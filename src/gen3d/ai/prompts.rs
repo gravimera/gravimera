@@ -1,0 +1,889 @@
+use bevy::prelude::*;
+
+use super::Gen3dPlannedComponent;
+use crate::gen3d::state::Gen3dSpeedMode;
+
+use crate::gen3d::{GEN3D_DEFAULT_STYLE_PROMPT, GEN3D_MAX_COMPONENTS, GEN3D_MAX_PARTS};
+
+pub(super) fn build_gen3d_effective_user_prompt(raw_prompt: &str) -> String {
+    let trimmed = raw_prompt.trim();
+    let mut out = String::new();
+    out.push_str(
+        "If photos are provided, choose the main object in the photos (ignore the background).\n\
+         If no photos are provided, infer the object solely from the user notes.\n",
+    );
+    out.push_str(
+        "Default style (use this unless the user explicitly requests a different style): ",
+    );
+    out.push_str(GEN3D_DEFAULT_STYLE_PROMPT);
+    out.push('\n');
+    out.push_str(
+        "Modeling priorities:\n\
+         - Reproduce the BASIC STRUCTURE and proportions first (silhouette and main volumes).\n\
+         - Components must be explainable (each one corresponds to a meaningful/structural sub-part).\n\
+         - Avoid small decorative details unless they are critical to the object's identity.\n",
+    );
+    out.push_str(
+        "Orientation conventions:\n\
+         - Treat the object's main/front facing direction as +Z (forward).\n\
+         - Treat the object's right direction as +X.\n\
+         - Keep the overall object centered near the origin.\n",
+    );
+
+    if trimmed.is_empty() {
+        out.push_str("User notes: (none)\n");
+    } else {
+        out.push_str(
+            "User notes (may include style overrides; if so, prefer the user over the default):\n",
+        );
+        out.push_str(trimmed);
+        out.push('\n');
+    }
+
+    out
+}
+
+pub(super) fn build_gen3d_plan_user_text(
+    raw_prompt: &str,
+    has_images: bool,
+    speed: Gen3dSpeedMode,
+) -> String {
+    let mut out = String::new();
+    out.push_str("Step 1 (planning): Split the object into multiple components.\n");
+    out.push_str(
+        "Each component must have a stable unique name, a purpose, and an approximate `size`.\n\
+         Components are assembled via a TREE of anchor attachments (no absolute placement).\n\
+         Each component must define named `anchors` (pos + forward/up in component-local space).\n\
+         Anchor NAMES must be stable: the next step will ask you to output the same anchor names again with precise frames.\n\
+         Every non-root component must define `attach_to` (parent component + anchor names).\n\
+         Also decide the object's `mobility` (static vs ground vs air).\n\
+         If the object is movable and has articulated parts (legs/wheels/wings/weapon), add `attach_to.animations` for the relevant components using channels: ambient/idle/move/attack_primary.\n\
+         Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
+         Define attachment anchors as a JOIN FRAME that matches on both sides:\n\
+          - Set parent_anchor.forward (+Z) to point from the parent toward the child (attachment direction).\n\
+          - Set child_anchor.forward (+Z) to point in the SAME direction as parent_anchor.forward (do NOT make it opposite, or the child will flip 180°).\n\
+          - Choose up vectors so parent_anchor.up (+Y) and child_anchor.up (+Y) generally match to avoid unintended roll.\n\
+         Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
+    );
+    out.push_str(&format!("Speed mode: {}.\n", speed.label()));
+    out.push_str(&format!(
+        "Hard cap: at most {} components.\n",
+        super::max_components_for_speed(speed)
+    ));
+    out.push_str("Goal: Use a reasonable number of components and ensure they fit/align well.\n");
+    if speed.wants_component_interaction() {
+        out.push_str(
+            "Component interaction requirements:\n\
+             - Plan shared dimensions and alignment rules (flush faces, symmetry, attachment points).\n\
+             - Use `assembly_notes` to describe key constraints so component generation stays consistent.\n\
+             - Keep the assembled object coherent near the origin (avoid scattering components).\n",
+        );
+    }
+    if !has_images {
+        out.push_str("No photos are provided for this run.\n");
+    }
+    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out
+}
+
+pub(super) fn build_gen3d_plan_user_text_with_hints(
+    raw_prompt: &str,
+    has_images: bool,
+    speed: Gen3dSpeedMode,
+    style_hint: Option<&str>,
+    required_component_names: &[String],
+) -> String {
+    let mut out = String::new();
+    out.push_str("Step 1 (planning): Split the object into multiple components.\n");
+    out.push_str(
+        "Each component must have a stable unique name, a purpose, and an approximate `size`.\n\
+         Components are assembled via a TREE of anchor attachments (no absolute placement).\n\
+         Each component must define named `anchors` (pos + forward/up in component-local space).\n\
+         Anchor NAMES must be stable: the next step will ask you to output the same anchor names again with precise frames.\n\
+         Every non-root component must define `attach_to` (parent component + anchor names).\n\
+         Also decide the object's `mobility` (static vs ground vs air).\n\
+         If the object is movable and has articulated parts (legs/wheels/wings/weapon), add `attach_to.animations` for the relevant components using channels: ambient/idle/move/attack_primary.\n\
+         Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
+         Define attachment anchors as a JOIN FRAME that matches on both sides:\n\
+          - Set parent_anchor.forward (+Z) to point from the parent toward the child (attachment direction).\n\
+          - Set child_anchor.forward (+Z) to point in the SAME direction as parent_anchor.forward (do NOT make it opposite, or the child will flip 180°).\n\
+          - Choose up vectors so parent_anchor.up (+Y) and child_anchor.up (+Y) generally match to avoid unintended roll.\n\
+         Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
+    );
+    out.push_str(&format!("Speed mode: {}.\n", speed.label()));
+    out.push_str(&format!(
+        "Hard cap: at most {} components.\n",
+        super::max_components_for_speed(speed)
+    ));
+    out.push_str("Goal: Use a reasonable number of components and ensure they fit/align well.\n");
+    if speed.wants_component_interaction() {
+        out.push_str(
+            "Component interaction requirements:\n\
+             - Plan shared dimensions and alignment rules (flush faces, symmetry, attachment points).\n\
+             - Use `assembly_notes` to describe key constraints so component generation stays consistent.\n\
+             - Keep the assembled object coherent near the origin (avoid scattering components).\n",
+        );
+    }
+
+    if !required_component_names.is_empty() {
+        out.push_str(
+            "Component naming constraint: You MUST use EXACTLY these component names (and ONLY these) in the plan.\n\
+If you feel you need extra pieces, merge them into these components instead of adding new components.\n\
+Required component names (in order):\n",
+        );
+        for name in required_component_names {
+            let n = name.trim();
+            if n.is_empty() {
+                continue;
+            }
+            out.push_str(&format!("- {n}\n"));
+        }
+    }
+
+    if let Some(style) = style_hint.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        out.push_str("Additional style preference (use this unless the user notes forbid it): ");
+        out.push_str(style);
+        out.push('\n');
+    }
+
+    if !has_images {
+        out.push_str("No photos are provided for this run.\n");
+    }
+    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out
+}
+
+pub(super) fn build_gen3d_component_user_text(
+    raw_prompt: &str,
+    has_images: bool,
+    speed: Gen3dSpeedMode,
+    assembly_notes: &str,
+    components: &[Gen3dPlannedComponent],
+    component_index: usize,
+) -> String {
+    let total = components.len().max(1);
+    let idx = component_index.min(total - 1);
+    let component = &components[idx];
+    let budget = (GEN3D_MAX_PARTS / total).clamp(16, 256);
+
+    let mut out = String::new();
+    out.push_str("Step 2 (component generation): Generate ONLY the requested component.\n");
+    out.push_str("Do not generate other components in this step.\n");
+    out.push_str(
+        "IMPORTANT: Output component-local coordinates.\n\
+         The engine assembles components by aligning named anchors (tree attachments).\n\
+         Do NOT bake any assembly transforms into the component's parts.\n\
+         Size contract: `target_size` is an axis-aligned AABB size in THIS component's local axes (+X right, +Y up, +Z forward).\n\
+         Your generated primitive parts should produce a component whose local AABB size is close to `target_size` on each axis (do not swap/permutate axes).\n\
+         Attachment frame rule: for an attachment, child_anchor.forward (+Z) must point in the SAME direction as the parent_anchor.forward (+Z). If you need a 180° flip, encode it via attach_to.offset.forward/up in the PLAN (not by reversing anchors).\n\
+         Convention: the component center must be at local [0,0,0].\n\
+         The engine will not auto-adjust placement. If you add thin surface details, place them slightly proud of the supporting surface so they remain visible.\n",
+    );
+    out.push_str(&format!(
+        "Component parts budget: try to stay within ~{budget} primitives.\n"
+    ));
+    out.push_str(
+        "Color requirement: every part MUST include `color` as [r,g,b,a] in 0..1 (do not omit; do not use material names).\n",
+    );
+    if speed.wants_component_interaction() {
+        out.push_str(
+            "Interaction reminder: This component must fit with the other components using the plan's anchor attachments.\n\
+             Use consistent shared dimensions and place anchors precisely where attachments should occur.\n",
+        );
+    }
+    if !has_images {
+        out.push_str("No photos are provided for this run.\n");
+    }
+    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push('\n');
+
+    out.push_str("Plan context (compact; for scale and attachments):\n");
+    if let Some(root) = components.iter().find(|c| c.attach_to.is_none()) {
+        let root_size = root.actual_size.unwrap_or(root.planned_size);
+        out.push_str(&format!(
+            "- root: {} size≈[{:.3},{:.3},{:.3}]\n",
+            root.name, root_size.x, root_size.y, root_size.z
+        ));
+    }
+    if let Some(att) = component.attach_to.as_ref() {
+        if let Some(parent) = components.iter().find(|c| c.name == att.parent) {
+            let parent_size = parent.actual_size.unwrap_or(parent.planned_size);
+            out.push_str(&format!(
+                "- parent: {} size≈[{:.3},{:.3},{:.3}] parent_anchor={} child_anchor={}\n",
+                parent.name,
+                parent_size.x,
+                parent_size.y,
+                parent_size.z,
+                att.parent_anchor,
+                att.child_anchor
+            ));
+        } else {
+            out.push_str(&format!(
+                "- parent: {} parent_anchor={} child_anchor={}\n",
+                att.parent, att.parent_anchor, att.child_anchor
+            ));
+        }
+    }
+    if !components.is_empty() {
+        let mut names: Vec<&str> = components.iter().map(|c| c.name.as_str()).collect();
+        // Keep this short; the engine keeps the full plan on disk if needed.
+        if names.len() > 24 {
+            names.truncate(24);
+        }
+        out.push_str(&format!("- components: {:?}\n", names));
+    }
+
+    out.push_str("\nComponent to generate:\n");
+    out.push_str(&format!(
+        "- name: {}\n- purpose: {}\n- modeling_notes: {}\n- target_size: [{:.3},{:.3},{:.3}]\n",
+        component.name,
+        component.purpose,
+        component.modeling_notes,
+        component.planned_size.x,
+        component.planned_size.y,
+        component.planned_size.z,
+    ));
+
+    if let Some(att) = component.attach_to.as_ref() {
+        let forward = att.offset.rotation * Vec3::Z;
+        let up = att.offset.rotation * Vec3::Y;
+        out.push_str(&format!(
+            "- attach_to: parent={}, parent_anchor={}, child_anchor={}\n- attach_offset_pos: [{:.3},{:.3},{:.3}]\n- attach_offset_forward: [{:.2},{:.2},{:.2}]\n- attach_offset_up: [{:.2},{:.2},{:.2}]\n",
+            att.parent,
+            att.parent_anchor,
+            att.child_anchor,
+            att.offset.translation.x,
+            att.offset.translation.y,
+            att.offset.translation.z,
+            forward.x,
+            forward.y,
+            forward.z,
+            up.x,
+            up.y,
+            up.z,
+        ));
+    } else {
+        out.push_str("- attach_to: (none; this is the root component)\n");
+    }
+
+    out.push_str("\nRequired anchors for this component (MUST include all in output JSON):\n");
+    for a in component.anchors.iter() {
+        let forward = a.transform.rotation * Vec3::Z;
+        let up = a.transform.rotation * Vec3::Y;
+        let pos = a.transform.translation;
+        out.push_str(&format!(
+            "- {}: approx pos=[{:.3},{:.3},{:.3}], forward=[{:.2},{:.2},{:.2}], up=[{:.2},{:.2},{:.2}]\n",
+            a.name,
+            pos.x,
+            pos.y,
+            pos.z,
+            forward.x,
+            forward.y,
+            forward.z,
+            up.x,
+            up.y,
+            up.z
+        ));
+    }
+
+    let mut children: Vec<&Gen3dPlannedComponent> = components
+        .iter()
+        .filter(|c| {
+            c.attach_to
+                .as_ref()
+                .is_some_and(|att| att.parent == component.name)
+        })
+        .collect();
+    children.sort_by(|a, b| a.name.cmp(&b.name));
+    if !children.is_empty() {
+        out.push_str("\nChildren that attach to this component (for context):\n");
+        for child in children {
+            if let Some(att) = child.attach_to.as_ref() {
+                out.push_str(&format!(
+                    "- {}: parent_anchor={} (on this component), child_anchor={} (on child)\n",
+                    child.name, att.parent_anchor, att.child_anchor
+                ));
+            }
+        }
+    }
+
+    let notes = assembly_notes.trim();
+    if !notes.is_empty() {
+        out.push_str("\nAssembly notes:\n");
+        out.push_str(notes);
+        out.push('\n');
+    }
+
+    out
+}
+
+pub(super) fn build_gen3d_plan_system_instructions() -> String {
+    format!(
+        "You are a 3D modeling assistant.\n\
+         Return STRICT JSON for a component assembly plan.\n\n\
+         Coordinate system:\n\
+         - +Y is up, +X is right, +Z is forward.\n\
+         - Orientations are given as direction vectors (no Euler angles).\n\
+         - Each component has its own LOCAL axes: +X right, +Y up, +Z forward.\n\n\
+         Assembly model:\n\
+         - Components are assembled by aligning named ANCHORS in a TREE of attachments.\n\
+         - There is NO absolute component placement in this plan.\n\n\
+         Mobility decision:\n\
+         - Decide whether the object should be movable.\n\
+         - Output `mobility` with `kind`:\n\
+           - `static` (buildings/props)\n\
+           - `ground` (walk/run/drive; provide `max_speed`)\n\
+           - `air` (fly; provide `max_speed`)\n\
+         - Strong guideline:\n\
+           - If the prompt describes a creature/character/vehicle (e.g. horse, soldier, knight, goblin, car, truck, tank), prefer `ground`.\n\
+           - Use `static` primarily for buildings/props (e.g. chair, table, lamp, door) unless the prompt explicitly says it is a controllable unit.\n\n\
+         Combat decision (optional):\n\
+         - Decide whether the object should be able to attack.\n\
+         - Most buildings/props are NOT attack-capable.\n\
+         - Most characters/units with weapons are attack-capable.\n\
+         - Output `attack` ONLY if the object is movable AND attack-capable.\n\
+         - `attack.kind`:\n\
+           - `none`\n\
+           - `melee` (swing/hit in close range)\n\
+           - `ranged_projectile` (shoot projectiles)\n\
+         - If you output `attack`, include ALL required fields for that kind (do not output partial attack objects).\n\
+         - `melee` fields: `cooldown_secs`, `damage`, `range`, `radius`, `arc_degrees`.\n\
+         - `ranged_projectile` fields:\n\
+           - `cooldown_secs`\n\
+           - `muzzle`: {{ `component`, `anchor` }}\n\
+           - `projectile`: {{\n\
+               `shape`: `sphere` | `capsule` | `cylinder` | `cuboid`\n\
+               (`radius`/`length`/`size` depending on shape)\n\
+               `color`: [r,g,b,a]  (REQUIRED; 0..1)\n\
+               `unlit`: bool\n\
+               `speed`: number\n\
+               `ttl_secs`: number\n\
+               `damage`: integer\n\
+               `obstacle_rule`: `bullets_blockers` | `laser_blockers` (optional)\n\
+               `spawn_energy_impact`: bool (optional)\n\
+             }}\n\
+         - For `ranged_projectile`, you MUST provide the `muzzle` anchor reference (component+anchor) and define that anchor in the referenced component.\n\n\
+         Aim / attention constraints (optional):\n\
+         - If the object is attack-capable (or has a head/weapon/turret that should track targets), you may output `aim`.\n\
+         - This defines the MAX allowed yaw difference between the unit BODY direction (movement facing) and its ATTENTION direction (weapon/head facing).\n\
+         - `aim.max_yaw_delta_degrees`: number or null.\n\
+           - null (or omitted) means unlimited (can aim freely 360 degrees).\n\
+           - smaller values (e.g. 45..120) limit how far the weapon/head can turn away from the body.\n\
+         - `aim.components`: list of component NAMES that should yaw with the attention direction (e.g. `head`, `turret`, `weapon`, `cannon`).\n\
+         - If `aim` is omitted for a ranged unit, the engine will aim the muzzle component by default.\n\n\
+         Animation channels (optional):\n\
+         - Attachments may include `animations` as a map from channel -> animation spec.\n\
+         - Valid channels: `ambient`, `idle`, `move`, `attack_primary`.\n\
+         - Per-part channel priority is: `attack_primary` > `move` > `idle` > `ambient`.\n\
+         - Use `move` for locomotion motion (legs swing, wheels spin).\n\
+         - Use `attack_primary` for weapon/attack motion if the object has a weapon/tool.\n\
+         - Use `idle` for subtle idle motions.\n\
+         - Use `ambient` for motions that should run regardless (fans/propellers).\n\
+         - Avoid `ambient` for weapons/turrets (a cannon spinning constantly looks wrong); prefer `attack_primary` recoil or no animation.\n\n\
+         Animation spec (inside `attach_to.animations[channel]`):\n\
+         - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
+         - Prefer `attack_time` for `attack_primary` so the animation runs once per attack event (instead of continuously while the player holds the attack key).\n\
+         - `speed_scale`: number (optional; default 1)\n\
+         - `clip`:\n\
+           - `{{ \"kind\": \"loop\", \"duration_secs\": number, \"keyframes\": [ {{\"time_secs\": number, \"delta\": {{\"pos\":[x,y,z], \"forward\":[x,y,z] (optional), \"up\":[x,y,z] (optional), \"scale\":[x,y,z] (optional)}} }} ] }}`\n\
+           - `{{ \"kind\": \"spin\", \"axis\": [x,y,z], \"radians_per_unit\": number }}`\n\
+         - For `spin`, `axis` is expressed in THIS COMPONENT's LOCAL axes (+X right, +Y up, +Z forward).\n\n\
+         Units:\n\
+         - For drivers `always` and `attack_time`:\n\
+           - `loop.duration_secs` and `loop.keyframes[].time_secs` are in seconds.\n\
+           - `spin.radians_per_unit` is radians per second.\n\
+         - For drivers `move_phase` and `move_distance`:\n\
+           - `loop.duration_secs` and `loop.keyframes[].time_secs` are in meters traveled (XZ).\n\
+           - `spin.radians_per_unit` is radians per meter traveled.\n\n\
+         Spin tip:\n\
+         - For attached spinners (wheels/propellers/turrets), the safest convention is:\n\
+           - set the spin axis to the attachment direction, i.e. `axis = child_anchor.forward` (in component-local coordinates).\n\
+           This guarantees the part spins around its attachment/joint axis.\n\n\
+         Anchor definition:\n\
+         - An anchor is a named coordinate frame inside a component.\n\
+         - `pos` is anchor origin in component-local coordinates.\n\
+         - `forward` is the anchor's +Z direction.\n\
+         - `up` is the anchor's +Y direction.\n\
+         - Do NOT output an anchor named \"origin\". The engine provides an implicit identity anchor named \"origin\".\n\n\
+         Attachment definition:\n\
+         - Each non-root component must define `attach_to`.\n\
+         - `attach_to` aligns this component's `child_anchor` to the parent's `parent_anchor`.\n\
+         - `offset` is an extra tweak transform expressed in the PARENT ANCHOR frame (after alignment).\n\
+         - The engine will NOT apply any hidden auto-placement rules. If you need overlap/inset/outset, encode it explicitly in `offset.pos`.\n\
+         - Define attachment anchors as a JOIN FRAME that matches on both sides:\n\
+           - Set parent_anchor.forward (+Z) to point from the parent toward the child (attachment direction).\n\
+           - Set child_anchor.forward (+Z) to point in the SAME direction as the parent_anchor.forward (do NOT make it opposite, or the child will flip 180°).\n\
+           - Choose up vectors so parent_anchor.up (+Y) and child_anchor.up generally match to avoid unintended roll.\n\
+         - Then `offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n\
+         - For flush joins, use a small NEGATIVE `offset.pos[2]` (slight inset/overlap). For surface overlays, use a small POSITIVE `offset.pos[2]` (slight outset) so thin details are not buried.\n\
+         - IMPORTANT: Do not use `attach_to.animation` (legacy). Use `attach_to.animations`.\n\n\
+         Schema:\n\
+         {{\n\
+           \"version\": 6,\n\
+           \"mobility\": {{\"kind\":\"static\"}} | {{\"kind\":\"ground\",\"max_speed\": number}} | {{\"kind\":\"air\",\"max_speed\": number}},\n\
+           \"attack\": {{ ... }} (optional; omit if not attack-capable),\n\
+           \"aim\": {{\"max_yaw_delta_degrees\": number|null (optional), \"components\": [\"component_name\", ...]}} (optional),\n\
+           \"collider\": {{\"kind\":\"aabb_xz\",\"half_extents\":[x,z]}} | {{\"kind\":\"circle_xz\",\"radius\":r}} | {{\"kind\":\"none\"}} (optional),\n\
+           \"assembly_notes\": \"...\" (optional),\n\
+           \"root_component\": \"component_name\" (optional; otherwise inferred as the only component without attach_to),\n\
+           \"components\": [\n\
+             {{\n\
+               \"name\": \"stable_unique_identifier\",\n\
+               \"purpose\": \"...\" (optional),\n\
+               \"modeling_notes\": \"...\" (optional),\n\
+               \"size\": [x,y,z],\n\
+               \"anchors\": [\n\
+                 {{\"name\":\"anchor_name\",\"pos\":[x,y,z],\"forward\":[x,y,z],\"up\":[x,y,z]}}\n\
+               ],\n\
+               \"attach_to\": {{\n\
+                 \"parent\": \"parent_component_name\",\n\
+                 \"parent_anchor\": \"anchor_name_on_parent\",\n\
+                 \"child_anchor\": \"anchor_name_on_this_component\",\n\
+                 \"offset\": {{\n\
+                   \"pos\": [x,y,z],\n\
+                   \"forward\": [x,y,z] (optional),\n\
+                   \"up\": [x,y,z] (optional),\n\
+                   \"scale\": [x,y,z] (optional)\n\
+                 }} (optional),\n\
+                 \"animations\": {{\n\
+                   \"ambient\" | \"idle\" | \"move\" | \"attack_primary\": {{\n\
+                     \"driver\": \"always\" | \"move_phase\" | \"move_distance\" | \"attack_time\",\n\
+                     \"speed_scale\": number (optional),\n\
+                     \"clip\": {{\"kind\":\"loop\",...}} | {{\"kind\":\"spin\",...}}\n\
+                   }}\n\
+                 }} (optional)\n\
+               }} (omit ONLY for the root component)\n\
+             }}\n\
+           ]\n\
+         }}\n\n\
+         Constraints:\n\
+         - Provide at most {GEN3D_MAX_COMPONENTS} components.\n\
+         - Use units roughly in meters; keep scale consistent.\n\
+         - Each component should be a coherent structural sub-part (not tiny decoration).\n\
+         - Focus on BASIC STRUCTURE over details.\n\
+         - Order components from most important (core volumes) to least important.\n\
+         - `size` is the component's approximate full bounds extents in the component's LOCAL axes.\n\
+         - Keep names simple; no spaces.\n\
+         - Output only the JSON object; no markdown.\n"
+    )
+}
+
+pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
+    "You are a 3D modeling assistant.\n\
+     Return STRICT JSON that fills missing mobility and per-component attachment animations for an already-created component plan.\n\
+     Do NOT change component names, the attachment tree, or geometry.\n\
+     You MUST output only the JSON object; no markdown.\n\n\
+     Mobility:\n\
+     - Output `mobility` with `kind`: `static` | `ground` | `air`.\n\
+     - For `ground` and `air`, provide `max_speed`.\n\n\
+     Animation channels:\n\
+     - Provide `animations` per component (these are for that component's attachment to its parent).\n\
+     - Valid channels: `ambient`, `idle`, `move`, `attack_primary`.\n\
+     - Channel priority: `attack_primary` > `move` > `idle` > `ambient`.\n\n\
+     Animation spec (inside `animations[channel]`):\n\
+     - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
+     - `speed_scale`: number (optional; default 1)\n\
+     - `clip`:\n\
+       - {\"kind\":\"loop\",\"duration_secs\": number,\"keyframes\":[{\"time_secs\": number,\"delta\":{\"pos\":[x,y,z],\"forward\":[x,y,z] (optional),\"up\":[x,y,z] (optional),\"scale\":[x,y,z] (optional)}}]}\n\
+       - {\"kind\":\"spin\",\"axis\":[x,y,z],\"radians_per_unit\": number}\n\
+     - For `spin`, `axis` is expressed in the COMPONENT's LOCAL axes.\n\n\
+     Units:\n\
+     - For drivers `always` and `attack_time`:\n\
+       - `loop.duration_secs` and `loop.keyframes[].time_secs` are in seconds.\n\
+       - `spin.radians_per_unit` is radians per second.\n\
+     - For drivers `move_phase` and `move_distance`:\n\
+       - `loop.duration_secs` and `loop.keyframes[].time_secs` are in meters traveled (XZ).\n\
+       - `spin.radians_per_unit` is radians per meter traveled.\n\n\
+     Schema:\n\
+     {\n\
+       \"version\": 1,\n\
+       \"mobility\": {\"kind\":\"static\"} | {\"kind\":\"ground\",\"max_speed\": number} | {\"kind\":\"air\",\"max_speed\": number},\n\
+       \"components\": [\n\
+         {\n\
+           \"name\": \"component_name\",\n\
+           \"animations\": { \"ambient\" | \"idle\" | \"move\" | \"attack_primary\": { ...spec... } }\n\
+         }\n\
+       ]\n\
+     }\n"
+        .to_string()
+}
+
+pub(super) fn build_gen3d_plan_fill_user_text(
+    raw_prompt: &str,
+    has_images: bool,
+    plan: &crate::gen3d::ai::schema::AiPlanJsonV1,
+) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "Step 1b (plan fill): Provide mobility + per-component attachment animations for an existing plan.\n\
+         Do NOT change component names or the attachment structure.\n",
+    );
+    if !has_images {
+        out.push_str("No photos are provided for this run.\n");
+    }
+    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push_str("\nComponents:\n");
+    for component in plan.components.iter() {
+        let parent = component
+            .attach_to
+            .as_ref()
+            .map(|att| att.parent.as_str())
+            .unwrap_or("<root>");
+        out.push_str(&format!(
+            "- name: {}; parent: {}; purpose: {}\n",
+            component.name,
+            parent,
+            component.purpose.trim()
+        ));
+    }
+    out
+}
+
+pub(super) fn build_gen3d_component_system_instructions() -> String {
+    format!(
+        "You are a 3D modeling assistant.\n\
+         Return STRICT JSON for a single component.\n\n\
+         Requirements:\n\
+         - Use ONLY primitives (cuboid, cylinder, sphere, cone).\n\
+         - You MUST output `anchors` with the same names as the plan requires.\n\
+         - You MUST output per-part `color` as [r,g,b,a] in 0..1 (do not omit).\n\
+         - Output only the JSON object; no markdown.\n\n\
+         Schema:\n\
+         {{\n\
+           \"version\": 2,\n\
+           \"collider\": {{\"kind\":\"aabb_xz\",\"half_extents\":[x,z]}} | {{\"kind\":\"circle_xz\",\"radius\":r}} | {{\"kind\":\"none\"}} (optional),\n\
+           \"anchors\": [\n\
+             {{\"name\":\"anchor_name\",\"pos\":[x,y,z],\"forward\":[x,y,z] (optional),\"up\":[x,y,z] (optional)}}\n\
+           ],\n\
+           \"parts\": [\n\
+             {{\n\
+               \"primitive\": \"cuboid\" | \"cylinder\" | \"sphere\" | \"cone\",\n\
+               \"params\": {{...}} (optional; only for capsule/conical_frustum/torus etc if supported),\n\
+               \"color\": [r,g,b,a],\n\
+               \"pos\": [x,y,z],\n\
+               \"forward\": [x,y,z] (optional),\n\
+               \"up\": [x,y,z] (optional),\n\
+               \"scale\": [x,y,z]\n\
+             }}\n\
+           ]\n\
+         }}\n\n\
+         Constraints:\n\
+         - Use units roughly in meters; keep scale consistent with the plan.\n\
+         - Component center should be near the origin.\n\
+         - Transform semantics: `scale` is a 3D size vector in the part's LOCAL axes (+X right, +Y up, +Z forward), and it rotates with the part when you provide `forward`/`up`.\n\
+         - The component's overall local AABB should be close to the plan's `target_size` per-axis (do not swap/permutate axes).\n\
+         - Output only the JSON object; no markdown.\n"
+    )
+}
+
+pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
+    "You are a 3D modeling assistant.\n\
+     You will be given: (1) reference photos (optional), (2) multiple rendered preview images of the CURRENT assembled draft, and (3) structured summaries of the draft and smoke checks.\n\
+     Your job is to propose machine-appliable fixes as STRICT JSON.\n\
+     Return ONLY JSON. Do NOT output markdown.\n\n\
+     IMPORTANT:\n\
+     - Do NOT assume the engine will \"auto-fix\" placement. If something is wrong, request explicit edits.\n\
+     - Do NOT output Euler angles. For rotations, use either:\n\
+       - a basis: {\"forward\":[x,y,z],\"up\":[x,y,z]}\n\
+       - or a quaternion: {\"quat_xyzw\":[x,y,z,w]}\n\
+     - Target components by `component_id` (UUID), not by name.\n\
+     - Keep changes minimal: prefer adjusting attachment offsets / anchors over regenerating geometry.\n\
+     - Focus on HIGH-IMPACT structural issues. If only minor cosmetic tweaks remain, return ONLY {\"kind\":\"accept\"}.\n\
+     - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\n\
+     Animation notes:\n\
+     - `tweak_animation.spec.clip.spin.axis` is expressed in the COMPONENT's LOCAL axes.\n\
+     - If smoke results include `suggested_component_local_axis`, prefer using that value for the spin axis.\n\
+       (It is computed from the component's child anchor forward vector so the part spins around the attachment axis.)\n\
+     - If an `ambient` animation is undesirable (e.g. a weapon spinning constantly), you may replace it with an identity loop:\n\
+       - a `loop` with keyframes whose `delta` transforms are all identity.\n\n\
+     If the scene graph shows no generated geometry yet (e.g. 0 primitive parts / components_generated=0), blank renders are expected.\n\
+     Do NOT report that as a renderer bug. Instead, request generating components first.\n\n\
+     Attack schema for `tweak_attack` (MUST follow exactly; do not invent custom fields):\n\
+     - `attack.kind` must be exactly one of: `none`, `melee`, `ranged_projectile`.\n\
+     - Do NOT output synonyms like `cannon`, `gun`, `projectile`, `ranged`; always use the canonical kinds above.\n\
+     - If the weapon is a cannon/gun, use `ranged_projectile` and describe it as a cannon in `reason`.\n\
+     - `none`: {\"kind\":\"none\"}\n\
+     - `melee`: {\"kind\":\"melee\",\"cooldown_secs\":number,\"damage\":integer,\"range\":number,\"radius\":number,\"arc_degrees\":number}\n\
+     - `ranged_projectile`: {\"kind\":\"ranged_projectile\",\"cooldown_secs\":number,\"muzzle\":{\"component\":\"<component_name>\",\"anchor\":\"<anchor_name>\"},\"projectile\":{...}}\n\
+       - `muzzle.component` MUST be the component NAME (same as in the plan), NOT a UUID.\n\
+       - `projectile` MUST include: `shape`, `color` [r,g,b,a], `speed`, `ttl_secs`, `damage` (and shape-specific fields like `radius`/`length`/`size`).\n\n\
+     Schema (review_delta_v1):\n\
+     {\n\
+       \"version\": 1,\n\
+       \"applies_to\": {\"run_id\":\"<uuid>\",\"attempt\": N,\"plan_hash\":\"sha256:...\",\"assembly_rev\": N},\n\
+       \"summary\": \"...\" (optional),\n\
+       \"actions\": [\n\
+         {\"kind\":\"accept\"},\n\
+         {\"kind\":\"tooling_feedback\",\"feedback\":{...}},\n\
+         {\"kind\":\"replan\",\"reason\":\"...\"},\n\
+         {\"kind\":\"regen_component\",\"component_id\":\"<uuid>\",\"updated_modeling_notes\":\"...\" (optional),\"reason\":\"...\" (optional)},\n\
+         {\"kind\":\"tweak_component_transform\",\"component_id\":\"<uuid>\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
+         {\"kind\":\"tweak_anchor\",\"component_id\":\"<uuid>\",\"anchor_name\":\"name\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
+         {\"kind\":\"tweak_attachment\",\"component_id\":\"<uuid>\",\"set\":{...},\"reason\":\"...\" (optional)},\n\
+         {\"kind\":\"tweak_animation\",\"component_id\":\"<uuid>\",\"channel\":\"ambient|idle|move|attack_primary\",\"spec\":{...},\"reason\":\"...\" (optional)},\n\
+         {\"kind\":\"tweak_mobility\",\"mobility\":{...},\"reason\":\"...\" (optional)},\n\
+         {\"kind\":\"tweak_attack\",\"attack\":{...},\"reason\":\"...\" (optional)}\n\
+       ]\n\
+     }\n\n\
+     Notes:\n\
+     - `tweak_component_transform` edits the component's attachment OFFSET relative to its parent.\n\
+     - IMPORTANT: Attachment offsets are expressed in the PARENT ANCHOR join frame.\n\
+       In that join frame, `offset.pos = [x,y,z]` means:\n\
+       - +X (`pos[0]`) is `join_right_world`\n\
+       - +Y (`pos[1]`) is `join_up_world`\n\
+       - +Z (`pos[2]`) is `join_forward_world` (this is `parent_anchor.forward`, defined to point from the parent toward the child)\n\
+       Therefore:\n\
+       - If a child looks DETACHED and you want to pull it TOWARD its parent, use a NEGATIVE delta on `pos[2]` (decrease `offset.pos[2]`).\n\
+       - If you want to push a child further away along the attachment direction, use a POSITIVE delta on `pos[2]` (increase `offset.pos[2]`).\n\
+       - If you want to apply a desired WORLD-space translation delta `W = [wx,wy,wz]`, convert it into join-frame deltas:\n\
+         - `delta.pos[0] = dot(W, join_right_world)`\n\
+         - `delta.pos[1] = dot(W, join_up_world)`\n\
+         - `delta.pos[2] = dot(W, join_forward_world)`\n\
+     - `tooling_feedback` is for missing tools / tool improvements / tool bugs.\n\
+       It must include at least: {\"version\":1,\"priority\":\"low|medium|high|blocker\",\"title\":\"...\",\"summary\":\"...\"}.\n\
+       You may include additional fields (e.g. `missing_tools`, `enhancements`, `bugs`, `examples`, `details`).\n\
+     - Use `replan` only if the component breakdown or attachment tree is fundamentally wrong.\n\
+     - Use `regen_component` if the component geometry is structurally wrong (not for tiny details).\n"
+        .to_string()
+}
+
+pub(super) fn build_gen3d_review_delta_user_text(
+    run_id: &str,
+    attempt: u32,
+    plan_hash: &str,
+    assembly_rev: u32,
+    raw_prompt: &str,
+    has_images: bool,
+    scene_graph_summary: &serde_json::Value,
+    smoke_results: &serde_json::Value,
+) -> String {
+    fn fmt_f32(v: Option<f32>) -> String {
+        v.map(|f| format!("{f:.2}"))
+            .unwrap_or_else(|| "null".into())
+    }
+
+    fn read_vec3(value: &serde_json::Value) -> Option<(f32, f32, f32)> {
+        let arr = value.as_array()?;
+        if arr.len() != 3 {
+            return None;
+        }
+        Some((
+            arr[0].as_f64()? as f32,
+            arr[1].as_f64()? as f32,
+            arr[2].as_f64()? as f32,
+        ))
+    }
+
+    fn read_vec2(value: &serde_json::Value) -> Option<(f32, f32)> {
+        let arr = value.as_array()?;
+        if arr.len() != 2 {
+            return None;
+        }
+        Some((arr[0].as_f64()? as f32, arr[1].as_f64()? as f32))
+    }
+
+    fn fmt_vec3(value: Option<(f32, f32, f32)>) -> String {
+        match value {
+            Some((x, y, z)) => format!("[{:.2},{:.2},{:.2}]", x, y, z),
+            None => "null".into(),
+        }
+    }
+
+    fn fmt_vec2(value: Option<(f32, f32)>) -> String {
+        match value {
+            Some((x, y)) => format!("[{:.2},{:.2}]", x, y),
+            None => "null".into(),
+        }
+    }
+
+    fn compact_scene_graph_summary(summary: &serde_json::Value) -> String {
+        fn normalized_cross(a: (f32, f32, f32), b: (f32, f32, f32)) -> Option<(f32, f32, f32)> {
+            let (ax, ay, az) = a;
+            let (bx, by, bz) = b;
+            let rx = ay * bz - az * by;
+            let ry = az * bx - ax * bz;
+            let rz = ax * by - ay * bx;
+            let len2 = rx * rx + ry * ry + rz * rz;
+            if !len2.is_finite() || len2 <= 1e-6 {
+                return None;
+            }
+            let inv = 1.0 / len2.sqrt();
+            Some((rx * inv, ry * inv, rz * inv))
+        }
+
+        let mut out = String::new();
+
+        if let Some(root) = summary.get("root") {
+            let size = root.get("size").and_then(read_vec3);
+            let mobility = root
+                .get("mobility")
+                .and_then(|m| m.get("kind"))
+                .and_then(|v| v.as_str());
+            let speed = root
+                .get("mobility")
+                .and_then(|m| m.get("max_speed"))
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32);
+            let attack_kind = root
+                .get("attack")
+                .and_then(|a| a.get("kind"))
+                .and_then(|v| v.as_str());
+            let collider_kind = root
+                .get("collider")
+                .and_then(|c| c.get("kind"))
+                .and_then(|v| v.as_str());
+            let half = root
+                .get("collider")
+                .and_then(|c| c.get("half_extents"))
+                .and_then(read_vec2);
+
+            out.push_str(&format!(
+                "- root: size={} mobility={} max_speed={} attack={} collider={} half_extents={}\n",
+                fmt_vec3(size),
+                mobility.unwrap_or("unknown"),
+                fmt_f32(speed),
+                attack_kind.unwrap_or("none"),
+                collider_kind.unwrap_or("none"),
+                fmt_vec2(half),
+            ));
+        }
+
+        let Some(components) = summary.get("components").and_then(|v| v.as_array()) else {
+            return out;
+        };
+
+        out.push_str(&format!("- components_total: {}\n", components.len()));
+        for c in components {
+            let name = c
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unnamed>");
+            let id = c
+                .get("component_id_uuid")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<no-id>");
+            let parent_name = c
+                .get("attach_to")
+                .and_then(|a| a.get("parent_component_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("(root)");
+            let parent_id = c
+                .get("attach_to")
+                .and_then(|a| a.get("parent_component_id_uuid"))
+                .and_then(|v| v.as_str());
+            let parent_anchor = c
+                .get("attach_to")
+                .and_then(|a| a.get("parent_anchor"))
+                .and_then(|v| v.as_str());
+            let child_anchor = c
+                .get("attach_to")
+                .and_then(|a| a.get("child_anchor"))
+                .and_then(|v| v.as_str());
+
+            let pos = c
+                .get("resolved_transform")
+                .and_then(|t| t.get("pos"))
+                .and_then(read_vec3);
+            let forward = c
+                .get("resolved_transform")
+                .and_then(|t| t.get("forward"))
+                .and_then(read_vec3);
+            let up = c
+                .get("resolved_transform")
+                .and_then(|t| t.get("up"))
+                .and_then(read_vec3);
+
+            let planned_size = c.get("planned_size").and_then(read_vec3);
+            let actual_size = c.get("actual_size").and_then(read_vec3);
+
+            let offset_pos_join = c
+                .get("attach_to")
+                .and_then(|a| a.get("offset"))
+                .and_then(|o| o.get("pos"))
+                .and_then(read_vec3);
+            let join_forward_world = c
+                .get("attach_to")
+                .and_then(|a| a.get("join_forward_world"))
+                .and_then(read_vec3);
+            let join_up_world = c
+                .get("attach_to")
+                .and_then(|a| a.get("join_up_world"))
+                .and_then(read_vec3);
+            let join_right_world = c
+                .get("attach_to")
+                .and_then(|a| a.get("join_right_world"))
+                .and_then(read_vec3)
+                .or_else(|| {
+                    join_up_world
+                        .zip(join_forward_world)
+                        .and_then(|(u, f)| normalized_cross(u, f))
+                });
+
+            let anchors: Vec<&str> = c
+                .get("anchors")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|a| a.get("name").and_then(|v| v.as_str()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            out.push_str(&format!("- {name}: id={id} parent={parent_name}"));
+            if let Some(parent_id) = parent_id {
+                out.push_str(&format!(" parent_id={parent_id}"));
+            }
+            if let Some(parent_anchor) = parent_anchor {
+                out.push_str(&format!(" parent_anchor={parent_anchor}"));
+            }
+            if let Some(child_anchor) = child_anchor {
+                out.push_str(&format!(" child_anchor={child_anchor}"));
+            }
+            out.push_str(&format!(
+                " pos={} fwd={} up={} planned_size={} actual_size={}",
+                fmt_vec3(pos),
+                fmt_vec3(forward),
+                fmt_vec3(up),
+                fmt_vec3(planned_size),
+                fmt_vec3(actual_size)
+            ));
+
+            if parent_name != "(root)" {
+                out.push_str(&format!(
+                    " offset_pos_join={} join_right_world={} join_up_world={} join_forward_world={}",
+                    fmt_vec3(offset_pos_join),
+                    fmt_vec3(join_right_world),
+                    fmt_vec3(join_up_world),
+                    fmt_vec3(join_forward_world),
+                ));
+            }
+
+            out.push_str(&format!(" anchors={:?}\n", anchors));
+        }
+
+        out
+    }
+
+    let mut out = String::new();
+    out.push_str("Auto-review pass: propose strict machine-appliable deltas.\n");
+    if !has_images {
+        out.push_str("No photos are provided for this run.\n");
+    }
+    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push('\n');
+
+    out.push_str("You MUST copy these values into `applies_to` exactly:\n");
+    out.push_str(&format!("- run_id: {run_id}\n"));
+    out.push_str(&format!("- attempt: {attempt}\n"));
+    out.push_str(&format!("- plan_hash: {plan_hash}\n"));
+    out.push_str(&format!("- assembly_rev: {assembly_rev}\n\n"));
+
+    out.push_str("scene_graph_summary (compact):\n");
+    out.push_str(&compact_scene_graph_summary(scene_graph_summary));
+    out.push_str("\n\nsmoke_results.json:\n");
+    out.push_str(
+        &serde_json::to_string_pretty(smoke_results).unwrap_or_else(|_| smoke_results.to_string()),
+    );
+    out.push('\n');
+    out
+}

@@ -1,0 +1,9 @@
+/target
+/dist
+/.idea
+/.vscode
+.DS_Store
+*.log
+config.toml
+cases
+game_test

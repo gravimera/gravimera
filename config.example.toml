@@ -1,0 +1,93 @@
+# Copy this file to `~/.gravimera/config.toml` and fill in your settings.
+# NOTE: `config.toml` is gitignored in this repo to avoid committing secrets.
+
+# Optional: write logs to a file (in addition to the terminal).
+# Relative paths are resolved relative to the config file directory.
+# If the path can't be opened, Gravimera logs a warning and falls back next to the running binary.
+# log_path = "./gravimera.log"
+
+[scene]
+
+# Optional: override where build scene persistence is stored.
+# Default: `~/.gravimera/scene.dat`.
+# Relative paths are resolved relative to the config file directory.
+# scene_dat_path = "./scene.dat"
+
+[automation]
+
+# Optional: enable a local-only Automation HTTP API so tools/agents can drive the game
+# (select/move/fire/mode/screenshot/shutdown) for automated testing.
+# enabled = false
+
+# Optional: bind address for the HTTP server (default: 127.0.0.1:8791).
+# bind = "127.0.0.1:8791"
+
+# Optional: require `Authorization: Bearer <token>` on every request.
+# token = "CHANGE_ME"
+
+# Optional: ignore keyboard/mouse input while automation is enabled (default: true).
+# disable_local_input = true
+
+# Optional: start with time paused (default: true). Use the API to resume/step.
+# pause_on_start = true
+
+[gen3d]
+
+# Optional: override where Gen3D artifacts are cached.
+# Default: `~/.gravimera/cache/gen3d/`.
+# Relative paths are resolved relative to the config file directory.
+# cache_dir = "./gen3d_cache"
+
+# Optional: save a set of debug preview renders into every `attempt_N/pass_M/` folder.
+# This makes it much easier to see how the draft changes over time while debugging.
+# Default: enabled in debug builds; disabled in release builds (and in `cargo test`).
+# save_pass_screenshots = true
+
+# Max number of component generation requests to run in parallel (default: 10).
+# Note: higher values can hit provider rate limits.
+max_parallel_components = 10
+
+# Step-specific reasoning-effort caps for the Gen3D agent.
+# Effective effort = min(openai.model_reasoning_effort, reasoning_effort_*).
+# Values: "none" | "low" | "medium" | "high"
+# reasoning_effort_plan = "high"
+# reasoning_effort_agent_step = "low"
+# reasoning_effort_component = "medium"
+# reasoning_effort_review = "medium"
+# reasoning_effort_repair = "low"
+
+# Budget: max wall-clock seconds per Build run (default: 3600). Set to 0 to disable the time budget.
+# max_seconds = 3600
+
+# Budget: max OpenAI tokens per Build run across all requests (default: 10000000). Set to 0 to disable the token budget.
+# max_tokens = 10000000
+
+# No-progress guard: stop a Build run if the agent makes no observable progress for N steps.
+# Set to 0 to disable the guard (default: 12).
+# no_progress_max_steps = 12
+
+# Budget: max number of replans per Build run (default: 1).
+# max_replans = 1
+
+# Budget: max number of component regenerations per Build run (default: 16).
+# max_regen_total = 16
+
+# Budget: max number of regenerations for any single component per Build run (default: 2).
+# max_regen_per_component = 2
+
+# Optional: number of auto-review passes after the initial build (0 disables auto-review).
+# refine_iterations = 1
+
+[openai]
+
+# OpenAI Responses API base URL.
+base_url = "https://api.openai.com/v1"
+
+# Any Responses API model that supports images.
+model = "gpt-4.1"
+
+# "low" | "medium" | "high"
+model_reasoning_effort = "high"
+
+# Your OpenAI API key.
+OPENAI_API_KEY = "YOUR_OPENAI_API_KEY_HERE"
