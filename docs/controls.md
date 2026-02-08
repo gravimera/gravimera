@@ -9,6 +9,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Zoom: mouse wheel (in/out; no orbit/rotation)
 - Camera pan: move cursor near the window edge
 - Camera rotate: `I` / `J` / `K` / `L`
+- Direct move (selected units/build objects): `W` / `A` / `S` / `D` (camera-relative)
 
 ## Selection
 
@@ -32,7 +33,8 @@ Place objects:
 Edit selected build objects (when not placing):
 
 - Delete: `Delete` / `Backspace`
-- Move: arrow keys (`Shift` = bigger step)
+- Move: `W` / `A` / `S` / `D` (camera-relative; hold to repeat)
+- Move (grid nudge): arrow keys (`Shift` = bigger step)
 - Rotate: `Q` / `E` (`Shift` = 45° steps)
 - Scale: `-` / `=` (`Shift` = bigger steps)
 - Duplicate: `Ctrl/Cmd + D`
@@ -40,6 +42,7 @@ Edit selected build objects (when not placing):
 Units in Build mode:
 
 - Duplicate selected units: `M`
+- Scale selected units: `-` / `=` (`Shift` = bigger steps)
 
 ## Play mode
 

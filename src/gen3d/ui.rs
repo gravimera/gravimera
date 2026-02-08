@@ -130,21 +130,13 @@ pub(crate) fn enter_gen3d_mode(
                             Node {
                                 width: Val::Percent(100.0),
                                 flex_direction: FlexDirection::Row,
-                                justify_content: JustifyContent::SpaceBetween,
+                                justify_content: JustifyContent::FlexEnd,
                                 align_items: AlignItems::Center,
                                 ..default()
                             },
                             BackgroundColor(Color::NONE),
                         ))
                         .with_children(|row| {
-                            row.spawn((
-                                Text::new("Photos (drag & drop)"),
-                                TextFont {
-                                    font_size: 18.0,
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.95, 0.85, 0.25)),
-                            ));
                             row.spawn((
                                 Button,
                                 Node {

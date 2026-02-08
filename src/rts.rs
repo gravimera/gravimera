@@ -803,12 +803,12 @@ pub(crate) fn build_unit_hotkeys(
     mut material_cache: ResMut<visuals::MaterialCache>,
     mut mesh_cache: ResMut<visuals::PrimitiveMeshCache>,
     library: Res<ObjectLibrary>,
-    units: Query<
+    mut units: Query<
         (
             Entity,
-            &Transform,
+            &mut Transform,
             &ObjectPrefabId,
-            &Collider,
+            &mut Collider,
             Option<&ObjectTint>,
         ),
         (With<Commandable>, Without<Player>),
@@ -820,6 +820,8 @@ pub(crate) fn build_unit_hotkeys(
     if build.placing_active {
         return;
     }
+
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
     let delete_pressed =
         keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace);
@@ -836,6 +838,54 @@ pub(crate) fn build_unit_hotkeys(
         selection.drag_end = None;
     }
 
+    let scale_step = if shift { 1.25 } else { 1.10 };
+    let mut scale_mul = 1.0f32;
+    if keys.just_pressed(KeyCode::Equal) {
+        scale_mul *= scale_step;
+    }
+    if keys.just_pressed(KeyCode::Minus) {
+        scale_mul /= scale_step;
+    }
+    if (scale_mul - 1.0).abs() > 1e-6 {
+        let selected: Vec<Entity> = selection.selected.iter().copied().collect();
+        for entity in selected {
+            let Ok((_entity, mut transform, _prefab_id, mut collider, _tint)) =
+                units.get_mut(entity)
+            else {
+                continue;
+            };
+
+            let current_scale = transform
+                .scale
+                .x
+                .abs()
+                .max(transform.scale.y.abs())
+                .max(transform.scale.z.abs())
+                .max(1e-3);
+            let new_scale = (current_scale * scale_mul).clamp(0.15, 10.0);
+            let applied = new_scale / current_scale;
+
+            transform.scale = Vec3::splat(new_scale);
+            if transform.translation.y.is_finite() {
+                transform.translation.y *= applied;
+            }
+
+            if collider.radius.is_finite() {
+                collider.radius = (collider.radius * applied).max(0.01);
+            }
+
+            let radius = collider.radius.max(0.01);
+            transform.translation.x = transform
+                .translation
+                .x
+                .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+            transform.translation.z = transform
+                .translation
+                .z
+                .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+        }
+    }
+
     if !keys.just_pressed(KeyCode::KeyM) {
         return;
     }
@@ -845,7 +895,7 @@ pub(crate) fn build_unit_hotkeys(
     let mut new_selected: HashSet<Entity> = HashSet::new();
     let selected: Vec<Entity> = selection.selected.iter().copied().collect();
     for entity in selected {
-        let Ok((_entity, transform, prefab_id, collider, tint)) = units.get(entity) else {
+        let Ok((_entity, transform, prefab_id, collider, tint)) = units.get_mut(entity) else {
             continue;
         };
 

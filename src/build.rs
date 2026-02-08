@@ -1027,6 +1027,7 @@ fn build_instance_bounds(
 
 pub(crate) fn build_edit_selected_objects(
     mut commands: Commands,
+    time: Res<Time>,
     build: Res<BuildState>,
     keys: Res<ButtonInput<KeyCode>>,
     mut selection: ResMut<SelectionState>,
@@ -1037,6 +1038,8 @@ pub(crate) fn build_edit_selected_objects(
     mut material_cache: ResMut<visuals::MaterialCache>,
     mut mesh_cache: ResMut<visuals::PrimitiveMeshCache>,
     library: Res<ObjectLibrary>,
+    camera_q: Query<&Transform, With<MainCamera>>,
+    mut wasd_repeat: Local<BuildObjectWasdRepeat>,
     mut objects: Query<
         (
             Entity,
@@ -1050,9 +1053,13 @@ pub(crate) fn build_edit_selected_objects(
     >,
 ) {
     if build.placing_active {
+        wasd_repeat.dir = Vec2::ZERO;
+        wasd_repeat.cooldown_secs = 0.0;
         return;
     }
     if selection.selected.is_empty() {
+        wasd_repeat.dir = Vec2::ZERO;
+        wasd_repeat.cooldown_secs = 0.0;
         return;
     }
 
@@ -1124,6 +1131,72 @@ pub(crate) fn build_edit_selected_objects(
     }
 
     let mut move_delta = Vec3::ZERO;
+    const REPEAT_INITIAL_DELAY_SECS: f32 = 0.28;
+    const REPEAT_INTERVAL_SECS: f32 = 0.06;
+
+    let mut camera_forward = camera_q
+        .single()
+        .map(|transform| transform.rotation * Vec3::NEG_Z)
+        .unwrap_or(Vec3::Z);
+    camera_forward.y = 0.0;
+    let forward_xz = if camera_forward.length_squared() > 1e-6 {
+        Vec2::new(camera_forward.x, camera_forward.z).normalize()
+    } else {
+        Vec2::Y
+    };
+
+    let mut camera_right = camera_q
+        .single()
+        .map(|transform| transform.rotation * Vec3::X)
+        .unwrap_or(Vec3::X);
+    camera_right.y = 0.0;
+    let right_xz = if camera_right.length_squared() > 1e-6 {
+        Vec2::new(camera_right.x, camera_right.z).normalize()
+    } else {
+        Vec2::X
+    };
+
+    let mut dir = Vec2::ZERO;
+    if keys.pressed(KeyCode::KeyW) {
+        dir += forward_xz;
+    }
+    if keys.pressed(KeyCode::KeyS) {
+        dir -= forward_xz;
+    }
+    if keys.pressed(KeyCode::KeyD) {
+        dir += right_xz;
+    }
+    if keys.pressed(KeyCode::KeyA) {
+        dir -= right_xz;
+    }
+
+    let mut step_dir = Vec2::ZERO;
+    if dir.length_squared() > 1e-6 {
+        let dir = dir.normalize();
+        if dir.x.abs() >= 0.5 {
+            step_dir.x = dir.x.signum();
+        }
+        if dir.y.abs() >= 0.5 {
+            step_dir.y = dir.y.signum();
+        }
+    }
+    let dt = time.delta_secs().max(0.0);
+    if step_dir.length_squared() <= 1e-6 {
+        wasd_repeat.dir = Vec2::ZERO;
+        wasd_repeat.cooldown_secs = 0.0;
+    } else if step_dir != wasd_repeat.dir {
+        wasd_repeat.dir = step_dir;
+        wasd_repeat.cooldown_secs = REPEAT_INITIAL_DELAY_SECS;
+        move_delta.x += step * step_dir.x;
+        move_delta.z += step * step_dir.y;
+    } else {
+        wasd_repeat.cooldown_secs -= dt;
+        if wasd_repeat.cooldown_secs <= 0.0 {
+            wasd_repeat.cooldown_secs = REPEAT_INTERVAL_SECS;
+            move_delta.x += step * step_dir.x;
+            move_delta.z += step * step_dir.y;
+        }
+    }
     if keys.just_pressed(KeyCode::ArrowLeft) {
         move_delta.x -= step;
     }
@@ -1204,6 +1277,12 @@ pub(crate) fn build_edit_selected_objects(
         dimensions.size = new_size;
         collider.half_extents = new_half;
     }
+}
+
+#[derive(Default)]
+pub(crate) struct BuildObjectWasdRepeat {
+    dir: Vec2,
+    cooldown_secs: f32,
 }
 
 fn draw_dashed_line(
