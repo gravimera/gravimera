@@ -179,22 +179,17 @@ pub(crate) fn camera_follow(
     let forward = Vec3::new(camera_yaw.yaw.sin(), 0.0, camera_yaw.yaw.cos());
     let right = Vec3::Y.cross(forward);
 
-    let near_offset =
-        Vec3::Y * CAMERA_NEAR_UP + right * CAMERA_NEAR_RIGHT - forward * CAMERA_NEAR_BACK;
     let far_offset =
         Vec3::Y * CAMERA_OFFSET.y + right * CAMERA_OFFSET.x - forward * CAMERA_OFFSET.z;
-    let base_offset = far_offset.lerp(near_offset, t);
+    let zoom_scale = 1.0 + t * (CAMERA_ZOOM_NEAR_SCALE - 1.0);
+    let base_offset = far_offset * zoom_scale;
     let pitch_rot = Quat::from_axis_angle(right, camera_pitch.pitch);
     let offset = pitch_rot * base_offset;
 
     let focus_pos = focus.position;
     camera_transform.translation = focus_pos + offset;
 
-    let far_target = focus_pos;
-    let near_target =
-        focus_pos + pitch_rot * (Vec3::Y * CAMERA_NEAR_LOOK_UP + forward * CAMERA_NEAR_LOOK_AHEAD);
-    let target = far_target.lerp(near_target, t);
-    camera_transform.look_at(target, Vec3::Y);
+    camera_transform.look_at(focus_pos, Vec3::Y);
 }
 
 fn wrap_angle(angle: f32) -> f32 {

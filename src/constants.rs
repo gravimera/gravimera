@@ -185,12 +185,9 @@ pub(crate) const CAMERA_ZOOM_MIN: f32 = 0.0;
 pub(crate) const CAMERA_ZOOM_MAX: f32 = 1.0;
 pub(crate) const CAMERA_YAW_DEADZONE_RADS: f32 = 15.0 * std::f32::consts::PI / 180.0;
 
-// When fully zoomed-in, use an "over the shoulder" camera.
-pub(crate) const CAMERA_NEAR_BACK: f32 = 6.0;
-pub(crate) const CAMERA_NEAR_UP: f32 = 3.6;
-pub(crate) const CAMERA_NEAR_RIGHT: f32 = 0.6;
-pub(crate) const CAMERA_NEAR_LOOK_AHEAD: f32 = 5.5;
-pub(crate) const CAMERA_NEAR_LOOK_UP: f32 = 0.9;
+// Fully zoomed-in camera uses the same view direction as far zoom, just closer.
+// (i.e. scrolling zooms without orbiting/rotating the view.)
+pub(crate) const CAMERA_ZOOM_NEAR_SCALE: f32 = 1.0 / 3.0;
 
 pub(crate) const DEFAULT_HEADLESS_SECONDS: f32 = 5.0;
 
