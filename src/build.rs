@@ -1038,7 +1038,7 @@ pub(crate) fn build_edit_selected_objects(
     mut material_cache: ResMut<visuals::MaterialCache>,
     mut mesh_cache: ResMut<visuals::PrimitiveMeshCache>,
     library: Res<ObjectLibrary>,
-    camera_q: Query<&Transform, With<MainCamera>>,
+    camera_q: Query<&Transform, (With<MainCamera>, Without<BuildObject>)>,
     mut wasd_repeat: Local<BuildObjectWasdRepeat>,
     mut objects: Query<
         (
