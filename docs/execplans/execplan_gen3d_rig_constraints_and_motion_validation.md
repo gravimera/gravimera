@@ -33,7 +33,7 @@ User-visible outcome: generated units with locomotion animations are much less l
 ## Surprises & Discoveries
 
 - Observation: “swimming” locomotion often comes from coordinate-frame mismatch, not animation math.
-  Evidence: In the Gen3D cache run `~/.gravimera/cache/gen3d/b31f2f5a-51a7-42f9-a07a-d9037ed4419c/`, the horse’s assembly is structurally fine, but its `move` keyframes can yield limb motion that reads like paddling when the AI chooses an unintended joint frame.
+  Evidence: This has been reproduced in prompt-only creature generations (e.g. “a horse”) where the assembly is structurally fine, but the AI authors `move` keyframes in an unintended frame (e.g. limb “up” ends up pointing forward), producing a paddling-like motion. When reproducing locally, inspect the current run’s Gen3D artifacts (see “Gen3D cache layout” below) and compare `plan_raw.txt` (especially attachment anchor frames + `move` clips) against `move_sheet.png`.
 
 - Observation: the current auto-review already captures motion sheets, but has no contract to validate against.
   Evidence: `src/gen3d/ai/mod.rs` captures `move_sheet.png` and `attack_sheet.png`, and `build_gen3d_review_delta_user_text` includes `smoke_results.json`; however `smoke_check_v1` only checks high-level semantics (attack required, spin axis warning) and does not validate gait plausibility.
@@ -96,6 +96,15 @@ Definitions used in this ExecPlan:
 
 - Contact: a named anchor that represents a point intended to touch the ground (or another surface) during locomotion.
 
+Gen3D cache layout (so this plan is machine-independent):
+
+- Base directory: `AppConfig.gen3d_cache_dir` if set; otherwise `default_gen3d_cache_dir()` which resolves to `$GRAVIMERA_HOME/cache/gen3d` (`GRAVIMERA_HOME` defaults to `~/.gravimera`). See `src/paths.rs` and `src/gen3d/ai/mod.rs` (`gen3d_make_run_dir`).
+- Run directory: `<base>/<run_id>/` where `run_id` is a UUID.
+- Per-run artifacts:
+  - `agent_trace.jsonl` lives at the run directory root.
+  - Each agent iteration writes to `<run_dir>/attempt_<attempt>/pass_<pass>/`.
+  - Most “what happened in this pass” artifacts live in the pass directory (for example `plan_raw.txt`, `scene_graph_summary.json`, `smoke_results.json`, and the review images like `move_sheet.png`).
+
 ## Plan of Work
 
 This change is intentionally contract-driven rather than “preset gait” driven. The engine does not hardcode “horse trot”; it enforces the constraints the AI declares.
@@ -126,12 +135,57 @@ In `src/gen3d/ai/schema.rs`:
       - `kind`: `ground` (start with only this)
       - `stance`: optional object `{ phase_01: number, duty_factor_01: number }` used for `move` validation
 
+Example (plan excerpt; exact field names can differ, but semantics must match):
+
+    {
+      "version": 7,
+      "rig": { "move_cycle_m": 1.2 },
+      "mobility": { "kind": "ground", "max_speed": 6.0 },
+      "components": [
+        {
+          "name": "torso",
+          "size": [1.4, 0.85, 2.0],
+          "anchors": [
+            { "name": "leg_fl_mount", "pos": [-0.45, -0.425, 0.65], "forward": [0,-1,0], "up": [0,0,1] }
+          ]
+        },
+        {
+          "name": "leg_fl",
+          "size": [0.25, 0.8, 0.25],
+          "anchors": [
+            { "name": "torso_mount", "pos": [0, 0.4, 0], "forward": [0,-1,0], "up": [0,0,1] },
+            { "name": "ground_contact", "pos": [0, -0.4, 0], "forward": [0,-1,0], "up": [0,0,1] }
+          ],
+          "contacts": [
+            {
+              "name": "hoof_fl",
+              "kind": "ground",
+              "anchor": "ground_contact",
+              "stance": { "phase_01": 0.0, "duty_factor_01": 0.6 }
+            }
+          ],
+          "attach_to": {
+            "parent": "torso",
+            "parent_anchor": "leg_fl_mount",
+            "child_anchor": "torso_mount",
+            "joint": { "kind": "hinge", "axis_join": [1,0,0], "limits_degrees": [-35, 35] },
+            "animations": {
+              "move": {
+                "driver": "move_phase",
+                "clip": { "kind": "loop", "duration_secs": 1.2, "keyframes": [ ... ] }
+              }
+            }
+          }
+        }
+      ]
+    }
+
 2) Prompting updates to make the AI follow the contract.
 
 In `src/gen3d/ai/prompts.rs`, update `build_gen3d_plan_system_instructions()`:
 
 - Define the new fields and state when they are required:
-  - If `mobility.kind == "ground"` and any `move` animations exist on limb-like attachments, strongly encourage adding `attach_to.joint` and `contacts`.
+  - If `mobility.kind == "ground"` and you output any `move` animation on an attachment, strongly encourage adding `attach_to.joint` and at least one `contacts[]` entry for the end effector(s) that should touch the ground.
   - If the object is “static” (building/prop), omit rig fields entirely.
 
 - Add explicit guidance that prevents frame confusion:
@@ -151,8 +205,9 @@ Add a “rig/motion validation” routine that samples the move cycle and return
 Key requirements:
 
 - Validation must be deterministic and based on declared contract data (joints/contacts), not on component-name heuristics.
-- Output must include `component_id_uuid` and channel names so the AI can target `tweak_animation` precisely.
+- Output must include `component_id` (UUID string) and channel names so the AI can target `tweak_animation` precisely.
 - Issues should include numeric evidence (angle, slip, lift) and tolerances.
+- Validation output must be prompt-budget-friendly: cap issue count (e.g. keep the top 8–16 issues) and order by severity and magnitude (worst offenders first).
 
 Suggested approach:
 
@@ -160,12 +215,14 @@ Suggested approach:
 
 - Sample N times across one move cycle:
   - If a top-level `rig.move_cycle_m` exists, interpret it as meters-per-cycle and sample in `[0, move_cycle_m)`.
-  - Otherwise, infer a cycle from the first `move_phase` loop duration found (fallback to `1.0`).
+  - Otherwise, infer a cycle from the first `move` animation clip whose `driver == move_phase` and whose `clip.kind == loop` (use `loop.duration_secs`).
+    Important: despite the field name, `duration_secs` is interpreted in the driver’s units. For `move_phase`, driver time is meters traveled (`LocomotionClock.t`), so `duration_secs` is effectively meters-per-cycle. See `src/locomotion.rs` and `src/object/visuals.rs` (`PartAnimationDriver::MovePhase`).
+    Fallback to `1.0` meter if none exist.
 
 - For each component attachment, build the animated offset for the `move` channel at each sample:
   - base_offset = `attach_to.offset`
   - delta = sampled animation transform for the chosen spec (if any)
-  - animated_offset = base_offset * delta (use the same multiplication semantics as runtime; see `mul_transform`)
+  - animated_offset = base_offset * delta (use the same multiplication semantics as runtime; see `mul_transform` in `src/object/visuals.rs`)
 
 - Resolve each component’s world transform by walking the attachment tree using:
 
@@ -218,7 +275,7 @@ Extend `build_gen3d_smoke_results()` in `src/gen3d/ai/mod.rs` to include:
 - `rig_summary`: extracted joints/contacts counts and cycle length used.
 - `motion_validation`: `{ ok, issues: [...] }`
 
-Include `component_id_uuid` in each issue to match `llm_review_delta_v1` targeting rules.
+Include `component_id` in each issue to match `review_delta_v1` / `tweak_animation` targeting rules.
 
 ### Milestone 3 — AI repair loop + channel-scoped fallback
 
@@ -279,7 +336,7 @@ Record how to reproduce with a minimal prompt (e.g. “a horse”) and where to 
 
 ## Concrete Steps
 
-All commands run from repo root (`/Users/flow/workspace/github/gravimera`):
+All commands run from the repository root (the directory containing `Cargo.toml`):
 
 1) Run unit tests:
 
@@ -292,7 +349,7 @@ All commands run from repo root (`/Users/flow/workspace/github/gravimera`):
 3) Manual sanity (optional but recommended):
 
 - In Gen3D, generate a prompt-only creature with move animation (e.g. “a horse”).
-- Check `~/.gravimera/cache/gen3d/<run>/smoke_results.json` contains `motion_validation`.
+- Locate the current run directory (see “Gen3D cache layout” above) and open the most recent pass’s `smoke_results.json`. Confirm it contains `motion_validation`.
 - Confirm that if `motion_validation.ok=false`, the system requests a repair and either fixes or disables only the bad channel(s).
 
 ## Validation and Acceptance
@@ -305,7 +362,7 @@ Acceptance criteria:
 
 2) Motion validation:
    - `smoke_results.json` includes structured, component-targetable motion validation issues when contract is violated.
-   - Issues include `component_id_uuid` and enough metrics to be actionably repaired.
+   - Issues include `component_id` and enough metrics to be actionably repaired.
 
 3) Repair loop:
    - When motion validation reports errors, the system attempts `llm_review_delta_v1` repair.
@@ -340,3 +397,7 @@ At the end of implementation, the following user-facing schema changes should ex
 And the following engine outputs should exist:
 
 - `smoke_check_v1` output includes `motion_validation` with component/channel-scoped issues and numeric evidence.
+
+---
+
+Revision note (2026-02-08): clarify driver units (`duration_secs` uses driver units), remove machine-specific repo paths, and document Gen3D cache/run directory layout so another agent can follow this plan on a different computer.
