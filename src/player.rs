@@ -128,7 +128,7 @@ pub(crate) fn camera_edge_pan(
         return;
     }
 
-    let zoom_t = zoom.t.clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
+    let zoom_t = zoom.t.clamp(0.0, CAMERA_ZOOM_MAX);
     let speed = CAMERA_EDGE_PAN_SPEED_FAR_UNITS_PER_SEC
         + (CAMERA_EDGE_PAN_SPEED_NEAR_UNITS_PER_SEC - CAMERA_EDGE_PAN_SPEED_FAR_UNITS_PER_SEC)
             * zoom_t;
@@ -181,7 +181,13 @@ pub(crate) fn camera_follow(
 
     let far_offset =
         Vec3::Y * CAMERA_OFFSET.y + right * CAMERA_OFFSET.x - forward * CAMERA_OFFSET.z;
-    let zoom_scale = 1.0 + t * (CAMERA_ZOOM_NEAR_SCALE - 1.0);
+    let zoom_scale = if t >= 0.0 {
+        1.0 + t * (CAMERA_ZOOM_NEAR_SCALE - 1.0)
+    } else {
+        let out_t = (-t).clamp(0.0, 1.0);
+        let eased = out_t * out_t;
+        1.0 + eased * (CAMERA_ZOOM_FAR_SCALE - 1.0)
+    };
     let base_offset = far_offset * zoom_scale;
     let pitch_rot = Quat::from_axis_angle(right, camera_pitch.pitch);
     let offset = pitch_rot * base_offset;

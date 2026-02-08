@@ -332,7 +332,7 @@ impl MinimapContext {
             origin_world,
             right_world,
             forward_world,
-            zoom_t: zoom_t.clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX),
+            zoom_t: zoom_t.clamp(0.0, CAMERA_ZOOM_MAX),
         }
     }
 }
@@ -426,7 +426,7 @@ pub(crate) fn update_minimap(
         Err(_) => return,
     };
 
-    let zoom_t = zoom.t.clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
+    let zoom_t = zoom.t.clamp(0.0, CAMERA_ZOOM_MAX);
     let player_pos = player_q
         .single()
         .ok()
