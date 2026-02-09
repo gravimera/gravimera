@@ -916,8 +916,9 @@ fn openai_responses_flow(
             .and_then(|v| v.as_str())
             .ok_or_else(|| OpenAiError::new("Missing /responses id".into()))?
             .to_string();
-        let poll_headers = curl_auth_header_file(api_key)
-            .map_err(|err| OpenAiError::new(format!("Failed to create curl auth header file: {err}")))?;
+        let poll_headers = curl_auth_header_file(api_key).map_err(|err| {
+            OpenAiError::new(format!("Failed to create curl auth header file: {err}"))
+        })?;
 
         loop {
             if start.elapsed() > timeout {

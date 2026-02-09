@@ -227,7 +227,7 @@ Rules:\n\
 - Avoid duplicated LLM work: reuse geometry for symmetric/repeated parts (major speed win):\n\
   - If multiple planned components should be identical (wheels, legs, mirrored handles, numbered sets like leg_0..leg_7), generate ONE of them, then fill the others using copy_component_v1 instead of calling llm_generate_component_v1 repeatedly.\n\
   - If the repeated part is a CHAIN (a component with attached descendants, like a leg/arm), use copy_component_subtree_v1 to copy the whole subtree in one call.\n\
-  - Anchors: use anchors=copy_source when the copy should inherit each target's mount orientation (common for limb chains / radial legs). Use anchors=preserve_target only when the TARGET anchors are already correct and must remain stable (common for mirrored interfaces).\n\
+  - Anchors: prefer anchors=preserve_target so TARGET mount interfaces stay stable (recommended for mirrored parts and radial limbs). Use anchors=copy_source only when you need to overwrite the TARGET's anchors to match the SOURCE exactly.\n\
   - Prefer mode=linked when copying many LEAF components; call detach_component_v1 if any copy must diverge later.\n\
   - The state summary may include `reuse_suggestions` with ready-to-use tool args; use them when appropriate.\n\
 - When you DO need LLM generation, prefer batching UNIQUE components in parallel:\n\
@@ -631,7 +631,7 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
                         "source_root": source_name,
                         "targets": targets,
                         "mode": "detached",
-                        "anchors": "copy_source",
+                        "anchors": "preserve_target",
                     }
                 }));
             } else {
@@ -2142,7 +2142,7 @@ fn execute_tool_call(
                 .or_else(|| call.args.get("anchors_mode"))
                 .or_else(|| call.args.get("anchor_mode"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("copy_source")
+                .unwrap_or("preserve_target")
                 .trim()
                 .to_ascii_lowercase();
             let anchors_mode = match anchors_mode.as_str() {
@@ -2403,7 +2403,7 @@ fn execute_tool_call(
                 .or_else(|| call.args.get("anchors_mode"))
                 .or_else(|| call.args.get("anchor_mode"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("copy_source")
+                .unwrap_or("preserve_target")
                 .trim()
                 .to_ascii_lowercase();
             let anchors_mode = match anchors_mode.as_str() {

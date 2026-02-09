@@ -254,8 +254,9 @@ impl Gen3dToolRegistryV1 {
                      - detached: duplicates the primitive parts into the target component.\n\
                      - linked: target becomes a lightweight wrapper that references the source component (SOURCE must be a leaf component; otherwise children would be duplicated).\n\
                      Optional `anchors` controls whether detached copies overwrite anchors:\n\
-                     - copy_source: (default) copy source anchors into the target (can change join frames).\n\
-                     - preserve_target: keep the target anchors unchanged (recommended for symmetric parts).\n\
+                     - preserve_target: (default) keep the target anchors unchanged (recommended for symmetric parts and stable join frames).\n\
+                     - copy_source: copy source anchors into the target (can change join frames).\n\
+                     Note: when anchors=preserve_target, the engine aligns copied geometry to the target's mount anchor so the part follows the target's mount orientation.\n\
                      Optional `transform` applies a local-space delta (pos/rot/scale) to the copied geometry (and to anchors only when anchors=copy_source).",
                 args_example: serde_json::json!({
                     "source_component": "wheel_front_left",
@@ -279,20 +280,22 @@ impl Gen3dToolRegistryV1 {
                 description:
                     "Use this for symmetric limb chains (legs/arms) where a root component has attached descendants.\n\
                      It structurally matches the source and target subtrees by attachment ordering (parent_anchor/child_anchor) and copies geometry for each pair.\n\
-                     By default it copies SOURCE anchors into the targets so limb chains inherit their mount orientations consistently.\n\
-                     Use anchors=preserve_target only when the TARGET anchors are already correct and must remain stable.\n\
+                     If the TARGET subtree is missing descendants (for example the plan only includes the root), this tool will expand the target subtree by cloning the source subtree structure into new planned components, then copy geometry.\n\
+                     By default it preserves TARGET anchors so each subtree keeps its mount interface and join frames stable.\n\
+                     Use anchors=copy_source only when you want to overwrite the TARGET anchors to match the SOURCE exactly.\n\
+                     Note: when anchors=preserve_target, the engine aligns copied geometry to each target component's mount anchor so limb chains follow the target mounts (useful for radial limbs).\n\
                      This is a convenience tool that avoids many repeated `copy_component_v1` calls.\n\
                      Args:\n\
                      - source_root: source component (name or index)\n\
                      - targets: list of target root components (names or indices)\n\
                      - mode: detached (only supported today)\n\
-                     - anchors: copy_source (default) or preserve_target\n\
+                     - anchors: preserve_target (default) or copy_source\n\
                      - transform: optional delta applied to copied geometry.",
                 args_example: serde_json::json!({
                     "source_root": "leg_front_left",
                     "targets": ["leg_front_right","leg_back_left","leg_back_right"],
                     "mode": "detached",
-                    "anchors": "copy_source"
+                    "anchors": "preserve_target"
                 }),
                 result_example: serde_json::json!({
                     "ok": true,

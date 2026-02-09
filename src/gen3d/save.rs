@@ -224,8 +224,9 @@ fn bounds_of_object(
 
                 for sample in samples {
                     let child_mat = if let Some(attachment) = part.attachment.as_ref() {
-                        let parent_anchor = anchor_transform(def, attachment.parent_anchor.as_ref())
-                            .unwrap_or(Transform::IDENTITY);
+                        let parent_anchor =
+                            anchor_transform(def, attachment.parent_anchor.as_ref())
+                                .unwrap_or(Transform::IDENTITY);
                         let child_anchor = defs
                             .get(child)
                             .and_then(|child_def| {
