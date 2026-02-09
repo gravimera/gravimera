@@ -508,6 +508,15 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
                     changed = true;
                     out_parts.push("{side}".into());
                 }
+                // Common positional suffixes / tokens (helps group radial legs like `leg01_fr`, `leg02_r`, ...).
+                "l" | "r" => {
+                    changed = true;
+                    out_parts.push("{side}".into());
+                }
+                "front" | "back" | "f" | "b" | "fl" | "fr" | "bl" | "br" => {
+                    changed = true;
+                    out_parts.push("{pos}".into());
+                }
                 _ => out_parts.push(normalized),
             }
         }
