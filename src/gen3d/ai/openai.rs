@@ -23,6 +23,55 @@ use super::{
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 const CURL_MAX_TIME_SECS: u32 = 600;
 
+struct TempSecretFile {
+    path: PathBuf,
+}
+
+impl TempSecretFile {
+    fn create(prefix: &str, contents: &str) -> std::io::Result<Self> {
+        use std::io::Write;
+
+        let mut path = std::env::temp_dir();
+        let pid = std::process::id();
+        let nonce = uuid::Uuid::new_v4();
+        path.push(format!("gravimera_{prefix}_{pid}_{nonce}.txt"));
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
+        file.write_all(contents.as_bytes())?;
+        file.flush()?;
+
+        Ok(Self { path })
+    }
+
+    fn curl_header_arg(&self) -> String {
+        format!("@{}", self.path.display())
+    }
+}
+
+impl Drop for TempSecretFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn curl_auth_header_file(api_key: &str) -> Result<TempSecretFile, std::io::Error> {
+    // IMPORTANT: do not pass secrets on the curl command line (visible via `ps`).
+    // Use `curl -H @file` so argv contains only the temp file path.
+    let api_key = api_key.replace(['\n', '\r'], "");
+    let headers = format!("Authorization: Bearer {api_key}\n");
+    TempSecretFile::create("openai_auth", &headers)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ReasoningEffortRank {
     None = 0,
@@ -867,6 +916,8 @@ fn openai_responses_flow(
             .and_then(|v| v.as_str())
             .ok_or_else(|| OpenAiError::new("Missing /responses id".into()))?
             .to_string();
+        let poll_headers = curl_auth_header_file(api_key)
+            .map_err(|err| OpenAiError::new(format!("Failed to create curl auth header file: {err}")))?;
 
         loop {
             if start.elapsed() > timeout {
@@ -888,7 +939,7 @@ fn openai_responses_flow(
                 .arg("--max-time")
                 .arg(CURL_MAX_TIME_SECS.to_string())
                 .arg("-H")
-                .arg(format!("Authorization: Bearer {api_key}"))
+                .arg(poll_headers.curl_header_arg())
                 .arg(&url)
                 .output()
                 .map_err(|err| OpenAiError::new(format!("Failed to start curl: {err}")))?;
@@ -1158,6 +1209,12 @@ fn openai_responses_curl(
         ),
     );
     set_progress(progress, "Sending request…");
+    let auth_headers = curl_auth_header_file(api_key).map_err(|err| OpenAiError {
+        summary: format!("Failed to create curl auth header file: {err}"),
+        url: url.clone(),
+        status: None,
+        body_preview: None,
+    })?;
     let mut cmd = std::process::Command::new("curl");
     cmd.arg("-sS")
         .arg("--connect-timeout")
@@ -1169,7 +1226,7 @@ fn openai_responses_curl(
         .arg("-H")
         .arg("Content-Type: application/json")
         .arg("-H")
-        .arg(format!("Authorization: Bearer {api_key}"))
+        .arg(auth_headers.curl_header_arg())
         .arg("-d")
         .arg("@-")
         .arg(&url)
@@ -1357,6 +1414,12 @@ fn openai_chat_completions_curl(
         ),
     );
     set_progress(progress, "Sending request…");
+    let auth_headers = curl_auth_header_file(api_key).map_err(|err| OpenAiError {
+        summary: format!("Failed to create curl auth header file: {err}"),
+        url: url.clone(),
+        status: None,
+        body_preview: None,
+    })?;
 
     let mut cmd = std::process::Command::new("curl");
     cmd.arg("-sS")
@@ -1369,7 +1432,7 @@ fn openai_chat_completions_curl(
         .arg("-H")
         .arg("Content-Type: application/json")
         .arg("-H")
-        .arg(format!("Authorization: Bearer {api_key}"))
+        .arg(auth_headers.curl_header_arg())
         .arg("-d")
         .arg("@-")
         .arg(&url)
