@@ -346,12 +346,19 @@ fn run_rendered_catching_panics(config: crate::config::AppConfig) -> Result<(), 
 
     if wants_backtrace {
         return std::panic::catch_unwind(|| run_rendered(config))
-            .map(|_| ())
             .map_err(|_| {
                 "Rendered mode crashed. A backtrace was printed above.\n\
                  Falling back to headless mode.\n\
                  Tip: if this always happens, try `cargo run -- --headless`."
                     .to_string()
+            })
+            .and_then(|exit| {
+                exit.is_success().then_some(()).ok_or_else(|| {
+                    "Rendered mode exited with an error.\n\
+                     Falling back to headless mode.\n\
+                     Tip: if this always happens, try `cargo run -- --headless`."
+                        .to_string()
+                })
             });
     }
 
@@ -373,11 +380,17 @@ fn run_rendered_catching_panics(config: crate::config::AppConfig) -> Result<(), 
     }));
 
     let result = std::panic::catch_unwind(|| run_rendered(config))
-        .map(|_| ())
         .map_err(|_| {
             "Rendered mode crashed. Falling back to headless mode.\n\
          Tip: run `RUST_BACKTRACE=1 cargo run` for a full backtrace."
                 .to_string()
+        })
+        .and_then(|exit| {
+            exit.is_success().then_some(()).ok_or_else(|| {
+                "Rendered mode exited with an error. Falling back to headless mode.\n\
+         Tip: run `RUST_BACKTRACE=1 cargo run` for a full backtrace."
+                    .to_string()
+            })
         });
 
     std::panic::set_hook(previous_hook);
@@ -455,7 +468,7 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.run();
 }
 
-fn run_rendered(config: crate::config::AppConfig) {
+fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     #[cfg(target_os = "linux")]
     fixup_linux_display_env_for_winit();
 
@@ -986,7 +999,7 @@ fn run_rendered(config: crate::config::AppConfig) {
         Update,
         effects::update_explosion_particles.run_if(console::console_closed),
     );
-    app.run();
+    app.run()
 }
 
 #[cfg(target_os = "linux")]
@@ -994,10 +1007,169 @@ fn fixup_linux_display_env_for_winit() {
     use std::os::unix::fs::FileTypeExt;
     use std::path::{Path, PathBuf};
 
+    const WSL_REEXEC_MARKER: &str = "GRAVIMERA_WSL_REEXEC";
+
     fn is_socket(path: &Path) -> bool {
         std::fs::metadata(path)
             .map(|meta| meta.file_type().is_socket())
             .unwrap_or(false)
+    }
+
+    fn is_wsl() -> bool {
+        if std::env::var_os("WSL_INTEROP").is_some()
+            || std::env::var_os("WSL_DISTRO_NAME").is_some()
+        {
+            return true;
+        }
+
+        let osrelease = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+        let osrelease = osrelease.trim().to_ascii_lowercase();
+        osrelease.contains("microsoft") || osrelease.contains("wsl")
+    }
+
+    fn has_x11_display() -> bool {
+        std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
+    }
+
+    fn sysroot_lib_dir() -> Option<PathBuf> {
+        let home = crate::paths::home_dir()?;
+        let sysroot = home.join(".local").join("gravimera-sysroot");
+
+        let multiarch = match std::env::consts::ARCH {
+            "x86_64" => Some("x86_64-linux-gnu"),
+            "aarch64" => Some("aarch64-linux-gnu"),
+            _ => None,
+        };
+
+        let candidate = match multiarch {
+            Some(multiarch) => sysroot.join("usr").join("lib").join(multiarch),
+            None => sysroot.join("usr").join("lib"),
+        };
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+
+        let fallback = sysroot.join("usr").join("lib");
+        fallback.is_dir().then_some(fallback)
+    }
+
+    fn system_has_library(name: &str) -> bool {
+        let multiarch = match std::env::consts::ARCH {
+            "x86_64" => Some("x86_64-linux-gnu"),
+            "aarch64" => Some("aarch64-linux-gnu"),
+            _ => None,
+        };
+
+        if let Some(multiarch) = multiarch {
+            for base in ["/usr/lib", "/lib"] {
+                if Path::new(base).join(multiarch).join(name).exists() {
+                    return true;
+                }
+            }
+        }
+
+        for base in ["/usr/lib64", "/lib64", "/usr/lib", "/lib"] {
+            if Path::new(base).join(name).exists() {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn is_winit_backend_forced_to_wayland() -> bool {
+        std::env::var("WINIT_UNIX_BACKEND")
+            .ok()
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("wayland"))
+    }
+
+    fn try_reexec_with_x11_sysroot_libs(lib_dir: &Path) {
+        if std::env::var_os(WSL_REEXEC_MARKER).is_some() {
+            return;
+        }
+
+        let new_ld_library_path = {
+            const VAR: &str = "LD_LIBRARY_PATH";
+            let lib_dir = lib_dir.to_string_lossy();
+            let existing = std::env::var_os(VAR).unwrap_or_default();
+            let existing_str = existing.to_string_lossy();
+            if existing_str
+                .split(':')
+                .any(|entry| entry.trim() == lib_dir.trim())
+            {
+                return;
+            }
+
+            if existing_str.trim().is_empty() {
+                lib_dir.into_owned()
+            } else {
+                format!("{lib_dir}:{existing_str}")
+            }
+        };
+
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+
+        eprintln!("WSL display fix: re-execing to apply LD_LIBRARY_PATH for X11 backend support.");
+
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(std::env::args_os().skip(1));
+        cmd.env(WSL_REEXEC_MARKER, "1");
+        cmd.env("LD_LIBRARY_PATH", new_ld_library_path);
+        cmd.env("WINIT_UNIX_BACKEND", "x11");
+        cmd.env_remove("WAYLAND_DISPLAY");
+
+        #[allow(unused_imports)]
+        use std::os::unix::process::CommandExt;
+        let err = cmd.exec();
+        eprintln!("WSL display fix: failed to re-exec process: {err}");
+    }
+
+    // WSLg occasionally drops Wayland connections for Vulkan apps. Prefer X11 (XWayland) when
+    // available to keep startup stable.
+    if is_wsl() && has_x11_display() && !is_winit_backend_forced_to_wayland() {
+        let required = ["libxkbcommon-x11.so.0", "libxcb-xkb.so.1"];
+        let system_has_required = required.iter().all(|name| system_has_library(name));
+        let sysroot_lib_dir = sysroot_lib_dir();
+        let sysroot_has_required = sysroot_lib_dir
+            .as_ref()
+            .is_some_and(|dir| required.iter().all(|name| dir.join(name).exists()));
+
+        if system_has_required || sysroot_has_required {
+            let mut can_use_x11 = system_has_required;
+
+            if !system_has_required {
+                if let Some(dir) = sysroot_lib_dir.as_ref() {
+                    // glibc's dynamic loader does not pick up runtime changes to LD_LIBRARY_PATH
+                    // for dlopen(), so we must re-exec before switching to X11 if we're relying on
+                    // a user sysroot to provide libxkbcommon-x11 / libxcb-xkb.
+                    const VAR: &str = "LD_LIBRARY_PATH";
+                    let dir_str = dir.to_string_lossy();
+                    let existing = std::env::var_os(VAR).unwrap_or_default();
+                    let existing_str = existing.to_string_lossy();
+                    let already_available = existing_str
+                        .split(':')
+                        .any(|entry| entry.trim() == dir_str.trim());
+
+                    if already_available {
+                        can_use_x11 = true;
+                    } else {
+                        try_reexec_with_x11_sysroot_libs(dir);
+                        // If re-exec succeeds, we never reach this point.
+                        can_use_x11 = false;
+                    }
+                }
+            }
+
+            if can_use_x11 {
+                // Some environments set both DISPLAY and WAYLAND_DISPLAY. Prefer X11 for WSL.
+                std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+                std::env::remove_var("WAYLAND_DISPLAY");
+                eprintln!("WSL display fix: forcing X11 backend (unset WAYLAND_DISPLAY).");
+                return;
+            }
+        }
     }
 
     let Some(wayland_display) = std::env::var_os("WAYLAND_DISPLAY") else {

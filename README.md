@@ -28,9 +28,12 @@ cargo run
 
 WSL (WSLg):
 
-- If you hit a startup crash like `WaylandError(Connection(NoCompositor))`, your `XDG_RUNTIME_DIR` may not point at WSLg’s Wayland socket.
-  - Gravimera auto-fixes this when it detects `/mnt/wslg/runtime-dir/<WAYLAND_DISPLAY>`.
-  - If needed, you can also run: `XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir cargo run`
+- Gravimera prefers the X11 backend on WSLg (XWayland) because Wayland connections can be flaky under WSL.
+  - It auto-sets `WINIT_UNIX_BACKEND=x11` and unsets `WAYLAND_DISPLAY` when `DISPLAY` is available.
+- If you see a crash mentioning missing `libxkbcommon-x11.so.0` / `libxcb-xkb.so.1`:
+  - Install system packages: `sudo apt-get update && sudo apt-get install -y libxkbcommon-x11-0 libxcb-xkb1`
+  - Or (no sudo) provide those `.so` files under `~/.local/gravimera-sysroot/usr/lib/<multiarch>/` (e.g. `x86_64-linux-gnu/`); Gravimera will re-exec with an updated `LD_LIBRARY_PATH`.
+- If you force Wayland (e.g. `WINIT_UNIX_BACKEND=wayland`) and hit `WaylandError(Connection(NoCompositor))`, set `XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir`.
 
 Headless (no GPU / CI):
 
