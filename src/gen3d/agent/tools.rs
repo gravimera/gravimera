@@ -279,19 +279,20 @@ impl Gen3dToolRegistryV1 {
                 description:
                     "Use this for symmetric limb chains (legs/arms) where a root component has attached descendants.\n\
                      It structurally matches the source and target subtrees by attachment ordering (parent_anchor/child_anchor) and copies geometry for each pair.\n\
-                     By default it preserves the target anchors and target attachment refs, so assembly frames stay stable.\n\
+                     By default it copies SOURCE anchors into the targets so limb chains inherit their mount orientations consistently.\n\
+                     Use anchors=preserve_target only when the TARGET anchors are already correct and must remain stable.\n\
                      This is a convenience tool that avoids many repeated `copy_component_v1` calls.\n\
                      Args:\n\
                      - source_root: source component (name or index)\n\
                      - targets: list of target root components (names or indices)\n\
                      - mode: detached (default) or linked\n\
-                     - anchors: preserve_target (default) or copy_source\n\
+                     - anchors: copy_source (default) or preserve_target\n\
                      - transform: optional delta applied to copied geometry.",
                 args_example: serde_json::json!({
                     "source_root": "leg_front_left",
                     "targets": ["leg_front_right","leg_back_left","leg_back_right"],
                     "mode": "detached",
-                    "anchors": "preserve_target"
+                    "anchors": "copy_source"
                 }),
                 result_example: serde_json::json!({
                     "ok": true,

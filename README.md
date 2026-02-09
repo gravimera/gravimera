@@ -4,6 +4,8 @@ Gravimera is an **AI-driven game** that helps you build your own 3D game by gene
 
 It’s built with [Bevy](https://bevyengine.org/) and currently focuses on the Gen3D workflow: prompt (and optional reference images) → generate a prefab → drop it into the game as a unit/building.
 
+Gen3D also tries to avoid duplicated LLM work by **reusing generated geometry** for repeated parts (for example: wheels, mirrored parts, or radial legs) via copy tools, and saves prefabs with bounds that account for animation keyframes to reduce ground-clipping surprises.
+
 <img src="assets/icon.png" width="128" height="128" alt="Gravimera app icon" />
 
 ## Prerequisites

@@ -7,7 +7,7 @@ use crate::constants::{BUILD_GRID_SIZE, CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION, WO
 use crate::geometry::{normalize_flat_direction, snap_to_grid};
 use crate::object::registry::{
     ColliderProfile, MeshKey, MovementBlockRule, ObjectDef, ObjectInteraction, ObjectLibrary,
-    ObjectPartKind, PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
+    ObjectPartKind, PartAnimationDef, PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
 };
 use crate::object::visuals;
 use crate::scene_store::SceneSaveRequest;
@@ -131,6 +131,55 @@ fn bounds_of_object(
     stack: &mut Vec<u128>,
     memo: &mut std::collections::HashMap<u128, Bounds>,
 ) -> Bounds {
+    fn compose_transform(a: Transform, b: Transform) -> Option<Transform> {
+        let composed = a.to_matrix() * b.to_matrix();
+        let (scale, rotation, translation) = composed.to_scale_rotation_translation();
+        if !scale.is_finite() || !rotation.is_finite() || !translation.is_finite() {
+            return None;
+        }
+        Some(Transform {
+            translation,
+            rotation,
+            scale,
+        })
+    }
+
+    fn part_transform_samples(part: &crate::object::registry::ObjectPartDef) -> Vec<Transform> {
+        let mut out = Vec::new();
+        out.push(part.transform);
+
+        for slot in part.animations.iter() {
+            match &slot.spec.clip {
+                PartAnimationDef::Loop { keyframes, .. } => {
+                    for keyframe in keyframes {
+                        if let Some(t) = compose_transform(part.transform, keyframe.delta) {
+                            out.push(t);
+                        }
+                    }
+                }
+                PartAnimationDef::Spin { axis, .. } => {
+                    let axis = if axis.length_squared() > 1e-6 {
+                        axis.normalize()
+                    } else {
+                        Vec3::Y
+                    };
+                    for i in 0..4 {
+                        let angle = (i as f32) * core::f32::consts::FRAC_PI_2;
+                        let delta = Transform {
+                            rotation: Quat::from_axis_angle(axis, angle),
+                            ..default()
+                        };
+                        if let Some(t) = compose_transform(part.transform, delta) {
+                            out.push(t);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+
     if let Some(cached) = memo.get(&object_id) {
         return *cached;
     }
@@ -145,6 +194,7 @@ fn bounds_of_object(
     let mut bounds = Bounds::empty();
 
     for part in def.parts.iter() {
+        let samples = part_transform_samples(part);
         match &part.kind {
             ObjectPartKind::Primitive { primitive } => {
                 let (mesh, params) = match primitive {
@@ -156,13 +206,15 @@ fn bounds_of_object(
                 };
 
                 let base = primitive_base_size(mesh, params);
-                let local_half = (base * part.transform.scale).abs() * 0.5;
+                for sample in samples {
+                    let local_half = (base * sample.scale).abs() * 0.5;
 
-                let abs = Mat3::from_quat(part.transform.rotation).abs();
-                let ext = abs * local_half;
-                let center = part.transform.translation;
-                bounds.include_point(center - ext);
-                bounds.include_point(center + ext);
+                    let abs = Mat3::from_quat(sample.rotation).abs();
+                    let ext = abs * local_half;
+                    let center = sample.translation;
+                    bounds.include_point(center - ext);
+                    bounds.include_point(center + ext);
+                }
             }
             ObjectPartKind::ObjectRef { object_id: child } => {
                 let child_bounds = bounds_of_object(*child, defs, stack, memo);
@@ -170,42 +222,44 @@ fn bounds_of_object(
                     continue;
                 }
 
-                let child_mat = if let Some(attachment) = part.attachment.as_ref() {
-                    let parent_anchor = anchor_transform(def, attachment.parent_anchor.as_ref())
-                        .unwrap_or(Transform::IDENTITY);
-                    let child_anchor = defs
-                        .get(child)
-                        .and_then(|child_def| {
-                            anchor_transform(child_def, attachment.child_anchor.as_ref())
-                        })
-                        .unwrap_or(Transform::IDENTITY);
+                for sample in samples {
+                    let child_mat = if let Some(attachment) = part.attachment.as_ref() {
+                        let parent_anchor = anchor_transform(def, attachment.parent_anchor.as_ref())
+                            .unwrap_or(Transform::IDENTITY);
+                        let child_anchor = defs
+                            .get(child)
+                            .and_then(|child_def| {
+                                anchor_transform(child_def, attachment.child_anchor.as_ref())
+                            })
+                            .unwrap_or(Transform::IDENTITY);
 
-                    parent_anchor.to_matrix()
-                        * part.transform.to_matrix()
-                        * child_anchor.to_matrix().inverse()
-                } else {
-                    part.transform.to_matrix()
-                };
+                        parent_anchor.to_matrix()
+                            * sample.to_matrix()
+                            * child_anchor.to_matrix().inverse()
+                    } else {
+                        sample.to_matrix()
+                    };
 
-                let corners = [
-                    Vec3::new(child_bounds.min.x, child_bounds.min.y, child_bounds.min.z),
-                    Vec3::new(child_bounds.min.x, child_bounds.min.y, child_bounds.max.z),
-                    Vec3::new(child_bounds.min.x, child_bounds.max.y, child_bounds.min.z),
-                    Vec3::new(child_bounds.min.x, child_bounds.max.y, child_bounds.max.z),
-                    Vec3::new(child_bounds.max.x, child_bounds.min.y, child_bounds.min.z),
-                    Vec3::new(child_bounds.max.x, child_bounds.min.y, child_bounds.max.z),
-                    Vec3::new(child_bounds.max.x, child_bounds.max.y, child_bounds.min.z),
-                    Vec3::new(child_bounds.max.x, child_bounds.max.y, child_bounds.max.z),
-                ];
+                    let corners = [
+                        Vec3::new(child_bounds.min.x, child_bounds.min.y, child_bounds.min.z),
+                        Vec3::new(child_bounds.min.x, child_bounds.min.y, child_bounds.max.z),
+                        Vec3::new(child_bounds.min.x, child_bounds.max.y, child_bounds.min.z),
+                        Vec3::new(child_bounds.min.x, child_bounds.max.y, child_bounds.max.z),
+                        Vec3::new(child_bounds.max.x, child_bounds.min.y, child_bounds.min.z),
+                        Vec3::new(child_bounds.max.x, child_bounds.min.y, child_bounds.max.z),
+                        Vec3::new(child_bounds.max.x, child_bounds.max.y, child_bounds.min.z),
+                        Vec3::new(child_bounds.max.x, child_bounds.max.y, child_bounds.max.z),
+                    ];
 
-                let mut transformed = Bounds::empty();
-                for corner in corners {
-                    transformed.include_point(child_mat.transform_point3(corner));
+                    let mut transformed = Bounds::empty();
+                    for corner in corners {
+                        transformed.include_point(child_mat.transform_point3(corner));
+                    }
+                    bounds.include_bounds(transformed);
                 }
-                bounds.include_bounds(transformed);
             }
             ObjectPartKind::Model { .. } => {}
-        }
+        };
     }
 
     stack.pop();
@@ -217,6 +271,9 @@ fn bounds_of_object(
 mod tests {
     use super::*;
     use crate::object::registry::{AnchorDef, AttachmentDef, ObjectPartDef};
+    use crate::object::registry::{
+        PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSpec,
+    };
 
     #[test]
     fn bounds_of_object_respects_attachment_anchors() {
@@ -291,6 +348,98 @@ mod tests {
         // Child cube extends to y=-4.5..-3.5.
         assert!((bounds.min.y + 4.5).abs() < 1e-3, "min.y={}", bounds.min.y);
         assert!((bounds.max.y + 3.5).abs() < 1e-3, "max.y={}", bounds.max.y);
+    }
+
+    #[test]
+    fn bounds_of_object_includes_part_animation_keyframes() {
+        use crate::object::registry::{PartAnimationSlot, PrimitiveVisualDef};
+
+        let parent_id = 1u128;
+        let child_id = 2u128;
+
+        let child_def = ObjectDef {
+            object_id: child_id,
+            label: "child".into(),
+            size: Vec3::ONE,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(1.0, 1.0, 1.0),
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let mut child_ref = ObjectPartDef::object_ref(child_id, Transform::IDENTITY);
+        child_ref.animations.push(PartAnimationSlot {
+            channel: "move".into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::MovePhase,
+                speed_scale: 1.0,
+                clip: PartAnimationDef::Loop {
+                    duration_secs: 1.0,
+                    keyframes: vec![PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::from_translation(Vec3::new(0.0, -2.0, 0.0)),
+                    }],
+                },
+            },
+        });
+
+        let parent_def = ObjectDef {
+            object_id: parent_id,
+            label: "parent".into(),
+            size: Vec3::ONE,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![child_ref],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let mut defs = std::collections::HashMap::new();
+        defs.insert(parent_id, parent_def);
+        defs.insert(child_id, child_def);
+        let mut memo = std::collections::HashMap::<u128, Bounds>::new();
+        let mut stack = Vec::new();
+
+        let bounds = bounds_of_object(parent_id, &defs, &mut stack, &mut memo);
+        assert!(!bounds.is_empty());
+        assert!(
+            (bounds.min.y + 2.5).abs() < 1e-3,
+            "expected min.y≈-2.5, got {}",
+            bounds.min.y
+        );
+        assert!(
+            (bounds.max.y - 0.5).abs() < 1e-3,
+            "expected max.y≈0.5, got {}",
+            bounds.max.y
+        );
+
+        // Extra sanity: should still include the child's origin pose (y=-0.5..0.5).
+        assert!(bounds.min.y <= -2.5 + 1e-3);
+        assert!(bounds.max.y >= 0.5 - 1e-3);
+        assert!(memo.contains_key(&parent_id));
     }
 }
 
