@@ -26,6 +26,12 @@ Rendered:
 cargo run
 ```
 
+WSL (WSLg):
+
+- If you hit a startup crash like `WaylandError(Connection(NoCompositor))`, your `XDG_RUNTIME_DIR` may not point at WSLg’s Wayland socket.
+  - Gravimera auto-fixes this when it detects `/mnt/wslg/runtime-dir/<WAYLAND_DISPLAY>`.
+  - If needed, you can also run: `XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir cargo run`
+
 Headless (no GPU / CI):
 
 ```bash
@@ -63,4 +69,3 @@ Gen3D requires OpenAI settings in `config.toml` (or `OPENAI_API_KEY` via env).
 - Controls: `docs/controls.md`
 - Publishing builds: `docs/publishing.md`
 - Developer notes / code layout: `docs/development.md`
-

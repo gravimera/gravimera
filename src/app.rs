@@ -456,6 +456,9 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
 }
 
 fn run_rendered(config: crate::config::AppConfig) {
+    #[cfg(target_os = "linux")]
+    fixup_linux_display_env_for_winit();
+
     let mut app = App::new();
     app.insert_resource(config);
     app.insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.06)));
@@ -984,6 +987,61 @@ fn run_rendered(config: crate::config::AppConfig) {
         effects::update_explosion_particles.run_if(console::console_closed),
     );
     app.run();
+}
+
+#[cfg(target_os = "linux")]
+fn fixup_linux_display_env_for_winit() {
+    use std::os::unix::fs::FileTypeExt;
+    use std::path::{Path, PathBuf};
+
+    fn is_socket(path: &Path) -> bool {
+        std::fs::metadata(path)
+            .map(|meta| meta.file_type().is_socket())
+            .unwrap_or(false)
+    }
+
+    let Some(wayland_display) = std::env::var_os("WAYLAND_DISPLAY") else {
+        return;
+    };
+    if wayland_display.to_string_lossy().trim().is_empty() {
+        return;
+    }
+
+    let xdg_runtime_dir = std::env::var_os("XDG_RUNTIME_DIR");
+    let has_wayland_socket = xdg_runtime_dir
+        .as_deref()
+        .and_then(|dir| {
+            if dir.is_empty() {
+                return None;
+            }
+            let path = PathBuf::from(dir).join(&wayland_display);
+            is_socket(&path).then_some(path)
+        })
+        .is_some();
+    if has_wayland_socket {
+        return;
+    }
+
+    let wslg_runtime_dir = Path::new("/mnt/wslg/runtime-dir");
+    let wslg_socket_path = wslg_runtime_dir.join(&wayland_display);
+    if is_socket(&wslg_socket_path) {
+        let previous = xdg_runtime_dir.unwrap_or_default();
+        std::env::set_var("XDG_RUNTIME_DIR", wslg_runtime_dir);
+        eprintln!(
+            "WSL display fix: using XDG_RUNTIME_DIR={} (was {})",
+            wslg_runtime_dir.display(),
+            previous.to_string_lossy()
+        );
+        return;
+    }
+
+    // Wayland was selected but isn't available. If X11 is available, force winit to use X11.
+    if std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty()) {
+        std::env::remove_var("WAYLAND_DISPLAY");
+        eprintln!(
+            "Display fix: Wayland compositor not reachable; falling back to X11 (unset WAYLAND_DISPLAY)."
+        );
+    }
 }
 
 #[derive(Resource, Clone, Debug)]
