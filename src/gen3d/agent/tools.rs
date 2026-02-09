@@ -86,12 +86,13 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT,
                 title: "Copy component",
-                one_line_summary: "Copies an already-generated component into another planned component (detached or linked).",
+                one_line_summary: "Copies a generated component into other planned components (mirrored/repeated parts; saves LLM calls).",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT_SUBTREE,
                 title: "Copy component subtree",
-                one_line_summary: "Copies a generated component subtree (root + descendants) into another planned subtree.",
+                one_line_summary:
+                    "Copies a generated component subtree into other planned subtrees (symmetric limb chains; saves LLM calls).",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_DETACH_COMPONENT,

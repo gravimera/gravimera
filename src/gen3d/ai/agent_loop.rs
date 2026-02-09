@@ -224,14 +224,15 @@ Rules:\n\
   - For vehicles/wheeled objects, always include TOP and BOTTOM views (they reveal wheel/axle/undercarriage issues). A good default is: views=[\"front\",\"left_back\",\"right_back\",\"top\",\"bottom\"].\n\
   - For speed, prefer smaller preview renders during iteration (example: render_preview_v1 image_size=768). Only increase resolution if you truly need extra detail.\n\
   - Do NOT render/review before any geometry exists. If components_generated==0 or the draft has 0 primitive parts, generate components first; renders will be blank.\n\
-- Prefer generating multiple components in parallel:\n\
-  - If you need many components, call llm_generate_components_v1 instead of repeating llm_generate_component_v1.\n\
-  - If you just need missing components, call llm_generate_components_v1 with missing_only=true.\n\
-- Prefer reusing geometry for symmetric/repeated parts:\n\
-  - If multiple components should be identical (wheels, legs, mirrored handles), generate ONE of them, then use copy_component_v1 to fill the others instead of calling llm_generate_component_v1 repeatedly.\n\
+- Avoid duplicated LLM work: reuse geometry for symmetric/repeated parts (major speed win):\n\
+  - If multiple planned components should be identical (wheels, legs, mirrored handles, numbered sets like leg_0..leg_7), generate ONE of them, then fill the others using copy_component_v1 instead of calling llm_generate_component_v1 repeatedly.\n\
   - If the repeated part is a CHAIN (a component with attached descendants, like a leg/arm), use copy_component_subtree_v1 to copy the whole subtree in one call.\n\
-  - Use mode=linked only when the SOURCE is a leaf component (otherwise children would be duplicated). Linked copies preserve the TARGET's anchors (often mirrored), so you can reuse geometry without breaking attachment frames.\n\
-  - If you need one copy to diverge later, call detach_component_v1 on that component (it keeps the target anchors and materializes geometry).\n\
+  - Prefer anchors=preserve_target for symmetric copies so join frames and attachments stay stable.\n\
+  - Prefer mode=linked when copying many LEAF components; call detach_component_v1 if any copy must diverge later.\n\
+  - The state summary may include `reuse_suggestions` with ready-to-use tool args; use them when appropriate.\n\
+- When you DO need LLM generation, prefer batching UNIQUE components in parallel:\n\
+  - Use llm_generate_components_v1 with explicit component_indices/names for the unique set.\n\
+  - Use missing_only=true ONLY when you truly want ALL missing components and there are no copy opportunities.\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
@@ -402,7 +403,7 @@ fn build_agent_user_text(
                     out.push_str(&format!(" desc={}", truncate_for_prompt(description, 260)));
                 }
             }
-            TOOL_ID_COPY_COMPONENT => {
+            TOOL_ID_COPY_COMPONENT | TOOL_ID_COPY_COMPONENT_SUBTREE => {
                 let copies = value
                     .get("copies")
                     .and_then(|v| v.as_array())
@@ -479,6 +480,174 @@ fn build_agent_user_text(
 }
 
 fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
+    fn normalize_copy_group_key(name: &str) -> Option<String> {
+        let raw = name.trim();
+        if raw.is_empty() {
+            return None;
+        }
+
+        let mut changed = false;
+        let mut out_parts: Vec<String> = Vec::new();
+        for part in raw.split('_').filter(|p| !p.is_empty()) {
+            let mut normalized = String::new();
+            let mut chars = part.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if ch.is_ascii_digit() {
+                    changed = true;
+                    while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+                        chars.next();
+                    }
+                    normalized.push_str("{i}");
+                    continue;
+                }
+                normalized.push(ch.to_ascii_lowercase());
+            }
+
+            match normalized.as_str() {
+                "left" | "right" => {
+                    changed = true;
+                    out_parts.push("{side}".into());
+                }
+                _ => out_parts.push(normalized),
+            }
+        }
+
+        if !changed {
+            return None;
+        }
+
+        let key = out_parts.join("_");
+        if key.trim().is_empty() {
+            return None;
+        }
+
+        Some(key)
+    }
+
+    fn compute_child_counts(
+        components: &[super::Gen3dPlannedComponent],
+    ) -> std::collections::HashMap<String, usize> {
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for comp in components {
+            let Some(att) = comp.attach_to.as_ref() else {
+                continue;
+            };
+            *counts.entry(att.parent.clone()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    fn build_reuse_suggestions(
+        components: &[super::Gen3dPlannedComponent],
+    ) -> Vec<serde_json::Value> {
+        let child_counts = compute_child_counts(components);
+        let mut groups: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+
+        for (idx, comp) in components.iter().enumerate() {
+            let Some(key) = normalize_copy_group_key(&comp.name) else {
+                continue;
+            };
+            groups.entry(key).or_default().push(idx);
+        }
+
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        let mut keys: Vec<String> = groups.keys().cloned().collect();
+        keys.sort();
+
+        for key in keys {
+            let Some(mut indices) = groups.remove(&key) else {
+                continue;
+            };
+            if indices.len() < 2 {
+                continue;
+            }
+
+            // Suppress low-signal suggestions like foo_v{i} with only 2 entries.
+            let is_side_group = key.contains("{side}");
+            if !is_side_group && indices.len() < 3 {
+                continue;
+            }
+
+            indices.sort_by(|&a, &b| components[a].name.cmp(&components[b].name));
+
+            let generated_source = indices
+                .iter()
+                .copied()
+                .find(|&idx| components[idx].actual_size.is_some());
+
+            let source_idx = generated_source.unwrap_or(indices[0]);
+            let source_name = components[source_idx].name.clone();
+            let source_generated_now = components[source_idx].actual_size.is_some();
+
+            let mut targets: Vec<String> = Vec::new();
+            for idx in indices.iter().copied() {
+                if idx == source_idx {
+                    continue;
+                }
+                if generated_source.is_some() && components[idx].actual_size.is_some() {
+                    continue;
+                }
+                targets.push(components[idx].name.clone());
+            }
+
+            if targets.is_empty() {
+                continue;
+            }
+
+            let mut targets_omitted: Option<usize> = None;
+            const MAX_TARGETS_LISTED: usize = 16;
+            if targets.len() > MAX_TARGETS_LISTED {
+                targets_omitted = Some(targets.len() - MAX_TARGETS_LISTED);
+                targets.truncate(MAX_TARGETS_LISTED);
+            }
+
+            let source_has_children = child_counts.get(&source_name).copied().unwrap_or(0) > 0;
+            let group_has_children = indices.iter().any(|&idx| {
+                let name = components[idx].name.as_str();
+                child_counts.get(name).copied().unwrap_or(0) > 0
+            });
+
+            if group_has_children || source_has_children {
+                out.push(serde_json::json!({
+                    "kind": "copy_component_subtree",
+                    "group_key": key,
+                    "source": source_name.clone(),
+                    "source_generated": source_generated_now,
+                    "targets": targets.clone(),
+                    "targets_omitted": targets_omitted,
+                    "recommended_tool": "copy_component_subtree_v1",
+                    "note": "If source_generated=false, generate the source subtree first, then run the copy tool.",
+                    "recommended_args": {
+                        "source_root": source_name,
+                        "targets": targets,
+                        "mode": "detached",
+                        "anchors": "preserve_target",
+                    }
+                }));
+            } else {
+                out.push(serde_json::json!({
+                    "kind": "copy_component",
+                    "group_key": key,
+                    "source": source_name.clone(),
+                    "source_generated": source_generated_now,
+                    "targets": targets.clone(),
+                    "targets_omitted": targets_omitted,
+                    "recommended_tool": "copy_component_v1",
+                    "note": "If source_generated=false, generate the source component first, then run the copy tool.",
+                    "recommended_args": {
+                        "source_component": source_name,
+                        "targets": targets,
+                        "mode": "detached",
+                        "anchors": "preserve_target",
+                    }
+                }));
+            }
+        }
+
+        out
+    }
+
     let mut workspaces: Vec<(&String, &super::Gen3dAgentWorkspace)> =
         job.agent.workspaces.iter().collect();
     workspaces.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -513,6 +682,7 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
         "plan_hash": job.plan_hash,
         "assembly_rev": job.assembly_rev,
         "needs_review": job.agent.rendered_since_last_review,
+        "reuse_suggestions": build_reuse_suggestions(&job.planned_components),
         "qa": {
             "ever_rendered": job.agent.ever_rendered,
             "ever_reviewed": job.agent.ever_reviewed,
@@ -1741,7 +1911,11 @@ fn execute_tool_call(
                     }
 
                     let disable_key = format!("{component_id}|{channel}");
-                    if !job.agent.motion_fallbacks_applied.insert(disable_key.clone()) {
+                    if !job
+                        .agent
+                        .motion_fallbacks_applied
+                        .insert(disable_key.clone())
+                    {
                         continue;
                     }
 
@@ -1982,7 +2156,16 @@ fn execute_tool_call(
             let delta = parse_delta_transform(call.args.get("transform"));
 
             let mut targets: Vec<usize> = Vec::new();
-            if let Some(arr) = call.args.get("targets").and_then(|v| v.as_array()) {
+            let target_list = call
+                .args
+                .get("targets")
+                .or_else(|| call.args.get("target_component_indices"))
+                .or_else(|| call.args.get("target_indices"))
+                .or_else(|| call.args.get("target_idxs"))
+                .or_else(|| call.args.get("target_component_names"))
+                .or_else(|| call.args.get("target_names"));
+
+            if let Some(arr) = target_list.and_then(|v| v.as_array()) {
                 for item in arr.iter() {
                     if let Some(idx) = item.as_u64().map(|v| v as usize) {
                         targets.push(idx);
@@ -2046,7 +2229,7 @@ fn execute_tool_call(
                     return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                         call.call_id,
                         call.tool_id,
-                        "Missing target component (use args.targets or args.target_component)"
+                        "Missing target component (use args.targets / args.target_component, or args.target_component_indices)."
                             .into(),
                     ));
                 };

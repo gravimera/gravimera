@@ -70,7 +70,12 @@ pub(super) fn build_motion_validation_report(
 ) -> MotionValidationReport {
     let joints_total: usize = components
         .iter()
-        .filter(|c| c.attach_to.as_ref().and_then(|a| a.joint.as_ref()).is_some())
+        .filter(|c| {
+            c.attach_to
+                .as_ref()
+                .and_then(|a| a.joint.as_ref())
+                .is_some()
+        })
         .count();
     let contacts_total: usize = components.iter().map(|c| c.contacts.len()).sum();
     let contacts_with_stance: usize = components
@@ -87,7 +92,10 @@ pub(super) fn build_motion_validation_report(
         .collect();
     let samples_phase_01: Vec<f32> = samples_t_m.iter().map(|t| *t / cycle_m).collect();
 
-    let root_idx = components.iter().position(|c| c.attach_to.is_none()).unwrap_or(0);
+    let root_idx = components
+        .iter()
+        .position(|c| c.attach_to.is_none())
+        .unwrap_or(0);
     let root_forward = Vec3::Z;
     let mut root_forward_xz = Vec3::new(root_forward.x, 0.0, root_forward.z);
     if !root_forward_xz.is_finite() || root_forward_xz.length_squared() <= 1e-6 {
@@ -212,7 +220,11 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
             keyframes,
         } => {
             let duration = (*duration_secs).max(1e-6);
-            let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+            let mut t = if time_secs.is_finite() {
+                time_secs
+            } else {
+                0.0
+            };
             t = t.rem_euclid(duration);
 
             if keyframes.is_empty() {
@@ -331,10 +343,8 @@ fn compute_world_transforms_at_t(
             };
             let parent_anchor =
                 anchor_transform_from_component(&components[idx], att.parent_anchor.as_str());
-            let child_anchor = anchor_transform_from_component(
-                &components[child_idx],
-                att.child_anchor.as_str(),
-            );
+            let child_anchor =
+                anchor_transform_from_component(&components[child_idx], att.child_anchor.as_str());
 
             let mut animated_offset = att.offset;
             if let Some(move_slot) = find_move_slot(att) {
@@ -363,7 +373,9 @@ fn compute_world_transforms_at_t(
                 world[child_idx] = Transform::IDENTITY;
             }
 
-            dfs(child_idx, components, children, t_m, world, visiting, visited);
+            dfs(
+                child_idx, components, children, t_m, world, visiting, visited,
+            );
         }
 
         visiting[idx] = false;
@@ -432,7 +444,11 @@ fn hinge_signed_angle_and_off_axis_deg(q_delta: Quat, axis_join: Vec3) -> (f32, 
     let twist_vec = Vec3::new(twist.x, twist.y, twist.z);
     let sin_half = twist_vec.length();
     let angle = 2.0 * sin_half.atan2(twist.w);
-    let sign = if twist_vec.dot(axis) >= 0.0 { 1.0 } else { -1.0 };
+    let sign = if twist_vec.dot(axis) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
     let signed_deg = (angle * sign).to_degrees();
 
     // Swing is the remaining rotation not explained by the hinge twist.
@@ -479,9 +495,8 @@ fn validate_joints(
                         component_id,
                         component_name,
                         channel: "move",
-                        message:
-                            "Hinge joint is missing axis_join; cannot validate hinge motion."
-                                .into(),
+                        message: "Hinge joint is missing axis_join; cannot validate hinge motion."
+                            .into(),
                         evidence: serde_json::json!({}),
                         score: 1.0,
                     });
@@ -623,8 +638,9 @@ fn validate_joints(
                         component_id,
                         component_name,
                         channel: "move",
-                        message: "Fixed joint rotates under `move` animation (expected no rotation)."
-                            .into(),
+                        message:
+                            "Fixed joint rotates under `move` animation (expected no rotation)."
+                                .into(),
                         evidence: serde_json::json!({
                             "max_angle_degrees": max_angle_deg,
                             "at_phase_01": max_phase,
@@ -835,7 +851,9 @@ fn validate_contacts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object::registry::{AnchorDef, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec};
+    use crate::object::registry::{
+        AnchorDef, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
+    };
 
     fn anchor(name: &str, pos: Vec3) -> AnchorDef {
         AnchorDef {
@@ -920,7 +938,9 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(
-            issues.iter().any(|i| i.get("kind").and_then(|v| v.as_str()) == Some("hinge_off_axis")),
+            issues
+                .iter()
+                .any(|i| i.get("kind").and_then(|v| v.as_str()) == Some("hinge_off_axis")),
             "expected hinge_off_axis issue, got {issues:?}"
         );
     }
@@ -941,7 +961,10 @@ mod tests {
             },
         };
 
-        let mut foot = stub_component("foot", vec![anchor("mount", Vec3::ZERO), anchor("contact", Vec3::ZERO)]);
+        let mut foot = stub_component(
+            "foot",
+            vec![anchor("mount", Vec3::ZERO), anchor("contact", Vec3::ZERO)],
+        );
         foot.contacts.push(super::super::AiContactJson {
             name: "foot_contact".into(),
             anchor: "contact".into(),
@@ -972,7 +995,9 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(
-            issues.iter().any(|i| i.get("kind").and_then(|v| v.as_str()) == Some("contact_slip")),
+            issues
+                .iter()
+                .any(|i| i.get("kind").and_then(|v| v.as_str()) == Some("contact_slip")),
             "expected contact_slip issue, got {issues:?}"
         );
     }
@@ -992,7 +1017,10 @@ mod tests {
 
         let mut wheel = stub_component(
             "wheel",
-            vec![anchor("mount", Vec3::ZERO), anchor("contact", Vec3::new(0.0, -0.3, 0.0))],
+            vec![
+                anchor("mount", Vec3::ZERO),
+                anchor("contact", Vec3::new(0.0, -0.3, 0.0)),
+            ],
         );
         wheel.contacts.push(super::super::AiContactJson {
             name: "wheel_contact".into(),
@@ -1031,7 +1059,10 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(
-            !issues.iter().any(|i| matches!(i.get("kind").and_then(|v| v.as_str()), Some("contact_slip" | "contact_lift"))),
+            !issues.iter().any(|i| matches!(
+                i.get("kind").and_then(|v| v.as_str()),
+                Some("contact_slip" | "contact_lift")
+            )),
             "expected no contact slip/lift issues for spin move component, got {issues:?}"
         );
     }
