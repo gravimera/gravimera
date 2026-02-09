@@ -522,6 +522,7 @@ mod tests {
                 name: "origin".into(),
                 transform: Transform::IDENTITY,
             }],
+            contacts: Vec::new(),
             attach_to: None,
         }
     }
@@ -711,6 +712,7 @@ mod tests {
             parent_anchor: "leg_mount_a".into(),
             child_anchor: "hip".into(),
             offset: Transform::IDENTITY,
+            joint: None,
             animations: Vec::new(),
         });
         components[2].attach_to = Some(super::super::Gen3dPlannedAttachment {
@@ -718,6 +720,7 @@ mod tests {
             parent_anchor: "ankle".into(),
             child_anchor: "hip".into(),
             offset: Transform::IDENTITY,
+            joint: None,
             animations: Vec::new(),
         });
         components[3].attach_to = Some(super::super::Gen3dPlannedAttachment {
@@ -725,6 +728,7 @@ mod tests {
             parent_anchor: "leg_mount_b".into(),
             child_anchor: "hip".into(),
             offset: Transform::IDENTITY,
+            joint: None,
             animations: Vec::new(),
         });
         components[4].attach_to = Some(super::super::Gen3dPlannedAttachment {
@@ -732,6 +736,7 @@ mod tests {
             parent_anchor: "ankle".into(),
             child_anchor: "hip".into(),
             offset: Transform::IDENTITY,
+            joint: None,
             animations: Vec::new(),
         });
 

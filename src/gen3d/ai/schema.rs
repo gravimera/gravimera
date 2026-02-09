@@ -196,9 +196,18 @@ pub(crate) struct AiAnimationSpecJson {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct AiRigJson {
+    #[serde(default)]
+    pub(crate) move_cycle_m: Option<f32>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AiPlanJsonV1 {
     #[serde(default)]
     pub(crate) version: u32,
+    #[serde(default)]
+    pub(crate) rig: Option<AiRigJson>,
     #[serde(default)]
     pub(crate) mobility: Option<AiMobilityJson>,
     #[serde(default)]
@@ -227,7 +236,59 @@ pub(crate) struct AiPlanComponentJson {
     #[serde(default)]
     pub(crate) anchors: Vec<AiAnchorJson>,
     #[serde(default)]
+    pub(crate) contacts: Vec<AiContactJson>,
+    #[serde(default)]
     pub(crate) attach_to: Option<AiPlanAttachmentJson>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiJointKindJson {
+    Fixed,
+    Hinge,
+    Ball,
+    Free,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiJointJson {
+    pub(crate) kind: AiJointKindJson,
+    #[serde(default)]
+    pub(crate) axis_join: Option<[f32; 3]>,
+    #[serde(default)]
+    pub(crate) limits_degrees: Option<[f32; 2]>,
+    #[serde(default)]
+    pub(crate) swing_limits_degrees: Option<[f32; 2]>,
+    #[serde(default)]
+    pub(crate) twist_limits_degrees: Option<[f32; 2]>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiContactKindJson {
+    Ground,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiContactStanceJson {
+    pub(crate) phase_01: f32,
+    pub(crate) duty_factor_01: f32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiContactJson {
+    pub(crate) name: String,
+    pub(crate) anchor: String,
+    pub(crate) kind: AiContactKindJson,
+    #[serde(default)]
+    pub(crate) stance: Option<AiContactStanceJson>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -238,6 +299,8 @@ pub(crate) struct AiPlanAttachmentJson {
     pub(crate) child_anchor: String,
     #[serde(default)]
     pub(crate) offset: Option<AiAttachmentOffsetJson>,
+    #[serde(default)]
+    pub(crate) joint: Option<AiJointJson>,
     #[serde(default)]
     pub(crate) animations: Option<BTreeMap<String, AiAnimationSpecJson>>,
     // Legacy field (plan v4) – treated as an ambient loop when present.

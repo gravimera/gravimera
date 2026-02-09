@@ -19,6 +19,7 @@ mod agent_loop;
 mod artifacts;
 mod convert;
 mod copy_component;
+mod motion_validation;
 mod openai;
 mod parse;
 mod prompts;
@@ -117,6 +118,11 @@ struct Gen3dAgentState {
     pending_render: Option<Gen3dReviewCaptureState>,
     pending_pass_snapshot: Option<Gen3dReviewCaptureState>,
     pending_after_pass_snapshot: Option<Gen3dAgentAfterPassSnapshot>,
+    last_smoke_ok: Option<bool>,
+    last_motion_ok: Option<bool>,
+    motion_error_counts: std::collections::HashMap<String, u8>,
+    motion_fallbacks_applied: std::collections::HashSet<String>,
+    motion_fallback_actions: Vec<serde_json::Value>,
 }
 
 impl Default for Gen3dAgentState {
@@ -147,6 +153,11 @@ impl Default for Gen3dAgentState {
             pending_render: None,
             pending_pass_snapshot: None,
             pending_after_pass_snapshot: None,
+            last_smoke_ok: None,
+            last_motion_ok: None,
+            motion_error_counts: std::collections::HashMap::new(),
+            motion_fallbacks_applied: std::collections::HashSet::new(),
+            motion_fallback_actions: Vec::new(),
         }
     }
 }
@@ -184,6 +195,7 @@ pub(crate) struct Gen3dAiJob {
     planned_components: Vec<Gen3dPlannedComponent>,
     assembly_notes: String,
     plan_collider: Option<AiColliderJson>,
+    rig_move_cycle_m: Option<f32>,
     pending_plan: Option<AiPlanJsonV1>,
     component_queue: Vec<usize>,
     component_queue_pos: usize,
@@ -437,6 +449,7 @@ struct Gen3dPlannedComponent {
     planned_size: Vec3,
     actual_size: Option<Vec3>,
     anchors: Vec<crate::object::registry::AnchorDef>,
+    contacts: Vec<AiContactJson>,
     attach_to: Option<Gen3dPlannedAttachment>,
 }
 
@@ -446,6 +459,7 @@ struct Gen3dPlannedAttachment {
     parent_anchor: String,
     child_anchor: String,
     offset: Transform,
+    joint: Option<AiJointJson>,
     animations: Vec<PartAnimationSlot>,
 }
 
@@ -743,6 +757,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.planned_components.clear();
     job.assembly_notes.clear();
     job.plan_collider = None;
+    job.rig_move_cycle_m = None;
     job.pending_plan = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
@@ -1133,7 +1148,11 @@ pub(crate) fn gen3d_poll_ai_job(
                 .run_id
                 .map(|id| id.to_string())
                 .unwrap_or_else(|| "unknown".into());
-            let plan_hash = compute_gen3d_plan_hash(&job.assembly_notes, &job.planned_components);
+            let plan_hash = compute_gen3d_plan_hash(
+                &job.assembly_notes,
+                job.rig_move_cycle_m,
+                &job.planned_components,
+            );
             job.plan_hash = plan_hash.clone();
 
             let scene_graph_summary = build_gen3d_scene_graph_summary(
@@ -1148,6 +1167,7 @@ pub(crate) fn gen3d_poll_ai_job(
             let smoke_results = build_gen3d_smoke_results(
                 &job.user_prompt_raw,
                 !job.user_images.is_empty(),
+                job.rig_move_cycle_m,
                 &job.planned_components,
                 &draft,
             );
@@ -1420,6 +1440,13 @@ pub(crate) fn gen3d_poll_ai_job(
                     }
 
                     job.plan_collider = plan.collider.clone();
+                    job.rig_move_cycle_m = plan
+                        .rig
+                        .as_ref()
+                        .and_then(|r| r.move_cycle_m)
+                        .filter(|v| v.is_finite())
+                        .map(|v| v.abs())
+                        .filter(|v| *v > 1e-3);
                     match convert::ai_plan_to_initial_draft_defs(plan) {
                         Ok((planned, assembly_notes, defs)) => {
                             job.planned_components = planned;
@@ -1567,6 +1594,13 @@ pub(crate) fn gen3d_poll_ai_job(
                     }
 
                     job.plan_collider = plan.collider.clone();
+                    job.rig_move_cycle_m = plan
+                        .rig
+                        .as_ref()
+                        .and_then(|r| r.move_cycle_m)
+                        .filter(|v| v.is_finite())
+                        .map(|v| v.abs())
+                        .filter(|v| *v > 1e-3);
                     match convert::ai_plan_to_initial_draft_defs(plan) {
                         Ok((planned, assembly_notes, defs)) => {
                             job.planned_components = planned;
@@ -2461,6 +2495,7 @@ fn retry_gen3d_plan(
     job.planned_components.clear();
     job.assembly_notes.clear();
     job.plan_collider = None;
+    job.rig_move_cycle_m = None;
     job.pending_plan = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
@@ -3048,6 +3083,7 @@ fn try_start_gen3d_replan(
     job.planned_components.clear();
     job.assembly_notes.clear();
     job.plan_collider = None;
+    job.rig_move_cycle_m = None;
     job.pending_plan = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
@@ -3678,7 +3714,11 @@ impl AiColorInputJson {
     }
 }
 
-fn compute_gen3d_plan_hash(assembly_notes: &str, components: &[Gen3dPlannedComponent]) -> String {
+fn compute_gen3d_plan_hash(
+    assembly_notes: &str,
+    rig_move_cycle_m: Option<f32>,
+    components: &[Gen3dPlannedComponent],
+) -> String {
     let mut comps: Vec<&Gen3dPlannedComponent> = components.iter().collect();
     comps.sort_by(|a, b| a.name.cmp(&b.name));
     let comps_json: Vec<serde_json::Value> = comps
@@ -3698,6 +3738,31 @@ fn compute_gen3d_plan_hash(assembly_notes: &str, components: &[Gen3dPlannedCompo
                 })
                 .collect();
 
+            let contacts: Vec<serde_json::Value> = {
+                let mut contacts: Vec<&AiContactJson> = c.contacts.iter().collect();
+                contacts.sort_by(|a, b| a.name.cmp(&b.name));
+                contacts
+                    .into_iter()
+                    .map(|contact| {
+                        let stance = contact.stance.as_ref().map(|s| {
+                            serde_json::json!({
+                                "phase_01": s.phase_01,
+                                "duty_factor_01": s.duty_factor_01,
+                            })
+                        });
+                        serde_json::json!({
+                            "name": contact.name.as_str(),
+                            "kind": match contact.kind {
+                                AiContactKindJson::Ground => "ground",
+                                AiContactKindJson::Unknown => "unknown",
+                            },
+                            "anchor": contact.anchor.as_str(),
+                            "stance": stance,
+                        })
+                    })
+                    .collect()
+            };
+
             let attach_to = c.attach_to.as_ref().map(|att| {
                 let pos = att.offset.translation;
                 let q = att.offset.rotation.normalize();
@@ -3707,6 +3772,21 @@ fn compute_gen3d_plan_hash(assembly_notes: &str, components: &[Gen3dPlannedCompo
                     .iter()
                     .map(|slot| slot.channel.as_ref())
                     .collect();
+                let joint = att.joint.as_ref().map(|j| {
+                    serde_json::json!({
+                        "kind": match j.kind {
+                            AiJointKindJson::Fixed => "fixed",
+                            AiJointKindJson::Hinge => "hinge",
+                            AiJointKindJson::Ball => "ball",
+                            AiJointKindJson::Free => "free",
+                            AiJointKindJson::Unknown => "unknown",
+                        },
+                        "axis_join": j.axis_join,
+                        "limits_degrees": j.limits_degrees,
+                        "swing_limits_degrees": j.swing_limits_degrees,
+                        "twist_limits_degrees": j.twist_limits_degrees,
+                    })
+                });
                 serde_json::json!({
                     "parent": att.parent.as_str(),
                     "parent_anchor": att.parent_anchor.as_str(),
@@ -3714,6 +3794,7 @@ fn compute_gen3d_plan_hash(assembly_notes: &str, components: &[Gen3dPlannedCompo
                     "offset_pos": [pos.x, pos.y, pos.z],
                     "offset_rot_quat_xyzw": [q.x, q.y, q.z, q.w],
                     "offset_scale": [s.x, s.y, s.z],
+                    "joint": joint,
                     "animation_channels": channels,
                 })
             });
@@ -3725,6 +3806,7 @@ fn compute_gen3d_plan_hash(assembly_notes: &str, components: &[Gen3dPlannedCompo
                 "planned_size": [c.planned_size.x, c.planned_size.y, c.planned_size.z],
                 "attach_to": attach_to,
                 "anchors": anchors,
+                "contacts": contacts,
             })
         })
         .collect();
@@ -3732,6 +3814,7 @@ fn compute_gen3d_plan_hash(assembly_notes: &str, components: &[Gen3dPlannedCompo
     let plan_state = serde_json::json!({
         "version": 1,
         "assembly_notes": assembly_notes.trim(),
+        "rig_move_cycle_m": rig_move_cycle_m,
         "components": comps_json,
     });
     let text = serde_json::to_string(&plan_state).unwrap_or_else(|_| plan_state.to_string());
@@ -4043,6 +4126,7 @@ fn build_gen3d_scene_graph_summary(
 fn build_gen3d_smoke_results(
     raw_prompt: &str,
     has_images: bool,
+    rig_move_cycle_m: Option<f32>,
     components: &[Gen3dPlannedComponent],
     draft: &Gen3dDraft,
 ) -> serde_json::Value {
@@ -4075,9 +4159,15 @@ fn build_gen3d_smoke_results(
     }
 
     for c in components {
+        let component_id = Uuid::from_u128(builtin_object_id(&format!(
+            "gravimera/gen3d/component/{}",
+            c.name
+        )))
+        .to_string();
         if !c.pos.is_finite() || !c.rot.is_finite() || !c.planned_size.is_finite() {
             issues.push(serde_json::json!({
                 "severity":"error",
+                "component_id": component_id.as_str(),
                 "component": c.name.as_str(),
                 "message":"Component has non-finite transform or size.",
             }));
@@ -4089,6 +4179,7 @@ fn build_gen3d_smoke_results(
             {
                 issues.push(serde_json::json!({
                     "severity":"error",
+                    "component_id": component_id.as_str(),
                     "component": c.name.as_str(),
                     "message":"Attachment offset has non-finite values.",
                 }));
@@ -4122,6 +4213,7 @@ fn build_gen3d_smoke_results(
                     };
                     issues.push(serde_json::json!({
                         "severity":"warn",
+                        "component_id": component_id.as_str(),
                         "component": c.name.as_str(),
                         "channel": slot.channel.as_ref(),
                         "message":"Spin axis is not aligned with the attachment direction (+Z in the join frame). This often makes wheels/props/turrets spin around the wrong axis.",
@@ -4134,6 +4226,7 @@ fn build_gen3d_smoke_results(
             if !a.transform.translation.is_finite() || !a.transform.rotation.is_finite() {
                 issues.push(serde_json::json!({
                     "severity":"error",
+                    "component_id": component_id.as_str(),
                     "component": c.name.as_str(),
                     "anchor": a.name.as_ref(),
                     "message":"Anchor has non-finite transform.",
@@ -4146,6 +4239,15 @@ fn build_gen3d_smoke_results(
         .iter()
         .all(|i| i.get("severity").and_then(|v| v.as_str()) != Some("error"));
 
+    let motion_report =
+        motion_validation::build_motion_validation_report(rig_move_cycle_m, components);
+    let motion_ok = motion_report
+        .motion_validation
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let ok = ok && motion_ok;
+
     serde_json::json!({
         "version": 1,
         "has_images": has_images,
@@ -4155,6 +4257,8 @@ fn build_gen3d_smoke_results(
         "components_total": components.len(),
         "components_generated": components.iter().filter(|c| c.actual_size.is_some()).count(),
         "draft_defs": draft.defs.len(),
+        "rig_summary": motion_report.rig_summary,
+        "motion_validation": motion_report.motion_validation,
         "issues": issues,
         "ok": ok,
     })

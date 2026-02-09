@@ -187,7 +187,7 @@ pub(super) fn parse_ai_plan_from_text(text: &str) -> Result<AiPlanJsonV1, String
         Ok(plan) => plan,
         Err(err) => {
             if json_value.get("version").is_none() {
-                debug!("Gen3D: AI plan JSON missing `version`; assuming version 6.");
+                debug!("Gen3D: AI plan JSON missing `version`; assuming version 7.");
             }
             return Err(format!("AI JSON schema error: {err}"));
         }
@@ -195,8 +195,8 @@ pub(super) fn parse_ai_plan_from_text(text: &str) -> Result<AiPlanJsonV1, String
     if plan.version == 0 {
         // Plan version is treated as an informational hint. Older runs may omit it.
         // Avoid hard-failing here so we can stay compatible with evolving prompts/models.
-        plan.version = 6;
-        debug!("Gen3D: AI plan JSON missing `version`; assuming version 6.");
+        plan.version = 7;
+        debug!("Gen3D: AI plan JSON missing `version`; assuming version 7.");
     }
 
     Ok(plan)

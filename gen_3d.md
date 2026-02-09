@@ -126,11 +126,12 @@ Gen3D budgets / guard:
 
 ## AI JSON Schemas (Strict)
 
-### Plan JSON (version 4)
+### Plan JSON (version 7)
 
 ```json
 {
-  "version": 4,
+  "version": 7,
+  "mobility": { "kind": "static" },
   "collider": { "kind": "aabb_xz", "half_extents": [2.0, 2.0] },
   "assembly_notes": "Short notes about shared dimensions / alignment / style.",
   "root_component": "seat",
@@ -181,7 +182,17 @@ Notes:
   - `child_anchor.forward` (+Z) points in the SAME direction as `parent_anchor.forward` (do not make it opposite, or the child will flip 180°).
   - `parent_anchor.up` (+Y) and `child_anchor.up` (+Y) should generally match to avoid unintended roll.
   Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.
-- Optional: `attach_to.animation` can define a component-level loop animation as deltas applied to the attachment offset.
+- Component-level animation lives on attachments via `attach_to.animations` (preferred). `attach_to.animation` is a legacy field.
+
+Rig / motion contract (optional; used for locomotion validation and AI repair):
+
+- `rig.move_cycle_m` (optional): meters per `move` cycle when using the `move_phase` driver.
+- `components[].attach_to.joint` (optional): joint constraint for this attachment edge, expressed in the **parent-anchor join frame**
+  (the same frame as `attach_to.offset` and attachment animation deltas).
+  - `hinge` joints should include `axis_join` and (optionally) `limits_degrees`.
+- `components[].contacts[]` (optional): named ground contacts for this component.
+  - Each contact references a component anchor by name.
+  - Optional `stance` schedule `{ "phase_01": 0..1, "duty_factor_01": 0..1 }` is used by motion validation to detect obvious slip/lift.
 
 ### Component Draft JSON (version 2)
 

@@ -20,6 +20,9 @@ use super::{
     Gen3dAiTextResponse, Gen3dChatHistoryMessage,
 };
 
+const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
+const CURL_MAX_TIME_SECS: u32 = 600;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ReasoningEffortRank {
     None = 0,
@@ -880,6 +883,10 @@ fn openai_responses_flow(
             let url = crate::config::join_base_url(base_url, &format!("responses/{id}"));
             let poll = std::process::Command::new("curl")
                 .arg("-sS")
+                .arg("--connect-timeout")
+                .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
+                .arg("--max-time")
+                .arg(CURL_MAX_TIME_SECS.to_string())
                 .arg("-H")
                 .arg(format!("Authorization: Bearer {api_key}"))
                 .arg(&url)
@@ -1153,6 +1160,10 @@ fn openai_responses_curl(
     set_progress(progress, "Sending request…");
     let mut cmd = std::process::Command::new("curl");
     cmd.arg("-sS")
+        .arg("--connect-timeout")
+        .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
+        .arg("--max-time")
+        .arg(CURL_MAX_TIME_SECS.to_string())
         .arg("-X")
         .arg("POST")
         .arg("-H")
@@ -1349,6 +1360,10 @@ fn openai_chat_completions_curl(
 
     let mut cmd = std::process::Command::new("curl");
     cmd.arg("-sS")
+        .arg("--connect-timeout")
+        .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
+        .arg("--max-time")
+        .arg(CURL_MAX_TIME_SECS.to_string())
         .arg("-X")
         .arg("POST")
         .arg("-H")

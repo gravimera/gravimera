@@ -405,51 +405,73 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - `forward` is the anchor's +Z direction.\n\
          - `up` is the anchor's +Y direction.\n\
          - Do NOT output an anchor named \"origin\". The engine provides an implicit identity anchor named \"origin\".\n\n\
-         Attachment definition:\n\
-         - Each non-root component must define `attach_to`.\n\
-         - `attach_to` aligns this component's `child_anchor` to the parent's `parent_anchor`.\n\
-         - `offset` is an extra tweak transform expressed in the PARENT ANCHOR frame (after alignment).\n\
-         - The engine will NOT apply any hidden auto-placement rules. If you need overlap/inset/outset, encode it explicitly in `offset.pos`.\n\
-         - Define attachment anchors as a JOIN FRAME that matches on both sides:\n\
-           - Set parent_anchor.forward (+Z) to point from the parent toward the child (attachment direction).\n\
-           - Set child_anchor.forward (+Z) to point in the SAME direction as the parent_anchor.forward (do NOT make it opposite, or the child will flip 180°).\n\
-           - Choose up vectors so parent_anchor.up (+Y) and child_anchor.up generally match to avoid unintended roll.\n\
-         - Then `offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n\
-         - For flush joins, use a small NEGATIVE `offset.pos[2]` (slight inset/overlap). For surface overlays, use a small POSITIVE `offset.pos[2]` (slight outset) so thin details are not buried.\n\
-         - IMPORTANT: Do not use `attach_to.animation` (legacy). Use `attach_to.animations`.\n\n\
-         Schema:\n\
-         {{\n\
-           \"version\": 6,\n\
-           \"mobility\": {{\"kind\":\"static\"}} | {{\"kind\":\"ground\",\"max_speed\": number}} | {{\"kind\":\"air\",\"max_speed\": number}},\n\
-           \"attack\": {{ ... }} (optional; omit if not attack-capable),\n\
-           \"aim\": {{\"max_yaw_delta_degrees\": number|null (optional), \"components\": [\"component_name\", ...]}} (optional),\n\
-           \"collider\": {{\"kind\":\"aabb_xz\",\"half_extents\":[x,z]}} | {{\"kind\":\"circle_xz\",\"radius\":r}} | {{\"kind\":\"none\"}} (optional),\n\
-           \"assembly_notes\": \"...\" (optional),\n\
-           \"root_component\": \"component_name\" (optional; otherwise inferred as the only component without attach_to),\n\
-           \"components\": [\n\
-             {{\n\
-               \"name\": \"stable_unique_identifier\",\n\
-               \"purpose\": \"...\" (optional),\n\
-               \"modeling_notes\": \"...\" (optional),\n\
-               \"size\": [x,y,z],\n\
-               \"anchors\": [\n\
-                 {{\"name\":\"anchor_name\",\"pos\":[x,y,z],\"forward\":[x,y,z],\"up\":[x,y,z]}}\n\
-               ],\n\
-               \"attach_to\": {{\n\
-                 \"parent\": \"parent_component_name\",\n\
-                 \"parent_anchor\": \"anchor_name_on_parent\",\n\
-                 \"child_anchor\": \"anchor_name_on_this_component\",\n\
-                 \"offset\": {{\n\
-                   \"pos\": [x,y,z],\n\
-                   \"forward\": [x,y,z] (optional),\n\
-                   \"up\": [x,y,z] (optional),\n\
-                   \"scale\": [x,y,z] (optional)\n\
-                 }} (optional),\n\
-                 \"animations\": {{\n\
-                   \"ambient\" | \"idle\" | \"move\" | \"attack_primary\": {{\n\
-                     \"driver\": \"always\" | \"move_phase\" | \"move_distance\" | \"attack_time\",\n\
-                     \"speed_scale\": number (optional),\n\
-                     \"clip\": {{\"kind\":\"loop\",...}} | {{\"kind\":\"spin\",...}}\n\
+          Attachment definition:\n\
+          - Each non-root component must define `attach_to`.\n\
+          - `attach_to` aligns this component's `child_anchor` to the parent's `parent_anchor`.\n\
+          - `offset` is an extra tweak transform expressed in the PARENT ANCHOR frame (after alignment).\n\
+          - The engine will NOT apply any hidden auto-placement rules. If you need overlap/inset/outset, encode it explicitly in `offset.pos`.\n\
+          - Define attachment anchors as a JOIN FRAME that matches on both sides:\n\
+            - Set parent_anchor.forward (+Z) to point from the parent toward the child (attachment direction).\n\
+            - Set child_anchor.forward (+Z) to point in the SAME direction as the parent_anchor.forward (do NOT make it opposite, or the child will flip 180°).\n\
+            - Choose up vectors so parent_anchor.up (+Y) and child_anchor.up generally match to avoid unintended roll.\n\
+          - Then `offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n\
+          - For flush joins, use a small NEGATIVE `offset.pos[2]` (slight inset/overlap). For surface overlays, use a small POSITIVE `offset.pos[2]` (slight outset) so thin details are not buried.\n\
+          - IMPORTANT: Do not use `attach_to.animation` (legacy). Use `attach_to.animations`.\n\n\
+          Rig contract (optional; strongly recommended for ground locomotion):\n\
+          - The engine validates locomotion by sampling the `move` cycle and checking declared joints/contacts.\n\
+          - If `mobility.kind == \"ground\"` and you author any `move` animation:\n\
+            - Prefer adding `attach_to.joint` on that attachment edge.\n\
+            - Prefer adding one or more `contacts[]` on end-effector component(s) intended to be PLANTED during stance (feet/hooves).\n\
+            - For rolling wheels/tracks, contacts are optional; if you include them, omit `stance` (the physical ground contact point moves around the wheel).\n\
+          - Joint constraints:\n\
+            - `attach_to.joint.kind`: `fixed` | `hinge` | `ball` | `free`.\n\
+            - Joint axes/limits are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
+            - For `hinge`, provide `axis_join` and optional `limits_degrees` [min,max].\n\
+          - Contacts:\n\
+            - `contacts[]` lives on a component and references one of its `anchors[]` by name.\n\
+            - `contacts[].stance` defines when that contact should be on the ground during the `move` cycle:\n\
+              - `phase_01`: start phase in [0,1).\n\
+              - `duty_factor_01`: fraction of cycle in (0,1].\n\
+              - Only use `stance` for planted contacts (feet/hooves), not for spinning wheels.\n\
+          - Optional: top-level `rig.move_cycle_m` defines meters-per-cycle for `move` (helps validation for stance schedules).\n\n\
+          Schema:\n\
+          {{\n\
+            \"version\": 7,\n\
+            \"rig\": {{ \"move_cycle_m\": number }} (optional),\n\
+            \"mobility\": {{\"kind\":\"static\"}} | {{\"kind\":\"ground\",\"max_speed\": number}} | {{\"kind\":\"air\",\"max_speed\": number}},\n\
+            \"attack\": {{ ... }} (optional; omit if not attack-capable),\n\
+            \"aim\": {{\"max_yaw_delta_degrees\": number|null (optional), \"components\": [\"component_name\", ...]}} (optional),\n\
+            \"collider\": {{\"kind\":\"aabb_xz\",\"half_extents\":[x,z]}} | {{\"kind\":\"circle_xz\",\"radius\":r}} | {{\"kind\":\"none\"}} (optional),\n\
+            \"assembly_notes\": \"...\" (optional),\n\
+            \"root_component\": \"component_name\" (optional; otherwise inferred as the only component without attach_to),\n\
+            \"components\": [\n\
+              {{\n\
+                \"name\": \"stable_unique_identifier\",\n\
+                \"purpose\": \"...\" (optional),\n\
+                \"modeling_notes\": \"...\" (optional),\n\
+                \"size\": [x,y,z],\n\
+                \"anchors\": [\n\
+                  {{\"name\":\"anchor_name\",\"pos\":[x,y,z],\"forward\":[x,y,z],\"up\":[x,y,z]}}\n\
+                ],\n\
+                \"contacts\": [\n\
+                  {{\"name\":\"contact_name\",\"kind\":\"ground\",\"anchor\":\"anchor_name\",\"stance\":{{\"phase_01\": number,\"duty_factor_01\": number}} }}\n\
+                ] (optional),\n\
+                \"attach_to\": {{\n\
+                  \"parent\": \"parent_component_name\",\n\
+                  \"parent_anchor\": \"anchor_name_on_parent\",\n\
+                  \"child_anchor\": \"anchor_name_on_this_component\",\n\
+                  \"offset\": {{\n\
+                    \"pos\": [x,y,z],\n\
+                    \"forward\": [x,y,z] (optional),\n\
+                    \"up\": [x,y,z] (optional),\n\
+                    \"scale\": [x,y,z] (optional)\n\
+                  }} (optional),\n\
+                  \"joint\": {{ \"kind\": \"hinge\" | \"fixed\" | \"ball\" | \"free\", \"axis_join\": [x,y,z] (optional), \"limits_degrees\": [min,max] (optional) }} (optional),\n\
+                  \"animations\": {{\n\
+                    \"ambient\" | \"idle\" | \"move\" | \"attack_primary\": {{\n\
+                      \"driver\": \"always\" | \"move_phase\" | \"move_distance\" | \"attack_time\",\n\
+                      \"speed_scale\": number (optional),\n\
+                      \"clip\": {{\"kind\":\"loop\",...}} | {{\"kind\":\"spin\",...}}\n\
                    }}\n\
                  }} (optional)\n\
                }} (omit ONLY for the root component)\n\
@@ -586,18 +608,20 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
      - Do NOT output Euler angles. For rotations, use either:\n\
        - a basis: {\"forward\":[x,y,z],\"up\":[x,y,z]}\n\
        - or a quaternion: {\"quat_xyzw\":[x,y,z,w]}\n\
-     - Target components by `component_id` (UUID), not by name.\n\
-     - Keep changes minimal: prefer adjusting attachment offsets / anchors over regenerating geometry.\n\
-     - Focus on HIGH-IMPACT structural issues. If only minor cosmetic tweaks remain, return ONLY {\"kind\":\"accept\"}.\n\
-     - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\n\
-     Animation notes:\n\
-     - `tweak_animation.spec.clip.spin.axis` is expressed in the COMPONENT's LOCAL axes.\n\
-     - If smoke results include `suggested_component_local_axis`, prefer using that value for the spin axis.\n\
-       (It is computed from the component's child anchor forward vector so the part spins around the attachment axis.)\n\
-     - If an `ambient` animation is undesirable (e.g. a weapon spinning constantly), you may replace it with an identity loop:\n\
-       - a `loop` with keyframes whose `delta` transforms are all identity.\n\n\
-     If the scene graph shows no generated geometry yet (e.g. 0 primitive parts / components_generated=0), blank renders are expected.\n\
-     Do NOT report that as a renderer bug. Instead, request generating components first.\n\n\
+      - Target components by `component_id` (UUID), not by name.\n\
+      - Keep changes minimal: prefer adjusting attachment offsets / anchors over regenerating geometry.\n\
+      - Focus on HIGH-IMPACT structural issues. If only minor cosmetic tweaks remain, return ONLY {\"kind\":\"accept\"}.\n\
+      - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\
+      - If smoke results include `motion_validation` issues, treat them as authoritative and prioritize fixing them first.\n\n\
+      Animation notes:\n\
+      - `tweak_animation.spec.clip.spin.axis` is expressed in the COMPONENT's LOCAL axes.\n\
+      - If smoke results include `suggested_component_local_axis`, prefer using that value for the spin axis.\n\
+        (It is computed from the component's child anchor forward vector so the part spins around the attachment axis.)\n\
+      - If an animation channel is undesirable or too broken to repair, you may disable ANY channel (ambient/idle/move/attack_primary)\n\
+        by replacing it with an identity loop (a `loop` whose keyframes' `delta` transforms are all identity).\n\
+        IMPORTANT: include at least 1 keyframe (example: one keyframe at time_secs=0 with no delta / identity delta).\n\n\
+      If the scene graph shows no generated geometry yet (e.g. 0 primitive parts / components_generated=0), blank renders are expected.\n\
+      Do NOT report that as a renderer bug. Instead, request generating components first.\n\n\
      Attack schema for `tweak_attack` (MUST follow exactly; do not invent custom fields):\n\
      - `attack.kind` must be exactly one of: `none`, `melee`, `ranged_projectile`.\n\
      - Do NOT output synonyms like `cannon`, `gun`, `projectile`, `ranged`; always use the canonical kinds above.\n\

@@ -754,6 +754,34 @@ pub(super) fn ai_plan_to_initial_draft_defs(
             .max(Vec3::splat(0.01));
 
         let anchors = anchors_from_ai(&comp.name, &comp.anchors)?;
+        let contacts = {
+            let mut out: Vec<AiContactJson> = Vec::new();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for contact in comp.contacts.iter() {
+                let name = contact.name.trim();
+                let anchor = contact.anchor.trim();
+                if name.is_empty() || anchor.is_empty() {
+                    continue;
+                }
+                if !seen.insert(name.to_string()) {
+                    continue;
+                }
+                if anchor != "origin" && !anchors.iter().any(|a| a.name.as_ref() == anchor) {
+                    debug!(
+                        "Gen3D: plan component `{}` contact `{}` references missing anchor `{}`; skipping contact",
+                        comp.name, name, anchor
+                    );
+                    continue;
+                }
+                out.push(AiContactJson {
+                    name: name.to_string(),
+                    anchor: anchor.to_string(),
+                    kind: contact.kind,
+                    stance: contact.stance.clone(),
+                });
+            }
+            out
+        };
 
         let attach_to = match comp.attach_to.as_ref() {
             None => None,
@@ -828,6 +856,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                     parent_anchor: parent_anchor.to_string(),
                     child_anchor: child_anchor.to_string(),
                     offset,
+                    joint: att.joint.clone(),
                     animations,
                 })
             }
@@ -843,6 +872,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
             planned_size,
             actual_size: None,
             anchors,
+            contacts,
             attach_to,
         });
     }
@@ -1270,6 +1300,42 @@ fn component_index_from_object_id(
         .position(|c| component_object_id_for_name(&c.name) == object_id)
 }
 
+pub(super) fn disable_attachment_animation_channel_identity_loop(
+    components: &mut [Gen3dPlannedComponent],
+    draft: &mut Gen3dDraft,
+    component_id: &str,
+    channel: &str,
+) -> Result<bool, String> {
+    let Some(object_id) = parse_component_id_u128(component_id) else {
+        return Ok(false);
+    };
+    let Some(idx) = component_index_from_object_id(components, object_id) else {
+        return Ok(false);
+    };
+    let Some(att) = components[idx].attach_to.as_mut() else {
+        return Ok(false);
+    };
+
+    let mut changed = false;
+    for slot in att.animations.iter_mut() {
+        if slot.channel.as_ref() != channel {
+            continue;
+        }
+        slot.spec.clip = PartAnimationDef::Loop {
+            duration_secs: 1.0,
+            keyframes: Vec::new(),
+        };
+        slot.spec.speed_scale = 1.0;
+        changed = true;
+    }
+    if !changed {
+        return Ok(false);
+    }
+
+    sync_attachment_tree_to_defs(components, draft)?;
+    Ok(true)
+}
+
 fn sync_attachment_tree_to_defs(
     components: &[Gen3dPlannedComponent],
     draft: &mut Gen3dDraft,
@@ -1585,12 +1651,25 @@ pub(super) fn apply_ai_review_delta_actions(
                     .as_ref()
                     .map(|att| att.animations.clone())
                     .unwrap_or_default();
+                let joint = components[idx].attach_to.as_ref().and_then(|att| {
+                    let parent_anchor = set.parent_anchor.trim();
+                    let child_anchor = set.child_anchor.trim();
+                    if att.parent == components[parent_idx].name
+                        && att.parent_anchor == parent_anchor
+                        && att.child_anchor == child_anchor
+                    {
+                        att.joint.clone()
+                    } else {
+                        None
+                    }
+                });
 
                 components[idx].attach_to = Some(Gen3dPlannedAttachment {
                     parent: components[parent_idx].name.clone(),
                     parent_anchor: set.parent_anchor.trim().to_string(),
                     child_anchor: set.child_anchor.trim().to_string(),
                     offset,
+                    joint,
                     animations,
                 });
 
@@ -2310,6 +2389,7 @@ mod tests {
                 name: "mount".into(),
                 transform: Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
             }],
+            contacts: Vec::new(),
             attach_to: None,
         };
 
@@ -2365,6 +2445,7 @@ mod tests {
                 name: "mount".into(),
                 transform: Transform::IDENTITY,
             }],
+            contacts: Vec::new(),
             attach_to: None,
         };
 
