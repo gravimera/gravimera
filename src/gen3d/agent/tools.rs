@@ -285,7 +285,7 @@ impl Gen3dToolRegistryV1 {
                      Args:\n\
                      - source_root: source component (name or index)\n\
                      - targets: list of target root components (names or indices)\n\
-                     - mode: detached (default) or linked\n\
+                     - mode: detached (only supported today)\n\
                      - anchors: copy_source (default) or preserve_target\n\
                      - transform: optional delta applied to copied geometry.",
                 args_example: serde_json::json!({
