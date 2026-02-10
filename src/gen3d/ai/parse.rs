@@ -82,6 +82,188 @@ fn normalize_attack_kinds_in_json(value: &mut serde_json::Value) -> bool {
     changed
 }
 
+fn normalize_snake_case_token(raw: &str) -> String {
+    let mut normalized = raw.trim().to_ascii_lowercase();
+    normalized = normalized.replace(' ', "_");
+    normalized = normalized.replace('-', "_");
+    while normalized.contains("__") {
+        normalized = normalized.replace("__", "_");
+    }
+    normalized
+}
+
+fn normalize_animation_driver(raw: &str) -> Option<&'static str> {
+    let normalized = normalize_snake_case_token(raw);
+    match normalized.as_str() {
+        "always" | "idle" | "ambient" => Some("always"),
+        "move_phase" | "movephase" | "move_cycle" | "movecycle" | "move_cycle_phase"
+        | "move_cycle_m" | "move_cycle_meters" => Some("move_phase"),
+        "move_distance" | "movedistance" | "distance" => Some("move_distance"),
+        "attack_time" | "attacktime" | "attack" | "attack_primary" => Some("attack_time"),
+        _ => None,
+    }
+}
+
+fn normalize_animation_clip_kind(raw: &str) -> Option<&'static str> {
+    let normalized = normalize_snake_case_token(raw);
+    match normalized.as_str() {
+        "loop" | "cycle" => Some("loop"),
+        "spin" | "rotate" | "rotation" => Some("spin"),
+        _ => None,
+    }
+}
+
+fn driver_fallback_for_channel(channel: &str) -> &'static str {
+    let normalized = normalize_snake_case_token(channel);
+    match normalized.as_str() {
+        "move" => "move_phase",
+        "attack_primary" | "attack" => "attack_time",
+        _ => "always",
+    }
+}
+
+fn max_keyframe_time_secs(value: &serde_json::Value) -> Option<f64> {
+    let arr = value.as_array()?;
+    let mut max: Option<f64> = None;
+    for item in arr {
+        let t = item.get("time_secs").and_then(|v| v.as_f64());
+        if let Some(t) = t {
+            if !t.is_finite() {
+                continue;
+            }
+            max = Some(max.map_or(t, |m| m.max(t)));
+        }
+    }
+    max
+}
+
+fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+
+    let Some(actions) = value
+        .as_object_mut()
+        .and_then(|root| root.get_mut("actions"))
+        .and_then(|v| v.as_array_mut())
+    else {
+        return false;
+    };
+
+    for action in actions {
+        let Some(action_obj) = action.as_object_mut() else {
+            continue;
+        };
+        let kind = action_obj
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if kind != "tweak_animation" {
+            continue;
+        }
+
+        let channel = action_obj
+            .get("channel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let driver_fallback = driver_fallback_for_channel(channel);
+
+        let Some(spec_obj) = action_obj.get_mut("spec").and_then(|v| v.as_object_mut()) else {
+            continue;
+        };
+
+        let next_driver = match spec_obj.get("driver").and_then(|v| v.as_str()) {
+            Some(raw) => normalize_animation_driver(raw).unwrap_or(driver_fallback),
+            None => driver_fallback,
+        };
+        if spec_obj
+            .get("driver")
+            .and_then(|v| v.as_str())
+            .is_none_or(|cur| cur != next_driver)
+        {
+            spec_obj.insert(
+                "driver".to_string(),
+                serde_json::Value::String(next_driver.to_string()),
+            );
+            changed = true;
+        }
+
+        let Some(clip_obj) = spec_obj.get_mut("clip").and_then(|v| v.as_object_mut()) else {
+            continue;
+        };
+
+        let inferred_kind =
+            if clip_obj.contains_key("axis") && clip_obj.contains_key("radians_per_unit") {
+                Some("spin")
+            } else if clip_obj.contains_key("keyframes")
+                || clip_obj.contains_key("duration_secs")
+                || clip_obj.contains_key("duration")
+            {
+                Some("loop")
+            } else {
+                None
+            };
+
+        let mut clip_kind = clip_obj
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .and_then(normalize_animation_clip_kind)
+            .or(inferred_kind);
+        if clip_kind.is_none() {
+            continue;
+        }
+        let clip_kind_str = clip_kind.take().unwrap();
+        if clip_obj
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .is_none_or(|cur| cur != clip_kind_str)
+        {
+            clip_obj.insert(
+                "kind".to_string(),
+                serde_json::Value::String(clip_kind_str.to_string()),
+            );
+            changed = true;
+        }
+
+        if clip_kind_str != "loop" {
+            continue;
+        }
+
+        let duration_secs_value = clip_obj.get("duration_secs").and_then(|v| v.as_f64());
+        let duration_secs_ok = duration_secs_value.is_some_and(|v| v.is_finite() && v > 0.0);
+
+        if !duration_secs_ok {
+            if let Some(duration) = clip_obj.get("duration").and_then(|v| v.as_f64()) {
+                let duration = if duration.is_finite() && duration > 0.0 {
+                    duration
+                } else {
+                    1.0
+                };
+                clip_obj.insert(
+                    "duration_secs".to_string(),
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(duration)
+                            .unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()),
+                    ),
+                );
+                changed = true;
+            } else if let Some(keyframes) = clip_obj.get("keyframes") {
+                let max_time = max_keyframe_time_secs(keyframes).unwrap_or(0.0);
+                let duration = if max_time > 0.0 { max_time } else { 1.0 };
+                if let Some(n) = serde_json::Number::from_f64(duration) {
+                    clip_obj.insert("duration_secs".to_string(), serde_json::Value::Number(n));
+                    changed = true;
+                }
+            }
+        }
+
+        if clip_obj.contains_key("duration") {
+            clip_obj.remove("duration");
+            changed = true;
+        }
+    }
+
+    changed
+}
+
 pub(super) fn parse_ai_draft_from_text(text: &str) -> Result<AiDraftJsonV1, String> {
     debug!(
         "Gen3D: extracted component output text (chars={})",
@@ -259,6 +441,9 @@ pub(super) fn parse_ai_review_delta_from_text(text: &str) -> Result<AiReviewDelt
         serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
     if normalize_attack_kinds_in_json(&mut json_value) {
         debug!("Gen3D: normalized attack.kind in review-delta JSON.");
+    }
+    if normalize_review_delta_json(&mut json_value) {
+        debug!("Gen3D: normalized review-delta JSON (driver/duration/etc).");
     }
     let mut delta: AiReviewDeltaJsonV1 =
         serde_json::from_value(json_value).map_err(|err| format!("Failed to parse JSON: {err}"))?;
@@ -725,7 +910,10 @@ pub(super) fn parse_hex_color(s: &str) -> Option<[f32; 4]> {
 #[cfg(test)]
 mod tests {
     use super::super::convert;
-    use super::super::schema::{AiAttackJson, AiPrimitiveJson, AiReviewDeltaActionJsonV1};
+    use super::super::schema::{
+        AiAnimationClipJson, AiAnimationDriverJson, AiAttackJson, AiPrimitiveJson,
+        AiReviewDeltaActionJsonV1,
+    };
     use super::*;
     use crate::object::registry::{MeshKey, PrimitiveParams};
 
@@ -756,6 +944,48 @@ mod tests {
                 other => panic!("expected ranged_projectile, got {other:?}"),
             },
             other => panic!("expected tweak_attack, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizes_review_delta_missing_driver_and_duration() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "actions": [
+            {
+              "kind":"tweak_animation",
+              "component_id":"deadbeef",
+              "channel":"move",
+              "spec": {
+                "clip": {
+                  "kind":"loop",
+                  "keyframes": [ { "time_secs": 0.0 } ]
+                }
+              }
+            }
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("delta should parse");
+        assert_eq!(delta.actions.len(), 1);
+        match &delta.actions[0] {
+            AiReviewDeltaActionJsonV1::TweakAnimation { spec, .. } => {
+                assert!(
+                    matches!(spec.driver, AiAnimationDriverJson::MovePhase),
+                    "expected driver move_phase for channel=move"
+                );
+                match &spec.clip {
+                    AiAnimationClipJson::Loop { duration_secs, .. } => {
+                        assert!(
+                            (*duration_secs - 1.0).abs() < 1e-6,
+                            "expected duration_secs=1.0 default"
+                        );
+                    }
+                    other => panic!("expected loop clip, got {other:?}"),
+                }
+            }
+            other => panic!("expected tweak_animation, got {other:?}"),
         }
     }
 

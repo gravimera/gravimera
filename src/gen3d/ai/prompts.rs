@@ -422,6 +422,8 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
           - If `mobility.kind == \"ground\"` and you author any `move` animation:\n\
             - Prefer adding `attach_to.joint` on that attachment edge.\n\
             - Prefer adding one or more `contacts[]` on end-effector component(s) intended to be PLANTED during stance (feet/hooves).\n\
+            - Only declare `contacts[].stance` if your `move` animation is authored to keep that contact approximately planted in world space during stance.\n\
+              If you cannot satisfy planted-foot behavior, OMIT `stance` to avoid `contact_slip`/`contact_lift` validation errors.\n\
             - For rolling wheels/tracks, contacts are optional; if you include them, omit `stance` (the physical ground contact point moves around the wheel).\n\
           - Joint constraints:\n\
             - `attach_to.joint.kind`: `fixed` | `hinge` | `ball` | `free`.\n\
@@ -662,6 +664,7 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
          {\"kind\":\"tweak_component_transform\",\"component_id\":\"<uuid>\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_anchor\",\"component_id\":\"<uuid>\",\"anchor_name\":\"name\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_attachment\",\"component_id\":\"<uuid>\",\"set\":{...},\"reason\":\"...\" (optional)},\n\
+         {\"kind\":\"tweak_contact\",\"component_id\":\"<uuid>\",\"contact_name\":\"name\",\"stance\": null (optional),\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_animation\",\"component_id\":\"<uuid>\",\"channel\":\"ambient|idle|move|attack_primary\",\"spec\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_mobility\",\"mobility\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_attack\",\"attack\":{...},\"reason\":\"...\" (optional)}\n\
@@ -669,6 +672,10 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
      }\n\n\
      Notes:\n\
      - `tweak_component_transform` edits the component's attachment OFFSET relative to its parent.\n\
+     - `tweak_contact` edits the component's declared contacts (most commonly `stance`).\n\
+       - Set stance: `\"stance\": {\"phase_01\": number, \"duty_factor_01\": number}`\n\
+       - Clear stance: `\"stance\": null`\n\
+       If motion validation reports `contact_slip`/`contact_lift` during stance and you cannot author truly planted foot motion, prefer clearing stance.\n\
      - IMPORTANT: Attachment offsets are expressed in the PARENT ANCHOR join frame.\n\
        In that join frame, `offset.pos = [x,y,z]` means:\n\
        - +X (`pos[0]`) is `join_right_world`\n\

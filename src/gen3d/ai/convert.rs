@@ -1683,6 +1683,45 @@ pub(super) fn apply_ai_review_delta_actions(
                 }
                 result.had_actions = true;
             }
+            AiReviewDeltaActionJsonV1::TweakContact {
+                component_id,
+                contact_name,
+                stance,
+                reason,
+            } => {
+                let Some(object_id) = parse_component_id_u128(&component_id) else {
+                    continue;
+                };
+                let Some(idx) = component_index_from_object_id(components, object_id) else {
+                    continue;
+                };
+                let contact_name = contact_name.trim();
+                if contact_name.is_empty() {
+                    continue;
+                }
+                let Some(contact) = components[idx]
+                    .contacts
+                    .iter_mut()
+                    .find(|c| c.name.trim() == contact_name)
+                else {
+                    continue;
+                };
+
+                if let Some(stance) = stance {
+                    contact.stance = stance;
+                }
+
+                if !reason.trim().is_empty() {
+                    debug!(
+                        "Gen3D: review-delta tweak_contact {} ({}) contact={} reason={}",
+                        component_id,
+                        components[idx].name,
+                        contact_name,
+                        reason.trim()
+                    );
+                }
+                result.had_actions = true;
+            }
             AiReviewDeltaActionJsonV1::TweakAnimation {
                 component_id,
                 channel,
@@ -2700,5 +2739,63 @@ mod tests {
         assert!(axis.x.abs() < 1e-3);
         assert!(axis.y.abs() < 1e-3);
         assert!((axis.z + 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn applies_review_delta_tweak_contact_clears_stance() {
+        let plan_text = r##"{
+          "version": 7,
+          "components": [
+            {
+              "name": "body",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "foot_anchor", "pos": [0.0, -0.5, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ],
+              "contacts": [
+                {
+                  "name": "foot_contact",
+                  "kind": "ground",
+                  "anchor": "foot_anchor",
+                  "stance": { "phase_01": 0.0, "duty_factor_01": 0.6 }
+                }
+              ]
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let plan_collider = plan.collider.clone();
+        let (mut planned, _notes, defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+        let mut draft = Gen3dDraft { defs };
+
+        assert_eq!(planned.len(), 1);
+        assert_eq!(planned[0].contacts.len(), 1);
+        assert!(planned[0].contacts[0].stance.is_some());
+
+        let component_id =
+            Uuid::from_u128(builtin_object_id("gravimera/gen3d/component/body")).to_string();
+        let delta = AiReviewDeltaJsonV1 {
+            version: 1,
+            applies_to: AiReviewDeltaAppliesToJsonV1 {
+                run_id: "test".into(),
+                attempt: 0,
+                plan_hash: "sha256:test".into(),
+                assembly_rev: 0,
+            },
+            actions: vec![AiReviewDeltaActionJsonV1::TweakContact {
+                component_id,
+                contact_name: "foot_contact".into(),
+                stance: Some(None),
+                reason: String::new(),
+            }],
+            summary: None,
+            notes: None,
+        };
+
+        let apply = apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+            .expect("apply should succeed");
+        assert!(apply.had_actions);
+        assert!(planned[0].contacts[0].stance.is_none());
     }
 }

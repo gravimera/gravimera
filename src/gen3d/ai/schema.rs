@@ -545,6 +545,14 @@ pub(crate) enum AiReviewDeltaActionJsonV1 {
         #[serde(default)]
         reason: String,
     },
+    TweakContact {
+        component_id: String,
+        contact_name: String,
+        #[serde(default)]
+        stance: Option<Option<AiContactStanceJson>>,
+        #[serde(default)]
+        reason: String,
+    },
     TweakAnimation {
         component_id: String,
         channel: String,
