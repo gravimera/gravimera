@@ -23,20 +23,26 @@ Finally, we run a real rendered Gen3D regression with a prompt that stresses rad
 
 ## Progress
 
-- [ ] (2026-02-10) Write and check in this ExecPlan.
-- [ ] (2026-02-10) Extend plan schema with `reuse_groups` and document it in prompts/tooling docs.
-- [ ] (2026-02-10) Persist validated reuse groups into job state and expose them in `get_state_summary_v1`.
-- [ ] (2026-02-10) Enforce “plan step only” in the Gen3D agent loop (prompt rule + engine guard).
-- [ ] (2026-02-10) Implement reuse-aware batch generation and auto-copy based on `reuse_groups`.
-- [ ] (2026-02-10) Add unit tests for reuse plan validation + generation scheduling + copy application.
-- [ ] (2026-02-10) Update `README.md` to mention plan-level reuse + auto-copy.
-- [ ] (2026-02-10) Run `cargo test`, run a headless smoke start, and commit.
-- [ ] (2026-02-10) Run a real rendered Gen3D test (radial legs prompt) via `tools/gen3d_real_test.py`, save to scene, move + fire + capture screenshots, and record the run id + any issues.
+- [x] (2026-02-10) Write and check in this ExecPlan.
+- [x] (2026-02-10) Extend plan schema with `reuse_groups` and document it in prompts/tooling docs.
+- [x] (2026-02-10) Persist validated reuse groups into job state and expose them in `get_state_summary_v1`.
+- [x] (2026-02-10) Enforce “plan step only” in the Gen3D agent loop (prompt rule + engine guard).
+- [x] (2026-02-10) Implement reuse-aware batch generation and auto-copy based on `reuse_groups`.
+- [x] (2026-02-10) Add unit tests for reuse plan validation + generation scheduling + copy application.
+- [x] (2026-02-10) Update `README.md` to mention plan-level reuse + auto-copy.
+- [x] (2026-02-10) Run `cargo test`, run a headless smoke start, and commit.
+- [x] (2026-02-10) Run a real rendered Gen3D test (radial legs prompt) via `tools/gen3d_real_test.py`, save to scene, move + fire + capture screenshots, and record the run id + any issues.
 
 ## Surprises & Discoveries
 
-- Observation: (fill in during implementation)
-  Evidence: (paths / short transcripts)
+- Observation: Some providers return SSE text for `/responses` even when we do not request streaming.
+  Evidence: Older real test runs failed with “`/responses returned no output text`” and fell back to `/chat/completions` (often 504). Fix implemented in `src/gen3d/ai/openai.rs` to extract SSE `response.output_text.delta` and accept `"type":"text"` parts.
+
+- Observation: Plan tool outputs are often “nearly-correct” but still require repair (and repairs can become very large).
+  Evidence: This real test run needed 2 repair attempts for `llm_generate_plan_v1` and produced multi-MB `/responses` artifacts under `tests/gen3d/cache/gen3d/f685579e-25b4-47cf-948a-42f9e09a5c8c/attempt_0/pass_0/`.
+
+- Observation: Engine-side `auto_copy` works, but agents may still redundantly call copy tools.
+  Evidence: `tests/gen3d/cache/gen3d/f685579e-25b4-47cf-948a-42f9e09a5c8c/attempt_0/pass_1/auto_copy.json` shows deterministic copies applied after batch generation, and the same pass also contains explicit copy tool calls in `tool_calls.jsonl`.
 
 ## Decision Log
 
@@ -54,7 +60,14 @@ Finally, we run a real rendered Gen3D regression with a prompt that stresses rad
 
 ## Outcomes & Retrospective
 
-(Fill in at completion: what worked, what didn’t, what to do next.)
+- `reuse_groups` is now a plan-level, non-heuristic way to declare repeated parts for deterministic reuse.
+- Reuse-aware missing-only batching + engine-side auto-copy reduces LLM calls and keeps repeated limbs consistent.
+- Real rendered run executed end-to-end (Build → Save → Move → Fire → screenshots) with:
+  - run_id `f685579e-25b4-47cf-948a-42f9e09a5c8c` under `tests/gen3d/cache/gen3d/`
+  - `auto_copy.json` applied 7 subtree copies / 14 component copies
+  - leg roots distributed evenly at ~45° increments (verified via `assembly_transforms.json`)
+  - smoke + motion validation OK (`smoke_results.json`)
+- Note: the driver used `--build-timeout-secs 1800` and the run finished “best effort” (`build_complete=false` but `draft_ready=true`) while still saving successfully and capturing move/fire sequences.
 
 ## Context and Orientation
 
@@ -200,6 +213,8 @@ Acceptance is satisfied when:
 
 Record run ids and key findings here once the regression is executed:
 
-- Run: (fill in) `~/.gravimera/cache/gen3d/<run_id>/`
-  - Notes: (copy usage, radial distribution, animation observations)
-
+- Run: `tests/gen3d/cache/gen3d/f685579e-25b4-47cf-948a-42f9e09a5c8c/`
+  - Reuse: `tests/gen3d/cache/gen3d/f685579e-25b4-47cf-948a-42f9e09a5c8c/attempt_0/pass_1/auto_copy.json`
+  - Render previews: `tests/gen3d/cache/gen3d/f685579e-25b4-47cf-948a-42f9e09a5c8c/attempt_0/pass_1/render_front.png`
+  - World screenshots: `tests/gen3d/cache/gen3d/f685579e-25b4-47cf-948a-42f9e09a5c8c/external_screenshots_world/spawn.png`
+  - Animation strips: `tests/gen3d/cache/gen3d/f685579e-25b4-47cf-948a-42f9e09a5c8c/external_screenshots_anim/move_anim.mp4`

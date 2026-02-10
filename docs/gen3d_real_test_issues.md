@@ -29,3 +29,8 @@ Note: Some prompts (e.g. “A horse”) may still exhaust the Gen3D time budget 
 - movement capture works,
 - and (if attackable) firing works.
 
+## 2026-02-10
+
+- `/responses` returned SSE output, but Gen3D treated it as non-JSON and failed with “`/responses returned no output text`”, then fell back to `/chat/completions` (often 504).
+  - Symptom: Real tests intermittently fail early during plan/component calls even though HTTP status is 200.
+  - Fix: parse SSE payloads and extract `response.output_text.delta` / `response.output_text.done` (and accept `"type":"text"` parts) in `src/gen3d/ai/openai.rs`.
