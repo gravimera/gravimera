@@ -140,6 +140,39 @@ fn max_keyframe_time_secs(value: &serde_json::Value) -> Option<f64> {
 fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
     let mut changed = false;
 
+    fn rename_key(
+        map: &mut serde_json::Map<String, serde_json::Value>,
+        from: &str,
+        to: &str,
+    ) -> bool {
+        if !map.contains_key(from) {
+            return false;
+        }
+        if map.contains_key(to) {
+            map.remove(from);
+            return true;
+        }
+        let Some(value) = map.remove(from) else {
+            return false;
+        };
+        map.insert(to.to_string(), value);
+        true
+    }
+
+    fn normalize_transform_set_delta_aliases(
+        map: &mut serde_json::Map<String, serde_json::Value>,
+    ) -> bool {
+        // The review prompt includes a compact label `offset.pos(join_frame)=...` for attachment
+        // offsets. Some models incorrectly copy that label into JSON keys like `offset_pos_join`.
+        // Accept those near-miss keys deterministically by rewriting them to the schema fields.
+        let mut changed = false;
+        changed |= rename_key(map, "offset_pos_join", "pos");
+        changed |= rename_key(map, "offset_pos", "pos");
+        changed |= rename_key(map, "offset_scale_join", "scale");
+        changed |= rename_key(map, "offset_scale", "scale");
+        changed
+    }
+
     let Some(actions) = value
         .as_object_mut()
         .and_then(|root| root.get_mut("actions"))
@@ -156,8 +189,23 @@ fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if kind != "tweak_animation" {
-            continue;
+        match kind {
+            "tweak_animation" => {}
+            "tweak_component_transform" => {
+                if let Some(set_obj) = action_obj.get_mut("set").and_then(|v| v.as_object_mut()) {
+                    if normalize_transform_set_delta_aliases(set_obj) {
+                        changed = true;
+                    }
+                }
+                if let Some(delta_obj) = action_obj.get_mut("delta").and_then(|v| v.as_object_mut())
+                {
+                    if normalize_transform_set_delta_aliases(delta_obj) {
+                        changed = true;
+                    }
+                }
+                continue;
+            }
+            _ => continue,
         }
 
         let channel = action_obj
@@ -986,6 +1034,33 @@ mod tests {
                 }
             }
             other => panic!("expected tweak_animation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizes_review_delta_transform_offset_pos_join_alias() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "actions": [
+            {
+              "kind":"tweak_component_transform",
+              "component_id":"deadbeef",
+              "delta": { "offset_pos_join": [0.0, 0.0, 0.06] }
+            }
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("delta should parse");
+        assert_eq!(delta.actions.len(), 1);
+        match &delta.actions[0] {
+            AiReviewDeltaActionJsonV1::TweakComponentTransform { delta, .. } => {
+                let Some(delta) = delta.as_ref() else {
+                    panic!("expected delta to be present");
+                };
+                assert_eq!(delta.pos, Some([0.0, 0.0, 0.06]));
+            }
+            other => panic!("expected tweak_component_transform, got {other:?}"),
         }
     }
 

@@ -444,8 +444,8 @@ fn gen3d_review_delta_prompt_includes_join_axes_and_offset_pos() {
     );
 
     assert!(
-        text.contains("offset_pos_join="),
-        "missing offset_pos_join in prompt:\n{text}"
+        text.contains("offset.pos(join_frame)="),
+        "missing offset.pos(join_frame)= in prompt:\n{text}"
     );
     assert!(
         text.contains("join_right_world=")

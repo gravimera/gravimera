@@ -899,7 +899,7 @@ pub(super) fn build_gen3d_review_delta_user_text(
 
             if parent_name != "(root)" {
                 out.push_str(&format!(
-                    " offset_pos_join={} join_right_world={} join_up_world={} join_forward_world={}",
+                    " offset.pos(join_frame)={} join_right_world={} join_up_world={} join_forward_world={}",
                     fmt_vec3(offset_pos_join),
                     fmt_vec3(join_right_world),
                     fmt_vec3(join_up_world),
