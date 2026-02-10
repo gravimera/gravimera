@@ -3756,7 +3756,7 @@ fn poll_agent_tool(
         base_user_text: String,
         images_to_send: Vec<PathBuf>,
         err: &str,
-        previous_output: &str,
+        _previous_output: &str,
         prefix_base: &str,
     ) -> bool {
         if job.agent.pending_llm_repair_attempt >= GEN3D_LLM_TOOL_SCHEMA_REPAIR_MAX_ATTEMPTS {
@@ -3770,13 +3770,16 @@ fn poll_agent_tool(
         user_text.push_str("\n\nREPAIR REQUEST:\n");
         user_text.push_str(
             "Your previous output could not be parsed/applied by the engine.\n\
-Return ONLY a single JSON object that matches the schema exactly.\n\
-Do not include markdown or extra commentary.\n",
+	Return ONLY a single JSON object that matches the schema exactly.\n\
+	Do not include markdown or extra commentary.\n",
         );
         user_text.push_str(&format!("Error: {}\n", err.trim()));
-        user_text.push_str("Previous output (for reference):\n");
-        user_text.push_str(previous_output.trim());
-        user_text.push('\n');
+        user_text.push_str(
+            "IMPORTANT: Your previous output may contain INVALID field names.\n\
+             Do NOT copy/paste keys from it. Use ONLY the schema-defined keys.\n\
+             If you want to reuse values (numbers/strings), retype them under the correct keys.\n\
+             (The raw previous output is omitted here to avoid repeating invalid keys.)\n",
+        );
 
         let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
             Arc::new(Mutex::new(None));
