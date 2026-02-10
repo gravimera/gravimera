@@ -815,6 +815,9 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                 let mut animations: Vec<PartAnimationSlot> = Vec::new();
                 if let Some(map) = att.animations.as_ref() {
                     for (channel, spec) in map.iter() {
+                        let Some(spec) = spec.as_ref() else {
+                            continue;
+                        };
                         let channel = channel.trim();
                         if channel.is_empty() {
                             continue;

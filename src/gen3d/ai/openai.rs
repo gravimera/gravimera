@@ -15,6 +15,7 @@ use super::artifacts::{
     append_gen3d_run_log, write_gen3d_json_artifact, write_gen3d_text_artifact,
 };
 use super::parse::extract_json_object;
+use super::structured_outputs::{json_schema_spec, Gen3dAiJsonSchemaKind};
 use super::{
     set_progress, truncate_for_ui, Gen3dAiApi, Gen3dAiProgress, Gen3dAiSessionState,
     Gen3dAiTextResponse, Gen3dChatHistoryMessage,
@@ -113,6 +114,7 @@ pub(super) fn cap_reasoning_effort(config_effort: &str, cap: &str) -> String {
 pub(super) fn generate_text_via_openai(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     mut session: Gen3dAiSessionState,
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -219,6 +221,7 @@ pub(super) fn generate_text_via_openai(
             let resp = mock_generate_text_via_openai(
                 progress,
                 session.clone(),
+                expected_schema,
                 system_instructions,
                 user_text,
                 image_paths,
@@ -259,6 +262,7 @@ pub(super) fn generate_text_via_openai(
     let responses_summary = match openai_responses_flow(
         progress,
         &mut session,
+        expected_schema,
         base_url,
         api_key,
         model,
@@ -328,6 +332,7 @@ pub(super) fn generate_text_via_openai(
     let chat_summary = match openai_chat_completions_flow(
         progress,
         &mut session,
+        expected_schema,
         base_url,
         api_key,
         model,
@@ -404,6 +409,7 @@ pub(super) fn generate_text_via_openai(
 fn mock_generate_text_via_openai(
     _progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: Gen3dAiSessionState,
+    _expected_schema: Option<Gen3dAiJsonSchemaKind>,
     _system_instructions: &str,
     _user_text: &str,
     image_paths: &[PathBuf],
@@ -831,9 +837,35 @@ fn parse_openai_responses_json(body: &str) -> Result<serde_json::Value, String> 
     }
 }
 
+fn is_structured_outputs_rejected(err: &OpenAiError) -> bool {
+    if !matches!(err.status, Some(400 | 404 | 422)) {
+        return false;
+    }
+    let Some(preview) = err.body_preview.as_deref() else {
+        return false;
+    };
+    let preview = preview.to_ascii_lowercase();
+
+    let mentions_feature = preview.contains("response_format")
+        || preview.contains("text.format")
+        || (preview.contains("text") && preview.contains("format"))
+        || preview.contains("json_schema")
+        || preview.contains("schema");
+    if !mentions_feature {
+        return false;
+    }
+
+    preview.contains("unsupported")
+        || preview.contains("unknown field")
+        || preview.contains("unrecognized field")
+        || preview.contains("not supported")
+        || preview.contains("invalid")
+}
+
 fn openai_responses_flow(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -911,12 +943,21 @@ fn openai_responses_flow(
             );
         }
 
+        let schema_for_request = if expected_schema.is_some()
+            && session.responses_structured_outputs_supported != Some(false)
+        {
+            expected_schema
+        } else {
+            None
+        };
+
         match openai_responses_curl(
             progress,
             base_url,
             api_key,
             model,
             reasoning_effort,
+            schema_for_request,
             system_instructions,
             user_text,
             images,
@@ -928,6 +969,9 @@ fn openai_responses_flow(
         ) {
             Ok(body) => {
                 session.responses_supported = Some(true);
+                if schema_for_request.is_some() {
+                    session.responses_structured_outputs_supported = Some(true);
+                }
                 break body;
             }
             Err(err) => {
@@ -943,6 +987,12 @@ fn openai_responses_flow(
                 if is_responses_endpoint_unsupported(&err) {
                     session.responses_supported = Some(false);
                     return Err(err);
+                }
+
+                if schema_for_request.is_some() && is_structured_outputs_rejected(&err) {
+                    warn!("Gen3D: /responses structured outputs rejected; retrying without structured outputs for this session.");
+                    session.responses_structured_outputs_supported = Some(false);
+                    continue;
                 }
 
                 if attempt < max_attempts
@@ -990,12 +1040,20 @@ fn openai_responses_flow(
                     attempt, max_attempts
                 );
                 std::thread::sleep(retry_delay);
+                let schema_for_request = if expected_schema.is_some()
+                    && session.responses_structured_outputs_supported != Some(false)
+                {
+                    expected_schema
+                } else {
+                    None
+                };
                 body = openai_responses_curl(
                     progress,
                     base_url,
                     api_key,
                     model,
                     reasoning_effort,
+                    schema_for_request,
                     system_instructions,
                     user_text,
                     images,
@@ -1118,6 +1176,7 @@ fn openai_responses_flow(
 fn openai_chat_completions_flow(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -1159,6 +1218,14 @@ fn openai_chat_completions_flow(
             );
         }
 
+        let schema_for_request = if expected_schema.is_some()
+            && session.chat_structured_outputs_supported != Some(false)
+        {
+            expected_schema
+        } else {
+            None
+        };
+
         match openai_chat_completions_curl(
             progress,
             session,
@@ -1166,6 +1233,7 @@ fn openai_chat_completions_flow(
             api_key,
             model,
             reasoning_effort,
+            schema_for_request,
             system_instructions,
             user_text,
             images,
@@ -1173,8 +1241,18 @@ fn openai_chat_completions_flow(
             run_dir,
             artifact_prefix,
         ) {
-            Ok(json) => break json,
+            Ok(json) => {
+                if schema_for_request.is_some() {
+                    session.chat_structured_outputs_supported = Some(true);
+                }
+                break json;
+            }
             Err(err) => {
+                if schema_for_request.is_some() && is_structured_outputs_rejected(&err) {
+                    warn!("Gen3D: /chat/completions structured outputs rejected; retrying without structured outputs for this session.");
+                    session.chat_structured_outputs_supported = Some(false);
+                    continue;
+                }
                 if attempt < max_attempts
                     && (is_transient_chat_error(&err) || err.body_preview.is_none())
                 {
@@ -1258,22 +1336,16 @@ impl std::fmt::Display for OpenAiError {
 
 impl std::error::Error for OpenAiError {}
 
-fn openai_responses_curl(
-    progress: &Arc<Mutex<Gen3dAiProgress>>,
-    base_url: &str,
-    api_key: &str,
+fn build_openai_responses_request_json(
     model: &str,
     reasoning_effort: &str,
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
     system_instructions: &str,
     user_text: &str,
     images: &[(&'static str, Vec<u8>)],
     image_paths: &[PathBuf],
     previous_response_id: Option<&str>,
-    run_dir: Option<&Path>,
-    artifact_prefix: &str,
-    probe_only: bool,
-) -> Result<String, OpenAiError> {
-    let url = crate::config::join_base_url(base_url, "responses");
+) -> serde_json::Value {
     let mut input = serde_json::json!({
       "model": model,
       "stream": false,
@@ -1298,6 +1370,17 @@ fn openai_responses_curl(
     if reasoning_effort.trim() != "none" {
         input["reasoning"] = serde_json::json!({ "effort": reasoning_effort });
     }
+    if let Some(kind) = expected_schema {
+        let spec = json_schema_spec(kind);
+        input["text"] = serde_json::json!({
+            "format": {
+                "type": "json_schema",
+                "name": spec.name,
+                "schema": spec.schema,
+                "strict": true,
+            }
+        });
+    }
 
     let content = input["input"][1]["content"].as_array_mut().unwrap();
     for (idx, (mime, bytes)) in images.iter().enumerate() {
@@ -1317,6 +1400,108 @@ fn openai_responses_curl(
         }));
     }
 
+    input
+}
+
+fn build_openai_chat_completions_request_json(
+    session: &Gen3dAiSessionState,
+    model: &str,
+    reasoning_effort: &str,
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    system_instructions: &str,
+    user_text: &str,
+    images: &[(&'static str, Vec<u8>)],
+    image_paths: &[PathBuf],
+) -> serde_json::Value {
+    let mut messages = Vec::new();
+
+    // A minimal session: keep some recent messages.
+    if !session.chat_history.is_empty() {
+        messages.extend(session.chat_history.iter().map(|m| {
+            serde_json::json!({
+              "role": m.role,
+              "content": m.content,
+            })
+        }));
+    }
+
+    messages.push(serde_json::json!({
+      "role": "system",
+      "content": system_instructions,
+    }));
+
+    let mut user_content: Vec<serde_json::Value> = Vec::new();
+    user_content.push(serde_json::json!({"type":"text","text": user_text}));
+    for (idx, (mime, bytes)) in images.iter().enumerate() {
+        let b64 = base64_encode(bytes);
+        let name = image_paths
+            .get(idx)
+            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
+            .unwrap_or("<unknown>");
+        user_content.push(serde_json::json!({
+          "type":"text",
+          "text": format!("Image {}: {name}", idx + 1),
+        }));
+        user_content.push(serde_json::json!({
+          "type": "image_url",
+          "image_url": { "url": format!("data:{mime};base64,{b64}") },
+        }));
+    }
+    messages.push(serde_json::json!({
+      "role": "user",
+      "content": user_content,
+    }));
+
+    let mut body_json = serde_json::json!({
+      "model": model,
+      "stream": false,
+      "messages": messages,
+    });
+    if reasoning_effort.trim() != "none" {
+        body_json["reasoning_effort"] = serde_json::json!(reasoning_effort);
+    }
+    if let Some(kind) = expected_schema {
+        let spec = json_schema_spec(kind);
+        body_json["response_format"] = serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": spec.name,
+                "schema": spec.schema,
+                "strict": true,
+            }
+        });
+    }
+    body_json
+}
+
+fn openai_responses_curl(
+    progress: &Arc<Mutex<Gen3dAiProgress>>,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    reasoning_effort: &str,
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    system_instructions: &str,
+    user_text: &str,
+    images: &[(&'static str, Vec<u8>)],
+    image_paths: &[PathBuf],
+    previous_response_id: Option<&str>,
+    run_dir: Option<&Path>,
+    artifact_prefix: &str,
+    probe_only: bool,
+) -> Result<String, OpenAiError> {
+    let url = crate::config::join_base_url(base_url, "responses");
+    let input = build_openai_responses_request_json(
+        model,
+        reasoning_effort,
+        expected_schema,
+        system_instructions,
+        user_text,
+        images,
+        image_paths,
+        previous_response_id,
+    );
+
     write_gen3d_json_artifact(
         run_dir,
         format!("{artifact_prefix}_responses_request.json"),
@@ -1333,12 +1518,13 @@ fn openai_responses_curl(
     append_gen3d_run_log(
         run_dir,
         format!(
-            "responses_send prefix={} url={} body_bytes={} images={} previous_response_id={} probe_only={}",
+            "responses_send prefix={} url={} body_bytes={} images={} previous_response_id={} structured_outputs={} probe_only={}",
             artifact_prefix,
             url,
             body.len(),
             images.len(),
             previous_response_id.unwrap_or(""),
+            expected_schema.is_some(),
             probe_only
         ),
     );
@@ -1469,6 +1655,7 @@ fn openai_chat_completions_curl(
     api_key: &str,
     model: &str,
     reasoning_effort: &str,
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
     system_instructions: &str,
     user_text: &str,
     images: &[(&'static str, Vec<u8>)],
@@ -1477,53 +1664,16 @@ fn openai_chat_completions_curl(
     artifact_prefix: &str,
 ) -> Result<serde_json::Value, OpenAiError> {
     let url = crate::config::join_base_url(base_url, "chat/completions");
-    let mut messages = Vec::new();
-
-    // A minimal session: keep some recent messages.
-    if !session.chat_history.is_empty() {
-        messages.extend(session.chat_history.iter().map(|m| {
-            serde_json::json!({
-              "role": m.role,
-              "content": m.content,
-            })
-        }));
-    }
-
-    messages.push(serde_json::json!({
-      "role": "system",
-      "content": system_instructions,
-    }));
-
-    let mut user_content: Vec<serde_json::Value> = Vec::new();
-    user_content.push(serde_json::json!({"type":"text","text": user_text}));
-    for (idx, (mime, bytes)) in images.iter().enumerate() {
-        let b64 = base64_encode(bytes);
-        let name = image_paths
-            .get(idx)
-            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
-            .unwrap_or("<unknown>");
-        user_content.push(serde_json::json!({
-          "type":"text",
-          "text": format!("Image {}: {name}", idx + 1),
-        }));
-        user_content.push(serde_json::json!({
-          "type": "image_url",
-          "image_url": { "url": format!("data:{mime};base64,{b64}") },
-        }));
-    }
-    messages.push(serde_json::json!({
-      "role": "user",
-      "content": user_content,
-    }));
-
-    let mut body_json = serde_json::json!({
-      "model": model,
-      "stream": false,
-      "messages": messages,
-    });
-    if reasoning_effort.trim() != "none" {
-        body_json["reasoning_effort"] = serde_json::json!(reasoning_effort);
-    }
+    let body_json = build_openai_chat_completions_request_json(
+        session,
+        model,
+        reasoning_effort,
+        expected_schema,
+        system_instructions,
+        user_text,
+        images,
+        image_paths,
+    );
     write_gen3d_json_artifact(
         run_dir,
         format!("{artifact_prefix}_chat_request.json"),
@@ -1540,11 +1690,12 @@ fn openai_chat_completions_curl(
     append_gen3d_run_log(
         run_dir,
         format!(
-            "chat_send prefix={} url={} body_bytes={} images={}",
+            "chat_send prefix={} url={} body_bytes={} images={} structured_outputs={}",
             artifact_prefix,
             url,
             body.len(),
-            images.len()
+            images.len(),
+            expected_schema.is_some()
         ),
     );
     set_progress(progress, "Sending request…");
@@ -1742,5 +1893,116 @@ mod tests {
         assert!(extract_openai_response_text(&json).is_none());
         assert_eq!(openai_response_status(&json), Some("in_progress"));
         assert!(openai_response_has_pending_status(&json));
+    }
+
+    #[test]
+    fn responses_request_includes_text_format_when_schema_provided() {
+        let json = build_openai_responses_request_json(
+            "gpt-test",
+            "high",
+            Some(Gen3dAiJsonSchemaKind::PlanV1),
+            "sys",
+            "user",
+            &[],
+            &[],
+            None,
+        );
+
+        let format = json
+            .get("text")
+            .and_then(|v| v.get("format"))
+            .expect("text.format should exist");
+        assert_eq!(
+            format.get("type").and_then(|v| v.as_str()),
+            Some("json_schema")
+        );
+        assert_eq!(
+            format.get("name").and_then(|v| v.as_str()),
+            Some("gen3d_plan_v1")
+        );
+        assert_eq!(format.get("strict").and_then(|v| v.as_bool()), Some(true));
+        assert!(format.get("schema").is_some());
+    }
+
+    #[test]
+    fn responses_request_omits_text_format_when_schema_not_provided() {
+        let json = build_openai_responses_request_json(
+            "gpt-test",
+            "high",
+            None,
+            "sys",
+            "user",
+            &[],
+            &[],
+            None,
+        );
+        assert!(json.get("text").is_none());
+    }
+
+    #[test]
+    fn chat_request_includes_response_format_when_schema_provided() {
+        let session = Gen3dAiSessionState::default();
+        let json = build_openai_chat_completions_request_json(
+            &session,
+            "gpt-test",
+            "high",
+            Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
+            "sys",
+            "user",
+            &[],
+            &[],
+        );
+
+        let resp_format = json
+            .get("response_format")
+            .expect("response_format should exist");
+        assert_eq!(
+            resp_format.get("type").and_then(|v| v.as_str()),
+            Some("json_schema")
+        );
+        let spec = resp_format
+            .get("json_schema")
+            .expect("response_format.json_schema should exist");
+        assert_eq!(
+            spec.get("name").and_then(|v| v.as_str()),
+            Some("gen3d_review_delta_v1")
+        );
+        assert_eq!(spec.get("strict").and_then(|v| v.as_bool()), Some(true));
+        assert!(spec.get("schema").is_some());
+    }
+
+    #[test]
+    fn chat_request_omits_response_format_when_schema_not_provided() {
+        let session = Gen3dAiSessionState::default();
+        let json = build_openai_chat_completions_request_json(
+            &session,
+            "gpt-test",
+            "high",
+            None,
+            "sys",
+            "user",
+            &[],
+            &[],
+        );
+        assert!(json.get("response_format").is_none());
+    }
+
+    #[test]
+    fn detects_structured_outputs_rejection_errors() {
+        let err = OpenAiError {
+            summary: "HTTP 400".into(),
+            url: "https://example.invalid".into(),
+            status: Some(400),
+            body_preview: Some("Unknown field `response_format`".into()),
+        };
+        assert!(is_structured_outputs_rejected(&err));
+
+        let other = OpenAiError {
+            summary: "HTTP 400".into(),
+            url: "https://example.invalid".into(),
+            status: Some(400),
+            body_preview: Some("unknown field `previous_response_id`".into()),
+        };
+        assert!(!is_structured_outputs_rejected(&other));
     }
 }

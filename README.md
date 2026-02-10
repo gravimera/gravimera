@@ -6,6 +6,8 @@ It’s built with [Bevy](https://bevyengine.org/) and currently focuses on the G
 
 Gen3D also tries to avoid duplicated LLM work by **reusing generated geometry** for repeated parts (for example: wheels, mirrored parts, or radial legs) via plan-level `reuse_groups` + deterministic copy tools (including subtree copy that can auto-expand missing target limb-chain descendants). The engine can auto-apply reuse after batch generation, and saves prefabs with bounds that account for animation keyframes to reduce ground-clipping surprises.
 
+When supported by your OpenAI-compatible endpoint, Gen3D requests API-level **Structured Outputs** (strict JSON Schema) for plan / component / review JSON so runs spend less time in schema-repair loops. If the provider rejects structured outputs, Gravimera automatically disables it for the current session and falls back to the legacy “free-form JSON + local repair” behavior.
+
 <img src="assets/icon.png" width="128" height="128" alt="Gravimera app icon" />
 
 ## Prerequisites

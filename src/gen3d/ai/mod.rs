@@ -25,6 +25,7 @@ mod parse;
 mod prompts;
 mod reuse_groups;
 mod schema;
+mod structured_outputs;
 
 #[cfg(test)]
 mod regression_tests;
@@ -37,6 +38,7 @@ use prompts::{
     build_gen3d_review_delta_system_instructions, build_gen3d_review_delta_user_text,
 };
 use schema::*;
+use structured_outputs::Gen3dAiJsonSchemaKind;
 
 use super::state::{
     Gen3dDraft, Gen3dGenerateButton, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera,
@@ -306,9 +308,15 @@ impl Gen3dAiJob {
         // cause avoidable 0-token failed requests.
         let responses_supported = self.session.responses_supported;
         let responses_continuation_supported = self.session.responses_continuation_supported;
+        let responses_structured_outputs_supported =
+            self.session.responses_structured_outputs_supported;
+        let chat_structured_outputs_supported = self.session.chat_structured_outputs_supported;
         self.session = Gen3dAiSessionState::default();
         self.session.responses_supported = responses_supported;
         self.session.responses_continuation_supported = responses_continuation_supported;
+        self.session.responses_structured_outputs_supported =
+            responses_structured_outputs_supported;
+        self.session.chat_structured_outputs_supported = chat_structured_outputs_supported;
     }
 
     fn start_run_metrics(&mut self) {
@@ -405,6 +413,8 @@ struct Gen3dAiSessionState {
     responses_supported: Option<bool>,
     responses_continuation_supported: Option<bool>,
     responses_previous_id: Option<String>,
+    responses_structured_outputs_supported: Option<bool>,
+    chat_structured_outputs_supported: Option<bool>,
     chat_history: Vec<Gen3dChatHistoryMessage>,
 }
 
@@ -1203,6 +1213,7 @@ pub(crate) fn gen3d_poll_ai_job(
                 shared,
                 progress,
                 job.session.clone(),
+                Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
                 openai,
                 reasoning_effort,
                 system,
@@ -1435,6 +1446,7 @@ pub(crate) fn gen3d_poll_ai_job(
                             shared,
                             progress,
                             job.session.clone(),
+                            Some(Gen3dAiJsonSchemaKind::PlanFillV1),
                             openai,
                             reasoning_effort,
                             system,
@@ -1600,7 +1612,8 @@ pub(crate) fn gen3d_poll_ai_job(
                         let Some(att) = target.attach_to.as_mut() else {
                             continue;
                         };
-                        if component.animations.is_empty() {
+                        let has_any_animation = component.animations.values().any(|v| v.is_some());
+                        if !has_any_animation {
                             continue;
                         }
                         att.animations = Some(component.animations.clone());
@@ -1999,6 +2012,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         shared,
                         progress,
                         job.session.clone(),
+                        Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
                         openai,
                         reasoning_effort,
                         system,
@@ -2389,6 +2403,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         shared,
                         progress,
                         job.session.clone(),
+                        Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
                         openai,
                         reasoning_effort,
                         system,
@@ -2481,6 +2496,7 @@ fn retry_gen3d_review_delta(
         shared,
         progress,
         job.session.clone(),
+        Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
         openai,
         reasoning_effort,
         system,
@@ -2561,6 +2577,7 @@ fn retry_gen3d_plan(
         shared,
         progress,
         job.session.clone(),
+        Some(Gen3dAiJsonSchemaKind::PlanV1),
         openai,
         reasoning_effort,
         system,
@@ -2823,6 +2840,7 @@ fn poll_gen3d_parallel_components(
             shared.clone(),
             progress.clone(),
             job.session.clone(),
+            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
             openai,
             reasoning_effort,
             system,
@@ -3048,6 +3066,7 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
         shared,
         progress,
         job.session.clone(),
+        Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
         openai,
         reasoning_effort,
         system,
@@ -3161,6 +3180,7 @@ fn try_start_gen3d_replan(
         shared,
         progress,
         job.session.clone(),
+        Some(Gen3dAiJsonSchemaKind::PlanV1),
         openai,
         reasoning_effort,
         system,
@@ -4468,6 +4488,7 @@ fn spawn_gen3d_ai_text_thread(
     shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>>,
     progress: Arc<Mutex<Gen3dAiProgress>>,
     session: Gen3dAiSessionState,
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
     openai: crate::config::OpenAiConfig,
     reasoning_effort: String,
     system_instructions: String,
@@ -4500,6 +4521,7 @@ fn spawn_gen3d_ai_text_thread(
         let result = openai::generate_text_via_openai(
             &progress,
             session,
+            expected_schema,
             &openai.base_url,
             &openai.api_key,
             &openai.model,

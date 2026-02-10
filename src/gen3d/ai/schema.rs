@@ -360,7 +360,7 @@ pub(crate) struct AiPlanAttachmentJson {
     #[serde(default)]
     pub(crate) joint: Option<AiJointJson>,
     #[serde(default)]
-    pub(crate) animations: Option<BTreeMap<String, AiAnimationSpecJson>>,
+    pub(crate) animations: Option<BTreeMap<String, Option<AiAnimationSpecJson>>>,
     // Legacy field (plan v4) – treated as an ambient loop when present.
     #[serde(default)]
     pub(crate) animation: Option<AiPartAnimationJson>,
@@ -588,5 +588,5 @@ pub(crate) struct AiPlanFillJsonV1 {
 pub(crate) struct AiPlanFillComponentJson {
     pub(crate) name: String,
     #[serde(default)]
-    pub(crate) animations: BTreeMap<String, AiAnimationSpecJson>,
+    pub(crate) animations: BTreeMap<String, Option<AiAnimationSpecJson>>,
 }

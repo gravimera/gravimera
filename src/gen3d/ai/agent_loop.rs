@@ -180,6 +180,7 @@ pub(super) fn spawn_agent_step_request(
         shared,
         progress,
         job.session.clone(),
+        None,
         openai,
         reasoning_effort,
         system,
@@ -2754,6 +2755,7 @@ fn execute_tool_call(
                 shared,
                 progress,
                 job.session.clone(),
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1),
                 openai,
                 reasoning_effort,
                 system,
@@ -2892,6 +2894,7 @@ fn execute_tool_call(
                 shared,
                 progress,
                 job.session.clone(),
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1),
                 openai,
                 reasoning_effort,
                 system,
@@ -3379,6 +3382,7 @@ fn execute_tool_call(
                 shared,
                 progress,
                 job.session.clone(),
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1),
                 openai,
                 reasoning_effort,
                 system,
@@ -3821,10 +3825,23 @@ fn poll_agent_tool(
             &openai.model_reasoning_effort,
             reasoning_effort_cap,
         );
+        let expected_schema = match kind {
+            super::Gen3dAgentLlmToolKind::GeneratePlan => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1)
+            }
+            super::Gen3dAgentLlmToolKind::GenerateComponent { .. }
+            | super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1)
+            }
+            super::Gen3dAgentLlmToolKind::ReviewDelta => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1)
+            }
+        };
         spawn_gen3d_ai_text_thread(
             shared,
             progress,
             job.session.clone(),
+            expected_schema,
             openai,
             reasoning_effort,
             system,
@@ -4916,6 +4933,7 @@ fn poll_agent_component_batch(
             shared.clone(),
             progress.clone(),
             job.session.clone(),
+            Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1),
             openai,
             reasoning_effort,
             system,
