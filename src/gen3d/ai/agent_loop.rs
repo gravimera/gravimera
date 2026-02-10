@@ -216,6 +216,10 @@ Rules:\n\
   - If budgets prevent further improvement (regen budgets, time, tokens), output a \"done\" action with a best-effort reason.\n\
 - Be AGGRESSIVE about visual QA: render previews and review them early, but prefer doing work in WAVES to reduce LLM wall time.\n\
   - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\
+  - IMPORTANT: planning must be its OWN step.\n\
+    - If you call llm_generate_plan_v1, DO NOT include llm_generate_components_v1/llm_generate_component_v1 in the same step.\n\
+    - End the step after planning so you can observe `reuse_groups`/state before deciding what to generate.\n\
+    - The engine will end the step after a successful llm_generate_plan_v1 even if you requested more actions.\n\
   - Avoid calling llm_review_delta_v1 after every single component if you can generate a batch first.\n\
   - After any render_preview_v1, immediately call llm_review_delta_v1 using the rendered images.\n\
   - Do NOT use placeholder paths like `$CALL_1.images[0]` in tool args; the engine does not substitute tool outputs into later tool calls.\n\
@@ -232,7 +236,8 @@ Rules:\n\
   - The state summary may include `reuse_suggestions` with ready-to-use tool args; use them when appropriate.\n\
 - When you DO need LLM generation, prefer batching UNIQUE components in parallel:\n\
   - Use llm_generate_components_v1 with explicit component_indices/names for the unique set.\n\
-  - Use missing_only=true ONLY when you truly want ALL missing components and there are no copy opportunities.\n\
+  - Use missing_only=true ONLY when you truly want ALL missing components.\n\
+    - If the plan declares `reuse_groups`, the engine will skip reuse targets in missing_only batches and auto-copy them after sources are generated.\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
@@ -684,6 +689,50 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
         })
         .collect();
 
+    let reuse_groups_json: Vec<serde_json::Value> = job
+        .reuse_groups
+        .iter()
+        .map(|g| {
+            let kind = match g.kind {
+                super::reuse_groups::Gen3dReuseGroupKind::Component => "component",
+                super::reuse_groups::Gen3dReuseGroupKind::Subtree => "subtree",
+            };
+            let mode = match g.mode {
+                super::copy_component::Gen3dCopyMode::Detached => "detached",
+                super::copy_component::Gen3dCopyMode::Linked => "linked",
+            };
+            let anchors = match g.anchors_mode {
+                super::copy_component::Gen3dCopyAnchorsMode::CopySourceAnchors => "copy_source",
+                super::copy_component::Gen3dCopyAnchorsMode::PreserveTargetAnchors => {
+                    "preserve_target"
+                }
+            };
+            let source = job
+                .planned_components
+                .get(g.source_root_idx)
+                .map(|c| c.name.as_str())
+                .unwrap_or("<missing>");
+            let targets: Vec<&str> = g
+                .target_root_indices
+                .iter()
+                .copied()
+                .filter_map(|idx| job.planned_components.get(idx).map(|c| c.name.as_str()))
+                .collect();
+            serde_json::json!({
+                "kind": kind,
+                "source": source,
+                "targets": targets,
+                "mode": mode,
+                "anchors": anchors,
+            })
+        })
+        .collect();
+
+    let missing_only_generation_indices = super::reuse_groups::missing_only_generation_indices(
+        &job.planned_components,
+        &job.reuse_groups,
+    );
+
     serde_json::json!({
         "run_id": job.run_id.map(|id| id.to_string()),
         "attempt": job.attempt,
@@ -691,6 +740,9 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
         "plan_hash": job.plan_hash,
         "assembly_rev": job.assembly_rev,
         "needs_review": job.agent.rendered_since_last_review,
+        "reuse_groups": reuse_groups_json,
+        "reuse_group_warnings": &job.reuse_group_warnings,
+        "missing_only_generation_indices": missing_only_generation_indices,
         "reuse_suggestions": build_reuse_suggestions(&job.planned_components),
         "qa": {
             "ever_rendered": job.agent.ever_rendered,
@@ -2933,12 +2985,37 @@ fn execute_tool_call(
 
             let missing_only_arg = call.args.get("missing_only").and_then(|v| v.as_bool());
             let missing_only = missing_only_arg.unwrap_or(requested_indices.is_empty());
+            let mut optimized_by_reuse_groups = false;
+            let mut skipped_due_to_reuse_groups: Vec<usize> = Vec::new();
 
             if requested_indices.is_empty() {
                 if missing_only {
-                    for (idx, comp) in job.planned_components.iter().enumerate() {
-                        if comp.actual_size.is_none() {
-                            requested_indices.push(idx);
+                    if !job.reuse_groups.is_empty() {
+                        optimized_by_reuse_groups = true;
+                        let optimized = super::reuse_groups::missing_only_generation_indices(
+                            &job.planned_components,
+                            &job.reuse_groups,
+                        );
+                        let mut included = vec![false; job.planned_components.len()];
+                        for idx in optimized.iter().copied() {
+                            if idx < included.len() {
+                                included[idx] = true;
+                            }
+                        }
+                        for (idx, comp) in job.planned_components.iter().enumerate() {
+                            if comp.actual_size.is_some() {
+                                continue;
+                            }
+                            if !included[idx] {
+                                skipped_due_to_reuse_groups.push(idx);
+                            }
+                        }
+                        requested_indices = optimized;
+                    } else {
+                        for (idx, comp) in job.planned_components.iter().enumerate() {
+                            if comp.actual_size.is_none() {
+                                requested_indices.push(idx);
+                            }
                         }
                     }
                 } else {
@@ -3030,6 +3107,8 @@ fn execute_tool_call(
 
             job.agent.pending_component_batch = Some(super::Gen3dPendingComponentBatch {
                 requested_indices,
+                optimized_by_reuse_groups,
+                skipped_due_to_reuse_groups,
                 skipped_due_to_regen_budget,
                 completed_indices: std::collections::HashSet::new(),
                 failed: Vec::new(),
@@ -3774,10 +3853,17 @@ Do not include markdown or extra commentary.\n",
                     let text = resp.text;
                     match parse::parse_ai_plan_from_text(&text) {
                         Ok(plan) => {
+                            let plan_reuse_groups = plan.reuse_groups.clone();
                             match super::convert::ai_plan_to_initial_draft_defs(plan.clone()) {
                                 Ok((planned, notes, defs)) => {
                                     job.planned_components = planned;
                                     job.assembly_notes = notes;
+                                    let (validated, warnings) = super::reuse_groups::validate_reuse_groups(
+                                        &plan_reuse_groups,
+                                        &job.planned_components,
+                                    );
+                                    job.reuse_groups = validated;
+                                    job.reuse_group_warnings = warnings;
                                     job.plan_hash = super::compute_gen3d_plan_hash(
                                         &job.assembly_notes,
                                         job.rig_move_cycle_m,
@@ -4499,8 +4585,17 @@ Do not include markdown or extra commentary.\n",
             tool_result.error.as_deref().unwrap_or("<none>")
         );
     }
+    let tool_id_for_guard = tool_result.tool_id.clone();
+    let tool_ok_for_guard = tool_result.ok;
     note_observable_tool_result(job, &tool_result);
     job.agent.step_tool_results.push(tool_result);
+
+    if !tool_ok_for_guard || tool_id_for_guard == TOOL_ID_LLM_GENERATE_PLAN {
+        // End the step early on async tool failures (avoid cascades), and also enforce
+        // a hard phase split after planning so the next step can observe the plan state
+        // (including any reuse_groups) before deciding what to generate.
+        job.agent.step_action_idx = job.agent.step_actions.len();
+    }
 
     job.phase = Gen3dAiPhase::AgentExecutingActions;
 
@@ -4863,6 +4958,97 @@ fn poll_agent_component_batch(
             })
             .collect();
 
+        let mut auto_copy = super::reuse_groups::apply_auto_copy(
+            &mut job.planned_components,
+            draft,
+            &job.reuse_groups,
+        );
+        if auto_copy.component_copies_applied > 0 {
+            if let Some(root_idx) = job
+                .planned_components
+                .iter()
+                .position(|c| c.attach_to.is_none())
+            {
+                if let Err(err) = super::convert::resolve_planned_component_transforms(
+                    &mut job.planned_components,
+                    root_idx,
+                ) {
+                    auto_copy.errors.push(format!(
+                        "auto_copy: failed to resolve transforms after copy: {err}"
+                    ));
+                }
+            }
+            super::convert::update_root_def_from_planned_components(
+                &job.planned_components,
+                &job.plan_collider,
+                draft,
+            );
+            write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
+            job.assembly_rev = job.assembly_rev.saturating_add(1);
+        }
+
+        if let Some(pass_dir) = job.pass_dir.as_deref() {
+            if auto_copy.component_copies_applied > 0 || !auto_copy.errors.is_empty() {
+                let mut outcomes_json: Vec<serde_json::Value> = Vec::new();
+                const MAX_OUTCOMES: usize = 16;
+                for outcome in auto_copy.outcomes.iter().take(MAX_OUTCOMES) {
+                    let mode = match outcome.mode_used {
+                        super::copy_component::Gen3dCopyMode::Detached => "detached",
+                        super::copy_component::Gen3dCopyMode::Linked => "linked",
+                    };
+                    outcomes_json.push(serde_json::json!({
+                        "source": outcome.source_component_name.as_str(),
+                        "target": outcome.target_component_name.as_str(),
+                        "mode": mode,
+                    }));
+                }
+                let outcomes_omitted = auto_copy.outcomes.len().saturating_sub(MAX_OUTCOMES);
+                write_gen3d_json_artifact(
+                    Some(pass_dir),
+                    "auto_copy.json",
+                    &serde_json::json!({
+                        "version": 1,
+                        "enabled": auto_copy.enabled,
+                        "component_copies_applied": auto_copy.component_copies_applied,
+                        "subtree_copies_applied": auto_copy.subtree_copies_applied,
+                        "targets_skipped_already_generated": auto_copy.targets_skipped_already_generated,
+                        "subtrees_skipped_partially_generated": auto_copy.subtrees_skipped_partially_generated,
+                        "errors": &auto_copy.errors,
+                        "outcomes": outcomes_json,
+                        "outcomes_omitted": outcomes_omitted,
+                    }),
+                );
+            }
+        }
+
+        let mut outcomes_json: Vec<serde_json::Value> = Vec::new();
+        const MAX_OUTCOMES: usize = 16;
+        for outcome in auto_copy.outcomes.iter().take(MAX_OUTCOMES) {
+            let mode = match outcome.mode_used {
+                super::copy_component::Gen3dCopyMode::Detached => "detached",
+                super::copy_component::Gen3dCopyMode::Linked => "linked",
+            };
+            outcomes_json.push(serde_json::json!({
+                "source": outcome.source_component_name.as_str(),
+                "target": outcome.target_component_name.as_str(),
+                "mode": mode,
+            }));
+        }
+        let outcomes_omitted = auto_copy.outcomes.len().saturating_sub(MAX_OUTCOMES);
+
+        let skipped_due_to_reuse_groups_json: Vec<serde_json::Value> = batch
+            .skipped_due_to_reuse_groups
+            .iter()
+            .copied()
+            .filter(|idx| *idx < job.planned_components.len())
+            .map(|idx| {
+                serde_json::json!({
+                    "index": idx,
+                    "name": job.planned_components[idx].name.as_str(),
+                })
+            })
+            .collect();
+
         let call = job.agent.pending_tool_call.take().unwrap();
         job.agent.pending_llm_tool = None;
         job.agent.pending_component_batch = None;
@@ -4876,7 +5062,19 @@ fn poll_agent_component_batch(
                 "requested": total,
                 "succeeded": succeeded,
                 "failed": failed_json,
+                "optimized_by_reuse_groups": batch.optimized_by_reuse_groups,
+                "skipped_due_to_reuse_groups": skipped_due_to_reuse_groups_json,
                 "skipped_due_to_regen_budget": batch.skipped_due_to_regen_budget,
+                "auto_copy": {
+                    "enabled": auto_copy.enabled,
+                    "component_copies_applied": auto_copy.component_copies_applied,
+                    "subtree_copies_applied": auto_copy.subtree_copies_applied,
+                    "targets_skipped_already_generated": auto_copy.targets_skipped_already_generated,
+                    "subtrees_skipped_partially_generated": auto_copy.subtrees_skipped_partially_generated,
+                    "errors": auto_copy.errors,
+                    "outcomes": outcomes_json,
+                    "outcomes_omitted": outcomes_omitted,
+                },
             }),
         ));
     }

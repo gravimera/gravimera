@@ -23,6 +23,7 @@ mod motion_validation;
 mod openai;
 mod parse;
 mod prompts;
+mod reuse_groups;
 mod schema;
 
 #[cfg(test)]
@@ -63,6 +64,8 @@ enum Gen3dAgentLlmToolKind {
 #[derive(Clone, Debug)]
 struct Gen3dPendingComponentBatch {
     requested_indices: Vec<usize>,
+    optimized_by_reuse_groups: bool,
+    skipped_due_to_reuse_groups: Vec<usize>,
     skipped_due_to_regen_budget: Vec<usize>,
     completed_indices: std::collections::HashSet<usize>,
     failed: Vec<Gen3dComponentBatchFailure>,
@@ -196,6 +199,8 @@ pub(crate) struct Gen3dAiJob {
     assembly_notes: String,
     plan_collider: Option<AiColliderJson>,
     rig_move_cycle_m: Option<f32>,
+    reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
+    reuse_group_warnings: Vec<String>,
     pending_plan: Option<AiPlanJsonV1>,
     component_queue: Vec<usize>,
     component_queue_pos: usize,
@@ -758,6 +763,8 @@ pub(crate) fn gen3d_start_build_from_api(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
+    job.reuse_groups.clear();
+    job.reuse_group_warnings.clear();
     job.pending_plan = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
@@ -1447,10 +1454,17 @@ pub(crate) fn gen3d_poll_ai_job(
                         .filter(|v| v.is_finite())
                         .map(|v| v.abs())
                         .filter(|v| *v > 1e-3);
+                    let plan_reuse_groups = plan.reuse_groups.clone();
                     match convert::ai_plan_to_initial_draft_defs(plan) {
                         Ok((planned, assembly_notes, defs)) => {
                             job.planned_components = planned;
                             job.assembly_notes = assembly_notes;
+                            let (validated, warnings) = reuse_groups::validate_reuse_groups(
+                                &plan_reuse_groups,
+                                &job.planned_components,
+                            );
+                            job.reuse_groups = validated;
+                            job.reuse_group_warnings = warnings;
                             job.component_queue = (0..job.planned_components.len()).collect();
                             job.component_queue_pos = 0;
                             job.generation_kind = Gen3dComponentGenerationKind::Initial;
@@ -1601,10 +1615,17 @@ pub(crate) fn gen3d_poll_ai_job(
                         .filter(|v| v.is_finite())
                         .map(|v| v.abs())
                         .filter(|v| *v > 1e-3);
+                    let plan_reuse_groups = plan.reuse_groups.clone();
                     match convert::ai_plan_to_initial_draft_defs(plan) {
                         Ok((planned, assembly_notes, defs)) => {
                             job.planned_components = planned;
                             job.assembly_notes = assembly_notes;
+                            let (validated, warnings) = reuse_groups::validate_reuse_groups(
+                                &plan_reuse_groups,
+                                &job.planned_components,
+                            );
+                            job.reuse_groups = validated;
+                            job.reuse_group_warnings = warnings;
                             job.component_queue = (0..job.planned_components.len()).collect();
                             job.component_queue_pos = 0;
                             job.generation_kind = Gen3dComponentGenerationKind::Initial;
@@ -2496,6 +2517,8 @@ fn retry_gen3d_plan(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
+    job.reuse_groups.clear();
+    job.reuse_group_warnings.clear();
     job.pending_plan = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
@@ -3084,6 +3107,8 @@ fn try_start_gen3d_replan(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
+    job.reuse_groups.clear();
+    job.reuse_group_warnings.clear();
     job.pending_plan = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;

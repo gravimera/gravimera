@@ -434,6 +434,21 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
               - `duty_factor_01`: fraction of cycle in (0,1].\n\
               - Only use `stance` for planted contacts (feet/hooves), not for spinning wheels.\n\
           - Optional: top-level `rig.move_cycle_m` defines meters-per-cycle for `move` (helps validation for stance schedules).\n\n\
+         Reuse groups (IMPORTANT for speed + consistency):\n\
+         - If multiple components should share the SAME geometry (wheels, repeated legs, mirrored parts, numbered sets like `leg_0..leg_7`), declare `reuse_groups`.\n\
+         - The engine can then generate only the unique components + the declared reuse sources, and fill the remaining targets via deterministic copy.\n\
+         - This does NOT change the attachment tree; it only affects how missing geometry gets produced.\n\
+         - `reuse_groups[].kind`:\n\
+           - `component` (copy a single component's geometry)\n\
+           - `subtree` (copy an entire limb-chain subtree rooted at `source`)\n\
+         - `reuse_groups[].mode` (optional; default `detached`): `detached` | `linked`.\n\
+           - For `subtree`, prefer `detached`.\n\
+         - `reuse_groups[].anchors` (optional; default `preserve_target`):\n\
+           - `preserve_target` (recommended for mirrored/radial limbs; keeps each target's mount interface stable)\n\
+           - `copy_source` (overwrite target anchors to match the source exactly)\n\
+         - Field aliases accepted by the engine:\n\
+           - `source` may be `source_root` / `source_component`.\n\
+           - `targets` may be `target_roots` / `target_components`.\n\n\
           Schema:\n\
           {{\n\
             \"version\": 7,\n\
@@ -444,6 +459,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             \"collider\": {{\"kind\":\"aabb_xz\",\"half_extents\":[x,z]}} | {{\"kind\":\"circle_xz\",\"radius\":r}} | {{\"kind\":\"none\"}} (optional),\n\
             \"assembly_notes\": \"...\" (optional),\n\
             \"root_component\": \"component_name\" (optional; otherwise inferred as the only component without attach_to),\n\
+            \"reuse_groups\": [\n\
+              {{ \"kind\": \"component\" | \"subtree\", \"source\": \"component_name\", \"targets\": [\"component_name\", ...], \"mode\": \"detached\" | \"linked\" (optional), \"anchors\": \"preserve_target\" | \"copy_source\" (optional) }}\n\
+            ] (optional),\n\
             \"components\": [\n\
               {{\n\
                 \"name\": \"stable_unique_identifier\",\n\

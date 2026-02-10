@@ -201,6 +201,62 @@ pub(crate) struct AiRigJson {
     pub(crate) move_cycle_m: Option<f32>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiReuseGroupKindJson {
+    Component,
+    #[serde(rename = "copy_component")]
+    CopyComponent,
+    Subtree,
+    #[serde(rename = "copy_component_subtree")]
+    CopyComponentSubtree,
+    #[serde(other)]
+    Unknown,
+}
+
+impl Default for AiReuseGroupKindJson {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiReuseModeJson {
+    Detached,
+    Linked,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiReuseAnchorsJson {
+    PreserveTarget,
+    CopySource,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct AiReuseGroupJson {
+    #[serde(default)]
+    pub(crate) kind: AiReuseGroupKindJson,
+    #[serde(default, alias = "source_root", alias = "source_component")]
+    pub(crate) source: String,
+    #[serde(
+        default,
+        alias = "target_roots",
+        alias = "target_components",
+        alias = "target_component_names"
+    )]
+    pub(crate) targets: Vec<String>,
+    #[serde(default)]
+    pub(crate) mode: Option<AiReuseModeJson>,
+    #[serde(default)]
+    pub(crate) anchors: Option<AiReuseAnchorsJson>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiPlanJsonV1 {
@@ -220,6 +276,8 @@ pub(crate) struct AiPlanJsonV1 {
     pub(crate) assembly_notes: String,
     #[serde(default)]
     pub(crate) root_component: Option<String>,
+    #[serde(default)]
+    pub(crate) reuse_groups: Vec<AiReuseGroupJson>,
     pub(crate) components: Vec<AiPlanComponentJson>,
 }
 

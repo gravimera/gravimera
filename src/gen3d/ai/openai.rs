@@ -419,61 +419,112 @@ fn mock_generate_text_via_openai(
     }
 
     let text = if artifact_prefix == "agent_step" {
+        fn attempt_dir_for_pass_dir(pass_dir: &Path) -> Option<&Path> {
+            // Expected layout: <run_dir>/attempt_0/pass_N
+            pass_dir.parent()
+        }
+
+        fn attempt_has_plan(attempt_dir: &Path) -> bool {
+            let Ok(entries) = std::fs::read_dir(attempt_dir) else {
+                return false;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if !name.starts_with("pass_") {
+                    continue;
+                }
+                if path.join("plan_extracted.json").exists() {
+                    return true;
+                }
+            }
+            false
+        }
+
+        let has_plan = run_dir
+            .and_then(|dir| attempt_dir_for_pass_dir(dir))
+            .is_some_and(attempt_has_plan);
+
         // Intentionally uses some common “wrong” arg spellings (name/component_id/base) to
         // regression-test tool-call tolerance.
-        serde_json::json!({
-            "version": 1,
-            "status_summary": "Mock: build a warcar with a cannon via plan + components.",
-            "actions": [
-                {
-                    "kind": "tool_call",
-                    "call_id": "call_1_create_ws",
-                    "tool_id": "create_workspace_v1",
-                    "args": { "name": "warcar_preview", "base": "main" }
-                },
-                {
-                    "kind": "tool_call",
-                    "call_id": "call_2_set_ws",
-                    "tool_id": "set_active_workspace_v1",
-                    "args": { "name": "warcar_preview" }
-                },
-                {
-                    "kind": "tool_call",
-                    "call_id": "call_3_plan",
-                    "tool_id": "llm_generate_plan_v1",
-                    "args": {
-                        "prompt": "A warcar with a cannon as weapon",
-                        "style": "Voxel/Pixel Art",
-                        "components": ["chassis","wheels","turret","cannon","details"]
+        if !has_plan {
+            // Planning must be its own step (the engine enforces this).
+            serde_json::json!({
+                "version": 1,
+                "status_summary": "Mock: plan the warcar components.",
+                "actions": [
+                    {
+                        "kind": "tool_call",
+                        "call_id": "call_1_create_ws",
+                        "tool_id": "create_workspace_v1",
+                        "args": { "name": "warcar_preview", "base": "main" }
+                    },
+                    {
+                        "kind": "tool_call",
+                        "call_id": "call_2_set_ws",
+                        "tool_id": "set_active_workspace_v1",
+                        "args": { "name": "warcar_preview" }
+                    },
+                    {
+                        "kind": "tool_call",
+                        "call_id": "call_3_plan",
+                        "tool_id": "llm_generate_plan_v1",
+                        "args": {
+                            "prompt": "A warcar with a cannon as weapon",
+                            "style": "Voxel/Pixel Art",
+                            "components": ["chassis","wheels","turret","cannon","details"]
+                        }
                     }
-                },
-                {
-                    "kind": "tool_call",
-                    "call_id": "call_4_components",
-                    "tool_id": "llm_generate_components_v1",
-                    "args": {
-                        "component_names": ["chassis","wheels","turret","cannon","details"]
+                ]
+            })
+            .to_string()
+        } else {
+            serde_json::json!({
+                "version": 1,
+                "status_summary": "Mock: generate the planned components and run QA.",
+                "actions": [
+                    {
+                        "kind": "tool_call",
+                        "call_id": "call_1_create_ws",
+                        "tool_id": "create_workspace_v1",
+                        "args": { "name": "warcar_preview", "base": "main" }
+                    },
+                    {
+                        "kind": "tool_call",
+                        "call_id": "call_2_set_ws",
+                        "tool_id": "set_active_workspace_v1",
+                        "args": { "name": "warcar_preview" }
+                    },
+                    {
+                        "kind": "tool_call",
+                        "call_id": "call_4_components",
+                        "tool_id": "llm_generate_components_v1",
+                        "args": {
+                            "component_names": ["chassis","wheels","turret","cannon","details"]
+                        }
+                    },
+                    {
+                        "kind": "tool_call",
+                        "call_id": "call_9_validate",
+                        "tool_id": "validate_v1",
+                        "args": {}
+                    },
+                    {
+                        "kind": "tool_call",
+                        "call_id": "call_10_smoke",
+                        "tool_id": "smoke_check_v1",
+                        "args": {}
+                    },
+                    {
+                        "kind": "done",
+                        "reason": "Mock Gen3D build completed."
                     }
-                },
-                {
-                    "kind": "tool_call",
-                    "call_id": "call_9_validate",
-                    "tool_id": "validate_v1",
-                    "args": {}
-                },
-                {
-                    "kind": "tool_call",
-                    "call_id": "call_10_smoke",
-                    "tool_id": "smoke_check_v1",
-                    "args": {}
-                },
-                {
-                    "kind": "done",
-                    "reason": "Mock Gen3D build completed."
-                }
-            ]
-        })
-        .to_string()
+                ]
+            })
+            .to_string()
+        }
     } else if artifact_prefix.starts_with("tool_plan_") {
         serde_json::json!({
             "version": 6,
@@ -628,13 +679,66 @@ pub(super) fn extract_openai_response_text(json: &serde_json::Value) -> Option<S
             continue;
         };
         for part in parts {
-            if part.get("type").and_then(|v| v.as_str()) == Some("output_text") {
+            let ty = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if matches!(ty, "output_text" | "text") {
                 if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
                     out.push_str(text);
                 }
             }
         }
     }
+    (!out.trim().is_empty()).then_some(out)
+}
+
+fn extract_openai_responses_sse_output_text(body: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut saw_delta = false;
+
+    for line in body.lines() {
+        let line = line.trim();
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(data) else {
+            continue;
+        };
+
+        match json.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+            "response.output_text.delta" => {
+                if let Some(delta) = json.get("delta").and_then(|v| v.as_str()) {
+                    saw_delta = true;
+                    out.push_str(delta);
+                }
+            }
+            "response.output_text.done" => {
+                if let Some(text) = json.get("text").and_then(|v| v.as_str()) {
+                    saw_delta = true;
+                    out.push_str(text);
+                }
+            }
+            // Some SSE streams include the full part payload instead of deltas.
+            "response.content_part.added" | "response.content_part.done" => {
+                if saw_delta {
+                    continue;
+                }
+                let Some(part) = json.get("part") else {
+                    continue;
+                };
+                if part.get("type").and_then(|v| v.as_str()) != Some("output_text") {
+                    continue;
+                }
+                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                    out.push_str(text);
+                }
+            }
+            _ => {}
+        }
+    }
+
     (!out.trim().is_empty()).then_some(out)
 }
 
@@ -868,10 +972,19 @@ fn openai_responses_flow(
         &body,
     );
 
+    let sse_output_text = extract_openai_responses_sse_output_text(&body);
+
     let mut json: serde_json::Value = match parse_openai_responses_json(&body) {
         Ok(json) => json,
         Err(err) => {
-            if attempt < max_attempts {
+            // If we already reconstructed an SSE output text, do not retry just to obtain the
+            // surrounding JSON envelope; the text itself is sufficient.
+            if sse_output_text.is_some() {
+                warn!(
+                    "Gen3D: failed to parse /responses JSON envelope, but SSE output text was extracted; continuing. err={err}"
+                );
+                serde_json::Value::Null
+            } else if attempt < max_attempts {
                 warn!(
                     "Gen3D: failed to parse /responses JSON; retrying (attempt {}/{}) err={err}",
                     attempt, max_attempts
@@ -902,7 +1015,27 @@ fn openai_responses_flow(
             }
         }
     };
-    write_gen3d_json_artifact(run_dir, format!("{artifact_prefix}_responses.json"), &json);
+    if !json.is_null() {
+        write_gen3d_json_artifact(run_dir, format!("{artifact_prefix}_responses.json"), &json);
+    }
+
+    if let Some(text) = sse_output_text {
+        let total_tokens = extract_openai_total_tokens(&json);
+
+        if success_used_previous_response_id {
+            session.responses_continuation_supported = Some(true);
+        }
+        if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
+            session.responses_previous_id = Some(id.to_string());
+        }
+
+        return Ok(Gen3dAiTextResponse {
+            text,
+            api: Gen3dAiApi::Responses,
+            session: session.clone(),
+            total_tokens,
+        });
+    }
 
     // Poll if in progress.
     if openai_response_has_pending_status(&json) {

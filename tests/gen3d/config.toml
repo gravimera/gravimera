@@ -1,0 +1,24 @@
+# Test-only config used by `tools/gen3d_real_test.py`.
+#
+# This config intentionally keeps the OpenAI API key out of the repo.
+# Provide it via env `OPENAI_API_KEY` when running the real test.
+
+[scene]
+scene_dat_path = "./scene.dat"
+
+[automation]
+enabled = true
+bind = "127.0.0.1:8792"
+disable_local_input = true
+pause_on_start = true
+
+[gen3d]
+cache_dir = "./cache/gen3d"
+save_pass_screenshots = true
+max_parallel_components = 6
+
+[openai]
+base_url = "https://right.codes/codex/v1"
+model = "gpt-5.2"
+model_reasoning_effort = "high"
+OPENAI_API_KEY = ""
