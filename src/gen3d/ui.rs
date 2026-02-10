@@ -1291,7 +1291,7 @@ pub(crate) fn gen3d_prompt_text_input(
                     }
                     continue;
                 }
-                if let Some(text) = read_clipboard_text() {
+                if let Some(text) = crate::clipboard::read_text() {
                     push_prompt_text(&mut workshop.prompt, &text);
                 }
             }
@@ -1317,42 +1317,6 @@ fn push_prompt_text(prompt: &mut String, text: &str) {
             break;
         }
     }
-}
-
-fn read_clipboard_text() -> Option<String> {
-    #[cfg(target_os = "macos")]
-    {
-        return read_clipboard_text_command("pbpaste", &[]);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        return read_clipboard_text_command(
-            "powershell",
-            &["-NoProfile", "-Command", "Get-Clipboard -Raw"],
-        );
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Some(text) = read_clipboard_text_command("wl-paste", &["-n"]) {
-            return Some(text);
-        }
-        if let Some(text) = read_clipboard_text_command("xclip", &["-selection", "clipboard", "-o"])
-        {
-            return Some(text);
-        }
-        return read_clipboard_text_command("xsel", &["--clipboard", "--output"]);
-    }
-}
-
-fn read_clipboard_text_command(cmd: &str, args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new(cmd).args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout).to_string();
-    (!text.trim().is_empty()).then_some(text)
 }
 
 pub(crate) fn gen3d_collision_toggle_button(

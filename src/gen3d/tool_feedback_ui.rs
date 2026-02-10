@@ -295,7 +295,7 @@ pub(crate) fn gen3d_copy_tool_feedback_buttons(
                     *bg = BackgroundColor(Color::srgba(0.10, 0.14, 0.22, 0.90));
                     if let Some(run_id) = run_id.as_deref() {
                         let payload = build_codex_clipboard_payload(&config, &history, run_id);
-                        if write_clipboard_text(&payload) {
+                        if crate::clipboard::write_text(&payload) {
                             workshop.status = format!("Copied tool feedback for run {run_id}.");
                             workshop.error = None;
                         } else {
@@ -310,7 +310,7 @@ pub(crate) fn gen3d_copy_tool_feedback_buttons(
                         let entries: Vec<_> = history.entries_for_run(run_id).cloned().collect();
                         match serde_json::to_string_pretty(&entries) {
                             Ok(json) => {
-                                if write_clipboard_text(&json) {
+                                if crate::clipboard::write_text(&json) {
                                     workshop.status =
                                         format!("Copied JSON tool feedback for run {run_id}.");
                                     workshop.error = None;
@@ -413,47 +413,4 @@ fn build_codex_clipboard_payload(
     ));
 
     out
-}
-
-fn write_clipboard_text(text: &str) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        return write_clipboard_text_command("pbcopy", &[], text);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        return write_clipboard_text_command("clip", &[], text);
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if write_clipboard_text_command("wl-copy", &[], text) {
-            return true;
-        }
-        if write_clipboard_text_command("xclip", &["-selection", "clipboard"], text) {
-            return true;
-        }
-        return write_clipboard_text_command("xsel", &["--clipboard", "--input"], text);
-    }
-}
-
-fn write_clipboard_text_command(cmd: &str, args: &[&str], text: &str) -> bool {
-    let mut child = match std::process::Command::new(cmd)
-        .args(args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(_) => return false,
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        if stdin.write_all(text.as_bytes()).is_err() {
-            return false;
-        }
-    }
-    child.wait().map(|s| s.success()).unwrap_or(false)
 }

@@ -14,6 +14,7 @@ The AI is instructed to prioritize **basic structure and proportions** over smal
 2. Drag & drop **0–6** images into the game window (supported: `.png`, `.jpg/.jpeg`, `.webp`).
    - Tip: click a thumbnail to open the original image viewer (`↑/↓` navigate, `Esc` to close) while keeping the 3D preview visible for comparison.
 3. Optional: type notes/style in the prompt box (supports paste via `Cmd/Ctrl+V`, and scrolling for long text; **Clear Prompt** wipes it).
+   - On WSL, paste/copy prefers the Windows clipboard via interop (`powershell.exe` / `clip.exe`). If interop is disabled, install `wl-clipboard` or `xclip`/`xsel`.
    - The game always provides a default style: “Concise Voxel/Pixel Art style (not necessarily cuboid-only).”
    - If your notes include a different style, the AI should prefer your notes over the default.
    - You must provide at least one: a reference photo or a text prompt.

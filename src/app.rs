@@ -1015,18 +1015,6 @@ fn fixup_linux_display_env_for_winit() {
             .unwrap_or(false)
     }
 
-    fn is_wsl() -> bool {
-        if std::env::var_os("WSL_INTEROP").is_some()
-            || std::env::var_os("WSL_DISTRO_NAME").is_some()
-        {
-            return true;
-        }
-
-        let osrelease = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
-        let osrelease = osrelease.trim().to_ascii_lowercase();
-        osrelease.contains("microsoft") || osrelease.contains("wsl")
-    }
-
     fn has_x11_display() -> bool {
         std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
     }
@@ -1128,7 +1116,7 @@ fn fixup_linux_display_env_for_winit() {
 
     // WSLg occasionally drops Wayland connections for Vulkan apps. Prefer X11 (XWayland) when
     // available to keep startup stable.
-    if is_wsl() && has_x11_display() && !is_winit_backend_forced_to_wayland() {
+    if crate::platform::is_wsl() && has_x11_display() && !is_winit_backend_forced_to_wayland() {
         let required = ["libxkbcommon-x11.so.0", "libxcb-xkb.so.1"];
         let system_has_required = required.iter().all(|name| system_has_library(name));
         let sysroot_lib_dir = sysroot_lib_dir();
