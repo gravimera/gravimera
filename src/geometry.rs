@@ -25,6 +25,18 @@ pub(crate) fn snap_to_grid(value: f32, grid: f32) -> f32 {
     (value / grid).round() * grid
 }
 
+pub(crate) fn safe_abs_scale_component(value: f32) -> f32 {
+    if value.is_finite() && value.abs() >= 1e-4 {
+        value.abs()
+    } else {
+        1.0
+    }
+}
+
+pub(crate) fn safe_abs_scale_y(scale: Vec3) -> f32 {
+    safe_abs_scale_component(scale.y)
+}
+
 pub(crate) fn normalize_flat_direction(direction: Vec3) -> Option<Vec3> {
     let flat = Vec3::new(direction.x, 0.0, direction.z);
     if flat.length_squared() < 0.0001 {

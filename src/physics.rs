@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::constants::*;
-use crate::geometry::{circle_intersects_aabb_xz, resolve_circle_against_aabbs};
+use crate::geometry::{circle_intersects_aabb_xz, resolve_circle_against_aabbs, safe_abs_scale_y};
 use crate::object::registry::{MovementBlockRule, ObjectLibrary};
 use crate::types::*;
 
@@ -78,17 +78,19 @@ pub(crate) fn separate_enemies(
     }
 
     for (mut transform, collider, enemy, prefab_id, pounce) in &mut enemies {
+        let scale_y = safe_abs_scale_y(transform.scale);
+        let origin_y = enemy.origin_y * scale_y;
         let radius = collider.radius;
         let mut pos = Vec2::new(transform.translation.x, transform.translation.z);
         let current_ground_y = if let Some(pounce) = pounce {
-            (pounce.start.y - enemy.origin_y).max(0.0)
+            (pounce.start.y - origin_y).max(0.0)
         } else {
-            (transform.translation.y - enemy.origin_y).max(0.0)
+            (transform.translation.y - origin_y).max(0.0)
         };
         let height = library
             .size(prefab_id.0)
-            .map(|size| size.y)
-            .unwrap_or(HERO_HEIGHT_WORLD);
+            .map(|size| size.y * scale_y)
+            .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
 
         let mut obstacles: Vec<(Vec2, Vec2)> = Vec::with_capacity(aabbs.len());
         obstacles.extend(aabbs.iter().filter_map(|ob| {
@@ -133,7 +135,7 @@ pub(crate) fn separate_enemies(
                     ground_y = ground_y.max(ob.top_y);
                 }
             }
-            ground_y + enemy.origin_y
+            ground_y + origin_y
         };
         transform.translation = Vec3::new(pos.x, y, pos.y);
     }
@@ -219,6 +221,7 @@ pub(crate) fn separate_commandables(
     }
 
     for (_entity, mut transform, collider, prefab_id, player) in &mut units {
+        let scale_y = safe_abs_scale_y(transform.scale);
         let radius = if collider.radius.is_finite() {
             collider.radius.max(COMMANDABLE_MIN_SEPARATION_RADIUS)
         } else {
@@ -231,12 +234,12 @@ pub(crate) fn separate_commandables(
             (
                 library
                     .size(prefab_id.0)
-                    .map(|size| size.y * 0.5)
+                    .map(|size| size.y * 0.5 * scale_y)
                     .unwrap_or(0.0),
                 library
                     .size(prefab_id.0)
-                    .map(|size| size.y)
-                    .unwrap_or(HERO_HEIGHT_WORLD),
+                    .map(|size| size.y * scale_y)
+                    .unwrap_or(HERO_HEIGHT_WORLD * scale_y),
             )
         };
 
@@ -510,6 +513,56 @@ mod tests {
         assert!(
             push_circle_out_of_aabb_xz(pos, 0.5, Vec2::ZERO, Vec2::splat(1.0)).is_none(),
             "unit should not overlap the blocking build object after separation: pos={pos:?}",
+        );
+    }
+
+    #[test]
+    fn commandable_ground_origin_scales_with_transform() {
+        let mut library = ObjectLibrary::default();
+
+        let unit_id: u128 = 0x90ab;
+        library.upsert(ObjectDef {
+            object_id: unit_id,
+            label: "ScaledUnit".into(),
+            size: Vec3::new(1.0, 2.0, 1.0),
+            collider: ColliderProfile::CircleXZ { radius: 0.5 },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let mut world = World::new();
+        world.insert_resource(State::<GameMode>::new(GameMode::Build));
+        world.insert_resource(Game::default());
+        world.insert_resource(library);
+
+        let unit_entity = world
+            .spawn((
+                Commandable,
+                ObjectPrefabId(unit_id),
+                Collider { radius: 1.0 },
+                Transform::from_xyz(0.0, 2.0, 0.0).with_scale(Vec3::splat(2.0)),
+            ))
+            .id();
+
+        let _ = world.run_system_once(separate_commandables);
+
+        let transform = world.get::<Transform>(unit_entity).expect("unit transform");
+        assert!(
+            (transform.translation.y - 2.0).abs() < 1e-4,
+            "expected y≈2.0 for scale=2 (half-height), got {}",
+            transform.translation.y
         );
     }
 }

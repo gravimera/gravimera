@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::geometry::{point_inside_aabb_xz, snap_to_grid};
+use crate::geometry::{point_inside_aabb_xz, safe_abs_scale_y, snap_to_grid};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::object::types::effects as effect_types;
@@ -156,10 +156,11 @@ fn pick_enemy_under_cursor(
     let mut best_d = f32::INFINITY;
 
     for (transform, enemy, prefab_id) in enemies.iter() {
+        let scale_y = safe_abs_scale_y(transform.scale);
         let height = library
             .size(prefab_id.0)
-            .map(|s| s.y)
-            .unwrap_or(HERO_HEIGHT_WORLD);
+            .map(|s| s.y * scale_y)
+            .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
         let world_pos = transform.translation + Vec3::Y * (height * 0.55);
         let Some(screen) = world_to_screen(camera, camera_transform, world_pos) else {
             continue;
@@ -171,7 +172,7 @@ fn pick_enemy_under_cursor(
         if d < best_d {
             best_d = d;
             let goal = Vec2::new(transform.translation.x, transform.translation.z);
-            let ground_y = (transform.translation.y - enemy.origin_y).max(0.0);
+            let ground_y = (transform.translation.y - enemy.origin_y * scale_y).max(0.0);
             best = Some((goal, ground_y));
         }
     }
@@ -190,10 +191,11 @@ fn pick_enemy_entity_under_cursor(
     let mut best_d = f32::INFINITY;
 
     for (entity, transform, prefab_id) in enemies.iter() {
+        let scale_y = safe_abs_scale_y(transform.scale);
         let height = library
             .size(prefab_id.0)
-            .map(|s| s.y)
-            .unwrap_or(HERO_HEIGHT_WORLD);
+            .map(|s| s.y * scale_y)
+            .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
         let world_pos = transform.translation + Vec3::Y * (height * 0.55);
         let Some(screen) = world_to_screen(camera, camera_transform, world_pos) else {
             continue;
@@ -458,10 +460,14 @@ pub(crate) fn draw_selected_player_gizmos(
             continue;
         }
 
+        let scale_y = safe_abs_scale_y(transform.scale);
         let origin_y = if player.is_some() {
             PLAYER_Y
         } else {
-            library.size(prefab_id.0).map(|s| s.y * 0.5).unwrap_or(0.0)
+            library
+                .size(prefab_id.0)
+                .map(|s| s.y * 0.5 * scale_y)
+                .unwrap_or(0.0)
         };
         let ground_y = (transform.translation.y - origin_y).max(0.0);
         let center = Vec3::new(
@@ -586,6 +592,7 @@ pub(crate) fn move_command_input(
             continue;
         };
 
+        let scale_y = safe_abs_scale_y(transform.scale);
         let radius = collider.radius.max(0.01);
         let min = Vec2::splat(-WORLD_HALF_SIZE + radius);
         let max = Vec2::splat(WORLD_HALF_SIZE - radius);
@@ -595,13 +602,16 @@ pub(crate) fn move_command_input(
         let origin_y = if players.contains(entity) {
             PLAYER_Y
         } else {
-            library.size(prefab_id.0).map(|s| s.y * 0.5).unwrap_or(0.0)
+            library
+                .size(prefab_id.0)
+                .map(|s| s.y * 0.5 * scale_y)
+                .unwrap_or(0.0)
         };
         let current_ground_y = (transform.translation.y - origin_y).max(0.0);
         let height = library
             .size(prefab_id.0)
-            .map(|s| s.y)
-            .unwrap_or(HERO_HEIGHT_WORLD);
+            .map(|s| s.y * scale_y)
+            .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
 
         let mut order = MoveOrder::default();
         match mobility.mode {
@@ -868,6 +878,16 @@ pub(crate) fn build_unit_hotkeys(
                 continue;
             };
 
+            let mobility_mode = library
+                .mobility(_prefab_id.0)
+                .map(|mobility| mobility.mode)
+                .unwrap_or(crate::object::registry::MobilityMode::Ground);
+            let base_origin_y = library
+                .size(_prefab_id.0)
+                .map(|size| size.y * 0.5)
+                .unwrap_or(0.0);
+
+            let current_scale_y = safe_abs_scale_y(transform.scale);
             let current_scale = transform
                 .scale
                 .x
@@ -879,8 +899,11 @@ pub(crate) fn build_unit_hotkeys(
             let applied = new_scale / current_scale;
 
             transform.scale = Vec3::splat(new_scale);
-            if transform.translation.y.is_finite() {
-                transform.translation.y *= applied;
+            if mobility_mode == crate::object::registry::MobilityMode::Ground
+                && transform.translation.y.is_finite()
+            {
+                let bottom_y = transform.translation.y - base_origin_y * current_scale_y;
+                transform.translation.y = bottom_y + base_origin_y * new_scale;
             }
 
             if collider.radius.is_finite() {

@@ -18,6 +18,7 @@ use serde::Deserialize;
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
+use crate::geometry::safe_abs_scale_y;
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::scene_store::SceneSaveRequest;
@@ -1058,16 +1059,20 @@ fn handle_request_main_thread(
                 let clamped_goal = goal.clamp(min, max);
 
                 let start = Vec2::new(transform.translation.x, transform.translation.z);
+                let scale_y = safe_abs_scale_y(transform.scale);
                 let origin_y = if players.contains(entity) {
                     PLAYER_Y
                 } else {
-                    library.size(prefab_id.0).map(|s| s.y * 0.5).unwrap_or(0.0)
+                    library
+                        .size(prefab_id.0)
+                        .map(|s| s.y * 0.5 * scale_y)
+                        .unwrap_or(0.0)
                 };
                 let current_ground_y = (transform.translation.y - origin_y).max(0.0);
                 let height = library
                     .size(prefab_id.0)
-                    .map(|s| s.y)
-                    .unwrap_or(HERO_HEIGHT_WORLD);
+                    .map(|s| s.y * scale_y)
+                    .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
 
                 let mut order = MoveOrder::default();
                 match mobility.mode {
