@@ -543,6 +543,12 @@ fn part_animation_spec_from_ai(spec: &AiAnimationSpecJson) -> Option<PartAnimati
     } else {
         1.0
     };
+    let time_offset_units = spec.time_offset_units.unwrap_or(0.0).clamp(-1.0e9, 1.0e9);
+    let time_offset_units = if time_offset_units.is_finite() {
+        time_offset_units
+    } else {
+        0.0
+    };
 
     let clip = match &spec.clip {
         AiAnimationClipJson::Loop {
@@ -604,6 +610,7 @@ fn part_animation_spec_from_ai(spec: &AiAnimationSpecJson) -> Option<PartAnimati
     Some(PartAnimationSpec {
         driver,
         speed_scale,
+        time_offset_units,
         clip,
     })
 }
@@ -849,6 +856,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                             spec: PartAnimationSpec {
                                 driver: PartAnimationDriver::Always,
                                 speed_scale: 1.0,
+                                time_offset_units: 0.0,
                                 clip: animation,
                             },
                         });

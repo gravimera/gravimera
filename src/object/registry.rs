@@ -123,6 +123,12 @@ pub(crate) enum PartAnimationDriver {
 pub(crate) struct PartAnimationSpec {
     pub(crate) driver: PartAnimationDriver,
     pub(crate) speed_scale: f32,
+    /// Constant additive offset applied in the clip's time domain (the same units as
+    /// `PartAnimationDef::Loop.duration_secs` / keyframe `time_secs` and the derived driver time).
+    ///
+    /// This enables deterministic phase offsets (e.g. staggered legs) without duplicating
+    /// keyframes.
+    pub(crate) time_offset_units: f32,
     pub(crate) clip: PartAnimationDef,
 }
 

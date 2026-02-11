@@ -191,6 +191,8 @@ pub(crate) struct AiAnimationSpecJson {
     pub(crate) driver: AiAnimationDriverJson,
     #[serde(default)]
     pub(crate) speed_scale: Option<f32>,
+    #[serde(default)]
+    pub(crate) time_offset_units: Option<f32>,
     pub(crate) clip: AiAnimationClipJson,
 }
 

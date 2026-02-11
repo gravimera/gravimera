@@ -184,6 +184,11 @@ Notes:
   - `parent_anchor.up` (+Y) and `child_anchor.up` (+Y) should generally match to avoid unintended roll.
   Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.
 - Component-level animation lives on attachments via `attach_to.animations` (preferred). `attach_to.animation` is a legacy field.
+- Attachment animations (`attach_to.animations`) are keyed by channel (`ambient`, `idle`, `move`, `attack_primary`) and each animation spec contains:
+  - `driver`: `always` (seconds), `attack_time` (seconds), `move_phase` (meters traveled while moving), `move_distance` (meters traveled; can be signed for spins).
+  - `speed_scale` (optional): multiplies the driver time.
+  - `time_offset_units` (optional): additive offset in the clip time domain (same units as loop `duration_secs` / keyframe `time_secs`). Use this to phase-stagger repeated limbs without duplicating keyframes.
+  - `clip`: either `loop` (keyframed deltas) or `spin` (procedural rotation).
 
 Rig / motion contract (optional; used for locomotion validation and AI repair):
 

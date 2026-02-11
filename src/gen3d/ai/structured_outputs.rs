@@ -226,6 +226,7 @@ fn schema_animation_spec() -> serde_json::Value {
             schema_enum(&["always", "move_phase", "move_distance", "attack_time"]),
         ),
         ("speed_scale", schema_nullable(schema_number())),
+        ("time_offset_units", schema_nullable(schema_number())),
         ("clip", schema_animation_clip()),
     ])
 }

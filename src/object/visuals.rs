@@ -817,7 +817,10 @@ pub(crate) fn update_part_animations(
                     .unwrap_or(0.0),
             };
 
-            let t = driver_time * spec.speed_scale.max(0.0);
+            let mut t = driver_time * spec.speed_scale.max(0.0);
+            if spec.time_offset_units.is_finite() {
+                t += spec.time_offset_units;
+            }
             sample_part_animation(&spec.clip, t)
         } else {
             Transform::IDENTITY
@@ -1068,6 +1071,7 @@ mod tests {
         let spec = PartAnimationSpec {
             driver: PartAnimationDriver::Always,
             speed_scale: 1.0,
+            time_offset_units: 0.0,
             clip: PartAnimationDef::Loop {
                 duration_secs: 2.0,
                 keyframes: vec![
@@ -1115,6 +1119,79 @@ mod tests {
         assert!(
             (transform.translation.y - 1.0).abs() < 1e-4,
             "expected idle clip to keep sampling while moving, got translation={:?}",
+            transform.translation
+        );
+    }
+
+    #[test]
+    fn move_animation_applies_time_offset_units() {
+        use crate::object::registry::{
+            PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot,
+            PartAnimationSpec,
+        };
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(ObjectLibrary::default());
+        app.add_systems(Update, update_part_animations);
+
+        let root = app
+            .world_mut()
+            .spawn(AnimationChannelsActive {
+                moving: true,
+                attacking_primary: false,
+            })
+            .id();
+
+        let spec = PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 1.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 2.0,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.0,
+                        delta: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+                    },
+                ],
+            },
+        };
+
+        let part_entity = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                PartAnimationPlayer {
+                    root_entity: root,
+                    parent_object_id: 0,
+                    child_object_id: None,
+                    attachment: None,
+                    base_transform: Transform::IDENTITY,
+                    animations: vec![PartAnimationSlot {
+                        channel: "move".into(),
+                        spec,
+                    }],
+                    apply_aim_yaw: false,
+                },
+            ))
+            .id();
+
+        // With wall_time=0 and time_offset_units=1, we should sample at t=1.0.
+        app.update();
+
+        let transform = app
+            .world()
+            .get::<Transform>(part_entity)
+            .copied()
+            .expect("part entity has Transform");
+        assert!(
+            (transform.translation.y - 1.0).abs() < 1e-4,
+            "expected time_offset_units to phase-shift sampling, got translation={:?}",
             transform.translation
         );
     }

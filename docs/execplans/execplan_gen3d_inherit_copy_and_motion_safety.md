@@ -20,14 +20,23 @@ You can see this working by generating a multi-leg creature (8 radial legs, or a
 - The saved prefab spawns with feet above/at ground, not sunk below it.
 - Motion validation passes (no `hinge_limit_exceeded`, stance contacts exist if declared), and the move gait looks consistent across repeated legs.
 
+This ExecPlan focuses on **generic improvements with a low regression risk**:
+
+- No name-based inference (“leg”, “wheel”, etc.). All behavior is driven by explicit plan fields (anchors, attachments, reuse declarations, joints, contacts) or explicit tool args.
+- New schema fields are optional and default to today’s behavior.
+- Every behavior change is covered by unit tests and at least one end-to-end rendered Gen3D regression run recorded under `tests/gen3d/cache/gen3d/` (ignored by git).
+
 ## Progress
 
 - [x] (2026-02-11) Write and check in this ExecPlan.
-- [ ] Define precise “inherit” semantics (which fields are inherited vs preserved vs overridden).
-- [ ] Extend reuse/copy pipeline to support inherit + overrides (engine-side; no heuristics).
-- [ ] Add motion-authoring constraints so repeated animations stay within joint limits and produce stance.
-- [ ] Add end-to-end Gen3D regression: generate, save to scene, move/fire, capture screenshots, and record run ids.
-- [ ] Update docs (`gen_3d.md`, `README.md` if needed), run smoke test, commit.
+- [x] (2026-02-11) Add regression-safety gates + acceptance criteria to this plan.
+- [x] (2026-02-11) Implement `time_offset_units` for animation specs (enables deterministic phase offsets without duplicating keyframes).
+- [x] (2026-02-11) Make `copy_component_subtree_v1` robust to partially populated targets (deterministic matching by attachment edge keys; clone missing branches when unambiguous).
+- [x] (2026-02-11) Update Gen3D prompts + docs to teach “inherit geometry, override offsets/animation is OK” and document `time_offset_units`.
+- [x] (2026-02-11) Add/adjust unit tests (animation offset sampling + scene.dat round-trip; subtree copy partial fill).
+- [x] (2026-02-11) Run `cargo test` and a headless smoke start.
+- [ ] Run a real rendered Gen3D regression (generate → save → move/fire → screenshots) and record run id + findings here (blocked locally without `OPENAI_API_KEY`).
+- [ ] Update `README.md` if needed; commit.
 
 ## Surprises & Discoveries
 
@@ -40,6 +49,9 @@ You can see this working by generating a multi-leg creature (8 radial legs, or a
 - Observation: Users perceive “copy should work” even when per-target differences exist (angles, mount offsets, per-leg animations).
   Evidence: Reported expectation: “legs are mostly the same (3D model), only angles/animations differ; copy should still help”.
 
+- Observation: Rendered end-to-end Gen3D regressions require `OPENAI_API_KEY`.
+  Evidence: `tools/gen3d_real_test.py` returns HTTP 400 from Automation `/v1/gen3d/build` when the key is missing: `config.toml: missing openai.OPENAI_API_KEY (or env OPENAI_API_KEY)`.
+
 ## Decision Log
 
 - Decision: Treat “inherit” as a plan-declared, deterministic operation, not an engine heuristic.
@@ -49,6 +61,14 @@ You can see this working by generating a multi-leg creature (8 radial legs, or a
 - Decision: Keep inheritance narrowly scoped to geometry and explicitly selected fields; preserve per-target mount interfaces by default.
   Rationale: Repeated limbs often need different parent attachment offsets (radial distribution) and may need different animation phase; those should not block reuse.
   Date/Author: 2026-02-11 / Codex + user
+
+- Decision: Add `time_offset_units` to attachment animation specs and apply it at sampling time as `t = driver_time * speed_scale + time_offset_units`.
+  Rationale: A constant phase offset is generic (independent of object type), deterministic, and avoids duplicating keyframes for repeated limbs with staggered gaits.
+  Date/Author: 2026-02-11 / Codex
+
+- Decision: Match subtree copy children by explicit attachment edge keys `(parent_anchor, child_anchor)` and allow cloning missing branches even when a target subtree is partially populated.
+  Rationale: Per-target offsets/animations and naming differences should not block reuse. Attachment edge keys are the plan’s explicit interface and avoid heuristic name matching.
+  Date/Author: 2026-02-11 / Codex
 
 ## Outcomes & Retrospective
 
@@ -65,6 +85,7 @@ Relevant existing mechanisms:
 - Motion validation and review/repair:
   - Validator outputs are written to `smoke_results.json` in the run cache.
   - The agent may call `llm_review_delta_v1` to repair plan-level rig/animation/contact issues.
+- Structured outputs (strict JSON Schema) are requested when supported by the provider to reduce schema repair loops (see `src/gen3d/ai/structured_outputs.rs` and `src/gen3d/ai/openai.rs`).
 
 How Gen3D cache runs are laid out:
 
@@ -95,23 +116,17 @@ Recommended default semantics:
 
 Note: this formalizes the user expectation: “same 3D model, different angle/animation is fine”.
 
-### Milestone 2 — Add inherit + overrides to the plan schema (deterministic)
+### Milestone 2 — Teach and formalize “inherit geometry, override offsets/animation is OK”
 
-Extend the plan schema (or reuse `reuse_groups`) so the plan can declare:
+The plan schema already supports `reuse_groups` to declare repeated geometry. The missing piece is **teaching** (and documenting) that reuse works even when per-target values differ:
 
-- A source root (component/subtree).
-- Targets.
-- What to inherit:
-  - geometry only (default),
-  - geometry + anchors,
-  - geometry + anchors + size,
-  - (optional future) animation clip reuse.
-- Optional per-target overrides that are *explicit*:
-  - per-target attachment `move` phase shift (see next milestone),
-  - per-target contact stance windows,
-  - per-target mount offsets/rotations (already naturally live in `attach_to.offset` and should be planned explicitly).
+- Per-target `attach_to.offset` differences (radial distribution, mirrored placement) are expected and do not prevent reuse.
+- Per-target attachment animations are expected to differ (phase offsets, stance) while reusing the same underlying geometry.
 
-The engine must apply these without any name heuristics: it should only follow explicit plan fields.
+This is implemented by improving:
+
+- the plan prompt text (`src/gen3d/ai/prompts.rs`) to explicitly state what can differ, and
+- the tool docs (`src/gen3d/agent/tools.rs`) so the agent confidently uses copy/reuse even when offsets/animations differ.
 
 ### Milestone 3 — Make repeated-limb animation authoring motion-safe by construction
 
@@ -125,9 +140,12 @@ The recurring failure pattern is “joint limits declare ±X but animation swing
    - Geometry inheritance already reuses the mesh/primitive layout.
    - Motion should also be consistent, with per-target variation restricted to explicit overrides (phase shift, mount offset).
 
-3) Add a non-heuristic way to apply per-target phase offsets:
-   - Option A (preferred): add an explicit `phase_offset_units` (or similar) to `PartAnimationSpec` so the same clip can be reused with different phase starts while using the same driver (`move_phase`).
-   - Option B (fallback): add an engine helper that “rotates” loop keyframes by a phase offset and writes a per-target keyframe list deterministically.
+3) Add a non-heuristic way to apply per-target phase offsets without duplicating keyframes:
+
+- Extend animation specs with `time_offset_units` (a constant additive offset in the clip’s time domain, i.e. the same units as `clip.loop.duration_secs` and keyframe `time_secs`).
+- Apply it in runtime sampling and in motion validation sampling:
+  - `t = driver_time * speed_scale + time_offset_units`
+  - This preserves current semantics when `time_offset_units` is absent / null (defaults to 0).
 
 4) Stance must be explicit when declared:
    - If the plan declares stance, ensure the move clip has a real “plant” window (foot motion cancels body motion during stance) or explicitly clear stance if that contract cannot be satisfied.
@@ -149,23 +167,19 @@ This should be done as a placement step, not a heuristic in geometry generation.
 
 Address the class of failures where targets already contain partial descendants or minor structural differences.
 
-Potential improvements (choose one deterministic strategy and document it):
+Implement one deterministic strategy and document it:
 
-- Add a `mode`/flag for subtree inherit:
-  - `fill_missing`: copy only into components with `actual_size == None` (current auto-copy behavior), and only clone descendants when the target subtree is empty.
-  - `overwrite_geometry`: always copy geometry into the mapped subtree pairs (even if targets were generated earlier), while preserving per-target attachments and mount interfaces.
-  - `allow_partial`: if a target subtree is partially populated, match by (parent_anchor, child_anchor, stable order) and copy what matches, leaving non-matching extras untouched; errors must be path-specific and actionable.
+- For subtree matching, use the explicit attachment interface key `(parent_anchor, child_anchor)` for each edge.
+- If a target subtree is missing descendants, clone the missing branches under the target root as long as the existing edges are unambiguous and match the source by that key.
+- If ambiguity exists (duplicate keys under one parent, or a target edge key that does not exist in the source), return a clear tool error that names the parent component and the mismatched keys.
 
 The key requirement is: per-target `attach_to.offset` rotations or per-target animations must not prevent geometry inheritance, because those are *expected differences* for radial/mirrored limbs.
 
 ### Milestone 6 — Reduce schema/repair churn: structured outputs + better repair prompting
 
-Keep relying on schema-valid JSON:
+This is already implemented in this repo (structured outputs + repair-loop improvements). When adding `time_offset_units`, extend the structured-output schemas so the model is constrained to emit the correct key.
 
-- Prefer API-level structured outputs where supported (plan, draft, review delta).
-- When repairs are needed, ensure the repair prompt never includes concatenated/duplicated prior invalid JSON; the model should output exactly one corrected JSON object matching the tool schema.
-
-This avoids non-generic “accept alias key X” fixes and instead improves the likelihood of producing valid output for any future key name mistakes.
+This avoids non-generic “accept alias key X” fixes and instead improves the likelihood of producing valid output for future schema updates.
 
 ## Concrete Steps
 
@@ -208,4 +222,3 @@ This change is accepted when:
 ## Artifacts and Notes
 
 Record future real-test run ids and findings here (run id, prompt, screenshots, and whether copy/animation grounding issues were resolved).
-

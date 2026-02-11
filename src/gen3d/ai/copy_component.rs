@@ -428,6 +428,47 @@ fn build_children_map(components: &[Gen3dPlannedComponent]) -> Vec<Vec<usize>> {
     children
 }
 
+type AttachmentEdgeKey = (String, String);
+
+fn attachment_edge_key_for_child(
+    components: &[Gen3dPlannedComponent],
+    child_idx: usize,
+) -> Result<AttachmentEdgeKey, String> {
+    let child = components
+        .get(child_idx)
+        .ok_or_else(|| "copy_component_subtree: child index out of range".to_string())?;
+    let att = child
+        .attach_to
+        .as_ref()
+        .ok_or_else(|| "copy_component_subtree: child component missing attach_to".to_string())?;
+    Ok((att.parent_anchor.clone(), att.child_anchor.clone()))
+}
+
+fn children_by_attachment_edge_key(
+    components: &[Gen3dPlannedComponent],
+    parent_idx: usize,
+    child_indices: &[usize],
+) -> Result<HashMap<AttachmentEdgeKey, usize>, String> {
+    let parent_name = components
+        .get(parent_idx)
+        .map(|c| c.name.as_str())
+        .unwrap_or("<unknown>");
+    let mut out: HashMap<AttachmentEdgeKey, usize> = HashMap::new();
+    for &child_idx in child_indices {
+        let key = attachment_edge_key_for_child(components, child_idx)?;
+        if let Some(existing) = out.insert(key.clone(), child_idx) {
+            return Err(format!(
+                "copy_component_subtree: ambiguous child mapping under `{}`: duplicate attachment edge key {:?} (children `{}` and `{}`)",
+                parent_name,
+                key,
+                components.get(existing).map(|c| c.name.as_str()).unwrap_or("<unknown>"),
+                components.get(child_idx).map(|c| c.name.as_str()).unwrap_or("<unknown>"),
+            ));
+        }
+    }
+    Ok(out)
+}
+
 fn map_subtree_pairs(
     components: &[Gen3dPlannedComponent],
     children: &[Vec<usize>],
@@ -474,21 +515,41 @@ fn map_subtree_pairs(
 
         let source_children = &children[source_idx];
         let target_children = &children[target_idx];
-        if source_children.len() != target_children.len() {
+
+        let source_by_key =
+            children_by_attachment_edge_key(components, source_idx, source_children)?;
+        let target_by_key =
+            children_by_attachment_edge_key(components, target_idx, target_children)?;
+
+        let mut extra_target_keys: Vec<AttachmentEdgeKey> = target_by_key
+            .keys()
+            .filter(|key| !source_by_key.contains_key(*key))
+            .cloned()
+            .collect();
+        extra_target_keys.sort();
+        if !extra_target_keys.is_empty() {
             return Err(format!(
-                "copy_component_subtree: subtree shape mismatch at `{}` ({} children) vs `{}` ({} children)",
+                "copy_component_subtree: subtree shape mismatch at `{}`: target `{}` has extra child attachments {:?} not present in source `{}`",
                 components[source_idx].name,
-                source_children.len(),
                 components[target_idx].name,
-                target_children.len()
+                extra_target_keys,
+                components[source_idx].name,
             ));
         }
 
-        for (s_child, t_child) in source_children
-            .iter()
-            .copied()
-            .zip(target_children.iter().copied())
-        {
+        let mut ordered_source: Vec<(AttachmentEdgeKey, usize)> =
+            source_by_key.into_iter().collect();
+        ordered_source.sort_by(|(a, _), (b, _)| a.cmp(b));
+        for (key, s_child) in ordered_source {
+            let Some(&t_child) = target_by_key.get(&key) else {
+                return Err(format!(
+                    "copy_component_subtree: subtree shape mismatch at `{}`: target `{}` missing child attachment {:?} (present in source `{}`)",
+                    components[source_idx].name,
+                    components[target_idx].name,
+                    key,
+                    components[source_idx].name,
+                ));
+            };
             rec(
                 components,
                 children,
@@ -699,47 +760,57 @@ fn ensure_target_subtree_shape(
         let source_children = children.get(source_idx).cloned().unwrap_or_default();
         let target_children = children.get(target_idx).cloned().unwrap_or_default();
 
-        if target_children.len() > source_children.len() {
+        let source_by_key =
+            children_by_attachment_edge_key(components.as_slice(), source_idx, &source_children)?;
+        let mut target_by_key =
+            children_by_attachment_edge_key(components.as_slice(), target_idx, &target_children)?;
+
+        let mut extra_target_keys: Vec<AttachmentEdgeKey> = target_by_key
+            .keys()
+            .filter(|key| !source_by_key.contains_key(*key))
+            .cloned()
+            .collect();
+        extra_target_keys.sort();
+        if !extra_target_keys.is_empty() {
             return Err(format!(
-                "copy_component_subtree: subtree shape mismatch at `{}` ({} children) vs `{}` ({} children)",
+                "copy_component_subtree: subtree shape mismatch at `{}`: target `{}` has extra child attachments {:?} not present in source `{}`",
                 components[source_idx].name,
-                source_children.len(),
                 components[target_idx].name,
-                target_children.len()
+                extra_target_keys,
+                components[source_idx].name,
             ));
         }
 
-        if target_children.len() < source_children.len() {
-            if !target_children.is_empty() {
-                return Err(format!(
-                    "copy_component_subtree: subtree shape mismatch at `{}` ({} children) vs `{}` ({} children). Target subtree is partially populated; expand the plan to match or delete the existing target descendants.",
-                    components[source_idx].name,
-                    source_children.len(),
-                    components[target_idx].name,
-                    target_children.len()
-                ));
-            }
+        // Clone any missing branches under the target node (allowed even if the target subtree is
+        // partially populated), as long as attachment edge keys are unambiguous.
+        let mut ordered_source: Vec<(AttachmentEdgeKey, usize)> =
+            source_by_key.clone().into_iter().collect();
+        ordered_source.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-            // Clone the full missing branch under this target node.
-            let source_children_map = children;
-            for &s_child in source_children.iter() {
-                let _ = clone_missing_subtree(
-                    components,
-                    draft,
-                    s_child,
-                    target_idx,
-                    target_root_name,
-                    &source_children_map,
-                )?;
+        let source_children_map = children;
+        for (key, s_child) in ordered_source.iter() {
+            if target_by_key.contains_key(key) {
+                continue;
             }
-            return Ok(());
+            let new_child_idx = clone_missing_subtree(
+                components,
+                draft,
+                *s_child,
+                target_idx,
+                target_root_name,
+                &source_children_map,
+            )?;
+            target_by_key.insert(key.clone(), new_child_idx);
         }
 
-        for (s_child, t_child) in source_children
-            .iter()
-            .copied()
-            .zip(target_children.iter().copied())
-        {
+        // Recurse into matched children (including newly cloned ones).
+        for (key, s_child) in ordered_source {
+            let Some(&t_child) = target_by_key.get(&key) else {
+                return Err(format!(
+                    "copy_component_subtree: internal error: missing cloned child for attachment key {:?} under `{}`",
+                    key, components[target_idx].name
+                ));
+            };
             rec(components, draft, s_child, t_child, target_root_name)?;
         }
         Ok(())
@@ -1368,6 +1439,223 @@ mod tests {
         assert!(
             generated_new,
             "expected subtree copy to create + populate new descendant component defs under leg_1_root"
+        );
+    }
+
+    #[test]
+    fn subtree_copy_can_expand_missing_descendants_when_partially_populated() {
+        // Source subtree: leg_0_root -> leg_0_upper -> leg_0_foot (generated).
+        // Target subtree: leg_1_root -> leg_1_upper exists but leg_1_upper is missing its foot child.
+        // Subtree copy should clone the missing foot branch under leg_1_upper and then copy geometry.
+        let mut components = vec![
+            stub_component("body"),
+            stub_component("leg_0_root"),
+            stub_component("leg_0_upper"),
+            stub_component("leg_0_foot"),
+            stub_component("leg_1_root"),
+            stub_component("leg_1_upper"),
+        ];
+
+        components[0].anchors = vec![
+            anchor_named_forward("leg_0_mount", Vec3::Z),
+            anchor_named_forward("leg_1_mount", Vec3::Z),
+        ];
+        components[1].anchors = vec![
+            anchor_named_forward("to_body", Vec3::Z),
+            anchor_named_forward("to_upper", Vec3::Z),
+        ];
+        components[2].anchors = vec![
+            anchor_named_forward("to_root", Vec3::Z),
+            anchor_named_forward("to_foot", Vec3::Z),
+        ];
+        components[3].anchors = vec![anchor_named_forward("to_upper", Vec3::Z)];
+        components[4].anchors = vec![
+            anchor_named_forward("to_body", Vec3::X),
+            anchor_named_forward("to_upper", Vec3::Z),
+        ];
+        components[5].anchors = vec![
+            anchor_named_forward("to_root", Vec3::Z),
+            anchor_named_forward("to_foot", Vec3::Z),
+        ];
+
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "leg_0_mount".into(),
+            child_anchor: "to_body".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[2].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "leg_0_root".into(),
+            parent_anchor: "to_upper".into(),
+            child_anchor: "to_root".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[3].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "leg_0_upper".into(),
+            parent_anchor: "to_foot".into(),
+            child_anchor: "to_upper".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[4].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "leg_1_mount".into(),
+            child_anchor: "to_body".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[5].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "leg_1_root".into(),
+            parent_anchor: "to_upper".into(),
+            child_anchor: "to_root".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        // Mark source chain as generated.
+        components[1].actual_size = Some(Vec3::ONE);
+        components[2].actual_size = Some(Vec3::ONE);
+        components[3].actual_size = Some(Vec3::ONE);
+
+        let body_id = component_object_id("body");
+        let leg0_root_id = component_object_id("leg_0_root");
+        let leg0_upper_id = component_object_id("leg_0_upper");
+        let leg0_foot_id = component_object_id("leg_0_foot");
+        let leg1_root_id = component_object_id("leg_1_root");
+        let leg1_upper_id = component_object_id("leg_1_upper");
+
+        fn empty_def(mut def: ObjectDef) -> ObjectDef {
+            def.parts.clear();
+            def
+        }
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs =
+            vec![
+                {
+                    let mut def = empty_def(stub_def(body_id, "body"));
+                    def.anchors = vec![
+                        anchor_named_forward("leg_0_mount", Vec3::Z),
+                        anchor_named_forward("leg_1_mount", Vec3::Z),
+                    ];
+                    def.parts = vec![
+                        ObjectPartDef::object_ref(leg0_root_id, Transform::IDENTITY)
+                            .with_attachment(crate::object::registry::AttachmentDef {
+                                parent_anchor: "leg_0_mount".into(),
+                                child_anchor: "to_body".into(),
+                            }),
+                        ObjectPartDef::object_ref(leg1_root_id, Transform::IDENTITY)
+                            .with_attachment(crate::object::registry::AttachmentDef {
+                                parent_anchor: "leg_1_mount".into(),
+                                child_anchor: "to_body".into(),
+                            }),
+                    ];
+                    def
+                },
+                {
+                    let mut def = stub_def(leg0_root_id, "leg_0_root");
+                    def.anchors = vec![
+                        anchor_named_forward("to_body", Vec3::Z),
+                        anchor_named_forward("to_upper", Vec3::Z),
+                    ];
+                    def.parts.push(
+                        ObjectPartDef::object_ref(leg0_upper_id, Transform::IDENTITY)
+                            .with_attachment(crate::object::registry::AttachmentDef {
+                                parent_anchor: "to_upper".into(),
+                                child_anchor: "to_root".into(),
+                            }),
+                    );
+                    def
+                },
+                {
+                    let mut def = stub_def(leg0_upper_id, "leg_0_upper");
+                    def.anchors = vec![
+                        anchor_named_forward("to_root", Vec3::Z),
+                        anchor_named_forward("to_foot", Vec3::Z),
+                    ];
+                    def.parts.push(
+                        ObjectPartDef::object_ref(leg0_foot_id, Transform::IDENTITY)
+                            .with_attachment(crate::object::registry::AttachmentDef {
+                                parent_anchor: "to_foot".into(),
+                                child_anchor: "to_upper".into(),
+                            }),
+                    );
+                    def
+                },
+                {
+                    let mut def = stub_def(leg0_foot_id, "leg_0_foot");
+                    def.anchors = vec![anchor_named_forward("to_upper", Vec3::Z)];
+                    def
+                },
+                {
+                    let mut def = empty_def(stub_def(leg1_root_id, "leg_1_root"));
+                    def.anchors = vec![
+                        anchor_named_forward("to_body", Vec3::X),
+                        anchor_named_forward("to_upper", Vec3::Z),
+                    ];
+                    def.parts = vec![
+                        ObjectPartDef::object_ref(leg1_upper_id, Transform::IDENTITY)
+                            .with_attachment(crate::object::registry::AttachmentDef {
+                                parent_anchor: "to_upper".into(),
+                                child_anchor: "to_root".into(),
+                            }),
+                    ];
+                    def
+                },
+                {
+                    let mut def = empty_def(stub_def(leg1_upper_id, "leg_1_upper"));
+                    def.anchors = vec![
+                        anchor_named_forward("to_root", Vec3::Z),
+                        anchor_named_forward("to_foot", Vec3::Z),
+                    ];
+                    // No attachment refs under leg_1_upper initially (partial subtree).
+                    def
+                },
+            ];
+
+        copy_component_subtree_into(
+            &mut components,
+            &mut draft,
+            1,
+            4,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Transform::IDENTITY,
+        )
+        .expect("subtree copy ok");
+
+        // leg_1_upper should now have an attachment child part.
+        let leg1_upper_def_after = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == leg1_upper_id)
+            .unwrap();
+        assert!(
+            leg1_upper_def_after
+                .parts
+                .iter()
+                .any(|p| matches!(p.kind, ObjectPartKind::ObjectRef { .. })
+                    && p.attachment.is_some()),
+            "expected expanded subtree to attach a foot under leg_1_upper"
+        );
+
+        // And we should have at least one new component def created with primitives copied in.
+        let generated_new = draft.defs.iter().any(|d| {
+            d.label.as_ref().starts_with("gen3d_component_leg_1_root__")
+                && d.parts
+                    .iter()
+                    .any(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
+        });
+        assert!(
+            generated_new,
+            "expected subtree copy to create + populate new descendant component defs under leg_1_upper"
         );
     }
 }

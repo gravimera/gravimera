@@ -352,6 +352,8 @@ struct SceneDatPartAnimation {
     driver: i32,
     #[prost(float, tag = "4")]
     speed_scale: f32,
+    #[prost(float, tag = "5")]
+    time_offset_units: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
@@ -1063,11 +1065,17 @@ fn part_animation_spec_to_dat(spec: &PartAnimationSpec) -> SceneDatPartAnimation
     } else {
         1.0
     };
+    let time_offset_units = if spec.time_offset_units.is_finite() {
+        spec.time_offset_units
+    } else {
+        0.0
+    };
 
     SceneDatPartAnimation {
         kind: Some(kind),
         driver,
         speed_scale,
+        time_offset_units,
     }
 }
 
@@ -1085,6 +1093,11 @@ fn part_animation_spec_from_dat(animation: &SceneDatPartAnimation) -> Option<Par
         animation.speed_scale
     } else {
         1.0
+    };
+    let time_offset_units = if animation.time_offset_units.is_finite() {
+        animation.time_offset_units
+    } else {
+        0.0
     };
 
     let clip = match kind {
@@ -1139,6 +1152,7 @@ fn part_animation_spec_from_dat(animation: &SceneDatPartAnimation) -> Option<Par
     Some(PartAnimationSpec {
         driver,
         speed_scale,
+        time_offset_units,
         clip,
     })
 }
@@ -2061,6 +2075,7 @@ mod tests {
                     spec: PartAnimationSpec {
                         driver: PartAnimationDriver::MovePhase,
                         speed_scale: 1.25,
+                        time_offset_units: 0.4,
                         clip: PartAnimationDef::Loop {
                             duration_secs: 2.0,
                             keyframes: vec![
@@ -2169,6 +2184,7 @@ mod tests {
         let animation = &slot.spec;
         assert_eq!(animation.driver, PartAnimationDriver::MovePhase);
         assert!((animation.speed_scale - 1.25).abs() < 1e-6);
+        assert!((animation.time_offset_units - 0.4).abs() < 1e-6);
         match &animation.clip {
             PartAnimationDef::Loop {
                 duration_secs,

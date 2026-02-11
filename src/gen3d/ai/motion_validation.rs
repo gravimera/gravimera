@@ -209,7 +209,10 @@ fn sample_move_delta(
     driver_t: f32,
 ) -> Transform {
     let driver_t = if driver_t.is_finite() { driver_t } else { 0.0 };
-    let t = driver_t * move_slot.spec.speed_scale.max(0.0);
+    let mut t = driver_t * move_slot.spec.speed_scale.max(0.0);
+    if move_slot.spec.time_offset_units.is_finite() {
+        t += move_slot.spec.time_offset_units;
+    }
     sample_part_animation(&move_slot.spec.clip, t)
 }
 
@@ -885,6 +888,7 @@ mod tests {
         let move_spec = PartAnimationSpec {
             driver: PartAnimationDriver::MovePhase,
             speed_scale: 1.0,
+            time_offset_units: 0.0,
             clip: PartAnimationDef::Loop {
                 duration_secs: 1.0,
                 keyframes: vec![
@@ -952,6 +956,7 @@ mod tests {
         let move_spec = PartAnimationSpec {
             driver: PartAnimationDriver::MovePhase,
             speed_scale: 1.0,
+            time_offset_units: 0.0,
             clip: PartAnimationDef::Loop {
                 duration_secs: 2.0,
                 keyframes: vec![PartAnimationKeyframeDef {
@@ -1009,6 +1014,7 @@ mod tests {
         let move_spec = PartAnimationSpec {
             driver: PartAnimationDriver::MoveDistance,
             speed_scale: 1.0,
+            time_offset_units: 0.0,
             clip: PartAnimationDef::Spin {
                 axis: Vec3::X,
                 radians_per_unit: 4.0,

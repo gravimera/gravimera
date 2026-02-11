@@ -440,6 +440,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - If multiple components should share the SAME geometry (wheels, repeated legs, mirrored parts, numbered sets like `leg_0..leg_7`), declare `reuse_groups`.\n\
          - The engine can then generate only the unique components + the declared reuse sources, and fill the remaining targets via deterministic copy.\n\
          - This does NOT change the attachment tree; it only affects how missing geometry gets produced.\n\
+         - Reuse targets are allowed (and expected) to differ in per-target `attach_to.offset` (radial/mirrored placement) and per-target attachment animations (phase offsets).\n\
          - `reuse_groups[].kind`:\n\
            - `component` (copy a single component's geometry)\n\
            - `subtree` (copy an entire limb-chain subtree rooted at `source`)\n\
@@ -491,6 +492,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
                     \"ambient\" | \"idle\" | \"move\" | \"attack_primary\": {{\n\
                       \"driver\": \"always\" | \"move_phase\" | \"move_distance\" | \"attack_time\",\n\
                       \"speed_scale\": number (optional),\n\
+                      \"time_offset_units\": number (optional; additive offset in the clip's time domain),\n\
                       \"clip\": {{\"kind\":\"loop\",...}} | {{\"kind\":\"spin\",...}}\n\
                    }}\n\
                  }} (optional)\n\
@@ -637,6 +639,7 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
       - `tweak_animation.spec.clip.spin.axis` is expressed in the COMPONENT's LOCAL axes.\n\
       - If smoke results include `suggested_component_local_axis`, prefer using that value for the spin axis.\n\
         (It is computed from the component's child anchor forward vector so the part spins around the attachment axis.)\n\
+      - `tweak_animation.spec.time_offset_units` is an additive offset in the clip's time domain. Use it to phase-stagger repeated limbs (instead of duplicating or rewriting keyframes).\n\
       - If an animation channel is undesirable or too broken to repair, you may disable ANY channel (ambient/idle/move/attack_primary)\n\
         by replacing it with an identity loop (a `loop` whose keyframes' `delta` transforms are all identity).\n\
         IMPORTANT: include at least 1 keyframe (example: one keyframe at time_secs=0 with no delta / identity delta).\n\n\

@@ -391,6 +391,7 @@ mod tests {
             spec: PartAnimationSpec {
                 driver: PartAnimationDriver::MovePhase,
                 speed_scale: 1.0,
+                time_offset_units: 0.0,
                 clip: PartAnimationDef::Loop {
                     duration_secs: 1.0,
                     keyframes: vec![PartAnimationKeyframeDef {

@@ -291,12 +291,12 @@ impl Gen3dCopyMetrics {
                     .get("subtree_copies_applied")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
-                self.auto_component_copies = self.auto_component_copies.saturating_add(
-                    component_copies_applied.min(u32::MAX as u64) as u32,
-                );
-                self.auto_subtree_copies =
-                    self.auto_subtree_copies
-                        .saturating_add(subtree_copies_applied.min(u32::MAX as u64) as u32);
+                self.auto_component_copies = self
+                    .auto_component_copies
+                    .saturating_add(component_copies_applied.min(u32::MAX as u64) as u32);
+                self.auto_subtree_copies = self
+                    .auto_subtree_copies
+                    .saturating_add(subtree_copies_applied.min(u32::MAX as u64) as u32);
 
                 if let Some(errors) = auto_copy.get("errors").and_then(|v| v.as_array()) {
                     self.auto_errors = self
@@ -677,7 +677,11 @@ impl Gen3dAiJob {
             out.push_str("… | ");
         }
         for (i, pass) in passes.iter().enumerate().skip(start_idx) {
-            out.push_str(&format!("p{} {}", pass.pass, format_duration(pass.elapsed(now))));
+            out.push_str(&format!(
+                "p{} {}",
+                pass.pass,
+                format_duration(pass.elapsed(now))
+            ));
             if pass.ended_at.is_none() && self.running {
                 out.push('*');
             }
@@ -761,7 +765,11 @@ impl Gen3dAiJob {
                     out.push_str(item);
                 }
             }
-            if let Some(err) = copy.last_error.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            if let Some(err) = copy
+                .last_error
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
             {
                 out.push_str(&format!("\nCopy last err: {}", truncate_for_ui(err, 160)));
             }

@@ -250,6 +250,7 @@ impl Gen3dToolRegistryV1 {
                 description:
                     "Use this when multiple components should share the same geometry (wheels/legs/pairs).\n\
                      This avoids another `llm_generate_component_v1` call and keeps symmetric pieces consistent.\n\
+                     Note: The target component may have a different parent attachment offset and different attachment animations than the source. Copying only affects the target's own geometry (and optionally its anchors), and preserves existing child attachment refs.\n\
                      Modes:\n\
                      - detached: duplicates the primitive parts into the target component.\n\
                      - linked: target becomes a lightweight wrapper that references the source component (SOURCE must be a leaf component; otherwise children would be duplicated).\n\
@@ -279,8 +280,8 @@ impl Gen3dToolRegistryV1 {
                     "Copies a generated component subtree (root + descendants) into another planned subtree.",
                 description:
                     "Use this for symmetric limb chains (legs/arms) where a root component has attached descendants.\n\
-                     It structurally matches the source and target subtrees by attachment ordering (parent_anchor/child_anchor) and copies geometry for each pair.\n\
-                     If the TARGET subtree is missing descendants (for example the plan only includes the root), this tool will expand the target subtree by cloning the source subtree structure into new planned components, then copy geometry.\n\
+                     It structurally matches the source and target subtrees by attachment edge keys (parent_anchor, child_anchor) and copies geometry for each matched pair.\n\
+                     If the TARGET subtree is missing descendants, this tool expands the target subtree by cloning the missing branches from the source subtree into new planned components, then copies geometry.\n\
                      By default it preserves TARGET anchors so each subtree keeps its mount interface and join frames stable.\n\
                      Use anchors=copy_source only when you want to overwrite the TARGET anchors to match the SOURCE exactly.\n\
                      Note: when anchors=preserve_target, the engine aligns copied geometry to each target component's mount anchor so limb chains follow the target mounts (useful for radial limbs).\n\
