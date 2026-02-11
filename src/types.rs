@@ -406,7 +406,7 @@ impl Default for BuildState {
     fn default() -> Self {
         Self {
             selected: BuildObjectKind::Block,
-            placing_active: true,
+            placing_active: false,
             fence_axis: FenceAxis::X,
             // Start at medium-size tree. (scale index 1)
             tree_variant: 1,
