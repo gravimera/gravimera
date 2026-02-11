@@ -741,6 +741,25 @@ pub(crate) fn update_part_animations(
             }
         }
 
+        if chosen.is_none() {
+            // Fallback: if the current state doesn't provide an animation (e.g. unit is moving but
+            // the part only has an `idle` clip), prefer playing *some* animation over freezing the
+            // part at the last sampled pose.
+            for channel in ["attack_primary", "move", "idle", "ambient"] {
+                if let Some(slot) = player
+                    .animations
+                    .iter()
+                    .find(|slot| slot.channel.as_ref() == channel)
+                {
+                    chosen = Some(&slot.spec);
+                    break;
+                }
+            }
+            if chosen.is_none() {
+                chosen = player.animations.first().map(|slot| &slot.spec);
+            }
+        }
+
         let spec = chosen;
 
         if spec.is_none() && !player.apply_aim_yaw {
@@ -1022,6 +1041,81 @@ mod tests {
         assert!(
             right < 0.0,
             "expected right distance to stay negative, got {right}"
+        );
+    }
+
+    #[test]
+    fn idle_animation_falls_back_when_moving_and_no_move_slot() {
+        use crate::object::registry::{
+            PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot,
+            PartAnimationSpec,
+        };
+        use std::time::Duration;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(ObjectLibrary::default());
+        app.add_systems(Update, update_part_animations);
+
+        let root = app
+            .world_mut()
+            .spawn(AnimationChannelsActive {
+                moving: true,
+                attacking_primary: false,
+            })
+            .id();
+
+        let spec = PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 2.0,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.0,
+                        delta: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+                    },
+                ],
+            },
+        };
+
+        let part_entity = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                PartAnimationPlayer {
+                    root_entity: root,
+                    parent_object_id: 0,
+                    child_object_id: None,
+                    attachment: None,
+                    base_transform: Transform::IDENTITY,
+                    animations: vec![PartAnimationSlot {
+                        channel: "idle".into(),
+                        spec,
+                    }],
+                    apply_aim_yaw: false,
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(1.0));
+        app.update();
+
+        let transform = app
+            .world()
+            .get::<Transform>(part_entity)
+            .copied()
+            .expect("part entity has Transform");
+        assert!(
+            (transform.translation.y - 1.0).abs() < 1e-4,
+            "expected idle clip to keep sampling while moving, got translation={:?}",
+            transform.translation
         );
     }
 }
