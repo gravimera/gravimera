@@ -485,6 +485,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.init_resource::<BuildState>();
     app.init_resource::<SelectionState>();
     app.init_resource::<MoveCommandState>();
+    app.init_resource::<SlowMoveMode>();
     app.init_resource::<BuildPreview>();
     app.init_resource::<CameraZoom>();
     app.init_resource::<CameraYaw>();
@@ -740,6 +741,10 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         Update,
         (
             rts::selection_input.run_if(crate::automation::local_input_enabled),
+            rts::toggle_slow_move_mode
+                .after(rts::selection_input)
+                .before(rts::keyboard_move_input)
+                .run_if(crate::automation::local_input_enabled),
             rts::update_selection_box_ui.after(rts::selection_input),
             rts::draw_selected_player_gizmos.after(rts::selection_input),
             rts::update_fire_control

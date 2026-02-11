@@ -5,6 +5,7 @@ pub(crate) const WORLD_HALF_SIZE: f32 = 25.0;
 // Player entity origin is at the hips (feet on y=0).
 pub(crate) const PLAYER_Y: f32 = 0.55;
 pub(crate) const PLAYER_SPEED: f32 = 11.0;
+pub(crate) const SLOW_MOVE_SPEED_MULTIPLIER: f32 = 1.0 / 3.0;
 pub(crate) const PLAYER_RADIUS: f32 = 0.55;
 pub(crate) const PLAYER_MAX_HEALTH: i32 = 1000;
 

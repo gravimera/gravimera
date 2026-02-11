@@ -10,6 +10,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Camera pan: move cursor near the window edge
 - Camera rotate: `I` / `J` / `K` / `L`
 - Direct move (selected units/build objects): `W` / `A` / `S` / `D` (camera-relative)
+- Slow move (selected units): `CapsLock` (toggle; 1/3 speed)
 
 ## Selection
 
@@ -54,4 +55,3 @@ Units in Build mode:
 ## Gen3D
 
 Enter/exit Gen3D using the in-game **Gen3D** button. Full workflow: `gen_3d.md`.
-

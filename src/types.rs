@@ -476,6 +476,11 @@ pub(crate) struct MoveCommandState {
     pub(crate) marker: Option<Entity>,
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct SlowMoveMode {
+    pub(crate) enabled: bool,
+}
+
 #[derive(Component)]
 pub(crate) struct BuildPreviewMarker;
 

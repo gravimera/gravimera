@@ -211,6 +211,15 @@ fn pick_enemy_entity_under_cursor(
     best
 }
 
+pub(crate) fn toggle_slow_move_mode(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut slow_move: ResMut<SlowMoveMode>,
+) {
+    if keys.just_pressed(KeyCode::CapsLock) {
+        slow_move.enabled = !slow_move.enabled;
+    }
+}
+
 pub(crate) fn selection_input(
     mut selection: ResMut<SelectionState>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -670,6 +679,7 @@ pub(crate) fn keyboard_move_input(
     mut commands: Commands,
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    slow_move: Res<SlowMoveMode>,
     mode: Res<State<GameMode>>,
     build: Res<BuildState>,
     mut move_state: ResMut<MoveCommandState>,
@@ -757,7 +767,10 @@ pub(crate) fn keyboard_move_input(
         let Some(mobility) = library.mobility(prefab_id.0) else {
             continue;
         };
-        let speed = mobility.max_speed.max(0.0);
+        let mut speed = mobility.max_speed.max(0.0);
+        if slow_move.enabled {
+            speed *= SLOW_MOVE_SPEED_MULTIPLIER;
+        }
         if speed <= 0.001 {
             continue;
         }
@@ -951,6 +964,7 @@ pub(crate) fn build_unit_hotkeys(
 pub(crate) fn execute_move_orders(
     mut commands: Commands,
     time: Res<Time>,
+    slow_move: Res<SlowMoveMode>,
     mode: Res<State<GameMode>>,
     game: Res<Game>,
     library: Res<ObjectLibrary>,
@@ -988,7 +1002,10 @@ pub(crate) fn execute_move_orders(
             continue;
         };
 
-        let speed = mobility.max_speed.max(0.0);
+        let mut speed = mobility.max_speed.max(0.0);
+        if slow_move.enabled {
+            speed *= SLOW_MOVE_SPEED_MULTIPLIER;
+        }
         if speed <= 0.001 {
             any_active_after = true;
             continue;
