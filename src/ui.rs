@@ -43,11 +43,19 @@ pub(crate) fn update_window_title(
 
     match mode.get() {
         GameMode::Build => {
-            window.title = format!(
-                "Gravimera — BUILD ({}) | score: {} | health: {} | 1/2/3 place | Esc select | Tab play",
-                build.selected.label(),
-                game.score, game.health
-            );
+            if build.placing_active {
+                window.title = format!(
+                    "Gravimera — BUILD ({}) | score: {} | health: {} | 1/2/3 place | Esc select | Tab play",
+                    build.selected.label(),
+                    game.score,
+                    game.health
+                );
+            } else {
+                window.title = format!(
+                    "Gravimera — BUILD | score: {} | health: {} | LMB select | 1/2/3 place | Tab play",
+                    game.score, game.health
+                );
+            }
         }
         GameMode::Play => {
             if game.game_over {

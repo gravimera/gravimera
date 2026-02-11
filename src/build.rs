@@ -403,7 +403,7 @@ pub(crate) fn enter_build_mode(
     mut preview: ResMut<BuildPreview>,
     player: Query<Entity, With<Player>>,
 ) {
-    build.placing_active = true;
+    build.placing_active = false;
     selection.clear();
     preview.visible = false;
     preview.spec = None;
