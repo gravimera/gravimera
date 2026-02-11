@@ -1620,6 +1620,9 @@ pub(crate) fn gen3d_update_ui_text(
             status_text.push_str(&format!("\nDraft primitives: {primitives}"));
         }
     }
+    if let Some(metrics) = job.status_metrics_text() {
+        status_text.push_str(&metrics);
+    }
     if let Some(err) = &workshop.error {
         status_text.push_str("\n\nError:\n");
         status_text.push_str(err);

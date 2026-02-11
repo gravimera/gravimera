@@ -128,6 +128,7 @@ pub(super) fn spawn_agent_step_request(
         message: "Starting agent…".into(),
     }));
     job.shared_progress = Some(progress.clone());
+    job.metrics.note_agent_step_request_started();
 
     set_progress(&progress, "Thinking…");
 
@@ -1082,6 +1083,7 @@ fn poll_agent_step(
         return;
     };
     job.shared_result = None;
+    job.metrics.note_agent_step_response_received();
 
     match result {
         Ok(resp) => {
@@ -1518,6 +1520,8 @@ fn execute_agent_actions(
                     tool_id,
                     args,
                 };
+                job.metrics
+                    .note_tool_call_started(call.call_id.as_str(), call.tool_id.as_str());
                 append_agent_trace_event_v1(
                     job.run_dir.as_deref(),
                     &AgentTraceEventV1::ToolCall {
@@ -1567,6 +1571,7 @@ fn execute_agent_actions(
                     call,
                 ) {
                     ToolCallOutcome::Immediate(result) => {
+                        job.metrics.note_tool_result(&result);
                         append_gen3d_run_log(
                             job.pass_dir.as_deref(),
                             format!(
@@ -3676,6 +3681,7 @@ fn poll_agent_tool(
         if let Some(tool_result) =
             poll_agent_component_batch(config, workshop, job, draft, workshop.speed_mode)
         {
+            job.metrics.note_tool_result(&tool_result);
             append_agent_trace_event_v1(
                 job.run_dir.as_deref(),
                 &AgentTraceEventV1::ToolResult {
@@ -4559,6 +4565,7 @@ fn poll_agent_tool(
         Err(err) => Gen3dToolResultJsonV1::err(call.call_id, call.tool_id, err),
     };
 
+    job.metrics.note_tool_result(&tool_result);
     append_agent_trace_event_v1(
         job.run_dir.as_deref(),
         &AgentTraceEventV1::ToolResult {
@@ -5159,6 +5166,7 @@ fn poll_agent_render_capture(
             "images": paths.iter().map(|p| p.display().to_string()).collect::<Vec<String>>(),
         }),
     );
+    job.metrics.note_tool_result(&result);
     append_agent_trace_event_v1(
         job.run_dir.as_deref(),
         &AgentTraceEventV1::ToolResult {

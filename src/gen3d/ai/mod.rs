@@ -167,6 +167,280 @@ impl Default for Gen3dAgentState {
     }
 }
 
+#[derive(Clone, Debug)]
+struct Gen3dToolCallInFlight {
+    call_id: String,
+    tool_id: String,
+    started_at: std::time::Instant,
+}
+
+#[derive(Clone, Debug)]
+struct Gen3dPassMetrics {
+    pass: u32,
+    started_at: std::time::Instant,
+    ended_at: Option<std::time::Instant>,
+    agent_step_llm_ms_total: u128,
+    agent_step_llm_requests: u32,
+    tool_ms_total: u128,
+    tool_calls: u32,
+    tool_ms_by_id: std::collections::HashMap<String, u128>,
+}
+
+impl Gen3dPassMetrics {
+    fn elapsed(&self, now: std::time::Instant) -> std::time::Duration {
+        let end = self.ended_at.unwrap_or(now);
+        end.duration_since(self.started_at)
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct Gen3dCopyMetrics {
+    auto_component_copies: u32,
+    auto_subtree_copies: u32,
+    auto_errors: u32,
+    manual_component_calls: u32,
+    manual_component_copies: u32,
+    manual_subtree_calls: u32,
+    manual_subtree_copies: u32,
+    manual_failures: u32,
+    last_error: Option<String>,
+    recent_outcomes: std::collections::VecDeque<String>,
+}
+
+impl Gen3dCopyMetrics {
+    fn push_outcome(&mut self, outcome: String) {
+        const MAX_RECENT: usize = 8;
+        if outcome.trim().is_empty() {
+            return;
+        }
+        self.recent_outcomes.push_back(outcome);
+        while self.recent_outcomes.len() > MAX_RECENT {
+            self.recent_outcomes.pop_front();
+        }
+    }
+
+    fn note_tool_result(&mut self, result: &crate::gen3d::agent::Gen3dToolResultJsonV1) {
+        use crate::gen3d::agent::tools::{
+            TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_LLM_GENERATE_COMPONENTS,
+        };
+
+        match result.tool_id.as_str() {
+            TOOL_ID_COPY_COMPONENT => {
+                self.manual_component_calls = self.manual_component_calls.saturating_add(1);
+                if !result.ok {
+                    self.manual_failures = self.manual_failures.saturating_add(1);
+                    self.last_error = result.error.clone();
+                    return;
+                }
+                let Some(value) = result.result.as_ref() else {
+                    return;
+                };
+                let Some(copies) = value.get("copies").and_then(|v| v.as_array()) else {
+                    return;
+                };
+                self.manual_component_copies = self
+                    .manual_component_copies
+                    .saturating_add(copies.len().min(u32::MAX as usize) as u32);
+                for item in copies {
+                    let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                    let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
+                    let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+                    if !source.is_empty() && !target.is_empty() {
+                        self.push_outcome(format!("{source} -> {target} ({mode})"));
+                    }
+                }
+            }
+            TOOL_ID_COPY_COMPONENT_SUBTREE => {
+                self.manual_subtree_calls = self.manual_subtree_calls.saturating_add(1);
+                if !result.ok {
+                    self.manual_failures = self.manual_failures.saturating_add(1);
+                    self.last_error = result.error.clone();
+                    return;
+                }
+                let Some(value) = result.result.as_ref() else {
+                    return;
+                };
+                let Some(copies) = value.get("copies").and_then(|v| v.as_array()) else {
+                    return;
+                };
+                self.manual_subtree_copies = self
+                    .manual_subtree_copies
+                    .saturating_add(copies.len().min(u32::MAX as usize) as u32);
+                for item in copies {
+                    let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                    let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
+                    let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+                    if !source.is_empty() && !target.is_empty() {
+                        self.push_outcome(format!("{source} -> {target} ({mode})"));
+                    }
+                }
+            }
+            TOOL_ID_LLM_GENERATE_COMPONENTS => {
+                let Some(value) = result.result.as_ref() else {
+                    return;
+                };
+                let Some(auto_copy) = value.get("auto_copy").and_then(|v| v.as_object()) else {
+                    return;
+                };
+
+                let component_copies_applied = auto_copy
+                    .get("component_copies_applied")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let subtree_copies_applied = auto_copy
+                    .get("subtree_copies_applied")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                self.auto_component_copies = self.auto_component_copies.saturating_add(
+                    component_copies_applied.min(u32::MAX as u64) as u32,
+                );
+                self.auto_subtree_copies =
+                    self.auto_subtree_copies
+                        .saturating_add(subtree_copies_applied.min(u32::MAX as u64) as u32);
+
+                if let Some(errors) = auto_copy.get("errors").and_then(|v| v.as_array()) {
+                    self.auto_errors = self
+                        .auto_errors
+                        .saturating_add(errors.len().min(u32::MAX as usize) as u32);
+                    if let Some(last) = errors.last().and_then(|v| v.as_str()) {
+                        if !last.trim().is_empty() {
+                            self.last_error = Some(last.trim().to_string());
+                        }
+                    }
+                }
+
+                if let Some(outcomes) = auto_copy.get("outcomes").and_then(|v| v.as_array()) {
+                    for item in outcomes {
+                        let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                        let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
+                        let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+                        if !source.is_empty() && !target.is_empty() {
+                            self.push_outcome(format!("auto {source} -> {target} ({mode})"));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct Gen3dRunMetrics {
+    passes: Vec<Gen3dPassMetrics>,
+    current_pass_idx: Option<usize>,
+    agent_step_request_started_at: Option<std::time::Instant>,
+    tool_call_in_flight: Option<Gen3dToolCallInFlight>,
+    copy: Gen3dCopyMetrics,
+}
+
+impl Gen3dRunMetrics {
+    fn current_pass_mut(&mut self) -> Option<&mut Gen3dPassMetrics> {
+        self.current_pass_idx
+            .and_then(|idx| self.passes.get_mut(idx))
+    }
+
+    fn current_pass(&self) -> Option<&Gen3dPassMetrics> {
+        self.current_pass_idx.and_then(|idx| self.passes.get(idx))
+    }
+
+    fn note_pass_started(&mut self, pass: u32) {
+        let now = std::time::Instant::now();
+        self.finish_current_pass_at(now);
+
+        self.passes.push(Gen3dPassMetrics {
+            pass,
+            started_at: now,
+            ended_at: None,
+            agent_step_llm_ms_total: 0,
+            agent_step_llm_requests: 0,
+            tool_ms_total: 0,
+            tool_calls: 0,
+            tool_ms_by_id: std::collections::HashMap::new(),
+        });
+        self.current_pass_idx = Some(self.passes.len().saturating_sub(1));
+        self.agent_step_request_started_at = None;
+        self.tool_call_in_flight = None;
+    }
+
+    fn finish_current_pass(&mut self) {
+        self.finish_current_pass_at(std::time::Instant::now());
+    }
+
+    fn finish_current_pass_at(&mut self, now: std::time::Instant) {
+        let Some(pass) = self.current_pass_mut() else {
+            return;
+        };
+        if pass.ended_at.is_none() {
+            pass.ended_at = Some(now);
+        }
+    }
+
+    fn note_agent_step_request_started(&mut self) {
+        self.agent_step_request_started_at = Some(std::time::Instant::now());
+    }
+
+    fn note_agent_step_response_received(&mut self) {
+        let Some(start) = self.agent_step_request_started_at.take() else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        let ms = now.duration_since(start).as_millis() as u128;
+        let Some(pass) = self.current_pass_mut() else {
+            return;
+        };
+        pass.agent_step_llm_ms_total = pass.agent_step_llm_ms_total.saturating_add(ms);
+        pass.agent_step_llm_requests = pass.agent_step_llm_requests.saturating_add(1);
+    }
+
+    fn note_tool_call_started(&mut self, call_id: &str, tool_id: &str) {
+        self.tool_call_in_flight = Some(Gen3dToolCallInFlight {
+            call_id: call_id.to_string(),
+            tool_id: tool_id.to_string(),
+            started_at: std::time::Instant::now(),
+        });
+    }
+
+    fn note_tool_result(&mut self, result: &crate::gen3d::agent::Gen3dToolResultJsonV1) {
+        let now = std::time::Instant::now();
+        if let Some(in_flight) = self.tool_call_in_flight.take() {
+            if in_flight.call_id == result.call_id {
+                let ms = now.duration_since(in_flight.started_at).as_millis() as u128;
+                if let Some(pass) = self.current_pass_mut() {
+                    pass.tool_ms_total = pass.tool_ms_total.saturating_add(ms);
+                    pass.tool_calls = pass.tool_calls.saturating_add(1);
+                    let entry = pass.tool_ms_by_id.entry(in_flight.tool_id).or_insert(0);
+                    *entry = entry.saturating_add(ms);
+                }
+            }
+        }
+
+        self.copy.note_tool_result(result);
+    }
+
+    fn agent_step_llm_ms_with_in_flight(&self, now: std::time::Instant) -> u128 {
+        let Some(pass) = self.current_pass() else {
+            return 0;
+        };
+        let mut ms = pass.agent_step_llm_ms_total;
+        if let Some(start) = self.agent_step_request_started_at {
+            ms = ms.saturating_add(now.duration_since(start).as_millis() as u128);
+        }
+        ms
+    }
+
+    fn tool_ms_with_in_flight(&self, now: std::time::Instant) -> u128 {
+        let Some(pass) = self.current_pass() else {
+            return 0;
+        };
+        let mut ms = pass.tool_ms_total;
+        if let Some(in_flight) = self.tool_call_in_flight.as_ref() {
+            ms = ms.saturating_add(now.duration_since(in_flight.started_at).as_millis() as u128);
+        }
+        ms
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct Gen3dAiJob {
     running: bool,
@@ -225,6 +499,7 @@ pub(crate) struct Gen3dAiJob {
     chat_fallbacks_this_run: u32,
     agent: Gen3dAgentState,
     save_seq: u32,
+    metrics: Gen3dRunMetrics,
 }
 
 #[derive(Clone, Debug)]
@@ -331,6 +606,7 @@ impl Gen3dAiJob {
             self.last_run_elapsed = Some(start.elapsed());
         }
 
+        self.metrics.finish_current_pass();
         self.stop_gen3d_log_capture();
     }
 
@@ -360,6 +636,138 @@ impl Gen3dAiJob {
         let shared = self.shared_progress.as_ref()?;
         let guard = shared.lock().ok()?;
         Some(guard.message.clone())
+    }
+
+    pub(crate) fn status_metrics_text(&self) -> Option<String> {
+        if self.metrics.passes.is_empty() {
+            return None;
+        }
+
+        fn duration_from_ms(ms: u128) -> std::time::Duration {
+            std::time::Duration::from_millis(ms.min(u64::MAX as u128) as u64)
+        }
+
+        fn format_duration(d: std::time::Duration) -> String {
+            let secs = d.as_secs();
+            if secs < 60 {
+                format!("{:.1}s", d.as_secs_f32())
+            } else if secs < 60 * 60 {
+                format!("{}m {}s", secs / 60, secs % 60)
+            } else {
+                let hours = secs / 3600;
+                let mins = (secs % 3600) / 60;
+                format!("{hours}h {mins}m")
+            }
+        }
+
+        fn short_tool_id(tool_id: &str) -> &str {
+            tool_id.strip_suffix("_v1").unwrap_or(tool_id)
+        }
+
+        let now = std::time::Instant::now();
+        let mut out = String::new();
+        out.push_str("\n\nMetrics:");
+
+        // Step times (per pass). Display the most recent N to keep the panel readable.
+        out.push_str("\nStep time: ");
+        const MAX_PASSES: usize = 10;
+        let passes = &self.metrics.passes;
+        let start_idx = passes.len().saturating_sub(MAX_PASSES);
+        if start_idx > 0 {
+            out.push_str("… | ");
+        }
+        for (i, pass) in passes.iter().enumerate().skip(start_idx) {
+            out.push_str(&format!("p{} {}", pass.pass, format_duration(pass.elapsed(now))));
+            if pass.ended_at.is_none() && self.running {
+                out.push('*');
+            }
+            if i + 1 < passes.len() {
+                out.push_str(" | ");
+            }
+        }
+
+        // Current step breakdown.
+        if let Some(pass) = self.metrics.current_pass() {
+            let agent_ms = self.metrics.agent_step_llm_ms_with_in_flight(now);
+            let tool_ms = self.metrics.tool_ms_with_in_flight(now);
+            let agent_reqs = pass.agent_step_llm_requests
+                + if self.metrics.agent_step_request_started_at.is_some() {
+                    1
+                } else {
+                    0
+                };
+            let tool_calls = pass.tool_calls
+                + if self.metrics.tool_call_in_flight.is_some() {
+                    1
+                } else {
+                    0
+                };
+            let total = pass.elapsed(now);
+            out.push_str(&format!(
+                "\nThis step: agent {} ({agent_reqs} req) | tools {} ({tool_calls} call{}) | total {}",
+                format_duration(duration_from_ms(agent_ms)),
+                format_duration(duration_from_ms(tool_ms)),
+                if tool_calls == 1 { "" } else { "s" },
+                format_duration(total),
+            ));
+
+            if !pass.tool_ms_by_id.is_empty() {
+                let mut tools: Vec<(&str, u128)> = pass
+                    .tool_ms_by_id
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), *v))
+                    .collect();
+                tools.sort_by(|a, b| b.1.cmp(&a.1));
+                out.push_str("\nTop tools: ");
+                for (idx, (tool_id, ms)) in tools.into_iter().take(3).enumerate() {
+                    if idx > 0 {
+                        out.push_str(" | ");
+                    }
+                    out.push_str(&format!(
+                        "{} {}",
+                        short_tool_id(tool_id),
+                        format_duration(duration_from_ms(ms))
+                    ));
+                }
+            }
+        }
+
+        // Copy metrics (this run).
+        let copy = &self.metrics.copy;
+        if copy.auto_component_copies > 0
+            || copy.auto_subtree_copies > 0
+            || copy.manual_component_calls > 0
+            || copy.manual_subtree_calls > 0
+            || copy.manual_failures > 0
+        {
+            out.push_str(&format!(
+                "\nCopy: auto comp {} | auto subtree {} | tool comp {} ({} call{}) | tool subtree {} ({} call{}) | failures {}",
+                copy.auto_component_copies,
+                copy.auto_subtree_copies,
+                copy.manual_component_copies,
+                copy.manual_component_calls,
+                if copy.manual_component_calls == 1 { "" } else { "s" },
+                copy.manual_subtree_copies,
+                copy.manual_subtree_calls,
+                if copy.manual_subtree_calls == 1 { "" } else { "s" },
+                copy.manual_failures,
+            ));
+            if !copy.recent_outcomes.is_empty() {
+                out.push_str("\nCopy recent: ");
+                for (idx, item) in copy.recent_outcomes.iter().enumerate() {
+                    if idx > 0 {
+                        out.push_str(" | ");
+                    }
+                    out.push_str(item);
+                }
+            }
+            if let Some(err) = copy.last_error.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            {
+                out.push_str(&format!("\nCopy last err: {}", truncate_for_ui(err, 160)));
+            }
+        }
+
+        Some(out)
     }
 }
 
@@ -682,6 +1090,7 @@ pub(crate) fn gen3d_start_build_from_api(
     };
 
     job.log_sinks = log_sinks;
+    job.metrics = Gen3dRunMetrics::default();
 
     let image_paths: Vec<PathBuf> = workshop.images.iter().map(|i| i.path.clone()).collect();
     let (run_id, run_dir) = gen3d_make_run_dir(config);
@@ -3255,6 +3664,8 @@ fn gen3d_set_current_attempt_pass(
                 .unwrap_or(0),
         }),
     );
+
+    job.metrics.note_pass_started(pass);
 
     Ok(())
 }
