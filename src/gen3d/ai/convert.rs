@@ -2041,7 +2041,7 @@ pub(super) fn ai_to_component_def(
         &mut parts,
         &mut anchors,
     );
-    maybe_fix_planar_leaf_spinner_to_align_with_attachment_axis(
+    maybe_align_axially_symmetric_spinner_to_spin_axis(
         component_name,
         component,
         &anchors,
@@ -2136,32 +2136,30 @@ fn cube_rotations_right_handed() -> Vec<Quat> {
     out
 }
 
-fn maybe_fix_planar_leaf_spinner_to_align_with_attachment_axis(
+fn maybe_align_axially_symmetric_spinner_to_spin_axis(
     component_name: &str,
     component: &Gen3dPlannedComponent,
     anchors: &[crate::object::registry::AnchorDef],
     parts: &mut [ObjectPartDef],
 ) {
-    const PLANAR_THIN_RATIO_MAX: f32 = 0.35;
-    const PLANAR_WIDE_RATIO_MIN: f32 = 0.75;
-    const AXIS_ALIGN_MIN: f32 = 0.95;
     const ORIGIN_EPS: f32 = 0.01;
 
     let Some(att) = component.attach_to.as_ref() else {
         return;
     };
-    if !att.animations.iter().any(|slot| {
-        matches!(
-            &slot.spec.clip,
-            crate::object::registry::PartAnimationDef::Spin { .. }
-        )
-    }) {
-        return;
-    }
 
-    // Only apply to leaf-ish spinners: a single attachment anchor at (or very near) the origin.
-    // We rotate PARTS ONLY (anchors remain the plan-defined joint interface) to ensure the rotor/
-    // wheel plane is orthogonal to the attachment axis.
+    let Some(spin_axis_join) = att.animations.iter().find_map(|slot| {
+        match &slot.spec.clip {
+            crate::object::registry::PartAnimationDef::Spin { axis, .. } => Some(*axis),
+            _ => None,
+        }
+    }) else {
+        return;
+    };
+
+    // Only adjust geometry relative to anchors when this component has a single attachment anchor
+    // at the origin; otherwise we'd risk breaking other joints (child anchors) that depend on the
+    // component-local frame.
     if anchors.len() != 1 {
         return;
     }
@@ -2172,85 +2170,45 @@ fn maybe_fix_planar_leaf_spinner_to_align_with_attachment_axis(
         return;
     }
 
-    let child_forward = if att.child_anchor == "origin" {
-        Vec3::Z
+    let child_anchor_rot = if att.child_anchor == "origin" {
+        Quat::IDENTITY
     } else {
-        anchors[0].transform.rotation * Vec3::Z
+        anchors[0].transform.rotation
     };
-    let child_up = if att.child_anchor == "origin" {
-        Vec3::Y
-    } else {
-        anchors[0].transform.rotation * Vec3::Y
-    };
+    let desired_axis_component = (child_anchor_rot * spin_axis_join).normalize_or_zero();
+    if desired_axis_component.length_squared() <= 1e-6 {
+        return;
+    }
 
+    // If the component is axially symmetric in its local AABB (two axes have equal extents),
+    // we can safely align that symmetry axis with the spin axis. This avoids type/name-based
+    // heuristics and prevents "rotated 90 degrees" spinners that would otherwise tumble.
     let size = size_from_primitive_parts(parts);
-    let mut dims = [(0usize, size.x.abs()), (1, size.y.abs()), (2, size.z.abs())];
-    dims.sort_by(|a, b| {
-        a.1.partial_cmp(&b.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let (thin_axis, thin) = dims[0];
-    let wide1 = dims[1].1.max(0.0001);
-    let wide2 = dims[2].1.max(0.0001);
-    if thin <= 1e-6 {
-        return;
-    }
-    // Disk-like planar: one axis much thinner, the other two similar.
-    if thin / wide1 > PLANAR_THIN_RATIO_MAX {
-        return;
-    }
-    if wide1 / wide2 < PLANAR_WIDE_RATIO_MIN {
-        return;
+    let sx = size.x.abs();
+    let sy = size.y.abs();
+    let sz = size.z.abs();
+
+    fn approx_eq(a: f32, b: f32) -> bool {
+        let diff = (a - b).abs();
+        let scale = a.abs().max(b.abs()).max(1.0);
+        diff <= 1e-4 * scale
     }
 
-    let (desired_axis, desired_sign) = {
-        let a = child_forward.normalize_or_zero();
-        if a.length_squared() <= 1e-6 {
-            return;
-        }
-        let ax = a.x.abs();
-        let ay = a.y.abs();
-        let az = a.z.abs();
-        if ax >= AXIS_ALIGN_MIN && ay < (1.0 - AXIS_ALIGN_MIN) && az < (1.0 - AXIS_ALIGN_MIN) {
-            (0usize, if a.x >= 0.0 { 1.0 } else { -1.0 })
-        } else if ay >= AXIS_ALIGN_MIN
-            && ax < (1.0 - AXIS_ALIGN_MIN)
-            && az < (1.0 - AXIS_ALIGN_MIN)
-        {
-            (1usize, if a.y >= 0.0 { 1.0 } else { -1.0 })
-        } else if az >= AXIS_ALIGN_MIN
-            && ax < (1.0 - AXIS_ALIGN_MIN)
-            && ay < (1.0 - AXIS_ALIGN_MIN)
-        {
-            (2usize, if a.z >= 0.0 { 1.0 } else { -1.0 })
-        } else {
-            return;
-        }
+    let symmetry_axis = if approx_eq(sx, sy) && !approx_eq(sx, sz) {
+        Vec3::Z
+    } else if approx_eq(sx, sz) && !approx_eq(sx, sy) {
+        Vec3::Y
+    } else if approx_eq(sy, sz) && !approx_eq(sy, sx) {
+        Vec3::X
+    } else {
+        return;
     };
-
-    if thin_axis == desired_axis {
+    if symmetry_axis.dot(desired_axis_component).abs() > 0.999 {
         return;
     }
 
-    let basis = |idx: usize| match idx {
-        0 => Vec3::X,
-        1 => Vec3::Y,
-        _ => Vec3::Z,
-    };
-    let thin_dir = basis(thin_axis);
-    let desired_dir = basis(desired_axis) * desired_sign;
-
-    let mut best: Option<(Quat, f32)> = None;
-    for rot in cube_rotations_right_handed() {
-        if (rot * thin_dir).dot(desired_dir) < 0.99 {
-            continue;
-        }
-        let score = (rot * Vec3::Y).dot(child_up).abs();
-        if best.is_none_or(|(_, best_score)| score > best_score + 1e-5) {
-            best = Some((rot, score));
-        }
-    }
-    let Some((rot, _score)) = best else {
+    let rot = Quat::from_rotation_arc(symmetry_axis, desired_axis_component).normalize();
+    if !rot.is_finite() {
         return;
     };
 
@@ -2260,7 +2218,7 @@ fn maybe_fix_planar_leaf_spinner_to_align_with_attachment_axis(
     }
 
     debug!(
-        "Gen3D: rotated planar leaf spinner `{}` to align thin axis with attachment axis",
+        "Gen3D: aligned axially symmetric spinner `{}` with its spin axis",
         component_name
     );
 }
@@ -2675,13 +2633,14 @@ mod tests {
     }
 
     #[test]
-    fn fixes_planar_leaf_spinner_plane_against_attachment_axis() {
-        // Regression: a planar spinner (tail rotor / wheel disc) can be generated with the thin
-        // axis not aligned to the attachment axis, making it look rotated 90 degrees.
+    fn aligns_axially_symmetric_spinner_with_spin_axis() {
+        // Regression: an axially symmetric spinner (tail rotor / wheel disc) can be generated with
+        // its symmetry axis not aligned to the attachment's spin axis, making it look rotated 90
+        // degrees (tumbling instead of spinning).
         //
-        // For a leaf-ish component with a single attachment anchor at the origin and a spin
-        // animation, rotate PARTS ONLY so the geometry plane becomes orthogonal to the attachment
-        // direction, while keeping anchors stable as the joint interface.
+        // For a component with a single attachment anchor at the origin and a spin animation, we
+        // rotate PARTS ONLY to align the geometry's symmetry axis with the spin axis while keeping
+        // anchors stable as the joint interface.
         let planned = Gen3dPlannedComponent {
             display_name: "1. tail_rotor".into(),
             name: "tail_rotor".into(),
