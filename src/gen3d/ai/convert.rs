@@ -2041,6 +2041,12 @@ pub(super) fn ai_to_component_def(
         &mut parts,
         &mut anchors,
     );
+    maybe_fix_planar_leaf_spinner_to_align_with_attachment_axis(
+        component_name,
+        component,
+        &anchors,
+        &mut parts,
+    );
 
     let size = size_from_primitive_parts(&parts);
     let collider = collider_profile_from_ai(ai.collider.clone(), size)?;
@@ -2128,6 +2134,135 @@ fn cube_rotations_right_handed() -> Vec<Quat> {
         }
     }
     out
+}
+
+fn maybe_fix_planar_leaf_spinner_to_align_with_attachment_axis(
+    component_name: &str,
+    component: &Gen3dPlannedComponent,
+    anchors: &[crate::object::registry::AnchorDef],
+    parts: &mut [ObjectPartDef],
+) {
+    const PLANAR_THIN_RATIO_MAX: f32 = 0.35;
+    const PLANAR_WIDE_RATIO_MIN: f32 = 0.75;
+    const AXIS_ALIGN_MIN: f32 = 0.95;
+    const ORIGIN_EPS: f32 = 0.01;
+
+    let Some(att) = component.attach_to.as_ref() else {
+        return;
+    };
+    if !att.animations.iter().any(|slot| {
+        matches!(
+            &slot.spec.clip,
+            crate::object::registry::PartAnimationDef::Spin { .. }
+        )
+    }) {
+        return;
+    }
+
+    // Only apply to leaf-ish spinners: a single attachment anchor at (or very near) the origin.
+    // We rotate PARTS ONLY (anchors remain the plan-defined joint interface) to ensure the rotor/
+    // wheel plane is orthogonal to the attachment axis.
+    if anchors.len() != 1 {
+        return;
+    }
+    if att.child_anchor != "origin" && anchors[0].name.as_ref() != att.child_anchor {
+        return;
+    }
+    if anchors[0].transform.translation.length_squared() > ORIGIN_EPS * ORIGIN_EPS {
+        return;
+    }
+
+    let child_forward = if att.child_anchor == "origin" {
+        Vec3::Z
+    } else {
+        anchors[0].transform.rotation * Vec3::Z
+    };
+    let child_up = if att.child_anchor == "origin" {
+        Vec3::Y
+    } else {
+        anchors[0].transform.rotation * Vec3::Y
+    };
+
+    let size = size_from_primitive_parts(parts);
+    let mut dims = [(0usize, size.x.abs()), (1, size.y.abs()), (2, size.z.abs())];
+    dims.sort_by(|a, b| {
+        a.1.partial_cmp(&b.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let (thin_axis, thin) = dims[0];
+    let wide1 = dims[1].1.max(0.0001);
+    let wide2 = dims[2].1.max(0.0001);
+    if thin <= 1e-6 {
+        return;
+    }
+    // Disk-like planar: one axis much thinner, the other two similar.
+    if thin / wide1 > PLANAR_THIN_RATIO_MAX {
+        return;
+    }
+    if wide1 / wide2 < PLANAR_WIDE_RATIO_MIN {
+        return;
+    }
+
+    let (desired_axis, desired_sign) = {
+        let a = child_forward.normalize_or_zero();
+        if a.length_squared() <= 1e-6 {
+            return;
+        }
+        let ax = a.x.abs();
+        let ay = a.y.abs();
+        let az = a.z.abs();
+        if ax >= AXIS_ALIGN_MIN && ay < (1.0 - AXIS_ALIGN_MIN) && az < (1.0 - AXIS_ALIGN_MIN) {
+            (0usize, if a.x >= 0.0 { 1.0 } else { -1.0 })
+        } else if ay >= AXIS_ALIGN_MIN
+            && ax < (1.0 - AXIS_ALIGN_MIN)
+            && az < (1.0 - AXIS_ALIGN_MIN)
+        {
+            (1usize, if a.y >= 0.0 { 1.0 } else { -1.0 })
+        } else if az >= AXIS_ALIGN_MIN
+            && ax < (1.0 - AXIS_ALIGN_MIN)
+            && ay < (1.0 - AXIS_ALIGN_MIN)
+        {
+            (2usize, if a.z >= 0.0 { 1.0 } else { -1.0 })
+        } else {
+            return;
+        }
+    };
+
+    if thin_axis == desired_axis {
+        return;
+    }
+
+    let basis = |idx: usize| match idx {
+        0 => Vec3::X,
+        1 => Vec3::Y,
+        _ => Vec3::Z,
+    };
+    let thin_dir = basis(thin_axis);
+    let desired_dir = basis(desired_axis) * desired_sign;
+
+    let mut best: Option<(Quat, f32)> = None;
+    for rot in cube_rotations_right_handed() {
+        if (rot * thin_dir).dot(desired_dir) < 0.99 {
+            continue;
+        }
+        let score = (rot * Vec3::Y).dot(child_up).abs();
+        if best.is_none_or(|(_, best_score)| score > best_score + 1e-5) {
+            best = Some((rot, score));
+        }
+    }
+    let Some((rot, _score)) = best else {
+        return;
+    };
+
+    for part in parts.iter_mut() {
+        part.transform.translation = rot * part.transform.translation;
+        part.transform.rotation = (rot * part.transform.rotation).normalize();
+    }
+
+    debug!(
+        "Gen3D: rotated planar leaf spinner `{}` to align thin axis with attachment axis",
+        component_name
+    );
 }
 
 fn maybe_fix_component_axis_permutation(
@@ -2536,6 +2671,89 @@ mod tests {
             p.x.abs() > 0.9 && p.y.abs() < 0.1 && p.z.abs() < 0.1,
             "expected mount anchor to rotate with the corrected axes; pos={:?}",
             p
+        );
+    }
+
+    #[test]
+    fn fixes_planar_leaf_spinner_plane_against_attachment_axis() {
+        // Regression: a planar spinner (tail rotor / wheel disc) can be generated with the thin
+        // axis not aligned to the attachment axis, making it look rotated 90 degrees.
+        //
+        // For a leaf-ish component with a single attachment anchor at the origin and a spin
+        // animation, rotate PARTS ONLY so the geometry plane becomes orthogonal to the attachment
+        // direction, while keeping anchors stable as the joint interface.
+        let planned = Gen3dPlannedComponent {
+            display_name: "1. tail_rotor".into(),
+            name: "tail_rotor".into(),
+            purpose: String::new(),
+            modeling_notes: String::new(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::new(0.60, 0.60, 0.12),
+            actual_size: None,
+            anchors: vec![crate::object::registry::AnchorDef {
+                name: "root_attach".into(),
+                transform: Transform::from_translation(Vec3::ZERO)
+                    .with_rotation(plan_rotation_from_forward_up(Vec3::X, Some(Vec3::Y))),
+            }],
+            contacts: Vec::new(),
+            attach_to: Some(Gen3dPlannedAttachment {
+                parent: "tail_boom".into(),
+                parent_anchor: "tail_rotor_mount".into(),
+                child_anchor: "root_attach".into(),
+                offset: Transform::IDENTITY,
+                joint: None,
+                animations: vec![PartAnimationSlot {
+                    channel: "ambient".into(),
+                    spec: PartAnimationSpec {
+                        driver: PartAnimationDriver::Always,
+                        speed_scale: 1.0,
+                        clip: PartAnimationDef::Spin {
+                            axis: Vec3::Z,
+                            radians_per_unit: 1.0,
+                        },
+                    },
+                }],
+            }),
+        };
+
+        // Geometry is a flat disc in the XY plane (thin in +Z), but the attachment axis points +X.
+        let ai = AiDraftJsonV1 {
+            version: 2,
+            collider: None,
+            anchors: vec![AiAnchorJson {
+                name: "root_attach".into(),
+                pos: [0.0, 0.0, 0.0],
+                forward: Some([1.0, 0.0, 0.0]),
+                up: Some([0.0, 1.0, 0.0]),
+            }],
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cuboid,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 1.0]),
+                pos: [0.0, 0.0, 0.0],
+                forward: None,
+                up: None,
+                scale: [0.60, 0.60, 0.12],
+            }],
+        };
+
+        let def = ai_to_component_def(&planned, ai).expect("component def should build");
+        assert!(
+            def.size.x < def.size.y && def.size.x < def.size.z,
+            "expected component to be thin along +X after correction; size={:?}",
+            def.size
+        );
+        let anchor = def
+            .anchors
+            .iter()
+            .find(|a| a.name.as_ref() == "root_attach")
+            .expect("root_attach anchor");
+        let forward = anchor.transform.rotation * Vec3::Z;
+        assert!(
+            (forward - Vec3::X).length() < 1e-3,
+            "expected attachment anchor forward to stay +X; forward={:?}",
+            forward
         );
     }
 

@@ -7,7 +7,8 @@ use crate::constants::{BUILD_GRID_SIZE, CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION, WO
 use crate::geometry::{normalize_flat_direction, snap_to_grid};
 use crate::object::registry::{
     ColliderProfile, MeshKey, MovementBlockRule, ObjectDef, ObjectInteraction, ObjectLibrary,
-    ObjectPartKind, PartAnimationDef, PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
+    MobilityMode, ObjectPartKind, PartAnimationDef, PrimitiveParams, PrimitiveVisualDef,
+    UnitAttackKind,
 };
 use crate::object::visuals;
 use crate::scene_store::SceneSaveRequest;
@@ -685,6 +686,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     let half_xz = collider_half_xz(root_def.collider, size);
     let object_radius = half_xz.x.max(half_xz.y).max(0.1);
     let mobility = root_def.mobility.is_some();
+    let mobility_mode = root_def.mobility.map(|m| m.mode);
 
     let forward = normalize_flat_direction(player_transform.rotation * Vec3::Z).unwrap_or(Vec3::Z);
     let right = Vec3::Y.cross(forward).normalize_or_zero();
@@ -709,7 +711,11 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     let mut pos = player_transform.translation + dir * radial;
     pos.x = snap_to_grid(pos.x, BUILD_GRID_SIZE);
     pos.z = snap_to_grid(pos.z, BUILD_GRID_SIZE);
-    pos.y = size.y.max(0.01) * 0.5;
+    let ground_y = size.y.max(0.01) * 0.5;
+    pos.y = match mobility_mode {
+        Some(MobilityMode::Air) => ground_y + BUILD_GRID_SIZE * 8.0,
+        _ => ground_y,
+    };
 
     pos.x = pos
         .x
