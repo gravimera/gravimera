@@ -36,7 +36,7 @@ This ExecPlan focuses on **generic improvements with a low regression risk**:
 - [x] (2026-02-11) Add/adjust unit tests (animation offset sampling + scene.dat round-trip; subtree copy partial fill).
 - [x] (2026-02-11) Run `cargo test` and a headless smoke start.
 - [ ] Run a real rendered Gen3D regression (generate → save → move/fire → screenshots) and record run id + findings here (blocked locally without `OPENAI_API_KEY`).
-- [ ] Update `README.md` if needed; commit.
+- [x] (2026-02-11) Update docs + `README.md`; commit.
 
 ## Surprises & Discoveries
 
@@ -72,7 +72,15 @@ This ExecPlan focuses on **generic improvements with a low regression risk**:
 
 ## Outcomes & Retrospective
 
-- (TBD) Record whether inherit+overrides reduces copy failures and improves repeated-limb motion stability across real tests.
+- Implemented:
+  - `time_offset_units` on attachment animation specs (schema + runtime sampling + scene.dat round-trip) to support deterministic phase offsets.
+  - More robust `copy_component_subtree_v1` shape handling via attachment edge key matching and partial target subtree expansion when unambiguous.
+  - Prompt/tool/docs updates to clarify “inherit geometry, override offsets/animations is OK”.
+  - Unit tests covering animation offset sampling and partial subtree expansion.
+
+Remaining:
+
+- Run a rendered end-to-end Gen3D regression with a real OpenAI key and record run id(s) + findings here (locally blocked without `OPENAI_API_KEY`).
 
 ## Context and Orientation
 
