@@ -25,6 +25,9 @@ wgpu = { version = "27", default-features = false }
 tiny_http = "0.12"
 winit = "0.30"
 
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11rb = "0.13"
+
 [profile.release]
 opt-level = 3
 lto = "thin"
