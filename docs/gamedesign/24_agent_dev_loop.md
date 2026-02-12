@@ -24,6 +24,10 @@ This loop applies to:
 3) **Validations are measurable**: tests gate on numeric metrics and schema checks, not subjective judgments.
 4) **Every failure is inspectable**: any gate failure includes enough context to reproduce locally.
 
+For the detailed design of evaluation diagnostics and automatic repair, see:
+
+- `docs/gamedesign/25_evaluation_and_auto_repair.md`
+
 ## The Three Loops
 
 ### Loop A: Inner Loop (seconds to minutes)
@@ -215,4 +219,3 @@ When a test fails, the system should answer:
 4) What was the last known good signature?
 
 This is what makes agent development sustainable as the system grows.
-
