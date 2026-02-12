@@ -20,6 +20,10 @@ The realm manifest defines:
 - capability policy defaults (what kinds of tokens can exist)
 - dependencies on external asset packs (optional)
 
+The concrete realm package layout and manifest/ruleset fields are specified in:
+
+- `docs/gamedesign/20_realm_package_manifest.md`
+
 ## Scene Data
 
 Each scene stores:
@@ -56,6 +60,10 @@ A behavior graph format must define:
 
 Graph execution must be bounded (step budget) and must produce events on errors.
 
+The concrete behavior graph spec is defined in:
+
+- `docs/gamedesign/18_behavior_graph_spec.md`
+
 ## Story Assets
 
 Story assets include:
@@ -84,3 +92,6 @@ Migration rules:
 - failures must be non-destructive (do not corrupt the source)
 - migrations must be testable with fixture files under `tests/`
 
+The concrete migration policy is defined in:
+
+- `docs/gamedesign/21_versioning_and_migrations.md`

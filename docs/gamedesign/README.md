@@ -42,6 +42,8 @@ If a design choice conflicts with existing implementation docs, treat this folde
 - Story system contract (quests/dialogue/triggers): `docs/gamedesign/17_story_system_contract.md`
 - Behavior graph spec (embedded brains): `docs/gamedesign/18_behavior_graph_spec.md`
 - Blueprint spec (bulk world creation): `docs/gamedesign/19_blueprint_spec.md`
+- Realm package + ruleset manifest: `docs/gamedesign/20_realm_package_manifest.md`
+- Versioning and migrations: `docs/gamedesign/21_versioning_and_migrations.md`
 
 ## Scope Notes (What “Complete Game” Means Here)
 
