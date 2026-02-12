@@ -46,6 +46,7 @@ If a design choice conflicts with existing implementation docs, treat this folde
 - Versioning and migrations: `docs/gamedesign/21_versioning_and_migrations.md`
 - Scene creation (realistic towns at scale): `docs/gamedesign/22_scene_creation.md`
 - Multi-agent world builder (generic): `docs/gamedesign/23_multi_agent_world_builder.md`
+- Agent development loop (automatic): `docs/gamedesign/24_agent_dev_loop.md`
 
 ## Scope Notes (What “Complete Game” Means Here)
 
