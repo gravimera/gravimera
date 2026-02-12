@@ -38,6 +38,7 @@ If a design choice conflicts with existing implementation docs, treat this folde
 - Human UX (creator + player tools): `docs/gamedesign/13_user_experience.md`
 - AI authoring workflows (creator/resident agents): `docs/gamedesign/14_ai_authoring_workflows.md`
 - Time, schedules, and living world loops: `docs/gamedesign/15_time_and_schedule.md`
+- Agent API contract (detailed): `docs/gamedesign/16_agent_api_contract.md`
 
 ## Scope Notes (What “Complete Game” Means Here)
 

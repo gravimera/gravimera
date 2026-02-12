@@ -2,6 +2,10 @@
 
 Agents interact with Gravimera via HTTP APIs. The API is a **player interface**, not a debug-only harness.
 
+This document describes the principles and surfaces at a conceptual level. The detailed, implementable contract lives in:
+
+- `docs/gamedesign/16_agent_api_contract.md`
+
 ## Core Principles
 
 1) **Semantic actions, not raw input**  
