@@ -4,6 +4,10 @@ This document focuses on *scene creation* for Gravimera’s “living world / me
 
 The key challenge is scale: realism comes from many small details, but naively placing every detail as an independent object is too slow to author, too heavy to simulate, and too hard to keep stylistically coherent.
 
+For a proposed multi-agent architecture that can create and refine such scenes reliably, see:
+
+- `docs/gamedesign/23_multi_agent_world_builder.md`
+
 ## Design Goals
 
 1) **Fast authoring**: create a believable town in minutes (human) or a handful of API calls (agent).
@@ -226,4 +230,3 @@ An ancient town template is just a composition of generic primitives:
 - NPCs: vendor schedules in market hours; guards patrol ring road; citizens roam neighborhoods
 
 Nothing here is hard-coded in the engine; it’s a realm-provided template + parameters + style pack.
-
