@@ -380,19 +380,21 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - Use `idle` for subtle idle motions.\n\
          - Use `ambient` for motions that should run regardless (fans/propellers).\n\
          - Avoid `ambient` for weapons/turrets (a cannon spinning constantly looks wrong); prefer `attack_primary` recoil or no animation.\n\n\
-	         Animation spec (inside `attach_to.animations[channel]`):\n\
-	         - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
-	         - Prefer `attack_time` for `attack_primary` so the animation runs once per attack event (instead of continuously while the player holds the attack key).\n\
-	         - `speed_scale`: number (optional; default 1)\n\
-	         - `clip`:\n\
-	           - `{{ \"kind\": \"loop\", \"duration_secs\": number, \"keyframes\": [ {{\"time_secs\": number, \"delta\": {{\"pos\":[x,y,z], \"forward\":[x,y,z] (optional), \"up\":[x,y,z] (optional), \"scale\":[x,y,z] (optional)}} }} ] }}`\n\
-	           - `{{ \"kind\": \"spin\", \"axis\": [x,y,z], \"radians_per_unit\": number }}`\n\
-	         - For `loop` keyframes:\n\
-	           - `delta.pos` is a translation in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset.pos`).\n\
-	           - If you include `delta.forward` / `delta.up`, they are direction vectors in the PARENT COMPONENT frame (same coordinates as anchors), and the engine converts them into the join frame.\n\
-	             - Rest pose (no rotation) should match the parent anchor frame: `delta.forward = parent_anchor.forward` and `delta.up = parent_anchor.up`.\n\
-	             - If you don't need rotation, omit `delta.forward`/`delta.up` entirely.\n\
-	         - For `spin`, `axis` is expressed in THIS COMPONENT's LOCAL axes (+X right, +Y up, +Z forward).\n\n\
+         Animation spec (inside `attach_to.animations[channel]`):\n\
+         - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
+         - Prefer `attack_time` for `attack_primary` so the animation runs once per attack event (instead of continuously while the player holds the attack key).\n\
+         - `speed_scale`: number (optional; default 1)\n\
+         - `clip`:\n\
+           - `{{ \"kind\": \"loop\", \"duration_secs\": number, \"keyframes\": [ {{\"time_secs\": number, \"delta\": {{\"pos\":[x,y,z], \"forward\":[x,y,z] (optional), \"up\":[x,y,z] (optional), \"rot_frame\":\"join\"|\"parent\" (optional), \"rot_quat_xyzw\":[x,y,z,w] (optional), \"scale\":[x,y,z] (optional)}} }} ] }}`\n\
+           - `{{ \"kind\": \"spin\", \"axis\": [x,y,z], \"radians_per_unit\": number }}`\n\
+         - For `loop` keyframes:\n\
+           - `delta.pos` is a translation in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset.pos`).\n\
+           - Rotation deltas (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`) are interpreted in the JOIN frame by default.\n\
+           - If you author rotation in the PARENT COMPONENT frame (matching anchors), set `delta.rot_frame` to `parent` (the engine converts into the join frame).\n\
+             - Rest pose with `rot_frame=join`: `delta.forward=[0,0,1]` and `delta.up=[0,1,0]`.\n\
+             - Rest pose with `rot_frame=parent`: `delta.forward=parent_anchor.forward` and `delta.up=parent_anchor.up`.\n\
+           - If you don't need rotation, omit `delta.forward`/`delta.up`/`delta.rot_quat_xyzw` entirely.\n\
+         - For `spin`, `axis` is expressed in THIS COMPONENT's LOCAL axes (+X right, +Y up, +Z forward).\n\n\
          Units:\n\
          - For drivers `always` and `attack_time`:\n\
            - `loop.duration_secs` and `loop.keyframes[].time_secs` are in seconds.\n\
@@ -413,7 +415,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
           Attachment definition:\n\
           - Each non-root component must define `attach_to`.\n\
           - `attach_to` aligns this component's `child_anchor` to the parent's `parent_anchor`.\n\
-          - `offset` is an extra tweak transform expressed in the PARENT ANCHOR frame (after alignment).\n\
+          - `offset` is an extra tweak transform expressed in the PARENT ANCHOR JOIN FRAME (after alignment).\n\
           - The engine will NOT apply any hidden auto-placement rules. If you need overlap/inset/outset, encode it explicitly in `offset.pos`.\n\
           - Define attachment anchors as a JOIN FRAME that matches on both sides:\n\
             - Set parent_anchor.forward (+Z) to point from the parent toward the child (attachment direction).\n\
@@ -486,12 +488,14 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
                   \"parent\": \"parent_component_name\",\n\
                   \"parent_anchor\": \"anchor_name_on_parent\",\n\
                   \"child_anchor\": \"anchor_name_on_this_component\",\n\
-                  \"offset\": {{\n\
-                    \"pos\": [x,y,z],\n\
-                    \"forward\": [x,y,z] (optional),\n\
-                    \"up\": [x,y,z] (optional),\n\
-                    \"scale\": [x,y,z] (optional)\n\
-                  }} (optional),\n\
+	                  \"offset\": {{\n\
+	                    \"pos\": [x,y,z],\n\
+	                    \"forward\": [x,y,z] (optional),\n\
+	                    \"up\": [x,y,z] (optional),\n\
+	                    \"rot_frame\": \"join\" | \"parent\" (optional),\n\
+	                    \"rot_quat_xyzw\": [x,y,z,w] (optional),\n\
+	                    \"scale\": [x,y,z] (optional)\n\
+	                  }} (optional),\n\
                   \"joint\": {{ \"kind\": \"hinge\" | \"fixed\" | \"ball\" | \"free\", \"axis_join\": [x,y,z] (optional), \"limits_degrees\": [min,max] (optional) }} (optional),\n\
                   \"animations\": {{\n\
                     \"ambient\" | \"idle\" | \"move\" | \"attack_primary\": {{\n\
@@ -533,8 +537,11 @@ pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
      - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
      - `speed_scale`: number (optional; default 1)\n\
      - `clip`:\n\
-       - {\"kind\":\"loop\",\"duration_secs\": number,\"keyframes\":[{\"time_secs\": number,\"delta\":{\"pos\":[x,y,z],\"forward\":[x,y,z] (optional),\"up\":[x,y,z] (optional),\"scale\":[x,y,z] (optional)}}]}\n\
+       - {\"kind\":\"loop\",\"duration_secs\": number,\"keyframes\":[{\"time_secs\": number,\"delta\":{\"pos\":[x,y,z],\"forward\":[x,y,z] (optional),\"up\":[x,y,z] (optional),\"rot_frame\":\"join\"|\"parent\" (optional),\"rot_quat_xyzw\":[x,y,z,w] (optional),\"scale\":[x,y,z] (optional)}}]}\n\
        - {\"kind\":\"spin\",\"axis\":[x,y,z],\"radians_per_unit\": number}\n\
+     - For `loop` keyframes:\n\
+       - `delta.pos` is in the PARENT ANCHOR JOIN FRAME.\n\
+       - Rotation deltas are in the JOIN frame by default; set `delta.rot_frame` to `parent` to author rotation in the PARENT COMPONENT frame.\n\
      - For `spin`, `axis` is expressed in the COMPONENT's LOCAL axes.\n\n\
      Units:\n\
      - For drivers `always` and `attack_time`:\n\

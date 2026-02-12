@@ -176,7 +176,8 @@ Notes:
 - This plan has **no absolute placement**. Assembly uses a tree of `attach_to` links.
 - Anchor names must be stable and unique per component.
 - Do **not** output an anchor named `"origin"`; the engine provides an implicit identity anchor `"origin"`.
-- `attach_to.offset` is a tweak transform in the **parent anchor frame** (after alignment).
+- `attach_to.offset` is a tweak transform in the **parent-anchor join frame** (after alignment).
+  - If you include `offset.forward`/`offset.up` or `offset.rot_quat_xyzw`, they are interpreted in the join frame by default. Optionally set `offset.rot_frame: "parent"` to author rotation in the parent component frame (matching anchors); the engine converts into the join frame.
 - The engine does **not** apply heuristic placement tweaks (no automatic overlap/surface nudges). If you need inset/outset/overlap at a join, encode it explicitly in `attach_to.offset.pos`.
 - Define attachment anchors as a JOIN FRAME that matches on both sides:
   - `parent_anchor.forward` (+Z) points from the parent toward the child (attachment direction).
@@ -190,9 +191,12 @@ Notes:
   - `time_offset_units` (optional): additive offset in the clip time domain (same units as loop `duration_secs` / keyframe `time_secs`). Use this to phase-stagger repeated limbs without duplicating keyframes.
   - `clip`: either `loop` (keyframed deltas) or `spin` (procedural rotation).
     - For `loop` keyframes, `delta.pos` is in the **parent-anchor join frame** (the same frame as `attach_to.offset.pos`).
-    - If you include `delta.forward` / `delta.up`, author them as **direction vectors in the parent component frame** (same coordinates as anchors). The engine converts them into the join frame.
-      - Rest pose should match the parent anchor frame: `delta.forward = parent_anchor.forward` and `delta.up = parent_anchor.up`.
-      - If you don't need rotation, omit `delta.forward` / `delta.up` entirely.
+    - Rotation deltas (`delta.forward`/`delta.up` basis vectors or `delta.rot_quat_xyzw`) are interpreted in the **attachment join frame** by default.
+      - Optional: set `delta.rot_frame` to control the rotation coordinate system:
+        - `"join"` (default / legacy): `delta.forward = [0,0,1]` and `delta.up = [0,1,0]` is the rest pose (no rotation).
+        - `"parent"`: author `delta.forward`/`delta.up` in the **parent component frame** (same coordinates as anchors). The engine converts them into the join frame.
+          - Rest pose should match the parent anchor frame: `delta.forward = parent_anchor.forward` and `delta.up = parent_anchor.up`.
+      - If you don't need rotation, omit `delta.forward` / `delta.up` / `delta.rot_quat_xyzw` entirely.
     - For `spin`, the `axis` is authored in the **child component's local axes** (+X right, +Y up, +Z forward). The engine converts it into the attachment join frame.
 
 Rig / motion contract (optional; used for locomotion validation and AI repair):

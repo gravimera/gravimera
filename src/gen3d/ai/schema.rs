@@ -368,6 +368,15 @@ pub(crate) struct AiPlanAttachmentJson {
     pub(crate) animation: Option<AiPartAnimationJson>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiRotationFrameJson {
+    Join,
+    Parent,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiAttachmentOffsetJson {
@@ -377,6 +386,15 @@ pub(crate) struct AiAttachmentOffsetJson {
     pub(crate) forward: Option<[f32; 3]>,
     #[serde(default)]
     pub(crate) up: Option<[f32; 3]>,
+    /// Coordinate frame for `forward`/`up` (and `rot_quat_xyzw` when used as a rotation). When
+    /// omitted, the engine assumes the attachment's JOIN FRAME (legacy behavior).
+    #[serde(
+        default,
+        alias = "rotation_frame",
+        alias = "basis_frame",
+        alias = "forward_up_frame"
+    )]
+    pub(crate) rot_frame: Option<AiRotationFrameJson>,
     // Optional quaternion rotation for convenience. When both basis vectors and a quaternion are
     // provided, the basis vectors take precedence.
     #[serde(default, alias = "quat_xyzw")]
