@@ -1,5 +1,7 @@
 # Realm Package Manifest (Rulesets, Modules, Budgets, Policy)
 
+_(Spec document; see `docs/gamedesign/08_persistence_packages.md` for the product goals.)_
+
 This document defines the **final target** structure and manifest format for a Gravimera realm package.
 
 It answers:
@@ -182,7 +184,7 @@ Rate limits are per token/principal:
 - `max_author_ops_per_minute`
 - `max_blueprint_apply_per_hour`
 
-Rate limits must be visible via `GET /v2/limits` (see `docs/gamedesign/16_agent_api_contract.md`).
+Rate limits must be visible via `GET /v2/limits` (see `docs/spec/16_agent_api_contract.md`).
 
 ### Example `ruleset.json` (Illustrative)
 
@@ -274,14 +276,14 @@ Prefab definitions must be stable and referentially safe:
 
 These assets must be schema-validated and versioned:
 
-- story contract: `docs/gamedesign/17_story_system_contract.md`
-- behavior graphs: `docs/gamedesign/18_behavior_graph_spec.md`
+- story contract: `docs/spec/17_story_system_contract.md`
+- behavior graphs: `docs/spec/18_behavior_graph_spec.md`
 
 ## Templates (Blueprints)
 
 Templates are stored blueprints with parameters. They live under `templates/blueprints/`.
 
-See `docs/gamedesign/19_blueprint_spec.md`.
+See `docs/spec/19_blueprint_spec.md`.
 
 ## What Not to Store Inside Realm Packages
 
@@ -292,4 +294,3 @@ To keep realm packages shareable and safe:
 - Do **not** store personally identifiable information (PII) unless a host explicitly opts in and has policy.
 
 Local single-player installs may optionally store convenience tokens outside the realm package (host-local config).
-

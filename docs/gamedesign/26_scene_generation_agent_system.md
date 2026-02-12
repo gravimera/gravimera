@@ -62,7 +62,7 @@ This makes agent iteration safe and testable.
 For the agent system to be effective, the engine must expose:
 
 1) **Validate / apply** for blueprints  
-   See `docs/gamedesign/19_blueprint_spec.md` and `docs/gamedesign/16_agent_api_contract.md`.
+   See `docs/spec/19_blueprint_spec.md` and `docs/spec/16_agent_api_contract.md`.
 
 2) **Scene validation** with structured diagnostics  
    - budgets and estimates
@@ -152,7 +152,7 @@ These govern evaluation and repair:
   - provenance blame
   - optional FixIts (suggested repairs)
 
-See `docs/gamedesign/27_scorecards_and_validation_reports.md`.
+See `docs/spec/27_scorecards_and_validation_reports.md`.
 
 ## Agent Roles and Interfaces (Scene-Focused)
 
@@ -282,4 +282,3 @@ When a scene is “bad”, the system should answer:
 - what to rerun to confirm.
 
 If a failure cannot be repaired without changing intent (ScorecardSpec), the supervisor must return a structured “spec insufficient/conflicting” report.
-

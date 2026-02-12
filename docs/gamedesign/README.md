@@ -38,19 +38,23 @@ If a design choice conflicts with existing implementation docs, treat this folde
 - Human UX (creator + player tools): `docs/gamedesign/13_user_experience.md`
 - AI authoring workflows (creator/resident agents): `docs/gamedesign/14_ai_authoring_workflows.md`
 - Time, schedules, and living world loops: `docs/gamedesign/15_time_and_schedule.md`
-- Agent API contract (detailed): `docs/gamedesign/16_agent_api_contract.md`
-- Story system contract (quests/dialogue/triggers): `docs/gamedesign/17_story_system_contract.md`
-- Behavior graph spec (embedded brains): `docs/gamedesign/18_behavior_graph_spec.md`
-- Blueprint spec (bulk world creation): `docs/gamedesign/19_blueprint_spec.md`
-- Realm package + ruleset manifest: `docs/gamedesign/20_realm_package_manifest.md`
-- Versioning and migrations: `docs/gamedesign/21_versioning_and_migrations.md`
 - Scene creation (realistic towns at scale): `docs/gamedesign/22_scene_creation.md`
 - Multi-agent world builder (generic): `docs/gamedesign/23_multi_agent_world_builder.md`
 - Agent development loop (automatic): `docs/gamedesign/24_agent_dev_loop.md`
 - Evaluation and auto-repair: `docs/gamedesign/25_evaluation_and_auto_repair.md`
 - Scene generation agent system (detailed): `docs/gamedesign/26_scene_generation_agent_system.md`
-- Scorecards and validation reports: `docs/gamedesign/27_scorecards_and_validation_reports.md`
 - Evolving evaluators (learned critics): `docs/gamedesign/28_evolving_evaluators.md`
+
+Specs (contracts and formats):
+
+- Specs index: `docs/spec/README.md`
+- Agent API contract: `docs/spec/16_agent_api_contract.md`
+- Story system contract: `docs/spec/17_story_system_contract.md`
+- Behavior graph spec: `docs/spec/18_behavior_graph_spec.md`
+- Blueprint spec: `docs/spec/19_blueprint_spec.md`
+- Realm package manifest: `docs/spec/20_realm_package_manifest.md`
+- Versioning and migrations: `docs/spec/21_versioning_and_migrations.md`
+- Scorecards and validation reports: `docs/spec/27_scorecards_and_validation_reports.md`
 
 ## Scope Notes (What “Complete Game” Means Here)
 

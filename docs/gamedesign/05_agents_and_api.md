@@ -4,7 +4,7 @@ Agents interact with Gravimera via HTTP APIs. The API is a **player interface**,
 
 This document describes the principles and surfaces at a conceptual level. The detailed, implementable contract lives in:
 
-- `docs/gamedesign/16_agent_api_contract.md`
+- `docs/spec/16_agent_api_contract.md`
 
 ## Core Principles
 

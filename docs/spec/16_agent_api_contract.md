@@ -1,5 +1,7 @@
 # Agent API Contract (vNext)
 
+_(Spec document; product intent lives in `docs/gamedesign/05_agents_and_api.md`.)_
+
 This document defines the **final target** HTTP API contract for AI agents as first-class players and creators in Gravimera.
 
 It is intentionally *more specific* than `docs/gamedesign/05_agents_and_api.md`: it describes common types, error semantics, event streaming, and the endpoint families needed for “living world” creation.
@@ -363,4 +365,3 @@ A hosted realm can be considered “living world capable” when:
 - NPC brains can run embedded with budgets and are debuggable,
 - blueprint apply can build large scenes without thousands of calls,
 - budgets and rate limits are visible to agents.
-

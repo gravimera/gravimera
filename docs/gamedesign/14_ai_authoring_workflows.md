@@ -6,7 +6,7 @@ The core philosophy is: agents create by sending **semantic authoring actions** 
 
 Blueprints are the primary bulk authoring mechanism; see:
 
-- `docs/gamedesign/19_blueprint_spec.md`
+- `docs/spec/19_blueprint_spec.md`
 
 ## Agent Roles in Practice
 

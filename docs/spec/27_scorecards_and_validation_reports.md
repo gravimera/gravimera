@@ -1,5 +1,7 @@
 # Scorecards and Validation Reports (Contracts for Evaluation)
 
+_(Spec document; see `docs/gamedesign/25_evaluation_and_auto_repair.md` for the product goals.)_
+
 This document defines the **structured evaluation contract** that enables automatic diagnosis and auto-repair.
 
 The core design is:
@@ -144,4 +146,3 @@ To compare runs, produce compact signatures:
 - `metrics_sig`: hash of scorecard metrics
 
 The report should include these signatures so CI can detect regressions without storing huge logs.
-

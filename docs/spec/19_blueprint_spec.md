@@ -1,5 +1,7 @@
 # Blueprint Spec (Bulk World Creation)
 
+_(Spec document; see `docs/gamedesign/14_ai_authoring_workflows.md` and `docs/gamedesign/22_scene_creation.md` for the product goals.)_
+
 This document defines the **final target** “blueprint” format used by AI agents (and advanced human tools) to create and modify large parts of a realm efficiently.
 
 Blueprints are essential for AI freedom creation because a living world often involves thousands of objects, multiple scenes, portal graphs, NPC populations, and story assets. These changes must be expressible as:
@@ -10,7 +12,7 @@ Blueprints are essential for AI freedom creation because a living world often in
 
 This spec is referenced by:
 
-- `docs/gamedesign/16_agent_api_contract.md` (blueprint validate/apply endpoints)
+- `docs/spec/16_agent_api_contract.md` (blueprint validate/apply endpoints)
 - `docs/gamedesign/12_content_formats.md` (realm durability/versioning)
 
 ## What a Blueprint Is (Conceptually)

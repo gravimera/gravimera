@@ -1,12 +1,14 @@
 # Behavior Graph Spec (Embedded Brains)
 
+_(Spec document; product intent lives in `docs/gamedesign/06_brains_and_ai.md`.)_
+
 This document defines the **final target** embedded behavior system used by NPCs and autonomous units. It is a safe, data-driven way to author “intelligence” inside the simulation without running arbitrary code.
 
 It complements:
 
 - `docs/gamedesign/06_brains_and_ai.md` (concepts)
-- `docs/gamedesign/16_agent_api_contract.md` (API surfaces)
-- `docs/gamedesign/17_story_system_contract.md` (story actions and variables)
+- `docs/spec/16_agent_api_contract.md` (API surfaces)
+- `docs/spec/17_story_system_contract.md` (story actions and variables)
 
 ## Design Goals
 
@@ -164,4 +166,3 @@ When budgets are exceeded:
 
 - the brain yields early,
 - a `brain_budget_exceeded` event may be emitted (rate-limited).
-

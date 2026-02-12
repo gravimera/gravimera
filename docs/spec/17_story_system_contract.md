@@ -1,5 +1,7 @@
 # Story System Contract (Quests, Dialogue, Triggers, Actions)
 
+_(Spec document; product intent lives in `docs/gamedesign/07_story_and_npcs.md`.)_
+
 This document defines the **final target** story system for Gravimera: how quests, dialogue, and living-world events are authored (by humans or agents) and executed deterministically in the simulation.
 
 This is designed for “metaverse-like” realms where story content can evolve over time and can be authored continuously by AI agents.
@@ -259,4 +261,3 @@ The Agent API should support:
 - “story test” endpoints (author/admin only),
 - an event trace export for replay,
 - a “dry run” mode for applying story asset changes to validate schema and budgets.
-

@@ -84,6 +84,38 @@ Creators must be able to:
 
 This is essential for iterative AI authoring: “generate → validate → render → patch → reapply”.
 
+## Regeneration Rule: Layers Own Their Outputs (Unless Pinned)
+
+This is the recommended default rule for procedural scene creation:
+
+- A procedural layer is the **owner** of the objects it generates.
+- When the layer is regenerated/recompiled, it may add/move/replace/remove its owned objects to match the updated layer definition.
+
+This rule is what makes large-scale edits possible. If a creator changes a path, region, or constraint, the scene updates coherently without manually editing thousands of instances.
+
+### Pinning (Detaching from a Layer)
+
+Creators (human or agent) must be able to “pin” specific generated objects:
+
+- A **pinned** object is no longer owned by the layer that generated it.
+- Pinned objects are not modified or deleted by future regenerations of that layer.
+
+Pinning is for exceptions and hand-crafted set pieces. The primary workflow remains: edit the layer, regenerate, validate.
+
+### Deletions and Overrides
+
+If a creator removes an owned object by hand, the system should not silently “fight” them:
+
+- Prefer expressing removals as **layer edits** (avoid zones, exclude rules, density changes) so regeneration remains stable.
+- Pinning can also be used when an object must remain manually controlled.
+
+### Continuity Guarantees
+
+Regeneration must preserve continuity for living worlds:
+
+- Story- and NPC-critical identities remain stable even as layers regenerate.
+- Regeneration produces a clear “what changed” report so creators can accept or reject large deltas.
+
 ## Style Packs: The Backbone of Realism
 
 An “ancient town” feels real primarily because its assets share:
@@ -124,7 +156,7 @@ Useful primitives:
 - **Spline placement**: place objects along a road/path spline with spacing and jitter.
 - **Parcel subdivision**: split a polygon region into lots with target area ranges.
 - **Edge alignment**: align building fronts to nearest road edge and keep set-backs.
-- **Scatter with constraints**: place props with Poisson-disc spacing, slope limits, and “avoid zones”.
+- **Scatter with constraints**: place props with minimum-distance spacing, slope limits, and “avoid zones”.
 - **Cluster scatter**: place pockets of clutter around anchor points (docks, markets).
 - **Marker system**: named points/areas used by portals, NPC schedules, and templates.
 
