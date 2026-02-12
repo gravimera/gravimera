@@ -11,6 +11,11 @@ The key idea is to treat world generation like software compilation:
 
 This stays generic: the engine does not assume “town rules”. It enforces constraints and budgets; content-specific intent lives in user/agent provided specs.
 
+For structured contracts and learned evaluator integration, see:
+
+- `docs/gamedesign/27_scorecards_and_validation_reports.md`
+- `docs/gamedesign/28_evolving_evaluators.md`
+
 ## Hard Truth: “Bad” Requires a Spec
 
 There is no universal “good-looking scene”. Automatic evaluation requires at least one of:
@@ -226,4 +231,3 @@ See also:
 
 - `docs/gamedesign/24_agent_dev_loop.md` (automation loops)
 - `docs/gamedesign/23_multi_agent_world_builder.md` (agent roles)
-

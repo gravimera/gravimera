@@ -48,6 +48,9 @@ If a design choice conflicts with existing implementation docs, treat this folde
 - Multi-agent world builder (generic): `docs/gamedesign/23_multi_agent_world_builder.md`
 - Agent development loop (automatic): `docs/gamedesign/24_agent_dev_loop.md`
 - Evaluation and auto-repair: `docs/gamedesign/25_evaluation_and_auto_repair.md`
+- Scene generation agent system (detailed): `docs/gamedesign/26_scene_generation_agent_system.md`
+- Scorecards and validation reports: `docs/gamedesign/27_scorecards_and_validation_reports.md`
+- Evolving evaluators (learned critics): `docs/gamedesign/28_evolving_evaluators.md`
 
 ## Scope Notes (What “Complete Game” Means Here)
 

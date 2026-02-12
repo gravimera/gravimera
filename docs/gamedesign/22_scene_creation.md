@@ -7,6 +7,7 @@ The key challenge is scale: realism comes from many small details, but naively p
 For a proposed multi-agent architecture that can create and refine such scenes reliably, see:
 
 - `docs/gamedesign/23_multi_agent_world_builder.md`
+- `docs/gamedesign/26_scene_generation_agent_system.md`
 
 ## Design Goals
 
