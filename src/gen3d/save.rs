@@ -6,8 +6,8 @@ use crate::assets::SceneAssets;
 use crate::constants::{BUILD_GRID_SIZE, CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION, WORLD_HALF_SIZE};
 use crate::geometry::{normalize_flat_direction, snap_to_grid};
 use crate::object::registry::{
-    ColliderProfile, MeshKey, MovementBlockRule, ObjectDef, ObjectInteraction, ObjectLibrary,
-    MobilityMode, ObjectPartKind, PartAnimationDef, PrimitiveParams, PrimitiveVisualDef,
+    ColliderProfile, MeshKey, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction,
+    ObjectLibrary, ObjectPartKind, PartAnimationDef, PrimitiveParams, PrimitiveVisualDef,
     UnitAttackKind,
 };
 use crate::object::visuals;

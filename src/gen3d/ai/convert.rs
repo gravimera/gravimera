@@ -2156,12 +2156,14 @@ fn maybe_align_axially_symmetric_spinner_to_spin_axis(
         return;
     };
 
-    let Some(spin_axis_join) = att.animations.iter().find_map(|slot| {
-        match &slot.spec.clip {
+    let Some(spin_axis_join) = att
+        .animations
+        .iter()
+        .find_map(|slot| match &slot.spec.clip {
             crate::object::registry::PartAnimationDef::Spin { axis, .. } => Some(*axis),
             _ => None,
-        }
-    }) else {
+        })
+    else {
         return;
     };
 
@@ -2675,6 +2677,7 @@ mod tests {
                     spec: PartAnimationSpec {
                         driver: PartAnimationDriver::Always,
                         speed_scale: 1.0,
+                        time_offset_units: 0.0,
                         clip: PartAnimationDef::Spin {
                             axis: Vec3::Z,
                             radians_per_unit: 1.0,
