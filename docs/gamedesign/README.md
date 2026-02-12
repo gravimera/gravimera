@@ -41,6 +41,7 @@ If a design choice conflicts with existing implementation docs, treat this folde
 - Agent API contract (detailed): `docs/gamedesign/16_agent_api_contract.md`
 - Story system contract (quests/dialogue/triggers): `docs/gamedesign/17_story_system_contract.md`
 - Behavior graph spec (embedded brains): `docs/gamedesign/18_behavior_graph_spec.md`
+- Blueprint spec (bulk world creation): `docs/gamedesign/19_blueprint_spec.md`
 
 ## Scope Notes (What “Complete Game” Means Here)
 

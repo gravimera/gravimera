@@ -4,6 +4,10 @@ This document describes how AI agents are expected to create “living worlds”
 
 The core philosophy is: agents create by sending **semantic authoring actions** and verifying results via **state snapshots + events**, not by directly manipulating files or injecting raw input.
 
+Blueprints are the primary bulk authoring mechanism; see:
+
+- `docs/gamedesign/19_blueprint_spec.md`
+
 ## Agent Roles in Practice
 
 ### Creator Agent (World Builder)
@@ -99,4 +103,3 @@ Agents must be able to reason about permissions:
 
 - endpoints must return “capability missing” errors explicitly,
 - tokens should expose their effective capability set (read-only endpoint).
-
