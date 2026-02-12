@@ -105,6 +105,21 @@ This spec does not mandate exact JSON field names, but it mandates responsibilit
 5) `brains`: attach/configure brains and schedules.
 6) `story`: quests/dialogue assets + variable initialization.
 
+## Procedural Layers (Scene-Scale)
+
+Blueprints should be able to describe **procedural scene layers** that compile deterministically into many concrete instances. This is how agents create realistic towns without issuing tens of thousands of individual placements.
+
+Examples of procedural layers:
+
+- road splines + categories (main road, alley)
+- district polygons with style tags (market, residential)
+- parcel subdivision rules and seeds
+- building placement rules (align to roads, set-backs)
+- prop scatter rules (density, min distance, avoid zones)
+- NPC population targets and schedule templates
+
+Procedural layers must always compile deterministically and must produce stable ids for compiled objects when provided a `request_id` and scene seed.
+
 ## Determinism Requirements
 
 Blueprint application must be deterministic given the same:
@@ -150,4 +165,3 @@ An example blueprint conceptually includes:
 - create an intro quest and set initial story vars
 
 The key property is that all references are resolvable and auditable, and that validation can estimate the resulting world size before apply.
-
