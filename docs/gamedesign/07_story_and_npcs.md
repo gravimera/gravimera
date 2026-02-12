@@ -2,6 +2,10 @@
 
 Gravimera’s story system is designed to be **authored** (by humans or agents) and to be **playable** across multiple scenes.
 
+This document describes the concepts and player-facing goals. The detailed contract for quests/dialogue/triggers/actions is specified in:
+
+- `docs/gamedesign/17_story_system_contract.md`
+
 ## Story as State + Events
 
 At the foundation:
