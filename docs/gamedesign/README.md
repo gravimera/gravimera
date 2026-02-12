@@ -1,22 +1,24 @@
 # Gravimera — Game Design (Final Target)
 
-This folder is a **living game design** for Gravimera: a Minecraft-like sandbox + “game creation engine” where **AI agents are first‑class players** through HTTP APIs.
+This folder is a **living game design** for Gravimera: a sandbox + “game creation engine” where **AI agents are first‑class players** through HTTP APIs.
 
 The intent of these documents is to describe the *final* product: gameplay, world model, content creation, AI/NPC/story systems, and the platform surface that agents use to play and create.
 
 If a design choice conflicts with existing implementation docs, treat this folder as the **target** and the rest of the repo as “current state”. Keep the design concrete enough that an implementer can translate it into an execution plan.
 
-## Design Pillars
+## Design Pillars (Metaverse-first)
 
-1) **Agents are players**: everything a human can do (observe, act, author content) is available to agents through a stable HTTP API + event stream.
+1) **Agents are players and creators**: everything a human can do (observe, act, author content) is available to agents through a stable HTTP API + event stream.
 
 2) **Everything is an object**: the world is made of prefabs (definitions) and instances (spawned objects). Terrain is also composed from basic objects/primitives, not special-cased.
 
-3) **Authoring is gameplay**: building scenes, spawning units, and attaching “brains” is a first-class loop, not a dev-only feature.
+3) **Authoring is gameplay**: building scenes, spawning units, attaching “brains”, and writing story logic are first-class loops.
 
 4) **Deterministic simulation is a feature**: a realm can run in real-time or in step/paused mode for reproducible agent training and testing.
 
 5) **Safe extensibility**: “intelligence” and “story logic” are data-driven and sandboxed. Agents can always run logic externally if they want full freedom.
+
+6) **Optional systems**: combat and economy exist as **modules** that a realm can enable/disable. The baseline product is a living world + story engine, not a combat game.
 
 ## Document Map
 
@@ -30,6 +32,12 @@ If a design choice conflicts with existing implementation docs, treat this folde
 - Story system + NPCs + dialogue: `docs/gamedesign/07_story_and_npcs.md`
 - Persistence + packaging + modding: `docs/gamedesign/08_persistence_packages.md`
 - Multiplayer + hosting model: `docs/gamedesign/09_multiplayer_and_hosting.md`
+- Rulesets and optional modules (combat/economy/etc): `docs/gamedesign/10_rulesets_and_modules.md`
+- Safety, governance, and capabilities: `docs/gamedesign/11_safety_and_governance.md`
+- Content formats and versioning: `docs/gamedesign/12_content_formats.md`
+- Human UX (creator + player tools): `docs/gamedesign/13_user_experience.md`
+- AI authoring workflows (creator/resident agents): `docs/gamedesign/14_ai_authoring_workflows.md`
+- Time, schedules, and living world loops: `docs/gamedesign/15_time_and_schedule.md`
 
 ## Scope Notes (What “Complete Game” Means Here)
 
@@ -37,6 +45,6 @@ This design treats “complete” as:
 
 - A player can create a realm with multiple scenes, travel via portals, and share it as a package.
 - A player/agent can create units/buildings/props; attach autonomous behaviors; and build storylines with NPCs and quests across scenes.
+- AI agents can author “living worlds” that keep running: NPC schedules, story triggers, portals, and continuous world evolution.
 - The game is fun to play without writing code, and powerful to author via APIs.
 - The platform is safe enough to run untrusted agents against local or hosted realms.
-

@@ -21,8 +21,8 @@ Build mode is not “paused by definition”; a realm can be live while authorin
 
 Play mode is for moment-to-moment gameplay:
 
-- direct control of the hero/avatar (optional) and/or RTS-style unit control,
-- combat, exploration, resource gathering, and quest progression,
+- direct control of an avatar (optional) and/or commanding units (optional),
+- exploration, interaction, and quest progression,
 - interacting with NPCs (dialogue, trades, quest handoffs),
 - traveling across scenes via portals.
 
@@ -32,6 +32,16 @@ Gen3D is the in-game workflow for generating new prefabs from prompts and option
 
 Gen3D is an authoring tool; it does not define gameplay rules. Generated prefabs become ordinary objects that can be assigned mobility/interaction/attack/brains.
 
+### Realm Ops (Always-On World Operation)
+
+“Realm Ops” is not a UI screen; it is the **operating posture** of a hosted realm:
+
+- the realm can run continuously (real-time) so NPCs and story triggers keep progressing,
+- resident agents and embedded brains can keep the world “alive” (schedules, reactions, dynamic events),
+- creators (human or agent) can still author content with capability-gated operations.
+
+Realm Ops is what makes Gravimera feel like a “metaverse”: worlds evolve over time, not only when a single human is actively playing.
+
 ## Core Loops
 
 ### Creator Loop (Human or Agent)
@@ -40,9 +50,10 @@ Gen3D is an authoring tool; it does not define gameplay rules. Generated prefabs
 2) Create scenes and terrain.
 3) Create or import prefabs (composition + Gen3D).
 4) Populate scenes with NPCs/enemies/objects and connect scenes with portals.
-5) Attach brains to units and define story triggers/quests.
-6) Test by playing or by running deterministic simulations via the agent API.
-7) Package and share the realm.
+5) Attach brains and define story triggers/quests/dialogue.
+6) Run the realm (Realm Ops): schedules, events, continuous story.
+7) Test by playing or by running deterministic simulations via the agent API.
+8) Package and share the realm.
 
 ### Player Loop (Human)
 
@@ -52,6 +63,8 @@ Gen3D is an authoring tool; it does not define gameplay rules. Generated prefabs
 4) Unlock new capabilities (new prefabs/brains/areas) through progression.
 5) Travel via portals to new scenes and continue the storyline.
 
+Note: this is an example loop. In many realms, combat/economy are disabled and the player loop is primarily exploration + social interaction + story.
+
 ### Agent Loop (AI Program)
 
 1) Observe: poll state snapshots + receive events.
@@ -59,3 +72,8 @@ Gen3D is an authoring tool; it does not define gameplay rules. Generated prefabs
 3) Act: send semantic actions (spawn/move/fire/interact) and authoring actions when permitted.
 4) Advance time: in deterministic mode, step ticks explicitly; in real-time, pace actions to server time.
 
+In “living world” realms, agent responsibilities often split into roles:
+
+- a **creator agent** that authors scenes, NPCs, and quests,
+- one or more **resident agents** that run ongoing world logic (events, schedules, moderation),
+- optional **player agents** that participate as characters.

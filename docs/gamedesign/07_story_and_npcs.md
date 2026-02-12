@@ -17,6 +17,8 @@ Story content reacts to events by:
 - spawning/transforming objects and portals,
 - starting dialogues and quests.
 
+This design supports “living worlds”: story logic can keep running continuously in Realm Ops, not only during a scripted campaign.
+
 ## Quests
 
 A quest is a state machine defined by:
@@ -48,6 +50,17 @@ NPCs are ordinary units/buildings with additional story metadata:
 
 NPC identity is stable across scenes and saves, so quests can refer to an NPC even if it travels.
 
+## Living World Features (Metaverse Feel)
+
+To feel like a persistent world rather than a static level, realms can enable:
+
+- **schedules**: NPCs move between places across a day/night cycle.
+- **relationships**: NPCs remember the player/agent and change dialogue accordingly.
+- **world events**: timed or triggered events (festivals, emergencies, migrations, weather shifts).
+- **ambient goals**: NPCs pursue roles (shopkeeper opens store; guard patrols).
+
+These features can be implemented via embedded brains + story triggers, or via resident agents.
+
 ## Multi-Scene Storylines
 
 Portals are the primary “chapter” mechanism:
@@ -67,3 +80,8 @@ Agents:
 - create quests and dialogue via API,
 - run deterministic playthroughs to validate.
 
+In hosted realms, creators often also deploy **resident agents**:
+
+- schedule and event agents (“it’s market day in the hub scene”),
+- moderation agents (rate-limit griefing; quarantine unsafe content),
+- narrator agents that extend story content over time.

@@ -7,6 +7,7 @@ The final product must make authored realms portable and durable over time.
 A realm is stored as a directory containing:
 
 - a realm manifest (name, version, author, dependencies),
+- a ruleset (enabled modules + module configuration),
 - scenes (each with terrain + object instances),
 - prefab defs (built-ins referenced + generated/imported prefabs),
 - story assets (quests, dialogue) and story variables,
@@ -17,6 +18,8 @@ The exact file formats are implementation details, but the layout must support:
 - versioned migrations,
 - partial loading (load one scene),
 - packaging as a single archive for sharing.
+
+See `docs/gamedesign/12_content_formats.md` for the responsibilities and versioning expectations of these artifacts.
 
 ## Packaging
 
@@ -35,4 +38,3 @@ Modding is a policy choice per realm/server. Supported extension mechanisms:
 - optional sandboxed logic modules (Wasm) under strict permissions.
 
 No mod is allowed to silently expand its capabilities; every capability is explicit in the manifest and must be approved by the host.
-

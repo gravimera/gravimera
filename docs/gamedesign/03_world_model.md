@@ -2,6 +2,8 @@
 
 Gravimera’s world is a **realm** containing a graph of **scenes** connected by **portal gates**.
 
+In hosted deployments, multiple realms can be connected into a larger “universe” experience (see **Universe** below). The core engine, however, treats realms as the primary boundary for saves, permissions, and rulesets.
+
 ## Realms
 
 A realm is the top-level unit of:
@@ -12,6 +14,16 @@ A realm is the top-level unit of:
 - simulation settings (real-time vs deterministic stepping).
 
 Realms can be “single-author” (one creator agent) or “multi-author” (shared editing), but the permission model must be explicit either way.
+
+### Universe (Realm Directory)
+
+A **universe** is a directory of realms that a host publishes together:
+
+- a realm listing (browse/search)
+- cross-realm identity (player ids that persist across realms)
+- optional cross-realm travel (a portal can target a realm id + scene id)
+
+Universe features are optional. A local/offline Gravimera install can still run a single realm without any universe layer.
 
 ## Scenes
 
@@ -46,6 +58,15 @@ Travel can be:
 
 The travel rule is part of the portal configuration.
 
+### Cross-Realm Portals (Universe Feature)
+
+If the host enables universe travel, a portal destination can be:
+
+- `(scene_id)` within the same realm, or
+- `(realm_id, scene_id)` in another realm within the same universe.
+
+Cross-realm travel must be explicit and capability-gated because it crosses permissions and rulesets. The default is **realm-local** portals only.
+
 ### Portal Constraints (To Keep Travel Robust)
 
 - Travel emits a realm event (`portal_entered`) with from/to scene ids and traveler ids.
@@ -71,4 +92,3 @@ Scenes define navigation constraints:
 - optional multi-level navigation (bridges, platforms).
 
 This design favors **predictable authoring**: creators explicitly mark what blocks movement and what supports standing, rather than relying on automatic heuristics.
-

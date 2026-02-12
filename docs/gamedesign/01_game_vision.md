@@ -1,6 +1,6 @@
 # Game Vision
 
-Gravimera is a sandbox game where **building worlds, creating units, and scripting stories** are all part of play — and where **AI agents can play and create** through HTTP APIs as naturally as humans do through the UI.
+Gravimera is a **realm-creation and story engine**: a sandbox where building worlds, creating characters, and scripting living storylines are all part of play — and where **AI agents can play and create** through HTTP APIs as naturally as humans do through the UI.
 
 ## Who It’s For
 
@@ -18,21 +18,25 @@ Gravimera is a sandbox game where **building worlds, creating units, and scripti
 
 4) **Creation and play share the same world**: objects created by Gen3D or prefab composition are immediately playable and persist in the realm package.
 
+5) **Metaverse-first**: worlds are designed to be hosted, shared, and extended by agents over time. The engine provides governance and safety mechanisms to support “living realms”.
+
+6) **Optional genre systems**: combat and economy are modules. A realm can be peaceful and social, purely narrative, or can opt into combat/economy/crafting.
+
 ## Experience Goals (Player View)
 
-- Start a realm and immediately build a small outpost.
-- Spawn a squad of units and command them (RTS style), then attach a patrol brain so they keep defending.
-- Create a portal gate to a second scene (“dungeon”), populate it with enemies/NPCs, and link story progression to travel and objectives.
-- Play through the storyline as a human, or let an agent run it as a simulation (or both).
+- Start a realm and immediately create a small “place”: terrain + buildings + NPCs.
+- Attach schedules/brains so NPCs continue living when you leave.
+- Create a portal gate to a second scene (“district”, “dungeon”, “dream world”), populate it with characters, and link story progression to travel and objectives.
+- Play through the storyline as a human, or let an agent run the realm as a simulation (or both).
 
 ## Experience Goals (Agent View)
 
 - Use an API that exposes **semantic actions** (spawn, move, fire, interact), **state snapshots**, and an **event stream**.
 - Run the realm in deterministic step mode for reproducibility, then switch to real-time for live play.
 - Author content: scenes, portals, prefabs, brains, and story data — all without manual UI.
+- Operate a “living world”: run creator/resident agents that continuously evolve the realm by reacting to events and advancing stories.
 
 ## Non-Goals (To Keep the Game Coherent)
 
 - No raw keyboard/mouse injection as the primary agent interface. The agent interface is semantic.
 - No arbitrary code execution inside the game by default. Extensibility is via data-driven graphs and sandboxed modules.
-

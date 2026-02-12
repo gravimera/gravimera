@@ -19,6 +19,17 @@ Instances define:
 - transform (pos/rot/scale),
 - overrides (tint, health, owner/faction, brain config, story tags).
 
+## Baseline Simulation (Story-First)
+
+In the “metaverse-like” baseline, the simulation must be rich even without combat:
+
+- NPC schedules (where they go at different times)
+- interactions (talk, trade, use, pick up, open, toggle, enter portal)
+- story triggers and actions that mutate the world (spawn characters, open portals, change dialogue)
+- social state (reputation/relationships) if the realm enables it
+
+Combat and economy are optional modules (see `docs/gamedesign/10_rulesets_and_modules.md`).
+
 ## Ownership, Factions, and Permissions
 
 Objects can be:
@@ -56,7 +67,7 @@ Buildings are mostly static objects used for:
 
 Buildings can also have brains (e.g. “auto-repair nearby structures”, “spawn guards when attacked”).
 
-## Combat (Generic, Data-Driven)
+## Combat (Optional Module; Generic and Data-Driven)
 
 Combat is expressed through data:
 
@@ -65,6 +76,17 @@ Combat is expressed through data:
 - defenses: health, resistances (optional), shields (optional).
 
 The engine must not hard-code behavior to specific prefab ids. Prefabs carry profiles and systems operate on profiles.
+
+## Economy and Inventory (Optional Modules)
+
+When enabled by the realm ruleset, objects may also participate in:
+
+- inventory (items/resources carried by units/players)
+- storage (containers/buildings)
+- production (recipes; input/output over time)
+- trade (NPC vendors; player trading)
+
+These systems must remain optional and must not be required for story-focused realms.
 
 ## Interactions and Triggers
 
@@ -76,4 +98,3 @@ The simulation supports “interaction volumes”:
 - pickups and switches.
 
 Interactions produce events and can mutate story variables via story actions.
-

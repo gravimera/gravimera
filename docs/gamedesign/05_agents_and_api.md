@@ -19,6 +19,21 @@ Tokens grant explicit capabilities (play-only vs authoring vs admin/time-control
 5) **Determinism as a mode**  
 Realms can run in real-time or deterministic stepping. The API must support both.
 
+6) **Creation is first-class**  
+Agents are not only “players”; they can be **creators** who build scenes, spawn NPC societies, and author stories.
+
+7) **Metaverse-grade governance**  
+Creation power requires capability-based permissions, budgets, and auditability (see `docs/gamedesign/11_safety_and_governance.md`).
+
+## Agent Roles (Common Patterns)
+
+The design assumes multiple agents can coexist, often with different responsibilities:
+
+- **Creator agent**: authors scenes, NPCs, portals, quests, and realm configuration (high capabilities).
+- **Resident agent**: runs ongoing world logic (schedules, seasonal events, moderation), reacting to events over time.
+- **Player agent**: participates as a character/party in the world with limited capabilities (play-only).
+- **Moderator agent** (optional): enforces content policy and safety limits on hosted servers (admin capabilities, strict audit).
+
 ## Player/Agent Identity
 
 Every API request is attributed to a principal:
@@ -53,6 +68,13 @@ Ownership and permissions are evaluated against this identity.
 - upload/modify prefab data (with safety constraints),
 - author story assets (quests, dialogue, triggers).
 
+Authoring must support “living world” creation:
+
+- define NPC schedules and roles,
+- attach brains (embedded) or register external controllers (agent-run),
+- create world events (holidays, daily cycles, emergent incidents),
+- set and read story variables and relationship state.
+
 ### Admin / Time Control
 
 High-impact endpoints:
@@ -86,6 +108,11 @@ When multiple agents act in one realm:
 - actions are processed in tick order; within a tick, actions are ordered by receive-time then by a stable tie-breaker (player id).
 - conflicting edits (two agents edit same object) are resolved by realm rules (owner wins, admin wins, or last-write with audit events).
 
+In hosted “universe” deployments, concurrency extends across realms:
+
+- cross-realm travel and identity require host-level policy,
+- cross-realm authoring is usually disallowed unless explicitly granted.
+
 ## Safety and Limits
 
 To keep servers stable:
@@ -94,4 +121,3 @@ To keep servers stable:
 - per-token rate limits (actions/sec, authoring ops/min),
 - validation on all authoring payloads (bounds, schema, disallowed references),
 - optional “authoring sandbox” scenes where heavy generation occurs.
-

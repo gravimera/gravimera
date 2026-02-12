@@ -11,6 +11,8 @@ Gravimera supports two ways to make units “intelligent”:
 
 Both are first-class. Embedded brains enable worlds to feel alive even when the authoring agent is offline.
 
+In “metaverse-like” realms, embedded brains are essential: NPCs should keep living even when no human is present.
+
 ## Brain Types
 
 ### Built-in Brains (Deterministic)
@@ -36,6 +38,15 @@ The runtime evaluates the graph on ticks. Actions are the same semantic actions 
 
 This is how creators define new NPC behaviors without embedding arbitrary code.
 
+## NPC Memory and Knowledge
+
+NPCs need persistent state to feel alive:
+
+- **short-term state**: blackboard variables in the behavior graph (current goal, current conversation partner).
+- **long-term state**: story variables attached to an NPC identity (relationships, promises made, quest progress).
+
+The design goal is that NPC “memory” is observable and editable by creators/agents (with permissions), so AI-created worlds remain debuggable and reproducible.
+
 ## Determinism Rules
 
 Brains must be reproducible in deterministic mode:
@@ -43,6 +54,17 @@ Brains must be reproducible in deterministic mode:
 - tick evaluation uses fixed dt,
 - randomness (if any) is derived from `(realm_seed, unit_instance_id, tick_index)`,
 - any “sensing” (enemy in range, line of sight) uses deterministic queries.
+
+## Budgets and Guardrails (Required for Hosting)
+
+Brains must be safe to run at scale:
+
+- per-brain step budget per tick
+- per-scene and per-realm max active brains
+- bounded sensing queries (radius/limit)
+- clear failure behavior (emit `brain_error` event; optionally disable brain)
+
+These guardrails let hosts run “living worlds” without risking runaway CPU usage.
 
 ## Extensibility (Optional Advanced)
 
@@ -52,4 +74,3 @@ For creators who need more complex logic than behavior graphs:
 - modules cannot access filesystem/network directly; they only read observation data and emit actions.
 
 This is optional and can be disabled by realm policy.
-
