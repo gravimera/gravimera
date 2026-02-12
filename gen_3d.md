@@ -189,6 +189,11 @@ Notes:
   - `speed_scale` (optional): multiplies the driver time.
   - `time_offset_units` (optional): additive offset in the clip time domain (same units as loop `duration_secs` / keyframe `time_secs`). Use this to phase-stagger repeated limbs without duplicating keyframes.
   - `clip`: either `loop` (keyframed deltas) or `spin` (procedural rotation).
+    - For `loop` keyframes, `delta.pos` is in the **parent-anchor join frame** (the same frame as `attach_to.offset.pos`).
+    - If you include `delta.forward` / `delta.up`, author them as **direction vectors in the parent component frame** (same coordinates as anchors). The engine converts them into the join frame.
+      - Rest pose should match the parent anchor frame: `delta.forward = parent_anchor.forward` and `delta.up = parent_anchor.up`.
+      - If you don't need rotation, omit `delta.forward` / `delta.up` entirely.
+    - For `spin`, the `axis` is authored in the **child component's local axes** (+X right, +Y up, +Z forward). The engine converts it into the attachment join frame.
 
 Rig / motion contract (optional; used for locomotion validation and AI repair):
 

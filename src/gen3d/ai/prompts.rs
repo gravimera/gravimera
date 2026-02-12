@@ -380,14 +380,19 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - Use `idle` for subtle idle motions.\n\
          - Use `ambient` for motions that should run regardless (fans/propellers).\n\
          - Avoid `ambient` for weapons/turrets (a cannon spinning constantly looks wrong); prefer `attack_primary` recoil or no animation.\n\n\
-         Animation spec (inside `attach_to.animations[channel]`):\n\
-         - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
-         - Prefer `attack_time` for `attack_primary` so the animation runs once per attack event (instead of continuously while the player holds the attack key).\n\
-         - `speed_scale`: number (optional; default 1)\n\
-         - `clip`:\n\
-           - `{{ \"kind\": \"loop\", \"duration_secs\": number, \"keyframes\": [ {{\"time_secs\": number, \"delta\": {{\"pos\":[x,y,z], \"forward\":[x,y,z] (optional), \"up\":[x,y,z] (optional), \"scale\":[x,y,z] (optional)}} }} ] }}`\n\
-           - `{{ \"kind\": \"spin\", \"axis\": [x,y,z], \"radians_per_unit\": number }}`\n\
-         - For `spin`, `axis` is expressed in THIS COMPONENT's LOCAL axes (+X right, +Y up, +Z forward).\n\n\
+	         Animation spec (inside `attach_to.animations[channel]`):\n\
+	         - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
+	         - Prefer `attack_time` for `attack_primary` so the animation runs once per attack event (instead of continuously while the player holds the attack key).\n\
+	         - `speed_scale`: number (optional; default 1)\n\
+	         - `clip`:\n\
+	           - `{{ \"kind\": \"loop\", \"duration_secs\": number, \"keyframes\": [ {{\"time_secs\": number, \"delta\": {{\"pos\":[x,y,z], \"forward\":[x,y,z] (optional), \"up\":[x,y,z] (optional), \"scale\":[x,y,z] (optional)}} }} ] }}`\n\
+	           - `{{ \"kind\": \"spin\", \"axis\": [x,y,z], \"radians_per_unit\": number }}`\n\
+	         - For `loop` keyframes:\n\
+	           - `delta.pos` is a translation in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset.pos`).\n\
+	           - If you include `delta.forward` / `delta.up`, they are direction vectors in the PARENT COMPONENT frame (same coordinates as anchors), and the engine converts them into the join frame.\n\
+	             - Rest pose (no rotation) should match the parent anchor frame: `delta.forward = parent_anchor.forward` and `delta.up = parent_anchor.up`.\n\
+	             - If you don't need rotation, omit `delta.forward`/`delta.up` entirely.\n\
+	         - For `spin`, `axis` is expressed in THIS COMPONENT's LOCAL axes (+X right, +Y up, +Z forward).\n\n\
          Units:\n\
          - For drivers `always` and `attack_time`:\n\
            - `loop.duration_secs` and `loop.keyframes[].time_secs` are in seconds.\n\

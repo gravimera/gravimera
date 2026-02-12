@@ -488,7 +488,64 @@ fn attachment_offset_from_ai(offset: Option<&AiAttachmentOffsetJson>) -> Transfo
         .with_scale(scale)
 }
 
-fn part_animation_from_ai(animation: &AiPartAnimationJson) -> Option<PartAnimationDef> {
+fn animation_keyframe_delta_from_ai(
+    delta: Option<&AiAttachmentOffsetJson>,
+    parent_anchor_rot: Option<Quat>,
+) -> Transform {
+    let Some(delta) = delta else {
+        return Transform::IDENTITY;
+    };
+
+    let mut translation = ai_vec3(delta.pos);
+    if !translation.is_finite() {
+        translation = Vec3::ZERO;
+    }
+
+    let rotation = if delta.forward.is_some() || delta.up.is_some() {
+        // Keyframe `delta.forward/up` are authored as direction vectors in the PARENT COMPONENT
+        // frame (the same frame as anchors), because it is far more intuitive than emitting join-
+        // frame coordinates when the join axes are intentionally rotated (e.g. neck join +Z points
+        // "up" in the body).
+        //
+        // Runtime playback applies deltas in the attachment join frame, so convert these direction
+        // vectors into that join frame based on the parent anchor orientation.
+        let mut forward = ai_vec3_opt(delta.forward).unwrap_or(Vec3::Z);
+        let mut up = ai_vec3_opt(delta.up);
+        if let Some(parent_anchor_rot) = parent_anchor_rot {
+            let inv = parent_anchor_rot.inverse();
+            forward = inv * forward;
+            up = up.map(|v| inv * v);
+        }
+        plan_rotation_from_forward_up(forward, up)
+    } else if let Some(q) = delta.rot_quat_xyzw {
+        let q = Quat::from_xyzw(q[0], q[1], q[2], q[3]).normalize();
+        if q.is_finite() {
+            q
+        } else {
+            Quat::IDENTITY
+        }
+    } else {
+        Quat::IDENTITY
+    };
+
+    let mut scale = delta
+        .scale
+        .map(ai_vec3)
+        .filter(|s| s.is_finite())
+        .unwrap_or(Vec3::ONE);
+    if scale.abs().max_element() <= 1e-4 {
+        scale = Vec3::ONE;
+    }
+
+    Transform::from_translation(translation)
+        .with_rotation(rotation)
+        .with_scale(scale)
+}
+
+fn part_animation_from_ai(
+    animation: &AiPartAnimationJson,
+    parent_anchor_rot: Option<Quat>,
+) -> Option<PartAnimationDef> {
     match animation {
         AiPartAnimationJson::Loop {
             duration_secs,
@@ -508,7 +565,7 @@ fn part_animation_from_ai(animation: &AiPartAnimationJson) -> Option<PartAnimati
                 if !kf.time_secs.is_finite() {
                     continue;
                 }
-                let delta = attachment_offset_from_ai(kf.delta.as_ref());
+                let delta = animation_keyframe_delta_from_ai(kf.delta.as_ref(), parent_anchor_rot);
                 out.push(PartAnimationKeyframeDef {
                     time_secs: kf.time_secs.clamp(0.0, duration_secs),
                     delta,
@@ -530,7 +587,10 @@ fn part_animation_from_ai(animation: &AiPartAnimationJson) -> Option<PartAnimati
     }
 }
 
-fn part_animation_spec_from_ai(spec: &AiAnimationSpecJson) -> Option<PartAnimationSpec> {
+fn part_animation_spec_from_ai(
+    spec: &AiAnimationSpecJson,
+    parent_anchor_rot: Option<Quat>,
+) -> Option<PartAnimationSpec> {
     let driver = match spec.driver {
         AiAnimationDriverJson::Always => PartAnimationDriver::Always,
         AiAnimationDriverJson::MovePhase => PartAnimationDriver::MovePhase,
@@ -569,7 +629,7 @@ fn part_animation_spec_from_ai(spec: &AiAnimationSpecJson) -> Option<PartAnimati
                 if !kf.time_secs.is_finite() {
                     continue;
                 }
-                let delta = attachment_offset_from_ai(kf.delta.as_ref());
+                let delta = animation_keyframe_delta_from_ai(kf.delta.as_ref(), parent_anchor_rot);
                 out.push(PartAnimationKeyframeDef {
                     time_secs: kf.time_secs.clamp(0.0, duration_secs),
                     delta,
@@ -802,6 +862,19 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                         comp.name
                     ));
                 }
+                let parent_anchor_rot = if parent_anchor == "origin" {
+                    Some(Quat::IDENTITY)
+                } else {
+                    name_to_idx
+                        .get(parent)
+                        .and_then(|idx| components.get(*idx))
+                        .and_then(|pc| pc.anchors.iter().find(|a| a.name.trim() == parent_anchor))
+                        .map(|a| {
+                            let forward = ai_vec3_opt(a.forward).unwrap_or(Vec3::Z);
+                            let up = ai_vec3_opt(a.up);
+                            plan_rotation_from_forward_up(forward, up)
+                        })
+                };
                 let offset = attachment_offset_from_ai(att.offset.as_ref());
                 let child_anchor_rot = if child_anchor == "origin" {
                     Quat::IDENTITY
@@ -832,7 +905,8 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                         if !matches!(channel, "ambient" | "idle" | "move" | "attack_primary") {
                             continue;
                         }
-                        if let Some(mut spec) = part_animation_spec_from_ai(spec) {
+                        if let Some(mut spec) = part_animation_spec_from_ai(spec, parent_anchor_rot)
+                        {
                             // The AI authoring spec defines spin axes in component-local space. The runtime
                             // animation playback applies deltas in the attachment join frame, so we convert
                             // axes into that join frame here based on the child's anchor orientation.
@@ -849,7 +923,10 @@ pub(super) fn ai_plan_to_initial_draft_defs(
 
                 // Legacy plan v4 field: treat as an ambient loop.
                 if animations.is_empty() {
-                    if let Some(animation) = att.animation.as_ref().and_then(part_animation_from_ai)
+                    if let Some(animation) = att
+                        .animation
+                        .as_ref()
+                        .and_then(|anim| part_animation_from_ai(anim, parent_anchor_rot))
                     {
                         animations.push(PartAnimationSlot {
                             channel: "ambient".into(),
@@ -1745,15 +1822,23 @@ pub(super) fn apply_ai_review_delta_actions(
                 let Some(idx) = component_index_from_object_id(components, object_id) else {
                     continue;
                 };
-                let Some(att) = components[idx].attach_to.as_mut() else {
-                    continue;
-                };
 
                 let channel = channel.trim();
                 if channel.is_empty() {
                     continue;
                 }
-                let Some(mut spec) = part_animation_spec_from_ai(&spec) else {
+                let parent_anchor_rot = components[idx].attach_to.as_ref().and_then(|att| {
+                    let parent = att.parent.as_str();
+                    let parent_anchor = att.parent_anchor.as_str();
+                    components
+                        .iter()
+                        .find(|c| c.name == parent)
+                        .map(|c| anchor_transform_from_defs(&c.anchors, parent_anchor).rotation)
+                });
+                let Some(att) = components[idx].attach_to.as_mut() else {
+                    continue;
+                };
+                let Some(mut spec) = part_animation_spec_from_ai(&spec, parent_anchor_rot) else {
                     return Err(format!("Invalid animation spec for channel `{channel}`."));
                 };
 
@@ -2724,6 +2809,88 @@ mod tests {
             (forward - Vec3::X).length() < 1e-3,
             "expected attachment anchor forward to stay +X; forward={:?}",
             forward
+        );
+    }
+
+    #[test]
+    fn animation_keyframe_basis_vectors_are_converted_into_join_frame() {
+        // Regression: plan animations often author keyframe basis vectors in the PARENT COMPONENT
+        // frame (matching anchors). When the join frame is intentionally rotated (e.g. neck join
+        // +Z points up), interpreting those vectors directly as join-frame coordinates rotates the
+        // part by ~90 degrees.
+        //
+        // We convert `delta.forward/up` into the attachment join frame using the parent anchor
+        // orientation so that rest poses match the declared join frame.
+        let plan_text = r##"{
+          "version": 7,
+          "components": [
+            {
+              "name": "body",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "neck", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
+              ]
+            },
+            {
+              "name": "head",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "neck_mount", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
+              ],
+              "attach_to": {
+                "parent": "body",
+                "parent_anchor": "neck",
+                "child_anchor": "neck_mount",
+                "offset": { "pos": [0,0,0] },
+                "animations": {
+                  "idle": {
+                    "driver": "always",
+                    "clip": {
+                      "kind": "loop",
+                      "duration_secs": 1.0,
+                      "keyframes": [
+                        { "time_secs": 0.0, "delta": { "forward": [0,1,0], "up": [0,0,1] } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let (_planned, _notes, defs) =
+            ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+
+        let body_id = builtin_object_id("gravimera/gen3d/component/body");
+        let head_id = builtin_object_id("gravimera/gen3d/component/head");
+        let body_def = defs
+            .iter()
+            .find(|def| def.object_id == body_id)
+            .expect("body def");
+        let head_part = body_def
+            .parts
+            .iter()
+            .find(|p| matches!(p.kind, ObjectPartKind::ObjectRef { object_id } if object_id == head_id))
+            .expect("head part ref");
+        let idle = head_part
+            .animations
+            .iter()
+            .find(|s| s.channel.as_ref() == "idle")
+            .expect("idle slot");
+
+        let PartAnimationDef::Loop { keyframes, .. } = &idle.spec.clip else {
+            panic!("expected loop clip");
+        };
+        assert_eq!(keyframes.len(), 1, "expected one keyframe");
+        let rot = keyframes[0].delta.rotation.normalize();
+        assert!(rot.is_finite(), "rotation should be finite");
+        // Rest pose should be identity in the join frame.
+        assert!(
+            rot.dot(Quat::IDENTITY).abs() > 0.9999,
+            "expected identity delta rotation in join frame; rot={:?}",
+            rot
         );
     }
 
