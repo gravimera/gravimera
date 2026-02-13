@@ -210,6 +210,7 @@ Rig / motion contract (optional; used for locomotion validation and AI repair):
   - `hinge` joints should include `axis_join` and (optionally) `limits_degrees`.
   - Motion validation applies to all authored animation channels on constrained joints (not only `move`).
     Keep keyframe deltas joint-local and near-neutral unless you intend a large full-time bias.
+    Avoid large `delta.pos` translations on `hinge`/`ball` joints; prefer rotation deltas to prevent sliding/gap artifacts.
 - `components[].contacts[]` (optional): named ground contacts for this component.
   - Each contact references a component anchor by name.
   - Optional `stance` schedule `{ "phase_01": 0..1, "duty_factor_01": 0..1 }` is used by motion validation to detect obvious slip/lift.

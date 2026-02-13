@@ -128,6 +128,8 @@ struct Gen3dAgentState {
     motion_error_counts: std::collections::HashMap<String, u8>,
     motion_fallbacks_applied: std::collections::HashSet<String>,
     motion_fallback_actions: Vec<serde_json::Value>,
+    pending_regen_component_indices: Vec<usize>,
+    pending_regen_component_indices_skipped_due_to_budget: Vec<usize>,
 }
 
 impl Default for Gen3dAgentState {
@@ -163,6 +165,8 @@ impl Default for Gen3dAgentState {
             motion_error_counts: std::collections::HashMap::new(),
             motion_fallbacks_applied: std::collections::HashSet::new(),
             motion_fallback_actions: Vec::new(),
+            pending_regen_component_indices: Vec::new(),
+            pending_regen_component_indices_skipped_due_to_budget: Vec::new(),
         }
     }
 }

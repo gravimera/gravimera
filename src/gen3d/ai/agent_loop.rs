@@ -240,6 +240,10 @@ Rules:\n\
   - Use llm_generate_components_v1 with explicit component_indices/names for the unique set.\n\
   - Use missing_only=true ONLY when you truly want ALL missing components.\n\
     - If the plan declares `reuse_groups`, the engine will skip reuse targets in missing_only batches and auto-copy them after sources are generated.\n\
+- IMPORTANT: If the state summary contains `pending_regen_component_indices` (non-empty), APPLY THEM NEXT:\n\
+  - Call llm_generate_components_v1 with component_indices set to that list and force=true (regen is expected).\n\
+  - Then call render_preview_v1 and llm_review_delta_v1 to confirm the fixes.\n\
+  - Do NOT call llm_review_delta_v1 repeatedly without applying the pending regen or making a new render.\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
@@ -335,10 +339,10 @@ fn build_agent_user_text(
             TOOL_ID_LLM_REVIEW_DELTA => {
                 let accepted = value.get("accepted").and_then(|v| v.as_bool());
                 let had_actions = value.get("had_actions").and_then(|v| v.as_bool());
-                let regen = value
-                    .get("regen_component_indices")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len());
+                let regen_indices = value.get("regen_component_indices").and_then(|v| v.as_array());
+                let regen_skipped = value
+                    .get("regen_component_indices_skipped_due_to_budget")
+                    .and_then(|v| v.as_array());
                 out.push_str("ok");
                 if let Some(accepted) = accepted {
                     out.push_str(&format!(" accepted={accepted}"));
@@ -346,8 +350,33 @@ fn build_agent_user_text(
                 if let Some(had_actions) = had_actions {
                     out.push_str(&format!(" had_actions={had_actions}"));
                 }
-                if let Some(regen) = regen {
-                    out.push_str(&format!(" regen_components={regen}"));
+                if let Some(regen_indices) = regen_indices {
+                    let total = regen_indices.len();
+                    let indices: Vec<u64> = regen_indices
+                        .iter()
+                        .filter_map(|v| v.as_u64())
+                        .take(12)
+                        .collect();
+                    if !indices.is_empty() {
+                        out.push_str(&format!(" regen_indices={indices:?}"));
+                    }
+                    if total > indices.len() {
+                        out.push_str(&format!(" regen_indices_total={total}"));
+                    }
+                }
+                if let Some(regen_skipped) = regen_skipped {
+                    let total = regen_skipped.len();
+                    let skipped: Vec<u64> = regen_skipped
+                        .iter()
+                        .filter_map(|v| v.as_u64())
+                        .take(12)
+                        .collect();
+                    if !skipped.is_empty() {
+                        out.push_str(&format!(" regen_skipped={skipped:?}"));
+                    }
+                    if total > skipped.len() {
+                        out.push_str(&format!(" regen_skipped_total={total}"));
+                    }
                 }
             }
             TOOL_ID_RENDER_PREVIEW => {
@@ -742,6 +771,10 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
         "plan_hash": job.plan_hash,
         "assembly_rev": job.assembly_rev,
         "needs_review": job.agent.rendered_since_last_review,
+        "pending_regen_component_indices": &job.agent.pending_regen_component_indices,
+        "pending_regen_component_indices_skipped_due_to_budget": &job
+            .agent
+            .pending_regen_component_indices_skipped_due_to_budget,
         "reuse_groups": reuse_groups_json,
         "reuse_group_warnings": &job.reuse_group_warnings,
         "missing_only_generation_indices": missing_only_generation_indices,
@@ -2821,6 +2854,13 @@ fn execute_tool_call(
                 ));
             }
 
+            job.agent
+                .pending_regen_component_indices
+                .retain(|pending| *pending != idx);
+            job.agent
+                .pending_regen_component_indices_skipped_due_to_budget
+                .retain(|pending| *pending != idx);
+
             let is_regen = job
                 .planned_components
                 .get(idx)
@@ -3051,6 +3091,15 @@ fn execute_tool_call(
                     }),
                 ));
             }
+
+            let request_set: std::collections::HashSet<usize> =
+                requested_indices.iter().copied().collect();
+            job.agent
+                .pending_regen_component_indices
+                .retain(|pending| !request_set.contains(pending));
+            job.agent
+                .pending_regen_component_indices_skipped_due_to_budget
+                .retain(|pending| !request_set.contains(pending));
 
             // Enforce regen budgets for any components that are already generated (regen attempts).
             // Missing components are always allowed.
@@ -3910,6 +3959,10 @@ fn poll_agent_tool(
                                     job.agent.next_workspace_seq = 1;
                                     job.agent.rendered_since_last_review = false;
                                     job.agent.last_render_images.clear();
+                                    job.agent.pending_regen_component_indices.clear();
+                                    job.agent
+                                        .pending_regen_component_indices_skipped_due_to_budget
+                                        .clear();
                                     job.agent.pending_llm_repair_attempt = 0;
 
                                     if let Some(def) = draft.root_def() {
@@ -4354,6 +4407,10 @@ fn poll_agent_tool(
                                             );
                                         }
                                     }
+                                    regen_allowed.sort_unstable();
+                                    job.agent.pending_regen_component_indices = regen_allowed.clone();
+                                    job.agent.pending_regen_component_indices_skipped_due_to_budget =
+                                        regen_skipped.clone();
 
                                     if apply.had_actions {
                                         job.assembly_rev = job.assembly_rev.saturating_add(1);

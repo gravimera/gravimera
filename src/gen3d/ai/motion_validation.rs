@@ -704,6 +704,8 @@ fn validate_joints(
             let mut max_abs_hinge_angle_phase: f32 = 0.0;
             let mut max_limit_exceed_deg: f32 = 0.0;
             let mut max_limit_exceed_phase: f32 = 0.0;
+            let mut max_translation_m: f32 = 0.0;
+            let mut max_translation_phase: f32 = 0.0;
 
             let axis_join = if joint.kind == AiJointKindJson::Hinge {
                 let Some(axis_join_arr) = joint.axis_join else {
@@ -749,6 +751,7 @@ fn validate_joints(
                 let animated_offset = mul_transform(&att.offset, &delta);
                 let q_delta = (att.offset.rotation.inverse() * animated_offset.rotation).normalize();
                 let angle_deg = quat_angle_deg(q_delta).abs();
+                let translation_m = delta.translation.length();
 
                 if angle_deg > max_angle_deg {
                     max_angle_deg = angle_deg;
@@ -757,6 +760,10 @@ fn validate_joints(
                 if angle_deg < min_angle_deg {
                     min_angle_deg = angle_deg;
                     min_angle_phase = sample_phase_01;
+                }
+                if translation_m.is_finite() && translation_m > max_translation_m {
+                    max_translation_m = translation_m;
+                    max_translation_phase = sample_phase_01;
                 }
 
                 if let Some(axis_join) = axis_join {
@@ -892,6 +899,37 @@ fn validate_joints(
                     );
                 }
                 AiJointKindJson::Free | AiJointKindJson::Unknown => {}
+            }
+
+            if matches!(joint.kind, AiJointKindJson::Hinge | AiJointKindJson::Ball) {
+                let max_dim = comp
+                    .planned_size
+                    .x
+                    .abs()
+                    .max(comp.planned_size.y.abs())
+                    .max(comp.planned_size.z.abs())
+                    .max(0.01);
+                let warn_ratio = 0.05;
+                let warn_m = (max_dim * warn_ratio).max(0.01);
+                if max_translation_m.is_finite() && max_translation_m > warn_m {
+                    issues.push(MotionIssue {
+                        severity: MotionSeverity::Warn,
+                        kind: "constrained_joint_translates",
+                        component_id: component_id.clone(),
+                        component_name: component_name.clone(),
+                        channel: channel.clone(),
+                        message: "Constrained joint uses translation deltas; prefer rotation-only deltas to avoid sliding/gap artifacts."
+                            .into(),
+                        evidence: serde_json::json!({
+                            "joint_kind": format!("{:?}", joint.kind),
+                            "max_translation_m": max_translation_m,
+                            "at_phase_01": max_translation_phase,
+                            "component_max_dim_m": max_dim,
+                            "tolerances": { "warn_ratio_of_max_dim": warn_ratio, "warn_translation_m": warn_m },
+                        }),
+                        score: max_translation_m,
+                    });
+                }
             }
         }
     }
@@ -1451,6 +1489,80 @@ mod tests {
                     && i.get("channel").and_then(|v| v.as_str()) == Some("idle")
             }),
             "expected joint_rest_bias_large issue on idle channel, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn constrained_joint_translation_is_warned() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        let idle_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 2.0,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.0,
+                        delta: Transform {
+                            translation: Vec3::new(0.2, 0.0, 0.0),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 2.0,
+                        delta: Transform::IDENTITY,
+                    },
+                ],
+            },
+        };
+
+        let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Hinge,
+                axis_join: Some([1.0, 0.0, 0.0]),
+                limits_degrees: Some([-20.0, 20.0]),
+                swing_limits_degrees: None,
+                twist_limits_degrees: None,
+            }),
+            animations: vec![PartAnimationSlot {
+                channel: "idle".into(),
+                spec: idle_spec,
+            }],
+        });
+
+        let components = vec![root, limb];
+        let report = build_motion_validation_report(Some(1.0), &components);
+        let ok = report
+            .motion_validation
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(ok, "expected motion validation to pass with warn-only issues");
+
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("constrained_joint_translates")
+                    && i.get("channel").and_then(|v| v.as_str()) == Some("idle")
+                    && i.get("severity").and_then(|v| v.as_str()) == Some("warn")
+            }),
+            "expected constrained_joint_translates warn on idle channel, got {issues:?}"
         );
     }
 

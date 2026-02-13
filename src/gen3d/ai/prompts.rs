@@ -439,10 +439,11 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             - Only declare `contacts[].stance` if your `move` animation is authored to keep that contact approximately planted in world space during stance.\n\
               If you cannot satisfy planted-foot behavior, OMIT `stance` to avoid `contact_slip`/`contact_lift` validation errors.\n\
             - For rolling wheels/tracks, contacts are optional; if you include them, omit `stance` (the physical ground contact point moves around the wheel).\n\
-          - Joint constraints:\n\
+            - Joint constraints:\n\
             - `attach_to.joint.kind`: `fixed` | `hinge` | `ball` | `free`.\n\
             - Joint axes/limits are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
             - For `hinge`, provide `axis_join` and optional `limits_degrees` [min,max].\n\
+            - For `hinge`/`ball` joints, prefer ROTATION deltas in animations; avoid large `delta.pos` translations (motion validation warns `constrained_joint_translates`).\n\
           - Contacts:\n\
             - `contacts[]` lives on a component and references one of its `anchors[]` by name.\n\
             - `contacts[].stance` defines when that contact should be on the ground during the `move` cycle:\n\
@@ -655,6 +656,7 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
       - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\
       - If smoke results include `motion_validation` issues, treat them as authoritative and prioritize fixing them first.\n\n\
       - If motion validation reports `chain_axis_mismatch`, fix the COMPONENT ANCHORS (not offsets): reorient the child component's joint anchors so the vector from its parent joint anchor to its child joint anchor aligns with the proximal anchor's +Z (forward) in component-local space.\n\n\
+      - If motion validation reports `constrained_joint_translates`, fix the ANIMATION (not the mesh): hinge/ball joints should not translate. Set keyframe `delta.pos` near [0,0,0] and drive motion via rotation deltas instead.\n\n\
       Animation notes:\n\
       - `tweak_animation.spec.clip.spin.axis` is expressed in the COMPONENT's LOCAL axes.\n\
       - If smoke results include `suggested_component_local_axis`, prefer using that value for the spin axis.\n\
