@@ -45,7 +45,7 @@ Core artifacts (conceptual; carried via API payloads or files):
 - **PrefabPack**: prefab definitions and asset references (including Gen3D job outputs).
 - **StoryPack**: quests/dialogue/triggers/actions assets.
 - **BrainPack**: behavior graphs, schedule templates, brain configs.
-- **Blueprint / BlueprintPatch**: the concrete mutation set to apply (see `docs/spec/19_blueprint_spec.md`).
+- **Blueprint / BlueprintPatch**: the concrete mutation set to apply (see `docs/gamedesign/19_blueprint_spec.md`).
 - **ValidationReport**: metrics and failures (budgets, walkability, repetition, nav cost).
 
 If every agent produces one of these artifacts, the pipeline becomes reliable and testable.
@@ -118,7 +118,7 @@ Responsibilities:
 - bind triggers to stable identities/markers/portals (not fragile instance ids),
 - ensure triggers/actions respect budgets and do not create infinite loops.
 
-See `docs/spec/17_story_system_contract.md`.
+See `docs/gamedesign/17_story_system_contract.md`.
 
 ### 8) Supervisor / QA Agent
 
@@ -168,9 +168,9 @@ Countermeasures:
 
 ## Where This Connects to the Existing Design Docs
 
-- API surfaces: `docs/spec/16_agent_api_contract.md`
-- Blueprint validate/apply: `docs/spec/19_blueprint_spec.md`
+- API surfaces: `docs/gamedesign/16_agent_api_contract.md`
+- Blueprint validate/apply: `docs/gamedesign/19_blueprint_spec.md`
 - Scene-scale creation: `docs/gamedesign/22_scene_creation.md`
-- Story system: `docs/spec/17_story_system_contract.md`
-- Behavior graphs: `docs/spec/18_behavior_graph_spec.md`
+- Story system: `docs/gamedesign/17_story_system_contract.md`
+- Behavior graphs: `docs/gamedesign/18_behavior_graph_spec.md`
 - Safety/governance: `docs/gamedesign/11_safety_and_governance.md`

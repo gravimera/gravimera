@@ -36,7 +36,9 @@ A scene is a bounded play area with:
 
 ### Scene Graph (Multiple Scenes)
 
-Scenes are connected by directed or bidirectional portals. A realm can represent:
+Scenes are connected by **directed (one-way) portals**. For bidirectional travel, creators place **two** portals (A→B and B→A).
+
+A realm can represent:
 
 - a hub world with multiple dungeons,
 - a sequence of narrative chapters,
@@ -48,6 +50,7 @@ A portal gate is an object instance with:
 
 - a trigger volume (enter condition),
 - a destination scene id,
+- a direction: **from this scene to the destination** (portals are one-way; use two portals for bidirectional travel),
 - a destination spawn rule (exact transform, spawn marker id, or “nearest safe point”).
 
 Travel can be:

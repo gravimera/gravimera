@@ -19,7 +19,7 @@ This is required for a “metaverse-like” engine where realms live for a long 
 There are multiple independent version axes:
 
 1) **Engine version**: the Gravimera binary version.
-2) **API version**: `/v1`, `/v2`, etc (see `docs/spec/16_agent_api_contract.md`).
+2) **API version**: `/v1`, `/v2`, etc (see `docs/gamedesign/16_agent_api_contract.md`).
 3) **Realm package versions**:
    - manifest version (`realm.json.format_version`)
    - ruleset version (`ruleset.json.format_version`)

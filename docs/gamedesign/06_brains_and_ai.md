@@ -4,7 +4,7 @@ Units can act autonomously through an attached **brain**. Brains are part of the
 
 This document describes the concepts and goals. The detailed embedded behavior programming model is specified in:
 
-- `docs/spec/18_behavior_graph_spec.md`
+- `docs/gamedesign/18_behavior_graph_spec.md`
 
 ## Why Brains Exist
 

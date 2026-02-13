@@ -7,8 +7,8 @@ This document defines the **final target** embedded behavior system used by NPCs
 It complements:
 
 - `docs/gamedesign/06_brains_and_ai.md` (concepts)
-- `docs/spec/16_agent_api_contract.md` (API surfaces)
-- `docs/spec/17_story_system_contract.md` (story actions and variables)
+- `docs/gamedesign/16_agent_api_contract.md` (API surfaces)
+- `docs/gamedesign/17_story_system_contract.md` (story actions and variables)
 
 ## Design Goals
 

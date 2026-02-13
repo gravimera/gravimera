@@ -227,6 +227,8 @@ Requires `author.scenes`.
 - `PATCH /v2/portals/{portal_id}` -> edit destination, lock conditions, travel rule
 - `DELETE /v2/portals/{portal_id}` -> remove portal
 
+Portals are **one-way** by default. For bidirectional travel, create two portals (A→B and B→A).
+
 Portal entry emits `portal_entered` events; portal travel emits `scene_loaded` and `travel_completed` events.
 
 ### Objects (Instances)

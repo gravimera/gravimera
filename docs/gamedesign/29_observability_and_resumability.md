@@ -123,5 +123,4 @@ In hosted realms, artifact retention and access must be controlled by capabiliti
 - Scene generation pipeline: `docs/gamedesign/26_scene_generation_agent_system.md`
 - Agent dev loop: `docs/gamedesign/24_agent_dev_loop.md`
 - Evaluation and repair goals: `docs/gamedesign/25_evaluation_and_auto_repair.md`
-- Specs (exact contracts and formats): `docs/spec/README.md`
-
+- Specs (exact contracts and formats): `docs/gamedesign/specs.md`

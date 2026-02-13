@@ -22,7 +22,7 @@ The realm manifest defines:
 
 The concrete realm package layout and manifest/ruleset fields are specified in:
 
-- `docs/spec/20_realm_package_manifest.md`
+- `docs/gamedesign/20_realm_package_manifest.md`
 
 ## Scene Data
 
@@ -62,7 +62,7 @@ Graph execution must be bounded (step budget) and must produce events on errors.
 
 The concrete behavior graph spec is defined in:
 
-- `docs/spec/18_behavior_graph_spec.md`
+- `docs/gamedesign/18_behavior_graph_spec.md`
 
 ## Story Assets
 
@@ -94,4 +94,4 @@ Migration rules:
 
 The concrete migration policy is defined in:
 
-- `docs/spec/21_versioning_and_migrations.md`
+- `docs/gamedesign/21_versioning_and_migrations.md`

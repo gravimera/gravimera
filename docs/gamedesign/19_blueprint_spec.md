@@ -12,7 +12,7 @@ Blueprints are essential for AI freedom creation because a living world often in
 
 This spec is referenced by:
 
-- `docs/spec/16_agent_api_contract.md` (blueprint validate/apply endpoints)
+- `docs/gamedesign/16_agent_api_contract.md` (blueprint validate/apply endpoints)
 - `docs/gamedesign/12_content_formats.md` (realm durability/versioning)
 
 ## What a Blueprint Is (Conceptually)
@@ -103,7 +103,7 @@ This spec does not mandate exact JSON field names, but it mandates responsibilit
 1) `scenes`: create/update scene metadata, markers, and budgets.
 2) `prefabs`: register or update prefabs (including Gen3D job outputs).
 3) `instances`: spawn/edit/destroy instances in scenes, including terrain objects.
-4) `portals`: create/edit portal gates connecting scenes (and optionally realms).
+4) `portals`: create/edit **directed** portal gates connecting scenes (and optionally realms). Bidirectional travel is represented as two portals (A→B and B→A).
 5) `brains`: attach/configure brains and schedules.
 6) `story`: quests/dialogue assets + variable initialization.
 

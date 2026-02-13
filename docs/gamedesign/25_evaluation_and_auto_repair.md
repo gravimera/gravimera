@@ -13,7 +13,7 @@ This stays generic: the engine does not assume “town rules”. It enforces con
 
 For structured contracts and learned evaluator integration, see:
 
-- `docs/spec/27_scorecards_and_validation_reports.md`
+- `docs/gamedesign/27_scorecards_and_validation_reports.md`
 - `docs/gamedesign/28_evolving_evaluators.md`
 
 ## Hard Truth: “Bad” Requires a Spec
