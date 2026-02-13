@@ -1,8 +1,8 @@
 # Specs (Contracts and Formats)
 
-This folder contains **detailed specs**: contracts, schemas, and format definitions that are needed for implementation and interoperability.
+This doc indexes the **detailed specs**: contracts, schemas, and format definitions needed for implementation and interoperability.
 
-The product goals and intent live in `docs/gamedesign/`. The specs here are the precise “how it works” layer and may evolve with versioning and migrations.
+The product goals and intent live in the design docs in `docs/gamedesign/`. The specs below are the precise “how it works” layer and may evolve with versioning and migrations.
 
 ## Spec Index
 
