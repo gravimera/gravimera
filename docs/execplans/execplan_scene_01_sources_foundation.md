@@ -15,16 +15,16 @@ Verification is via `cargo test`: canonicalization is stable, idempotent, and do
 ## Progress
 
 - [x] (2026-02-13) Create the initial ExecPlan.
-- [ ] (2026-02-13) Define the `scenes/<scene_id>/src/` file set and the minimum required fields for v1 sources.
-- [ ] (2026-02-13) Implement Rust `SceneSources` types + directory read/write helpers.
-- [ ] (2026-02-13) Implement canonicalization (stable ordering + formatting) and unit tests for idempotence.
-- [ ] (2026-02-13) Add a minimal fixture under `tests/scene_generation/fixtures/minimal/src/` and a test that canonicalizes it without changes.
-- [ ] (2026-02-13) Run `cargo test` + headless smoke boot and commit.
+- [x] (2026-02-13) Define the `scenes/<scene_id>/src/` file set and the minimum required fields for v1 sources.
+- [x] (2026-02-13) Implement Rust `SceneSources` types + directory read/write helpers.
+- [x] (2026-02-13) Implement canonicalization (stable ordering + formatting) and unit tests for idempotence.
+- [x] (2026-02-13) Add a minimal fixture under `tests/scene_generation/fixtures/minimal/src/` and a test that canonicalizes it without changes.
+- [x] (2026-02-13) Run `cargo test` + headless smoke boot and commit (`d0a2b33`).
 
 ## Surprises & Discoveries
 
-- Observation: (none yet)
-  Evidence: (fill in as discovered)
+- Observation: `serde_json::to_string_pretty` expands nested objects/arrays onto multiple lines, so fixtures must match that canonical formatting byte-for-byte.
+  Evidence: unit test `scene_sources::tests::canonicalize_fixture_minimal_no_changes` failed until fixture JSON matched the pretty format.
 
 ## Decision Log
 
@@ -32,13 +32,18 @@ Verification is via `cargo test`: canonicalization is stable, idempotent, and do
   Rationale: Git needs mergeable text sources; splitting reduces conflicts between parallel agents.
   Date/Author: 2026-02-13 / Codex
 
-- Decision: Preserve unknown fields in sources using an explicit “extras” map in Rust structs.
-  Rationale: Agents and future engine versions may add fields; canonicalization and read/write must not silently drop data.
+- Decision: Preserve unknown fields by storing each source file as raw `serde_json::Value` and only extracting a minimal set of required fields (paths + `format_version`) for validation and discovery.
+  Rationale: This avoids silently dropping nested/unknown fields while still allowing strict validation of required fields.
   Date/Author: 2026-02-13 / Codex
 
 ## Outcomes & Retrospective
 
-(Fill in at completion.)
+- Implemented v1 scene source loading + canonicalization in `src/scene_sources.rs`.
+- Added a minimal canonical fixture under `tests/scene_generation/fixtures/minimal/src/`.
+- Added unit tests that enforce:
+  - canonicalization idempotence,
+  - unknown field preservation,
+  - meta tag canonicalization (sorted + deduped).
 
 ## Context and Orientation
 
@@ -66,6 +71,7 @@ Implement a new Rust module that provides three core capabilities:
 3) Canonicalize an existing `src/` directory in place (read → write) without semantic changes.
 
 The canonicalization rules must be strict enough that two agents making the same semantic change produce identical bytes after canonicalization. At minimum this requires stable sorting of lists by stable ids and stable formatting of floats/ints.
+In v1 we avoid unordered “lists of records” by using maps keyed by stable ids; arrays are treated as ordered and are not re-sorted by the canonicalizer (except for `meta.tags`, which is treated as a set and canonicalized).
 
 ## Concrete Steps
 
@@ -87,7 +93,7 @@ This milestone is accepted when:
 - `cargo test` includes unit tests that assert:
   - canonicalization is idempotent (second run produces byte-identical files),
   - unknown fields survive a read→write round-trip,
-  - list ordering is stable (sorted by ids, not insertion order).
+  - object keys are sorted deterministically, and `meta.tags` is canonicalized (sorted + deduped).
 - The headless smoke boot command exits successfully.
 
 ## Idempotence and Recovery
