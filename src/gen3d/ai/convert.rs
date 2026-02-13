@@ -466,9 +466,7 @@ fn attachment_offset_from_ai(
     if !translation.is_finite() {
         translation = Vec3::ZERO;
     }
-    let rot_frame = offset
-        .rot_frame
-        .unwrap_or(AiRotationFrameJson::Join);
+    let rot_frame = offset.rot_frame.unwrap_or(AiRotationFrameJson::Join);
     let rotation = if offset.forward.is_some() || offset.up.is_some() {
         let mut forward = ai_vec3_opt(offset.forward).unwrap_or(Vec3::Z);
         let mut up = ai_vec3_opt(offset.up);
@@ -495,7 +493,11 @@ fn attachment_offset_from_ai(
                 );
             }
         }
-        if q.is_finite() { q } else { Quat::IDENTITY }
+        if q.is_finite() {
+            q
+        } else {
+            Quat::IDENTITY
+        }
     } else {
         Quat::IDENTITY
     };
@@ -1627,42 +1629,110 @@ pub(super) fn apply_ai_review_delta_actions(
                 let Some(idx) = component_index_from_object_id(components, object_id) else {
                     continue;
                 };
-                let Some(anchor) = components[idx]
+                let Some(anchor_idx) = components[idx]
                     .anchors
-                    .iter_mut()
-                    .find(|a| a.name.as_ref() == anchor_name)
+                    .iter()
+                    .position(|a| a.name.as_ref() == anchor_name)
                 else {
                     continue;
                 };
 
-                if let Some(set) = set.as_ref() {
-                    if let Some(pos) = set.pos {
-                        let v = Vec3::new(pos[0], pos[1], pos[2]);
-                        if v.is_finite() {
-                            anchor.transform.translation = v;
+                let old_anchor_tf = components[idx].anchors[anchor_idx].transform;
+                {
+                    let anchor = &mut components[idx].anchors[anchor_idx];
+
+                    if let Some(set) = set.as_ref() {
+                        if let Some(pos) = set.pos {
+                            let v = Vec3::new(pos[0], pos[1], pos[2]);
+                            if v.is_finite() {
+                                anchor.transform.translation = v;
+                            }
+                        }
+                        if let Some(forward) = set.forward {
+                            let f = Vec3::new(forward[0], forward[1], forward[2]);
+                            let u = set.up.map(|up| Vec3::new(up[0], up[1], up[2]));
+                            let q = plan_rotation_from_forward_up(f, u);
+                            if q.is_finite() {
+                                anchor.transform.rotation = q;
+                            }
                         }
                     }
-                    if let Some(forward) = set.forward {
-                        let f = Vec3::new(forward[0], forward[1], forward[2]);
-                        let u = set.up.map(|up| Vec3::new(up[0], up[1], up[2]));
-                        let q = plan_rotation_from_forward_up(f, u);
-                        if q.is_finite() {
-                            anchor.transform.rotation = q;
+                    if let Some(delta) = delta.as_ref() {
+                        if let Some(pos) = delta.pos {
+                            let v = Vec3::new(pos[0], pos[1], pos[2]);
+                            if v.is_finite() {
+                                anchor.transform.translation += v;
+                            }
+                        }
+                        if let Some(quat_xyzw) = delta.rot_quat_xyzw {
+                            let q = Quat::from_xyzw(
+                                quat_xyzw[0],
+                                quat_xyzw[1],
+                                quat_xyzw[2],
+                                quat_xyzw[3],
+                            );
+                            if q.is_finite() {
+                                anchor.transform.rotation =
+                                    (q * anchor.transform.rotation).normalize();
+                            }
                         }
                     }
                 }
-                if let Some(delta) = delta.as_ref() {
-                    if let Some(pos) = delta.pos {
-                        let v = Vec3::new(pos[0], pos[1], pos[2]);
-                        if v.is_finite() {
-                            anchor.transform.translation += v;
+
+                let new_anchor_tf = components[idx].anchors[anchor_idx].transform;
+                if old_anchor_tf != new_anchor_tf {
+                    let old_anchor_mat = old_anchor_tf.to_matrix();
+                    let new_anchor_mat = new_anchor_tf.to_matrix();
+                    let old_anchor_inv = old_anchor_mat.inverse();
+                    let new_anchor_inv = new_anchor_mat.inverse();
+
+                    fn mat4_to_transform(mat: Mat4) -> Option<Transform> {
+                        let (scale, rotation, translation) = mat.to_scale_rotation_translation();
+                        if translation.is_finite() && rotation.is_finite() && scale.is_finite() {
+                            let mut scale = scale;
+                            if scale.abs().max_element() <= 1e-4 {
+                                scale = Vec3::ONE;
+                            }
+                            return Some(Transform {
+                                translation,
+                                rotation: rotation.normalize(),
+                                scale,
+                            });
+                        }
+                        None
+                    }
+
+                    // If this anchor is used as the component's child anchor, changing it would
+                    // otherwise "jump" the whole component in the assembly. Compensate by updating
+                    // the attachment offset so the assembled rest pose stays the same:
+                    // parent_anchor * offset' * inv(child_anchor_new) == parent_anchor * offset * inv(child_anchor_old)
+                    if let Some(att) = components[idx].attach_to.as_mut() {
+                        if att.child_anchor.as_str() == anchor_name {
+                            let offset_mat = att.offset.to_matrix();
+                            let compensated = offset_mat * old_anchor_inv * new_anchor_mat;
+                            if let Some(next) = mat4_to_transform(compensated) {
+                                att.offset = next;
+                            }
                         }
                     }
-                    if let Some(quat_xyzw) = delta.rot_quat_xyzw {
-                        let q =
-                            Quat::from_xyzw(quat_xyzw[0], quat_xyzw[1], quat_xyzw[2], quat_xyzw[3]);
-                        if q.is_finite() {
-                            anchor.transform.rotation = (q * anchor.transform.rotation).normalize();
+
+                    // If any children attach to this component via this anchor, changing the parent
+                    // anchor would otherwise "jump" those children. Compensate by rebasing their
+                    // offsets into the new parent-anchor frame:
+                    // old_parent_anchor * offset == new_parent_anchor * offset'
+                    // => offset' = inv(new_parent_anchor) * old_parent_anchor * offset
+                    let parent_name = components[idx].name.clone();
+                    for child in components.iter_mut() {
+                        let Some(att) = child.attach_to.as_mut() else {
+                            continue;
+                        };
+                        if att.parent != parent_name || att.parent_anchor.as_str() != anchor_name {
+                            continue;
+                        }
+                        let offset_mat = att.offset.to_matrix();
+                        let compensated = new_anchor_inv * old_anchor_mat * offset_mat;
+                        if let Some(next) = mat4_to_transform(compensated) {
+                            att.offset = next;
                         }
                     }
                 }
@@ -1674,7 +1744,7 @@ pub(super) fn apply_ai_review_delta_actions(
                         .iter_mut()
                         .find(|a| a.name.as_ref() == anchor_name)
                     {
-                        *def_anchor = anchor.clone();
+                        *def_anchor = components[idx].anchors[anchor_idx].clone();
                     }
                 }
 
@@ -3217,5 +3287,198 @@ mod tests {
             .expect("apply should succeed");
         assert!(apply.had_actions);
         assert!(planned[0].contacts[0].stance.is_none());
+    }
+
+    fn assembled_child_transform(
+        planned: &[Gen3dPlannedComponent],
+        parent_name: &str,
+        parent_anchor_name: &str,
+        child_name: &str,
+        child_anchor_name: &str,
+    ) -> Transform {
+        let parent = planned
+            .iter()
+            .find(|c| c.name == parent_name)
+            .expect("parent component should exist");
+        let parent_anchor = parent
+            .anchors
+            .iter()
+            .find(|a| a.name.as_ref() == parent_anchor_name)
+            .map(|a| a.transform)
+            .unwrap_or(Transform::IDENTITY);
+
+        let child = planned
+            .iter()
+            .find(|c| c.name == child_name)
+            .expect("child component should exist");
+        let child_anchor = child
+            .anchors
+            .iter()
+            .find(|a| a.name.as_ref() == child_anchor_name)
+            .map(|a| a.transform)
+            .unwrap_or(Transform::IDENTITY);
+        let offset = child
+            .attach_to
+            .as_ref()
+            .map(|a| a.offset)
+            .unwrap_or(Transform::IDENTITY);
+
+        let composed =
+            parent_anchor.to_matrix() * offset.to_matrix() * child_anchor.to_matrix().inverse();
+        let (scale, rotation, translation) = composed.to_scale_rotation_translation();
+        Transform {
+            translation,
+            rotation: rotation.normalize(),
+            scale,
+        }
+    }
+
+    fn assert_transform_close(a: Transform, b: Transform) {
+        let dp = (a.translation - b.translation).length();
+        assert!(dp < 1e-4, "translation mismatch: a={:?} b={:?}", a, b);
+
+        let qa = a.rotation.normalize();
+        let qb = b.rotation.normalize();
+        let dot = qa.dot(qb).abs();
+        assert!(dot > 1.0 - 1e-4, "rotation mismatch: a={:?} b={:?}", qa, qb);
+
+        let ds = (a.scale - b.scale).length();
+        assert!(ds < 1e-4, "scale mismatch: a={:?} b={:?}", a.scale, b.scale);
+    }
+
+    #[test]
+    fn tweak_anchor_rebases_component_offset_when_child_anchor_changes() {
+        let plan_text = r##"{
+          "version": 7,
+          "components": [
+            {
+              "name": "root",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "socket", "pos": [0.0, 1.0, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ]
+            },
+            {
+              "name": "child",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "mount", "pos": [0.0, 0.0, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ],
+              "attach_to": {
+                "parent": "root",
+                "parent_anchor": "socket",
+                "child_anchor": "mount",
+                "offset": { "pos": [0.0, 0.0, 0.0] }
+              }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let plan_collider = plan.collider.clone();
+        let (mut planned, _notes, defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+        let mut draft = Gen3dDraft { defs };
+
+        let before = assembled_child_transform(&planned, "root", "socket", "child", "mount");
+
+        let component_id =
+            Uuid::from_u128(builtin_object_id("gravimera/gen3d/component/child")).to_string();
+        let q = Quat::from_rotation_y(core::f32::consts::FRAC_PI_2).normalize();
+        let delta = AiReviewDeltaJsonV1 {
+            version: 1,
+            applies_to: AiReviewDeltaAppliesToJsonV1 {
+                run_id: "test".into(),
+                attempt: 0,
+                plan_hash: "sha256:test".into(),
+                assembly_rev: 0,
+            },
+            actions: vec![AiReviewDeltaActionJsonV1::TweakAnchor {
+                component_id,
+                anchor_name: "mount".into(),
+                set: None,
+                delta: Some(AiAnchorDeltaJsonV1 {
+                    pos: None,
+                    rot_quat_xyzw: Some([q.x, q.y, q.z, q.w]),
+                }),
+                reason: String::new(),
+            }],
+            summary: None,
+            notes: None,
+        };
+
+        let apply = apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+            .expect("apply should succeed");
+        assert!(apply.had_actions);
+
+        let after = assembled_child_transform(&planned, "root", "socket", "child", "mount");
+        assert_transform_close(before, after);
+    }
+
+    #[test]
+    fn tweak_anchor_rebases_child_offsets_when_parent_anchor_changes() {
+        let plan_text = r##"{
+          "version": 7,
+          "components": [
+            {
+              "name": "root",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "socket", "pos": [0.0, 1.0, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ]
+            },
+            {
+              "name": "child",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "mount", "pos": [0.0, 0.0, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ],
+              "attach_to": {
+                "parent": "root",
+                "parent_anchor": "socket",
+                "child_anchor": "mount",
+                "offset": { "pos": [0.0, 0.0, 0.0] }
+              }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let plan_collider = plan.collider.clone();
+        let (mut planned, _notes, defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+        let mut draft = Gen3dDraft { defs };
+
+        let before = assembled_child_transform(&planned, "root", "socket", "child", "mount");
+
+        let component_id =
+            Uuid::from_u128(builtin_object_id("gravimera/gen3d/component/root")).to_string();
+        let q = Quat::from_rotation_x(core::f32::consts::FRAC_PI_2).normalize();
+        let delta = AiReviewDeltaJsonV1 {
+            version: 1,
+            applies_to: AiReviewDeltaAppliesToJsonV1 {
+                run_id: "test".into(),
+                attempt: 0,
+                plan_hash: "sha256:test".into(),
+                assembly_rev: 0,
+            },
+            actions: vec![AiReviewDeltaActionJsonV1::TweakAnchor {
+                component_id,
+                anchor_name: "socket".into(),
+                set: None,
+                delta: Some(AiAnchorDeltaJsonV1 {
+                    pos: None,
+                    rot_quat_xyzw: Some([q.x, q.y, q.z, q.w]),
+                }),
+                reason: String::new(),
+            }],
+            summary: None,
+            notes: None,
+        };
+
+        let apply = apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+            .expect("apply should succeed");
+        assert!(apply.had_actions);
+
+        let after = assembled_child_transform(&planned, "root", "socket", "child", "mount");
+        assert_transform_close(before, after);
     }
 }

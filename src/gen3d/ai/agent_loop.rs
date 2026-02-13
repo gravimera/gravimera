@@ -93,7 +93,16 @@ pub(super) fn poll_gen3d_agent(
             preview,
         ),
         Gen3dAiPhase::AgentCapturingRender => {
-            poll_agent_render_capture(commands, workshop, job);
+            poll_agent_render_capture(
+                config,
+                time,
+                commands,
+                images,
+                workshop,
+                job,
+                draft,
+                preview_model,
+            );
         }
         Gen3dAiPhase::AgentCapturingPassSnapshot => poll_agent_pass_snapshot_capture(
             config,
@@ -339,7 +348,9 @@ fn build_agent_user_text(
             TOOL_ID_LLM_REVIEW_DELTA => {
                 let accepted = value.get("accepted").and_then(|v| v.as_bool());
                 let had_actions = value.get("had_actions").and_then(|v| v.as_bool());
-                let regen_indices = value.get("regen_component_indices").and_then(|v| v.as_array());
+                let regen_indices = value
+                    .get("regen_component_indices")
+                    .and_then(|v| v.as_array());
                 let regen_skipped = value
                     .get("regen_component_indices_skipped_due_to_budget")
                     .and_then(|v| v.as_array());
@@ -3220,6 +3231,12 @@ fn execute_tool_call(
                 .and_then(|v| v.as_str())
                 .unwrap_or("render");
             let prefix = sanitize_prefix(prefix);
+            let include_motion_sheets = call
+                .args
+                .get("include_motion_sheets")
+                .or_else(|| call.args.get("motion_sheets"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
 
             let resolution_px = call
                 .args
@@ -3332,6 +3349,7 @@ fn execute_tool_call(
                 height_px,
             ) {
                 Ok(state) => {
+                    job.agent.pending_render_include_motion_sheets = include_motion_sheets;
                     job.agent.pending_tool_call = Some(call);
                     job.agent.pending_render = Some(state);
                     job.phase = Gen3dAiPhase::AgentCapturingRender;
@@ -5169,10 +5187,100 @@ fn poll_agent_component_batch(
 }
 
 fn poll_agent_render_capture(
+    _config: &AppConfig,
+    time: &Time,
     commands: &mut Commands,
+    images: &mut Assets<Image>,
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+    preview_model: &mut Query<
+        (
+            &mut AnimationChannelsActive,
+            &mut LocomotionClock,
+            &mut AttackClock,
+        ),
+        With<Gen3dPreviewModelRoot>,
+    >,
 ) {
+    fn finish(
+        workshop: &mut Gen3dWorkshop,
+        job: &mut Gen3dAiJob,
+        paths: Vec<PathBuf>,
+    ) -> Option<Gen3dToolResultJsonV1> {
+        for path in &paths {
+            if std::fs::metadata(path).is_err() {
+                fail_job(
+                    workshop,
+                    job,
+                    format!("Render missing output file: {}", path.display()),
+                );
+                return None;
+            }
+        }
+
+        job.agent.rendered_since_last_review = true;
+        job.agent.ever_rendered = true;
+        job.agent.last_render_images = paths.clone();
+
+        let Some(call) = job.agent.pending_tool_call.take() else {
+            fail_job(workshop, job, "Internal error: missing pending tool call");
+            return None;
+        };
+        Some(Gen3dToolResultJsonV1::ok(
+            call.call_id,
+            call.tool_id,
+            serde_json::json!({
+                "images": paths.iter().map(|p| p.display().to_string()).collect::<Vec<String>>(),
+            }),
+        ))
+    }
+
+    // If motion capture is active, keep polling it until it finishes, then finalize the tool result.
+    if job.motion_capture.is_some() {
+        super::poll_gen3d_motion_capture(
+            time,
+            commands,
+            images,
+            workshop,
+            job,
+            draft,
+            preview_model,
+        );
+        if job.motion_capture.is_some() {
+            return;
+        }
+    }
+
+    // If motion capture finished, the combined static+motion paths live in `job.review_static_paths`.
+    if job.agent.pending_render.is_none() && !job.review_static_paths.is_empty() {
+        let paths = std::mem::take(&mut job.review_static_paths);
+        let Some(result) = finish(workshop, job, paths) else {
+            return;
+        };
+        job.metrics.note_tool_result(&result);
+        append_agent_trace_event_v1(
+            job.run_dir.as_deref(),
+            &AgentTraceEventV1::ToolResult {
+                call_id: result.call_id.clone(),
+                tool_id: result.tool_id.clone(),
+                ok: result.ok,
+                result: result.result.clone(),
+                error: result.error.clone(),
+            },
+        );
+        append_gen3d_jsonl_artifact(
+            job.pass_dir.as_deref(),
+            "tool_results.jsonl",
+            &serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+        );
+        note_observable_tool_result(job, &result);
+        job.agent.step_tool_results.push(result);
+        job.phase = Gen3dAiPhase::AgentExecutingActions;
+        return;
+    }
+
+    // Otherwise poll the static render capture.
     let Some(state) = job.agent.pending_render.as_ref() else {
         fail_job(workshop, job, "Internal error: missing pending render");
         return;
@@ -5197,32 +5305,25 @@ fn poll_agent_render_capture(
     }
     let paths = state.image_paths.clone();
 
-    for path in &paths {
-        if std::fs::metadata(path).is_err() {
-            fail_job(
-                workshop,
-                job,
-                format!("Render missing output file: {}", path.display()),
-            );
-            return;
-        }
+    if job.agent.pending_render_include_motion_sheets {
+        // Capture motion sprite sheets (move + attack) and return them alongside the static renders.
+        job.review_static_paths = paths;
+        job.motion_capture = Some(super::Gen3dMotionCaptureState::new());
+        super::poll_gen3d_motion_capture(
+            time,
+            commands,
+            images,
+            workshop,
+            job,
+            draft,
+            preview_model,
+        );
+        return;
     }
 
-    job.agent.rendered_since_last_review = true;
-    job.agent.ever_rendered = true;
-    job.agent.last_render_images = paths.clone();
-
-    let Some(call) = job.agent.pending_tool_call.take() else {
-        fail_job(workshop, job, "Internal error: missing pending tool call");
+    let Some(result) = finish(workshop, job, paths) else {
         return;
     };
-    let result = Gen3dToolResultJsonV1::ok(
-        call.call_id,
-        call.tool_id,
-        serde_json::json!({
-            "images": paths.iter().map(|p| p.display().to_string()).collect::<Vec<String>>(),
-        }),
-    );
     job.metrics.note_tool_result(&result);
     append_agent_trace_event_v1(
         job.run_dir.as_deref(),

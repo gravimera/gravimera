@@ -390,10 +390,13 @@ impl Gen3dToolRegistryV1 {
                     "Renders the current draft to PNGs using the Gen3D preview scene. Use for agent self-review.\n\
                      Views are selected by `views` (preferred) or `angles` (alias).\n\
                      Resolution can be specified as `resolution` (square) or `width`+`height`.\n\
-                     For convenience, you can also pass `image_size` (or `image_size_px`) as the maximum dimension; it scales the default 16:9 capture size.",
+                     For convenience, you can also pass `image_size` (or `image_size_px`) as the maximum dimension; it scales the default 16:9 capture size.\n\
+                     By default, this tool also captures 2 motion sprite sheets (front view): `move_sheet.png` + `attack_sheet.png` and returns them alongside the static renders.\n\
+                     Disable with `include_motion_sheets=false` if you need a faster static-only render.",
                 args_example: serde_json::json!({
                     "views": ["front", "front_left", "left_back", "right_back", "top", "bottom"],
                     "image_size": 768,
+                    "include_motion_sheets": true,
                     "overlay": "axes_grid",
                     "background": "neutral_studio",
                     "prefix": "review",

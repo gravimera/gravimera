@@ -394,10 +394,11 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            - `{{ \"kind\": \"spin\", \"axis\": [x,y,z], \"radians_per_unit\": number }}`\n\
          - For `loop` keyframes:\n\
            - `delta.pos` is a translation in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset.pos`).\n\
-           - Rotation deltas (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`) are interpreted in the JOIN frame by default.\n\
-           - If you author rotation in the PARENT COMPONENT frame (matching anchors), set `delta.rot_frame` to `parent` (the engine converts into the join frame).\n\
-             - Rest pose with `rot_frame=join`: `delta.forward=[0,0,1]` and `delta.up=[0,1,0]`.\n\
-             - Rest pose with `rot_frame=parent`: `delta.forward=parent_anchor.forward` and `delta.up=parent_anchor.up`.\n\
+           - Whenever you use rotation (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`), ALWAYS include `delta.rot_frame` explicitly.\n\
+             - Use `delta.rot_frame=\"join\"` to author basis/quaternion directly in the join frame.\n\
+               Rest/identity delta with `rot_frame=\"join\"`: `delta.forward=[0,0,1]` and `delta.up=[0,1,0]`.\n\
+             - Use `delta.rot_frame=\"parent\"` to author basis/quaternion in the PARENT COMPONENT frame (+Y up, +Z forward).\n\
+               Rest/identity delta with `rot_frame=\"parent\"`: `delta.forward=parent_anchor.forward` and `delta.up=parent_anchor.up`.\n\
            - If you don't need rotation, omit `delta.forward`/`delta.up`/`delta.rot_quat_xyzw` entirely.\n\
          - For `spin`, `axis` is expressed in THIS COMPONENT's LOCAL axes (+X right, +Y up, +Z forward).\n\n\
          Units:\n\
@@ -549,7 +550,8 @@ pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
        - {\"kind\":\"spin\",\"axis\":[x,y,z],\"radians_per_unit\": number}\n\
      - For `loop` keyframes:\n\
        - `delta.pos` is in the PARENT ANCHOR JOIN FRAME.\n\
-       - Rotation deltas are in the JOIN frame by default; set `delta.rot_frame` to `parent` to author rotation in the PARENT COMPONENT frame.\n\
+       - Whenever you use rotation (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`), ALWAYS include `delta.rot_frame` explicitly.\n\
+         Prefer `delta.rot_frame=\"parent\"` when authoring in the PARENT COMPONENT axes (+Y up, +Z forward). Use `\"join\"` only if intentionally authoring in the joint/join frame axes.\n\
      - For `spin`, `axis` is expressed in the COMPONENT's LOCAL axes.\n\n\
      Units:\n\
      - For drivers `always` and `attack_time`:\n\
@@ -654,13 +656,22 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
       - Keep changes minimal: prefer adjusting attachment offsets / anchors over regenerating geometry.\n\
       - Focus on HIGH-IMPACT structural issues. If only minor cosmetic tweaks remain, return ONLY {\"kind\":\"accept\"}.\n\
       - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\
-      - If smoke results include `motion_validation` issues, treat them as authoritative and prioritize fixing them first.\n\n\
+      - Preview images may include `move_sheet.png` and `attack_sheet.png` (2x2 sprite sheets, 4 frames each). Use them to debug animation issues (e.g. hair/legs moving in the wrong direction).\n\
+      - If smoke results include `motion_validation.issues`, treat ONLY `severity=error` issues as authoritative and prioritize fixing them first.\n\
+        `severity=warn` issues are suggestions; fix them only when it will not regress visuals.\n\n\
+\n\
+      Anchor edits and regression safety:\n\
+      - `tweak_anchor` is for changing JOINT FRAMES / pivot placement in COMPONENT-LOCAL space.\n\
+      - The engine automatically rebases affected attachment offsets when anchors move/rotate so the assembled REST POSE stays stable.\n\
+        If you WANT to move/rotate a component in the assembly, use `tweak_component_transform` (offset) instead.\n\n\
       - If motion validation reports `chain_axis_mismatch`, fix the COMPONENT ANCHORS (not offsets): reorient the child component's joint anchors so the vector from its parent joint anchor to its child joint anchor aligns with the proximal anchor's +Z (forward) in component-local space.\n\n\
       - If motion validation reports `constrained_joint_translates`, fix the ANIMATION (not the mesh): hinge/ball joints should not translate. Set keyframe `delta.pos` near [0,0,0] and drive motion via rotation deltas instead.\n\n\
       Animation notes:\n\
       - `tweak_animation.spec.clip.spin.axis` is expressed in the COMPONENT's LOCAL axes.\n\
       - If smoke results include `suggested_component_local_axis`, prefer using that value for the spin axis.\n\
         (It is computed from the component's child anchor forward vector so the part spins around the attachment axis.)\n\
+      - Whenever you use a keyframe `delta` rotation (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`), ALWAYS include `delta.rot_frame` explicitly.\n\
+        Prefer `delta.rot_frame=\"parent\"` when you are thinking in the PARENT COMPONENT axes (+Y up, +Z forward). Use `\"join\"` only if you are intentionally authoring in the joint/join frame axes.\n\
       - `tweak_animation.spec.time_offset_units` is an additive offset in the clip's time domain. Use it to phase-stagger repeated limbs (instead of duplicating or rewriting keyframes).\n\
       - If an animation channel is undesirable or too broken to repair, you may disable ANY channel (ambient/idle/move/attack_primary)\n\
         by replacing it with an identity loop (a `loop` whose keyframes' `delta` transforms are all identity).\n\

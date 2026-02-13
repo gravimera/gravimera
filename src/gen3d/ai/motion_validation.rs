@@ -195,10 +195,7 @@ fn validate_chain_anchor_axes(components: &[Gen3dPlannedComponent], issues: &mut
         }
 
         let child_idx = children[idx][0];
-        let Some(child_att) = components
-            .get(child_idx)
-            .and_then(|c| c.attach_to.as_ref())
-        else {
+        let Some(child_att) = components.get(child_idx).and_then(|c| c.attach_to.as_ref()) else {
             continue;
         };
 
@@ -749,7 +746,8 @@ fn validate_joints(
                 let sample_phase_01 = samples_phase_01.get(i).copied().unwrap_or(0.0);
                 let delta = sample_animation_slot_delta(slot, sample_t_m, sample_phase_01);
                 let animated_offset = mul_transform(&att.offset, &delta);
-                let q_delta = (att.offset.rotation.inverse() * animated_offset.rotation).normalize();
+                let q_delta =
+                    (att.offset.rotation.inverse() * animated_offset.rotation).normalize();
                 let angle_deg = quat_angle_deg(q_delta).abs();
                 let translation_m = delta.translation.length();
 
@@ -1278,9 +1276,9 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(
-            !issues.iter().any(|i| {
-                i.get("kind").and_then(|v| v.as_str()) == Some("chain_axis_mismatch")
-            }),
+            !issues
+                .iter()
+                .any(|i| { i.get("kind").and_then(|v| v.as_str()) == Some("chain_axis_mismatch") }),
             "expected no chain_axis_mismatch issue, got {issues:?}"
         );
     }
@@ -1548,7 +1546,10 @@ mod tests {
             .get("ok")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        assert!(ok, "expected motion validation to pass with warn-only issues");
+        assert!(
+            ok,
+            "expected motion validation to pass with warn-only issues"
+        );
 
         let issues = report
             .motion_validation
