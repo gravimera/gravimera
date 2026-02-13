@@ -31,8 +31,12 @@ Realm packages are directories. Hosts may also distribute them as single-file ar
         index.json
         <scene_id>/
           scene.json
-          instances.dat            (optional binary optimized form)
-          nav.dat                  (optional cached nav)
+          src/                     (authoritative text sources; see Scene Sources spec)
+            index.json
+            ...
+          build/                   (optional derived caches)
+            instances.dat
+            nav.dat
       prefabs/
         index.json
         packs/
@@ -60,7 +64,7 @@ Realm packages are directories. Hosts may also distribute them as single-file ar
 
 Notes:
 
-- `*.dat` files are optional performance caches. The authoritative content is the `*.json` sources unless the ruleset chooses otherwise.
+- `build/*.dat` files are optional performance caches. The authoritative scene content is the `scenes/<scene_id>/src/` text sources; build caches must be regenerable from sources.
 - Hosts are allowed to add host-local files (logs, analytics), but those must not be required to load the realm package.
 
 ## `realm.json` (Realm Manifest)
@@ -240,11 +244,17 @@ Each `scenes/<scene_id>/scene.json` contains:
 - portal definitions in this scene (directed edges; bidirectional travel is represented as two portals)
 - markers (spawn points, POIs)
 - optional local budgets (can only tighten, never loosen host caps)
+- pointers to authoritative scene sources under `scenes/<scene_id>/src/` (required for editable realms)
+- optional pointers to derived build caches under `scenes/<scene_id>/build/` (for fast loading)
 
-Object instances are stored either:
+Authoritative scene content is stored as **text sources** under:
 
-- inline in `scene.json` (small scenes), or
-- in an adjacent `instances.dat` optimized representation (large scenes), with a deterministic codec.
+- `scenes/<scene_id>/src/` (see `docs/gamedesign/30_scene_sources_and_build_artifacts.md`)
+
+Build caches (optional) are stored under:
+
+- `scenes/<scene_id>/build/instances.dat` optimized representation (large scenes), with a deterministic codec
+- `scenes/<scene_id>/build/nav.dat` cached navigation (if enabled)
 
 ## Prefab Index and Prefab Packs
 

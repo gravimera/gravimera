@@ -56,6 +56,7 @@ Specs (contracts and formats):
 - Realm package manifest: `docs/gamedesign/20_realm_package_manifest.md`
 - Versioning and migrations: `docs/gamedesign/21_versioning_and_migrations.md`
 - Scorecards and validation reports: `docs/gamedesign/27_scorecards_and_validation_reports.md`
+- Scene sources and build artifacts: `docs/gamedesign/30_scene_sources_and_build_artifacts.md`
 
 ## Scope Notes (What “Complete Game” Means Here)
 

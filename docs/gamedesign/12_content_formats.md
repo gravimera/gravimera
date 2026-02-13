@@ -36,6 +36,8 @@ Each scene stores:
 
 Scenes must be independently loadable. Hosts may stream scenes in/out of memory.
 
+For multi-agent authoring and git/process management, scenes must have a **textual source of truth** suitable for diffs/merges, with optional derived binary caches for fast loading (see `docs/gamedesign/30_scene_sources_and_build_artifacts.md`).
+
 ## Prefab Packs
 
 Prefabs can come from:

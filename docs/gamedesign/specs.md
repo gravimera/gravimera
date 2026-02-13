@@ -13,3 +13,4 @@ The product goals and intent live in the design docs in `docs/gamedesign/`. The 
 - Realm package manifest (layout + ruleset): `docs/gamedesign/20_realm_package_manifest.md`
 - Versioning and migrations policy: `docs/gamedesign/21_versioning_and_migrations.md`
 - Scorecards and validation report contracts: `docs/gamedesign/27_scorecards_and_validation_reports.md`
+- Scene sources and build artifacts (git/process-friendly scenes): `docs/gamedesign/30_scene_sources_and_build_artifacts.md`

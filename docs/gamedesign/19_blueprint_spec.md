@@ -50,6 +50,8 @@ Apply performs the mutations and returns:
 - a summary of what changed and budget consumption,
 - an audit event stream that links changes to `request_id`.
 
+If the realm uses “scene sources + build caches”, blueprint apply must update the authoritative scene sources (text) and then invalidate or refresh any derived build outputs (see `docs/gamedesign/30_scene_sources_and_build_artifacts.md`).
+
 ## Atomicity and Recovery
 
 Preferred: blueprint apply is atomic at the realm level.
