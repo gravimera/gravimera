@@ -59,10 +59,12 @@ pub(super) fn build_gen3d_plan_user_text(
          Also decide the object's `mobility` (static vs ground vs air).\n\
          If the object is movable and has articulated parts (legs/wheels/wings/weapon), add `attach_to.animations` for the relevant components using channels: ambient/idle/move/attack_primary.\n\
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
-         Define attachment anchors as a JOIN FRAME that matches on both sides:\n\
-          - Set parent_anchor.forward (+Z) to point from the parent toward the child (attachment direction).\n\
-          - Set child_anchor.forward (+Z) to point in the SAME direction as parent_anchor.forward (do NOT make it opposite, or the child will flip 180°).\n\
-          - Choose up vectors so parent_anchor.up (+Y) and child_anchor.up (+Y) generally match to avoid unintended roll.\n\
+         Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
+          - Set `parent_anchor.forward` (+Z) to point from the parent toward the child (attachment direction) in the PARENT component's local axes.\n\
+          - Set `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) in the CHILD component's local axes so the child can rotate into the parent's join frame.\n\
+            They do NOT need to numerically equal the parent's vectors.\n\
+            Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
+          - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
          Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
     );
     out.push_str(&format!("Speed mode: {}.\n", speed.label()));
@@ -104,10 +106,12 @@ pub(super) fn build_gen3d_plan_user_text_with_hints(
          Also decide the object's `mobility` (static vs ground vs air).\n\
          If the object is movable and has articulated parts (legs/wheels/wings/weapon), add `attach_to.animations` for the relevant components using channels: ambient/idle/move/attack_primary.\n\
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
-         Define attachment anchors as a JOIN FRAME that matches on both sides:\n\
-          - Set parent_anchor.forward (+Z) to point from the parent toward the child (attachment direction).\n\
-          - Set child_anchor.forward (+Z) to point in the SAME direction as parent_anchor.forward (do NOT make it opposite, or the child will flip 180°).\n\
-          - Choose up vectors so parent_anchor.up (+Y) and child_anchor.up (+Y) generally match to avoid unintended roll.\n\
+         Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
+          - Set `parent_anchor.forward` (+Z) to point from the parent toward the child (attachment direction) in the PARENT component's local axes.\n\
+          - Set `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) in the CHILD component's local axes so the child can rotate into the parent's join frame.\n\
+            They do NOT need to numerically equal the parent's vectors.\n\
+            Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
+          - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
          Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
     );
     out.push_str(&format!("Speed mode: {}.\n", speed.label()));
@@ -175,7 +179,8 @@ pub(super) fn build_gen3d_component_user_text(
          Do NOT bake any assembly transforms into the component's parts.\n\
          Size contract: `target_size` is an axis-aligned AABB size in THIS component's local axes (+X right, +Y up, +Z forward).\n\
          Your generated primitive parts should produce a component whose local AABB size is close to `target_size` on each axis (do not swap/permutate axes).\n\
-         Attachment frame rule: for an attachment, child_anchor.forward (+Z) must point in the SAME direction as the parent_anchor.forward (+Z). If you need a 180° flip, encode it via attach_to.offset.forward/up in the PLAN (not by reversing anchors).\n\
+         Attachment frame rule: parent/child anchors describe the SAME join frame but in different component-local coordinates; do NOT force them to have identical numeric vectors.\n\
+         Avoid 180° opposition (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation in the PLAN (not by reversing anchors).\n\
          Convention: the component center must be at local [0,0,0].\n\
          The engine will not auto-adjust placement. If you add thin surface details, place them slightly proud of the supporting surface so they remain visible.\n",
     );
@@ -417,10 +422,12 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
           - `attach_to` aligns this component's `child_anchor` to the parent's `parent_anchor`.\n\
           - `offset` is an extra tweak transform expressed in the PARENT ANCHOR JOIN FRAME (after alignment).\n\
           - The engine will NOT apply any hidden auto-placement rules. If you need overlap/inset/outset, encode it explicitly in `offset.pos`.\n\
-          - Define attachment anchors as a JOIN FRAME that matches on both sides:\n\
-            - Set parent_anchor.forward (+Z) to point from the parent toward the child (attachment direction).\n\
-            - Set child_anchor.forward (+Z) to point in the SAME direction as the parent_anchor.forward (do NOT make it opposite, or the child will flip 180°).\n\
-            - Choose up vectors so parent_anchor.up (+Y) and child_anchor.up generally match to avoid unintended roll.\n\
+          - Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
+            - Set `parent_anchor.forward` (+Z) to point from the parent toward the child (attachment direction) in the PARENT component's local axes.\n\
+            - Set `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) in the CHILD component's local axes so the child can rotate into the parent's join frame.\n\
+              They do NOT need to numerically equal the parent's vectors.\n\
+              Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
+            - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
           - Then `offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n\
           - For flush joins, use a small NEGATIVE `offset.pos[2]` (slight inset/overlap). For surface overlays, use a small POSITIVE `offset.pos[2]` (slight outset) so thin details are not buried.\n\
           - IMPORTANT: Do not use `attach_to.animation` (legacy). Use `attach_to.animations`.\n\n\
@@ -647,6 +654,7 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
       - Focus on HIGH-IMPACT structural issues. If only minor cosmetic tweaks remain, return ONLY {\"kind\":\"accept\"}.\n\
       - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\
       - If smoke results include `motion_validation` issues, treat them as authoritative and prioritize fixing them first.\n\n\
+      - If motion validation reports `chain_axis_mismatch`, fix the COMPONENT ANCHORS (not offsets): reorient the child component's joint anchors so the vector from its parent joint anchor to its child joint anchor aligns with the proximal anchor's +Z (forward) in component-local space.\n\n\
       Animation notes:\n\
       - `tweak_animation.spec.clip.spin.axis` is expressed in the COMPONENT's LOCAL axes.\n\
       - If smoke results include `suggested_component_local_axis`, prefer using that value for the spin axis.\n\

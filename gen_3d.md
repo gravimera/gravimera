@@ -179,10 +179,13 @@ Notes:
 - `attach_to.offset` is a tweak transform in the **parent-anchor join frame** (after alignment).
   - If you include `offset.forward`/`offset.up` or `offset.rot_quat_xyzw`, they are interpreted in the join frame by default. Optionally set `offset.rot_frame: "parent"` to author rotation in the parent component frame (matching anchors); the engine converts into the join frame.
 - The engine does **not** apply heuristic placement tweaks (no automatic overlap/surface nudges). If you need inset/outset/overlap at a join, encode it explicitly in `attach_to.offset.pos`.
-- Define attachment anchors as a JOIN FRAME that matches on both sides:
-  - `parent_anchor.forward` (+Z) points from the parent toward the child (attachment direction).
-  - `child_anchor.forward` (+Z) points in the SAME direction as `parent_anchor.forward` (do not make it opposite, or the child will flip 180°).
-  - `parent_anchor.up` (+Y) and `child_anchor.up` (+Y) should generally match to avoid unintended roll.
+- Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):
+  - `parent_anchor.forward` (+Z) points from the parent toward the child (attachment direction) in the parent component's local axes.
+  - `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) are expressed in the child component's local axes; set them to match the child's modeling axes at that joint so the child can rotate into the parent's join frame.
+    - They do NOT need to numerically equal the parent's vectors.
+    - Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.
+  - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.
+  - For intermediate chain links with exactly 2 joint anchors (one parent, one child), the vector from the proximal joint anchor to the distal joint anchor should be aligned with the proximal anchor's +Z (forward) axis in component-local space; otherwise motion validation may report `chain_axis_mismatch`.
   Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.
 - Component-level animation lives on attachments via `attach_to.animations` (preferred). `attach_to.animation` is a legacy field.
 - Attachment animations (`attach_to.animations`) are keyed by channel (`ambient`, `idle`, `move`, `attack_primary`) and each animation spec contains:
@@ -205,6 +208,8 @@ Rig / motion contract (optional; used for locomotion validation and AI repair):
 - `components[].attach_to.joint` (optional): joint constraint for this attachment edge, expressed in the **parent-anchor join frame**
   (the same frame as `attach_to.offset` and attachment animation deltas).
   - `hinge` joints should include `axis_join` and (optionally) `limits_degrees`.
+  - Motion validation applies to all authored animation channels on constrained joints (not only `move`).
+    Keep keyframe deltas joint-local and near-neutral unless you intend a large full-time bias.
 - `components[].contacts[]` (optional): named ground contacts for this component.
   - Each contact references a component anchor by name.
   - Optional `stance` schedule `{ "phase_01": 0..1, "duty_factor_01": 0..1 }` is used by motion validation to detect obvious slip/lift.

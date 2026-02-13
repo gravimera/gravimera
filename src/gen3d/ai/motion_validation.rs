@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 use uuid::Uuid;
 
-use crate::object::registry::{builtin_object_id, PartAnimationDef, PartAnimationDriver};
+use crate::object::registry::{
+    builtin_object_id, PartAnimationDef, PartAnimationDriver, PartAnimationSlot,
+};
 
 use super::schema::{AiContactKindJson, AiJointKindJson};
 use super::{Gen3dPlannedAttachment, Gen3dPlannedComponent};
@@ -34,7 +36,7 @@ struct MotionIssue {
     kind: &'static str,
     component_id: String,
     component_name: String,
-    channel: &'static str,
+    channel: String,
     message: String,
     evidence: serde_json::Value,
     score: f32,
@@ -106,6 +108,7 @@ pub(super) fn build_motion_validation_report(
 
     let mut issues: Vec<MotionIssue> = Vec::new();
 
+    validate_chain_anchor_axes(components, &mut issues);
     validate_joints(&samples_t_m, &samples_phase_01, components, &mut issues);
     validate_contacts(
         &samples_t_m,
@@ -149,6 +152,133 @@ pub(super) fn build_motion_validation_report(
             "ok": ok,
             "issues": issues_json,
         }),
+    }
+}
+
+fn validate_chain_anchor_axes(components: &[Gen3dPlannedComponent], issues: &mut Vec<MotionIssue>) {
+    const EPS: f32 = 1e-6;
+    const DOT_ERROR_THRESHOLD: f32 = 0.2;
+
+    let mut name_to_idx: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (idx, c) in components.iter().enumerate() {
+        name_to_idx.insert(c.name.as_str(), idx);
+    }
+
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); components.len()];
+    for (idx, c) in components.iter().enumerate() {
+        let Some(att) = c.attach_to.as_ref() else {
+            continue;
+        };
+        if let Some(parent_idx) = name_to_idx.get(att.parent.as_str()).copied() {
+            children[parent_idx].push(idx);
+        }
+    }
+
+    for (idx, comp) in components.iter().enumerate() {
+        let Some(att) = comp.attach_to.as_ref() else {
+            continue;
+        };
+        let Some(joint) = att.joint.as_ref() else {
+            continue;
+        };
+        if !matches!(joint.kind, AiJointKindJson::Hinge | AiJointKindJson::Ball) {
+            continue;
+        }
+        // Restrict to the most common limb-link case to avoid false positives:
+        // - exactly 2 anchors (a proximal + distal joint)
+        // - exactly 1 child (a simple chain segment)
+        if comp.anchors.len() != 2 {
+            continue;
+        }
+        if children.get(idx).map_or(0, |v| v.len()) != 1 {
+            continue;
+        }
+
+        let child_idx = children[idx][0];
+        let Some(child_att) = components
+            .get(child_idx)
+            .and_then(|c| c.attach_to.as_ref())
+        else {
+            continue;
+        };
+
+        // In the component-local frame, the vector from the anchor that attaches to the parent
+        // (proximal) to the anchor that attaches to the child (distal) should be aligned with the
+        // join-frame +Z direction ("forward") at the proximal anchor.
+        let proximal_anchor = att.child_anchor.as_str();
+        let distal_anchor = child_att.parent_anchor.as_str();
+        if proximal_anchor == distal_anchor {
+            continue;
+        }
+
+        let proximal_tf = anchor_transform_from_component(comp, proximal_anchor);
+        let distal_tf = anchor_transform_from_component(comp, distal_anchor);
+        let axis = distal_tf.translation - proximal_tf.translation;
+        if !axis.is_finite() || axis.length_squared() <= EPS {
+            continue;
+        }
+        let axis_dir = axis.normalize();
+
+        let forward = if proximal_tf.rotation.is_finite() {
+            (proximal_tf.rotation.normalize() * Vec3::Z)
+        } else {
+            Vec3::Z
+        };
+        let forward = if forward.length_squared() > EPS {
+            forward.normalize()
+        } else {
+            Vec3::Z
+        };
+
+        let dot = axis_dir.dot(forward);
+        if dot >= DOT_ERROR_THRESHOLD {
+            continue;
+        }
+
+        let angle_deg = dot.clamp(-1.0, 1.0).acos().to_degrees();
+
+        let mut suggested_up = if proximal_tf.rotation.is_finite() {
+            proximal_tf.rotation.normalize() * Vec3::Y
+        } else {
+            Vec3::Y
+        };
+        suggested_up = suggested_up - axis_dir * suggested_up.dot(axis_dir);
+        if !suggested_up.is_finite() || suggested_up.length_squared() <= EPS {
+            suggested_up = Vec3::Y - axis_dir * axis_dir.dot(Vec3::Y);
+        }
+        if !suggested_up.is_finite() || suggested_up.length_squared() <= EPS {
+            suggested_up = Vec3::Z - axis_dir * axis_dir.dot(Vec3::Z);
+        }
+        if !suggested_up.is_finite() || suggested_up.length_squared() <= EPS {
+            suggested_up = Vec3::X - axis_dir * axis_dir.dot(Vec3::X);
+        }
+        if suggested_up.length_squared() > EPS {
+            suggested_up = suggested_up.normalize();
+        } else {
+            suggested_up = Vec3::Y;
+        }
+
+        issues.push(MotionIssue {
+            severity: MotionSeverity::Error,
+            kind: "chain_axis_mismatch",
+            component_id: component_id_uuid_for_name(&comp.name),
+            component_name: comp.name.clone(),
+            channel: "rig".to_string(),
+            message: "Intermediate component chain axis (between its parent and child anchors) is not aligned with join forward (+Z) at the parent joint; this usually makes limbs point the wrong direction and makes animation deltas rotate around the wrong axis.".into(),
+            evidence: serde_json::json!({
+                "proximal_anchor": proximal_anchor,
+                "distal_anchor": distal_anchor,
+                "axis_dir_component_local": [axis_dir.x, axis_dir.y, axis_dir.z],
+                "forward_component_local": [forward.x, forward.y, forward.z],
+                "dot": dot,
+                "angle_degrees": angle_deg,
+                "suggested_forward_component_local": [axis_dir.x, axis_dir.y, axis_dir.z],
+                "suggested_up_component_local": [suggested_up.x, suggested_up.y, suggested_up.z],
+                "thresholds": { "error_dot_min": DOT_ERROR_THRESHOLD },
+                "hint": "Fix by reorienting the component's proximal and distal anchors in COMPONENT-LOCAL space so their +Z (forward) points from the parent joint toward the child joint. Do not blindly copy the parent's anchor forward/up vectors into the child component.",
+            }),
+            score: angle_deg,
+        });
     }
 }
 
@@ -214,6 +344,32 @@ fn sample_move_delta(
         t += move_slot.spec.time_offset_units;
     }
     sample_part_animation(&move_slot.spec.clip, t)
+}
+
+fn sample_animation_slot_delta(
+    slot: &PartAnimationSlot,
+    sample_t_m: f32,
+    sample_phase_01: f32,
+) -> Transform {
+    let driver_t = match slot.spec.driver {
+        PartAnimationDriver::Always => match &slot.spec.clip {
+            PartAnimationDef::Loop { duration_secs, .. }
+                if duration_secs.is_finite() && *duration_secs > 0.0 =>
+            {
+                sample_phase_01 * *duration_secs
+            }
+            _ => sample_t_m,
+        },
+        PartAnimationDriver::MovePhase => sample_phase_01,
+        PartAnimationDriver::MoveDistance => sample_t_m,
+        PartAnimationDriver::AttackTime => sample_phase_01,
+    };
+    let mut t = if driver_t.is_finite() { driver_t } else { 0.0 };
+    t *= slot.spec.speed_scale.max(0.0);
+    if slot.spec.time_offset_units.is_finite() {
+        t += slot.spec.time_offset_units;
+    }
+    sample_part_animation(&slot.spec.clip, t)
 }
 
 fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transform {
@@ -469,6 +625,54 @@ fn validate_joints(
     components: &[Gen3dPlannedComponent],
     issues: &mut Vec<MotionIssue>,
 ) {
+    fn maybe_push_joint_rest_bias_issue(
+        issues: &mut Vec<MotionIssue>,
+        component_id: &str,
+        component_name: &str,
+        channel: &str,
+        min_angle_deg: f32,
+        min_phase: f32,
+        max_angle_deg: f32,
+        max_phase: f32,
+    ) {
+        if !min_angle_deg.is_finite() || !max_angle_deg.is_finite() {
+            return;
+        }
+        let span_deg = (max_angle_deg - min_angle_deg).max(0.0);
+        let bias_warn_deg = 50.0;
+        let bias_error_deg = 75.0;
+        let max_span_deg = 70.0;
+        if min_angle_deg <= bias_warn_deg || span_deg > max_span_deg {
+            return;
+        }
+        let severity = if min_angle_deg >= bias_error_deg {
+            MotionSeverity::Error
+        } else {
+            MotionSeverity::Warn
+        };
+        issues.push(MotionIssue {
+            severity,
+            kind: "joint_rest_bias_large",
+            component_id: component_id.to_string(),
+            component_name: component_name.to_string(),
+            channel: channel.to_string(),
+            message: "Animation channel keeps this joint far from neutral for the full cycle (likely absolute-frame animation instead of delta).".into(),
+            evidence: serde_json::json!({
+                "min_angle_degrees": min_angle_deg,
+                "min_angle_at_phase_01": min_phase,
+                "max_angle_degrees": max_angle_deg,
+                "max_angle_at_phase_01": max_phase,
+                "span_degrees": span_deg,
+                "tolerances": {
+                    "warn_min_angle_degrees": bias_warn_deg,
+                    "error_min_angle_degrees": bias_error_deg,
+                    "max_span_degrees": max_span_deg,
+                },
+            }),
+            score: min_angle_deg,
+        });
+    }
+
     for comp in components.iter() {
         let Some(att) = comp.attach_to.as_ref() else {
             continue;
@@ -476,28 +680,39 @@ fn validate_joints(
         let Some(joint) = att.joint.as_ref() else {
             continue;
         };
-        let Some(move_slot) = find_move_slot(att) else {
-            continue;
-        };
-        if !matches!(
-            move_slot.spec.driver,
-            PartAnimationDriver::MovePhase | PartAnimationDriver::MoveDistance
-        ) {
+        if att.animations.is_empty() {
             continue;
         }
 
         let component_name = comp.name.clone();
         let component_id = component_id_uuid_for_name(&component_name);
 
-        match joint.kind {
-            AiJointKindJson::Hinge => {
+        for slot in att.animations.iter() {
+            let channel = slot.channel.as_ref().to_string();
+            if channel.is_empty() {
+                continue;
+            }
+
+            let mut max_angle_deg: f32 = 0.0;
+            let mut max_angle_phase: f32 = 0.0;
+            let mut min_angle_deg: f32 = f32::INFINITY;
+            let mut min_angle_phase: f32 = 0.0;
+
+            let mut max_off_axis_deg: f32 = 0.0;
+            let mut max_off_axis_phase: f32 = 0.0;
+            let mut max_abs_hinge_angle_deg: f32 = 0.0;
+            let mut max_abs_hinge_angle_phase: f32 = 0.0;
+            let mut max_limit_exceed_deg: f32 = 0.0;
+            let mut max_limit_exceed_phase: f32 = 0.0;
+
+            let axis_join = if joint.kind == AiJointKindJson::Hinge {
                 let Some(axis_join_arr) = joint.axis_join else {
                     issues.push(MotionIssue {
                         severity: MotionSeverity::Error,
                         kind: "hinge_axis_missing",
-                        component_id,
-                        component_name,
-                        channel: "move",
+                        component_id: component_id.clone(),
+                        component_name: component_name.clone(),
+                        channel: channel.clone(),
                         message: "Hinge joint is missing axis_join; cannot validate hinge motion."
                             .into(),
                         evidence: serde_json::json!({}),
@@ -510,9 +725,9 @@ fn validate_joints(
                     issues.push(MotionIssue {
                         severity: MotionSeverity::Error,
                         kind: "hinge_axis_invalid",
-                        component_id,
-                        component_name,
-                        channel: "move",
+                        component_id: component_id.clone(),
+                        component_name: component_name.clone(),
+                        channel: channel.clone(),
                         message:
                             "Hinge joint axis_join is non-finite or near-zero; cannot validate hinge motion."
                                 .into(),
@@ -523,31 +738,38 @@ fn validate_joints(
                     });
                     continue;
                 }
-                let axis_join = axis_join.normalize();
+                Some(axis_join.normalize())
+            } else {
+                None
+            };
 
-                let mut max_off_axis_deg: f32 = 0.0;
-                let mut max_off_axis_phase: f32 = 0.0;
-                let mut max_abs_hinge_angle_deg: f32 = 0.0;
-                let mut max_abs_hinge_angle_phase: f32 = 0.0;
-                let mut max_limit_exceed_deg: f32 = 0.0;
-                let mut max_limit_exceed_phase: f32 = 0.0;
+            for (i, &sample_t_m) in samples_t_m.iter().enumerate() {
+                let sample_phase_01 = samples_phase_01.get(i).copied().unwrap_or(0.0);
+                let delta = sample_animation_slot_delta(slot, sample_t_m, sample_phase_01);
+                let animated_offset = mul_transform(&att.offset, &delta);
+                let q_delta = (att.offset.rotation.inverse() * animated_offset.rotation).normalize();
+                let angle_deg = quat_angle_deg(q_delta).abs();
 
-                for (i, &t_m) in samples_t_m.iter().enumerate() {
-                    let delta = sample_move_delta(move_slot, t_m);
-                    let animated_offset = mul_transform(&att.offset, &delta);
-                    let q_delta =
-                        (att.offset.rotation.inverse() * animated_offset.rotation).normalize();
+                if angle_deg > max_angle_deg {
+                    max_angle_deg = angle_deg;
+                    max_angle_phase = sample_phase_01;
+                }
+                if angle_deg < min_angle_deg {
+                    min_angle_deg = angle_deg;
+                    min_angle_phase = sample_phase_01;
+                }
+
+                if let Some(axis_join) = axis_join {
                     let (hinge_angle_deg, off_axis_deg) =
                         hinge_signed_angle_and_off_axis_deg(q_delta, axis_join);
-                    let phase = samples_phase_01.get(i).copied().unwrap_or(0.0);
 
                     if off_axis_deg > max_off_axis_deg {
                         max_off_axis_deg = off_axis_deg;
-                        max_off_axis_phase = phase;
+                        max_off_axis_phase = sample_phase_01;
                     }
                     if hinge_angle_deg.abs() > max_abs_hinge_angle_deg {
                         max_abs_hinge_angle_deg = hinge_angle_deg.abs();
-                        max_abs_hinge_angle_phase = phase;
+                        max_abs_hinge_angle_phase = sample_phase_01;
                     }
                     if let Some([min_deg, max_deg]) = joint.limits_degrees {
                         let (min_deg, max_deg) = if min_deg <= max_deg {
@@ -564,96 +786,113 @@ fn validate_joints(
                         };
                         if exceed > max_limit_exceed_deg {
                             max_limit_exceed_deg = exceed;
-                            max_limit_exceed_phase = phase;
+                            max_limit_exceed_phase = sample_phase_01;
                         }
                     }
                 }
-
-                let off_axis_warn_deg: f32 = 8.0;
-                let off_axis_error_deg: f32 = 18.0;
-                if max_off_axis_deg.is_finite() && max_off_axis_deg > off_axis_warn_deg {
-                    let severity = if max_off_axis_deg >= off_axis_error_deg {
-                        MotionSeverity::Error
-                    } else {
-                        MotionSeverity::Warn
-                    };
-                    issues.push(MotionIssue {
-                        severity,
-                        kind: "hinge_off_axis",
-                        component_id: component_id_uuid_for_name(&comp.name),
-                        component_name: comp.name.clone(),
-                        channel: "move",
-                        message: "Hinge joint motion includes off-axis rotation (likely wrong frame or wrong degrees-of-freedom)."
-                            .into(),
-                        evidence: serde_json::json!({
-                            "axis_join": [axis_join.x, axis_join.y, axis_join.z],
-                            "max_off_axis_degrees": max_off_axis_deg,
-                            "at_phase_01": max_off_axis_phase,
-                            "max_abs_hinge_angle_degrees": max_abs_hinge_angle_deg,
-                            "hinge_angle_at_phase_01": max_abs_hinge_angle_phase,
-                            "tolerances": { "warn_off_axis_degrees": off_axis_warn_deg, "error_off_axis_degrees": off_axis_error_deg },
-                        }),
-                        score: max_off_axis_deg,
-                    });
-                }
-                if max_limit_exceed_deg.is_finite() && max_limit_exceed_deg > 0.1 {
-                    issues.push(MotionIssue {
-                        severity: MotionSeverity::Error,
-                        kind: "hinge_limit_exceeded",
-                        component_id,
-                        component_name,
-                        channel: "move",
-                        message: "Hinge joint motion exceeds declared limits.".into(),
-                        evidence: serde_json::json!({
-                            "limits_degrees": joint.limits_degrees,
-                            "max_exceed_degrees": max_limit_exceed_deg,
-                            "at_phase_01": max_limit_exceed_phase,
-                        }),
-                        score: max_limit_exceed_deg,
-                    });
-                }
             }
-            AiJointKindJson::Fixed => {
-                let mut max_angle_deg: f32 = 0.0;
-                let mut max_phase: f32 = 0.0;
-                for (i, &t_m) in samples_t_m.iter().enumerate() {
-                    let delta = sample_move_delta(move_slot, t_m);
-                    let animated_offset = mul_transform(&att.offset, &delta);
-                    let q_delta =
-                        (att.offset.rotation.inverse() * animated_offset.rotation).normalize();
-                    let angle_deg = quat_angle_deg(q_delta).abs();
-                    if angle_deg > max_angle_deg {
-                        max_angle_deg = angle_deg;
-                        max_phase = samples_phase_01.get(i).copied().unwrap_or(0.0);
+
+            match joint.kind {
+                AiJointKindJson::Hinge => {
+                    let Some(axis_join) = axis_join else {
+                        continue;
+                    };
+                    let off_axis_warn_deg: f32 = 8.0;
+                    let off_axis_error_deg: f32 = 18.0;
+                    if max_off_axis_deg.is_finite() && max_off_axis_deg > off_axis_warn_deg {
+                        let severity = if max_off_axis_deg >= off_axis_error_deg {
+                            MotionSeverity::Error
+                        } else {
+                            MotionSeverity::Warn
+                        };
+                        issues.push(MotionIssue {
+                            severity,
+                            kind: "hinge_off_axis",
+                            component_id: component_id.clone(),
+                            component_name: component_name.clone(),
+                            channel: channel.clone(),
+                            message: "Hinge joint motion includes off-axis rotation (likely wrong frame or wrong degrees-of-freedom)."
+                                .into(),
+                            evidence: serde_json::json!({
+                                "axis_join": [axis_join.x, axis_join.y, axis_join.z],
+                                "max_off_axis_degrees": max_off_axis_deg,
+                                "at_phase_01": max_off_axis_phase,
+                                "max_abs_hinge_angle_degrees": max_abs_hinge_angle_deg,
+                                "hinge_angle_at_phase_01": max_abs_hinge_angle_phase,
+                                "tolerances": { "warn_off_axis_degrees": off_axis_warn_deg, "error_off_axis_degrees": off_axis_error_deg },
+                            }),
+                            score: max_off_axis_deg,
+                        });
+                    }
+                    if max_limit_exceed_deg.is_finite() && max_limit_exceed_deg > 0.1 {
+                        issues.push(MotionIssue {
+                            severity: MotionSeverity::Error,
+                            kind: "hinge_limit_exceeded",
+                            component_id: component_id.clone(),
+                            component_name: component_name.clone(),
+                            channel: channel.clone(),
+                            message: "Hinge joint motion exceeds declared limits.".into(),
+                            evidence: serde_json::json!({
+                                "limits_degrees": joint.limits_degrees,
+                                "max_exceed_degrees": max_limit_exceed_deg,
+                                "at_phase_01": max_limit_exceed_phase,
+                            }),
+                            score: max_limit_exceed_deg,
+                        });
+                    }
+                    maybe_push_joint_rest_bias_issue(
+                        issues,
+                        &component_id,
+                        &component_name,
+                        channel.as_str(),
+                        min_angle_deg,
+                        min_angle_phase,
+                        max_angle_deg,
+                        max_angle_phase,
+                    );
+                }
+                AiJointKindJson::Fixed => {
+                    let warn_deg = 2.0;
+                    let error_deg = 6.0;
+                    if max_angle_deg.is_finite() && max_angle_deg > warn_deg {
+                        let severity = if max_angle_deg >= error_deg {
+                            MotionSeverity::Error
+                        } else {
+                            MotionSeverity::Warn
+                        };
+                        issues.push(MotionIssue {
+                            severity,
+                            kind: "fixed_joint_rotates",
+                            component_id: component_id.clone(),
+                            component_name: component_name.clone(),
+                            channel: channel.clone(),
+                            message: "Fixed joint rotates under animation (expected no rotation)."
+                                .into(),
+                            evidence: serde_json::json!({
+                                "max_angle_degrees": max_angle_deg,
+                                "at_phase_01": max_angle_phase,
+                                "tolerances": { "warn_degrees": warn_deg, "error_degrees": error_deg },
+                            }),
+                            score: max_angle_deg,
+                        });
                     }
                 }
-                let warn_deg = 2.0;
-                let error_deg = 6.0;
-                if max_angle_deg.is_finite() && max_angle_deg > warn_deg {
-                    let severity = if max_angle_deg >= error_deg {
-                        MotionSeverity::Error
-                    } else {
-                        MotionSeverity::Warn
-                    };
-                    issues.push(MotionIssue {
-                        severity,
-                        kind: "fixed_joint_rotates",
-                        component_id,
-                        component_name,
-                        channel: "move",
-                        message:
-                            "Fixed joint rotates under `move` animation (expected no rotation)."
-                                .into(),
-                        evidence: serde_json::json!({
-                            "max_angle_degrees": max_angle_deg,
-                            "at_phase_01": max_phase,
-                            "tolerances": { "warn_degrees": warn_deg, "error_degrees": error_deg },
-                        }),
-                        score: max_angle_deg,
-                    });
+                AiJointKindJson::Ball => {
+                    // Generic rule: any joint channel should not stay far from neutral for the
+                    // entire cycle unless it is intentionally spanning a broad arc.
+                    maybe_push_joint_rest_bias_issue(
+                        issues,
+                        &component_id,
+                        &component_name,
+                        channel.as_str(),
+                        min_angle_deg,
+                        min_angle_phase,
+                        max_angle_deg,
+                        max_angle_phase,
+                    );
                 }
+                AiJointKindJson::Free | AiJointKindJson::Unknown => {}
             }
-            AiJointKindJson::Ball | AiJointKindJson::Free | AiJointKindJson::Unknown => {}
         }
     }
 }
@@ -804,7 +1043,7 @@ fn validate_contacts(
                     kind: "contact_slip",
                     component_id: component_id_uuid_for_name(&comp.name),
                     component_name: comp.name.clone(),
-                    channel: "move",
+                    channel: "move".to_string(),
                     message:
                         "Contact slips too much during declared stance (foot should be mostly planted)."
                             .into(),
@@ -831,7 +1070,7 @@ fn validate_contacts(
                     kind: "contact_lift",
                     component_id: component_id_uuid_for_name(&comp.name),
                     component_name: comp.name.clone(),
-                    channel: "move",
+                    channel: "move".to_string(),
                     message:
                         "Contact lifts too much during declared stance (expected near-constant ground height)."
                             .into(),
@@ -865,6 +1104,13 @@ mod tests {
         }
     }
 
+    fn anchor_with_rot(name: &str, pos: Vec3, rot: Quat) -> AnchorDef {
+        AnchorDef {
+            name: name.to_string().into(),
+            transform: Transform::from_translation(pos).with_rotation(rot),
+        }
+    }
+
     fn stub_component(name: &str, anchors: Vec<AnchorDef>) -> Gen3dPlannedComponent {
         Gen3dPlannedComponent {
             display_name: name.to_string(),
@@ -879,6 +1125,126 @@ mod tests {
             contacts: Vec::new(),
             attach_to: None,
         }
+    }
+
+    #[test]
+    fn chain_axis_mismatch_reports_error() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        // Forward axis at the proximal anchor points along +Y, but the chain axis points along +Z.
+        let bad_rot = Quat::from_rotation_x(-core::f32::consts::FRAC_PI_2);
+        let mut link = stub_component(
+            "link",
+            vec![
+                anchor_with_rot("prox", Vec3::new(0.0, 0.0, -0.5), bad_rot),
+                anchor_with_rot("dist", Vec3::new(0.0, 0.0, 0.5), bad_rot),
+            ],
+        );
+        link.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "prox".into(),
+            offset: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Ball,
+                axis_join: None,
+                limits_degrees: None,
+                swing_limits_degrees: None,
+                twist_limits_degrees: None,
+            }),
+            animations: Vec::new(),
+        });
+
+        let mut child = stub_component("child", vec![anchor("prox", Vec3::ZERO)]);
+        child.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "link".into(),
+            parent_anchor: "dist".into(),
+            child_anchor: "prox".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        let components = vec![root, link, child];
+        let report = build_motion_validation_report(Some(1.0), &components);
+        let ok = report
+            .motion_validation
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        assert!(!ok, "expected motion validation to fail");
+
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.get("kind").and_then(|v| v.as_str()) == Some("chain_axis_mismatch")),
+            "expected chain_axis_mismatch issue, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn chain_axis_mismatch_is_not_reported_when_aligned() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        let mut link = stub_component(
+            "link",
+            vec![
+                anchor("prox", Vec3::new(0.0, 0.0, -0.5)),
+                anchor("dist", Vec3::new(0.0, 0.0, 0.5)),
+            ],
+        );
+        link.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "prox".into(),
+            offset: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Ball,
+                axis_join: None,
+                limits_degrees: None,
+                swing_limits_degrees: None,
+                twist_limits_degrees: None,
+            }),
+            animations: Vec::new(),
+        });
+
+        let mut child = stub_component("child", vec![anchor("prox", Vec3::ZERO)]);
+        child.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "link".into(),
+            parent_anchor: "dist".into(),
+            child_anchor: "prox".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        let components = vec![root, link, child];
+        let report = build_motion_validation_report(Some(1.0), &components);
+        let ok = report
+            .motion_validation
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(ok, "expected motion validation to pass");
+
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("chain_axis_mismatch")
+            }),
+            "expected no chain_axis_mismatch issue, got {issues:?}"
+        );
     }
 
     #[test]
@@ -946,6 +1312,145 @@ mod tests {
                 .iter()
                 .any(|i| i.get("kind").and_then(|v| v.as_str()) == Some("hinge_off_axis")),
             "expected hinge_off_axis issue, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn hinge_off_axis_is_checked_for_idle_channel() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        let idle_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 2.0,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.0,
+                        delta: Transform {
+                            rotation: Quat::from_rotation_y(core::f32::consts::FRAC_PI_2),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 2.0,
+                        delta: Transform::IDENTITY,
+                    },
+                ],
+            },
+        };
+
+        let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Hinge,
+                axis_join: Some([1.0, 0.0, 0.0]),
+                limits_degrees: Some([-20.0, 20.0]),
+                swing_limits_degrees: None,
+                twist_limits_degrees: None,
+            }),
+            animations: vec![PartAnimationSlot {
+                channel: "idle".into(),
+                spec: idle_spec,
+            }],
+        });
+
+        let components = vec![root, limb];
+        let report = build_motion_validation_report(Some(1.0), &components);
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("hinge_off_axis")
+                    && i.get("channel").and_then(|v| v.as_str()) == Some("idle")
+            }),
+            "expected hinge_off_axis issue on idle channel, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn ball_joint_rest_bias_is_reported() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+        let base_rot = Quat::from_rotation_x(-core::f32::consts::FRAC_PI_2);
+
+        let idle_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 2.0,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform {
+                            rotation: base_rot,
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.0,
+                        delta: Transform {
+                            rotation: (Quat::from_rotation_z(0.08) * base_rot).normalize(),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 2.0,
+                        delta: Transform {
+                            rotation: base_rot,
+                            ..default()
+                        },
+                    },
+                ],
+            },
+        };
+
+        let mut head = stub_component("head", vec![anchor("mount", Vec3::ZERO)]);
+        head.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Ball,
+                axis_join: None,
+                limits_degrees: None,
+                swing_limits_degrees: None,
+                twist_limits_degrees: None,
+            }),
+            animations: vec![PartAnimationSlot {
+                channel: "idle".into(),
+                spec: idle_spec,
+            }],
+        });
+
+        let components = vec![root, head];
+        let report = build_motion_validation_report(Some(1.0), &components);
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("joint_rest_bias_large")
+                    && i.get("channel").and_then(|v| v.as_str()) == Some("idle")
+            }),
+            "expected joint_rest_bias_large issue on idle channel, got {issues:?}"
         );
     }
 
