@@ -23,6 +23,7 @@ mod physics;
 mod platform;
 mod player;
 mod rts;
+mod scene_sources;
 mod scene_store;
 mod setup;
 mod types;
