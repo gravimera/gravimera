@@ -1,4 +1,4 @@
-# ExecPlan: Scene Generation Pipeline (Sources, Layers, Validation, Runs)
+# ExecPlan: Scene Generation Pipeline (Roadmap + Verification Cycle)
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -6,42 +6,27 @@ This repository contains `PLANS.md` at the repo root. This document must be main
 
 ## Purpose / Big Picture
 
-After this work, Gravimera supports a practical, testable, multi-agent scene generation workflow where:
+Scene generation is a large system. This file is the **roadmap** plus the shared **dev↔test/quality verification cycle**. The implementation work is split into milestone ExecPlans so each step delivers something that can be verified in automation.
 
-- Scenes have an **authoritative, git-friendly text source of truth** (split into multiple files so multiple agents can work in parallel without constant conflicts).
-- Scenes can be **compiled deterministically** from those sources into optional **binary build caches** for fast loading/simulation.
-- AI agents (and humans) can **create, edit, regenerate, validate, and debug** large scenes via bulk “blueprint” operations and procedural layers, with clear validation reports and durable run artifacts for crash-resume and inspection.
+After completing the milestone ExecPlans linked in the `Plan of Work` section, Gravimera supports a practical, testable, multi-agent scene generation workflow where scenes are authored as git-friendly text sources under `scenes/<scene_id>/src/`, deterministically compiled into optional build caches under `scenes/<scene_id>/build/`, regenerated via procedural layers (“layer owns outputs unless pinned”), and verified via structured validation reports and durable run artifacts (checkpoints + crash-resume).
 
-This is not “a town generator”. The engine remains a generic compiler + validator; agents author concrete intent using explicit parameters.
+The engine remains a generic compiler + validator (no domain-specific “town generator” heuristics); agents and humans supply explicit intent via sources and bulk blueprint operations.
 
-User-visible behavior we will enable (end state):
+End-state behaviors:
 
-- A developer can author a scene by editing files under `scenes/<scene_id>/src/` (the “scene repo”), commit changes, and run the game to load it.
-- The game can export the currently loaded scene to `src/` and import from `src/` (round-trip).
-- A local automation client can:
-  - validate a scene and get a structured `ValidationReport` with evidence pointers,
-  - apply a blueprint patch, recompile affected layers, and get a “what changed” report,
-  - persist a durable run directory (logs + artifacts) so a crash can resume from the last checkpoint.
+1) A developer can edit `scenes/<scene_id>/src/`, commit, and run the game to load the scene.
+2) The game can export/import scene sources (round-trip), and tests can enforce canonical equality.
+3) Automation can validate/apply/regenerate and persist a run directory with artifacts for debugging and resume.
 
 ## Progress
 
 - [x] (2026-02-13) Create the initial ExecPlan.
-- [ ] (2026-02-13) Read and summarize the current scene save/load pipeline (`src/scene_store.rs`) and identify the minimum stable “scene core” types needed for sources.
-- [ ] (2026-02-13) Define concrete JSON schemas (field names + canonical ordering rules) for `scenes/<scene_id>/src/*` that satisfy `docs/gamedesign/30_scene_sources_and_build_artifacts.md`.
-- [ ] (2026-02-13) Implement `SceneSources` read/write + canonicalization utilities (serde + stable formatting) and add unit tests for canonical stability.
-- [ ] (2026-02-13) Implement ECS ↔ SceneSources conversion for the currently supported object model (prefabs/instances/transforms/tint/scale) and add round-trip tests.
-- [ ] (2026-02-13) Add automation endpoints for export/import of scene sources and a headless integration smoke test that:
-  - starts the game with automation enabled,
-  - imports a fixture scene from `tests/`,
-  - exports it back,
-  - and verifies canonical equality.
-- [ ] (2026-02-13) Introduce procedural layer files under `src/layers/` (still data-only) and implement the regeneration rule “layer owns outputs unless pinned”.
-- [ ] (2026-02-13) Implement deterministic instance-id derivation for compiled outputs (no UUID v4 in compilation paths) and add determinism regression tests (compile twice → identical signature).
-- [ ] (2026-02-13) Add a minimal generic validator set (budgets, referential integrity, collision/movement blockers sanity, portal destination validity, marker reachability if navigation enabled) and expose it via automation API.
-- [ ] (2026-02-13) Implement `ScorecardSpec` + `ValidationReport` JSON contracts and persist reports to disk as run artifacts.
-- [ ] (2026-02-13) Implement blueprint apply in “scene sources mode”: apply mutations by editing `src/` (not binary) + recompile + invalidate/refresh build caches.
-- [ ] (2026-02-13) Add durable “run directories” (artifacts + step timeline) and crash-resume semantics for long-running authoring runs.
-- [ ] (2026-02-13) Add a “dev ↔ test ↔ quality” cycle: a small fixture suite + automation-driven integration tests + a deterministic signature gate that prevents accidental scene compiler changes.
+- [ ] (2026-02-13) Execute Milestone 1: `docs/execplans/execplan_scene_sources_foundation.md`.
+- [ ] (2026-02-13) Execute Milestone 2: `docs/execplans/execplan_scene_sources_roundtrip_automation.md`.
+- [ ] (2026-02-13) Execute Milestone 3: `docs/execplans/execplan_scene_layers_and_compilation.md`.
+- [ ] (2026-02-13) Execute Milestone 4: `docs/execplans/execplan_scene_validation_scorecards.md`.
+- [ ] (2026-02-13) Execute Milestone 5: `docs/execplans/execplan_scene_blueprint_apply_sources.md`.
+- [ ] (2026-02-13) Execute Milestone 6: `docs/execplans/execplan_scene_runs_resume_quality_gate.md`.
 
 ## Surprises & Discoveries
 
@@ -104,78 +89,18 @@ Read these docs before implementing anything in this plan:
 
 ## Plan of Work
 
-This work is intentionally split into small, testable milestones. Each milestone must add or extend automated tests so the dev loop is:
+This work is intentionally split into multiple ExecPlans (one per milestone) so each milestone delivers something that can be verified automatically.
 
-1. Change sources/engine.
-2. Run unit tests (`cargo test`).
-3. Run headless automation integration tests (also under `cargo test`).
-4. (Optional) Run rendered snapshot tests locally when GPU is available.
-5. Commit.
+Execute these milestone plans in order:
 
-### Milestone 1: Scene sources foundation (read/write/canonicalize)
+1) `docs/execplans/execplan_scene_sources_foundation.md` — define `scenes/<scene_id>/src/` sources, implement canonical read/write, and add unit tests for idempotence.
+2) `docs/execplans/execplan_scene_sources_roundtrip_automation.md` — add import/export automation endpoints and an integration test that round-trips a fixture scene.
+3) `docs/execplans/execplan_scene_layers_and_compilation.md` — add procedural layers + pinning semantics and deterministic compilation/signatures with regression tests.
+4) `docs/execplans/execplan_scene_validation_scorecards.md` — add validators + scorecards and write structured `ValidationReport` outputs with evidence pointers.
+5) `docs/execplans/execplan_scene_blueprint_apply_sources.md` — implement blueprint validate/apply that edits sources, recompiles, and revalidates, with patch-history artifacts.
+6) `docs/execplans/execplan_scene_runs_resume_quality_gate.md` — add run directories, checkpoints/resume, and a deterministic signature quality gate over fixtures.
 
-Implement the concrete `src/` JSON layout and utilities to read and write it with deterministic canonical formatting. Keep the initial scope aligned with what the engine already supports (object defs + instances), but structure the sources so procedural layers and pinning can be added without a format-breaking rewrite.
-
-Deliverables:
-
-- A Rust module that can read and write `SceneSources` from a directory.
-- A canonicalizer that rewrites sources into a stable order (keys and arrays) so diffs are meaningful.
-- Unit tests that ensure canonicalization is stable and idempotent.
-
-### Milestone 2: ECS ↔ sources round-trip + automation endpoints
-
-Add conversion between the in-memory ECS scene state and the text sources, and expose minimal automation endpoints for export/import so we can build integration tests without interactive UI.
-
-Deliverables:
-
-- Export: ECS → `src/` (authoritative) + optional `build/` cache.
-- Import: `src/` → ECS (spawns the same objects with stable ids).
-- A new integration test that imports a fixture and exports it back, asserting canonical equality.
-
-### Milestone 3: Procedural layers, pinning, and deterministic compilation
-
-Introduce procedural layer files and implement deterministic compilation into concrete instances, with the regeneration rule:
-
-- “layer owns its outputs unless pinned”.
-
-Deliverables:
-
-- A compilation pipeline that produces a stable “scene signature” (hash) so determinism can be regression-tested.
-- Deterministic id derivation for compiled instances (no random UUIDs).
-- Tests:
-  - compile twice → same signature
-  - regenerate a layer → owned outputs change as expected
-  - pinned instances remain unchanged across regeneration
-
-### Milestone 4: Validation + scorecards (hard gates and evidence)
-
-Implement generic validators and the `ValidationReport` output contract so the system can objectively detect “bad results” without embedding aesthetic heuristics.
-
-Deliverables:
-
-- Validators for budgets, referential integrity, portal validity, and (optionally) navigation/marker reachability.
-- A stable report format written to the run directory.
-- Tests that intentionally violate gates and assert the report contains evidence pointers.
-
-### Milestone 5: Blueprint apply in sources-mode + patch history
-
-Implement blueprint application as edits to `src/` plus recompile/validate. Store patches and results as durable artifacts so the whole process is debuggable and resumable.
-
-Deliverables:
-
-- Blueprint validate/apply updates `src/` (authoritative) and invalidates/refreshes `build/`.
-- Patch history persisted in a run directory with a timeline of steps and checkpoints.
-- Integration test: apply a small blueprint patch to a fixture, revalidate, and verify only expected files changed in `src/`.
-
-### Milestone 6: Runs, crash-resume, and the dev↔test↔quality cycle
-
-Make long runs resilient: persist step artifacts, and ensure retries are safe (idempotent) so an agent can resume after a crash without duplicating objects.
-
-Deliverables:
-
-- Run directories with checkpoints after validate/apply/evaluate steps.
-- A resume mechanism that picks up from the last checkpoint.
-- A “quality gate” in CI: a deterministic signature suite (small fixtures) that must not change without an intentional update.
+All milestones share the same dev↔test cycle: make a small change, add/update a test, run `cargo test`, run a headless smoke boot (`cargo run -- --headless --headless-seconds 1`), then commit.
 
 ## Concrete Steps
 
@@ -262,4 +187,3 @@ At the end of Milestone 2, the codebase should contain (names can vary, but resp
 - a `scene_sources` module for read/write/canonicalize,
 - a conversion layer between `SceneSources` and ECS world state,
 - automation endpoints to import/export/validate scenes for tests.
-
