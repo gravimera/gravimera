@@ -1,4 +1,4 @@
-# ExecPlan: Scene Sources Round-Trip + Automation Verification
+# ExecPlan 02: Scene Sources Round-Trip + Automation Verification
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -43,7 +43,7 @@ Verification is via an automation-driven integration test (similar to `tests/aut
 
 Milestone 1 defines the on-disk source format and canonicalization utilities:
 
-- `docs/execplans/execplan_scene_sources_foundation.md`
+- `docs/execplans/execplan_scene_01_sources_foundation.md`
 
 Existing automation test patterns:
 
@@ -101,4 +101,3 @@ Use existing dependencies only:
 - Existing HTTP automation infrastructure in `src/automation/mod.rs`.
 
 Do not add external test harness tooling in this milestone; keep tests in Rust under `tests/`.
-

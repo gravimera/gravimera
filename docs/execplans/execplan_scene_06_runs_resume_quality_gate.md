@@ -1,4 +1,4 @@
-# ExecPlan: Runs + Checkpoints/Resume + Determinism Quality Gate
+# ExecPlan 06: Runs + Checkpoints/Resume + Determinism Quality Gate
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -107,4 +107,3 @@ This milestone is accepted when:
 ## Interfaces and Dependencies
 
 Use existing dependencies only. If signatures are already implemented in Milestone 3, reuse the exact signature algorithm and ensure it is stable and documented.
-

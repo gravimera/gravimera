@@ -1,4 +1,4 @@
-# ExecPlan: Scene Validation + Scorecards + Evidence Reports
+# ExecPlan 04: Scene Validation + Scorecards + Evidence Reports
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -100,4 +100,3 @@ Use existing dependencies:
 - `serde` / `serde_json` for report serialization (when persisted).
 
 Keep report types “data-only” so they can be used by both automation endpoints and future `/v2/` agent APIs.
-

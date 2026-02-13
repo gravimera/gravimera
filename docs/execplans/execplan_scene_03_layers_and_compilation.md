@@ -1,4 +1,4 @@
-# ExecPlan: Procedural Layers + Pinning + Deterministic Compilation
+# ExecPlan 03: Procedural Layers + Pinning + Deterministic Compilation
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -111,4 +111,3 @@ Use existing dependencies:
 - `sha2` for signatures.
 
 Keep compilation logic deterministic by construction: stable ordering, stable formatting, no dependence on hash iteration order, and no use of `ObjectId::new_v4()` in compilation paths.
-

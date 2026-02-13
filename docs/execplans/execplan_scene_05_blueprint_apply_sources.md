@@ -1,4 +1,4 @@
-# ExecPlan: Blueprint Apply in Sources-Mode (Patch → Recompile → Revalidate)
+# ExecPlan 05: Blueprint Apply in Sources-Mode (Patch → Recompile → Revalidate)
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -109,4 +109,3 @@ Use existing dependencies:
 - `serde` / `serde_json` for patch documents and responses.
 
 Prefer to implement patch validation/apply as pure operations over `SceneSources` + patch, with IO at the boundary. This makes it easier to unit test and to reuse later for a hosted `/v2/` API.
-

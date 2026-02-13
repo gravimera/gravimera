@@ -21,12 +21,12 @@ End-state behaviors:
 ## Progress
 
 - [x] (2026-02-13) Create the initial ExecPlan.
-- [ ] (2026-02-13) Execute Milestone 1: `docs/execplans/execplan_scene_sources_foundation.md`.
-- [ ] (2026-02-13) Execute Milestone 2: `docs/execplans/execplan_scene_sources_roundtrip_automation.md`.
-- [ ] (2026-02-13) Execute Milestone 3: `docs/execplans/execplan_scene_layers_and_compilation.md`.
-- [ ] (2026-02-13) Execute Milestone 4: `docs/execplans/execplan_scene_validation_scorecards.md`.
-- [ ] (2026-02-13) Execute Milestone 5: `docs/execplans/execplan_scene_blueprint_apply_sources.md`.
-- [ ] (2026-02-13) Execute Milestone 6: `docs/execplans/execplan_scene_runs_resume_quality_gate.md`.
+- [ ] (2026-02-13) Execute Milestone 1: `docs/execplans/execplan_scene_01_sources_foundation.md`.
+- [ ] (2026-02-13) Execute Milestone 2: `docs/execplans/execplan_scene_02_sources_roundtrip_automation.md`.
+- [ ] (2026-02-13) Execute Milestone 3: `docs/execplans/execplan_scene_03_layers_and_compilation.md`.
+- [ ] (2026-02-13) Execute Milestone 4: `docs/execplans/execplan_scene_04_validation_scorecards.md`.
+- [ ] (2026-02-13) Execute Milestone 5: `docs/execplans/execplan_scene_05_blueprint_apply_sources.md`.
+- [ ] (2026-02-13) Execute Milestone 6: `docs/execplans/execplan_scene_06_runs_resume_quality_gate.md`.
 
 ## Surprises & Discoveries
 
@@ -93,12 +93,12 @@ This work is intentionally split into multiple ExecPlans (one per milestone) so 
 
 Execute these milestone plans in order:
 
-1) `docs/execplans/execplan_scene_sources_foundation.md` — define `scenes/<scene_id>/src/` sources, implement canonical read/write, and add unit tests for idempotence.
-2) `docs/execplans/execplan_scene_sources_roundtrip_automation.md` — add import/export automation endpoints and an integration test that round-trips a fixture scene.
-3) `docs/execplans/execplan_scene_layers_and_compilation.md` — add procedural layers + pinning semantics and deterministic compilation/signatures with regression tests.
-4) `docs/execplans/execplan_scene_validation_scorecards.md` — add validators + scorecards and write structured `ValidationReport` outputs with evidence pointers.
-5) `docs/execplans/execplan_scene_blueprint_apply_sources.md` — implement blueprint validate/apply that edits sources, recompiles, and revalidates, with patch-history artifacts.
-6) `docs/execplans/execplan_scene_runs_resume_quality_gate.md` — add run directories, checkpoints/resume, and a deterministic signature quality gate over fixtures.
+1) `docs/execplans/execplan_scene_01_sources_foundation.md` — define `scenes/<scene_id>/src/` sources, implement canonical read/write, and add unit tests for idempotence.
+2) `docs/execplans/execplan_scene_02_sources_roundtrip_automation.md` — add import/export automation endpoints and an integration test that round-trips a fixture scene.
+3) `docs/execplans/execplan_scene_03_layers_and_compilation.md` — add procedural layers + pinning semantics and deterministic compilation/signatures with regression tests.
+4) `docs/execplans/execplan_scene_04_validation_scorecards.md` — add validators + scorecards and write structured `ValidationReport` outputs with evidence pointers.
+5) `docs/execplans/execplan_scene_05_blueprint_apply_sources.md` — implement blueprint validate/apply that edits sources, recompiles, and revalidates, with patch-history artifacts.
+6) `docs/execplans/execplan_scene_06_runs_resume_quality_gate.md` — add run directories, checkpoints/resume, and a deterministic signature quality gate over fixtures.
 
 All milestones share the same dev↔test cycle: make a small change, add/update a test, run `cargo test`, run a headless smoke boot (`cargo run -- --headless --headless-seconds 1`), then commit.
 
