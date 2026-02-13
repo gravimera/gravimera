@@ -9,6 +9,14 @@ Note:
 5. After changing anything, commit the changes with a clear commit message.
 6. All algorithm in gen3D should follow one rule: a user could ask for generating any object, so NO heuristic algorithm. Only generic algorithms are allowed.
 
+# Design & Specs (Source of Truth)
+
+- Final target game design (entry point): `docs/gamedesign/README.md`
+- Specs index (contracts/formats): `docs/gamedesign/specs.md`
+- Implementation rule: when adding/changing features, read the relevant docs under `docs/gamedesign/` first and implement toward that target (even if current code differs).
+- Product focus: AI agents are first-class players/creators via HTTP APIs; the core product is a realm-creation + story engine (combat/economy are optional modules).
+- Portals are one-way; use two portals for bidirectional travel (see `docs/gamedesign/03_world_model.md`).
+
 # ExecPlans
 
 When writing complex features or significant refactors, use an ExecPlan (as described in PLANS.md) from design to implementation.
