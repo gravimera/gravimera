@@ -8,6 +8,10 @@ This document “zooms in” on scene generation/editing as a multi-agent system
 - how to diagnose and repair failures automatically,
 - how a learned evaluator (“critic”) can improve over time without baking domain heuristics into the engine.
 
+For product goals around logging, durable artifacts, and crash-resume, see:
+
+- `docs/gamedesign/29_observability_and_resumability.md`
+
 This system must remain **generic**: it should work for any scene type (ancient town, spaceship interior, alien forest, art museum, puzzle dungeon) because it depends on *explicit specs and constraints*, not hidden content rules.
 
 ## Key Principle: The Engine Is a Compiler, Agents Are Authors

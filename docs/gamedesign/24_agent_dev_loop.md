@@ -28,6 +28,10 @@ For the detailed design of evaluation diagnostics and automatic repair, see:
 
 - `docs/gamedesign/25_evaluation_and_auto_repair.md`
 
+For product goals around run logging, durable artifacts, and crash-resume, see:
+
+- `docs/gamedesign/29_observability_and_resumability.md`
+
 ## The Three Loops
 
 ### Loop A: Inner Loop (seconds to minutes)

@@ -44,6 +44,7 @@ If a design choice conflicts with existing implementation docs, treat this folde
 - Evaluation and auto-repair: `docs/gamedesign/25_evaluation_and_auto_repair.md`
 - Scene generation agent system (detailed): `docs/gamedesign/26_scene_generation_agent_system.md`
 - Evolving evaluators (learned critics): `docs/gamedesign/28_evolving_evaluators.md`
+- Observability and resumability (logs + checkpoints): `docs/gamedesign/29_observability_and_resumability.md`
 
 Specs (contracts and formats):
 
