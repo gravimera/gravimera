@@ -741,30 +741,7 @@ pub(crate) fn update_part_animations(
             }
         }
 
-        if chosen.is_none() {
-            // Fallback: if the current state doesn't provide an animation (e.g. unit is moving but
-            // the part only has an `idle` clip), prefer playing *some* animation over freezing the
-            // part at the last sampled pose.
-            for channel in ["attack_primary", "move", "idle", "ambient"] {
-                if let Some(slot) = player
-                    .animations
-                    .iter()
-                    .find(|slot| slot.channel.as_ref() == channel)
-                {
-                    chosen = Some(&slot.spec);
-                    break;
-                }
-            }
-            if chosen.is_none() {
-                chosen = player.animations.first().map(|slot| &slot.spec);
-            }
-        }
-
         let spec = chosen;
-
-        if spec.is_none() && !player.apply_aim_yaw {
-            continue;
-        }
 
         let aim_delta = if player.apply_aim_yaw {
             aim_deltas
@@ -1157,7 +1134,7 @@ mod tests {
     }
 
     #[test]
-    fn idle_animation_falls_back_when_moving_and_no_move_slot() {
+    fn no_fallback_animation_when_channel_missing() {
         use crate::object::registry::{
             PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot,
             PartAnimationSpec,
@@ -1226,8 +1203,8 @@ mod tests {
             .copied()
             .expect("part entity has Transform");
         assert!(
-            (transform.translation.y - 1.0).abs() < 1e-4,
-            "expected idle clip to keep sampling while moving, got translation={:?}",
+            transform.translation.length_squared() < 1e-6,
+            "expected no fallback animation while moving, got translation={:?}",
             transform.translation
         );
     }

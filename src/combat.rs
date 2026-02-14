@@ -51,6 +51,9 @@ fn find_anchor_world_matrix(
     target_object_id: u128,
     target_anchor: &str,
     object_to_world: Mat4,
+    aim_object_ids: &HashSet<u128>,
+    aim_quat_parent: Quat,
+    ancestor_apply_aim_yaw: bool,
     stack: &mut Vec<u128>,
 ) -> Option<Mat4> {
     if stack.contains(&object_id) {
@@ -73,14 +76,45 @@ fn find_anchor_world_matrix(
             continue;
         };
 
-        let mut child_local = part.transform.to_matrix();
+        let apply_aim_yaw =
+            !ancestor_apply_aim_yaw && !aim_object_ids.is_empty() && aim_object_ids.contains(child_id);
+
+        let mut offset = part.transform;
+        if apply_aim_yaw {
+            let aim_quat = if let Some(att) = part.attachment.as_ref() {
+                anchor_transform(def, att.parent_anchor.as_ref())
+                    .map(|anchor| {
+                        let anchor_rot = if anchor.rotation.is_finite() {
+                            anchor.rotation.normalize()
+                        } else {
+                            Quat::IDENTITY
+                        };
+                        let q = anchor_rot.inverse() * aim_quat_parent * anchor_rot;
+                        if q.is_finite() {
+                            q.normalize()
+                        } else {
+                            Quat::IDENTITY
+                        }
+                    })
+                    .unwrap_or(aim_quat_parent)
+            } else {
+                aim_quat_parent
+            };
+
+            let q = aim_quat * offset.rotation;
+            if q.is_finite() {
+                offset.rotation = q.normalize();
+            }
+        }
+
+        let mut child_local = offset.to_matrix();
         if let Some(att) = part.attachment.as_ref() {
             let parent_anchor = anchor_transform(def, att.parent_anchor.as_ref())?;
             let child_def = library.get(*child_id)?;
             let child_anchor = anchor_transform(child_def, att.child_anchor.as_ref())
                 .unwrap_or(Transform::IDENTITY);
             child_local = parent_anchor.to_matrix()
-                * part.transform.to_matrix()
+                * offset.to_matrix()
                 * child_anchor.to_matrix().inverse();
         }
 
@@ -91,6 +125,9 @@ fn find_anchor_world_matrix(
             target_object_id,
             target_anchor,
             child_to_world,
+            aim_object_ids,
+            aim_quat_parent,
+            ancestor_apply_aim_yaw || apply_aim_yaw,
             stack,
         ) {
             stack.pop();
@@ -107,8 +144,10 @@ fn anchor_world_position(
     root_prefab_id: u128,
     root_transform: &Transform,
     anchor: &AnchorRef,
+    aim_quat_parent: Quat,
 ) -> Option<Vec3> {
     let root_to_world = root_transform.to_matrix();
+    let aim_object_ids = aim_object_ids_for_root(library, root_prefab_id);
     let mut stack = Vec::new();
     let mat = find_anchor_world_matrix(
         library,
@@ -116,9 +155,140 @@ fn anchor_world_position(
         anchor.object_id,
         anchor.anchor.as_ref(),
         root_to_world,
+        &aim_object_ids,
+        aim_quat_parent,
+        false,
         &mut stack,
     )?;
     Some(mat.transform_point3(Vec3::ZERO))
+}
+
+fn aim_object_ids_for_root(library: &ObjectLibrary, root_object_id: u128) -> HashSet<u128> {
+    let mut out = HashSet::new();
+    let Some(def) = library.get(root_object_id) else {
+        return out;
+    };
+
+    if let Some(aim) = def.aim.as_ref() {
+        out.extend(aim.components.iter().copied());
+    }
+
+    if out.is_empty() {
+        if let Some(attack) = def.attack.as_ref() {
+            if matches!(attack.kind, UnitAttackKind::RangedProjectile) {
+                if let Some(ranged) = attack.ranged.as_ref() {
+                    out.insert(ranged.muzzle.object_id);
+                }
+            }
+        }
+    }
+
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::object::registry::{
+        AimProfile, AnchorDef, AttachmentDef, ObjectDef, ObjectInteraction, ObjectPartDef,
+        ObjectPartKind,
+    };
+
+    #[test]
+    fn anchor_world_position_applies_aim_yaw_in_parent_frame() {
+        // Regression: aim yaw is defined in the parent's body frame (+Y is up). When attachments
+        // use rotated join frames (common for neck/shoulder joints), applying yaw directly in the
+        // join frame rotates around a horizontal axis and misplaces the muzzle when aiming.
+        //
+        // This test uses a rotated anchor/join frame and matching child anchor such that, without
+        // the parent-frame conversion, the muzzle would incorrectly remain at +Z when yawing.
+        let anchor_rot =
+            Quat::from_mat3(&Mat3::from_cols(Vec3::NEG_X, Vec3::Z, Vec3::Y)).normalize();
+
+        let parent_id = 0x91a6_1f17_u128;
+        let child_id = 0x2c1e_4caa_u128;
+
+        let mut library = ObjectLibrary::default();
+        library.upsert(ObjectDef {
+            object_id: parent_id,
+            label: "parent".into(),
+            size: Vec3::ONE,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: Some(AimProfile {
+                max_yaw_delta_degrees: None,
+                components: vec![child_id],
+            }),
+            mobility: None,
+            anchors: vec![AnchorDef {
+                name: "neck".into(),
+                transform: Transform::from_rotation(anchor_rot),
+            }],
+            parts: vec![ObjectPartDef {
+                part_id: None,
+                kind: ObjectPartKind::ObjectRef { object_id: child_id },
+                attachment: Some(AttachmentDef {
+                    parent_anchor: "neck".into(),
+                    child_anchor: "neck_mount".into(),
+                }),
+                animations: Vec::new(),
+                transform: Transform::IDENTITY,
+            }],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        library.upsert(ObjectDef {
+            object_id: child_id,
+            label: "child".into(),
+            size: Vec3::ONE,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![
+                AnchorDef {
+                    name: "neck_mount".into(),
+                    transform: Transform::from_rotation(anchor_rot),
+                },
+                AnchorDef {
+                    name: "muzzle".into(),
+                    transform: Transform::from_translation(Vec3::new(0.0, 0.0, 1.0)),
+                },
+            ],
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let anchor = AnchorRef {
+            object_id: child_id,
+            anchor: "muzzle".into(),
+        };
+
+        let pos = anchor_world_position(
+            &library,
+            parent_id,
+            &Transform::IDENTITY,
+            &anchor,
+            Quat::from_rotation_y(core::f32::consts::FRAC_PI_2),
+        )
+        .expect("muzzle anchor world position");
+
+        assert!(
+            (pos - Vec3::X).length() < 1e-4,
+            "expected muzzle to yaw around +Y into +X; pos={:?}",
+            pos
+        );
+    }
 }
 
 fn fire_direction_from_target(
@@ -858,7 +1028,7 @@ pub(crate) fn unit_attack_execute(
                 };
 
                 let muzzle_pos =
-                    anchor_world_position(&library, prefab_id.0, transform, &ranged.muzzle)
+                    anchor_world_position(&library, prefab_id.0, transform, &ranged.muzzle, aim_rot)
                         .unwrap_or_else(|| transform.translation + Vec3::Y * 1.0);
 
                 let radius = projectile_collider_radius(projectile_def);
