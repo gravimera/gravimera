@@ -609,6 +609,31 @@ pub(super) fn copy_component_subtree_into(
     Ok(out)
 }
 
+pub(super) fn preflight_subtree_copy_compatibility(
+    components: &[Gen3dPlannedComponent],
+    source_root_idx: usize,
+    target_root_idx: usize,
+) -> Result<(), String> {
+    // Run the same structural checks as the real subtree copy path, but on scratch state so we
+    // can decide whether to copy or generate before mutating live draft/component data.
+    let mut scratch_components = components.to_vec();
+    let mut scratch_draft = Gen3dDraft::default();
+    ensure_target_subtree_shape(
+        &mut scratch_components,
+        &mut scratch_draft,
+        source_root_idx,
+        target_root_idx,
+    )?;
+    let children = build_children_map(&scratch_components);
+    let _ = map_subtree_pairs(
+        &scratch_components,
+        &children,
+        source_root_idx,
+        target_root_idx,
+    )?;
+    Ok(())
+}
+
 fn ensure_target_subtree_shape(
     components: &mut Vec<Gen3dPlannedComponent>,
     draft: &mut Gen3dDraft,

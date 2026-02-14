@@ -129,6 +129,7 @@ pub(crate) fn gen3d_clear_images_button(
     mode: Res<State<GameMode>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut job: ResMut<Gen3dAiJob>,
+    mut scroll_panels: Query<&mut ScrollPosition, With<Gen3dImagesScrollPanel>>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Gen3dClearImagesButton>),
@@ -147,10 +148,13 @@ pub(crate) fn gen3d_clear_images_button(
                 workshop.images.clear();
                 workshop.image_viewer = None;
                 workshop.error = None;
+                if let Ok(mut scroll) = scroll_panels.single_mut() {
+                    scroll.y = 0.0;
+                }
                 job.reset_session();
                 if !job.is_running() {
                     workshop.status = format!(
-                        "Drop 1–{} images, then click Build. (Prompt optional.)",
+                        "Drop 0–{} images and/or type a prompt, then click Build.",
                         super::GEN3D_MAX_IMAGES
                     );
                 }

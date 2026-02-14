@@ -755,8 +755,7 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
             let max_total = config.gen3d_max_regen_total;
             let max_per_component = config.gen3d_max_regen_per_component;
             let regen_total_blocked = max_total > 0 && job.regen_total >= max_total;
-            let regen_component_blocked =
-                max_per_component > 0 && regen_count >= max_per_component;
+            let regen_component_blocked = max_per_component > 0 && regen_count >= max_per_component;
             let regen_budget_blocked = regen_total_blocked || regen_component_blocked;
             let regen_remaining = if max_per_component == 0 {
                 None
@@ -836,14 +835,16 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
     let time_budget_remaining_seconds = if config.gen3d_max_seconds == 0 {
         None
     } else {
-        run_elapsed_seconds.map(|elapsed| {
-            (config.gen3d_max_seconds as f64 - elapsed).max(0.0)
-        })
+        run_elapsed_seconds.map(|elapsed| (config.gen3d_max_seconds as f64 - elapsed).max(0.0))
     };
     let token_budget_remaining = if config.gen3d_max_tokens == 0 {
         None
     } else {
-        Some(config.gen3d_max_tokens.saturating_sub(job.current_run_tokens()))
+        Some(
+            config
+                .gen3d_max_tokens
+                .saturating_sub(job.current_run_tokens()),
+        )
     };
 
     serde_json::json!({
@@ -4850,7 +4851,10 @@ fn poll_agent_tool(
             draft,
             super::Gen3dAgentAfterPassSnapshot::FinishRun {
                 workshop_status: status.clone(),
-                run_log: format!("budget_stop reason={}", super::truncate_for_ui(reason.trim(), 600)),
+                run_log: format!(
+                    "budget_stop reason={}",
+                    super::truncate_for_ui(reason.trim(), 600)
+                ),
                 info_log: format!(
                     "Gen3D agent: best-effort stop (regen budget exhausted). reason={:?}",
                     reason.trim()
@@ -4864,7 +4868,10 @@ fn poll_agent_tool(
         workshop.status = status;
         append_gen3d_run_log(
             job.pass_dir.as_deref(),
-            format!("budget_stop reason={}", super::truncate_for_ui(reason.trim(), 600)),
+            format!(
+                "budget_stop reason={}",
+                super::truncate_for_ui(reason.trim(), 600)
+            ),
         );
         info!(
             "Gen3D agent: best-effort stop (regen budget exhausted). reason={:?}",
@@ -5277,8 +5284,64 @@ fn poll_agent_component_batch(
             job.assembly_rev = job.assembly_rev.saturating_add(1);
         }
 
+        let mut fallback_component_indices: Vec<usize> = auto_copy
+            .fallback_component_indices
+            .iter()
+            .copied()
+            .filter(|idx| *idx < job.planned_components.len())
+            .filter(|idx| {
+                job.planned_components
+                    .get(*idx)
+                    .is_some_and(|c| c.actual_size.is_none())
+            })
+            .collect();
+        fallback_component_indices.sort_unstable();
+        fallback_component_indices.dedup();
+
+        if !fallback_component_indices.is_empty() {
+            let mut pending_set: std::collections::HashSet<usize> = job
+                .agent
+                .pending_regen_component_indices
+                .iter()
+                .copied()
+                .collect();
+            for idx in fallback_component_indices.iter().copied() {
+                pending_set.insert(idx);
+            }
+            let mut pending: Vec<usize> = pending_set.into_iter().collect();
+            pending.sort_unstable();
+            job.agent.pending_regen_component_indices = pending;
+            job.agent
+                .pending_regen_component_indices_skipped_due_to_budget
+                .clear();
+
+            append_gen3d_run_log(
+                job.pass_dir.as_deref(),
+                format!(
+                    "auto_copy_preflight_fallback components={:?}",
+                    fallback_component_indices
+                ),
+            );
+        }
+
+        let fallback_components_json: Vec<serde_json::Value> = fallback_component_indices
+            .iter()
+            .copied()
+            .filter(|idx| *idx < job.planned_components.len())
+            .map(|idx| {
+                serde_json::json!({
+                    "index": idx,
+                    "name": job.planned_components[idx].name.as_str(),
+                })
+            })
+            .collect();
+
         if let Some(pass_dir) = job.pass_dir.as_deref() {
-            if auto_copy.component_copies_applied > 0 || !auto_copy.errors.is_empty() {
+            if auto_copy.component_copies_applied > 0
+                || !auto_copy.errors.is_empty()
+                || !auto_copy.preflight_mismatches.is_empty()
+                || !fallback_components_json.is_empty()
+            {
                 let mut outcomes_json: Vec<serde_json::Value> = Vec::new();
                 const MAX_OUTCOMES: usize = 16;
                 for outcome in auto_copy.outcomes.iter().take(MAX_OUTCOMES) {
@@ -5303,6 +5366,9 @@ fn poll_agent_component_batch(
                         "subtree_copies_applied": auto_copy.subtree_copies_applied,
                         "targets_skipped_already_generated": auto_copy.targets_skipped_already_generated,
                         "subtrees_skipped_partially_generated": auto_copy.subtrees_skipped_partially_generated,
+                        "preflight_mismatches": &auto_copy.preflight_mismatches,
+                        "fallback_component_indices": &fallback_component_indices,
+                        "fallback_components": &fallback_components_json,
                         "errors": &auto_copy.errors,
                         "outcomes": outcomes_json,
                         "outcomes_omitted": outcomes_omitted,
@@ -5361,6 +5427,9 @@ fn poll_agent_component_batch(
                     "subtree_copies_applied": auto_copy.subtree_copies_applied,
                     "targets_skipped_already_generated": auto_copy.targets_skipped_already_generated,
                     "subtrees_skipped_partially_generated": auto_copy.subtrees_skipped_partially_generated,
+                    "preflight_mismatches": auto_copy.preflight_mismatches,
+                    "fallback_component_indices": fallback_component_indices,
+                    "fallback_components": fallback_components_json,
                     "errors": auto_copy.errors,
                     "outcomes": outcomes_json,
                     "outcomes_omitted": outcomes_omitted,
@@ -5855,21 +5924,29 @@ mod tests {
             .and_then(|v| v.get("elapsed_seconds"))
             .and_then(|v| v.as_f64())
             .expect("expected time elapsed_seconds");
-        assert!((elapsed - 100.3).abs() < 1e-6, "unexpected elapsed={elapsed}");
+        assert!(
+            (elapsed - 100.3).abs() < 1e-6,
+            "unexpected elapsed={elapsed}"
+        );
 
         let remaining = budgets
             .get("time")
             .and_then(|v| v.get("remaining_seconds"))
             .and_then(|v| v.as_f64())
             .expect("expected time remaining_seconds");
-        assert!((remaining - 99.8).abs() < 1e-6, "unexpected remaining={remaining}");
+        assert!(
+            (remaining - 99.8).abs() < 1e-6,
+            "unexpected remaining={remaining}"
+        );
 
         let components = summary
             .get("components")
             .and_then(|v| v.as_array())
             .expect("expected components array");
         assert_eq!(
-            components[0].get("regen_remaining").and_then(|v| v.as_u64()),
+            components[0]
+                .get("regen_remaining")
+                .and_then(|v| v.as_u64()),
             Some(0)
         );
         assert_eq!(
@@ -5879,7 +5956,9 @@ mod tests {
             Some(true)
         );
         assert_eq!(
-            components[1].get("regen_remaining").and_then(|v| v.as_u64()),
+            components[1]
+                .get("regen_remaining")
+                .and_then(|v| v.as_u64()),
             Some(1)
         );
         assert_eq!(

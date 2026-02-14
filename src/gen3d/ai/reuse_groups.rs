@@ -27,6 +27,8 @@ pub(super) struct Gen3dAutoCopyReport {
     pub(super) subtree_copies_applied: usize,
     pub(super) targets_skipped_already_generated: usize,
     pub(super) subtrees_skipped_partially_generated: usize,
+    pub(super) preflight_mismatches: Vec<String>,
+    pub(super) fallback_component_indices: Vec<usize>,
     pub(super) errors: Vec<String>,
     pub(super) outcomes: Vec<super::copy_component::Gen3dCopyComponentOutcome>,
 }
@@ -70,6 +72,17 @@ fn collect_subtree_indices(children: &[Vec<usize>], root_idx: usize) -> Vec<usiz
         }
     }
     out
+}
+
+fn is_component_leaf(components: &[Gen3dPlannedComponent], idx: usize) -> bool {
+    let Some(name) = components.get(idx).map(|c| c.name.as_str()) else {
+        return false;
+    };
+    !components.iter().any(|c| {
+        c.attach_to
+            .as_ref()
+            .is_some_and(|att| att.parent.as_str() == name)
+    })
 }
 
 fn parse_kind(kind: AiReuseGroupKindJson) -> Option<Gen3dReuseGroupKind> {
@@ -214,6 +227,11 @@ pub(super) fn missing_only_generation_indices(
                 if source_idx < required_sources.len() {
                     required_sources[source_idx] = true;
                 }
+                let can_copy = group.mode != Gen3dCopyMode::Linked
+                    || is_component_leaf(planned_components, source_idx);
+                if !can_copy {
+                    continue;
+                }
                 for &target_idx in &group.target_root_indices {
                     if target_idx < skip_targets.len() {
                         skip_targets[target_idx] = true;
@@ -227,6 +245,14 @@ pub(super) fn missing_only_generation_indices(
                     }
                 }
                 for &target_root in &group.target_root_indices {
+                    let preflight = super::copy_component::preflight_subtree_copy_compatibility(
+                        planned_components,
+                        source_idx,
+                        target_root,
+                    );
+                    if preflight.is_err() {
+                        continue;
+                    }
                     for idx in collect_subtree_indices(&children, target_root) {
                         if idx < skip_targets.len() {
                             skip_targets[idx] = true;
@@ -263,6 +289,7 @@ pub(super) fn apply_auto_copy(
     }
 
     let children = build_children_map(planned_components);
+    let mut fallback_component_indices: HashSet<usize> = HashSet::new();
 
     for group in reuse_groups {
         let source_root_idx = group.source_root_idx;
@@ -296,6 +323,27 @@ pub(super) fn apply_auto_copy(
 
         match group.kind {
             Gen3dReuseGroupKind::Component => {
+                if group.mode == Gen3dCopyMode::Linked
+                    && !is_component_leaf(planned_components, source_root_idx)
+                {
+                    let source_name = planned_components
+                        .get(source_root_idx)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("<missing>");
+                    report.preflight_mismatches.push(format!(
+                        "auto_copy: preflight mismatch for source `{source_name}`: mode=linked requires a leaf source; fallback to llm_generate_component_v1 for targets"
+                    ));
+                    for &target_idx in &group.target_root_indices {
+                        if planned_components
+                            .get(target_idx)
+                            .is_some_and(|c| c.actual_size.is_none())
+                        {
+                            fallback_component_indices.insert(target_idx);
+                        }
+                    }
+                    continue;
+                }
+
                 for &target_idx in &group.target_root_indices {
                     let Some(target) = planned_components.get(target_idx) else {
                         report
@@ -327,6 +375,33 @@ pub(super) fn apply_auto_copy(
             }
             Gen3dReuseGroupKind::Subtree => {
                 for &target_root_idx in &group.target_root_indices {
+                    if let Err(err) = super::copy_component::preflight_subtree_copy_compatibility(
+                        planned_components,
+                        source_root_idx,
+                        target_root_idx,
+                    ) {
+                        let source_name = planned_components
+                            .get(source_root_idx)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("<missing>");
+                        let target_name = planned_components
+                            .get(target_root_idx)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("<missing>");
+                        report.preflight_mismatches.push(format!(
+                            "auto_copy: preflight mismatch for subtree `{source_name}` -> `{target_name}`: {err}; fallback to llm_generate_component_v1"
+                        ));
+                        for idx in collect_subtree_indices(&children, target_root_idx) {
+                            if planned_components
+                                .get(idx)
+                                .is_some_and(|c| c.actual_size.is_none())
+                            {
+                                fallback_component_indices.insert(idx);
+                            }
+                        }
+                        continue;
+                    }
+
                     let subtree_indices = collect_subtree_indices(&children, target_root_idx);
                     let mut any_generated = false;
                     for idx in &subtree_indices {
@@ -364,6 +439,12 @@ pub(super) fn apply_auto_copy(
         }
     }
 
+    if !fallback_component_indices.is_empty() {
+        let mut indices: Vec<usize> = fallback_component_indices.into_iter().collect();
+        indices.sort_unstable();
+        report.fallback_component_indices = indices;
+    }
+
     report
 }
 
@@ -392,14 +473,30 @@ mod tests {
     }
 
     fn attach(child: &mut Gen3dPlannedComponent, parent: &str) {
+        attach_with_edge(child, parent, "origin", "origin");
+    }
+
+    fn attach_with_edge(
+        child: &mut Gen3dPlannedComponent,
+        parent: &str,
+        parent_anchor: &str,
+        child_anchor: &str,
+    ) {
         child.attach_to = Some(super::super::Gen3dPlannedAttachment {
             parent: parent.to_string(),
-            parent_anchor: "origin".to_string(),
-            child_anchor: "origin".to_string(),
+            parent_anchor: parent_anchor.to_string(),
+            child_anchor: child_anchor.to_string(),
             offset: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
+    }
+
+    fn anchor(name: &str) -> AnchorDef {
+        AnchorDef {
+            name: name.to_string().into(),
+            transform: Transform::IDENTITY,
+        }
     }
 
     #[test]
@@ -465,6 +562,124 @@ mod tests {
             indices,
             vec![0, 1, 2],
             "expected to generate body + full source subtree"
+        );
+    }
+
+    #[test]
+    fn subtree_reuse_fallback_generates_targets_on_shape_mismatch() {
+        let mut components = vec![
+            stub_component("body"),
+            stub_component("leg0_root"),
+            stub_component("leg0_foot"),
+            stub_component("leg1_root"),
+            stub_component("leg1_foot"),
+            stub_component("leg1_spur"),
+        ];
+        attach_with_edge(&mut components[1], "body", "mount0", "hip");
+        attach_with_edge(&mut components[2], "leg0_root", "knee", "hip");
+        attach_with_edge(&mut components[3], "body", "mount1", "hip");
+        attach_with_edge(&mut components[4], "leg1_root", "knee", "hip");
+        // Extra branch on target root makes subtree shape incompatible with source.
+        attach_with_edge(&mut components[5], "leg1_root", "spur", "hip");
+
+        let (validated, warnings) = validate_reuse_groups(
+            &[AiReuseGroupJson {
+                kind: AiReuseGroupKindJson::Subtree,
+                source: "leg0_root".into(),
+                targets: vec!["leg1_root".into()],
+                mode: None,
+                anchors: None,
+            }],
+            &components,
+        );
+        assert!(warnings.is_empty());
+
+        let indices = missing_only_generation_indices(&components, &validated);
+        assert_eq!(
+            indices,
+            vec![0, 1, 2, 3, 4, 5],
+            "shape mismatch should preflight-fallback to generation for target subtree"
+        );
+    }
+
+    #[test]
+    fn subtree_reuse_still_skips_when_missing_branch_is_cloneable() {
+        let mut components = vec![
+            stub_component("body"),
+            stub_component("leg0_root"),
+            stub_component("leg0_foot"),
+            stub_component("leg1_root"),
+        ];
+        components[3].anchors.push(anchor("knee"));
+        attach_with_edge(&mut components[1], "body", "mount0", "hip");
+        attach_with_edge(&mut components[2], "leg0_root", "knee", "hip");
+        attach_with_edge(&mut components[3], "body", "mount1", "hip");
+
+        let (validated, warnings) = validate_reuse_groups(
+            &[AiReuseGroupJson {
+                kind: AiReuseGroupKindJson::Subtree,
+                source: "leg0_root".into(),
+                targets: vec!["leg1_root".into()],
+                mode: None,
+                anchors: None,
+            }],
+            &components,
+        );
+        assert!(warnings.is_empty());
+
+        let indices = missing_only_generation_indices(&components, &validated);
+        assert_eq!(
+            indices,
+            vec![0, 1, 2],
+            "missing target branch should stay copyable (cloneable), so target subtree remains skipped"
+        );
+    }
+
+    #[test]
+    fn auto_copy_reports_preflight_mismatch_and_fallback_targets() {
+        let mut components = vec![
+            stub_component("body"),
+            stub_component("leg0_root"),
+            stub_component("leg0_foot"),
+            stub_component("leg1_root"),
+            stub_component("leg1_foot"),
+            stub_component("leg1_spur"),
+        ];
+        attach_with_edge(&mut components[1], "body", "mount0", "hip");
+        attach_with_edge(&mut components[2], "leg0_root", "knee", "hip");
+        attach_with_edge(&mut components[3], "body", "mount1", "hip");
+        attach_with_edge(&mut components[4], "leg1_root", "knee", "hip");
+        attach_with_edge(&mut components[5], "leg1_root", "spur", "hip");
+
+        // Source subtree is generated; target subtree is missing.
+        components[1].actual_size = Some(Vec3::ONE);
+        components[2].actual_size = Some(Vec3::ONE);
+
+        let (validated, warnings) = validate_reuse_groups(
+            &[AiReuseGroupJson {
+                kind: AiReuseGroupKindJson::Subtree,
+                source: "leg0_root".into(),
+                targets: vec!["leg1_root".into()],
+                mode: None,
+                anchors: None,
+            }],
+            &components,
+        );
+        assert!(warnings.is_empty());
+
+        let mut draft = crate::gen3d::state::Gen3dDraft::default();
+        let report = apply_auto_copy(&mut components, &mut draft, &validated);
+        assert_eq!(report.component_copies_applied, 0);
+        assert_eq!(report.subtree_copies_applied, 0);
+        assert!(report.errors.is_empty());
+        assert_eq!(report.fallback_component_indices, vec![3, 4, 5]);
+        assert!(
+            report
+                .preflight_mismatches
+                .iter()
+                .any(|m| m.contains("preflight mismatch")),
+            "expected a preflight mismatch note, got {:?}",
+            report.preflight_mismatches
         );
     }
 }
