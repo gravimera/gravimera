@@ -319,6 +319,11 @@ fn build_agent_user_text(
             TOOL_ID_LLM_GENERATE_COMPONENT => {
                 let idx = value.get("component_index").and_then(|v| v.as_u64());
                 let name = value.get("component_name").and_then(|v| v.as_str());
+                let skipped_due_to_regen_budget = value
+                    .get("skipped_due_to_regen_budget")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let regen_count = value.get("regen_count").and_then(|v| v.as_u64());
                 out.push_str("ok");
                 if let Some(idx) = idx {
                     out.push_str(&format!(" idx={idx}"));
@@ -326,12 +331,26 @@ fn build_agent_user_text(
                 if let Some(name) = name {
                     out.push_str(&format!(" name={name}"));
                 }
+                if skipped_due_to_regen_budget {
+                    out.push_str(" skipped_due_to_regen_budget=true");
+                    if let Some(regen_count) = regen_count {
+                        out.push_str(&format!(" regen_count={regen_count}"));
+                    }
+                }
             }
             TOOL_ID_LLM_GENERATE_COMPONENTS => {
                 let requested = value.get("requested").and_then(|v| v.as_u64());
                 let succeeded = value.get("succeeded").and_then(|v| v.as_u64());
                 let failed = value
                     .get("failed")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
+                let regen_skipped = value
+                    .get("skipped_due_to_regen_budget")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
+                let reuse_skipped = value
+                    .get("skipped_due_to_reuse_groups")
                     .and_then(|v| v.as_array())
                     .map(|a| a.len());
                 out.push_str("ok");
@@ -343,6 +362,16 @@ fn build_agent_user_text(
                 }
                 if let Some(failed) = failed {
                     out.push_str(&format!(" failed={failed}"));
+                }
+                if let Some(total) = regen_skipped {
+                    if total > 0 {
+                        out.push_str(&format!(" regen_budget_skipped={total}"));
+                    }
+                }
+                if let Some(total) = reuse_skipped {
+                    if total > 0 {
+                        out.push_str(&format!(" reuse_skipped={total}"));
+                    }
                 }
             }
             TOOL_ID_LLM_REVIEW_DELTA => {
@@ -722,11 +751,25 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
         .iter()
         .enumerate()
         .map(|(idx, c)| {
+            let regen_count = job.regen_per_component.get(idx).copied().unwrap_or(0);
+            let max_total = config.gen3d_max_regen_total;
+            let max_per_component = config.gen3d_max_regen_per_component;
+            let regen_total_blocked = max_total > 0 && job.regen_total >= max_total;
+            let regen_component_blocked =
+                max_per_component > 0 && regen_count >= max_per_component;
+            let regen_budget_blocked = regen_total_blocked || regen_component_blocked;
+            let regen_remaining = if max_per_component == 0 {
+                None
+            } else {
+                Some(max_per_component.saturating_sub(regen_count))
+            };
             serde_json::json!({
                 "index": idx,
                 "name": c.name.as_str(),
                 "generated": c.actual_size.is_some(),
-                "regen_count": job.regen_per_component.get(idx).copied().unwrap_or(0),
+                "regen_count": regen_count,
+                "regen_remaining": regen_remaining,
+                "regen_budget_blocked": regen_budget_blocked,
             })
         })
         .collect();
@@ -775,6 +818,34 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
         &job.reuse_groups,
     );
 
+    let regen_remaining_total = if config.gen3d_max_regen_total == 0 {
+        None
+    } else {
+        Some(config.gen3d_max_regen_total.saturating_sub(job.regen_total))
+    };
+    let no_progress_steps_remaining = if config.gen3d_no_progress_max_steps == 0 {
+        None
+    } else {
+        Some(
+            config
+                .gen3d_no_progress_max_steps
+                .saturating_sub(job.agent.no_progress_steps),
+        )
+    };
+    let run_elapsed_seconds = job.run_elapsed().map(|d| d.as_secs_f64());
+    let time_budget_remaining_seconds = if config.gen3d_max_seconds == 0 {
+        None
+    } else {
+        run_elapsed_seconds.map(|elapsed| {
+            (config.gen3d_max_seconds as f64 - elapsed).max(0.0)
+        })
+    };
+    let token_budget_remaining = if config.gen3d_max_tokens == 0 {
+        None
+    } else {
+        Some(config.gen3d_max_tokens.saturating_sub(job.current_run_tokens()))
+    };
+
     serde_json::json!({
         "run_id": job.run_id.map(|id| id.to_string()),
         "attempt": job.attempt,
@@ -782,6 +853,7 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
         "plan_hash": job.plan_hash,
         "assembly_rev": job.assembly_rev,
         "needs_review": job.agent.rendered_since_last_review,
+        "no_progress_steps": job.agent.no_progress_steps,
         "pending_regen_component_indices": &job.agent.pending_regen_component_indices,
         "pending_regen_component_indices_skipped_due_to_budget": &job
             .agent
@@ -795,6 +867,29 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
             "ever_reviewed": job.agent.ever_reviewed,
             "ever_validated": job.agent.ever_validated,
             "ever_smoke_checked": job.agent.ever_smoke_checked,
+        },
+        "budgets": {
+            "regen": {
+                "max_total": config.gen3d_max_regen_total,
+                "used_total": job.regen_total,
+                "remaining_total": regen_remaining_total,
+                "max_per_component": config.gen3d_max_regen_per_component,
+            },
+            "no_progress": {
+                "max_steps": config.gen3d_no_progress_max_steps,
+                "used_steps": job.agent.no_progress_steps,
+                "remaining_steps": no_progress_steps_remaining,
+            },
+            "time": {
+                "max_seconds": config.gen3d_max_seconds,
+                "elapsed_seconds": run_elapsed_seconds.map(|v| (v * 10.0).round() / 10.0),
+                "remaining_seconds": time_budget_remaining_seconds.map(|v| (v * 10.0).round() / 10.0),
+            },
+            "tokens": {
+                "max_tokens": config.gen3d_max_tokens,
+                "used_run_tokens": job.current_run_tokens(),
+                "remaining_run_tokens": token_budget_remaining,
+            },
         },
         "last_render_images": job
             .agent
@@ -5681,6 +5776,118 @@ mod tests {
         let h2 = compute_agent_state_hash(&job, &draft);
 
         assert_eq!(h1, h2, "state hash should ignore assembly_rev");
+    }
+
+    #[test]
+    fn gen3d_agent_state_summary_exposes_budget_remaining() {
+        let mut config = AppConfig::default();
+        config.gen3d_max_seconds = 200;
+        config.gen3d_max_tokens = 2000;
+        config.gen3d_no_progress_max_steps = 12;
+        config.gen3d_max_regen_total = 16;
+        config.gen3d_max_regen_per_component = 2;
+
+        let mut job = Gen3dAiJob::default();
+        job.running = false;
+        job.last_run_elapsed = Some(std::time::Duration::from_secs_f64(100.25));
+        job.current_run_tokens = 1234;
+        job.regen_total = 15;
+        job.regen_per_component = vec![2, 1];
+        job.agent.no_progress_steps = 5;
+        job.planned_components = vec![
+            super::super::Gen3dPlannedComponent {
+                display_name: "A".into(),
+                name: "a".into(),
+                purpose: String::new(),
+                modeling_notes: String::new(),
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                planned_size: Vec3::ONE,
+                actual_size: Some(Vec3::ONE),
+                anchors: Vec::new(),
+                contacts: Vec::new(),
+                attach_to: None,
+            },
+            super::super::Gen3dPlannedComponent {
+                display_name: "B".into(),
+                name: "b".into(),
+                purpose: String::new(),
+                modeling_notes: String::new(),
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                planned_size: Vec3::ONE,
+                actual_size: Some(Vec3::ONE),
+                anchors: Vec::new(),
+                contacts: Vec::new(),
+                attach_to: None,
+            },
+        ];
+
+        let summary = draft_summary(&config, &job);
+        let budgets = summary
+            .get("budgets")
+            .and_then(|v| v.as_object())
+            .expect("expected budgets object in state summary");
+
+        let regen_remaining = budgets
+            .get("regen")
+            .and_then(|v| v.get("remaining_total"))
+            .and_then(|v| v.as_u64())
+            .expect("expected regen remaining_total");
+        assert_eq!(regen_remaining, 1);
+
+        let no_progress_remaining = budgets
+            .get("no_progress")
+            .and_then(|v| v.get("remaining_steps"))
+            .and_then(|v| v.as_u64())
+            .expect("expected no_progress remaining_steps");
+        assert_eq!(no_progress_remaining, 7);
+
+        let token_remaining = budgets
+            .get("tokens")
+            .and_then(|v| v.get("remaining_run_tokens"))
+            .and_then(|v| v.as_u64())
+            .expect("expected tokens remaining_run_tokens");
+        assert_eq!(token_remaining, 766);
+
+        let elapsed = budgets
+            .get("time")
+            .and_then(|v| v.get("elapsed_seconds"))
+            .and_then(|v| v.as_f64())
+            .expect("expected time elapsed_seconds");
+        assert!((elapsed - 100.3).abs() < 1e-6, "unexpected elapsed={elapsed}");
+
+        let remaining = budgets
+            .get("time")
+            .and_then(|v| v.get("remaining_seconds"))
+            .and_then(|v| v.as_f64())
+            .expect("expected time remaining_seconds");
+        assert!((remaining - 99.8).abs() < 1e-6, "unexpected remaining={remaining}");
+
+        let components = summary
+            .get("components")
+            .and_then(|v| v.as_array())
+            .expect("expected components array");
+        assert_eq!(
+            components[0].get("regen_remaining").and_then(|v| v.as_u64()),
+            Some(0)
+        );
+        assert_eq!(
+            components[0]
+                .get("regen_budget_blocked")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            components[1].get("regen_remaining").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            components[1]
+                .get("regen_budget_blocked")
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     #[test]
