@@ -359,6 +359,65 @@ Notes:
 - Requires a prior `POST /v1/scene_sources/import`.
 - Validation does not mutate the world or the on-disk sources.
 
+### `POST /v1/scene_sources/patch_validate`
+
+Validate a patch (dry-run) against the currently loaded scene sources.
+
+Request body:
+
+```json
+{
+  "scorecard": { "format_version": 1, "hard_gates": [{ "kind": "schema" }] },
+  "patch": {
+    "format_version": 1,
+    "request_id": "req_123",
+    "ops": [
+      {
+        "kind": "upsert_layer",
+        "layer_id": "layer_a",
+        "doc": { "kind": "explicit_instances", "instances": [] }
+      }
+    ]
+  }
+}
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "patch_summary": { "changed_paths": ["layers/layer_a.json"], "derived_instance_ids": {} },
+  "validation_report": { "hard_gates_passed": true, "violations": [] }
+}
+```
+
+Notes:
+
+- Dry-run only: does not write to disk and does not recompile.
+
+### `POST /v1/scene_sources/patch_apply`
+
+Apply a patch by mutating the authoritative `src/` files, then recompiling all layers.
+
+Request body: same as `patch_validate`.
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "applied": true,
+  "patch_summary": { "changed_paths": ["layers/layer_a.json"], "derived_instance_ids": {} },
+  "compile_report": { "spawned": 0, "updated": 1, "despawned": 1, "layers_compiled": 2, "pinned_upserts": 1 },
+  "validation_report": { "hard_gates_passed": true, "violations": [] }
+}
+```
+
+Notes:
+
+- If validation fails, the response has `"applied": false` and includes the `validation_report`.
+
 ### `POST /v1/mode`
 
 Switch game mode: `build`, `play`, `gen3d` (alias `gen3d_workshop`).

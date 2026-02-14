@@ -24,6 +24,7 @@ mod platform;
 mod player;
 mod rts;
 mod scene_sources;
+mod scene_sources_patch;
 mod scene_sources_runtime;
 mod scene_validation;
 mod scene_store;

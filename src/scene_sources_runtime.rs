@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -12,6 +13,9 @@ use crate::scene_validation::{
 };
 use crate::scene_sources::{
     SceneSourcesIndexPaths, SceneSourcesV1, SCENE_SOURCES_FORMAT_VERSION,
+};
+use crate::scene_sources_patch::{
+    apply_patch_to_sources, SceneSourcesPatchSummaryV1, SceneSourcesPatchV1,
 };
 use crate::types::{
     AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, ObjectId, ObjectPrefabId,
@@ -641,7 +645,7 @@ pub(crate) struct SceneWorldInstance {
     pub(crate) owner_layer_id: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub(crate) struct SceneCompileReport {
     pub(crate) spawned: usize,
     pub(crate) updated: usize,
@@ -979,6 +983,26 @@ pub(crate) fn validate_scene_sources(
     existing_instances: impl Iterator<Item = SceneWorldInstance>,
     scorecard: &ScorecardSpecV1,
 ) -> Result<ValidationReportV1, String> {
+    let Some(sources) = workspace.sources.as_ref() else {
+        return Err("No scene sources have been imported in this session.".to_string());
+    };
+
+    validate_scene_sources_impl(
+        sources,
+        workspace.loaded_from_dir.as_deref(),
+        library,
+        existing_instances,
+        scorecard,
+    )
+}
+
+fn validate_scene_sources_impl(
+    sources: &SceneSourcesV1,
+    loaded_from_dir: Option<&Path>,
+    library: &ObjectLibrary,
+    existing_instances: impl Iterator<Item = SceneWorldInstance>,
+    scorecard: &ScorecardSpecV1,
+) -> Result<ValidationReportV1, String> {
     if scorecard.format_version != crate::scene_validation::SCORECARD_FORMAT_VERSION {
         return Err(format!(
             "Unsupported scorecard format_version {} (expected {})",
@@ -986,10 +1010,6 @@ pub(crate) fn validate_scene_sources(
             crate::scene_validation::SCORECARD_FORMAT_VERSION
         ));
     }
-
-    let Some(sources) = workspace.sources.as_ref() else {
-        return Err("No scene sources have been imported in this session.".to_string());
-    };
 
     let scene_id = sources
         .meta_json
@@ -1134,7 +1154,7 @@ pub(crate) fn validate_scene_sources(
     }
 
     // Portal validity: destination scenes and marker refs (if possible).
-    let known_scene_ids = match workspace.loaded_from_dir.as_ref() {
+    let known_scene_ids = match loaded_from_dir {
         Some(src_dir) => discover_known_scene_ids(src_dir)?,
         None => HashSet::new(),
     };
@@ -1271,6 +1291,94 @@ pub(crate) fn validate_scene_sources(
     }
 
     Ok(report)
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SceneSourcesPatchValidateReport {
+    pub(crate) patch_summary: SceneSourcesPatchSummaryV1,
+    pub(crate) validation_report: ValidationReportV1,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SceneSourcesPatchApplyReport {
+    pub(crate) applied: bool,
+    pub(crate) patch_summary: SceneSourcesPatchSummaryV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) compile_report: Option<SceneCompileReport>,
+    pub(crate) validation_report: ValidationReportV1,
+}
+
+pub(crate) fn validate_scene_sources_patch(
+    workspace: &SceneSourcesWorkspace,
+    library: &ObjectLibrary,
+    scorecard: &ScorecardSpecV1,
+    patch: &SceneSourcesPatchV1,
+) -> Result<SceneSourcesPatchValidateReport, String> {
+    let Some(src_dir) = workspace.loaded_from_dir.as_deref() else {
+        return Err("No scene sources directory has been imported in this session.".to_string());
+    };
+
+    let sources = SceneSourcesV1::load_from_dir(src_dir).map_err(|err| err.to_string())?;
+    let mut patched = sources.clone();
+    let patch_summary = apply_patch_to_sources(&mut patched, patch)?;
+    let validation_report = validate_scene_sources_impl(
+        &patched,
+        Some(src_dir),
+        library,
+        std::iter::empty(),
+        scorecard,
+    )?;
+
+    Ok(SceneSourcesPatchValidateReport {
+        patch_summary,
+        validation_report,
+    })
+}
+
+pub(crate) fn apply_scene_sources_patch(
+    commands: &mut Commands,
+    workspace: &mut SceneSourcesWorkspace,
+    library: &ObjectLibrary,
+    existing_instances: impl Iterator<Item = SceneWorldInstance>,
+    scorecard: &ScorecardSpecV1,
+    patch: &SceneSourcesPatchV1,
+) -> Result<SceneSourcesPatchApplyReport, String> {
+    let Some(src_dir) = workspace.loaded_from_dir.as_deref() else {
+        return Err("No scene sources directory has been imported in this session.".to_string());
+    };
+
+    let sources = SceneSourcesV1::load_from_dir(src_dir).map_err(|err| err.to_string())?;
+    let mut patched = sources.clone();
+    let patch_summary = apply_patch_to_sources(&mut patched, patch)?;
+    let validation_report = validate_scene_sources_impl(
+        &patched,
+        Some(src_dir),
+        library,
+        std::iter::empty(),
+        scorecard,
+    )?;
+
+    if !validation_report.hard_gates_passed {
+        return Ok(SceneSourcesPatchApplyReport {
+            applied: false,
+            patch_summary,
+            compile_report: None,
+            validation_report,
+        });
+    }
+
+    patched.write_to_dir(src_dir).map_err(|err| err.to_string())?;
+    workspace.sources = Some(patched);
+
+    let compile_report =
+        compile_scene_sources_all_layers(commands, workspace, library, existing_instances)?;
+
+    Ok(SceneSourcesPatchApplyReport {
+        applied: true,
+        patch_summary,
+        compile_report: Some(compile_report),
+        validation_report,
+    })
 }
 
 pub(crate) fn compile_scene_sources_all_layers(

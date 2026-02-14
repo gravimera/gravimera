@@ -17,13 +17,13 @@ Verification is via an automation-driven integration test that applies a small p
 ## Progress
 
 - [x] (2026-02-13) Create the initial ExecPlan.
-- [ ] (2026-02-13) Confirm Milestones 1–4 landed (sources + round-trip + compilation + validation reports).
-- [ ] (2026-02-13) Define the minimal blueprint patch operations needed for scene generation iteration (spawn/edit/destroy, layer edits, pin/unpin).
-- [ ] (2026-02-13) Implement blueprint validate/apply that edits `src/` (not binary caches) and returns a structured “what changed” summary.
-- [ ] (2026-02-13) Ensure apply is idempotent under `request_id` semantics (repeat apply does not duplicate content).
-- [ ] (2026-02-13) Expose validate/apply via automation endpoint(s) for integration testing.
-- [ ] (2026-02-13) Add fixtures + integration tests for patch apply.
-- [ ] (2026-02-13) Run `cargo test` + headless smoke boot and commit.
+- [x] (2026-02-14) Confirm Milestones 1–4 landed (sources + round-trip + compilation + validation reports).
+- [x] (2026-02-14) Define the minimal blueprint patch operations needed for scene generation iteration (spawn/edit/destroy, layer edits, pin/unpin).
+- [x] (2026-02-14) Implement blueprint validate/apply that edits `src/` (not binary caches) and returns a structured “what changed” summary.
+- [x] (2026-02-14) Ensure apply is idempotent under `request_id` semantics (repeat apply does not duplicate content).
+- [x] (2026-02-14) Expose validate/apply via automation endpoint(s) for integration testing.
+- [x] (2026-02-14) Add fixtures + integration tests for patch apply.
+- [x] (2026-02-14) Run `cargo test` + headless smoke boot and commit.
 
 ## Surprises & Discoveries
 
@@ -42,7 +42,16 @@ Verification is via an automation-driven integration test that applies a small p
 
 ## Outcomes & Retrospective
 
-(Fill in at completion.)
+- Shipped a minimal, deterministic SceneSourcesPatch format (BlueprintPatch subset):
+  - `docs/gamedesign/31_scene_sources_patch_v1.md`
+- Added patch validate/apply in sources-mode (mutate `src/` → recompile → validate):
+  - `POST /v1/scene_sources/patch_validate`
+  - `POST /v1/scene_sources/patch_apply`
+- Enforced retry-safe, deterministic id derivation for pinned instances using `local_ref` + `request_id`.
+- Added an integration test covering:
+  - layer edit patch apply (signature deltas scoped to one layer),
+  - idempotent patch re-apply (no changed paths),
+  - deterministic derived ids for pinned instance upserts.
 
 ## Context and Orientation
 
