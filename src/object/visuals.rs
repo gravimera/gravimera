@@ -775,7 +775,7 @@ pub(crate) fn update_part_animations(
         } else {
             0.0
         };
-        let aim_quat = if aim_delta.is_finite() {
+        let aim_quat_parent = if aim_delta.is_finite() {
             Quat::from_rotation_y(aim_delta)
         } else {
             Quat::IDENTITY
@@ -783,6 +783,34 @@ pub(crate) fn update_part_animations(
 
         let mut base = player.base_transform;
         if player.apply_aim_yaw {
+            // `AimYawDelta` is expressed in the root body's frame (+Y is up). For attachments,
+            // the join frame at `parent_anchor` can be arbitrarily oriented (e.g. a neck anchor's
+            // +Z points "out of the joint", not necessarily world-forward). Convert the yaw
+            // rotation into the join frame so aim always yaws around the parent's vertical axis.
+            let aim_quat = if let Some(attachment) = player.attachment.as_ref() {
+                library
+                    .get(player.parent_object_id)
+                    .and_then(|parent_def| {
+                        anchor_transform(parent_def, attachment.parent_anchor.as_ref())
+                    })
+                    .map(|anchor| {
+                        let anchor_rot = if anchor.rotation.is_finite() {
+                            anchor.rotation.normalize()
+                        } else {
+                            Quat::IDENTITY
+                        };
+                        let q = anchor_rot.inverse() * aim_quat_parent * anchor_rot;
+                        if q.is_finite() {
+                            q.normalize()
+                        } else {
+                            Quat::IDENTITY
+                        }
+                    })
+                    .unwrap_or(aim_quat_parent)
+            } else {
+                aim_quat_parent
+            };
+
             base.rotation = aim_quat * base.rotation;
         }
 
@@ -1044,6 +1072,87 @@ mod tests {
         assert!(
             right < 0.0,
             "expected right distance to stay negative, got {right}"
+        );
+    }
+
+    #[test]
+    fn aim_yaw_applies_in_parent_frame_even_when_anchor_frame_is_rotated() {
+        use crate::object::registry::{AnchorDef, ColliderProfile, ObjectDef, ObjectInteraction};
+        use crate::types::AimYawDelta;
+
+        // A rotated anchor frame where +Z points up (common for "neck"/"shoulder" style joints).
+        // If we naively apply yaw in the *anchor* frame, we'd rotate around a horizontal axis.
+        let anchor_rot =
+            Quat::from_mat3(&Mat3::from_cols(Vec3::NEG_X, Vec3::Z, Vec3::Y)).normalize();
+
+        let parent_id = 0xfeed_face_u128;
+        let mut library = ObjectLibrary::default();
+        library.upsert(ObjectDef {
+            object_id: parent_id,
+            label: "parent".into(),
+            size: Vec3::ONE,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![AnchorDef {
+                name: "neck".into(),
+                transform: Transform::from_rotation(anchor_rot),
+            }],
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(library);
+        app.add_systems(Update, update_part_animations);
+
+        let aim_delta = core::f32::consts::FRAC_PI_2;
+        let expected = Quat::from_rotation_y(aim_delta);
+
+        let root = app.world_mut().spawn(AimYawDelta(aim_delta)).id();
+        let part = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                PartAnimationPlayer {
+                    root_entity: root,
+                    parent_object_id: parent_id,
+                    child_object_id: None,
+                    attachment: Some(AttachmentDef {
+                        parent_anchor: "neck".into(),
+                        child_anchor: "origin".into(),
+                    }),
+                    base_transform: Transform::IDENTITY,
+                    animations: Vec::new(),
+                    apply_aim_yaw: true,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let transform = app
+            .world()
+            .get::<Transform>(part)
+            .copied()
+            .expect("part entity has Transform");
+
+        // Rest pose without yaw would be `anchor_rot`. The yaw delta should apply in the parent
+        // frame, so the relative delta should be exactly the expected yaw quaternion.
+        let delta = (transform.rotation * anchor_rot.inverse()).normalize();
+        assert!(
+            delta.angle_between(expected) < 1e-3,
+            "expected aim yaw delta to be applied in parent frame: anchor_rot={:?} delta={:?} expected={:?}",
+            anchor_rot,
+            delta,
+            expected,
         );
     }
 
