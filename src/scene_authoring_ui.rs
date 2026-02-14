@@ -1048,9 +1048,26 @@ pub(crate) fn scene_ui_clear_keyboard_state_when_captured(
 
 pub(crate) fn scene_ui_update_texts(
     state: Res<SceneAuthoringUiState>,
-    mut status: Query<&mut Text, With<SceneUiStatusText>>,
-    mut errors: Query<&mut Text, With<SceneUiErrorText>>,
-    mut fields: Query<(&SceneUiTextFieldText, &mut Text)>,
+    mut status: Query<
+        &mut Text,
+        (
+            With<SceneUiStatusText>,
+            Without<SceneUiErrorText>,
+            Without<SceneUiTextFieldText>,
+        ),
+    >,
+    mut errors: Query<
+        &mut Text,
+        (
+            With<SceneUiErrorText>,
+            Without<SceneUiStatusText>,
+            Without<SceneUiTextFieldText>,
+        ),
+    >,
+    mut fields: Query<
+        (&SceneUiTextFieldText, &mut Text),
+        (Without<SceneUiStatusText>, Without<SceneUiErrorText>),
+    >,
 ) {
     if !state.open {
         return;
