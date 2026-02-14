@@ -3821,6 +3821,8 @@ fn poll_agent_tool(
         return;
     };
 
+    let mut stop_best_effort_after_tool: Option<String> = None;
+
     fn schedule_llm_tool_schema_repair(
         job: &mut Gen3dAiJob,
         workshop: &mut Gen3dWorkshop,
@@ -4362,6 +4364,24 @@ fn poll_agent_tool(
 
                     match super::parse::parse_ai_review_delta_from_text(&text) {
                         Ok(delta) => {
+                            let delta_requested_regen = delta.actions.iter().any(|action| {
+                                matches!(
+                                    action,
+                                    super::schema::AiReviewDeltaActionJsonV1::RegenComponent { .. }
+                                )
+                            });
+                            let delta_has_non_regen_actions = delta.actions.iter().any(|action| {
+                                !matches!(
+                                    action,
+                                    super::schema::AiReviewDeltaActionJsonV1::Accept
+                                        | super::schema::AiReviewDeltaActionJsonV1::ToolingFeedback {
+                                            ..
+                                        }
+                                        | super::schema::AiReviewDeltaActionJsonV1::RegenComponent {
+                                            ..
+                                        }
+                                )
+                            });
                             let extracted_feedback: Vec<super::schema::AiToolingFeedbackJsonV1> =
                                 delta
                                     .actions
@@ -4430,7 +4450,35 @@ fn poll_agent_tool(
                                     job.agent.pending_regen_component_indices_skipped_due_to_budget =
                                         regen_skipped.clone();
 
-                                    if apply.had_actions {
+                                    let non_actionable_regen_only = delta_requested_regen
+                                        && regen_allowed.is_empty()
+                                        && !regen_skipped.is_empty()
+                                        && !delta_has_non_regen_actions
+                                        && apply.replan_reason.is_none();
+
+                                    if non_actionable_regen_only {
+                                        let visual_qa_required = job
+                                            .openai
+                                            .as_ref()
+                                            .map(|openai| {
+                                                !openai.base_url.starts_with("mock://gen3d")
+                                            })
+                                            .unwrap_or(true);
+                                        let qa_ok = job.agent.ever_validated
+                                            && job.agent.ever_smoke_checked
+                                            && (!visual_qa_required
+                                                || (job.agent.ever_rendered
+                                                    && job.agent.ever_reviewed));
+                                        if qa_ok {
+                                            stop_best_effort_after_tool = Some(format!(
+                                                "Regen budget exhausted for requested component(s) (max_regen_total={}, max_regen_per_component={}).",
+                                                config.gen3d_max_regen_total,
+                                                config.gen3d_max_regen_per_component
+                                            ));
+                                        }
+                                    }
+
+                                    if apply.had_actions && !non_actionable_regen_only {
                                         job.assembly_rev = job.assembly_rev.saturating_add(1);
                                         write_gen3d_assembly_snapshot(
                                             job.pass_dir.as_deref(),
@@ -4447,7 +4495,7 @@ fn poll_agent_tool(
                                         serde_json::json!({
                                             "ok": true,
                                             "accepted": apply.accepted,
-                                            "had_actions": apply.had_actions,
+                                            "had_actions": apply.had_actions && !non_actionable_regen_only,
                                             "regen_component_indices": regen_allowed,
                                             "regen_component_indices_skipped_due_to_budget": regen_skipped,
                                             "replan_reason": apply.replan_reason,
@@ -4691,6 +4739,50 @@ fn poll_agent_tool(
     let tool_ok_for_guard = tool_result.ok;
     note_observable_tool_result(job, &tool_result);
     job.agent.step_tool_results.push(tool_result);
+
+    if let Some(reason) = stop_best_effort_after_tool.take() {
+        workshop.error = None;
+        let status = format!(
+            "Build finished (best effort).\nReason: {}",
+            super::truncate_for_ui(reason.trim(), 600)
+        );
+        if maybe_start_pass_snapshot_capture(
+            config,
+            commands,
+            images,
+            workshop,
+            job,
+            draft,
+            super::Gen3dAgentAfterPassSnapshot::FinishRun {
+                workshop_status: status.clone(),
+                run_log: format!("budget_stop reason={}", super::truncate_for_ui(reason.trim(), 600)),
+                info_log: format!(
+                    "Gen3D agent: best-effort stop (regen budget exhausted). reason={:?}",
+                    reason.trim()
+                ),
+            },
+        ) {
+            workshop.status = status;
+            return;
+        }
+
+        workshop.status = status;
+        append_gen3d_run_log(
+            job.pass_dir.as_deref(),
+            format!("budget_stop reason={}", super::truncate_for_ui(reason.trim(), 600)),
+        );
+        info!(
+            "Gen3D agent: best-effort stop (regen budget exhausted). reason={:?}",
+            reason.trim()
+        );
+        job.finish_run_metrics();
+        job.running = false;
+        job.build_complete = true;
+        job.phase = Gen3dAiPhase::Idle;
+        job.shared_progress = None;
+        job.shared_result = None;
+        return;
+    }
 
     if !tool_ok_for_guard || tool_id_for_guard == TOOL_ID_LLM_GENERATE_PLAN {
         // End the step early on async tool failures (avoid cascades), and also enforce
@@ -5364,7 +5456,9 @@ fn compute_agent_state_hash(job: &Gen3dAiJob, draft: &Gen3dDraft) -> String {
         0,
         0,
         &job.plan_hash,
-        job.assembly_rev,
+        // No-progress guard should reflect *actual* assembly state, not revision counters.
+        // Some tool results can bump `assembly_rev` even when the assembled draft doesn't change.
+        0,
         &job.planned_components,
         draft,
     );
@@ -5573,6 +5667,21 @@ mod tests {
     use crate::gen3d::state::{Gen3dDraft, Gen3dPreview, Gen3dSpeedMode, Gen3dWorkshop};
     use crate::gen3d::tool_feedback::Gen3dToolFeedbackHistory;
     use uuid::Uuid;
+
+    #[test]
+    fn gen3d_no_progress_state_hash_ignores_assembly_rev_churn() {
+        let mut job = Gen3dAiJob::default();
+        job.plan_hash = "sha256:deadbeef".to_string();
+
+        let draft = Gen3dDraft::default();
+
+        job.assembly_rev = 1;
+        let h1 = compute_agent_state_hash(&job, &draft);
+        job.assembly_rev = 999;
+        let h2 = compute_agent_state_hash(&job, &draft);
+
+        assert_eq!(h1, h2, "state hash should ignore assembly_rev");
+    }
 
     #[test]
     fn gen3d_agent_step_prompt_compacts_large_tool_payloads() {
