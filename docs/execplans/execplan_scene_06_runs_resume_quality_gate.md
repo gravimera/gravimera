@@ -19,13 +19,13 @@ Verification is via tests that:
 ## Progress
 
 - [x] (2026-02-13) Create the initial ExecPlan.
-- [ ] (2026-02-13) Confirm Milestones 1–5 landed (sources + compilation + validation + blueprint apply).
-- [ ] (2026-02-13) Define the on-disk run directory layout and which artifacts are required at each checkpoint.
-- [ ] (2026-02-13) Implement run step tracking and checkpoint writes (spec inputs, patch history, reports, signatures).
-- [ ] (2026-02-13) Implement resume semantics (detect last completed checkpoint, retry safely using idempotent request ids).
-- [ ] (2026-02-13) Add fixture compilation signature tests (a deterministic “golden” suite).
-- [ ] (2026-02-13) Add a documented workflow to intentionally update (“bless”) signatures when a change is intended.
-- [ ] (2026-02-13) Run `cargo test` + headless smoke boot and commit.
+- [x] (2026-02-14) Confirm Milestones 1–5 landed (sources + compilation + validation + blueprint apply).
+- [x] (2026-02-14) Define the on-disk run directory layout and which artifacts are required at each checkpoint.
+- [x] (2026-02-14) Implement run step tracking and checkpoint writes (spec inputs, patch history, reports, signatures).
+- [x] (2026-02-14) Implement resume semantics (detect last completed checkpoint, retry safely using idempotent request ids).
+- [x] (2026-02-14) Add fixture compilation signature tests (a deterministic “golden” suite).
+- [x] (2026-02-14) Add a documented workflow to intentionally update (“bless”) signatures when a change is intended.
+- [x] (2026-02-14) Run `cargo test` + headless smoke boot and commit.
 
 ## Surprises & Discoveries
 
@@ -44,7 +44,14 @@ Verification is via tests that:
 
 ## Outcomes & Retrospective
 
-(Fill in at completion.)
+- Shipped a v1 run directory spec for durable artifacts + resume:
+  - `docs/gamedesign/32_scene_runs_v1.md`
+- Added run-aware automation endpoints:
+  - `POST /v1/scene_sources/run_status`
+  - `POST /v1/scene_sources/run_apply_patch` (writes step artifacts + supports replay/resume)
+- Added deterministic signature quality gate:
+  - `tests/scene_generation/golden_signatures.json` is enforced by a unit test.
+  - Bless workflow: run `GRAVIMERA_BLESS_SCENE_SIGNATURES=1 cargo test golden_signatures_match_or_bless` and commit the updated golden file.
 
 ## Context and Orientation
 

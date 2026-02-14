@@ -595,6 +595,19 @@ struct SceneSourcesPatchRequest {
     patch: crate::scene_sources_patch::SceneSourcesPatchV1,
 }
 
+#[derive(Deserialize)]
+struct SceneRunStatusRequest {
+    run_id: String,
+}
+
+#[derive(Deserialize)]
+struct SceneRunApplyPatchRequest {
+    run_id: String,
+    step: u32,
+    scorecard: crate::scene_validation::ScorecardSpecV1,
+    patch: crate::scene_sources_patch::SceneSourcesPatchV1,
+}
+
 fn handle_request_main_thread(
     commands: &mut Commands,
     config: &AppConfig,
@@ -925,6 +938,73 @@ fn handle_request_main_thread(
             })
             .to_string();
 
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/scene_sources/run_status") => {
+            let req: SceneRunStatusRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let status = match crate::scene_runs::scene_run_status(scene_workspace, &req.run_id) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(409, err)),
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "status": status,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/scene_sources/run_apply_patch") => {
+            let req: SceneRunApplyPatchRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
+                crate::scene_sources_runtime::SceneWorldInstance {
+                    entity: e,
+                    instance_id: *id,
+                    prefab_id: *prefab,
+                    transform: t.clone(),
+                    tint: tint.map(|t| t.0),
+                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                }
+            });
+
+            let response = match crate::scene_runs::scene_run_apply_patch_step(
+                commands,
+                scene_workspace,
+                library,
+                existing,
+                &req.run_id,
+                req.step,
+                &req.scorecard,
+                &req.patch,
+            ) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(409, err)),
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "run_id": response.run_id,
+                "step": response.step,
+                "mode": response.mode,
+                "result": response.result,
+            })
+            .to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),

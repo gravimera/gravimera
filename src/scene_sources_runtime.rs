@@ -654,7 +654,7 @@ pub(crate) struct SceneCompileReport {
     pub(crate) pinned_upserts: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub(crate) struct SceneSignatureSummary {
     pub(crate) overall_sig: String,
     pub(crate) pinned_sig: String,
@@ -1906,6 +1906,67 @@ pub(crate) fn scene_signature_summary(
     })
 }
 
+pub(crate) fn scene_signature_summary_from_sources(
+    sources: &SceneSourcesV1,
+) -> Result<SceneSignatureSummary, String> {
+    let scene_id = sources
+        .meta_json
+        .get("scene_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "meta.json missing scene_id".to_string())?;
+
+    let pinned_instances = parse_pinned_instances(sources)?;
+    let layers = parse_layers(sources)?;
+
+    let pinned_ids: HashSet<u128> = pinned_instances.keys().copied().collect();
+    let mut seen_ids: HashSet<u128> = HashSet::new();
+
+    let mut instances: Vec<SceneWorldInstance> = Vec::new();
+    let mut next_entity_raw: u32 = 1;
+    for pinned in pinned_instances.values() {
+        if !seen_ids.insert(pinned.instance_id.0) {
+            return Err("sources contain duplicate instance_id across outputs".to_string());
+        }
+        instances.push(SceneWorldInstance {
+            entity: Entity::from_bits(next_entity_raw as u64),
+            instance_id: pinned.instance_id,
+            prefab_id: pinned.prefab_id,
+            transform: pinned.transform,
+            tint: pinned.tint,
+            owner_layer_id: None,
+        });
+        next_entity_raw = next_entity_raw.saturating_add(1);
+    }
+
+    for (layer_id, layer) in &layers {
+        let desired = desired_instances_for_layer(scene_id, layer_id, layer)?;
+        for spec in desired.values() {
+            if pinned_ids.contains(&spec.instance_id.0) {
+                return Err(format!(
+                    "Layer output id conflicts with pinned instance id: {}",
+                    uuid::Uuid::from_u128(spec.instance_id.0)
+                ));
+            }
+            if !seen_ids.insert(spec.instance_id.0) {
+                return Err("sources contain duplicate instance_id across outputs".to_string());
+            }
+            instances.push(SceneWorldInstance {
+                entity: Entity::from_bits(next_entity_raw as u64),
+                instance_id: spec.instance_id,
+                prefab_id: spec.prefab_id,
+                transform: spec.transform,
+                tint: spec.tint,
+                owner_layer_id: Some(layer_id.clone()),
+            });
+            next_entity_raw = next_entity_raw.saturating_add(1);
+        }
+    }
+
+    scene_signature_summary(instances.into_iter())
+}
+
 fn signature_for_instances(instances: &[&SceneWorldInstance]) -> Result<String, String> {
     let mut items = instances.to_vec();
     items.sort_by(|a, b| a.instance_id.0.cmp(&b.instance_id.0));
@@ -1962,4 +2023,76 @@ fn hex_string(bytes: &[u8]) -> String {
         out.push_str(&format!("{b:02x}"));
     }
     out
+}
+
+#[cfg(test)]
+mod golden_scene_signatures {
+    use super::*;
+    use std::path::PathBuf;
+
+    const GOLDEN_FORMAT_VERSION: u32 = 1;
+
+    fn golden_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/scene_generation/golden_signatures.json")
+    }
+
+    fn fixture_src_dir(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/scene_generation/fixtures")
+            .join(name)
+            .join("src")
+    }
+
+    fn compute_golden() -> serde_json::Value {
+        let fixtures = [("minimal", fixture_src_dir("minimal")), ("layers_regen", fixture_src_dir("layers_regen"))];
+
+        let mut out = serde_json::Map::new();
+        for (name, src_dir) in fixtures {
+            let sources = SceneSourcesV1::load_from_dir(&src_dir)
+                .unwrap_or_else(|err| panic!("load fixture {name} failed: {err}"));
+            let sig = scene_signature_summary_from_sources(&sources)
+                .unwrap_or_else(|err| panic!("signature for fixture {name} failed: {err}"));
+            let sig_val = serde_json::to_value(sig).expect("sig to_value");
+            out.insert(name.to_string(), sig_val);
+        }
+
+        serde_json::json!({
+            "format_version": GOLDEN_FORMAT_VERSION,
+            "fixtures": out,
+        })
+    }
+
+    fn write_json_atomic(path: &Path, value: &serde_json::Value) {
+        let Some(parent) = path.parent() else {
+            panic!("no parent for {}", path.display());
+        };
+        std::fs::create_dir_all(parent).expect("create golden dir");
+        let text = serde_json::to_string_pretty(value).expect("serialize golden json");
+        let bytes = format!("{text}\n").into_bytes();
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, bytes).expect("write tmp");
+        std::fs::rename(&tmp, path).expect("rename golden");
+    }
+
+    #[test]
+    fn golden_signatures_match_or_bless() {
+        let computed = compute_golden();
+        let path = golden_path();
+
+        if std::env::var("GRAVIMERA_BLESS_SCENE_SIGNATURES")
+            .ok()
+            .is_some_and(|v| v == "1")
+        {
+            write_json_atomic(&path, &computed);
+            eprintln!("Blessed scene signatures at {}", path.display());
+            return;
+        }
+
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|err| panic!("read golden signatures failed ({}): {err}", path.display()));
+        let expected: serde_json::Value = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|err| panic!("parse golden signatures failed ({}): {err}", path.display()));
+
+        assert_eq!(expected, computed, "Golden scene signatures changed. If this is intended, re-run with GRAVIMERA_BLESS_SCENE_SIGNATURES=1.");
+    }
 }

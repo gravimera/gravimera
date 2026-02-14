@@ -7,7 +7,7 @@ use crate::scene_sources::{SceneSourcesIndexPaths, SceneSourcesV1, SCENE_SOURCES
 
 pub(crate) const SCENE_SOURCES_PATCH_FORMAT_VERSION: u32 = 1;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct SceneSourcesPatchV1 {
     pub(crate) format_version: u32,
     pub(crate) request_id: String,
@@ -15,7 +15,7 @@ pub(crate) struct SceneSourcesPatchV1 {
     pub(crate) ops: Vec<SceneSourcesPatchOpV1>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind")]
 pub(crate) enum SceneSourcesPatchOpV1 {
     #[serde(rename = "upsert_pinned_instance")]
@@ -300,4 +300,3 @@ pub(crate) fn apply_patch_to_sources(
         derived_instance_ids,
     })
 }
-

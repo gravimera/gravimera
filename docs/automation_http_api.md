@@ -418,6 +418,63 @@ Notes:
 
 - If validation fails, the response has `"applied": false` and includes the `validation_report`.
 
+### `POST /v1/scene_sources/run_status`
+
+Return the run status for a given `run_id` in the current scene workspace.
+
+Request body:
+
+```json
+{ "run_id": "run_01" }
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "status": {
+    "format_version": 1,
+    "run_id": "run_01",
+    "last_complete_step": 3,
+    "next_step": 4
+  }
+}
+```
+
+### `POST /v1/scene_sources/run_apply_patch`
+
+Apply a patch as part of a durable **run step**. This persists artifacts on disk under
+`runs/<run_id>/steps/<step>/` and supports crash-resume by replaying completed steps.
+
+Request body:
+
+```json
+{
+  "run_id": "run_01",
+  "step": 1,
+  "scorecard": { "format_version": 1, "hard_gates": [{ "kind": "schema" }] },
+  "patch": { "format_version": 1, "request_id": "req_123", "ops": [] }
+}
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "run_id": "run_01",
+  "step": 1,
+  "mode": "executed",
+  "result": { "applied": true, "patch_summary": { "changed_paths": [] }, "validation_report": { "hard_gates_passed": true } }
+}
+```
+
+Notes:
+
+- If `steps/<step>/complete.json` already exists, the response uses `mode = "replayed"` and returns
+  the stored `apply_result.json` without reapplying.
+
 ### `POST /v1/mode`
 
 Switch game mode: `build`, `play`, `gen3d` (alias `gen3d_workshop`).

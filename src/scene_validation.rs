@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 pub(crate) const SCORECARD_FORMAT_VERSION: u32 = 1;
 pub(crate) const VALIDATION_REPORT_FORMAT_VERSION: u32 = 1;
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct ScorecardScopeV1 {
     #[serde(default)]
     #[allow(dead_code)]
@@ -17,7 +17,7 @@ pub(crate) struct ScorecardScopeV1 {
     pub(crate) region_filter: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ScorecardSpecV1 {
     pub(crate) format_version: u32,
     #[serde(default)]
@@ -33,7 +33,7 @@ pub(crate) struct ScorecardSpecV1 {
     pub(crate) weights: BTreeMap<String, f64>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind")]
 pub(crate) enum HardGateSpecV1 {
     #[serde(rename = "schema")]

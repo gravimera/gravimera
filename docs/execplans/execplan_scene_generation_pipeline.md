@@ -26,7 +26,7 @@ End-state behaviors:
 - [x] (2026-02-14) Execute Milestone 3: `docs/execplans/execplan_scene_03_layers_and_compilation.md`.
 - [x] (2026-02-14) Execute Milestone 4: `docs/execplans/execplan_scene_04_validation_scorecards.md`.
 - [x] (2026-02-14) Execute Milestone 5: `docs/execplans/execplan_scene_05_blueprint_apply_sources.md`.
-- [ ] (2026-02-13) Execute Milestone 6: `docs/execplans/execplan_scene_06_runs_resume_quality_gate.md`.
+- [x] (2026-02-14) Execute Milestone 6: `docs/execplans/execplan_scene_06_runs_resume_quality_gate.md`.
 
 ## Surprises & Discoveries
 
