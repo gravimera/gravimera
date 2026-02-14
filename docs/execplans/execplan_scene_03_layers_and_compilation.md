@@ -25,7 +25,7 @@ Verification is via deterministic signatures and regression tests: compiling the
 - [x] (2026-02-14) Implement compilation: sources + layers → concrete instances (ECS) with provenance (owner layer id).
 - [x] (2026-02-14) Implement regeneration: recompile one layer and update only owned instances; pinned instances are preserved.
 - [x] (2026-02-14) Add determinism tests (compile twice → identical signature; regen → expected delta).
-- [ ] (2026-02-14) Run `cargo test` + headless smoke boot and commit.
+- [x] (2026-02-14) Run `cargo test` + headless smoke boot and commit.
 
 ## Surprises & Discoveries
 
