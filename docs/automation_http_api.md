@@ -313,6 +313,52 @@ Response (shape):
 }
 ```
 
+### `POST /v1/scene_sources/validate`
+
+Validate the currently loaded scene sources against a **ScorecardSpec** and return a structured
+`ValidationReport`.
+
+Request body (ScorecardSpec shape, minimal):
+
+```json
+{
+  "format_version": 1,
+  "hard_gates": [
+    { "kind": "schema" },
+    { "kind": "budget", "max_instances": 40000, "max_portals": 2000 }
+  ]
+}
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "report": {
+    "format_version": 1,
+    "tick": 0,
+    "event_id": 0,
+    "scene_id": "hub",
+    "hard_gates_passed": false,
+    "metrics": { "predicted_total_instances": 123 },
+    "violations": [
+      {
+        "code": "unknown_prefab_id",
+        "message": "…",
+        "severity": "error",
+        "evidence": { "source_path": "pinned_instances/…", "prefab_id": "…" }
+      }
+    ]
+  }
+}
+```
+
+Notes:
+
+- Requires a prior `POST /v1/scene_sources/import`.
+- Validation does not mutate the world or the on-disk sources.
+
 ### `POST /v1/mode`
 
 Switch game mode: `build`, `play`, `gen3d` (alias `gen3d_workshop`).

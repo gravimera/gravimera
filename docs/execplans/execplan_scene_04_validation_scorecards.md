@@ -13,13 +13,13 @@ Verification is via tests that intentionally violate constraints and assert that
 ## Progress
 
 - [x] (2026-02-13) Create the initial ExecPlan.
-- [ ] (2026-02-13) Confirm Milestones 1–3 landed (sources + round-trip + layers/compilation).
-- [ ] (2026-02-13) Define a minimal `ScorecardSpec` subset used by the engine validators (hard gates first).
-- [ ] (2026-02-13) Implement a `ValidationReport` type aligned with `docs/gamedesign/27_scorecards_and_validation_reports.md`.
-- [ ] (2026-02-13) Implement baseline validators (referential integrity, budgets, portal validity, determinism invariants) and include evidence pointers.
-- [ ] (2026-02-13) Expose validation via automation endpoint(s) for integration testing.
-- [ ] (2026-02-13) Add failing fixtures + tests that assert specific report codes and evidence.
-- [ ] (2026-02-13) Run `cargo test` + headless smoke boot and commit.
+- [x] (2026-02-14) Confirm Milestones 1–3 landed (sources + round-trip + layers/compilation).
+- [x] (2026-02-14) Define a minimal `ScorecardSpec` subset used by the engine validators (hard gates first).
+- [x] (2026-02-14) Implement a `ValidationReport` type aligned with `docs/gamedesign/27_scorecards_and_validation_reports.md`.
+- [x] (2026-02-14) Implement baseline validators (referential integrity, budgets, portal validity, determinism invariants) and include evidence pointers.
+- [x] (2026-02-14) Expose validation via automation endpoint(s) for integration testing.
+- [x] (2026-02-14) Add failing fixtures + tests that assert specific report codes and evidence.
+- [x] (2026-02-14) Run `cargo test` + headless smoke boot and commit.
 
 ## Surprises & Discoveries
 
@@ -38,7 +38,15 @@ Verification is via tests that intentionally violate constraints and assert that
 
 ## Outcomes & Retrospective
 
-(Fill in at completion.)
+- Shipped minimal scorecard + report contracts:
+  - `ScorecardSpecV1` (hard gates) and `ValidationReportV1` (violations + evidence pointers).
+- Added deterministic, objective scene validators (no aesthetic heuristics):
+  - unknown prefab id references (`unknown_prefab_id`)
+  - budget gates for predicted instance and portal counts
+  - portal validity (unknown destination scenes when discoverable via `scenes/<scene_id>/src` layout)
+- Exposed validation via the local Automation API:
+  - `POST /v1/scene_sources/validate` returns `{ ok, report }`
+- Added fixtures + an integration test asserting stable violation codes and evidence pointers.
 
 ## Context and Orientation
 

@@ -101,6 +101,28 @@ The source index exists so tools can:
 - pointer to pinned instance directory (or list of pinned instance files)
 - pointer to style pack reference(s)
 
+## Portal Files (Directed Travel Edges)
+
+Portals are authored as separate JSON files under:
+
+    src/portals/<portal_id>.json
+
+Portals are **one-way** by default. For bidirectional travel, creators place two portals (A→B and B→A).
+
+### Portal File Schema (v1, minimal / normative)
+
+Minimum required fields (v1):
+
+- `format_version`: integer (currently `1`)
+- `portal_id`: string (stable within the scene)
+- `destination_scene_id`: string (target scene id within the same realm by default)
+
+Optional fields (v1):
+
+- `from_marker_id`: string (marker id in this scene used as an authoring anchor for the portal gate)
+
+Additional fields are allowed and must be preserved by round-trip tools when possible.
+
 ## Layer Files and Ownership
 
 Procedural layers are authored as separate files under `src/layers/` to make parallel editing practical.

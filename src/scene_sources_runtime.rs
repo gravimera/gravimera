@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 
 use crate::constants::BUILD_UNIT_SIZE;
 use crate::object::registry::{ColliderProfile, ObjectLibrary};
+use crate::scene_validation::{
+    HardGateSpecV1, ProvenanceSummaryV1, ScorecardSpecV1, ValidationReportV1,
+    ValidationViolationV1, ViolationEvidenceV1, ViolationSeverityV1,
+};
 use crate::scene_sources::{
     SceneSourcesIndexPaths, SceneSourcesV1, SCENE_SOURCES_FORMAT_VERSION,
 };
@@ -127,6 +131,7 @@ struct PinnedInstance {
     prefab_id: ObjectPrefabId,
     transform: Transform,
     tint: Option<Color>,
+    source_rel_path: Option<PathBuf>,
 }
 
 fn parse_pinned_instances(sources: &SceneSourcesV1) -> Result<BTreeMap<u128, PinnedInstance>, String> {
@@ -220,6 +225,7 @@ fn parse_pinned_instance_doc(path: &Path, doc: &Value) -> Result<PinnedInstance,
         prefab_id: ObjectPrefabId(prefab_uuid.as_u128()),
         transform,
         tint,
+        source_rel_path: Some(path.to_path_buf()),
     })
 }
 
@@ -673,6 +679,7 @@ enum SceneLayer {
 struct ExplicitInstancesLayer {
     layer_id: String,
     instances: Vec<ExplicitInstanceSpec>,
+    source_rel_path: PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -764,6 +771,7 @@ fn parse_layer_doc(path: &Path, doc: &Value) -> Result<SceneLayer, String> {
             Ok(SceneLayer::ExplicitInstances(ExplicitInstancesLayer {
                 layer_id,
                 instances: parsed,
+                source_rel_path: path.to_path_buf(),
             }))
         }
         other => Err(format!(
@@ -843,6 +851,426 @@ fn derived_layer_instance_id(scene_id: &str, layer_id: &str, local_id: &str) -> 
         "gravimera/scene_sources/v1/scene/{scene_id}/layer/{layer_id}/instance/{local_id}"
     );
     ObjectId(uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, key.as_bytes()).as_u128())
+}
+
+#[derive(Clone, Debug)]
+struct PortalSpec {
+    portal_id: String,
+    destination_scene_id: String,
+    from_marker_id: Option<String>,
+    source_rel_path: PathBuf,
+}
+
+fn parse_portals(sources: &SceneSourcesV1) -> Result<Vec<PortalSpec>, String> {
+    let index_paths =
+        SceneSourcesIndexPaths::from_index_json_value(&sources.index_json).map_err(|err| {
+            format!("Invalid scene sources index.json: {err}")
+        })?;
+    let portals_dir = index_paths.portals_dir;
+
+    let mut out = Vec::new();
+    for (rel_path, doc) in &sources.extra_json_files {
+        if !is_under_dir(rel_path, &portals_dir) {
+            continue;
+        }
+        out.push(parse_portal_doc(rel_path, doc)?);
+    }
+
+    out.sort_by(|a, b| a.portal_id.cmp(&b.portal_id));
+    Ok(out)
+}
+
+fn parse_portal_doc(path: &Path, doc: &Value) -> Result<PortalSpec, String> {
+    let Value::Object(map) = doc else {
+        return Err(format!("{}: portal must be a JSON object", path.display()));
+    };
+
+    let format_version = map
+        .get("format_version")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| format!("{}: missing format_version", path.display()))?;
+    if format_version != SCENE_SOURCES_FORMAT_VERSION as u64 {
+        return Err(format!(
+            "{}: unsupported format_version {} (expected {})",
+            path.display(),
+            format_version,
+            SCENE_SOURCES_FORMAT_VERSION
+        ));
+    }
+
+    let portal_id = map
+        .get("portal_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("{}: missing portal_id", path.display()))?
+        .to_string();
+
+    let destination_scene_id = map
+        .get("destination_scene_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("{}: missing destination_scene_id", path.display()))?
+        .to_string();
+
+    Ok(PortalSpec {
+        portal_id,
+        destination_scene_id,
+        from_marker_id: map
+            .get("from_marker_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string()),
+        source_rel_path: path.to_path_buf(),
+    })
+}
+
+fn discover_known_scene_ids(src_dir: &Path) -> Result<HashSet<String>, String> {
+    let src_name = src_dir.file_name().and_then(|s| s.to_str());
+    if src_name != Some("src") {
+        return Ok(HashSet::new());
+    }
+
+    let scene_dir = src_dir
+        .parent()
+        .ok_or_else(|| format!("invalid src dir (no parent): {}", src_dir.display()))?;
+    let scenes_dir = scene_dir
+        .parent()
+        .ok_or_else(|| format!("invalid scene dir (no parent): {}", scene_dir.display()))?;
+
+    let mut out = HashSet::new();
+    let entries = std::fs::read_dir(scenes_dir)
+        .map_err(|err| format!("read_dir failed ({}): {err}", scenes_dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("read_dir entry failed: {err}"))?;
+        let ty = entry
+            .file_type()
+            .map_err(|err| format!("stat scene dir entry failed: {err}"))?;
+        if !ty.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(scene_id) = name.to_str() else {
+            continue;
+        };
+
+        let candidate_src = entry.path().join("src/index.json");
+        if candidate_src.exists() {
+            out.insert(scene_id.to_string());
+        }
+    }
+
+    Ok(out)
+}
+
+fn marker_ids_from_sources(sources: &SceneSourcesV1) -> HashSet<String> {
+    let Some(markers_obj) = sources.markers_json.get("markers").and_then(|v| v.as_object()) else {
+        return HashSet::new();
+    };
+
+    markers_obj.keys().cloned().collect()
+}
+
+pub(crate) fn validate_scene_sources(
+    workspace: &SceneSourcesWorkspace,
+    library: &ObjectLibrary,
+    existing_instances: impl Iterator<Item = SceneWorldInstance>,
+    scorecard: &ScorecardSpecV1,
+) -> Result<ValidationReportV1, String> {
+    if scorecard.format_version != crate::scene_validation::SCORECARD_FORMAT_VERSION {
+        return Err(format!(
+            "Unsupported scorecard format_version {} (expected {})",
+            scorecard.format_version,
+            crate::scene_validation::SCORECARD_FORMAT_VERSION
+        ));
+    }
+
+    let Some(sources) = workspace.sources.as_ref() else {
+        return Err("No scene sources have been imported in this session.".to_string());
+    };
+
+    let scene_id = sources
+        .meta_json
+        .get("scene_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let mut report = ValidationReportV1::new(scene_id.clone());
+
+    let pinned_instances = parse_pinned_instances(sources)?;
+    let layers = parse_layers(sources)?;
+    let portals = parse_portals(sources)?;
+    let marker_ids = marker_ids_from_sources(sources);
+
+    let predicted_pinned = pinned_instances.len();
+    let mut predicted_by_layer: BTreeMap<String, usize> = BTreeMap::new();
+    for (layer_id, layer) in &layers {
+        let count = match layer {
+            SceneLayer::ExplicitInstances(layer) => layer.instances.len(),
+        };
+        predicted_by_layer.insert(layer_id.clone(), count);
+    }
+    let predicted_layers_total: usize = predicted_by_layer.values().sum();
+    let predicted_total_instances = predicted_pinned + predicted_layers_total;
+
+    report.metrics.insert(
+        "predicted_total_instances".to_string(),
+        serde_json::Value::from(predicted_total_instances as u64),
+    );
+    report.metrics.insert(
+        "predicted_pinned_instances".to_string(),
+        serde_json::Value::from(predicted_pinned as u64),
+    );
+    report.metrics.insert(
+        "predicted_layer_instances".to_string(),
+        serde_json::Value::from(predicted_layers_total as u64),
+    );
+    report.metrics.insert(
+        "predicted_total_portals".to_string(),
+        serde_json::Value::from(portals.len() as u64),
+    );
+
+    let mut provenance = ProvenanceSummaryV1::default();
+    provenance.pinned_instances = predicted_pinned;
+    provenance.instances_by_layer = predicted_by_layer.clone();
+    report.provenance_summary = Some(provenance);
+
+    // Referential integrity: prefab ids must exist.
+    for pinned in pinned_instances.values() {
+        if library.get(pinned.prefab_id.0).is_some() {
+            continue;
+        }
+        report.push_violation(ValidationViolationV1 {
+            code: "unknown_prefab_id".to_string(),
+            message: format!(
+                "Pinned instance references unknown prefab_id {}",
+                uuid::Uuid::from_u128(pinned.prefab_id.0)
+            ),
+            severity: ViolationSeverityV1::Error,
+            evidence: Some(ViolationEvidenceV1 {
+                source_path: pinned
+                    .source_rel_path
+                    .as_ref()
+                    .map(|p| p.display().to_string()),
+                instance_id: Some(uuid::Uuid::from_u128(pinned.instance_id.0).to_string()),
+                prefab_id: Some(uuid::Uuid::from_u128(pinned.prefab_id.0).to_string()),
+                ..Default::default()
+            }),
+        });
+    }
+    for (layer_id, layer) in &layers {
+        match layer {
+            SceneLayer::ExplicitInstances(layer) => {
+                for inst in &layer.instances {
+                    if library.get(inst.prefab_id.0).is_some() {
+                        continue;
+                    }
+                    report.push_violation(ValidationViolationV1 {
+                        code: "unknown_prefab_id".to_string(),
+                        message: format!(
+                            "Layer {layer_id} instance {} references unknown prefab_id {}",
+                            inst.local_id,
+                            uuid::Uuid::from_u128(inst.prefab_id.0)
+                        ),
+                        severity: ViolationSeverityV1::Error,
+                        evidence: Some(ViolationEvidenceV1 {
+                            source_path: Some(layer.source_rel_path.display().to_string()),
+                            layer_id: Some(layer_id.clone()),
+                            local_id: Some(inst.local_id.clone()),
+                            prefab_id: Some(uuid::Uuid::from_u128(inst.prefab_id.0).to_string()),
+                            ..Default::default()
+                        }),
+                    });
+                }
+            }
+        }
+    }
+
+    // Deterministic id derivation conflicts with pinned ids.
+    if let Some(scene_id) = scene_id.as_deref() {
+        let pinned_ids: HashSet<u128> = pinned_instances.keys().copied().collect();
+        for (layer_id, layer) in &layers {
+            match layer {
+                SceneLayer::ExplicitInstances(layer) => {
+                    for inst in &layer.instances {
+                        let derived_id =
+                            derived_layer_instance_id(scene_id, layer_id, inst.local_id.as_str());
+                        if !pinned_ids.contains(&derived_id.0) {
+                            continue;
+                        }
+                        report.push_violation(ValidationViolationV1 {
+                            code: "instance_id_conflict_pinned_vs_layer".to_string(),
+                            message: format!(
+                                "Layer output instance_id conflicts with pinned instance_id {}",
+                                uuid::Uuid::from_u128(derived_id.0)
+                            ),
+                            severity: ViolationSeverityV1::Error,
+                            evidence: Some(ViolationEvidenceV1 {
+                                source_path: Some(layer.source_rel_path.display().to_string()),
+                                layer_id: Some(layer_id.clone()),
+                                local_id: Some(inst.local_id.clone()),
+                                instance_id: Some(uuid::Uuid::from_u128(derived_id.0).to_string()),
+                                ..Default::default()
+                            }),
+                        });
+                    }
+                }
+            }
+        }
+    } else {
+        report.push_violation(ValidationViolationV1 {
+            code: "meta_missing_scene_id".to_string(),
+            message: "meta.json missing scene_id; deterministic layer ids cannot be derived"
+                .to_string(),
+            severity: ViolationSeverityV1::Error,
+            evidence: Some(ViolationEvidenceV1 {
+                source_path: Some("meta.json".to_string()),
+                ..Default::default()
+            }),
+        });
+    }
+
+    // Portal validity: destination scenes and marker refs (if possible).
+    let known_scene_ids = match workspace.loaded_from_dir.as_ref() {
+        Some(src_dir) => discover_known_scene_ids(src_dir)?,
+        None => HashSet::new(),
+    };
+    report.metrics.insert(
+        "known_scene_ids_count".to_string(),
+        serde_json::Value::from(known_scene_ids.len() as u64),
+    );
+
+    for portal in &portals {
+        if let Some(from_marker_id) = portal.from_marker_id.as_deref() {
+            if !marker_ids.contains(from_marker_id) {
+                report.push_violation(ValidationViolationV1 {
+                    code: "portal_unknown_from_marker".to_string(),
+                    message: format!(
+                        "Portal {} references unknown from_marker_id {}",
+                        portal.portal_id, from_marker_id
+                    ),
+                    severity: ViolationSeverityV1::Error,
+                    evidence: Some(ViolationEvidenceV1 {
+                        source_path: Some(portal.source_rel_path.display().to_string()),
+                        portal_id: Some(portal.portal_id.clone()),
+                        marker_id: Some(from_marker_id.to_string()),
+                        ..Default::default()
+                    }),
+                });
+            }
+        }
+
+        // If the workspace is under a realm-style `scenes/` layout, validate the destination.
+        if !known_scene_ids.is_empty() && !known_scene_ids.contains(&portal.destination_scene_id) {
+            report.push_violation(ValidationViolationV1 {
+                code: "unknown_portal_destination_scene".to_string(),
+                message: format!(
+                    "Portal {} references unknown destination_scene_id {}",
+                    portal.portal_id, portal.destination_scene_id
+                ),
+                severity: ViolationSeverityV1::Error,
+                evidence: Some(ViolationEvidenceV1 {
+                    source_path: Some(portal.source_rel_path.display().to_string()),
+                    portal_id: Some(portal.portal_id.clone()),
+                    destination_scene_id: Some(portal.destination_scene_id.clone()),
+                    ..Default::default()
+                }),
+            });
+        }
+    }
+
+    // Scorecard hard gates.
+    for gate in &scorecard.hard_gates {
+        match gate {
+            HardGateSpecV1::Schema { .. } => {
+                // Core schema checks are handled by parsing + the invariants above.
+            }
+            HardGateSpecV1::Budget {
+                max_instances,
+                max_portals,
+            } => {
+                if let Some(max_instances) = *max_instances {
+                    if predicted_total_instances > max_instances {
+                        report.push_violation(ValidationViolationV1 {
+                            code: "budget_max_instances_exceeded".to_string(),
+                            message: format!(
+                                "Budget exceeded: predicted_total_instances {predicted_total_instances} > max_instances {max_instances}"
+                            ),
+                            severity: ViolationSeverityV1::Error,
+                            evidence: Some(ViolationEvidenceV1 {
+                                measured: Some(serde_json::Value::from(
+                                    predicted_total_instances as u64,
+                                )),
+                                limit: Some(serde_json::Value::from(max_instances as u64)),
+                                ..Default::default()
+                            }),
+                        });
+                    }
+                }
+                if let Some(max_portals) = *max_portals {
+                    if portals.len() > max_portals {
+                        report.push_violation(ValidationViolationV1 {
+                            code: "budget_max_portals_exceeded".to_string(),
+                            message: format!(
+                                "Budget exceeded: predicted_total_portals {} > max_portals {max_portals}",
+                                portals.len()
+                            ),
+                            severity: ViolationSeverityV1::Error,
+                            evidence: Some(ViolationEvidenceV1 {
+                                measured: Some(serde_json::Value::from(portals.len() as u64)),
+                                limit: Some(serde_json::Value::from(max_portals as u64)),
+                                ..Default::default()
+                            }),
+                        });
+                    }
+                }
+            }
+            HardGateSpecV1::Portals {
+                require_known_destinations,
+            } => {
+                if require_known_destinations.unwrap_or(false) && known_scene_ids.is_empty() {
+                    report.push_violation(ValidationViolationV1 {
+                        code: "portal_destination_validation_unavailable".to_string(),
+                        message: "Portal destination validation is unavailable: cannot discover known scene ids from workspace path".to_string(),
+                        severity: ViolationSeverityV1::Warning,
+                        evidence: None,
+                    });
+                }
+            }
+            HardGateSpecV1::Determinism { .. } => {
+                // In Milestone 04 we surface deterministic signatures as metrics; the quality gate
+                // (golden signatures) is introduced in Milestone 06.
+            }
+        }
+    }
+
+    // Optional: include world signature summary for debugging.
+    let existing: Vec<SceneWorldInstance> = existing_instances.collect();
+    if !existing.is_empty() {
+        match scene_signature_summary(existing.into_iter()) {
+            Ok(sig) => {
+                report.metrics.insert(
+                    "world_overall_sig".to_string(),
+                    serde_json::Value::from(sig.overall_sig),
+                );
+                report.metrics.insert(
+                    "world_total_instances".to_string(),
+                    serde_json::Value::from(sig.total_instances as u64),
+                );
+            }
+            Err(err) => report.push_violation(ValidationViolationV1 {
+                code: "world_signature_error".to_string(),
+                message: format!("Failed to compute world signature: {err}"),
+                severity: ViolationSeverityV1::Error,
+                evidence: None,
+            }),
+        }
+    }
+
+    Ok(report)
 }
 
 pub(crate) fn compile_scene_sources_all_layers(
@@ -1136,6 +1564,7 @@ fn desired_instances_for_layer(
                             prefab_id: inst.prefab_id,
                             transform: inst.transform,
                             tint: inst.tint,
+                            source_rel_path: None,
                         },
                     )
                     .is_some()

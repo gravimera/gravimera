@@ -812,6 +812,46 @@ fn handle_request_main_thread(
                 content_type: "application/json",
             })
         }
+        ("POST", "/v1/scene_sources/validate") => {
+            let scorecard: crate::scene_validation::ScorecardSpecV1 =
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                };
+
+            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
+                crate::scene_sources_runtime::SceneWorldInstance {
+                    entity: e,
+                    instance_id: *id,
+                    prefab_id: *prefab,
+                    transform: t.clone(),
+                    tint: tint.map(|t| t.0),
+                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                }
+            });
+
+            let report = match crate::scene_sources_runtime::validate_scene_sources(
+                scene_workspace,
+                library,
+                existing,
+                &scorecard,
+            ) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(409, err)),
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "report": report,
+            })
+            .to_string();
+
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
         ("POST", "/v1/scene_sources/import") => {
             let req: SceneSourcesImportRequest = match serde_json::from_slice(&msg.body) {
                 Ok(v) => v,
