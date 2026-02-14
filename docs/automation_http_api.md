@@ -158,6 +158,66 @@ Response (shape):
 }
 ```
 
+### `POST /v1/scene_sources/import`
+
+Import a VCS-friendly **scene sources** directory (`src/`) into the running ECS world.
+
+This is intended for automated tests and scene generation tooling.
+
+Request body:
+
+```json
+{"src_dir":"/abs/path/to/scenes/<scene_id>/src"}
+```
+
+Example:
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/scene_sources/import \
+  -H 'Content-Type: application/json' \
+  -d '{"src_dir":"/tmp/my_scene/src"}'
+```
+
+Response (shape):
+
+```json
+{"ok":true,"imported_instances":1,"src_dir":"/tmp/my_scene/src"}
+```
+
+Notes:
+
+- Import currently **replaces** all non-player `BuildObject` + `Commandable` instances with the scene’s pinned instances.
+- Only pinned instances are applied as ECS entities in this milestone; other source files (layers/portals) are loaded and retained for round-trip export.
+
+### `POST /v1/scene_sources/export`
+
+Export the currently loaded scene back into canonical `src/` sources.
+
+Request body:
+
+```json
+{"out_dir":"/abs/path/to/write/src"}
+```
+
+Example:
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/scene_sources/export \
+  -H 'Content-Type: application/json' \
+  -d '{"out_dir":"/tmp/exported_scene/src"}'
+```
+
+Response (shape):
+
+```json
+{"ok":true,"exported_instances":1,"out_dir":"/tmp/exported_scene/src"}
+```
+
+Notes:
+
+- Export requires a prior import in the current session so metadata files (`index.json`, `meta.json`, etc.) can be preserved.
+- Returns `409` if no scene sources have been imported yet.
+
 ### `POST /v1/mode`
 
 Switch game mode: `build`, `play`, `gen3d` (alias `gen3d_workshop`).

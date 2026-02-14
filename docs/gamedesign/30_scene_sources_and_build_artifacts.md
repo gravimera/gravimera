@@ -138,6 +138,21 @@ Each pinned instance must include:
 - optional tags/overrides used by story/brains
 - optional provenance field (“pinned from layer X at compile signature Y”) for debugging
 
+### Pinned Instance File Schema (v1, normative)
+
+Pinned instances are authored as JSON objects:
+
+- `format_version`: integer (currently `1`)
+- `instance_id`: UUID string (stable identifier for story/brains references)
+- `prefab_id`: UUID string (builtin or generated prefab id)
+- `transform`: object
+  - `translation`: `{ "x": <f32>, "y": <f32>, "z": <f32> }`
+  - `rotation`: `{ "x": <f32>, "y": <f32>, "z": <f32>, "w": <f32> }` (quaternion)
+  - `scale`: `{ "x": <f32>, "y": <f32>, "z": <f32> }`
+- `tint_rgba` (optional): `{ "r": <f32>, "g": <f32>, "b": <f32>, "a": <f32> }` (linear RGBA)
+
+Additional fields are allowed and must be preserved by round-trip tools when possible.
+
 ## Canonicalization Rules (Diff Stability)
 
 To keep diffs stable and merge-friendly, tools must be able to rewrite sources into a canonical form:

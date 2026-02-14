@@ -1,0 +1,23 @@
+{
+  "format_version": 1,
+  "instance_id": "4037cd2c-7bf0-4615-9a70-29dc112ebbcf",
+  "prefab_id": "a114d7d4-d27b-5d79-926e-c435f181e1df",
+  "transform": {
+    "rotation": {
+      "w": 1.0,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "scale": {
+      "x": 1.0,
+      "y": 1.0,
+      "z": 1.0
+    },
+    "translation": {
+      "x": 1.0,
+      "y": 0.0,
+      "z": 2.0
+    }
+  }
+}

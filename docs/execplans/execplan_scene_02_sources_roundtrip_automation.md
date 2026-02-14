@@ -13,12 +13,12 @@ Verification is via an automation-driven integration test (similar to `tests/aut
 ## Progress
 
 - [x] (2026-02-13) Create the initial ExecPlan.
-- [ ] (2026-02-13) Confirm Milestone 1 landed (scene sources module + canonicalization + minimal fixture).
-- [ ] (2026-02-13) Implement ECS→sources export for the current object model (instances + ids + transforms + tint/scale as supported).
-- [ ] (2026-02-13) Implement sources→ECS import for the same subset, ensuring stable ids are respected.
-- [ ] (2026-02-13) Add local Automation API endpoints to import/export scene sources directories.
-- [ ] (2026-02-13) Add `tests/scene_sources_roundtrip.rs` integration test that exercises import→export→compare.
-- [ ] (2026-02-13) Run `cargo test` + headless smoke boot and commit.
+- [x] (2026-02-14) Confirm Milestone 1 landed (scene sources module + canonicalization + minimal fixture).
+- [x] (2026-02-14) Implement ECS→sources export for the current object model (instances + ids + transforms + tint/scale as supported).
+- [x] (2026-02-14) Implement sources→ECS import for the same subset, ensuring stable ids are respected.
+- [x] (2026-02-14) Add local Automation API endpoints to import/export scene sources directories.
+- [x] (2026-02-14) Add `tests/scene_sources_roundtrip.rs` integration test that exercises import→export→compare.
+- [x] (2026-02-14) Run `cargo test` + headless smoke boot and commit.
 
 ## Surprises & Discoveries
 
@@ -37,7 +37,12 @@ Verification is via an automation-driven integration test (similar to `tests/aut
 
 ## Outcomes & Retrospective
 
-(Fill in at completion.)
+- Shipped scene sources ↔ ECS round-trip in headless automation mode:
+  - Import: `POST /v1/scene_sources/import` loads `src/` and replaces non-player scene instances with pinned instances.
+  - Export: `POST /v1/scene_sources/export` writes canonical `src/` sources (preserving metadata from the last import).
+- Added a pinned-instance fixture and an integration test that round-trips `tests/scene_generation/fixtures/minimal/src/` via the Automation API and asserts byte-identical canonical output.
+- Limitations (expected for this milestone):
+  - Only pinned instances are materialized as ECS entities; layers/portals are retained for round-trip but not applied/compiled yet.
 
 ## Context and Orientation
 

@@ -29,6 +29,7 @@ pub(crate) struct AutomationPlugin;
 impl Plugin for AutomationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AutomationRuntime>();
+        app.init_resource::<crate::scene_sources_runtime::SceneSourcesWorkspace>();
         app.add_systems(Startup, automation_startup);
         app.add_systems(
             PreUpdate,
@@ -393,6 +394,18 @@ struct AutomationWorld<'w, 's> {
         ),
         Or<(With<Commandable>, With<BuildObject>, With<Enemy>)>,
     >,
+    scene_instances: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static Transform,
+            &'static ObjectId,
+            &'static ObjectPrefabId,
+            Option<&'static ObjectTint>,
+        ),
+        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+    >,
 }
 
 #[derive(SystemParam)]
@@ -415,6 +428,7 @@ fn automation_process_requests(
     mut commands: Commands,
     config: Res<AppConfig>,
     mut runtime: ResMut<AutomationRuntime>,
+    mut scene_workspace: ResMut<crate::scene_sources_runtime::SceneSourcesWorkspace>,
     mode: Option<Res<State<GameMode>>>,
     mut next_mode: Option<ResMut<NextState<GameMode>>>,
     mut selection: Option<ResMut<SelectionState>>,
@@ -481,11 +495,13 @@ fn automation_process_requests(
             &world.build_objects,
             &world.selectable_entities,
             &world.state_objects,
+            &world.scene_instances,
             mode.as_deref(),
             next_mode.as_deref_mut(),
             selection.as_deref_mut(),
             fire.as_deref_mut(),
             &mut runtime,
+            &mut scene_workspace,
             &msg,
             &mut exit,
         );
@@ -551,6 +567,16 @@ struct Gen3dPromptRequest {
     prompt: String,
 }
 
+#[derive(Deserialize)]
+struct SceneSourcesImportRequest {
+    src_dir: String,
+}
+
+#[derive(Deserialize)]
+struct SceneSourcesExportRequest {
+    out_dir: String,
+}
+
 fn handle_request_main_thread(
     commands: &mut Commands,
     config: &AppConfig,
@@ -595,11 +621,22 @@ fn handle_request_main_thread(
         ),
         Or<(With<Commandable>, With<BuildObject>, With<Enemy>)>,
     >,
+    scene_instances: &Query<
+        (
+            Entity,
+            &Transform,
+            &ObjectId,
+            &ObjectPrefabId,
+            Option<&ObjectTint>,
+        ),
+        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+    >,
     mode: Option<&State<GameMode>>,
     next_mode: Option<&mut NextState<GameMode>>,
     mut selection: Option<&mut SelectionState>,
     mut fire: Option<&mut FireControl>,
     runtime: &mut AutomationRuntime,
+    scene_workspace: &mut crate::scene_sources_runtime::SceneSourcesWorkspace,
     msg: &AutomationRequest,
     exit: &mut MessageWriter<AppExit>,
 ) -> Option<AutomationReply> {
@@ -615,6 +652,70 @@ fn handle_request_main_thread(
                     "paused": runtime.time_paused,
                     "listen_addr": runtime.listen_addr,
                 }
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/scene_sources/import") => {
+            let req: SceneSourcesImportRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let src_dir = PathBuf::from(req.src_dir.trim());
+            let existing_entities = scene_instances.iter().map(|(e, _, _, _, _)| e);
+
+            let report = match crate::scene_sources_runtime::import_scene_sources_replace_world(
+                commands,
+                scene_workspace,
+                library,
+                &src_dir,
+                existing_entities,
+            ) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "imported_instances": report.instance_count,
+                "src_dir": src_dir.display().to_string(),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/scene_sources/export") => {
+            let req: SceneSourcesExportRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let out_dir = PathBuf::from(req.out_dir.trim());
+            let objects = scene_instances
+                .iter()
+                .map(|(_e, t, id, prefab, tint)| (t, id, prefab, tint));
+
+            let report = match crate::scene_sources_runtime::export_scene_sources_from_world(
+                scene_workspace,
+                objects,
+                &out_dir,
+            ) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(409, err)),
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "exported_instances": report.instance_count,
+                "out_dir": out_dir.display().to_string(),
             })
             .to_string();
             Some(AutomationReply {

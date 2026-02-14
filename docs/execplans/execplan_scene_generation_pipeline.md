@@ -21,8 +21,8 @@ End-state behaviors:
 ## Progress
 
 - [x] (2026-02-13) Create the initial ExecPlan.
-- [ ] (2026-02-13) Execute Milestone 1: `docs/execplans/execplan_scene_01_sources_foundation.md`.
-- [ ] (2026-02-13) Execute Milestone 2: `docs/execplans/execplan_scene_02_sources_roundtrip_automation.md`.
+- [x] (2026-02-14) Execute Milestone 1: `docs/execplans/execplan_scene_01_sources_foundation.md`.
+- [x] (2026-02-14) Execute Milestone 2: `docs/execplans/execplan_scene_02_sources_roundtrip_automation.md`.
 - [ ] (2026-02-13) Execute Milestone 3: `docs/execplans/execplan_scene_03_layers_and_compilation.md`.
 - [ ] (2026-02-13) Execute Milestone 4: `docs/execplans/execplan_scene_04_validation_scorecards.md`.
 - [ ] (2026-02-13) Execute Milestone 5: `docs/execplans/execplan_scene_05_blueprint_apply_sources.md`.
