@@ -79,6 +79,7 @@ Gen3D requires OpenAI settings in `config.toml` (or `OPENAI_API_KEY` via env).
 
 - Game design (long-term target): `docs/gamedesign/README.md`
 - Specs (contracts/formats): `docs/gamedesign/specs.md`
+- Scene sources authoring (human UI): click the **Scene** button in rendered mode to import/compile/regenerate/validate scene sources (`docs/gamedesign/30_scene_sources_and_build_artifacts.md`).
 - Gen3D Workshop + schemas + cache layout: `gen_3d.md`
 - Local Automation HTTP API (tooling/tests): `docs/automation_http_api.md`
 - Controls: `docs/controls.md`

@@ -26,6 +26,7 @@ mod rts;
 mod scene_sources;
 mod scene_sources_patch;
 mod scene_sources_runtime;
+mod scene_authoring_ui;
 mod scene_runs;
 mod scene_validation;
 mod scene_store;

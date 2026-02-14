@@ -432,6 +432,10 @@ impl ObjectLibrary {
         self.defs.get(&object_id)
     }
 
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&u128, &ObjectDef)> {
+        self.defs.iter()
+    }
+
     pub(crate) fn interaction(&self, object_id: u128) -> ObjectInteraction {
         self.get(object_id)
             .map(|def| def.interaction)

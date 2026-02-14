@@ -28,6 +28,7 @@ End-state behaviors:
 - [x] (2026-02-14) Execute Milestone 5: `docs/execplans/execplan_scene_05_blueprint_apply_sources.md`.
 - [x] (2026-02-14) Execute Milestone 6: `docs/execplans/execplan_scene_06_runs_resume_quality_gate.md`.
 - [x] (2026-02-14) Execute Milestone 7: `docs/execplans/execplan_scene_07_procedural_layer_kinds_v1.md`.
+- [x] (2026-02-14) Execute Milestone 8: `docs/execplans/execplan_scene_08_human_scene_sources_ui.md`.
 
 ## Surprises & Discoveries
 
@@ -101,6 +102,7 @@ Execute these milestone plans in order:
 5) `docs/execplans/execplan_scene_05_blueprint_apply_sources.md` — implement blueprint validate/apply that edits sources, recompiles, and revalidates, with patch-history artifacts.
 6) `docs/execplans/execplan_scene_06_runs_resume_quality_gate.md` — add run directories, checkpoints/resume, and a deterministic signature quality gate over fixtures.
 7) `docs/execplans/execplan_scene_07_procedural_layer_kinds_v1.md` — add additional generic procedural layer kinds (grid + polyline) for scalable scene authoring.
+8) `docs/execplans/execplan_scene_08_human_scene_sources_ui.md` — add an in-game UI for humans to drive the deterministic scene sources pipeline (import/compile/regen/validate/export + author v1 layers).
 
 All milestones share the same dev↔test cycle: make a small change, add/update a test, run `cargo test`, run a headless smoke boot (`cargo run -- --headless --headless-seconds 1`), then commit.
 

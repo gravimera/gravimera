@@ -501,6 +501,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.init_resource::<crate::gen3d::Gen3dDraft>();
     app.init_resource::<crate::gen3d::Gen3dAiJob>();
     app.init_resource::<crate::gen3d::Gen3dToolFeedbackHistory>();
+    app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
     app.add_plugins(crate::automation::AutomationPlugin);
     app.add_message::<AppExit>();
     app.add_message::<HealthChangeEvent>();
@@ -560,6 +561,10 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(Startup, setup::setup_rendered);
     app.add_systems(
         Startup,
+        crate::scene_authoring_ui::setup_scene_authoring_ui.after(setup::setup_rendered),
+    );
+    app.add_systems(
+        Startup,
         scene_store::load_scene_dat.after(setup::setup_rendered),
     );
     app.add_systems(
@@ -601,12 +606,51 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         ),
     );
     app.add_systems(
+        PreUpdate,
+        (
+            crate::scene_authoring_ui::scene_ui_text_input,
+            crate::scene_authoring_ui::scene_ui_clear_keyboard_state_when_captured
+                .after(crate::scene_authoring_ui::scene_ui_text_input),
+        )
+            .after(bevy::input::InputSystems),
+    );
+
+    app.add_systems(
         Update,
         (
             console::toggle_command_console,
             console::command_console_text_input.after(console::toggle_command_console),
             console::update_command_console_ui.after(console::command_console_text_input),
         )
+            .run_if(not(in_state(GameMode::Gen3D)))
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
+            .run_if(crate::automation::local_input_enabled),
+    );
+
+    app.add_systems(
+        Update,
+        (
+            crate::scene_authoring_ui::scene_ui_toggle_button,
+            crate::scene_authoring_ui::scene_ui_close_button
+                .after(crate::scene_authoring_ui::scene_ui_toggle_button),
+            crate::scene_authoring_ui::scene_ui_panel_visibility
+                .after(crate::scene_authoring_ui::scene_ui_close_button),
+            crate::scene_authoring_ui::scene_ui_tab_buttons,
+            crate::scene_authoring_ui::scene_ui_tab_visibility
+                .after(crate::scene_authoring_ui::scene_ui_tab_buttons),
+            crate::scene_authoring_ui::scene_ui_text_field_focus,
+            crate::scene_authoring_ui::scene_ui_action_buttons
+                .after(crate::scene_authoring_ui::scene_ui_text_field_focus),
+            crate::scene_authoring_ui::scene_ui_rebuild_layers_list
+                .after(crate::scene_authoring_ui::scene_ui_action_buttons),
+            crate::scene_authoring_ui::scene_ui_regen_layer_buttons
+                .after(crate::scene_authoring_ui::scene_ui_rebuild_layers_list),
+            crate::scene_authoring_ui::scene_ui_rebuild_prefabs_list,
+            crate::scene_authoring_ui::scene_ui_use_prefab_buttons
+                .after(crate::scene_authoring_ui::scene_ui_rebuild_prefabs_list),
+            crate::scene_authoring_ui::scene_ui_update_texts,
+        )
+            .run_if(console::console_closed)
             .run_if(not(in_state(GameMode::Gen3D)))
             .run_if(crate::automation::local_input_enabled),
     );
@@ -618,6 +662,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .after(crate::gen3d::handle_gen3d_toggle_button),
         )
             .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(crate::automation::local_input_enabled),
     );
     app.add_systems(
@@ -734,6 +779,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         Update,
         (common::restart_game, build::toggle_game_mode)
             .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(not(in_state(GameMode::Gen3D)))
             .run_if(crate::automation::local_input_enabled),
     );
@@ -769,6 +815,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .after(combat::tick_attack_cooldowns),
         )
             .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(not(in_state(GameMode::Gen3D))),
     );
     app.add_systems(
@@ -841,6 +888,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         player::camera_zoom_input
             .before(player::camera_follow)
             .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(not(in_state(GameMode::Gen3D)))
             .run_if(crate::automation::local_input_enabled),
     );
@@ -856,6 +904,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         )
             .before(player::camera_follow)
             .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(not(in_state(GameMode::Gen3D))),
     );
     app.add_systems(
@@ -869,6 +918,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         player::aim_player
             .after(player::camera_follow)
             .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(not(in_state(GameMode::Gen3D)))
             .run_if(crate::automation::local_input_enabled),
     );
@@ -916,6 +966,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         )
             .run_if(in_state(GameMode::Build))
             .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(crate::automation::local_input_enabled),
     );
 
