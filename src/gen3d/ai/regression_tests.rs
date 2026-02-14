@@ -1,6 +1,10 @@
 use super::{convert, parse};
+use super::schema::AiJointKindJson;
+use bevy::prelude::Quat;
 use crate::gen3d::state::Gen3dDraft;
-use crate::object::registry::{ObjectPartDef, ObjectPartKind};
+use crate::object::registry::{
+    builtin_object_id, ObjectPartDef, ObjectPartKind, PartAnimationDef,
+};
 use serde_json::json;
 
 fn id_hex32(id: u128) -> String {
@@ -452,5 +456,252 @@ fn gen3d_review_delta_prompt_includes_join_axes_and_offset_pos() {
             && text.contains("join_up_world=")
             && text.contains("join_forward_world="),
         "missing join axes in prompt:\n{text}"
+    );
+}
+
+#[test]
+fn gen3d_sanitizes_fixed_joint_rotation_in_plan_animations() {
+    let plan_text = r#"
+    {
+      "version": 1,
+      "assembly_notes": "test fixed joint animation sanitize",
+      "root_component": "head",
+      "components": [
+        {
+          "name": "head",
+          "purpose": "head",
+          "modeling_notes": "",
+          "size": [0.30, 0.30, 0.30],
+          "anchors": [
+            { "name": "hair_mount", "pos": [0.0, 0.15, 0.0], "forward": [0.0, 1.0, 0.0], "up": [0.0, 0.0, 1.0] }
+          ]
+        },
+        {
+          "name": "hair",
+          "purpose": "hair",
+          "modeling_notes": "",
+          "size": [0.30, 0.32, 0.26],
+          "anchors": [
+            { "name": "scalp_mount", "pos": [0.0, -0.14, 0.0], "forward": [0.0, 1.0, 0.0], "up": [0.0, 0.0, 1.0] }
+          ],
+          "attach_to": {
+            "parent": "head",
+            "parent_anchor": "hair_mount",
+            "child_anchor": "scalp_mount",
+            "offset": { "pos": [0.0, 0.0, -0.005] },
+            "joint": { "kind": "fixed" },
+            "animations": {
+              "idle": {
+                "driver": "always",
+                "clip": {
+                  "kind": "loop",
+                  "duration_secs": 1.0,
+                  "keyframes": [
+                    {
+                      "time_secs": 0.0,
+                      "delta": { "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0], "rot_frame": "join" }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+    "#;
+
+    let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+    let (planned, _notes, _defs) = convert::ai_plan_to_initial_draft_defs(plan).expect("convert");
+
+    let hair = planned
+        .iter()
+        .find(|c| c.name == "hair")
+        .expect("hair component");
+    let att = hair.attach_to.as_ref().expect("hair attach");
+    assert!(
+        att.joint
+            .as_ref()
+            .is_some_and(|joint| joint.kind == AiJointKindJson::Fixed),
+        "expected fixed joint"
+    );
+    assert_eq!(att.animations.len(), 1);
+    match &att.animations[0].spec.clip {
+        PartAnimationDef::Loop { keyframes, .. } => {
+            assert!(!keyframes.is_empty());
+            for kf in keyframes {
+                assert_eq!(kf.delta.rotation, Quat::IDENTITY);
+            }
+        }
+        other => panic!("expected loop clip, got {other:?}"),
+    }
+}
+
+#[test]
+fn gen3d_sanitizes_fixed_joint_rotation_in_review_delta_tweak_animation() {
+    let plan_text = r#"
+    {
+      "version": 1,
+      "assembly_notes": "test fixed joint review-delta sanitize",
+      "root_component": "head",
+      "components": [
+        {
+          "name": "head",
+          "purpose": "head",
+          "modeling_notes": "",
+          "size": [0.30, 0.30, 0.30],
+          "anchors": [
+            { "name": "hair_mount", "pos": [0.0, 0.15, 0.0], "forward": [0.0, 1.0, 0.0], "up": [0.0, 0.0, 1.0] }
+          ]
+        },
+        {
+          "name": "hair",
+          "purpose": "hair",
+          "modeling_notes": "",
+          "size": [0.30, 0.32, 0.26],
+          "anchors": [
+            { "name": "scalp_mount", "pos": [0.0, -0.14, 0.0], "forward": [0.0, 1.0, 0.0], "up": [0.0, 0.0, 1.0] }
+          ],
+          "attach_to": {
+            "parent": "head",
+            "parent_anchor": "hair_mount",
+            "child_anchor": "scalp_mount",
+            "offset": { "pos": [0.0, 0.0, -0.005] },
+            "joint": { "kind": "fixed" }
+          }
+        }
+      ]
+    }
+    "#;
+
+    let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+    let plan_collider = plan.collider.clone();
+    let (mut planned, _notes, defs) = convert::ai_plan_to_initial_draft_defs(plan).expect("convert");
+    let mut draft = Gen3dDraft { defs };
+
+    let hair_id = id_hex32(builtin_object_id("gravimera/gen3d/component/hair"));
+    let delta_text = format!(
+        r#"{{
+          "version": 1,
+          "applies_to": {{"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0}},
+          "actions": [
+            {{
+              "kind":"tweak_animation",
+              "component_id":"{hair_id}",
+              "channel":"idle",
+              "spec": {{
+                "driver": "always",
+                "clip": {{
+                  "kind": "loop",
+                  "duration_secs": 1.0,
+                  "keyframes": [
+                    {{
+                      "time_secs": 0.0,
+                      "delta": {{ "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0], "rot_frame": "join" }}
+                    }}
+                  ]
+                }}
+              }}
+            }}
+          ]
+        }}"#
+    );
+    let delta = parse::parse_ai_review_delta_from_text(delta_text.as_str()).expect("delta parse");
+    convert::apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+        .expect("apply delta");
+
+    let hair = planned
+        .iter()
+        .find(|c| c.name == "hair")
+        .expect("hair component");
+    let att = hair.attach_to.as_ref().expect("hair attach");
+    let slot = att
+        .animations
+        .iter()
+        .find(|s| s.channel.as_ref() == "idle")
+        .expect("idle slot");
+    match &slot.spec.clip {
+        PartAnimationDef::Loop { keyframes, .. } => {
+            assert!(!keyframes.is_empty());
+            for kf in keyframes {
+                assert_eq!(kf.delta.rotation, Quat::IDENTITY);
+            }
+        }
+        other => panic!("expected loop clip, got {other:?}"),
+    }
+}
+
+#[test]
+fn gen3d_ignores_spin_tweak_animation_on_fixed_joint() {
+    let plan_text = r#"
+    {
+      "version": 1,
+      "assembly_notes": "test fixed joint ignores spin tweak",
+      "root_component": "head",
+      "components": [
+        {
+          "name": "head",
+          "purpose": "head",
+          "modeling_notes": "",
+          "size": [0.30, 0.30, 0.30],
+          "anchors": [
+            { "name": "hair_mount", "pos": [0.0, 0.15, 0.0], "forward": [0.0, 1.0, 0.0], "up": [0.0, 0.0, 1.0] }
+          ]
+        },
+        {
+          "name": "hair",
+          "purpose": "hair",
+          "modeling_notes": "",
+          "size": [0.30, 0.32, 0.26],
+          "anchors": [
+            { "name": "scalp_mount", "pos": [0.0, -0.14, 0.0], "forward": [0.0, 1.0, 0.0], "up": [0.0, 0.0, 1.0] }
+          ],
+          "attach_to": {
+            "parent": "head",
+            "parent_anchor": "hair_mount",
+            "child_anchor": "scalp_mount",
+            "offset": { "pos": [0.0, 0.0, -0.005] },
+            "joint": { "kind": "fixed" }
+          }
+        }
+      ]
+    }
+    "#;
+
+    let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+    let plan_collider = plan.collider.clone();
+    let (mut planned, _notes, defs) = convert::ai_plan_to_initial_draft_defs(plan).expect("convert");
+    let mut draft = Gen3dDraft { defs };
+
+    let hair_id = id_hex32(builtin_object_id("gravimera/gen3d/component/hair"));
+    let delta_text = format!(
+        r#"{{
+          "version": 1,
+          "applies_to": {{"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0}},
+          "actions": [
+            {{
+              "kind":"tweak_animation",
+              "component_id":"{hair_id}",
+              "channel":"idle",
+              "spec": {{
+                "driver": "always",
+                "clip": {{ "kind": "spin", "axis": [0.0, 1.0, 0.0], "radians_per_unit": 1.0 }}
+              }}
+            }}
+          ]
+        }}"#
+    );
+    let delta = parse::parse_ai_review_delta_from_text(delta_text.as_str()).expect("delta parse");
+    convert::apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+        .expect("apply delta");
+
+    let hair = planned
+        .iter()
+        .find(|c| c.name == "hair")
+        .expect("hair component");
+    let att = hair.attach_to.as_ref().expect("hair attach");
+    assert!(
+        att.animations.is_empty(),
+        "expected no animation slots to be added for fixed joint"
     );
 }

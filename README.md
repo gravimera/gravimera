@@ -6,6 +6,7 @@ It’s built with [Bevy](https://bevyengine.org/) and currently focuses on the G
 
 Gen3D also tries to avoid duplicated LLM work by **reusing generated geometry** for repeated parts (for example: wheels, mirrored parts, or radial legs) via plan-level `reuse_groups` + deterministic copy tools (including subtree copy that can auto-expand missing target limb-chain descendants). Attachment animations support `time_offset_units` for deterministic phase offsets (staggered legs) without duplicating keyframes. The engine can auto-apply reuse after batch generation, and saves prefabs with bounds that account for animation keyframes to reduce ground-clipping surprises.
 Gen3D smoke validation checks constrained-joint motion across authored attachment animation channels (for example `idle`, `move`, and `attack_primary`) and reports channel-scoped issues when joint motion is off-axis, exceeds limits, translates despite constraints, or stays abnormally biased away from neutral.
+For `fixed` joints, rotational animation deltas are deterministically clamped to identity so attachments can’t “flip” under an idle loop.
 
 When supported by your OpenAI-compatible endpoint, Gen3D requests API-level **Structured Outputs** (strict JSON Schema) for plan / component / review JSON so runs spend less time in schema-repair loops. If the provider rejects structured outputs, Gravimera automatically disables it for the current session and falls back to the legacy “free-form JSON + local repair” behavior.
 

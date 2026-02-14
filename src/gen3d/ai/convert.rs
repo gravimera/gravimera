@@ -21,6 +21,28 @@ fn rotated_half_extents(half: Vec3, rotation: Quat) -> Vec3 {
     abs * half
 }
 
+fn sanitize_fixed_joint_attachment_animations(
+    joint: Option<&AiJointJson>,
+    animations: &mut Vec<PartAnimationSlot>,
+) {
+    let Some(joint) = joint else {
+        return;
+    };
+    if joint.kind != AiJointKindJson::Fixed {
+        return;
+    }
+
+    animations.retain_mut(|slot| match &mut slot.spec.clip {
+        PartAnimationDef::Spin { .. } => false,
+        PartAnimationDef::Loop { keyframes, .. } => {
+            for keyframe in keyframes.iter_mut() {
+                keyframe.delta.rotation = Quat::IDENTITY;
+            }
+            true
+        }
+    });
+}
+
 pub(super) fn plan_rotation_from_forward_up(forward: Vec3, up: Option<Vec3>) -> Quat {
     const EPS: f32 = 1e-5;
 
@@ -923,7 +945,11 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                     parent_anchor: parent_anchor.to_string(),
                     child_anchor: child_anchor.to_string(),
                     offset,
-                    joint: att.joint.clone(),
+                    joint: {
+                        let joint = att.joint.clone();
+                        sanitize_fixed_joint_attachment_animations(joint.as_ref(), &mut animations);
+                        joint
+                    },
                     animations,
                 })
             }
@@ -1913,10 +1939,40 @@ pub(super) fn apply_ai_review_delta_actions(
                     *axis = att.offset.rotation * (child_anchor_rot.inverse() * *axis);
                 }
 
-                let slot = PartAnimationSlot {
+                let mut slot = PartAnimationSlot {
                     channel: channel.to_string().into(),
                     spec,
                 };
+
+                if att
+                    .joint
+                    .as_ref()
+                    .is_some_and(|joint| joint.kind == AiJointKindJson::Fixed)
+                {
+                    // Fixed joints must not rotate under attachment animation.
+                    // Clamp rotations deterministically to avoid motion validation regressions.
+                    match &mut slot.spec.clip {
+                        PartAnimationDef::Spin { .. } => {
+                            if !reason.trim().is_empty() {
+                                debug!(
+                                    "Gen3D: ignored spin animation on fixed joint {} ({}) channel={} reason={}",
+                                    component_id,
+                                    components[idx].name,
+                                    channel,
+                                    reason.trim()
+                                );
+                            }
+                            result.had_actions = true;
+                            continue;
+                        }
+                        PartAnimationDef::Loop { keyframes, .. } => {
+                            for keyframe in keyframes.iter_mut() {
+                                keyframe.delta.rotation = Quat::IDENTITY;
+                            }
+                        }
+                    }
+                }
+
                 if let Some(existing) = att
                     .animations
                     .iter_mut()

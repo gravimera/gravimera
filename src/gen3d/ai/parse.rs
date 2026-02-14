@@ -173,6 +173,148 @@ fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
         changed
     }
 
+    fn normalize_animation_spec_clip_shorthand(
+        spec_obj: &mut serde_json::Map<String, serde_json::Value>,
+    ) -> bool {
+        use serde_json::Value;
+
+        let mut changed = false;
+
+        const CLIP_FIELDS: [&str; 6] = [
+            "kind",
+            "duration_secs",
+            "duration",
+            "keyframes",
+            "axis",
+            "radians_per_unit",
+        ];
+
+        // Some models emit an animation spec that directly contains clip fields (kind/keyframes/etc)
+        // instead of nesting them under `spec.clip`. Convert this deterministically.
+
+        // Also accept an alternate tagged union shape where `spec` or `spec.clip` uses `{ "loop": {...} }`.
+        let mut clip_value: Option<Value> = spec_obj.remove("clip");
+        if clip_value.is_none() {
+            for tagged_kind in ["loop", "spin"] {
+                if let Some(tagged) = spec_obj.remove(tagged_kind) {
+                    if let Value::Object(inner) = tagged {
+                        let mut clip_obj = inner;
+                        clip_obj.insert(
+                            "kind".to_string(),
+                            Value::String(tagged_kind.to_string()),
+                        );
+                        clip_value = Some(Value::Object(clip_obj));
+                        changed = true;
+                        break;
+                    } else {
+                        // Put it back if it wasn't an object.
+                        spec_obj.insert(tagged_kind.to_string(), tagged);
+                    }
+                }
+            }
+        }
+
+        // If `clip` exists but isn't an object, interpret it as a kind string when possible.
+        if let Some(clip) = clip_value.take() {
+            match clip {
+                Value::Object(map) => {
+                    clip_value = Some(Value::Object(map));
+                }
+                Value::String(kind) => {
+                    let mut map = serde_json::Map::new();
+                    if !kind.trim().is_empty() {
+                        map.insert("kind".to_string(), Value::String(kind));
+                    }
+                    clip_value = Some(Value::Object(map));
+                    changed = true;
+                }
+                Value::Null => {
+                    changed = true;
+                }
+                other => {
+                    let mut map = serde_json::Map::new();
+                    map.insert("kind".to_string(), other);
+                    clip_value = Some(Value::Object(map));
+                    changed = true;
+                }
+            }
+        }
+
+        // If there's still no clip object, but clip fields exist at spec-level, lift them.
+        if clip_value.is_none() && CLIP_FIELDS.iter().any(|k| spec_obj.contains_key(*k)) {
+            let mut clip_obj = serde_json::Map::new();
+            for key in CLIP_FIELDS {
+                if let Some(v) = spec_obj.remove(key) {
+                    clip_obj.insert(key.to_string(), v);
+                    changed = true;
+                }
+            }
+            clip_value = Some(Value::Object(clip_obj));
+        }
+
+        // If we have a clip object, merge any stray spec-level clip fields into it and accept
+        // `{ "loop": {...} }` / `{ "spin": {...} }` wrapper objects.
+        if let Some(Value::Object(mut clip_obj)) = clip_value.take() {
+            for key in CLIP_FIELDS {
+                let Some(spec_val) = spec_obj.remove(key) else {
+                    continue;
+                };
+                changed = true;
+                let should_overwrite = match key {
+                    "keyframes" => clip_obj
+                        .get("keyframes")
+                        .and_then(|v| v.as_array())
+                        .is_some_and(|arr| arr.is_empty())
+                        && spec_val
+                            .as_array()
+                            .is_some_and(|arr| !arr.is_empty()),
+                    "duration_secs" => clip_obj
+                        .get("duration_secs")
+                        .and_then(|v| v.as_f64())
+                        .is_none_or(|v| !(v.is_finite() && v > 0.0))
+                        && spec_val
+                            .as_f64()
+                            .is_some_and(|v| v.is_finite() && v > 0.0),
+                    "kind" => clip_obj
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .is_none_or(|s| s.trim().is_empty())
+                        && spec_val.as_str().is_some_and(|s| !s.trim().is_empty()),
+                    _ => false,
+                };
+                if should_overwrite || !clip_obj.contains_key(key) {
+                    clip_obj.insert(key.to_string(), spec_val);
+                }
+            }
+
+            if clip_obj.get("kind").and_then(|v| v.as_str()).is_none()
+                && clip_obj.len() == 1
+                && (clip_obj.contains_key("loop") || clip_obj.contains_key("spin"))
+            {
+                let wrapper_key = if clip_obj.contains_key("loop") {
+                    "loop"
+                } else {
+                    "spin"
+                };
+                if let Some(Value::Object(inner)) = clip_obj.remove(wrapper_key) {
+                    let mut flattened = inner;
+                    flattened.insert(
+                        "kind".to_string(),
+                        Value::String(wrapper_key.to_string()),
+                    );
+                    clip_obj = flattened;
+                    changed = true;
+                }
+            }
+
+            spec_obj.insert("clip".to_string(), Value::Object(clip_obj));
+        } else if let Some(clip_value) = clip_value {
+            spec_obj.insert("clip".to_string(), clip_value);
+        }
+
+        changed
+    }
+
     let Some(actions) = value
         .as_object_mut()
         .and_then(|root| root.get_mut("actions"))
@@ -217,6 +359,10 @@ fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
         let Some(spec_obj) = action_obj.get_mut("spec").and_then(|v| v.as_object_mut()) else {
             continue;
         };
+
+        if normalize_animation_spec_clip_shorthand(spec_obj) {
+            changed = true;
+        }
 
         let next_driver = match spec_obj.get("driver").and_then(|v| v.as_str()) {
             Some(raw) => normalize_animation_driver(raw).unwrap_or(driver_fallback),
@@ -1033,6 +1179,111 @@ mod tests {
                     other => panic!("expected loop clip, got {other:?}"),
                 }
             }
+            other => panic!("expected tweak_animation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizes_review_delta_animation_spec_clip_shorthand_fields() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "actions": [
+            {
+              "kind":"tweak_animation",
+              "component_id":"deadbeef",
+              "channel":"idle",
+              "spec": {
+                "driver": "always",
+                "kind":"loop",
+                "duration_secs": 2.0,
+                "keyframes": [ { "time_secs": 0.0 }, { "time_secs": 2.0 } ]
+              }
+            }
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("delta should parse");
+        assert_eq!(delta.actions.len(), 1);
+        match &delta.actions[0] {
+            AiReviewDeltaActionJsonV1::TweakAnimation { spec, .. } => {
+                assert!(matches!(spec.driver, AiAnimationDriverJson::Always));
+                match &spec.clip {
+                    AiAnimationClipJson::Loop {
+                        duration_secs,
+                        keyframes,
+                    } => {
+                        assert!((*duration_secs - 2.0).abs() < 1e-6);
+                        assert_eq!(keyframes.len(), 2);
+                    }
+                    other => panic!("expected loop clip, got {other:?}"),
+                }
+            }
+            other => panic!("expected tweak_animation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizes_review_delta_animation_clip_wrapped_loop_object() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "actions": [
+            {
+              "kind":"tweak_animation",
+              "component_id":"deadbeef",
+              "channel":"idle",
+              "spec": {
+                "driver": "always",
+                "clip": { "loop": { "duration_secs": 1.2, "keyframes": [ { "time_secs": 0.0 } ] } }
+              }
+            }
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("delta should parse");
+        assert_eq!(delta.actions.len(), 1);
+        match &delta.actions[0] {
+            AiReviewDeltaActionJsonV1::TweakAnimation { spec, .. } => {
+                assert!(matches!(spec.driver, AiAnimationDriverJson::Always));
+                match &spec.clip {
+                    AiAnimationClipJson::Loop { duration_secs, .. } => {
+                        assert!((*duration_secs - 1.2).abs() < 1e-6);
+                    }
+                    other => panic!("expected loop clip, got {other:?}"),
+                }
+            }
+            other => panic!("expected tweak_animation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizes_review_delta_animation_spec_wrapped_loop_object() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "actions": [
+            {
+              "kind":"tweak_animation",
+              "component_id":"deadbeef",
+              "channel":"idle",
+              "spec": {
+                "driver": "always",
+                "loop": { "duration_secs": 1.0, "keyframes": [ { "time_secs": 0.0 } ] }
+              }
+            }
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("delta should parse");
+        assert_eq!(delta.actions.len(), 1);
+        match &delta.actions[0] {
+            AiReviewDeltaActionJsonV1::TweakAnimation { spec, .. } => match &spec.clip {
+                AiAnimationClipJson::Loop { duration_secs, .. } => {
+                    assert!((*duration_secs - 1.0).abs() < 1e-6);
+                }
+                other => panic!("expected loop clip, got {other:?}"),
+            },
             other => panic!("expected tweak_animation, got {other:?}"),
         }
     }

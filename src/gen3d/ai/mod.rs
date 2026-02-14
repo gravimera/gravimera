@@ -30,7 +30,10 @@ mod structured_outputs;
 #[cfg(test)]
 mod regression_tests;
 
-use artifacts::{append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact};
+use artifacts::{
+    append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
+    write_gen3d_json_artifact,
+};
 use prompts::{
     build_gen3d_component_system_instructions, build_gen3d_component_user_text,
     build_gen3d_plan_fill_system_instructions, build_gen3d_plan_fill_user_text,
@@ -3334,6 +3337,7 @@ fn poll_gen3d_parallel_components(
 fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: impl Into<String>) {
     let err = err.into();
     error!("Gen3D: build failed: {}", truncate_for_ui(&err, 1200));
+    abort_pending_agent_tool_call(job, format!("Run failed: {err}"));
     workshop.error = Some(err);
     workshop.status = "Build failed.".into();
     job.finish_run_metrics();
@@ -3362,6 +3366,37 @@ fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: impl Into<S
     job.review_delta_repair_attempt = 0;
 }
 
+fn abort_pending_agent_tool_call(job: &mut Gen3dAiJob, reason: String) {
+    let Some(call) = job.agent.pending_tool_call.take() else {
+        return;
+    };
+    let result = crate::gen3d::agent::Gen3dToolResultJsonV1::err(
+        call.call_id.clone(),
+        call.tool_id.clone(),
+        reason.clone(),
+    );
+    append_gen3d_jsonl_artifact(
+        job.artifact_dir(),
+        "tool_results.jsonl",
+        &serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+    );
+    append_gen3d_run_log(
+        job.artifact_dir(),
+        format!(
+            "tool_call_aborted call_id={} tool_id={} reason={}",
+            call.call_id,
+            call.tool_id,
+            truncate_for_ui(reason.trim(), 360)
+        ),
+    );
+    job.agent.step_tool_results.push(result);
+    job.agent.pending_llm_tool = None;
+    job.agent.pending_component_batch = None;
+    job.agent.pending_render = None;
+    job.agent.pending_pass_snapshot = None;
+    job.agent.pending_after_pass_snapshot = None;
+}
+
 fn finish_job_best_effort(
     commands: &mut Commands,
     review_cameras: &Query<Entity, With<Gen3dReviewCaptureCamera>>,
@@ -3377,6 +3412,7 @@ fn finish_job_best_effort(
         job.artifact_dir(),
         format!("budget_stop reason={}", truncate_for_ui(&reason, 600)),
     );
+    abort_pending_agent_tool_call(job, format!("Run stopped (best effort): {reason}"));
 
     workshop.error = None;
     workshop.status = format!(
