@@ -9,6 +9,7 @@ This folder contains ExecPlans (execution plans) for larger features and refacto
   - `docs/execplans/execplan_scene_04_validation_scorecards.md`
   - `docs/execplans/execplan_scene_05_blueprint_apply_sources.md`
   - `docs/execplans/execplan_scene_06_runs_resume_quality_gate.md`
+  - `docs/execplans/execplan_scene_07_procedural_layer_kinds_v1.md`
 - Other files here are historical design/implementation notes from earlier iterations. They are kept for reference/debugging.
 
 For new work, create a fresh ExecPlan following `PLANS.md` and keep it up to date while implementing.

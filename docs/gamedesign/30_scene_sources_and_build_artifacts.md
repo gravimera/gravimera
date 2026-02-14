@@ -166,6 +166,10 @@ Fields:
 
 Additional fields are allowed and must be preserved by round-trip tools when possible.
 
+Additional procedural layer kinds are defined in:
+
+- `docs/gamedesign/33_scene_layer_kinds_v1.md`
+
 ### Deterministic Instance Id Derivation (v1, normative)
 
 For `explicit_instances` (and any future procedural layer kinds), the engine must derive a stable

@@ -677,12 +677,42 @@ pub(crate) fn reload_scene_sources_in_workspace(workspace: &mut SceneSourcesWork
 #[derive(Clone, Debug)]
 enum SceneLayer {
     ExplicitInstances(ExplicitInstancesLayer),
+    GridInstances(GridInstancesLayer),
+    PolylineInstances(PolylineInstancesLayer),
 }
 
 #[derive(Clone, Debug)]
 struct ExplicitInstancesLayer {
     layer_id: String,
     instances: Vec<ExplicitInstanceSpec>,
+    source_rel_path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct GridInstancesLayer {
+    layer_id: String,
+    prefab_id: ObjectPrefabId,
+    origin: Vec3,
+    count_x: u32,
+    count_z: u32,
+    step_x: f32,
+    step_z: f32,
+    rotation: Quat,
+    scale: Vec3,
+    tint: Option<Color>,
+    source_rel_path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct PolylineInstancesLayer {
+    layer_id: String,
+    prefab_id: ObjectPrefabId,
+    points: Vec<Vec3>,
+    spacing: f32,
+    start_offset: f32,
+    rotation: Quat,
+    scale: Vec3,
+    tint: Option<Color>,
     source_rel_path: PathBuf,
 }
 
@@ -708,7 +738,13 @@ fn parse_layers(sources: &SceneSourcesV1) -> Result<BTreeMap<String, SceneLayer>
         }
         let layer = parse_layer_doc(rel_path, doc)?;
         let (layer_id, layer) = match layer {
-            SceneLayer::ExplicitInstances(layer) => (layer.layer_id.clone(), SceneLayer::ExplicitInstances(layer)),
+            SceneLayer::ExplicitInstances(layer) => {
+                (layer.layer_id.clone(), SceneLayer::ExplicitInstances(layer))
+            }
+            SceneLayer::GridInstances(layer) => (layer.layer_id.clone(), SceneLayer::GridInstances(layer)),
+            SceneLayer::PolylineInstances(layer) => {
+                (layer.layer_id.clone(), SceneLayer::PolylineInstances(layer))
+            }
         };
         if out.insert(layer_id.clone(), layer).is_some() {
             return Err(format!("Duplicate layer_id in sources: {layer_id}"));
@@ -775,6 +811,176 @@ fn parse_layer_doc(path: &Path, doc: &Value) -> Result<SceneLayer, String> {
             Ok(SceneLayer::ExplicitInstances(ExplicitInstancesLayer {
                 layer_id,
                 instances: parsed,
+                source_rel_path: path.to_path_buf(),
+            }))
+        }
+        "grid_instances" => {
+            let prefab_uuid = map
+                .get("prefab_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("{}: missing prefab_id", path.display()))?;
+            let prefab_uuid = uuid::Uuid::parse_str(prefab_uuid.trim())
+                .map_err(|err| format!("{}: invalid prefab_id UUID: {err}", path.display()))?;
+
+            let origin_val = map
+                .get("origin")
+                .ok_or_else(|| format!("{}: missing origin", path.display()))?;
+            let origin = parse_vec3(origin_val)?;
+            if !origin.is_finite() {
+                return Err(format!("{}: origin must be finite", path.display()));
+            }
+
+            let count_val = map
+                .get("count")
+                .ok_or_else(|| format!("{}: missing count", path.display()))?;
+            let Value::Object(count_map) = count_val else {
+                return Err(format!("{}: count must be an object", path.display()));
+            };
+            let count_x = count_map
+                .get("x")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| format!("{}: count.x must be an integer", path.display()))?;
+            let count_z = count_map
+                .get("z")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| format!("{}: count.z must be an integer", path.display()))?;
+            let count_x = u32::try_from(count_x)
+                .map_err(|_| format!("{}: count.x out of range", path.display()))?;
+            let count_z = u32::try_from(count_z)
+                .map_err(|_| format!("{}: count.z out of range", path.display()))?;
+
+            let step_val = map
+                .get("step")
+                .ok_or_else(|| format!("{}: missing step", path.display()))?;
+            let Value::Object(step_map) = step_val else {
+                return Err(format!("{}: step must be an object", path.display()));
+            };
+            let step_x = step_map
+                .get("x")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| format!("{}: step.x must be a number", path.display()))?
+                as f32;
+            let step_z = step_map
+                .get("z")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| format!("{}: step.z must be a number", path.display()))?
+                as f32;
+            if !step_x.is_finite() || step_x == 0.0 {
+                return Err(format!("{}: step.x must be finite and non-zero", path.display()));
+            }
+            if !step_z.is_finite() || step_z == 0.0 {
+                return Err(format!("{}: step.z must be finite and non-zero", path.display()));
+            }
+
+            let rotation = map.get("rotation").map(parse_quat).transpose()?.unwrap_or(Quat::IDENTITY);
+            let scale = map.get("scale").map(parse_vec3).transpose()?.unwrap_or(Vec3::ONE);
+            let tint = map.get("tint_rgba").map(parse_color).transpose()?;
+
+            let template = sanitize_transform(
+                Transform::from_translation(Vec3::ZERO)
+                    .with_rotation(rotation)
+                    .with_scale(scale),
+            )?;
+
+            Ok(SceneLayer::GridInstances(GridInstancesLayer {
+                layer_id,
+                prefab_id: ObjectPrefabId(prefab_uuid.as_u128()),
+                origin,
+                count_x,
+                count_z,
+                step_x,
+                step_z,
+                rotation: template.rotation,
+                scale: template.scale,
+                tint,
+                source_rel_path: path.to_path_buf(),
+            }))
+        }
+        "polyline_instances" => {
+            let prefab_uuid = map
+                .get("prefab_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("{}: missing prefab_id", path.display()))?;
+            let prefab_uuid = uuid::Uuid::parse_str(prefab_uuid.trim())
+                .map_err(|err| format!("{}: invalid prefab_id UUID: {err}", path.display()))?;
+
+            let points_val = map
+                .get("points")
+                .ok_or_else(|| format!("{}: missing points", path.display()))?;
+            let Value::Array(points_items) = points_val else {
+                return Err(format!("{}: points must be an array", path.display()));
+            };
+            if points_items.len() < 2 {
+                return Err(format!(
+                    "{}: points must contain at least 2 points",
+                    path.display()
+                ));
+            }
+            let mut points = Vec::with_capacity(points_items.len());
+            for (idx, item) in points_items.iter().enumerate() {
+                let p = parse_vec3(item).map_err(|err| {
+                    format!("{}: points[{}] invalid vec3: {err}", path.display(), idx)
+                })?;
+                if !p.is_finite() {
+                    return Err(format!("{}: points[{}] must be finite", path.display(), idx));
+                }
+                points.push(p);
+            }
+            for idx in 0..(points.len() - 1) {
+                let a = points[idx];
+                let b = points[idx + 1];
+                if (b - a).length_squared() == 0.0 {
+                    return Err(format!(
+                        "{}: points[{}] and points[{}] must not be identical (zero-length segment)",
+                        path.display(),
+                        idx,
+                        idx + 1
+                    ));
+                }
+            }
+
+            let spacing = map
+                .get("spacing")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| format!("{}: spacing must be a number", path.display()))?
+                as f32;
+            if !spacing.is_finite() || spacing <= 0.0 {
+                return Err(format!("{}: spacing must be finite and > 0", path.display()));
+            }
+
+            let start_offset = match map.get("start_offset") {
+                None => 0.0f32,
+                Some(v) => v
+                    .as_f64()
+                    .ok_or_else(|| format!("{}: start_offset must be a number", path.display()))?
+                    as f32,
+            };
+            if !start_offset.is_finite() || start_offset < 0.0 {
+                return Err(format!(
+                    "{}: start_offset must be finite and >= 0",
+                    path.display()
+                ));
+            }
+
+            let rotation = map.get("rotation").map(parse_quat).transpose()?.unwrap_or(Quat::IDENTITY);
+            let scale = map.get("scale").map(parse_vec3).transpose()?.unwrap_or(Vec3::ONE);
+            let tint = map.get("tint_rgba").map(parse_color).transpose()?;
+
+            let template = sanitize_transform(
+                Transform::from_translation(Vec3::ZERO)
+                    .with_rotation(rotation)
+                    .with_scale(scale),
+            )?;
+
+            Ok(SceneLayer::PolylineInstances(PolylineInstancesLayer {
+                layer_id,
+                prefab_id: ObjectPrefabId(prefab_uuid.as_u128()),
+                points,
+                spacing,
+                start_offset,
+                rotation: template.rotation,
+                scale: template.scale,
+                tint,
                 source_rel_path: path.to_path_buf(),
             }))
         }
@@ -1030,6 +1236,8 @@ fn validate_scene_sources_impl(
     for (layer_id, layer) in &layers {
         let count = match layer {
             SceneLayer::ExplicitInstances(layer) => layer.instances.len(),
+            SceneLayer::GridInstances(layer) => grid_instances_predicted_count(layer)?,
+            SceneLayer::PolylineInstances(layer) => polyline_instances_predicted_count(layer)?,
         };
         predicted_by_layer.insert(layer_id.clone(), count);
     }
@@ -1106,6 +1314,44 @@ fn validate_scene_sources_impl(
                     });
                 }
             }
+            SceneLayer::GridInstances(layer) => {
+                if library.get(layer.prefab_id.0).is_some() {
+                    continue;
+                }
+                report.push_violation(ValidationViolationV1 {
+                    code: "unknown_prefab_id".to_string(),
+                    message: format!(
+                        "Layer {layer_id} references unknown prefab_id {}",
+                        uuid::Uuid::from_u128(layer.prefab_id.0)
+                    ),
+                    severity: ViolationSeverityV1::Error,
+                    evidence: Some(ViolationEvidenceV1 {
+                        source_path: Some(layer.source_rel_path.display().to_string()),
+                        layer_id: Some(layer_id.clone()),
+                        prefab_id: Some(uuid::Uuid::from_u128(layer.prefab_id.0).to_string()),
+                        ..Default::default()
+                    }),
+                });
+            }
+            SceneLayer::PolylineInstances(layer) => {
+                if library.get(layer.prefab_id.0).is_some() {
+                    continue;
+                }
+                report.push_violation(ValidationViolationV1 {
+                    code: "unknown_prefab_id".to_string(),
+                    message: format!(
+                        "Layer {layer_id} references unknown prefab_id {}",
+                        uuid::Uuid::from_u128(layer.prefab_id.0)
+                    ),
+                    severity: ViolationSeverityV1::Error,
+                    evidence: Some(ViolationEvidenceV1 {
+                        source_path: Some(layer.source_rel_path.display().to_string()),
+                        layer_id: Some(layer_id.clone()),
+                        prefab_id: Some(uuid::Uuid::from_u128(layer.prefab_id.0).to_string()),
+                        ..Default::default()
+                    }),
+                });
+            }
         }
     }
 
@@ -1132,6 +1378,57 @@ fn validate_scene_sources_impl(
                                 source_path: Some(layer.source_rel_path.display().to_string()),
                                 layer_id: Some(layer_id.clone()),
                                 local_id: Some(inst.local_id.clone()),
+                                instance_id: Some(uuid::Uuid::from_u128(derived_id.0).to_string()),
+                                ..Default::default()
+                            }),
+                        });
+                    }
+                }
+                SceneLayer::GridInstances(layer) => {
+                    for ix in 0..layer.count_x {
+                        for iz in 0..layer.count_z {
+                            let local_id = grid_instances_local_id(ix, iz);
+                            let derived_id = derived_layer_instance_id(scene_id, layer_id, &local_id);
+                            if !pinned_ids.contains(&derived_id.0) {
+                                continue;
+                            }
+                            report.push_violation(ValidationViolationV1 {
+                                code: "instance_id_conflict_pinned_vs_layer".to_string(),
+                                message: format!(
+                                    "Layer output instance_id conflicts with pinned instance_id {}",
+                                    uuid::Uuid::from_u128(derived_id.0)
+                                ),
+                                severity: ViolationSeverityV1::Error,
+                                evidence: Some(ViolationEvidenceV1 {
+                                    source_path: Some(layer.source_rel_path.display().to_string()),
+                                    layer_id: Some(layer_id.clone()),
+                                    local_id: Some(local_id),
+                                    instance_id: Some(uuid::Uuid::from_u128(derived_id.0).to_string()),
+                                    ..Default::default()
+                                }),
+                            });
+                        }
+                    }
+                }
+                SceneLayer::PolylineInstances(layer) => {
+                    let count = polyline_instances_predicted_count(layer)?;
+                    for k in 0..count {
+                        let local_id = polyline_instances_local_id(k);
+                        let derived_id = derived_layer_instance_id(scene_id, layer_id, &local_id);
+                        if !pinned_ids.contains(&derived_id.0) {
+                            continue;
+                        }
+                        report.push_violation(ValidationViolationV1 {
+                            code: "instance_id_conflict_pinned_vs_layer".to_string(),
+                            message: format!(
+                                "Layer output instance_id conflicts with pinned instance_id {}",
+                                uuid::Uuid::from_u128(derived_id.0)
+                            ),
+                            severity: ViolationSeverityV1::Error,
+                            evidence: Some(ViolationEvidenceV1 {
+                                source_path: Some(layer.source_rel_path.display().to_string()),
+                                layer_id: Some(layer_id.clone()),
+                                local_id: Some(local_id),
                                 instance_id: Some(uuid::Uuid::from_u128(derived_id.0).to_string()),
                                 ..Default::default()
                             }),
@@ -1685,7 +1982,206 @@ fn desired_instances_for_layer(
             }
             Ok(out)
         }
+        SceneLayer::GridInstances(layer) => {
+            let mut out = BTreeMap::new();
+            for ix in 0..layer.count_x {
+                for iz in 0..layer.count_z {
+                    let local_id = grid_instances_local_id(ix, iz);
+                    let instance_id = derived_layer_instance_id(scene_id, layer_id, &local_id);
+
+                    let translation = Vec3::new(
+                        layer.origin.x + layer.step_x * (ix as f32),
+                        layer.origin.y,
+                        layer.origin.z + layer.step_z * (iz as f32),
+                    );
+                    if !translation.is_finite() {
+                        return Err(format!(
+                            "Layer {layer_id} generated non-finite translation for {local_id}"
+                        ));
+                    }
+
+                    let transform = Transform::from_translation(translation)
+                        .with_rotation(layer.rotation)
+                        .with_scale(layer.scale);
+
+                    let key = instance_id.0;
+                    if out
+                        .insert(
+                            key,
+                            PinnedInstance {
+                                instance_id,
+                                prefab_id: layer.prefab_id,
+                                transform,
+                                tint: layer.tint,
+                                source_rel_path: None,
+                            },
+                        )
+                        .is_some()
+                    {
+                        return Err(format!(
+                            "Layer {layer_id} generated duplicate instance id: {}",
+                            uuid::Uuid::from_u128(key)
+                        ));
+                    }
+                }
+            }
+            Ok(out)
+        }
+        SceneLayer::PolylineInstances(layer) => {
+            let mut out = BTreeMap::new();
+            let count = polyline_instances_predicted_count(layer)?;
+            if count == 0 {
+                return Ok(out);
+            }
+
+            let mut segments = Vec::with_capacity(layer.points.len().saturating_sub(1));
+            let mut cum_end = 0.0f32;
+            for idx in 0..(layer.points.len() - 1) {
+                let a = layer.points[idx];
+                let b = layer.points[idx + 1];
+                let delta = b - a;
+                let len = delta.length();
+                if !len.is_finite() || len <= 0.0 {
+                    return Err(format!(
+                        "Layer {layer_id} contains a non-finite or zero-length segment at points[{idx}]"
+                    ));
+                }
+                cum_end += len;
+                if !cum_end.is_finite() {
+                    return Err(format!(
+                        "Layer {layer_id} polyline length overflow (non-finite total length)"
+                    ));
+                }
+                segments.push((a, delta, len, cum_end));
+            }
+
+            let total_length = cum_end;
+            let mut seg_idx: usize = 0;
+            let mut seg_start_dist: f32 = 0.0;
+            let mut seg_end_dist: f32 = segments
+                .first()
+                .map(|s| s.3)
+                .unwrap_or(0.0);
+
+            for k in 0..count {
+                let local_id = polyline_instances_local_id(k);
+                let instance_id = derived_layer_instance_id(scene_id, layer_id, &local_id);
+
+                let mut d = layer.start_offset + (k as f32) * layer.spacing;
+                if !d.is_finite() {
+                    return Err(format!("Layer {layer_id} generated non-finite distance for {local_id}"));
+                }
+                if d > total_length {
+                    d = total_length;
+                }
+
+                while seg_idx + 1 < segments.len() && d > seg_end_dist {
+                    seg_start_dist = seg_end_dist;
+                    seg_idx += 1;
+                    seg_end_dist = segments[seg_idx].3;
+                }
+
+                let (seg_a, seg_delta, seg_len, _seg_cum_end) = segments[seg_idx];
+                let local_d = d - seg_start_dist;
+                let t = local_d / seg_len;
+                let translation = seg_a + seg_delta * t;
+                if !translation.is_finite() {
+                    return Err(format!(
+                        "Layer {layer_id} generated non-finite translation for {local_id}"
+                    ));
+                }
+
+                let transform = Transform::from_translation(translation)
+                    .with_rotation(layer.rotation)
+                    .with_scale(layer.scale);
+
+                let key = instance_id.0;
+                if out
+                    .insert(
+                        key,
+                        PinnedInstance {
+                            instance_id,
+                            prefab_id: layer.prefab_id,
+                            transform,
+                            tint: layer.tint,
+                            source_rel_path: None,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(format!(
+                        "Layer {layer_id} generated duplicate instance id: {}",
+                        uuid::Uuid::from_u128(key)
+                    ));
+                }
+            }
+
+            Ok(out)
+        }
     }
+}
+
+fn grid_instances_local_id(ix: u32, iz: u32) -> String {
+    format!("x{ix}_z{iz}")
+}
+
+fn grid_instances_predicted_count(layer: &GridInstancesLayer) -> Result<usize, String> {
+    let count = (layer.count_x as u64)
+        .checked_mul(layer.count_z as u64)
+        .ok_or_else(|| "grid_instances predicted count overflow".to_string())?;
+    usize::try_from(count).map_err(|_| "grid_instances predicted count too large".to_string())
+}
+
+fn polyline_instances_local_id(idx: usize) -> String {
+    format!("i{idx}")
+}
+
+fn polyline_instances_predicted_count(layer: &PolylineInstancesLayer) -> Result<usize, String> {
+    if layer.points.len() < 2 {
+        return Ok(0);
+    }
+
+    let mut total_length = 0.0f64;
+    for idx in 0..(layer.points.len() - 1) {
+        let a = layer.points[idx];
+        let b = layer.points[idx + 1];
+        let len = (b - a).length() as f64;
+        if !len.is_finite() {
+            return Err("polyline_instances contains a non-finite segment length".to_string());
+        }
+        total_length += len;
+        if !total_length.is_finite() {
+            return Err("polyline_instances total_length overflow (non-finite)".to_string());
+        }
+    }
+
+    let start_offset = layer.start_offset as f64;
+    if start_offset > total_length {
+        return Ok(0);
+    }
+
+    let remaining = total_length - start_offset;
+    if !remaining.is_finite() {
+        return Err("polyline_instances remaining length must be finite".to_string());
+    }
+
+    let spacing = layer.spacing as f64;
+    if !spacing.is_finite() || spacing <= 0.0 {
+        return Err("polyline_instances spacing must be finite and > 0".to_string());
+    }
+
+    let ratio = remaining / spacing;
+    if !ratio.is_finite() || ratio < 0.0 {
+        return Err("polyline_instances count computation overflow".to_string());
+    }
+
+    let count_floor = ratio.floor();
+    let max_floor = (usize::MAX as f64) - 1.0;
+    if count_floor > max_floor {
+        return Err("polyline_instances predicted count too large".to_string());
+    }
+
+    Ok((count_floor as usize).saturating_add(1))
 }
 
 fn map_existing_instances_by_id(
@@ -2044,7 +2540,14 @@ mod golden_scene_signatures {
     }
 
     fn compute_golden() -> serde_json::Value {
-        let fixtures = [("minimal", fixture_src_dir("minimal")), ("layers_regen", fixture_src_dir("layers_regen"))];
+        let fixtures = [
+            ("minimal", fixture_src_dir("minimal")),
+            ("layers_regen", fixture_src_dir("layers_regen")),
+            (
+                "procedural_layers_v1",
+                fixture_src_dir("procedural_layers_v1"),
+            ),
+        ];
 
         let mut out = serde_json::Map::new();
         for (name, src_dir) in fixtures {

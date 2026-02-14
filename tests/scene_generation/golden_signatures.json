@@ -21,6 +21,20 @@
       "pinned_instances": 1,
       "pinned_sig": "923d87e781e2aebf2cc4e9a97d4aa8d3e4fcac65d178ac5ff7c9d13b8d98b778",
       "total_instances": 1
+    },
+    "procedural_layers_v1": {
+      "layer_instance_counts": {
+        "grid_a": 6,
+        "path_a": 5
+      },
+      "layer_sigs": {
+        "grid_a": "c54dec8a5b67c95fcade85c5cff072cde7a49c0b148f4199802595f7f984eb0e",
+        "path_a": "beca47ce9d05c79de33e6f1ce25b364f5d9c8eee8fe7443b846548f007aca4de"
+      },
+      "overall_sig": "3a651143d9a28507c6119f719caa7da505939e633d6fa4745b61140a0f830ce3",
+      "pinned_instances": 1,
+      "pinned_sig": "9f4bcc1bb477812afb90c343f28ba2dd2bc3e1a1a8d635d2ff1910db99a5eb76",
+      "total_instances": 12
     }
   },
   "format_version": 1

@@ -1,0 +1,20 @@
+{
+  "count": {
+    "x": 2,
+    "z": 3
+  },
+  "format_version": 1,
+  "kind": "grid_instances",
+  "layer_id": "grid_a",
+  "origin": {
+    "x": 0.0,
+    "y": 0.0,
+    "z": 0.0
+  },
+  "prefab_id": "a114d7d4-d27b-5d79-926e-c435f181e1df",
+  "step": {
+    "x": 1.0,
+    "z": 2.0
+  }
+}
+

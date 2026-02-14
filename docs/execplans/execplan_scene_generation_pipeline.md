@@ -27,6 +27,7 @@ End-state behaviors:
 - [x] (2026-02-14) Execute Milestone 4: `docs/execplans/execplan_scene_04_validation_scorecards.md`.
 - [x] (2026-02-14) Execute Milestone 5: `docs/execplans/execplan_scene_05_blueprint_apply_sources.md`.
 - [x] (2026-02-14) Execute Milestone 6: `docs/execplans/execplan_scene_06_runs_resume_quality_gate.md`.
+- [x] (2026-02-14) Execute Milestone 7: `docs/execplans/execplan_scene_07_procedural_layer_kinds_v1.md`.
 
 ## Surprises & Discoveries
 
@@ -99,6 +100,7 @@ Execute these milestone plans in order:
 4) `docs/execplans/execplan_scene_04_validation_scorecards.md` — add validators + scorecards and write structured `ValidationReport` outputs with evidence pointers.
 5) `docs/execplans/execplan_scene_05_blueprint_apply_sources.md` — implement blueprint validate/apply that edits sources, recompiles, and revalidates, with patch-history artifacts.
 6) `docs/execplans/execplan_scene_06_runs_resume_quality_gate.md` — add run directories, checkpoints/resume, and a deterministic signature quality gate over fixtures.
+7) `docs/execplans/execplan_scene_07_procedural_layer_kinds_v1.md` — add additional generic procedural layer kinds (grid + polyline) for scalable scene authoring.
 
 All milestones share the same dev↔test cycle: make a small change, add/update a test, run `cargo test`, run a headless smoke boot (`cargo run -- --headless --headless-seconds 1`), then commit.
 
