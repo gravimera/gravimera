@@ -112,6 +112,51 @@ Each layer must include:
 - deterministic seed policy (explicit)
 - declarations of which instances it owns (conceptually), to support regeneration and provenance
 
+### Layer File Schema (v1, minimal / normative)
+
+Layer files are JSON objects stored under:
+
+    src/layers/<layer_id>.json
+
+Minimum required fields (v1):
+
+- `format_version`: integer (currently `1`)
+- `layer_id`: string (stable within the scene)
+- `kind`: string (layer kind)
+
+The minimal generic layer kind supported by the engine is:
+
+#### `kind = "explicit_instances"`
+
+This kind is a “manual placement layer”: it explicitly enumerates concrete instances, but they are
+still **owned by the layer** (not pinned), so regeneration semantics remain consistent.
+
+Fields:
+
+- `instances`: array of instance specs
+  - `local_id`: string (stable identifier within this layer; required for deterministic ids)
+  - `prefab_id`: UUID string
+  - `transform`: object
+    - `translation`: `{ "x": <f32>, "y": <f32>, "z": <f32> }`
+    - `rotation`: `{ "x": <f32>, "y": <f32>, "z": <f32>, "w": <f32> }` (quaternion)
+    - `scale`: `{ "x": <f32>, "y": <f32>, "z": <f32> }`
+  - `tint_rgba` (optional): `{ "r": <f32>, "g": <f32>, "b": <f32>, "a": <f32> }` (linear RGBA)
+
+Additional fields are allowed and must be preserved by round-trip tools when possible.
+
+### Deterministic Instance Id Derivation (v1, normative)
+
+For `explicit_instances` (and any future procedural layer kinds), the engine must derive a stable
+UUID for each compiled instance. The v1 rule is:
+
+- Use UUID v5 with namespace `uuid::Uuid::NAMESPACE_URL`.
+- The name/key is the UTF-8 string:
+
+    gravimera/scene_sources/v1/scene/<scene_id>/layer/<layer_id>/instance/<local_id>
+
+This produces deterministic instance ids across machines and runs and enables safe regeneration
+without duplicates.
+
 Regeneration uses the rule defined in `docs/gamedesign/22_scene_creation.md`:
 
 - **layers own their outputs unless pinned**

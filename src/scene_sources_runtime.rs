@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::constants::BUILD_UNIT_SIZE;
@@ -10,7 +11,7 @@ use crate::scene_sources::{
 };
 use crate::types::{
     AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, ObjectId, ObjectPrefabId,
-    ObjectTint,
+    ObjectTint, SceneLayerOwner,
 };
 
 #[derive(Resource, Default)]
@@ -622,4 +623,806 @@ fn is_under_dir(path: &Path, dir: &Path) -> bool {
     };
     // Only match files directly under the directory or in subdirectories.
     !rel.as_os_str().is_empty()
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SceneWorldInstance {
+    pub(crate) entity: Entity,
+    pub(crate) instance_id: ObjectId,
+    pub(crate) prefab_id: ObjectPrefabId,
+    pub(crate) transform: Transform,
+    pub(crate) tint: Option<Color>,
+    pub(crate) owner_layer_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct SceneCompileReport {
+    pub(crate) spawned: usize,
+    pub(crate) updated: usize,
+    pub(crate) despawned: usize,
+    pub(crate) layers_compiled: usize,
+    pub(crate) pinned_upserts: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct SceneSignatureSummary {
+    pub(crate) overall_sig: String,
+    pub(crate) pinned_sig: String,
+    pub(crate) layer_sigs: BTreeMap<String, String>,
+    pub(crate) total_instances: usize,
+    pub(crate) pinned_instances: usize,
+    pub(crate) layer_instance_counts: BTreeMap<String, usize>,
+}
+
+pub(crate) fn reload_scene_sources_in_workspace(workspace: &mut SceneSourcesWorkspace) -> Result<(), String> {
+    let Some(src_dir) = workspace.loaded_from_dir.as_ref() else {
+        return Err("No scene sources directory has been imported in this session.".to_string());
+    };
+
+    let sources = SceneSourcesV1::load_from_dir(src_dir).map_err(|err| err.to_string())?;
+    workspace.sources = Some(sources);
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+enum SceneLayer {
+    ExplicitInstances(ExplicitInstancesLayer),
+}
+
+#[derive(Clone, Debug)]
+struct ExplicitInstancesLayer {
+    layer_id: String,
+    instances: Vec<ExplicitInstanceSpec>,
+}
+
+#[derive(Clone, Debug)]
+struct ExplicitInstanceSpec {
+    local_id: String,
+    prefab_id: ObjectPrefabId,
+    transform: Transform,
+    tint: Option<Color>,
+}
+
+fn parse_layers(sources: &SceneSourcesV1) -> Result<BTreeMap<String, SceneLayer>, String> {
+    let index_paths =
+        SceneSourcesIndexPaths::from_index_json_value(&sources.index_json).map_err(|err| {
+            format!("Invalid scene sources index.json: {err}")
+        })?;
+    let layers_dir = index_paths.layers_dir;
+
+    let mut out: BTreeMap<String, SceneLayer> = BTreeMap::new();
+    for (rel_path, doc) in &sources.extra_json_files {
+        if !is_under_dir(rel_path, &layers_dir) {
+            continue;
+        }
+        let layer = parse_layer_doc(rel_path, doc)?;
+        let (layer_id, layer) = match layer {
+            SceneLayer::ExplicitInstances(layer) => (layer.layer_id.clone(), SceneLayer::ExplicitInstances(layer)),
+        };
+        if out.insert(layer_id.clone(), layer).is_some() {
+            return Err(format!("Duplicate layer_id in sources: {layer_id}"));
+        }
+    }
+    Ok(out)
+}
+
+fn parse_layer_doc(path: &Path, doc: &Value) -> Result<SceneLayer, String> {
+    let Value::Object(map) = doc else {
+        return Err(format!("{}: layer must be a JSON object", path.display()));
+    };
+
+    let format_version = map
+        .get("format_version")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| format!("{}: missing format_version", path.display()))?;
+    if format_version != SCENE_SOURCES_FORMAT_VERSION as u64 {
+        return Err(format!(
+            "{}: unsupported format_version {} (expected {})",
+            path.display(),
+            format_version,
+            SCENE_SOURCES_FORMAT_VERSION
+        ));
+    }
+
+    let layer_id = map
+        .get("layer_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("{}: missing layer_id", path.display()))?
+        .to_string();
+
+    let kind = map
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("{}: missing kind", path.display()))?;
+
+    match kind {
+        "explicit_instances" => {
+            let instances_val = map
+                .get("instances")
+                .ok_or_else(|| format!("{}: missing instances", path.display()))?;
+            let Value::Array(instances) = instances_val else {
+                return Err(format!("{}: instances must be an array", path.display()));
+            };
+            let mut parsed = Vec::with_capacity(instances.len());
+            let mut seen_local_ids = HashSet::new();
+            for (idx, item) in instances.iter().enumerate() {
+                let spec = parse_explicit_instance_spec(path, idx, item)?;
+                if !seen_local_ids.insert(spec.local_id.clone()) {
+                    return Err(format!(
+                        "{}: duplicate local_id in instances: {}",
+                        path.display(),
+                        spec.local_id
+                    ));
+                }
+                parsed.push(spec);
+            }
+            parsed.sort_by(|a, b| a.local_id.cmp(&b.local_id));
+            Ok(SceneLayer::ExplicitInstances(ExplicitInstancesLayer {
+                layer_id,
+                instances: parsed,
+            }))
+        }
+        other => Err(format!(
+            "{}: unsupported layer kind: {}",
+            path.display(),
+            other
+        )),
+    }
+}
+
+fn parse_explicit_instance_spec(path: &Path, idx: usize, doc: &Value) -> Result<ExplicitInstanceSpec, String> {
+    let Value::Object(map) = doc else {
+        return Err(format!(
+            "{}: instances[{}] must be an object",
+            path.display(),
+            idx
+        ));
+    };
+
+    let local_id = map
+        .get("local_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("{}: instances[{}] missing local_id", path.display(), idx))?
+        .to_string();
+
+    let prefab_uuid = map
+        .get("prefab_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("{}: instances[{}] missing prefab_id", path.display(), idx))?;
+    let prefab_uuid = uuid::Uuid::parse_str(prefab_uuid.trim()).map_err(|err| {
+        format!(
+            "{}: instances[{}] invalid prefab_id UUID: {err}",
+            path.display(),
+            idx
+        )
+    })?;
+
+    let transform_val = map
+        .get("transform")
+        .ok_or_else(|| format!("{}: instances[{}] missing transform", path.display(), idx))?;
+    let translation = transform_val
+        .get("translation")
+        .map(parse_vec3)
+        .transpose()?
+        .unwrap_or(Vec3::ZERO);
+    let rotation = transform_val
+        .get("rotation")
+        .map(parse_quat)
+        .transpose()?
+        .unwrap_or(Quat::IDENTITY);
+    let scale = transform_val
+        .get("scale")
+        .map(parse_vec3)
+        .transpose()?
+        .unwrap_or(Vec3::ONE);
+
+    let tint = map.get("tint_rgba").map(parse_color).transpose()?;
+
+    let transform = sanitize_transform(
+        Transform::from_translation(translation)
+            .with_rotation(rotation)
+            .with_scale(scale),
+    )?;
+
+    Ok(ExplicitInstanceSpec {
+        local_id,
+        prefab_id: ObjectPrefabId(prefab_uuid.as_u128()),
+        transform,
+        tint,
+    })
+}
+
+fn derived_layer_instance_id(scene_id: &str, layer_id: &str, local_id: &str) -> ObjectId {
+    let key = format!(
+        "gravimera/scene_sources/v1/scene/{scene_id}/layer/{layer_id}/instance/{local_id}"
+    );
+    ObjectId(uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, key.as_bytes()).as_u128())
+}
+
+pub(crate) fn compile_scene_sources_all_layers(
+    commands: &mut Commands,
+    workspace: &SceneSourcesWorkspace,
+    library: &ObjectLibrary,
+    existing_instances: impl Iterator<Item = SceneWorldInstance>,
+) -> Result<SceneCompileReport, String> {
+    let Some(sources) = workspace.sources.as_ref() else {
+        return Err("No scene sources have been imported in this session.".to_string());
+    };
+
+    let scene_id = sources
+        .meta_json
+        .get("scene_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "meta.json missing scene_id".to_string())?;
+
+    let pinned_instances = parse_pinned_instances(sources)?;
+    let layers = parse_layers(sources)?;
+
+    let existing: Vec<SceneWorldInstance> = existing_instances.collect();
+    let existing_by_id = map_existing_instances_by_id(&existing)?;
+
+    let pinned_ids: HashSet<u128> = pinned_instances.keys().copied().collect();
+
+    let mut report = SceneCompileReport {
+        spawned: 0,
+        updated: 0,
+        despawned: 0,
+        layers_compiled: layers.len(),
+        pinned_upserts: pinned_instances.len(),
+    };
+
+    // First apply pinned instances (unowned).
+    for (id_u128, pinned) in &pinned_instances {
+        let existing = existing_by_id.get(id_u128);
+        if let Some(existing) = existing {
+            if existing.owner_layer_id.is_some() {
+                return Err(format!(
+                    "Pinned instance {} conflicts with a layer-owned entity",
+                    uuid::Uuid::from_u128(*id_u128)
+                ));
+            }
+            upsert_scene_instance_entity(
+                commands,
+                library,
+                existing.entity,
+                pinned.prefab_id.0,
+                pinned.transform,
+                pinned.tint,
+                None,
+            );
+            report.updated += 1;
+        } else {
+            spawn_scene_instance_entity(
+                commands,
+                library,
+                pinned.instance_id,
+                pinned.prefab_id.0,
+                pinned.transform,
+                pinned.tint,
+                None,
+            );
+            report.spawned += 1;
+        }
+    }
+
+    // Then compile each layer deterministically.
+    for (layer_id, layer) in &layers {
+        let desired = desired_instances_for_layer(scene_id, layer_id, layer)?;
+        let desired_ids: HashSet<u128> = desired.keys().copied().collect();
+
+        // Upsert desired outputs.
+        for (id_u128, spec) in &desired {
+            if pinned_ids.contains(id_u128) {
+                return Err(format!(
+                    "Layer output id conflicts with pinned instance id: {}",
+                    uuid::Uuid::from_u128(*id_u128)
+                ));
+            }
+
+            if let Some(existing) = existing_by_id.get(id_u128) {
+                match existing.owner_layer_id.as_deref() {
+                    Some(owner) if owner == layer_id => {
+                        upsert_scene_instance_entity(
+                            commands,
+                            library,
+                            existing.entity,
+                            spec.prefab_id.0,
+                            spec.transform,
+                            spec.tint,
+                            Some(layer_id.as_str()),
+                        );
+                        report.updated += 1;
+                    }
+                    Some(owner) => {
+                        return Err(format!(
+                            "Layer output id {} conflicts with entity owned by different layer {owner}",
+                            uuid::Uuid::from_u128(*id_u128)
+                        ));
+                    }
+                    None => {
+                        return Err(format!(
+                            "Layer output id {} conflicts with unowned entity",
+                            uuid::Uuid::from_u128(*id_u128)
+                        ));
+                    }
+                }
+            } else {
+                spawn_scene_instance_entity(
+                    commands,
+                    library,
+                    spec.instance_id,
+                    spec.prefab_id.0,
+                    spec.transform,
+                    spec.tint,
+                    Some(layer_id.as_str()),
+                );
+                report.spawned += 1;
+            }
+        }
+
+        // Despawn stale outputs owned by this layer.
+        for existing in &existing {
+            if existing.owner_layer_id.as_deref() != Some(layer_id.as_str()) {
+                continue;
+            }
+            if desired_ids.contains(&existing.instance_id.0) {
+                continue;
+            }
+            commands.entity(existing.entity).try_despawn();
+            report.despawned += 1;
+        }
+    }
+
+    // Remove entities owned by removed layers.
+    let layer_id_set: HashSet<&str> = layers.keys().map(|s| s.as_str()).collect();
+    for existing in &existing {
+        let Some(owner) = existing.owner_layer_id.as_deref() else {
+            continue;
+        };
+        if layer_id_set.contains(owner) {
+            continue;
+        }
+        commands.entity(existing.entity).try_despawn();
+        report.despawned += 1;
+    }
+
+    // Remove extraneous unowned entities not present in pinned sources.
+    for existing in &existing {
+        if existing.owner_layer_id.is_some() {
+            continue;
+        }
+        if pinned_ids.contains(&existing.instance_id.0) {
+            continue;
+        }
+        commands.entity(existing.entity).try_despawn();
+        report.despawned += 1;
+    }
+
+    Ok(report)
+}
+
+pub(crate) fn regenerate_scene_layer(
+    commands: &mut Commands,
+    workspace: &SceneSourcesWorkspace,
+    library: &ObjectLibrary,
+    existing_instances: impl Iterator<Item = SceneWorldInstance>,
+    layer_id: &str,
+) -> Result<SceneCompileReport, String> {
+    let Some(sources) = workspace.sources.as_ref() else {
+        return Err("No scene sources have been imported in this session.".to_string());
+    };
+    let scene_id = sources
+        .meta_json
+        .get("scene_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "meta.json missing scene_id".to_string())?;
+
+    let layers = parse_layers(sources)?;
+    let layer_id = layer_id.trim();
+    if layer_id.is_empty() {
+        return Err("layer_id must be a non-empty string".to_string());
+    }
+    let Some(layer) = layers.get(layer_id) else {
+        return Err(format!("Layer not found: {layer_id}"));
+    };
+
+    let desired = desired_instances_for_layer(scene_id, layer_id, layer)?;
+    let desired_ids: HashSet<u128> = desired.keys().copied().collect();
+
+    let existing: Vec<SceneWorldInstance> = existing_instances.collect();
+    let existing_by_id = map_existing_instances_by_id(&existing)?;
+
+    let pinned_instances = parse_pinned_instances(sources)?;
+    let pinned_ids: HashSet<u128> = pinned_instances.keys().copied().collect();
+
+    let mut report = SceneCompileReport {
+        spawned: 0,
+        updated: 0,
+        despawned: 0,
+        layers_compiled: 1,
+        pinned_upserts: 0,
+    };
+
+    for (id_u128, spec) in &desired {
+        if pinned_ids.contains(id_u128) {
+            return Err(format!(
+                "Layer output id conflicts with pinned instance id: {}",
+                uuid::Uuid::from_u128(*id_u128)
+            ));
+        }
+
+        if let Some(existing) = existing_by_id.get(id_u128) {
+            match existing.owner_layer_id.as_deref() {
+                Some(owner) if owner == layer_id => {
+                    upsert_scene_instance_entity(
+                        commands,
+                        library,
+                        existing.entity,
+                        spec.prefab_id.0,
+                        spec.transform,
+                        spec.tint,
+                        Some(layer_id),
+                    );
+                    report.updated += 1;
+                }
+                Some(owner) => {
+                    return Err(format!(
+                        "Layer output id {} conflicts with entity owned by different layer {owner}",
+                        uuid::Uuid::from_u128(*id_u128)
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "Layer output id {} conflicts with unowned entity",
+                        uuid::Uuid::from_u128(*id_u128)
+                    ));
+                }
+            }
+        } else {
+            spawn_scene_instance_entity(
+                commands,
+                library,
+                spec.instance_id,
+                spec.prefab_id.0,
+                spec.transform,
+                spec.tint,
+                Some(layer_id),
+            );
+            report.spawned += 1;
+        }
+    }
+
+    // Despawn stale outputs owned by this layer.
+    for existing in &existing {
+        if existing.owner_layer_id.as_deref() != Some(layer_id) {
+            continue;
+        }
+        if desired_ids.contains(&existing.instance_id.0) {
+            continue;
+        }
+        commands.entity(existing.entity).try_despawn();
+        report.despawned += 1;
+    }
+
+    Ok(report)
+}
+
+fn desired_instances_for_layer(
+    scene_id: &str,
+    layer_id: &str,
+    layer: &SceneLayer,
+) -> Result<BTreeMap<u128, PinnedInstance>, String> {
+    match layer {
+        SceneLayer::ExplicitInstances(layer) => {
+            let mut out = BTreeMap::new();
+            for inst in &layer.instances {
+                let instance_id = derived_layer_instance_id(scene_id, layer_id, &inst.local_id);
+                let key = instance_id.0;
+                if out
+                    .insert(
+                        key,
+                        PinnedInstance {
+                            instance_id,
+                            prefab_id: inst.prefab_id,
+                            transform: inst.transform,
+                            tint: inst.tint,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(format!(
+                        "Layer {layer_id} generated duplicate instance id: {}",
+                        uuid::Uuid::from_u128(key)
+                    ));
+                }
+            }
+            Ok(out)
+        }
+    }
+}
+
+fn map_existing_instances_by_id(
+    existing: &[SceneWorldInstance],
+) -> Result<HashMap<u128, SceneWorldInstance>, String> {
+    let mut map = HashMap::with_capacity(existing.len());
+    for inst in existing.iter().cloned() {
+        if map.insert(inst.instance_id.0, inst).is_some() {
+            return Err("World contains duplicate ObjectId components for scene instances".to_string());
+        }
+    }
+    Ok(map)
+}
+
+fn spawn_scene_instance_entity(
+    commands: &mut Commands,
+    library: &ObjectLibrary,
+    instance_id: ObjectId,
+    prefab_id: u128,
+    transform: Transform,
+    tint: Option<Color>,
+    owner_layer_id: Option<&str>,
+) -> Entity {
+    let entity = if library.mobility(prefab_id).is_some() {
+        spawn_unit_minimal(commands, library, prefab_id, transform, instance_id, tint)
+    } else {
+        spawn_build_object_minimal(commands, library, prefab_id, transform, instance_id, tint)
+    };
+    if let Some(owner_layer_id) = owner_layer_id {
+        commands.entity(entity).insert(SceneLayerOwner {
+            layer_id: owner_layer_id.to_string(),
+        });
+    }
+    entity
+}
+
+fn upsert_scene_instance_entity(
+    commands: &mut Commands,
+    library: &ObjectLibrary,
+    entity: Entity,
+    prefab_id: u128,
+    transform: Transform,
+    tint: Option<Color>,
+    owner_layer_id: Option<&str>,
+) {
+    if library.mobility(prefab_id).is_some() {
+        let (radius, transform) = compute_unit_radius_and_transform(library, prefab_id, transform);
+        let mut ec = commands.entity(entity);
+        ec.insert(ObjectPrefabId(prefab_id));
+        ec.insert(Commandable);
+        ec.insert(Collider { radius });
+        ec.insert(transform);
+        ec.remove::<BuildObject>();
+        ec.remove::<BuildDimensions>();
+        ec.remove::<AabbCollider>();
+    } else {
+        let (collider_half_xz, size, transform) =
+            compute_build_object_collider_and_transform(library, prefab_id, transform);
+        let mut ec = commands.entity(entity);
+        ec.insert(ObjectPrefabId(prefab_id));
+        ec.insert(BuildObject);
+        ec.insert(BuildDimensions { size });
+        ec.insert(AabbCollider {
+            half_extents: collider_half_xz,
+        });
+        ec.insert(transform);
+        ec.remove::<Commandable>();
+        ec.remove::<Collider>();
+    }
+
+    let mut ec = commands.entity(entity);
+    if let Some(tint) = tint {
+        ec.insert(ObjectTint(tint));
+    } else {
+        ec.remove::<ObjectTint>();
+    }
+
+    if let Some(owner_layer_id) = owner_layer_id {
+        ec.insert(SceneLayerOwner {
+            layer_id: owner_layer_id.to_string(),
+        });
+    } else {
+        ec.remove::<SceneLayerOwner>();
+    }
+}
+
+fn compute_unit_radius_and_transform(
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    transform: Transform,
+) -> (f32, Transform) {
+    let mut transform = transform;
+    let base_size = library
+        .size(prefab_id)
+        .unwrap_or_else(|| Vec3::splat(BUILD_UNIT_SIZE));
+    transform.scale = sanitize_scale(transform.scale);
+
+    let scale = transform.scale;
+    let radius = match library.collider(prefab_id) {
+        Some(ColliderProfile::CircleXZ { radius }) => {
+            radius.max(0.01) * scale.x.abs().max(scale.z.abs()).max(0.01)
+        }
+        Some(ColliderProfile::AabbXZ { half_extents }) => {
+            let half = Vec2::new(
+                half_extents.x.abs().max(0.01) * scale.x.abs().max(0.01),
+                half_extents.y.abs().max(0.01) * scale.z.abs().max(0.01),
+            );
+            half.x.max(half.y)
+        }
+        _ => {
+            let size = Vec2::new(
+                (base_size.x * scale.x.abs()).abs().max(0.01),
+                (base_size.z * scale.z.abs()).abs().max(0.01),
+            );
+            (size.x.max(size.y) * 0.5).max(0.01)
+        }
+    };
+    (radius, transform)
+}
+
+fn compute_build_object_collider_and_transform(
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    transform: Transform,
+) -> (Vec2, Vec3, Transform) {
+    let mut transform = transform;
+    let base_size = library
+        .size(prefab_id)
+        .unwrap_or_else(|| Vec3::splat(BUILD_UNIT_SIZE));
+
+    transform.scale = sanitize_scale(transform.scale);
+
+    let (yaw, _pitch, _roll) = transform.rotation.to_euler(EulerRot::YXZ);
+    let c = yaw.cos().abs();
+    let s = yaw.sin().abs();
+
+    let scale = transform.scale;
+    let (collider_half_xz, size) = match library.collider(prefab_id) {
+        Some(ColliderProfile::CircleXZ { radius }) => {
+            let r = radius.max(0.01) * scale.x.abs().max(scale.z.abs()).max(0.01);
+            (
+                Vec2::splat(r),
+                Vec3::new(r * 2.0, base_size.y * scale.y.abs(), r * 2.0),
+            )
+        }
+        Some(ColliderProfile::AabbXZ { half_extents }) => {
+            let half = Vec2::new(
+                half_extents.x.abs().max(0.01) * scale.x.abs().max(0.01),
+                half_extents.y.abs().max(0.01) * scale.z.abs().max(0.01),
+            );
+            let rotated = Vec2::new(c * half.x + s * half.y, s * half.x + c * half.y);
+            (
+                rotated,
+                Vec3::new(
+                    rotated.x * 2.0,
+                    base_size.y * scale.y.abs(),
+                    rotated.y * 2.0,
+                ),
+            )
+        }
+        _ => {
+            let half = Vec2::new(
+                (base_size.x * 0.5).abs().max(0.01) * scale.x.abs().max(0.01),
+                (base_size.z * 0.5).abs().max(0.01) * scale.z.abs().max(0.01),
+            );
+            let rotated = Vec2::new(c * half.x + s * half.y, s * half.x + c * half.y);
+            (
+                rotated,
+                Vec3::new(
+                    rotated.x * 2.0,
+                    base_size.y * scale.y.abs(),
+                    rotated.y * 2.0,
+                ),
+            )
+        }
+    };
+
+    (collider_half_xz, size, transform)
+}
+
+pub(crate) fn scene_signature_summary(
+    existing_instances: impl Iterator<Item = SceneWorldInstance>,
+) -> Result<SceneSignatureSummary, String> {
+    let instances: Vec<SceneWorldInstance> = existing_instances.collect();
+    let total_instances = instances.len();
+
+    let mut pinned: Vec<&SceneWorldInstance> = Vec::new();
+    let mut by_layer: BTreeMap<String, Vec<&SceneWorldInstance>> = BTreeMap::new();
+    for inst in &instances {
+        if let Some(layer_id) = inst.owner_layer_id.as_deref() {
+            by_layer
+                .entry(layer_id.to_string())
+                .or_default()
+                .push(inst);
+        } else {
+            pinned.push(inst);
+        }
+    }
+
+    let pinned_sig = signature_for_instances(&pinned)?;
+    let mut layer_sigs = BTreeMap::new();
+    let mut layer_instance_counts = BTreeMap::new();
+    for (layer_id, items) in &by_layer {
+        layer_instance_counts.insert(layer_id.clone(), items.len());
+        layer_sigs.insert(layer_id.clone(), signature_for_instances(items)?);
+    }
+
+    let all_refs: Vec<&SceneWorldInstance> = instances.iter().collect();
+    let overall_sig = signature_for_instances(&all_refs)?;
+
+    Ok(SceneSignatureSummary {
+        overall_sig,
+        pinned_sig,
+        layer_sigs,
+        total_instances,
+        pinned_instances: pinned.len(),
+        layer_instance_counts,
+    })
+}
+
+fn signature_for_instances(instances: &[&SceneWorldInstance]) -> Result<String, String> {
+    let mut items = instances.to_vec();
+    items.sort_by(|a, b| a.instance_id.0.cmp(&b.instance_id.0));
+
+    let mut hasher = Sha256::new();
+    for inst in items {
+        hasher.update(inst.instance_id.0.to_be_bytes());
+        hasher.update(inst.prefab_id.0.to_be_bytes());
+        update_hasher_with_vec3(&mut hasher, inst.transform.translation)?;
+        update_hasher_with_quat(&mut hasher, inst.transform.rotation)?;
+        update_hasher_with_vec3(&mut hasher, inst.transform.scale)?;
+
+        if let Some(tint) = inst.tint {
+            hasher.update([1u8]);
+            let linear = tint.to_linear();
+            update_hasher_with_f32(&mut hasher, linear.red)?;
+            update_hasher_with_f32(&mut hasher, linear.green)?;
+            update_hasher_with_f32(&mut hasher, linear.blue)?;
+            update_hasher_with_f32(&mut hasher, linear.alpha)?;
+        } else {
+            hasher.update([0u8]);
+        }
+    }
+
+    Ok(hex_string(&hasher.finalize()))
+}
+
+fn update_hasher_with_vec3(hasher: &mut Sha256, v: Vec3) -> Result<(), String> {
+    update_hasher_with_f32(hasher, v.x)?;
+    update_hasher_with_f32(hasher, v.y)?;
+    update_hasher_with_f32(hasher, v.z)?;
+    Ok(())
+}
+
+fn update_hasher_with_quat(hasher: &mut Sha256, q: Quat) -> Result<(), String> {
+    update_hasher_with_f32(hasher, q.x)?;
+    update_hasher_with_f32(hasher, q.y)?;
+    update_hasher_with_f32(hasher, q.z)?;
+    update_hasher_with_f32(hasher, q.w)?;
+    Ok(())
+}
+
+fn update_hasher_with_f32(hasher: &mut Sha256, v: f32) -> Result<(), String> {
+    if !v.is_finite() {
+        return Err("signature contains non-finite float".to_string());
+    }
+    hasher.update(v.to_bits().to_be_bytes());
+    Ok(())
+}
+
+fn hex_string(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
 }

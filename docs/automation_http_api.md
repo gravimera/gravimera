@@ -187,7 +187,7 @@ Response (shape):
 Notes:
 
 - Import currently **replaces** all non-player `BuildObject` + `Commandable` instances with the scene’s pinned instances.
-- Only pinned instances are applied as ECS entities in this milestone; other source files (layers/portals) are loaded and retained for round-trip export.
+- Procedural layers under `src/layers/` are loaded into memory but not compiled until you call `POST /v1/scene_sources/compile`.
 
 ### `POST /v1/scene_sources/export`
 
@@ -217,6 +217,101 @@ Notes:
 
 - Export requires a prior import in the current session so metadata files (`index.json`, `meta.json`, etc.) can be preserved.
 - Returns `409` if no scene sources have been imported yet.
+- Export writes **only pinned/unowned** instances. Layer-owned outputs are treated as derived and are not exported as pinned instances.
+
+### `POST /v1/scene_sources/reload`
+
+Reload the last imported `src_dir` from disk into the current session.
+
+This is useful when you:
+
+- edit `src/` files externally (editor/agent), then
+- want the running game to pick up the changes without re-importing the world.
+
+Request body:
+
+```json
+{}
+```
+
+Response:
+
+```json
+{"ok":true}
+```
+
+Errors:
+
+- `409` if no scene sources directory has been imported yet.
+
+### `POST /v1/scene_sources/compile`
+
+Compile **all** procedural layers from the currently loaded scene sources into concrete ECS instances.
+
+Request body:
+
+```json
+{}
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "spawned": 3,
+  "updated": 1,
+  "despawned": 0,
+  "layers_compiled": 2,
+  "pinned_upserts": 1
+}
+```
+
+Notes:
+
+- Requires a prior `POST /v1/scene_sources/import`.
+- If you changed any files on disk, call `POST /v1/scene_sources/reload` first.
+
+### `POST /v1/scene_sources/regenerate_layer`
+
+Regenerate (recompile) a **single** layer by id. This updates only the instances owned by that layer
+and leaves pinned instances and other layers untouched.
+
+Request body:
+
+```json
+{"layer_id":"layer_a"}
+```
+
+Response (shape):
+
+```json
+{"ok":true,"layer_id":"layer_a","spawned":0,"updated":1,"despawned":1}
+```
+
+### `GET /v1/scene_sources/signature`
+
+Fetch a deterministic signature summary of the current compiled scene instance set.
+
+This is intended for regression tests and determinism gates.
+
+```bash
+curl -s http://127.0.0.1:8791/v1/scene_sources/signature
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "overall_sig": "…",
+  "pinned_sig": "…",
+  "layer_sigs": { "layer_a": "…", "layer_b": "…" },
+  "total_instances": 4,
+  "pinned_instances": 1,
+  "layer_instance_counts": { "layer_a": 2, "layer_b": 1 }
+}
+```
 
 ### `POST /v1/mode`
 

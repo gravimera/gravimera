@@ -492,6 +492,15 @@ pub(crate) struct AabbCollider {
 #[derive(Component, Copy, Clone)]
 pub(crate) struct BuildObject;
 
+/// Provenance tag for concrete instances compiled from a procedural scene layer.
+///
+/// This is used to support deterministic regeneration: a layer owns its outputs unless an
+/// instance is pinned (i.e. unowned).
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SceneLayerOwner {
+    pub(crate) layer_id: String,
+}
+
 #[derive(Component, Copy, Clone)]
 pub(crate) struct BuildDimensions {
     pub(crate) size: Vec3,

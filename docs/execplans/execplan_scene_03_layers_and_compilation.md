@@ -19,13 +19,13 @@ Verification is via deterministic signatures and regression tests: compiling the
 ## Progress
 
 - [x] (2026-02-13) Create the initial ExecPlan.
-- [ ] (2026-02-13) Confirm Milestones 1–2 landed (sources format + round-trip import/export tests).
-- [ ] (2026-02-13) Extend the source format to include `src/layers/` and represent at least one minimal, generic layer kind.
-- [ ] (2026-02-13) Implement deterministic instance-id derivation for layer-owned outputs (no UUID v4 in compilation paths).
-- [ ] (2026-02-13) Implement compilation: sources + layers → concrete instances (ECS) with provenance (owner layer id).
-- [ ] (2026-02-13) Implement regeneration: recompile one layer and update only owned instances; pinned instances are preserved.
-- [ ] (2026-02-13) Add determinism tests (compile twice → identical signature; regen → expected delta).
-- [ ] (2026-02-13) Run `cargo test` + headless smoke boot and commit.
+- [x] (2026-02-14) Confirm Milestones 1–2 landed (sources format + round-trip import/export tests).
+- [x] (2026-02-14) Extend the source format to include `src/layers/` and represent at least one minimal, generic layer kind.
+- [x] (2026-02-14) Implement deterministic instance-id derivation for layer-owned outputs (no UUID v4 in compilation paths).
+- [x] (2026-02-14) Implement compilation: sources + layers → concrete instances (ECS) with provenance (owner layer id).
+- [x] (2026-02-14) Implement regeneration: recompile one layer and update only owned instances; pinned instances are preserved.
+- [x] (2026-02-14) Add determinism tests (compile twice → identical signature; regen → expected delta).
+- [ ] (2026-02-14) Run `cargo test` + headless smoke boot and commit.
 
 ## Surprises & Discoveries
 
@@ -44,7 +44,14 @@ Verification is via deterministic signatures and regression tests: compiling the
 
 ## Outcomes & Retrospective
 
-(Fill in at completion.)
+- Shipped a minimal, generic procedural layer kind (`explicit_instances`) and deterministic compilation into ECS instances with provenance (`SceneLayerOwner`).
+- Added deterministic regeneration for a single layer: only that layer’s owned outputs are updated/removed; pinned instances and other layers remain unchanged.
+- Added Automation endpoints to support a dev/test loop without UI:
+  - `POST /v1/scene_sources/reload`
+  - `POST /v1/scene_sources/compile`
+  - `POST /v1/scene_sources/regenerate_layer`
+  - `GET /v1/scene_sources/signature`
+- Added a fixture + integration test that enforces determinism and scoped regeneration.
 
 ## Context and Orientation
 

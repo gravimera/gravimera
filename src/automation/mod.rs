@@ -403,6 +403,7 @@ struct AutomationWorld<'w, 's> {
             &'static ObjectId,
             &'static ObjectPrefabId,
             Option<&'static ObjectTint>,
+            Option<&'static SceneLayerOwner>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
@@ -577,6 +578,17 @@ struct SceneSourcesExportRequest {
     out_dir: String,
 }
 
+#[derive(Deserialize)]
+struct SceneSourcesReloadRequest {}
+
+#[derive(Deserialize)]
+struct SceneSourcesCompileRequest {}
+
+#[derive(Deserialize)]
+struct SceneSourcesRegenerateLayerRequest {
+    layer_id: String,
+}
+
 fn handle_request_main_thread(
     commands: &mut Commands,
     config: &AppConfig,
@@ -628,6 +640,7 @@ fn handle_request_main_thread(
             &ObjectId,
             &ObjectPrefabId,
             Option<&ObjectTint>,
+            Option<&SceneLayerOwner>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
@@ -660,6 +673,145 @@ fn handle_request_main_thread(
                 content_type: "application/json",
             })
         }
+        ("POST", "/v1/scene_sources/reload") => {
+            let _req: SceneSourcesReloadRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            if let Err(err) =
+                crate::scene_sources_runtime::reload_scene_sources_in_workspace(scene_workspace)
+            {
+                return Some(json_error(409, err));
+            }
+
+            Some(AutomationReply {
+                status: 200,
+                body: serde_json::json!({ "ok": true }).to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/scene_sources/compile") => {
+            let _req: SceneSourcesCompileRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
+                crate::scene_sources_runtime::SceneWorldInstance {
+                    entity: e,
+                    instance_id: *id,
+                    prefab_id: *prefab,
+                    transform: t.clone(),
+                    tint: tint.map(|t| t.0),
+                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                }
+            });
+
+            let report = match crate::scene_sources_runtime::compile_scene_sources_all_layers(
+                commands,
+                scene_workspace,
+                library,
+                existing,
+            ) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(409, err)),
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "spawned": report.spawned,
+                "updated": report.updated,
+                "despawned": report.despawned,
+                "layers_compiled": report.layers_compiled,
+                "pinned_upserts": report.pinned_upserts,
+            })
+            .to_string();
+
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/scene_sources/regenerate_layer") => {
+            let req: SceneSourcesRegenerateLayerRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
+                crate::scene_sources_runtime::SceneWorldInstance {
+                    entity: e,
+                    instance_id: *id,
+                    prefab_id: *prefab,
+                    transform: t.clone(),
+                    tint: tint.map(|t| t.0),
+                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                }
+            });
+
+            let report = match crate::scene_sources_runtime::regenerate_scene_layer(
+                commands,
+                scene_workspace,
+                library,
+                existing,
+                &req.layer_id,
+            ) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(409, err)),
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "layer_id": req.layer_id,
+                "spawned": report.spawned,
+                "updated": report.updated,
+                "despawned": report.despawned,
+            })
+            .to_string();
+
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/scene_sources/signature") => {
+            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
+                crate::scene_sources_runtime::SceneWorldInstance {
+                    entity: e,
+                    instance_id: *id,
+                    prefab_id: *prefab,
+                    transform: t.clone(),
+                    tint: tint.map(|t| t.0),
+                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                }
+            });
+
+            let summary =
+                match crate::scene_sources_runtime::scene_signature_summary(existing) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(500, err)),
+                };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "overall_sig": summary.overall_sig,
+                "pinned_sig": summary.pinned_sig,
+                "layer_sigs": summary.layer_sigs,
+                "total_instances": summary.total_instances,
+                "pinned_instances": summary.pinned_instances,
+                "layer_instance_counts": summary.layer_instance_counts,
+            })
+            .to_string();
+
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
         ("POST", "/v1/scene_sources/import") => {
             let req: SceneSourcesImportRequest = match serde_json::from_slice(&msg.body) {
                 Ok(v) => v,
@@ -667,7 +819,7 @@ fn handle_request_main_thread(
             };
 
             let src_dir = PathBuf::from(req.src_dir.trim());
-            let existing_entities = scene_instances.iter().map(|(e, _, _, _, _)| e);
+            let existing_entities = scene_instances.iter().map(|(e, _, _, _, _, _)| e);
 
             let report = match crate::scene_sources_runtime::import_scene_sources_replace_world(
                 commands,
@@ -699,9 +851,11 @@ fn handle_request_main_thread(
             };
 
             let out_dir = PathBuf::from(req.out_dir.trim());
-            let objects = scene_instances
-                .iter()
-                .map(|(_e, t, id, prefab, tint)| (t, id, prefab, tint));
+            let objects = scene_instances.iter().filter_map(
+                |(_e, t, id, prefab, tint, owner)| {
+                    owner.is_none().then_some((t, id, prefab, tint))
+                },
+            );
 
             let report = match crate::scene_sources_runtime::export_scene_sources_from_world(
                 scene_workspace,
