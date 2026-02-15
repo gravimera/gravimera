@@ -375,7 +375,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            - null (or omitted) means unlimited (can aim freely 360 degrees).\n\
            - smaller values (e.g. 45..120) limit how far the weapon/head can turn away from the body.\n\
          - `aim.components`: list of component NAMES that should yaw with the attention direction (e.g. `head`, `turret`, `weapon`, `cannon`).\n\
-         - If `aim` is omitted for a ranged unit, the engine will aim the muzzle component by default.\n\n\
+         - If `aim` is omitted for a ranged unit, the engine will aim the muzzle component by default (or its parent component when the muzzle is a nested helper).\n\n\
          Animation channels (optional):\n\
          - Attachments may include `animations` as a map from channel -> animation spec.\n\
          - Valid channels: `ambient`, `idle`, `move`, `attack_primary`.\n\

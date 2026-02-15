@@ -1112,6 +1112,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
     let anim_window_secs =
         attack_anim_window_secs_from_planned_components(&planned).unwrap_or(0.35);
     let mut attack_profile: Option<UnitAttackProfile> = None;
+    let mut ranged_muzzle_component_idx: Option<usize> = None;
     if mobility.is_some() {
         match plan.attack.as_ref() {
             None | Some(AiAttackJson::None) => {}
@@ -1186,6 +1187,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                         object_id: component_ids[component_idx],
                         anchor: anchor_name.to_string().into(),
                     };
+                    ranged_muzzle_component_idx = Some(component_idx);
 
                     let projectile_def = gen3d_projectile_def_from_ai(projectile)?;
                     let projectile_prefab = projectile_def.object_id;
@@ -1242,9 +1244,20 @@ pub(super) fn ai_plan_to_initial_draft_defs(
         if let Some(attack) = attack_profile.as_ref() {
             if matches!(attack.kind, UnitAttackKind::RangedProjectile) {
                 if let Some(ranged) = attack.ranged.as_ref() {
+                    let muzzle_idx = ranged_muzzle_component_idx.or_else(|| {
+                        component_ids
+                            .iter()
+                            .position(|id| *id == ranged.muzzle.object_id)
+                    });
+                    let aim_object_id = muzzle_idx
+                        .and_then(|idx| planned.get(idx).and_then(|c| c.attach_to.as_ref()))
+                        .and_then(|att| name_to_idx.get(att.parent.as_str()).copied())
+                        .filter(|idx| *idx != root_idx)
+                        .map(|idx| component_ids[idx])
+                        .unwrap_or(ranged.muzzle.object_id);
                     aim_profile = Some(AimProfile {
                         max_yaw_delta_degrees: None,
-                        components: vec![ranged.muzzle.object_id],
+                        components: vec![aim_object_id],
                     });
                 }
             }
@@ -3111,6 +3124,129 @@ mod tests {
         assert!(root.mobility.is_some());
         // Attack is ignored because the plan omitted projectile details (should not fail the build).
         assert!(root.attack.is_none());
+    }
+
+    #[test]
+    fn defaults_ranged_aim_to_parent_of_nested_muzzle_component() {
+        // Regression: if the plan omits `aim`, Gen3D previously defaulted to aiming the muzzle's
+        // COMPONENT object id. When the muzzle anchor lives on a small nested helper component
+        // (e.g. a VFX mouth emitter), only that helper yaws and the visible head/weapon stays
+        // fixed. Default to aiming the parent component when the muzzle is nested.
+        let text = r##"{
+          "version": 7,
+          "mobility": { "kind": "ground", "max_speed": 6.0 },
+          "attack": {
+            "kind": "ranged_projectile",
+            "cooldown_secs": 0.6,
+            "muzzle": { "component": "vfx_heat", "anchor": "mouth" },
+            "projectile": {
+              "shape": "sphere",
+              "radius": 0.2,
+              "color": [1.0, 0.5, 0.0, 1.0],
+              "unlit": true,
+              "speed": 10.0,
+              "ttl_secs": 1.0,
+              "damage": 1
+            }
+          },
+          "components": [
+            {
+              "name": "torso",
+              "size": [2.0, 2.0, 2.0],
+              "anchors": [
+                { "name": "neck_mount", "pos": [0.0, 0.0, 1.0], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
+              ]
+            },
+            {
+              "name": "head",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "neck_mount", "pos": [0.0, 0.0, -0.5], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] },
+                { "name": "vfx_mount", "pos": [0.0, 0.0, 0.5], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
+              ],
+              "attach_to": { "parent": "torso", "parent_anchor": "neck_mount", "child_anchor": "neck_mount" }
+            },
+            {
+              "name": "vfx_heat",
+              "size": [0.5, 0.5, 0.5],
+              "anchors": [
+                { "name": "head_mount", "pos": [0.0, 0.0, -0.5], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] },
+                { "name": "mouth", "pos": [0.0, 0.0, 0.5], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
+              ],
+              "attach_to": { "parent": "head", "parent_anchor": "vfx_mount", "child_anchor": "head_mount" }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(text).expect("plan should parse");
+        let (_planned, _notes, defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+
+        let root_id = gen3d_draft_object_id();
+        let root = defs
+            .iter()
+            .find(|d| d.object_id == root_id)
+            .expect("root def");
+        let aim = root.aim.as_ref().expect("aim profile");
+        assert_eq!(aim.components.len(), 1);
+        assert_eq!(
+            aim.components[0],
+            builtin_object_id("gravimera/gen3d/component/head")
+        );
+    }
+
+    #[test]
+    fn defaults_ranged_aim_to_muzzle_when_muzzle_is_direct_child_of_root() {
+        let text = r##"{
+          "version": 7,
+          "mobility": { "kind": "ground", "max_speed": 6.0 },
+          "attack": {
+            "kind": "ranged_projectile",
+            "cooldown_secs": 0.6,
+            "muzzle": { "component": "gun", "anchor": "muzzle" },
+            "projectile": {
+              "shape": "sphere",
+              "radius": 0.2,
+              "color": [0.2, 0.8, 1.0, 1.0],
+              "unlit": true,
+              "speed": 10.0,
+              "ttl_secs": 1.0,
+              "damage": 1
+            }
+          },
+          "components": [
+            {
+              "name": "body",
+              "size": [2.0, 2.0, 2.0],
+              "anchors": [
+                { "name": "gun_mount", "pos": [0.0, 0.0, 1.0], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
+              ]
+            },
+            {
+              "name": "gun",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "gun_mount", "pos": [0.0, 0.0, -0.5], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] },
+                { "name": "muzzle", "pos": [0.0, 0.0, 0.5], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
+              ],
+              "attach_to": { "parent": "body", "parent_anchor": "gun_mount", "child_anchor": "gun_mount" }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(text).expect("plan should parse");
+        let (_planned, _notes, defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+
+        let root_id = gen3d_draft_object_id();
+        let root = defs
+            .iter()
+            .find(|d| d.object_id == root_id)
+            .expect("root def");
+        let aim = root.aim.as_ref().expect("aim profile");
+        assert_eq!(aim.components.len(), 1);
+        assert_eq!(
+            aim.components[0],
+            builtin_object_id("gravimera/gen3d/component/gun")
+        );
     }
 
     #[test]
