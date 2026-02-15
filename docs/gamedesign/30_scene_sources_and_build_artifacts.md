@@ -164,6 +164,12 @@ Fields:
     - `scale`: `{ "x": <f32>, "y": <f32>, "z": <f32> }`
   - `tint_rgba` (optional): `{ "r": <f32>, "g": <f32>, "b": <f32>, "a": <f32> }` (linear RGBA)
 
+Placement notes (non-normative):
+
+- `transform.translation` is applied to the instance root as-is.
+- Many prefabs are modeled around their center; to rest an object on the ground plane (y=0), set
+  `translation.y = (prefab_size.y * abs(scale.y)) / 2`.
+
 Additional fields are allowed and must be preserved by round-trip tools when possible.
 
 Additional procedural layer kinds are defined in:
@@ -221,6 +227,12 @@ Pinned instances are authored as JSON objects:
   - `rotation`: `{ "x": <f32>, "y": <f32>, "z": <f32>, "w": <f32> }` (quaternion)
   - `scale`: `{ "x": <f32>, "y": <f32>, "z": <f32> }`
 - `tint_rgba` (optional): `{ "r": <f32>, "g": <f32>, "b": <f32>, "a": <f32> }` (linear RGBA)
+
+Placement notes (non-normative):
+
+- `transform.translation` is applied to the instance root as-is.
+- Many prefabs are modeled around their center; to rest an object on the ground plane (y=0), set
+  `translation.y = (prefab_size.y * abs(scale.y)) / 2`.
 
 Additional fields are allowed and must be preserved by round-trip tools when possible.
 

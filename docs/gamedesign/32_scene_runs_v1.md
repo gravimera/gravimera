@@ -35,6 +35,12 @@ Optional debug artifacts (recommended):
       llm/                    (prompts/responses for long-running generation)
       steps/<n>/
         error.json            (present when pre-validation or apply fails)
+        screenshots_manifest.json  (view parameters for step screenshots)
+        view_front.png
+        view_right.png
+        view_back.png
+        view_left.png
+        view_top.png
 
 Notes:
 

@@ -69,6 +69,11 @@ Generate one instance with:
 - `rotation`, `scale`, and optional `tint_rgba` from the layer fields
 - `instance_id` derived from `(scene_id, layer_id, local_id)` using the shared v1 id rule.
 
+Placement notes (non-normative):
+
+- `origin.y` is the center height of the placed instances. To rest objects on the ground plane (y=0),
+  choose `origin.y = (prefab_size.y * abs(scale.y)) / 2`.
+
 Constraints:
 
 - `count.x` and `count.z` may be zero (generates zero instances).
@@ -118,6 +123,11 @@ For each `k` in `[0, count)`:
 - Set `local_id = "i{k}"`
 - Use the layer’s `rotation`, `scale`, and optional `tint_rgba`.
 - Derive `instance_id` from `(scene_id, layer_id, local_id)` using the shared v1 id rule.
+
+Placement notes (non-normative):
+
+- The `points[].y` values are the center heights of the placed instances. To rest objects on the ground plane (y=0),
+  author points with `y = (prefab_size.y * abs(scale.y)) / 2` (or set `scale` appropriately).
 
 Notes:
 

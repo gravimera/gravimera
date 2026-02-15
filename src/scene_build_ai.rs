@@ -1,9 +1,14 @@
+use bevy::camera::RenderTarget;
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::log::{error, info, warn};
 use bevy::prelude::*;
+use bevy::render::render_resource::{TextureFormat, TextureUsages};
+use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::config::AppConfig;
 use crate::object::registry::ObjectLibrary;
@@ -22,6 +27,317 @@ use crate::types::{
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 const CURL_MAX_TIME_SECS: u32 = 600;
 const MAX_STEP_ATTEMPTS: u8 = 3;
+
+const SCENE_BUILD_STEP_SCREENSHOT_WIDTH_PX: u32 = 960;
+const SCENE_BUILD_STEP_SCREENSHOT_HEIGHT_PX: u32 = 540;
+const SCENE_BUILD_STEP_SCREENSHOT_TIMEOUT_SECS: u64 = 20;
+
+#[derive(Clone, Copy, Debug)]
+enum SceneBuildStepScreenshotView {
+    Front,
+    Right,
+    Back,
+    Left,
+    Top,
+}
+
+impl SceneBuildStepScreenshotView {
+    fn file_stem(self) -> &'static str {
+        match self {
+            SceneBuildStepScreenshotView::Front => "front",
+            SceneBuildStepScreenshotView::Right => "right",
+            SceneBuildStepScreenshotView::Back => "back",
+            SceneBuildStepScreenshotView::Left => "left",
+            SceneBuildStepScreenshotView::Top => "top",
+        }
+    }
+
+    fn orbit_angles(self) -> (f32, f32) {
+        use std::f32::consts::{FRAC_PI_2, PI};
+
+        // Match the interactive camera-ish angle for the four horizontal views.
+        let pitch_iso = -0.45;
+        let pitch_top = -1.35;
+
+        match self {
+            SceneBuildStepScreenshotView::Front => (0.0, pitch_iso),
+            SceneBuildStepScreenshotView::Right => (FRAC_PI_2, pitch_iso),
+            SceneBuildStepScreenshotView::Back => (PI, pitch_iso),
+            SceneBuildStepScreenshotView::Left => (-FRAC_PI_2, pitch_iso),
+            SceneBuildStepScreenshotView::Top => (0.0, pitch_top),
+        }
+    }
+}
+
+const SCENE_BUILD_STEP_SCREENSHOT_VIEWS: [SceneBuildStepScreenshotView; 5] = [
+    SceneBuildStepScreenshotView::Front,
+    SceneBuildStepScreenshotView::Right,
+    SceneBuildStepScreenshotView::Back,
+    SceneBuildStepScreenshotView::Left,
+    SceneBuildStepScreenshotView::Top,
+];
+
+#[derive(Clone, Debug)]
+struct SceneBuildStepScreenshotProgress {
+    expected: usize,
+    completed: usize,
+}
+
+#[derive(Clone, Debug)]
+struct SceneBuildStepScreenshotCapture {
+    step_dir: PathBuf,
+    cameras: Vec<Entity>,
+    progress: Arc<Mutex<SceneBuildStepScreenshotProgress>>,
+    image_paths: Vec<PathBuf>,
+    started_at: Instant,
+    last_reported_completed: usize,
+}
+
+#[derive(Component)]
+struct SceneBuildStepScreenshotCamera;
+
+fn create_scene_build_render_target(
+    images: &mut Assets<Image>,
+    width_px: u32,
+    height_px: u32,
+) -> Handle<Image> {
+    let mut image = Image::new_target_texture(
+        width_px.max(1),
+        height_px.max(1),
+        TextureFormat::bevy_default(),
+        None,
+    );
+    image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+    images.add(image)
+}
+
+fn scene_build_orbit_transform(yaw: f32, pitch: f32, distance: f32, focus: Vec3) -> Transform {
+    let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+    let pos = focus + rot * Vec3::new(0.0, 0.0, distance);
+    Transform::from_translation(pos).looking_at(focus, Vec3::Y)
+}
+
+fn scene_build_required_distance_for_view(
+    half_extents: Vec3,
+    yaw: f32,
+    pitch: f32,
+    fov_y: f32,
+    aspect: f32,
+    near: f32,
+) -> f32 {
+    let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+    let mut view_dir = -rot * Vec3::Z;
+    if !view_dir.is_finite() || view_dir.length_squared() <= 1e-6 {
+        view_dir = -Vec3::Z;
+    } else {
+        view_dir = view_dir.normalize();
+    }
+
+    let mut right = Vec3::Y.cross(view_dir);
+    if !right.is_finite() || right.length_squared() <= 1e-6 {
+        right = Vec3::X;
+    } else {
+        right = right.normalize();
+    }
+    let mut up = view_dir.cross(right);
+    if !up.is_finite() || up.length_squared() <= 1e-6 {
+        up = Vec3::Y;
+    } else {
+        up = up.normalize();
+    }
+
+    let extent_right = half_extents.x * right.x.abs()
+        + half_extents.y * right.y.abs()
+        + half_extents.z * right.z.abs();
+    let extent_up =
+        half_extents.x * up.x.abs() + half_extents.y * up.y.abs() + half_extents.z * up.z.abs();
+    let extent_forward = half_extents.x * view_dir.x.abs()
+        + half_extents.y * view_dir.y.abs()
+        + half_extents.z * view_dir.z.abs();
+
+    let tan_y = (fov_y * 0.5).tan().max(1e-4);
+    let tan_x = (tan_y * aspect).max(1e-4);
+    let dist_y = extent_up / tan_y;
+    let dist_x = extent_right / tan_x;
+
+    // Ensure the near plane won't clip the bounds.
+    dist_x.max(dist_y).max(extent_forward + near + 0.05)
+}
+
+fn scene_build_focus_and_half_extents(
+    library: &ObjectLibrary,
+    instances: impl Iterator<Item = (Transform, ObjectPrefabId)>,
+) -> (Vec3, Vec3) {
+    let mut any = false;
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+
+    for (transform, prefab_id) in instances {
+        if !transform.translation.is_finite() || !transform.scale.is_finite() {
+            continue;
+        }
+
+        let base_size = library
+            .size(prefab_id.0)
+            .unwrap_or_else(|| Vec3::splat(crate::constants::BUILD_UNIT_SIZE));
+        let size = base_size.abs() * transform.scale.abs().max(Vec3::splat(0.001));
+        let half = (size * 0.5).max(Vec3::splat(0.001));
+
+        let axis_x = (transform.rotation * Vec3::X).abs();
+        let axis_y = (transform.rotation * Vec3::Y).abs();
+        let axis_z = (transform.rotation * Vec3::Z).abs();
+        let world_half = axis_x * half.x + axis_y * half.y + axis_z * half.z;
+
+        let aabb_min = transform.translation - world_half;
+        let aabb_max = transform.translation + world_half;
+
+        min = min.min(aabb_min);
+        max = max.max(aabb_max);
+        any = true;
+    }
+
+    if !any {
+        return (Vec3::ZERO, Vec3::new(20.0, 6.0, 20.0));
+    }
+
+    let focus = (min + max) * 0.5;
+    let half_extents = ((max - min) * 0.5).max(Vec3::splat(0.5));
+    (focus, half_extents)
+}
+
+fn start_scene_build_step_screenshot_capture(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    step_dir: &Path,
+    focus: Vec3,
+    half_extents: Vec3,
+) -> Result<SceneBuildStepScreenshotCapture, String> {
+    std::fs::create_dir_all(step_dir)
+        .map_err(|err| format!("Failed to create {}: {err}", step_dir.display()))?;
+
+    let width_px = SCENE_BUILD_STEP_SCREENSHOT_WIDTH_PX;
+    let height_px = SCENE_BUILD_STEP_SCREENSHOT_HEIGHT_PX;
+
+    let aspect = width_px.max(1) as f32 / height_px.max(1) as f32;
+    let mut projection = bevy::camera::PerspectiveProjection::default();
+    projection.aspect_ratio = aspect;
+    let fov_y = projection.fov;
+    let near = projection.near;
+
+    let base_distance = SCENE_BUILD_STEP_SCREENSHOT_VIEWS
+        .iter()
+        .map(|view| {
+            let (yaw, pitch) = view.orbit_angles();
+            scene_build_required_distance_for_view(half_extents, yaw, pitch, fov_y, aspect, near)
+        })
+        .fold(0.0f32, f32::max);
+
+    // Include a bit of margin so fences/trees on the edges are less likely to crop.
+    let distance = (base_distance * 1.15).clamp(near + 0.2, 500.0);
+
+    let progress = Arc::new(Mutex::new(SceneBuildStepScreenshotProgress {
+        expected: SCENE_BUILD_STEP_SCREENSHOT_VIEWS.len(),
+        completed: 0,
+    }));
+
+    let mut cameras = Vec::with_capacity(SCENE_BUILD_STEP_SCREENSHOT_VIEWS.len());
+    let mut image_paths = Vec::with_capacity(SCENE_BUILD_STEP_SCREENSHOT_VIEWS.len());
+
+    let mut views_manifest = Vec::new();
+
+    for &view in &SCENE_BUILD_STEP_SCREENSHOT_VIEWS {
+        let target = create_scene_build_render_target(images, width_px, height_px);
+        let (yaw, pitch) = view.orbit_angles();
+        let transform = scene_build_orbit_transform(yaw, pitch, distance, focus);
+
+        let camera = commands
+            .spawn((
+                Camera3d::default(),
+                bevy::camera::Projection::Perspective(projection.clone()),
+                Camera {
+                    clear_color: ClearColorConfig::Custom(Color::srgb(0.05, 0.05, 0.06)),
+                    ..default()
+                },
+                RenderTarget::Image(target.clone().into()),
+                Tonemapping::TonyMcMapface,
+                transform,
+                SceneBuildStepScreenshotCamera,
+            ))
+            .id();
+        cameras.push(camera);
+
+        let file_name = format!("view_{}.png", view.file_stem());
+        let path = step_dir.join(&file_name);
+        image_paths.push(path.clone());
+        views_manifest.push(serde_json::json!({
+            "name": view.file_stem(),
+            "file": file_name,
+            "yaw": yaw,
+            "pitch": pitch,
+            "distance": distance,
+        }));
+
+        let progress_clone = progress.clone();
+        commands
+            .spawn(Screenshot::image(target))
+            .observe(move |event: On<ScreenshotCaptured>| {
+                let mut saver = save_to_disk(path.clone());
+                saver(event);
+                if let Ok(mut guard) = progress_clone.lock() {
+                    guard.completed = guard.completed.saturating_add(1);
+                }
+            });
+    }
+
+    let manifest = serde_json::json!({
+        "format_version": 1,
+        "width_px": width_px,
+        "height_px": height_px,
+        "focus": { "x": focus.x, "y": focus.y, "z": focus.z },
+        "half_extents": { "x": half_extents.x, "y": half_extents.y, "z": half_extents.z },
+        "views": views_manifest,
+    });
+    let _ = write_json_artifact(&step_dir.join("screenshots_manifest.json"), &manifest);
+
+    Ok(SceneBuildStepScreenshotCapture {
+        step_dir: step_dir.to_path_buf(),
+        cameras,
+        progress,
+        image_paths,
+        started_at: Instant::now(),
+        last_reported_completed: 0,
+    })
+}
+
+fn scene_build_step_screenshot_capture_progress(
+    capture: &SceneBuildStepScreenshotCapture,
+) -> (usize, usize) {
+    let Ok(guard) = capture.progress.lock() else {
+        return (0, capture.image_paths.len());
+    };
+    (guard.completed, guard.expected)
+}
+
+fn scene_build_step_screenshot_capture_done(capture: &SceneBuildStepScreenshotCapture) -> bool {
+    let (completed, expected) = scene_build_step_screenshot_capture_progress(capture);
+    completed >= expected.max(1)
+}
+
+fn scene_build_step_screenshot_capture_timed_out(
+    capture: &SceneBuildStepScreenshotCapture,
+) -> bool {
+    let timeout = Duration::from_secs(SCENE_BUILD_STEP_SCREENSHOT_TIMEOUT_SECS);
+    capture.started_at.elapsed() > timeout
+}
+
+fn cleanup_scene_build_step_screenshot_capture(
+    commands: &mut Commands,
+    capture: &SceneBuildStepScreenshotCapture,
+) {
+    for entity in &capture.cameras {
+        commands.entity(*entity).try_despawn();
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 struct SceneBuildAiProgress {
@@ -52,6 +368,8 @@ enum SceneBuildAiPhase {
     Cleanup,
     PlanRequest,
     StepRequest { step_index: usize, attempt: u8 },
+    CaptureInit { step_index: usize, run_step: u32 },
+    CaptureWait { step_index: usize },
 }
 
 struct SceneBuildAiJob {
@@ -69,6 +387,7 @@ struct SceneBuildAiJob {
     phase: SceneBuildAiPhase,
     plan_steps: Vec<SceneBuildAiPlanStep>,
     next_run_step: u32,
+    capture: Option<SceneBuildStepScreenshotCapture>,
 
     progress: Arc<Mutex<SceneBuildAiProgress>>,
     shared_result: Arc<Mutex<Option<Result<String, String>>>>,
@@ -244,6 +563,7 @@ pub(crate) fn start_scene_build_from_description(
         phase: SceneBuildAiPhase::Cleanup,
         plan_steps: Vec::new(),
         next_run_step: 1,
+        capture: None,
         progress,
         shared_result: Arc::new(Mutex::new(None)),
     });
@@ -258,6 +578,7 @@ pub(crate) fn scene_build_ai_poll(
     active: Res<ActiveRealmScene>,
     library: Res<ObjectLibrary>,
     mut workspace: ResMut<SceneSourcesWorkspace>,
+    mut images: ResMut<Assets<Image>>,
     scene_instances: Query<
         (
             Entity,
@@ -288,6 +609,9 @@ pub(crate) fn scene_build_ai_poll(
         );
         ui.set_status("Build ignored (scene changed).".to_string());
         ui.set_error(msg);
+        if let Some(capture) = job.capture.as_ref() {
+            cleanup_scene_build_step_screenshot_capture(&mut commands, capture);
+        }
         runtime.last_status = Some(SceneBuildAiStatus {
             run_id: job.run_id,
             message: "Ignored (scene changed).".to_string(),
@@ -703,31 +1027,14 @@ pub(crate) fn scene_build_ai_poll(
                                 ),
                             );
 
+                            let run_step = job.next_run_step;
                             job.next_run_step = job.next_run_step.saturating_add(1).max(1);
-
-                            let next = step_index + 1;
-                            if next < job.plan_steps.len() {
-                                start_step_request(
-                                    &mut job, &active, &library, &src_dir, next, 0, None,
-                                );
-                                runtime.in_flight = Some(job);
-                                return;
-                            }
-
-                            runtime.last_status = Some(SceneBuildAiStatus {
-                                run_id: job.run_id.clone(),
-                                message: format!("Done ({total} steps)."),
-                            });
-                            set_progress(
-                                &job.progress,
-                                &job.run_id,
-                                &job.run_dir,
-                                format!("Build complete ({total} steps)."),
-                            );
-                            ui.set_status(format!(
-                                "Build complete (run_id={}, steps={total}).",
-                                job.run_id
-                            ));
+                            job.phase = SceneBuildAiPhase::CaptureInit {
+                                step_index,
+                                run_step,
+                            };
+                            runtime.in_flight = Some(job);
+                            return;
                         }
                         Err(err) => {
                             append_scene_build_run_log(
@@ -774,6 +1081,215 @@ pub(crate) fn scene_build_ai_poll(
                     }
                 }
             }
+        }
+        SceneBuildAiPhase::CaptureInit {
+            step_index,
+            run_step,
+        } => {
+            let total = job.plan_steps.len().max(1);
+            let step_dir = job
+                .run_dir
+                .join("steps")
+                .join(format!("{:04}", run_step.max(1)));
+
+            let instances = scene_instances
+                .iter()
+                .map(|(_, t, _, prefab, _, _)| (t.clone(), *prefab));
+            let (focus, half_extents) = scene_build_focus_and_half_extents(&library, instances);
+
+            match start_scene_build_step_screenshot_capture(
+                &mut commands,
+                &mut images,
+                &step_dir,
+                focus,
+                half_extents,
+            ) {
+                Ok(capture) => {
+                    let (completed, expected) =
+                        scene_build_step_screenshot_capture_progress(&capture);
+                    set_progress(
+                        &job.progress,
+                        &job.run_id,
+                        &job.run_dir,
+                        format!(
+                            "Capturing step {}/{} screenshots… ({}/{})",
+                            step_index + 1,
+                            total,
+                            completed,
+                            expected
+                        ),
+                    );
+                    append_scene_build_run_log(
+                        &job.run_dir,
+                        format!(
+                            "screenshots: started step {}/{} run_step={} dir={}",
+                            step_index + 1,
+                            total,
+                            run_step,
+                            step_dir.display()
+                        ),
+                    );
+
+                    job.capture = Some(capture);
+                    job.phase = SceneBuildAiPhase::CaptureWait { step_index };
+                    runtime.in_flight = Some(job);
+                }
+                Err(err) => {
+                    warn!(
+                        "Scene build {}: screenshot capture start failed: {}",
+                        job.run_id, err
+                    );
+                    append_scene_build_run_log(
+                        &job.run_dir,
+                        format!(
+                            "screenshots: start failed step {}/{} run_step={} err={}",
+                            step_index + 1,
+                            total,
+                            run_step,
+                            truncate_text(err.trim(), 300)
+                        ),
+                    );
+
+                    // Continue without screenshots.
+                    let next = step_index + 1;
+                    if next < job.plan_steps.len() {
+                        start_step_request(&mut job, &active, &library, &src_dir, next, 0, None);
+                        runtime.in_flight = Some(job);
+                        return;
+                    }
+
+                    runtime.last_status = Some(SceneBuildAiStatus {
+                        run_id: job.run_id.clone(),
+                        message: format!("Done ({total} steps)."),
+                    });
+                    set_progress(
+                        &job.progress,
+                        &job.run_id,
+                        &job.run_dir,
+                        format!("Build complete ({total} steps)."),
+                    );
+                    ui.set_status(format!(
+                        "Build complete (run_id={}, steps={total}).",
+                        job.run_id
+                    ));
+                }
+            }
+        }
+        SceneBuildAiPhase::CaptureWait { step_index } => {
+            let total = job.plan_steps.len().max(1);
+            let Some(capture) = job.capture.as_mut() else {
+                warn!(
+                    "Scene build {}: missing screenshot capture state (step {}/{})",
+                    job.run_id,
+                    step_index + 1,
+                    total
+                );
+
+                let next = step_index + 1;
+                if next < job.plan_steps.len() {
+                    start_step_request(&mut job, &active, &library, &src_dir, next, 0, None);
+                    runtime.in_flight = Some(job);
+                    return;
+                }
+
+                runtime.last_status = Some(SceneBuildAiStatus {
+                    run_id: job.run_id.clone(),
+                    message: format!("Done ({total} steps)."),
+                });
+                set_progress(
+                    &job.progress,
+                    &job.run_id,
+                    &job.run_dir,
+                    format!("Build complete ({total} steps)."),
+                );
+                ui.set_status(format!(
+                    "Build complete (run_id={}, steps={total}).",
+                    job.run_id
+                ));
+                return;
+            };
+
+            let (completed, expected) = scene_build_step_screenshot_capture_progress(capture);
+            if completed != capture.last_reported_completed {
+                capture.last_reported_completed = completed;
+                set_progress(
+                    &job.progress,
+                    &job.run_id,
+                    &job.run_dir,
+                    format!(
+                        "Capturing step {}/{} screenshots… ({}/{})",
+                        step_index + 1,
+                        total,
+                        completed,
+                        expected
+                    ),
+                );
+            }
+
+            let done = scene_build_step_screenshot_capture_done(capture);
+            let timed_out = !done && scene_build_step_screenshot_capture_timed_out(capture);
+            if done || timed_out {
+                if timed_out {
+                    warn!(
+                        "Scene build {}: screenshot capture timed out (step {}/{}, dir={})",
+                        job.run_id,
+                        step_index + 1,
+                        total,
+                        capture.step_dir.display()
+                    );
+                    append_scene_build_run_log(
+                        &job.run_dir,
+                        format!(
+                            "screenshots: timed out step {}/{} dir={} completed={}/{}",
+                            step_index + 1,
+                            total,
+                            capture.step_dir.display(),
+                            completed,
+                            expected
+                        ),
+                    );
+                } else {
+                    append_scene_build_run_log(
+                        &job.run_dir,
+                        format!(
+                            "screenshots: done step {}/{} dir={} ({}/{})",
+                            step_index + 1,
+                            total,
+                            capture.step_dir.display(),
+                            completed,
+                            expected
+                        ),
+                    );
+                }
+
+                cleanup_scene_build_step_screenshot_capture(&mut commands, capture);
+                job.capture = None;
+
+                let next = step_index + 1;
+                if next < job.plan_steps.len() {
+                    start_step_request(&mut job, &active, &library, &src_dir, next, 0, None);
+                    runtime.in_flight = Some(job);
+                    return;
+                }
+
+                runtime.last_status = Some(SceneBuildAiStatus {
+                    run_id: job.run_id.clone(),
+                    message: format!("Done ({total} steps)."),
+                });
+                set_progress(
+                    &job.progress,
+                    &job.run_id,
+                    &job.run_dir,
+                    format!("Build complete ({total} steps)."),
+                );
+                ui.set_status(format!(
+                    "Build complete (run_id={}, steps={total}).",
+                    job.run_id
+                ));
+                return;
+            }
+
+            runtime.in_flight = Some(job);
         }
     }
 }
@@ -1231,7 +1747,7 @@ fn build_plan_user_prompt(
         "Target scene: realm_id={}/ scene_id={}\n\n\
 Scene description:\n\
 {}\n\n\
-Prefab catalog (prefab_id | kind | label):\n\
+Prefab catalog (prefab_id | kind | label | size):\n\
 {}\n\n\
 Now output JSON with `steps`.\n",
         active.realm_id, active.scene_id, description, catalog
@@ -1258,6 +1774,9 @@ Rules:
 - For upsert_layer, `doc` MUST be a valid layer JSON document.
 - Use only prefab_id values from the provided catalog.
 - Coordinate system: XZ is ground plane, Y is up. Keep objects near the origin.
+- Placement: instance `transform.translation` is the CENTER of the object. To rest an object on the ground plane (y=0),
+  set translation.y to half the object's scaled height: `translation.y = (prefab_size.y * abs(scale.y)) / 2.0`.
+  Prefab sizes are included in the prefab catalog.
 - Prefer using your step_id as a namespace in layer_id, e.g. ai_<step_id>_main.
 
 Layer doc schemas (v1, minimal):
@@ -1274,7 +1793,7 @@ Example:
       "local_id": "ground_00",
       "prefab_id": "00000000-0000-0000-0000-000000000000",
       "transform": {
-        "translation": { "x": 0.0, "y": 0.0, "z": 0.0 },
+        "translation": { "x": 0.0, "y": 0.5, "z": 0.0 },
         "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
         "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
       }
@@ -1289,7 +1808,7 @@ Example:
 {
   "kind": "grid_instances",
   "prefab_id": "00000000-0000-0000-0000-000000000000",
-  "origin": { "x": 0.0, "y": 0.0, "z": 0.0 },
+  "origin": { "x": 0.0, "y": 0.5, "z": 0.0 },
   "count": { "x": 10, "z": 10 },
   "step": { "x": 1.0, "z": 1.0 },
   "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
@@ -1304,8 +1823,8 @@ Example:
   "kind": "polyline_instances",
   "prefab_id": "00000000-0000-0000-0000-000000000000",
   "points": [
-    { "x": 0.0, "y": 0.0, "z": 0.0 },
-    { "x": 10.0, "y": 0.0, "z": 0.0 }
+    { "x": 0.0, "y": 0.5, "z": 0.0 },
+    { "x": 10.0, "y": 0.5, "z": 0.0 }
   ],
   "spacing": 1.0,
   "start_offset": 0.0,
@@ -1356,7 +1875,7 @@ Scene description:\n\
 {}\n\n\
 Existing ai_ layers:\n\
 {}\n\
-Prefab catalog (prefab_id | kind | label):\n\
+Prefab catalog (prefab_id | kind | label | size):\n\
 {}\n\n\
 Now output JSON with `summary` + `ops`.\n",
         active.realm_id,
@@ -1373,7 +1892,7 @@ Now output JSON with `summary` + `ops`.\n",
 }
 
 fn build_prefab_catalog(library: &ObjectLibrary) -> String {
-    let mut prefabs: Vec<(String, String, &'static str)> = Vec::new();
+    let mut prefabs: Vec<(String, String, &'static str, Vec3)> = Vec::new();
     for (id, def) in library.iter() {
         let uuid = uuid::Uuid::from_u128(*id).to_string();
         let label = def.label.to_string();
@@ -1382,13 +1901,16 @@ fn build_prefab_catalog(library: &ObjectLibrary) -> String {
         } else {
             "building"
         };
-        prefabs.push((uuid, label, kind));
+        prefabs.push((uuid, label, kind, def.size));
     }
     prefabs.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
 
     let mut catalog = String::new();
-    for (uuid, label, kind) in prefabs {
-        catalog.push_str(&format!("- {uuid} | {kind} | {label}\n"));
+    for (uuid, label, kind, size) in prefabs {
+        catalog.push_str(&format!(
+            "- {uuid} | {kind} | {label} | size=({:.3},{:.3},{:.3})\n",
+            size.x, size.y, size.z
+        ));
     }
     catalog
 }
