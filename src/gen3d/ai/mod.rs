@@ -652,6 +652,33 @@ impl Gen3dAiJob {
             return None;
         }
 
+        fn summarize_tool_for_step(tool_id: &str) -> String {
+            use crate::gen3d::agent::tools::{
+                TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DETACH_COMPONENT,
+                TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_LLM_GENERATE_COMPONENT,
+                TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+                TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
+                TOOL_ID_VALIDATE,
+            };
+
+            match tool_id {
+                TOOL_ID_LLM_GENERATE_PLAN => "Plan".into(),
+                TOOL_ID_LLM_GENERATE_COMPONENT | TOOL_ID_LLM_GENERATE_COMPONENTS => {
+                    "Generate".into()
+                }
+                TOOL_ID_LLM_REVIEW_DELTA => "Review".into(),
+                TOOL_ID_RENDER_PREVIEW => "Render".into(),
+                TOOL_ID_VALIDATE => "Validate".into(),
+                TOOL_ID_SMOKE_CHECK => "Smoke".into(),
+                TOOL_ID_COPY_COMPONENT | TOOL_ID_COPY_COMPONENT_SUBTREE | TOOL_ID_DETACH_COMPONENT => {
+                    "Copy".into()
+                }
+                TOOL_ID_GET_STATE_SUMMARY | TOOL_ID_GET_SCENE_GRAPH_SUMMARY => "Inspect".into(),
+                TOOL_ID_SUBMIT_TOOLING_FEEDBACK => "Feedback".into(),
+                other => short_tool_id(other).to_string(),
+            }
+        }
+
         fn duration_from_ms(ms: u128) -> std::time::Duration {
             std::time::Duration::from_millis(ms.min(u64::MAX as u128) as u64)
         }
@@ -686,9 +713,29 @@ impl Gen3dAiJob {
             out.push_str("… | ");
         }
         for (i, pass) in passes.iter().enumerate().skip(start_idx) {
+            let is_current = self.metrics.current_pass_idx == Some(i) && pass.ended_at.is_none();
+            let mut main_tool_id: Option<&str> = None;
+            if is_current {
+                if let Some(in_flight) = self.metrics.tool_call_in_flight.as_ref() {
+                    main_tool_id = Some(in_flight.tool_id.as_str());
+                }
+            }
+            if main_tool_id.is_none() && !pass.tool_ms_by_id.is_empty() {
+                main_tool_id = pass
+                    .tool_ms_by_id
+                    .iter()
+                    .max_by(|a, b| a.1.cmp(b.1))
+                    .map(|(k, _)| k.as_str());
+            }
+
+            let label = main_tool_id
+                .map(summarize_tool_for_step)
+                .unwrap_or_else(|| "Think".into());
+
             out.push_str(&format!(
-                "p{} {}",
+                "p{} {} {}",
                 pass.pass,
+                label,
                 format_duration(pass.elapsed(now))
             ));
             if pass.ended_at.is_none() && self.running {
@@ -716,8 +763,20 @@ impl Gen3dAiJob {
                     0
                 };
             let total = pass.elapsed(now);
+            let main = self
+                .metrics
+                .tool_call_in_flight
+                .as_ref()
+                .map(|t| summarize_tool_for_step(t.tool_id.as_str()))
+                .or_else(|| {
+                    pass.tool_ms_by_id
+                        .iter()
+                        .max_by(|a, b| a.1.cmp(b.1))
+                        .map(|(k, _)| summarize_tool_for_step(k.as_str()))
+                })
+                .unwrap_or_else(|| "Think".into());
             out.push_str(&format!(
-                "\nThis step: agent {} ({agent_reqs} req) | tools {} ({tool_calls} call{}) | total {}",
+                "\nThis step ({main}): agent {} ({agent_reqs} req) | tools {} ({tool_calls} call{}) | total {}",
                 format_duration(duration_from_ms(agent_ms)),
                 format_duration(duration_from_ms(tool_ms)),
                 if tool_calls == 1 { "" } else { "s" },
@@ -745,43 +804,18 @@ impl Gen3dAiJob {
             }
         }
 
-        // Copy metrics (this run).
+        // Copy metrics (this run): summarize without copy chains.
         let copy = &self.metrics.copy;
-        if copy.auto_component_copies > 0
-            || copy.auto_subtree_copies > 0
-            || copy.manual_component_calls > 0
-            || copy.manual_subtree_calls > 0
-            || copy.manual_failures > 0
-        {
+        let copyable_components =
+            reuse_groups::copyable_target_count(&self.planned_components, &self.reuse_groups);
+        let total_copied_components = copy
+            .auto_component_copies
+            .saturating_add(copy.manual_component_copies)
+            .saturating_add(copy.manual_subtree_copies);
+        if copyable_components > 0 || total_copied_components > 0 {
             out.push_str(&format!(
-                "\nCopy: auto comp {} | auto subtree {} | tool comp {} ({} call{}) | tool subtree {} ({} call{}) | failures {}",
-                copy.auto_component_copies,
-                copy.auto_subtree_copies,
-                copy.manual_component_copies,
-                copy.manual_component_calls,
-                if copy.manual_component_calls == 1 { "" } else { "s" },
-                copy.manual_subtree_copies,
-                copy.manual_subtree_calls,
-                if copy.manual_subtree_calls == 1 { "" } else { "s" },
-                copy.manual_failures,
+                "\nCopy comps: copyable {copyable_components} | total {total_copied_components}"
             ));
-            if !copy.recent_outcomes.is_empty() {
-                out.push_str("\nCopy recent: ");
-                for (idx, item) in copy.recent_outcomes.iter().enumerate() {
-                    if idx > 0 {
-                        out.push_str(" | ");
-                    }
-                    out.push_str(item);
-                }
-            }
-            if let Some(err) = copy
-                .last_error
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                out.push_str(&format!("\nCopy last err: {}", truncate_for_ui(err, 160)));
-            }
         }
 
         Some(out)

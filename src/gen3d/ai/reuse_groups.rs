@@ -278,6 +278,68 @@ pub(super) fn missing_only_generation_indices(
     out
 }
 
+pub(super) fn copyable_target_count(
+    planned_components: &[Gen3dPlannedComponent],
+    reuse_groups: &[Gen3dValidatedReuseGroup],
+) -> usize {
+    if planned_components.is_empty() || reuse_groups.is_empty() {
+        return 0;
+    }
+
+    let children = build_children_map(planned_components);
+    let mut required_sources = vec![false; planned_components.len()];
+    let mut skip_targets = vec![false; planned_components.len()];
+
+    for group in reuse_groups {
+        let source_idx = group.source_root_idx;
+        match group.kind {
+            Gen3dReuseGroupKind::Component => {
+                if source_idx < required_sources.len() {
+                    required_sources[source_idx] = true;
+                }
+                let can_copy = group.mode != Gen3dCopyMode::Linked
+                    || is_component_leaf(planned_components, source_idx);
+                if !can_copy {
+                    continue;
+                }
+                for &target_idx in &group.target_root_indices {
+                    if target_idx < skip_targets.len() {
+                        skip_targets[target_idx] = true;
+                    }
+                }
+            }
+            Gen3dReuseGroupKind::Subtree => {
+                for idx in collect_subtree_indices(&children, source_idx) {
+                    if idx < required_sources.len() {
+                        required_sources[idx] = true;
+                    }
+                }
+                for &target_root in &group.target_root_indices {
+                    let preflight = super::copy_component::preflight_subtree_copy_compatibility(
+                        planned_components,
+                        source_idx,
+                        target_root,
+                    );
+                    if preflight.is_err() {
+                        continue;
+                    }
+                    for idx in collect_subtree_indices(&children, target_root) {
+                        if idx < skip_targets.len() {
+                            skip_targets[idx] = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    skip_targets
+        .into_iter()
+        .zip(required_sources)
+        .filter(|(skip, required)| *skip && !*required)
+        .count()
+}
+
 pub(super) fn apply_auto_copy(
     planned_components: &mut Vec<Gen3dPlannedComponent>,
     draft: &mut super::super::state::Gen3dDraft,
