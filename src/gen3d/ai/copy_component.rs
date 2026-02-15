@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::object::registry::{
     builtin_object_id, AnchorDef, ColliderProfile, ObjectDef, ObjectInteraction, ObjectPartDef,
@@ -20,6 +20,7 @@ pub(super) enum Gen3dCopyMode {
 pub(super) enum Gen3dCopyAnchorsMode {
     CopySourceAnchors,
     PreserveTargetAnchors,
+    PreserveInterfaceAnchors,
 }
 
 #[derive(Clone, Debug)]
@@ -162,6 +163,7 @@ pub(super) fn copy_component_into(
     mode: Gen3dCopyMode,
     anchors_mode: Gen3dCopyAnchorsMode,
     delta: Transform,
+    copied_target_indices: Option<&HashSet<usize>>,
 ) -> Result<Gen3dCopyComponentOutcome, String> {
     if source_idx >= components.len() || target_idx >= components.len() {
         return Err("copy_component_into: component index out of range".into());
@@ -204,8 +206,10 @@ pub(super) fn copy_component_into(
 
     let preserved_attachments = keep_attach_refs(&target_def.parts);
 
-    let preserve_target_alignment_delta =
-        if anchors_mode == Gen3dCopyAnchorsMode::PreserveTargetAnchors {
+    let preserve_target_alignment_delta = if matches!(
+        anchors_mode,
+        Gen3dCopyAnchorsMode::PreserveTargetAnchors | Gen3dCopyAnchorsMode::PreserveInterfaceAnchors
+    ) {
             let source_child_anchor = components[source_idx]
                 .attach_to
                 .as_ref()
@@ -230,6 +234,88 @@ pub(super) fn copy_component_into(
             None
         };
 
+    fn preserve_interface_anchor_names(
+        components: &[Gen3dPlannedComponent],
+        target_idx: usize,
+        copied_target_indices: Option<&HashSet<usize>>,
+    ) -> HashSet<String> {
+        let mut out: HashSet<String> = HashSet::new();
+        let Some(target) = components.get(target_idx) else {
+            return out;
+        };
+
+        // Always preserve the mount interface (child_anchor) so join frames stay stable.
+        if let Some(att) = target.attach_to.as_ref() {
+            if !att.child_anchor.trim().is_empty() {
+                out.insert(att.child_anchor.trim().to_string());
+            }
+        }
+
+        // Preserve anchors used to attach children that are NOT being copied as part of this
+        // operation. Otherwise, those children would "jump" in the assembly.
+        let parent_name = target.name.as_str();
+        for (child_idx, child) in components.iter().enumerate() {
+            let Some(att) = child.attach_to.as_ref() else {
+                continue;
+            };
+            if att.parent.as_str() != parent_name {
+                continue;
+            }
+            let child_is_internal = copied_target_indices
+                .is_some_and(|set| set.contains(&child_idx));
+            if child_is_internal {
+                continue;
+            }
+            if !att.parent_anchor.trim().is_empty() {
+                out.insert(att.parent_anchor.trim().to_string());
+            }
+        }
+
+        out
+    }
+
+    fn merge_anchors_preserve_interfaces(
+        source_anchors: &[AnchorDef],
+        target_anchors: &[AnchorDef],
+        delta_parts: Transform,
+        preserved: &HashSet<String>,
+    ) -> Vec<AnchorDef> {
+        let source_transformed = apply_delta_to_anchors(source_anchors, delta_parts);
+        let mut source_by_name: HashMap<String, Transform> = HashMap::new();
+        for anchor in source_transformed.iter() {
+            source_by_name.insert(anchor.name.as_ref().to_string(), anchor.transform);
+        }
+
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut out: Vec<AnchorDef> = Vec::new();
+
+        for target_anchor in target_anchors.iter() {
+            let name = target_anchor.name.as_ref().to_string();
+            seen.insert(name.clone());
+            let transform = if preserved.contains(&name) {
+                target_anchor.transform
+            } else if let Some(source_transform) = source_by_name.get(&name) {
+                *source_transform
+            } else {
+                target_anchor.transform
+            };
+            out.push(AnchorDef {
+                name: target_anchor.name.clone(),
+                transform,
+            });
+        }
+
+        for source_anchor in source_transformed.into_iter() {
+            let name = source_anchor.name.as_ref().to_string();
+            if seen.contains(&name) {
+                continue;
+            }
+            out.push(source_anchor);
+        }
+
+        out
+    }
+
     let (new_geometry_parts, new_size, new_anchors, mode_used) = match mode {
         Gen3dCopyMode::Detached => {
             let delta_parts = preserve_target_alignment_delta
@@ -239,9 +325,22 @@ pub(super) fn copy_component_into(
             apply_delta_to_parts(&mut parts, delta_parts);
             let anchors = match anchors_mode {
                 Gen3dCopyAnchorsMode::CopySourceAnchors => {
-                    apply_delta_to_anchors(&source_def.anchors, delta)
+                    apply_delta_to_anchors(&source_def.anchors, delta_parts)
                 }
                 Gen3dCopyAnchorsMode::PreserveTargetAnchors => target_def.anchors.clone(),
+                Gen3dCopyAnchorsMode::PreserveInterfaceAnchors => {
+                    let preserved = preserve_interface_anchor_names(
+                        components,
+                        target_idx,
+                        copied_target_indices,
+                    );
+                    merge_anchors_preserve_interfaces(
+                        &source_def.anchors,
+                        &target_def.anchors,
+                        delta_parts,
+                        &preserved,
+                    )
+                }
             };
             let size = transformed_size(source_def.size, delta_parts);
             (parts, size, anchors, Gen3dCopyMode::Detached)
@@ -593,6 +692,16 @@ pub(super) fn copy_component_subtree_into(
     let children = build_children_map(components);
     let pairs = map_subtree_pairs(components, &children, source_root_idx, target_root_idx)?;
 
+    let copied_target_indices = if anchors_mode == Gen3dCopyAnchorsMode::PreserveInterfaceAnchors {
+        let mut out: HashSet<usize> = HashSet::new();
+        for &(_, target_idx) in pairs.iter() {
+            out.insert(target_idx);
+        }
+        Some(out)
+    } else {
+        None
+    };
+
     let mut out: Vec<Gen3dCopyComponentOutcome> = Vec::new();
     for (source_idx, target_idx) in pairs {
         let outcome = copy_component_into(
@@ -603,6 +712,7 @@ pub(super) fn copy_component_subtree_into(
             mode,
             anchors_mode,
             delta,
+            copied_target_indices.as_ref(),
         )?;
         out.push(outcome);
     }
@@ -855,6 +965,18 @@ mod tests {
     use super::*;
     use crate::object::registry::{ColliderProfile, ObjectInteraction};
 
+    fn anchor_named(name: &str, pos: Vec3, forward: Vec3, up: Vec3) -> AnchorDef {
+        let rot = super::super::convert::plan_rotation_from_forward_up(forward, Some(up));
+        AnchorDef {
+            name: name.to_string().into(),
+            transform: Transform {
+                translation: pos,
+                rotation: rot,
+                ..default()
+            },
+        }
+    }
+
     fn anchor_named_forward(name: &str, forward: Vec3) -> AnchorDef {
         let rot = super::super::convert::plan_rotation_from_forward_up(forward, Some(Vec3::Y));
         AnchorDef {
@@ -947,6 +1069,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::CopySourceAnchors,
             Transform::IDENTITY,
+            None,
         )
         .expect("copy ok");
 
@@ -1014,6 +1137,7 @@ mod tests {
             Gen3dCopyMode::Linked,
             Gen3dCopyAnchorsMode::CopySourceAnchors,
             Transform::IDENTITY,
+            None,
         )
         .expect("linked copy ok");
 
@@ -1266,6 +1390,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Transform::IDENTITY,
+            None,
         )
         .expect("copy ok");
 
@@ -1285,6 +1410,139 @@ mod tests {
         assert!(
             dp < 1e-3,
             "expected copied part transform relative to mount anchor to be preserved; delta={dp}"
+        );
+    }
+
+    #[test]
+    fn preserve_interfaces_preserves_mount_but_overwrites_other_anchors() {
+        let mut components = vec![stub_component("a"), stub_component("b")];
+        components[0].actual_size = Some(Vec3::ONE);
+        components[0].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "origin".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "origin".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        let a_id = component_object_id("a");
+        let b_id = component_object_id("b");
+
+        let source_def = ObjectDef {
+            object_id: a_id,
+            label: "a".into(),
+            size: Vec3::ONE,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![
+                anchor_named(
+                    "mount",
+                    Vec3::new(1.775, 0.0, 0.3),
+                    Vec3::NEG_X,
+                    Vec3::Y,
+                ),
+                anchor_named(
+                    "tip_mount",
+                    Vec3::new(-1.425, 0.0, 0.5),
+                    Vec3::NEG_X,
+                    Vec3::Y,
+                ),
+            ],
+            parts: vec![ObjectPartDef::primitive(
+                crate::object::registry::PrimitiveVisualDef::Primitive {
+                    mesh: crate::object::registry::MeshKey::UnitCube,
+                    params: None,
+                    color: Color::WHITE,
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let target_mount_before =
+            anchor_named("mount", Vec3::ZERO, Vec3::X, Vec3::Y).transform;
+        let target_def = ObjectDef {
+            object_id: b_id,
+            label: "b".into(),
+            size: Vec3::ONE,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![
+                AnchorDef {
+                    name: "mount".into(),
+                    transform: target_mount_before,
+                },
+                anchor_named(
+                    "tip_mount",
+                    Vec3::new(3.2, 0.0, 0.2),
+                    Vec3::X,
+                    Vec3::Y,
+                ),
+            ],
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let source_mount = anchor_transform_from_defs(&source_def.anchors, "mount");
+        let inv_source_mount = invert_transform(source_mount).unwrap();
+        let expected_delta = compose_transform(target_mount_before, inv_source_mount).unwrap();
+        let expected_tip_mount = compose_transform(
+            expected_delta,
+            anchor_transform_from_defs(&source_def.anchors, "tip_mount"),
+        )
+        .unwrap();
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![source_def, target_def];
+
+        copy_component_into(
+            &mut components,
+            &mut draft,
+            0,
+            1,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Transform::IDENTITY,
+            None,
+        )
+        .expect("copy ok");
+
+        let b_def_after = draft.defs.iter().find(|d| d.object_id == b_id).unwrap();
+        let mount_after = anchor_transform_from_defs(&b_def_after.anchors, "mount");
+        assert_eq!(
+            mount_after, target_mount_before,
+            "expected mount anchor to be preserved under preserve_interfaces"
+        );
+
+        let tip_after = anchor_transform_from_defs(&b_def_after.anchors, "tip_mount");
+        let dp = (tip_after.translation - expected_tip_mount.translation).length();
+        assert!(
+            dp < 1e-4,
+            "expected tip_mount to be overwritten from source under preserve_interfaces; delta={dp}"
         );
     }
 
@@ -1464,6 +1722,155 @@ mod tests {
         assert!(
             generated_new,
             "expected subtree copy to create + populate new descendant component defs under leg_1_root"
+        );
+    }
+
+    #[test]
+    fn preserve_interfaces_subtree_does_not_preserve_internal_child_attachment_anchors() {
+        // Repro for the wing case: a subtree copy that requires a 180-degree rotation at the mount
+        // should also rotate/translate internal child-attachment anchors. `preserve_target` keeps
+        // those internal anchors unchanged, which can drift attachments. `preserve_interfaces`
+        // should overwrite internal anchors while preserving external interfaces.
+        let mut components = vec![
+            stub_component("body"),
+            stub_component("wing_root_L"),
+            stub_component("wing_tip_L"),
+            stub_component("wing_root_R"),
+            stub_component("wing_tip_R"),
+        ];
+
+        // Attach roots to body.
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "wing_mount_L".into(),
+            child_anchor: "shoulder".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[3].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "wing_mount_R".into(),
+            child_anchor: "shoulder".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        // Attach tips to roots via tip_mount/root.
+        components[2].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "wing_root_L".into(),
+            parent_anchor: "tip_mount".into(),
+            child_anchor: "root".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[4].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "wing_root_R".into(),
+            parent_anchor: "tip_mount".into(),
+            child_anchor: "root".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        // Mark source subtree as generated.
+        components[1].actual_size = Some(Vec3::ONE);
+        components[2].actual_size = Some(Vec3::ONE);
+
+        let body_id = component_object_id("body");
+        let wing_root_l_id = component_object_id("wing_root_L");
+        let wing_tip_l_id = component_object_id("wing_tip_L");
+        let wing_root_r_id = component_object_id("wing_root_R");
+        let wing_tip_r_id = component_object_id("wing_tip_R");
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![
+            stub_def(body_id, "body"),
+            ObjectDef {
+                anchors: vec![
+                    // Mount +X for the LEFT wing in local space; copy will rotate to +X for right.
+                    anchor_named(
+                        "shoulder",
+                        Vec3::new(1.775, 0.0, 0.3),
+                        Vec3::NEG_X,
+                        Vec3::Y,
+                    ),
+                    anchor_named(
+                        "tip_mount",
+                        Vec3::new(-1.425, 0.0, 0.5),
+                        Vec3::NEG_X,
+                        Vec3::Y,
+                    ),
+                ],
+                ..stub_def(wing_root_l_id, "wing_root_L")
+            },
+            ObjectDef {
+                anchors: vec![anchor_named("root", Vec3::ZERO, Vec3::NEG_X, Vec3::Y)],
+                ..stub_def(wing_tip_l_id, "wing_tip_L")
+            },
+            ObjectDef {
+                anchors: vec![
+                    // Target mount interface must remain stable.
+                    anchor_named("shoulder", Vec3::ZERO, Vec3::X, Vec3::Y),
+                    // This is intentionally the "wrong" Z sign for a 180-degree copy; it should be
+                    // overwritten when the attached child is internal to the subtree.
+                    anchor_named("tip_mount", Vec3::new(3.2, 0.0, 0.2), Vec3::X, Vec3::Y),
+                ],
+                parts: Vec::new(),
+                ..stub_def(wing_root_r_id, "wing_root_R")
+            },
+            ObjectDef {
+                anchors: vec![anchor_named("root", Vec3::ZERO, Vec3::X, Vec3::Y)],
+                parts: Vec::new(),
+                ..stub_def(wing_tip_r_id, "wing_tip_R")
+            },
+        ];
+
+        let target_mount_before = anchor_transform_from_defs(
+            &draft
+                .defs
+                .iter()
+                .find(|d| d.object_id == wing_root_r_id)
+                .unwrap()
+                .anchors,
+            "shoulder",
+        );
+        copy_component_subtree_into(
+            &mut components,
+            &mut draft,
+            1,
+            3,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Transform::IDENTITY,
+        )
+        .expect("subtree copy ok");
+
+        let wing_root_r_after = draft.defs.iter().find(|d| d.object_id == wing_root_r_id).unwrap();
+        let mount_after = anchor_transform_from_defs(&wing_root_r_after.anchors, "shoulder");
+        assert_eq!(
+            mount_after, target_mount_before,
+            "expected subtree copy to preserve the target mount interface"
+        );
+
+        let source_root_def = draft.defs.iter().find(|d| d.object_id == wing_root_l_id).unwrap();
+        let source_mount = anchor_transform_from_defs(&source_root_def.anchors, "shoulder");
+        let expected_delta =
+            compose_transform(target_mount_before, invert_transform(source_mount).unwrap())
+                .unwrap();
+        let expected_tip_mount = compose_transform(
+            expected_delta,
+            anchor_transform_from_defs(&source_root_def.anchors, "tip_mount"),
+        )
+        .unwrap();
+
+        let tip_after = anchor_transform_from_defs(&wing_root_r_after.anchors, "tip_mount");
+        let dp = (tip_after.translation - expected_tip_mount.translation).length();
+        assert!(
+            dp < 1e-4,
+            "expected subtree copy to overwrite internal child-attachment anchors; delta={dp}"
         );
     }
 

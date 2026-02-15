@@ -235,6 +235,7 @@ pub(crate) enum AiReuseModeJson {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AiReuseAnchorsJson {
     PreserveTarget,
+    PreserveInterfaces,
     CopySource,
     #[serde(other)]
     Unknown,

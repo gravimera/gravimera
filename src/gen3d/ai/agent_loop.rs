@@ -242,7 +242,7 @@ Rules:\n\
 - Avoid duplicated LLM work: reuse geometry for symmetric/repeated parts (major speed win):\n\
   - If multiple planned components should be identical (wheels, legs, mirrored handles, numbered sets like leg_0..leg_7), generate ONE of them, then fill the others using copy_component_v1 instead of calling llm_generate_component_v1 repeatedly.\n\
   - If the repeated part is a CHAIN (a component with attached descendants, like a leg/arm), use copy_component_subtree_v1 to copy the whole subtree in one call.\n\
-  - Anchors: prefer anchors=preserve_target so TARGET mount interfaces stay stable (recommended for mirrored parts and radial limbs). Use anchors=copy_source only when you need to overwrite the TARGET's anchors to match the SOURCE exactly.\n\
+  - Anchors: prefer anchors=preserve_interfaces so TARGET mount interfaces stay stable while internal anchors stay consistent with copied geometry (recommended for mirrored parts and radial limbs). Use anchors=preserve_target only when you must keep ALL target anchors unchanged. Use anchors=copy_source only when you need to overwrite the TARGET's anchors to match the SOURCE exactly.\n\
   - Prefer mode=linked when copying many LEAF components; call detach_component_v1 if any copy must diverge later.\n\
   - The state summary may include `reuse_suggestions` with ready-to-use tool args; use them when appropriate.\n\
 - When you DO need LLM generation, prefer batching UNIQUE components in parallel:\n\
@@ -707,7 +707,7 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
                         "source_root": source_name,
                         "targets": targets,
                         "mode": "detached",
-                        "anchors": "preserve_target",
+                        "anchors": "preserve_interfaces",
                     }
                 }));
             } else {
@@ -724,7 +724,7 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
                         "source_component": source_name,
                         "targets": targets,
                         "mode": "detached",
-                        "anchors": "preserve_target",
+                        "anchors": "preserve_interfaces",
                     }
                 }));
             }
@@ -789,6 +789,9 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
                 super::copy_component::Gen3dCopyAnchorsMode::CopySourceAnchors => "copy_source",
                 super::copy_component::Gen3dCopyAnchorsMode::PreserveTargetAnchors => {
                     "preserve_target"
+                }
+                super::copy_component::Gen3dCopyAnchorsMode::PreserveInterfaceAnchors => {
+                    "preserve_interfaces"
                 }
             };
             let source = job
@@ -2340,22 +2343,25 @@ fn execute_tool_call(
                 .or_else(|| call.args.get("anchors_mode"))
                 .or_else(|| call.args.get("anchor_mode"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("preserve_target")
+                .unwrap_or("preserve_interfaces")
                 .trim()
                 .to_ascii_lowercase();
             let anchors_mode = match anchors_mode.as_str() {
-                "" | "copy_source" | "copy" | "source" => {
-                    super::copy_component::Gen3dCopyAnchorsMode::CopySourceAnchors
+                "" | "preserve_interfaces" | "preserve_interface" | "interfaces" | "interface" => {
+                    super::copy_component::Gen3dCopyAnchorsMode::PreserveInterfaceAnchors
                 }
                 "preserve_target" | "preserve" | "target" => {
                     super::copy_component::Gen3dCopyAnchorsMode::PreserveTargetAnchors
+                }
+                "copy_source" | "copy" | "source" => {
+                    super::copy_component::Gen3dCopyAnchorsMode::CopySourceAnchors
                 }
                 other => {
                     return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                         call.call_id,
                         call.tool_id,
                         format!(
-                            "Unknown anchors `{other}` (expected `copy_source` or `preserve_target`)"
+                            "Unknown anchors `{other}` (expected `preserve_interfaces`, `preserve_target`, or `copy_source`)"
                         ),
                     ));
                 }
@@ -2477,6 +2483,7 @@ fn execute_tool_call(
                     mode,
                     anchors_mode,
                     delta,
+                    None,
                 ) {
                     Ok(outcome) => outcome,
                     Err(err) => {
@@ -2601,11 +2608,14 @@ fn execute_tool_call(
                 .or_else(|| call.args.get("anchors_mode"))
                 .or_else(|| call.args.get("anchor_mode"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("preserve_target")
+                .unwrap_or("preserve_interfaces")
                 .trim()
                 .to_ascii_lowercase();
             let anchors_mode = match anchors_mode.as_str() {
-                "" | "preserve_target" | "preserve" | "target" => {
+                "" | "preserve_interfaces" | "preserve_interface" | "interfaces" | "interface" => {
+                    super::copy_component::Gen3dCopyAnchorsMode::PreserveInterfaceAnchors
+                }
+                "preserve_target" | "preserve" | "target" => {
                     super::copy_component::Gen3dCopyAnchorsMode::PreserveTargetAnchors
                 }
                 "copy_source" | "copy" | "source" => {
@@ -2616,7 +2626,7 @@ fn execute_tool_call(
                         call.call_id,
                         call.tool_id,
                         format!(
-                            "Unknown anchors `{other}` (expected `preserve_target` or `copy_source`)"
+                            "Unknown anchors `{other}` (expected `preserve_interfaces`, `preserve_target`, or `copy_source`)"
                         ),
                     ));
                 }

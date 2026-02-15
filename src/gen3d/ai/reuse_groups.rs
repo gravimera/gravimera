@@ -106,10 +106,11 @@ fn parse_mode(mode: Option<AiReuseModeJson>) -> Gen3dCopyMode {
 }
 
 fn parse_anchors_mode(anchors: Option<AiReuseAnchorsJson>) -> Gen3dCopyAnchorsMode {
-    match anchors.unwrap_or(AiReuseAnchorsJson::PreserveTarget) {
+    match anchors.unwrap_or(AiReuseAnchorsJson::PreserveInterfaces) {
         AiReuseAnchorsJson::PreserveTarget => Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+        AiReuseAnchorsJson::PreserveInterfaces => Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
         AiReuseAnchorsJson::CopySource => Gen3dCopyAnchorsMode::CopySourceAnchors,
-        AiReuseAnchorsJson::Unknown => Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+        AiReuseAnchorsJson::Unknown => Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
     }
 }
 
@@ -364,6 +365,7 @@ pub(super) fn apply_auto_copy(
                         group.mode,
                         group.anchors_mode,
                         Transform::IDENTITY,
+                        None,
                     ) {
                         Ok(outcome) => {
                             report.component_copies_applied += 1;

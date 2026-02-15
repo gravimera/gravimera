@@ -53,6 +53,13 @@ In practice, the agent usually gets good results by calling:
 - `render_preview_v1` + `validate_v1` / `smoke_check_v1` (self-review inputs)
 - `llm_review_delta_v1` (apply machine-appliable tweaks / request replan / request regen)
 
+Plan-level reuse:
+
+- Plans may include `reuse_groups` to reuse already-generated geometry for symmetric/repeated parts.
+- Copy tools default to `anchors=preserve_interfaces`: preserve each target component’s mount interface (and external child-attachment anchors), but copy other anchors so internal anchors stay consistent with copied geometry.
+  - Use `preserve_target` only if you must keep *all* target anchors unchanged.
+  - Use `copy_source` to overwrite target anchors to match the source exactly.
+
 The loop continues until the AI returns `done`, the user clicks **Stop**, or a budget/no-progress guard stops best-effort.
 
 ---

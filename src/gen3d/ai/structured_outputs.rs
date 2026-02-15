@@ -315,7 +315,11 @@ fn schema_reuse_group() -> serde_json::Value {
         ),
         (
             "anchors",
-            schema_nullable(schema_enum(&["preserve_target", "copy_source"])),
+            schema_nullable(schema_enum(&[
+                "preserve_interfaces",
+                "preserve_target",
+                "copy_source",
+            ])),
         ),
     ])
 }

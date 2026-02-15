@@ -462,8 +462,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            - `subtree` (copy an entire limb-chain subtree rooted at `source`)\n\
          - `reuse_groups[].mode` (optional; default `detached`): `detached` | `linked`.\n\
            - For `subtree`, prefer `detached`.\n\
-         - `reuse_groups[].anchors` (optional; default `preserve_target`):\n\
-           - `preserve_target` (recommended for mirrored/radial limbs; keeps each target's mount interface stable)\n\
+         - `reuse_groups[].anchors` (optional; default `preserve_interfaces`):\n\
+           - `preserve_interfaces` (recommended; preserves each target's mount interface and any external child-attachment anchors, but copies other anchors so internal anchors stay consistent with the copied geometry)\n\
+           - `preserve_target` (legacy; keeps ALL target anchors unchanged; can cause internal-anchor drift when geometry is aligned)\n\
            - `copy_source` (overwrite target anchors to match the source exactly)\n\
          - Field aliases accepted by the engine:\n\
            - `source` may be `source_root` / `source_component`.\n\
@@ -479,7 +480,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             \"assembly_notes\": \"...\" (optional),\n\
             \"root_component\": \"component_name\" (optional; otherwise inferred as the only component without attach_to),\n\
             \"reuse_groups\": [\n\
-              {{ \"kind\": \"component\" | \"subtree\", \"source\": \"component_name\", \"targets\": [\"component_name\", ...], \"mode\": \"detached\" | \"linked\" (optional), \"anchors\": \"preserve_target\" | \"copy_source\" (optional) }}\n\
+              {{ \"kind\": \"component\" | \"subtree\", \"source\": \"component_name\", \"targets\": [\"component_name\", ...], \"mode\": \"detached\" | \"linked\" (optional), \"anchors\": \"preserve_interfaces\" | \"preserve_target\" | \"copy_source\" (optional) }}\n\
             ] (optional),\n\
             \"components\": [\n\
               {{\n\
