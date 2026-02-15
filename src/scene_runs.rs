@@ -13,6 +13,15 @@ use crate::scene_validation::ScorecardSpecV1;
 
 pub(crate) const SCENE_RUN_FORMAT_VERSION: u32 = 1;
 
+fn write_step_error(step_dir: &Path, stage: &str, error: &str) {
+    let doc = serde_json::json!({
+        "format_version": SCENE_RUN_FORMAT_VERSION,
+        "stage": stage,
+        "error": error,
+    });
+    let _ = write_json_value_atomic(&step_dir.join("error.json"), &doc);
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct SceneRunStatusV1 {
     pub(crate) format_version: u32,
@@ -233,19 +242,31 @@ pub(crate) fn scene_run_apply_patch_step(
     write_json_value_atomic(&step_dir.join("patch.json"), &patch_doc)?;
 
     let pre: SceneSourcesPatchValidateReport =
-        validate_scene_sources_patch(workspace, library, scorecard, patch)?;
+        match validate_scene_sources_patch(workspace, library, scorecard, patch) {
+            Ok(v) => v,
+            Err(err) => {
+                write_step_error(&step_dir, "pre_validation", &err);
+                return Err(err);
+            }
+        };
     let pre_doc =
         serde_json::to_value(&pre).map_err(|err| format!("pre to_value failed: {err}"))?;
     write_json_value_atomic(&step_dir.join("pre_validation_report.json"), &pre_doc)?;
 
-    let apply: SceneSourcesPatchApplyReport = apply_scene_sources_patch(
+    let apply: SceneSourcesPatchApplyReport = match apply_scene_sources_patch(
         commands,
         workspace,
         library,
         existing_instances,
         scorecard,
         patch,
-    )?;
+    ) {
+        Ok(v) => v,
+        Err(err) => {
+            write_step_error(&step_dir, "apply", &err);
+            return Err(err);
+        }
+    };
     let apply_doc =
         serde_json::to_value(&apply).map_err(|err| format!("apply to_value failed: {err}"))?;
     write_json_value_atomic(&step_dir.join("apply_result.json"), &apply_doc)?;

@@ -26,9 +26,20 @@ Minimal structure (v1):
           post_signature.json
           complete.json
 
+Optional debug artifacts (recommended):
+
+    runs/<run_id>/
+      progress.txt            (latest one-line status)
+      progress.log            (append-only status history; timestamped)
+      scene_build_run.log     (detailed per-run log; timestamped)
+      llm/                    (prompts/responses for long-running generation)
+      steps/<n>/
+        error.json            (present when pre-validation or apply fails)
+
 Notes:
 
 - `steps/<n>/complete.json` is the checkpoint marker for step `<n>`.
+- `steps/<n>/error.json` may be written for debugging when a step fails before `complete.json` is written.
 - All JSON writes must be atomic at the file level (write temp → rename).
 - Hosts may prune `runs/` by policy.
 

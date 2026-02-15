@@ -21,6 +21,7 @@ use crate::types::{
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 const CURL_MAX_TIME_SECS: u32 = 600;
+const MAX_STEP_ATTEMPTS: u8 = 3;
 
 #[derive(Clone, Debug, Default)]
 struct SceneBuildAiProgress {
@@ -41,10 +42,16 @@ struct SceneBuildAiPlanStep {
 }
 
 #[derive(Clone, Debug)]
+struct StepRepairContext {
+    error: String,
+    previous_output: String,
+}
+
+#[derive(Clone, Debug)]
 enum SceneBuildAiPhase {
     Cleanup,
     PlanRequest,
-    StepRequest { step_index: usize },
+    StepRequest { step_index: usize, attempt: u8 },
 }
 
 struct SceneBuildAiJob {
@@ -117,6 +124,27 @@ fn brief_run_id(run_id: &str) -> String {
     format!("{start}…{end}")
 }
 
+fn append_scene_build_run_log(run_dir: &Path, message: impl AsRef<str>) {
+    let path = run_dir.join("scene_build_run.log");
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut line = format!("[{ts_ms}] {}", message.as_ref());
+    if !line.ends_with("\n") {
+        line.push('\n');
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return;
+    };
+    use std::io::Write;
+    let _ = file.write_all(line.as_bytes());
+}
+
 fn set_progress(
     progress: &Arc<Mutex<SceneBuildAiProgress>>,
     run_id: &str,
@@ -137,6 +165,11 @@ fn set_progress(
         info!("Scene build {run_id}: {message}");
     }
 
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+
     let _ = std::fs::write(run_dir.join("progress.txt"), format!("{message}\n"));
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
@@ -144,8 +177,9 @@ fn set_progress(
         .open(run_dir.join("progress.log"))
     {
         use std::io::Write;
-        let _ = writeln!(file, "{message}");
+        let _ = writeln!(file, "[{ts_ms}] {message}");
     }
+    append_scene_build_run_log(run_dir, format!("progress: {message}"));
 }
 
 pub(crate) fn start_scene_build_from_description(
@@ -421,12 +455,15 @@ pub(crate) fn scene_build_ai_poll(
                         ),
                     );
 
-                    start_step_request(&mut job, &active, &library, &src_dir, 0);
+                    start_step_request(&mut job, &active, &library, &src_dir, 0, 0, None);
                     runtime.in_flight = Some(job);
                 }
             }
         }
-        SceneBuildAiPhase::StepRequest { step_index } => {
+        SceneBuildAiPhase::StepRequest {
+            step_index,
+            attempt,
+        } => {
             let result = take_shared_result(&job.shared_result);
             let Some(result) = result else {
                 runtime.in_flight = Some(job);
@@ -446,18 +483,73 @@ pub(crate) fn scene_build_ai_poll(
 
             match result {
                 Err(err) => {
+                    if attempt.saturating_add(1) < MAX_STEP_ATTEMPTS {
+                        set_progress(
+                            &job.progress,
+                            &job.run_id,
+                            &job.run_dir,
+                            format!(
+                                "Step {}/{} failed; retrying ({}/{})…",
+                                step_index + 1,
+                                total,
+                                attempt + 1,
+                                MAX_STEP_ATTEMPTS
+                            ),
+                        );
+                        start_step_request(
+                            &mut job,
+                            &active,
+                            &library,
+                            &src_dir,
+                            step_index,
+                            attempt + 1,
+                            Some(StepRepairContext {
+                                error: err,
+                                previous_output: String::new(),
+                            }),
+                        );
+                        runtime.in_flight = Some(job);
+                        return;
+                    }
+
                     finish_with_error(&mut runtime, &mut ui, &job, err);
                 }
                 Ok(text) => {
-                    let llm_dir = job
-                        .run_dir
-                        .join("llm")
-                        .join(format!("step_{:04}", step_index + 1));
+                    let llm_dir = step_llm_dir(&job.run_dir, step_index, attempt);
                     let _ = write_text_artifact(&llm_dir.join("response.txt"), &text);
 
                     let (summary, ops) = match parse_step_ops(&text) {
                         Ok(v) => v,
                         Err(err) => {
+                            if attempt.saturating_add(1) < MAX_STEP_ATTEMPTS {
+                                set_progress(
+                                    &job.progress,
+                                    &job.run_id,
+                                    &job.run_dir,
+                                    format!(
+                                        "Step {}/{} parse failed; retrying ({}/{})…",
+                                        step_index + 1,
+                                        total,
+                                        attempt + 1,
+                                        MAX_STEP_ATTEMPTS
+                                    ),
+                                );
+                                start_step_request(
+                                    &mut job,
+                                    &active,
+                                    &library,
+                                    &src_dir,
+                                    step_index,
+                                    attempt + 1,
+                                    Some(StepRepairContext {
+                                        error: err,
+                                        previous_output: text.clone(),
+                                    }),
+                                );
+                                runtime.in_flight = Some(job);
+                                return;
+                            }
+
                             finish_with_error(&mut runtime, &mut ui, &job, err);
                             return;
                         }
@@ -470,6 +562,22 @@ pub(crate) fn scene_build_ai_poll(
                             return;
                         }
                     };
+
+                    let ops_doc = serde_json::to_value(&ops).unwrap_or(Value::Null);
+                    let _ = write_json_artifact(&llm_dir.join("parsed_ops.json"), &ops_doc);
+                    let patch_doc = serde_json::to_value(&patch).unwrap_or(Value::Null);
+                    let _ = write_json_artifact(&llm_dir.join("patch.json"), &patch_doc);
+
+                    append_scene_build_run_log(
+                        &job.run_dir,
+                        format!(
+                            "step {} attempt {} parsed_ops={} patch_request_id={}",
+                            step_index + 1,
+                            attempt,
+                            ops.len(),
+                            patch.request_id
+                        ),
+                    );
 
                     set_progress(
                         &job.progress,
@@ -505,15 +613,64 @@ pub(crate) fn scene_build_ai_poll(
                         Ok(r) => {
                             let (applied, spawned, updated, despawned) = apply_counts(&r.result);
                             if !applied {
+                                let rejection = rejection_summary(&r.result);
+                                append_scene_build_run_log(
+                                    &job.run_dir,
+                                    format!(
+                                        "step {} attempt {} rejected: {}",
+                                        step_index + 1,
+                                        attempt,
+                                        truncate_text(rejection.trim(), 300)
+                                    ),
+                                );
+
+                                ui.set_status(format!(
+                                    "Step {}/{} rejected (run_id={}).",
+                                    step_index + 1,
+                                    total,
+                                    job.run_id
+                                ));
+
+                                job.next_run_step = job.next_run_step.saturating_add(1).max(1);
+
+                                if attempt.saturating_add(1) < MAX_STEP_ATTEMPTS {
+                                    set_progress(
+                                        &job.progress,
+                                        &job.run_id,
+                                        &job.run_dir,
+                                        format!(
+                                            "Step {}/{} rejected; retrying ({}/{})…",
+                                            step_index + 1,
+                                            total,
+                                            attempt + 1,
+                                            MAX_STEP_ATTEMPTS
+                                        ),
+                                    );
+                                    start_step_request(
+                                        &mut job,
+                                        &active,
+                                        &library,
+                                        &src_dir,
+                                        step_index,
+                                        attempt + 1,
+                                        Some(StepRepairContext {
+                                            error: rejection,
+                                            previous_output: text.clone(),
+                                        }),
+                                    );
+                                    runtime.in_flight = Some(job);
+                                    return;
+                                }
+
                                 finish_with_error(
                                     &mut runtime,
                                     &mut ui,
                                     &job,
                                     format!(
-                                        "Step {}/{} rejected by validators (run_id={}).",
+                                        "Step {}/{} rejected by validators: {}",
                                         step_index + 1,
                                         total,
-                                        job.run_id
+                                        rejection
                                     ),
                                 );
                                 return;
@@ -550,7 +707,9 @@ pub(crate) fn scene_build_ai_poll(
 
                             let next = step_index + 1;
                             if next < job.plan_steps.len() {
-                                start_step_request(&mut job, &active, &library, &src_dir, next);
+                                start_step_request(
+                                    &mut job, &active, &library, &src_dir, next, 0, None,
+                                );
                                 runtime.in_flight = Some(job);
                                 return;
                             }
@@ -571,6 +730,45 @@ pub(crate) fn scene_build_ai_poll(
                             ));
                         }
                         Err(err) => {
+                            append_scene_build_run_log(
+                                &job.run_dir,
+                                format!(
+                                    "step {} attempt {} apply_error: {}",
+                                    step_index + 1,
+                                    attempt,
+                                    truncate_text(err.trim(), 400)
+                                ),
+                            );
+
+                            if attempt.saturating_add(1) < MAX_STEP_ATTEMPTS {
+                                set_progress(
+                                    &job.progress,
+                                    &job.run_id,
+                                    &job.run_dir,
+                                    format!(
+                                        "Step {}/{} failed; retrying ({}/{})…",
+                                        step_index + 1,
+                                        total,
+                                        attempt + 1,
+                                        MAX_STEP_ATTEMPTS
+                                    ),
+                                );
+                                start_step_request(
+                                    &mut job,
+                                    &active,
+                                    &library,
+                                    &src_dir,
+                                    step_index,
+                                    attempt + 1,
+                                    Some(StepRepairContext {
+                                        error: err,
+                                        previous_output: text.clone(),
+                                    }),
+                                );
+                                runtime.in_flight = Some(job);
+                                return;
+                            }
+
                             finish_with_error(&mut runtime, &mut ui, &job, err);
                         }
                     }
@@ -586,20 +784,19 @@ fn start_step_request(
     library: &ObjectLibrary,
     src_dir: &Path,
     step_index: usize,
+    attempt: u8,
+    repair: Option<StepRepairContext>,
 ) {
     let total = job.plan_steps.len().max(1);
     let Some(step) = job.plan_steps.get(step_index) else {
         return;
     };
 
-    let llm_dir = job
-        .run_dir
-        .join("llm")
-        .join(format!("step_{:04}", step_index + 1));
+    let llm_dir = step_llm_dir(&job.run_dir, step_index, attempt);
     let _ = std::fs::create_dir_all(&llm_dir);
 
     let system_text = build_step_system_prompt();
-    let user_text = build_step_user_prompt(
+    let mut user_text = build_step_user_prompt(
         active,
         library,
         src_dir,
@@ -609,17 +806,62 @@ fn start_step_request(
         total,
     );
 
+    if let Some(repair) = repair {
+        user_text.push_str(
+            "
+
+Previous attempt failed with this error:
+",
+        );
+        user_text.push_str(repair.error.trim());
+        user_text.push_str(
+            "
+
+Your previous output (for reference; may be truncated):
+",
+        );
+        user_text.push_str(&truncate_text(repair.previous_output.trim(), 2400));
+        user_text.push_str(
+            "
+
+Fix the JSON so it matches the schemas exactly and resolves the error. Return ONLY JSON.
+",
+        );
+    }
+
     let _ = write_text_artifact(&llm_dir.join("system.txt"), &system_text);
     let _ = write_text_artifact(&llm_dir.join("user.txt"), &user_text);
 
-    set_progress(
-        &job.progress,
-        &job.run_id,
+    let display = if attempt == 0 {
+        format!("Step {}/{}: {}", step_index + 1, total, step.title)
+    } else {
+        format!(
+            "Step {}/{} (retry {}/{}): {}",
+            step_index + 1,
+            total,
+            attempt,
+            MAX_STEP_ATTEMPTS.saturating_sub(1),
+            step.title
+        )
+    };
+
+    set_progress(&job.progress, &job.run_id, &job.run_dir, display);
+    append_scene_build_run_log(
         &job.run_dir,
-        format!("Step {}/{}: {}", step_index + 1, total, step.title),
+        format!(
+            "step_request step={} attempt={} llm_dir={}",
+            step_index + 1,
+            attempt,
+            llm_dir.display()
+        ),
     );
 
     job.shared_result = Arc::new(Mutex::new(None));
+    let label = if attempt == 0 {
+        format!("Step {}/{}", step_index + 1, total)
+    } else {
+        format!("Step {}/{} (retry {attempt})", step_index + 1, total)
+    };
     spawn_scene_build_llm_thread(
         job.shared_result.clone(),
         job.progress.clone(),
@@ -632,10 +874,61 @@ fn start_step_request(
         system_text,
         user_text,
         llm_dir,
-        format!("Step {}/{}", step_index + 1, total),
+        label,
     );
 
-    job.phase = SceneBuildAiPhase::StepRequest { step_index };
+    job.phase = SceneBuildAiPhase::StepRequest {
+        step_index,
+        attempt,
+    };
+}
+
+fn step_llm_dir(run_dir: &Path, step_index: usize, attempt: u8) -> PathBuf {
+    if attempt == 0 {
+        return run_dir
+            .join("llm")
+            .join(format!("step_{:04}", step_index + 1));
+    }
+
+    run_dir
+        .join("llm")
+        .join(format!("step_{:04}_retry_{:02}", step_index + 1, attempt))
+}
+
+fn rejection_summary(result: &Value) -> String {
+    let Some(report) = result.get("validation_report") else {
+        return "Rejected by validators (missing validation_report).".to_string();
+    };
+
+    let hard_passed = report
+        .get("hard_gates_passed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let violations = report
+        .get("violations")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut parts = Vec::new();
+    parts.push(format!("hard_gates_passed={hard_passed}"));
+    parts.push(format!("violations={}", violations.len()));
+
+    for v in violations.iter().take(3) {
+        let code = v.get("code").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let msg = v
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if msg.is_empty() {
+            parts.push(code.to_string());
+        } else {
+            parts.push(format!("{code}: {msg}"));
+        }
+    }
+
+    parts.join("; ")
 }
 
 fn take_shared_result(
@@ -946,26 +1239,81 @@ Now output JSON with `steps`.\n",
 }
 
 fn build_step_system_prompt() -> String {
-    "You are a scene generation assistant for the game Gravimera.\n\
-Return ONLY valid JSON.\n\
-\n\
-Output schema:\n\
-{\n\
-  \"summary\": \"...\",\n\
-  \"ops\": [ <scene_sources_patch_op>, ... ]\n\
-}\n\
-\n\
-Where each `scene_sources_patch_op` is one of:\n\
-- { \"kind\": \"upsert_layer\", \"layer_id\": \"ai_*\", \"doc\": <layer_doc> }\n\
-- { \"kind\": \"delete_layer\", \"layer_id\": \"ai_*\" }\n\
-\n\
-Rules:\n\
-- Only use the op kinds above.\n\
-- Every layer_id MUST start with \"ai_\".\n\
-- For upsert_layer, `doc` MUST be a valid layer JSON document. Supported layer kinds: \"explicit_instances\", \"grid_instances\", \"polyline_instances\".\n\
-- Use only prefab_id values from the provided catalog.\n\
-- Coordinate system: XZ is ground plane, Y is up. Keep objects near the origin.\n\
-- Prefer using your step_id as a namespace in layer_id, e.g. ai_<step_id>_main.\n"
+    r#"You are a scene generation assistant for the game Gravimera.
+Return ONLY valid JSON.
+
+Output schema:
+{
+  "summary": "...",
+  "ops": [ <scene_sources_patch_op>, ... ]
+}
+
+Where each `scene_sources_patch_op` is one of:
+- { "kind": "upsert_layer", "layer_id": "ai_*", "doc": <layer_doc> }
+- { "kind": "delete_layer", "layer_id": "ai_*" }
+
+Rules:
+- Only use the op kinds above.
+- Every layer_id MUST start with "ai_".
+- For upsert_layer, `doc` MUST be a valid layer JSON document.
+- Use only prefab_id values from the provided catalog.
+- Coordinate system: XZ is ground plane, Y is up. Keep objects near the origin.
+- Prefer using your step_id as a namespace in layer_id, e.g. ai_<step_id>_main.
+
+Layer doc schemas (v1, minimal):
+
+1) kind = "explicit_instances"
+- Required: kind, instances[].local_id, instances[].prefab_id, instances[].transform
+- instances[].transform has: translation (x,y,z), rotation quaternion (x,y,z,w), scale (x,y,z)
+
+Example:
+{
+  "kind": "explicit_instances",
+  "instances": [
+    {
+      "local_id": "ground_00",
+      "prefab_id": "00000000-0000-0000-0000-000000000000",
+      "transform": {
+        "translation": { "x": 0.0, "y": 0.0, "z": 0.0 },
+        "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+        "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+      }
+    }
+  ]
+}
+
+2) kind = "grid_instances"
+- Required: kind, prefab_id, origin, count{x,z}, step{x,z}
+
+Example:
+{
+  "kind": "grid_instances",
+  "prefab_id": "00000000-0000-0000-0000-000000000000",
+  "origin": { "x": 0.0, "y": 0.0, "z": 0.0 },
+  "count": { "x": 10, "z": 10 },
+  "step": { "x": 1.0, "z": 1.0 },
+  "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+  "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+}
+
+3) kind = "polyline_instances"
+- Required: kind, prefab_id, points[], spacing
+
+Example:
+{
+  "kind": "polyline_instances",
+  "prefab_id": "00000000-0000-0000-0000-000000000000",
+  "points": [
+    { "x": 0.0, "y": 0.0, "z": 0.0 },
+    { "x": 10.0, "y": 0.0, "z": 0.0 }
+  ],
+  "spacing": 1.0,
+  "start_offset": 0.0,
+  "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+  "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+}
+
+Do NOT invent alternate field names (for example: "position", "rotation_y", arrays for vectors, etc.)."#
         .to_string()
 }
 
