@@ -47,6 +47,7 @@ fn gen3d_draft_projectile_object_id() -> u128 {
 
 pub(crate) use ai::{gen3d_cancel_build_from_api, gen3d_start_build_from_api};
 pub(crate) use ai::{gen3d_generate_button, gen3d_poll_ai_job, Gen3dAiJob};
+#[allow(unused_imports)]
 pub(crate) use ai::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 pub(crate) use images::{
     gen3d_clear_images_button, gen3d_handle_drag_and_drop, gen3d_image_viewer_click_to_close,
