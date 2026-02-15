@@ -1,7 +1,7 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -116,12 +116,15 @@ impl SceneSourcesV1 {
         write_json_file_canonical(&index_path, &self.index_json)?;
 
         let paths = SceneSourcesIndexPaths::from_index_json_value(&self.index_json)?;
-        write_json_file_canonical(&src_dir.join(paths.meta_path), &self.meta_json)?;
-        write_json_file_canonical(&src_dir.join(paths.markers_path), &self.markers_json)?;
+        let keep_json_paths = build_keep_json_paths(&paths, &self.extra_json_files);
+        write_json_file_canonical(&src_dir.join(&paths.meta_path), &self.meta_json)?;
+        write_json_file_canonical(&src_dir.join(&paths.markers_path), &self.markers_json)?;
         write_json_file_canonical(
-            &src_dir.join(paths.style_pack_ref_path),
+            &src_dir.join(&paths.style_pack_ref_path),
             &self.style_pack_ref_json,
         )?;
+
+        prune_stale_scene_owned_json_files(src_dir, &paths, &keep_json_paths)?;
 
         for (rel_path, value) in &self.extra_json_files {
             write_json_file_canonical(&src_dir.join(rel_path), value)?;
@@ -135,6 +138,56 @@ impl SceneSourcesV1 {
         sources.write_to_dir(src_dir)?;
         Ok(())
     }
+}
+
+fn build_keep_json_paths(
+    paths: &SceneSourcesIndexPaths,
+    extra_json_files: &BTreeMap<PathBuf, Value>,
+) -> BTreeSet<PathBuf> {
+    let mut keep = BTreeSet::new();
+    keep.insert(paths.meta_path.clone());
+    keep.insert(paths.markers_path.clone());
+    keep.insert(paths.style_pack_ref_path.clone());
+    keep.extend(extra_json_files.keys().cloned());
+    keep
+}
+
+fn prune_stale_scene_owned_json_files(
+    src_dir: &Path,
+    paths: &SceneSourcesIndexPaths,
+    keep_json_paths: &BTreeSet<PathBuf>,
+) -> Result<(), SceneSourcesError> {
+    for rel_dir in [
+        &paths.portals_dir,
+        &paths.layers_dir,
+        &paths.pinned_instances_dir,
+    ] {
+        let dir_path = src_dir.join(rel_dir);
+        if !dir_path.exists() {
+            continue;
+        }
+        let found = find_json_files(&dir_path)?;
+        for abs_path in found {
+            let rel_path =
+                abs_path
+                    .strip_prefix(src_dir)
+                    .map_err(|_| SceneSourcesError::InvalidPath {
+                        message: format!(
+                            "JSON file is not under src dir: src_dir={} file={}",
+                            src_dir.display(),
+                            abs_path.display()
+                        ),
+                    })?;
+            if keep_json_paths.contains(&rel_path.to_path_buf()) {
+                continue;
+            }
+            fs::remove_file(&abs_path).map_err(|error| SceneSourcesError::Io {
+                path: abs_path.to_path_buf(),
+                error,
+            })?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -478,6 +531,29 @@ mod tests {
 
         // Canonicalization sorts and dedups meta.tags.
         assert_eq!(sources.meta_json["tags"], Value::from(vec!["a", "b"]));
+    }
+
+    #[test]
+    fn write_to_dir_prunes_removed_extra_json_files() {
+        let fixture_src = fixture_src_dir();
+        let temp_root = make_temp_dir("gravimera_scene_sources_prune").unwrap();
+        let temp_src = temp_root.join("src");
+        copy_dir_recursive(&fixture_src, &temp_src).unwrap();
+
+        let stale_rel = PathBuf::from("layers/stale_layer.json");
+        let stale_abs = temp_src.join(&stale_rel);
+        write_file_bytes(&stale_abs, br#"{ "hello": "world" }"#).unwrap();
+
+        let mut sources = SceneSourcesV1::load_from_dir(&temp_src).unwrap();
+        assert!(sources.extra_json_files.contains_key(&stale_rel));
+
+        sources.extra_json_files.remove(&stale_rel);
+        sources.write_to_dir(&temp_src).unwrap();
+
+        assert!(!stale_abs.exists());
+
+        let sources_2 = SceneSourcesV1::load_from_dir(&temp_src).unwrap();
+        assert!(!sources_2.extra_json_files.contains_key(&stale_rel));
     }
 
     fn read_file_bytes(path: &Path) -> Result<Vec<u8>, SceneSourcesError> {
