@@ -5,7 +5,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 ## Common
 
 - Toggle Build/Play: `Tab`
-- Scene sources panel: click **Scene** (top-left)
+- Scene Builder panel: click **Scene** (top-left)
 - Console: `Enter` (commands: `/easy`, `/hard`, `/hell`)
 - Zoom: mouse wheel (in/out; no orbit/rotation)
 - Camera pan: move cursor near the window edge

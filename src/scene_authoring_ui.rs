@@ -5,9 +5,8 @@ use bevy::prelude::*;
 use crate::object::registry::ObjectLibrary;
 use crate::realm::ActiveRealmScene;
 use crate::scene_sources_runtime::{
-    compile_scene_sources_all_layers, import_scene_sources_replace_world,
-    reload_scene_sources_in_workspace, scene_signature_summary, validate_scene_sources,
-    SceneSourcesWorkspace, SceneWorldInstance,
+    compile_scene_sources_all_layers, reload_scene_sources_in_workspace, scene_signature_summary,
+    validate_scene_sources, SceneSourcesWorkspace, SceneWorldInstance,
 };
 use crate::scene_store::SceneSaveRequest;
 use crate::scene_validation::{HardGateSpecV1, ScorecardSpecV1};
@@ -26,11 +25,9 @@ pub(crate) enum SceneUiField {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SceneUiAction {
     SaveDescription,
-    LoadSources,
-    ReloadSources,
+    Build,
     Compile,
     Validate,
-    SavePinned,
 }
 
 #[derive(Resource, Debug)]
@@ -61,6 +58,20 @@ impl Default for SceneAuthoringUiState {
             description_dirty: false,
             last_active: None,
         }
+    }
+}
+
+impl SceneAuthoringUiState {
+    pub(crate) fn set_status(&mut self, status: impl Into<String>) {
+        self.status = status.into();
+    }
+
+    pub(crate) fn set_error(&mut self, error: impl Into<String>) {
+        self.error = Some(error.into());
+    }
+
+    pub(crate) fn clear_error(&mut self) {
+        self.error = None;
     }
 }
 
@@ -192,7 +203,7 @@ pub(crate) fn setup_scene_authoring_ui(mut commands: Commands) {
             ))
             .with_children(|row| {
                 row.spawn((
-                    Text::new("Realm & Scene"),
+                    Text::new("Scene Builder"),
                     TextFont {
                         font_size: 18.0,
                         ..default()
@@ -376,12 +387,10 @@ pub(crate) fn setup_scene_authoring_ui(mut commands: Commands) {
                 BackgroundColor(Color::NONE),
             ))
             .with_children(|row| {
-                spawn_action_button(row, "Save desc", SceneUiAction::SaveDescription);
-                spawn_action_button(row, "Load sources", SceneUiAction::LoadSources);
-                spawn_action_button(row, "Reload", SceneUiAction::ReloadSources);
+                spawn_action_button(row, "Build", SceneUiAction::Build);
                 spawn_action_button(row, "Compile", SceneUiAction::Compile);
                 spawn_action_button(row, "Validate", SceneUiAction::Validate);
-                spawn_action_button(row, "Save pinned", SceneUiAction::SavePinned);
+                spawn_action_button(row, "Save desc", SceneUiAction::SaveDescription);
             });
 
             // Status + error.
@@ -938,6 +947,8 @@ pub(crate) fn scene_ui_clear_keyboard_state_when_captured(
 pub(crate) fn scene_ui_action_buttons(
     mut commands: Commands,
     mut state: ResMut<SceneAuthoringUiState>,
+    config: Res<crate::config::AppConfig>,
+    mut build_ai: ResMut<crate::scene_build_ai::SceneBuildAiRuntime>,
     active: Res<ActiveRealmScene>,
     library: Res<ObjectLibrary>,
     mut workspace: ResMut<SceneSourcesWorkspace>,
@@ -973,7 +984,7 @@ pub(crate) fn scene_ui_action_buttons(
                     workspace.sources = None;
                 }
 
-                let result = match button.action {
+                let result: Result<String, String> = match button.action {
                     SceneUiAction::SaveDescription => crate::realm::save_scene_description(
                         &src_dir,
                         state.description.trim_end_matches('\n'),
@@ -982,27 +993,21 @@ pub(crate) fn scene_ui_action_buttons(
                         state.description_dirty = false;
                         "Saved scene description.".to_string()
                     }),
-                    SceneUiAction::LoadSources => {
-                        let existing_entities = scene_instances.iter().map(|(e, _, _, _, _, _)| e);
-                        import_scene_sources_replace_world(
-                            &mut commands,
-                            &mut workspace,
+                    SceneUiAction::Build => crate::realm::save_scene_description(
+                        &src_dir,
+                        state.description.trim_end_matches('\n'),
+                    )
+                    .and_then(|_| {
+                        state.description_dirty = false;
+                        crate::scene_build_ai::start_scene_build_from_description(
+                            &mut build_ai,
+                            &config,
+                            &active,
                             &library,
-                            &src_dir,
-                            existing_entities,
+                            state.description.trim_end_matches('\n'),
                         )
-                        .map(|report| {
-                            format!(
-                                "Loaded sources from {} (pinned instances: {}).",
-                                src_dir.display(),
-                                report.instance_count
-                            )
-                        })
-                    }
-                    SceneUiAction::ReloadSources => {
-                        reload_scene_sources_in_workspace(&mut workspace)
-                            .map(|_| "Reloaded sources from disk.".to_string())
-                    }
+                        .map(|run_id| format!("Build started (run_id={run_id})."))
+                    }),
                     SceneUiAction::Compile => {
                         let do_compile =
                             |commands: &mut Commands, workspace: &SceneSourcesWorkspace| {
@@ -1017,42 +1022,37 @@ pub(crate) fn scene_ui_action_buttons(
                                     },
                                 );
 
-                                compile_scene_sources_all_layers(commands, workspace, &library, existing).map(|report| {
-                                let sig = scene_signature_summary(scene_instances.iter().map(
-                                    |(e, t, id, prefab, tint, owner)| SceneWorldInstance {
-                                        entity: e,
-                                        instance_id: *id,
-                                        prefab_id: *prefab,
-                                        transform: t.clone(),
-                                        tint: tint.map(|t| t.0),
-                                        owner_layer_id: owner.map(|o| o.layer_id.clone()),
-                                    },
-                                ));
-                                match sig {
-                                    Ok(sig) => format!(
-                                        "Compiled: spawned={} updated={} despawned={} (total_instances={}; overall_sig={}).",
-                                        report.spawned,
-                                        report.updated,
-                                        report.despawned,
-                                        sig.total_instances,
-                                        sig.overall_sig
-                                    ),
-                                    Err(_) => format!(
-                                        "Compiled: spawned={} updated={} despawned={}.",
-                                        report.spawned, report.updated, report.despawned
-                                    ),
-                                }
-                            })
+                                compile_scene_sources_all_layers(commands, workspace, &library, existing)
+                                    .map(|report| {
+                                        let sig = scene_signature_summary(scene_instances.iter().map(
+                                            |(e, t, id, prefab, tint, owner)| SceneWorldInstance {
+                                                entity: e,
+                                                instance_id: *id,
+                                                prefab_id: *prefab,
+                                                transform: t.clone(),
+                                                tint: tint.map(|t| t.0),
+                                                owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                                            },
+                                        ));
+                                        match sig {
+                                            Ok(sig) => format!(
+                                                "Compiled: spawned={} updated={} despawned={} (total_instances={}; overall_sig={}).",
+                                                report.spawned,
+                                                report.updated,
+                                                report.despawned,
+                                                sig.total_instances,
+                                                sig.overall_sig
+                                            ),
+                                            Err(_) => format!(
+                                                "Compiled: spawned={} updated={} despawned={}.",
+                                                report.spawned, report.updated, report.despawned
+                                            ),
+                                        }
+                                    })
                             };
 
-                        if workspace.sources.is_none() {
-                            match reload_scene_sources_in_workspace(&mut workspace) {
-                                Ok(_) => do_compile(&mut commands, &workspace),
-                                Err(err) => Err(err),
-                            }
-                        } else {
-                            do_compile(&mut commands, &workspace)
-                        }
+                        reload_scene_sources_in_workspace(&mut workspace)
+                            .and_then(|_| do_compile(&mut commands, &workspace))
                     }
                     SceneUiAction::Validate => {
                         let scorecard = default_scorecard();
@@ -1079,34 +1079,8 @@ pub(crate) fn scene_ui_action_buttons(
                                     })
                             };
 
-                        if workspace.sources.is_none() {
-                            match reload_scene_sources_in_workspace(&mut workspace) {
-                                Ok(_) => do_validate(&workspace),
-                                Err(err) => Err(err),
-                            }
-                        } else {
-                            do_validate(&workspace)
-                        }
-                    }
-                    SceneUiAction::SavePinned => {
-                        let Some(out_dir) = workspace.loaded_from_dir.as_deref() else {
-                            return;
-                        };
-                        let objects = scene_instances.iter().filter_map(
-                            |(_e, t, id, prefab, tint, owner)| {
-                                owner.is_none().then_some((t, id, prefab, tint))
-                            },
-                        );
-                        crate::scene_sources_runtime::export_scene_sources_from_world(
-                            &workspace, objects, out_dir,
-                        )
-                        .map(|report| {
-                            format!(
-                                "Saved pinned instances to {} (count: {}).",
-                                out_dir.display(),
-                                report.instance_count
-                            )
-                        })
+                        reload_scene_sources_in_workspace(&mut workspace)
+                            .and_then(|_| do_validate(&workspace))
                     }
                 };
 
@@ -1192,7 +1166,7 @@ pub(crate) fn scene_ui_update_texts(
             value.push('|');
         }
         if value.trim().is_empty() {
-            value = "<click to edit; Ctrl/Cmd+V to paste>".to_string();
+            value = "<click to edit; paste scene description; then press Build>".to_string();
         }
         **text = value.into();
     }

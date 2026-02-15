@@ -502,6 +502,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.init_resource::<crate::gen3d::Gen3dAiJob>();
     app.init_resource::<crate::gen3d::Gen3dToolFeedbackHistory>();
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
+    app.init_resource::<crate::scene_build_ai::SceneBuildAiRuntime>();
     app.init_resource::<crate::realm::ActiveRealmScene>();
     app.init_resource::<crate::realm::PendingRealmSceneSwitch>();
     app.add_plugins(crate::automation::AutomationPlugin);
@@ -661,8 +662,10 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             crate::scene_authoring_ui::scene_ui_text_field_focus,
             crate::scene_authoring_ui::scene_ui_action_buttons
                 .after(crate::scene_authoring_ui::scene_ui_text_field_focus),
+            crate::scene_build_ai::scene_build_ai_poll
+                .after(crate::scene_authoring_ui::scene_ui_action_buttons),
             crate::scene_authoring_ui::scene_ui_update_texts
-                .after(crate::scene_authoring_ui::scene_ui_action_buttons)
+                .after(crate::scene_build_ai::scene_build_ai_poll)
                 .after(crate::scene_authoring_ui::scene_ui_update_realm_scene_button_styles),
         )
             .run_if(console::console_closed)
