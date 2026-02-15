@@ -95,6 +95,9 @@ pub(crate) struct SceneUiStatusText;
 pub(crate) struct SceneUiErrorText;
 
 #[derive(Component)]
+pub(crate) struct SceneUiBuildProgressText;
+
+#[derive(Component)]
 pub(crate) struct SceneUiRealmDropdownButton;
 
 #[derive(Component)]
@@ -392,6 +395,17 @@ pub(crate) fn setup_scene_authoring_ui(mut commands: Commands) {
                 spawn_action_button(row, "Validate", SceneUiAction::Validate);
                 spawn_action_button(row, "Save desc", SceneUiAction::SaveDescription);
             });
+
+            // Build progress.
+            root.spawn((
+                Text::new(""),
+                TextFont {
+                    font_size: 13.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.78, 0.86, 0.98)),
+                SceneUiBuildProgressText,
+            ));
 
             // Status + error.
             root.spawn((
@@ -1102,6 +1116,7 @@ pub(crate) fn scene_ui_action_buttons(
 pub(crate) fn scene_ui_update_texts(
     state: Res<SceneAuthoringUiState>,
     active: Res<ActiveRealmScene>,
+    build_ai: Res<crate::scene_build_ai::SceneBuildAiRuntime>,
     mut realm_text: Query<&mut Text, With<SceneUiRealmDropdownButtonText>>,
     mut realm_list: Query<(&mut Node, &mut Visibility), With<SceneUiRealmDropdownList>>,
     mut status: Query<
@@ -1111,6 +1126,7 @@ pub(crate) fn scene_ui_update_texts(
             Without<SceneUiErrorText>,
             Without<SceneUiTextFieldText>,
             Without<SceneUiRealmDropdownButtonText>,
+            Without<SceneUiBuildProgressText>,
         ),
     >,
     mut errors: Query<
@@ -1118,6 +1134,17 @@ pub(crate) fn scene_ui_update_texts(
         (
             With<SceneUiErrorText>,
             Without<SceneUiStatusText>,
+            Without<SceneUiTextFieldText>,
+            Without<SceneUiRealmDropdownButtonText>,
+            Without<SceneUiBuildProgressText>,
+        ),
+    >,
+    mut progress: Query<
+        &mut Text,
+        (
+            With<SceneUiBuildProgressText>,
+            Without<SceneUiStatusText>,
+            Without<SceneUiErrorText>,
             Without<SceneUiTextFieldText>,
             Without<SceneUiRealmDropdownButtonText>,
         ),
@@ -1128,6 +1155,7 @@ pub(crate) fn scene_ui_update_texts(
             Without<SceneUiStatusText>,
             Without<SceneUiErrorText>,
             Without<SceneUiRealmDropdownButtonText>,
+            Without<SceneUiBuildProgressText>,
         ),
     >,
 ) {
@@ -1154,6 +1182,11 @@ pub(crate) fn scene_ui_update_texts(
     }
     for mut t in &mut errors {
         **t = state.error.clone().unwrap_or_default().into();
+    }
+
+    let progress_summary = build_ai.ui_progress_summary();
+    for mut t in &mut progress {
+        **t = progress_summary.clone().into();
     }
 
     for (field, mut text) in &mut fields {

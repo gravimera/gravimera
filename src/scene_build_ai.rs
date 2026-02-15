@@ -1,3 +1,4 @@
+use bevy::log::{error, info, warn};
 use bevy::prelude::*;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -20,9 +21,96 @@ use crate::types::{
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 const CURL_MAX_TIME_SECS: u32 = 600;
 
+#[derive(Clone, Debug, Default)]
+struct SceneBuildAiProgress {
+    message: String,
+}
+
+#[derive(Clone, Debug)]
+struct SceneBuildAiStatus {
+    run_id: String,
+    message: String,
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct SceneBuildAiRuntime {
     in_flight: Option<SceneBuildAiJob>,
+    last_status: Option<SceneBuildAiStatus>,
+}
+
+impl SceneBuildAiRuntime {
+    pub(crate) fn ui_progress_summary(&self) -> String {
+        if let Some(job) = &self.in_flight {
+            let msg = job
+                .progress
+                .lock()
+                .ok()
+                .map(|p| p.message.clone())
+                .unwrap_or_default();
+            let run_id = brief_run_id(&job.run_id);
+            if msg.trim().is_empty() {
+                format!("Build running ({run_id}).")
+            } else {
+                format!("Build {run_id}: {}", msg.trim())
+            }
+        } else if let Some(status) = &self.last_status {
+            let run_id = brief_run_id(&status.run_id);
+            if status.message.trim().is_empty() {
+                format!("Last build ({run_id}).")
+            } else {
+                format!("Last build {run_id}: {}", status.message.trim())
+            }
+        } else {
+            "No build running.".to_string()
+        }
+    }
+}
+
+fn brief_run_id(run_id: &str) -> String {
+    let run_id = run_id.trim();
+    if let Some(uuid) = run_id.strip_prefix("scene_build_") {
+        let short = uuid.get(..8).unwrap_or(uuid);
+        return format!("scene_build_{short}");
+    }
+
+    if run_id.len() <= 16 {
+        return run_id.to_string();
+    }
+
+    let start = run_id.get(..8).unwrap_or(run_id);
+    let end = run_id.get(run_id.len().saturating_sub(4)..).unwrap_or("");
+    format!("{start}…{end}")
+}
+
+fn set_progress(
+    progress: &Arc<Mutex<SceneBuildAiProgress>>,
+    run_id: &str,
+    run_dir: &Path,
+    message: impl Into<String>,
+) {
+    let mut message = message.into();
+    message = message.replace(['\r', '\n'], " ");
+    let message = message.trim().to_string();
+
+    if let Ok(mut guard) = progress.lock() {
+        guard.message = message.clone();
+    }
+
+    if message.is_empty() {
+        info!("Scene build {run_id}: progress updated.");
+    } else {
+        info!("Scene build {run_id}: {message}");
+    }
+
+    let _ = std::fs::write(run_dir.join("progress.txt"), format!("{message}\n"));
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(run_dir.join("progress.log"))
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{message}");
+    }
 }
 
 struct SceneBuildAiJob {
@@ -30,6 +118,7 @@ struct SceneBuildAiJob {
     target_realm_id: String,
     target_scene_id: String,
     run_dir: PathBuf,
+    progress: Arc<Mutex<SceneBuildAiProgress>>,
     shared_result: Arc<Mutex<Option<Result<String, String>>>>,
 }
 
@@ -61,6 +150,28 @@ pub(crate) fn start_scene_build_from_description(
     std::fs::create_dir_all(&llm_dir)
         .map_err(|err| format!("Failed to create {}: {err}", llm_dir.display()))?;
 
+    info!(
+        "Scene build {run_id} started: realm={}/{} run_dir={}",
+        active.realm_id,
+        active.scene_id,
+        run_dir.display()
+    );
+
+    runtime.last_status = None;
+
+    let progress: Arc<Mutex<SceneBuildAiProgress>> =
+        Arc::new(Mutex::new(SceneBuildAiProgress::default()));
+
+    set_progress(
+        &progress,
+        &run_id,
+        &run_dir,
+        format!(
+            "Starting build for {}/{} (model={}).",
+            active.realm_id, active.scene_id, openai.model
+        ),
+    );
+
     let system_text = build_system_prompt();
     let user_text = build_user_prompt(active, library, description);
 
@@ -75,11 +186,17 @@ pub(crate) fn start_scene_build_from_description(
     let shared_result: Arc<Mutex<Option<Result<String, String>>>> = Arc::new(Mutex::new(None));
     let shared_result_thread = shared_result.clone();
     let llm_dir_thread = llm_dir.clone();
+    let progress_thread = progress.clone();
+    let run_id_thread = run_id.clone();
+    let run_dir_thread = run_dir.clone();
 
     std::thread::Builder::new()
         .name(format!("gravimera_scene_build_ai_{run_id}"))
         .spawn(move || {
             let res = call_openai_chat_json_object(
+                &progress_thread,
+                &run_id_thread,
+                &run_dir_thread,
                 &base_url,
                 &api_key,
                 &model,
@@ -99,6 +216,7 @@ pub(crate) fn start_scene_build_from_description(
         target_realm_id: active.realm_id.clone(),
         target_scene_id: active.scene_id.clone(),
         run_dir,
+        progress,
         shared_result,
     });
 
@@ -138,23 +256,56 @@ pub(crate) fn scene_build_ai_poll(
         return;
     };
 
-    let job = runtime.in_flight.take().expect("checked job exists above");
+    let run_id = job.run_id.clone();
+    let target_realm_id = job.target_realm_id.clone();
+    let target_scene_id = job.target_scene_id.clone();
+    let run_dir = job.run_dir.clone();
+    let progress = job.progress.clone();
 
-    if active.realm_id != job.target_realm_id || active.scene_id != job.target_scene_id {
-        ui.set_error(format!(
+    if active.realm_id != target_realm_id || active.scene_id != target_scene_id {
+        let msg = format!(
             "Build finished for {}/{} but active scene is now {}/{}; ignoring result (run_id={}).",
-            job.target_realm_id, job.target_scene_id, active.realm_id, active.scene_id, job.run_id
-        ));
+            target_realm_id, target_scene_id, active.realm_id, active.scene_id, run_id
+        );
+        warn!("{msg}");
+        set_progress(
+            &progress,
+            &run_id,
+            &run_dir,
+            "Ignored (active scene changed).",
+        );
+        ui.set_status("Build ignored (active scene changed).".to_string());
+        ui.set_error(msg);
+        runtime.last_status = Some(SceneBuildAiStatus {
+            run_id: run_id.clone(),
+            message: "Ignored (active scene changed).".to_string(),
+        });
+        runtime.in_flight = None;
         return;
     }
 
     ui.clear_error();
     match result {
         Err(err) => {
+            error!("Scene build {run_id} failed: {err}");
+            let short = truncate_text(err.trim(), 240);
+            set_progress(&progress, &run_id, &run_dir, format!("Failed: {short}"));
+            ui.set_status(format!("Build failed (run_id={run_id})."));
             ui.set_error(err);
+            runtime.last_status = Some(SceneBuildAiStatus {
+                run_id: run_id.clone(),
+                message: format!("Failed: {short}"),
+            });
         }
         Ok(text) => {
-            let llm_dir = job.run_dir.join("llm");
+            set_progress(
+                &progress,
+                &run_id,
+                &run_dir,
+                "LLM response received. Applying patch…",
+            );
+
+            let llm_dir = run_dir.join("llm");
             let _ = std::fs::create_dir_all(&llm_dir);
             let _ = write_text_artifact(&llm_dir.join("response.txt"), &text);
 
@@ -165,13 +316,29 @@ pub(crate) fn scene_build_ai_poll(
             }
 
             let scorecard = default_scorecard();
-            let patch = match build_patch_from_llm_layers(&src_dir, &job.run_id, &text) {
+            let patch = match build_patch_from_llm_layers(&src_dir, &run_id, &text) {
                 Ok(p) => p,
                 Err(err) => {
+                    error!("Scene build {run_id} patch parse failed: {err}");
+                    let short = truncate_text(err.trim(), 240);
+                    set_progress(&progress, &run_id, &run_dir, format!("Failed: {short}"));
+                    ui.set_status(format!("Build failed (run_id={run_id})."));
                     ui.set_error(err);
+                    runtime.last_status = Some(SceneBuildAiStatus {
+                        run_id: run_id.clone(),
+                        message: format!("Failed: {short}"),
+                    });
+                    runtime.in_flight = None;
                     return;
                 }
             };
+
+            set_progress(
+                &progress,
+                &run_id,
+                &run_dir,
+                "Applying patch + compiling scene…",
+            );
 
             let existing = scene_instances
                 .iter()
@@ -189,7 +356,7 @@ pub(crate) fn scene_build_ai_poll(
                 &mut workspace,
                 &library,
                 existing,
-                &job.run_id,
+                &run_id,
                 1,
                 &scorecard,
                 &patch,
@@ -219,23 +386,49 @@ pub(crate) fn scene_build_ai_poll(
                     if applied {
                         ui.set_status(format!(
                             "Built scene (run_id={}): spawned={} updated={} despawned={}.",
-                            job.run_id, spawned, updated, despawned
+                            run_id, spawned, updated, despawned
                         ));
+                        let msg = format!(
+                            "OK spawned={} updated={} despawned={}.",
+                            spawned, updated, despawned
+                        );
+                        set_progress(&progress, &run_id, &run_dir, format!("Done: {msg}"));
+                        runtime.last_status = Some(SceneBuildAiStatus {
+                            run_id: run_id.clone(),
+                            message: msg,
+                        });
                     } else {
-                        ui.set_error(format!(
-                            "Build rejected by validators (run_id={}).",
-                            job.run_id
-                        ));
+                        ui.set_status(format!("Build rejected (run_id={run_id})."));
+                        ui.set_error(format!("Build rejected by validators (run_id={run_id})."));
+                        set_progress(
+                            &progress,
+                            &run_id,
+                            &run_dir,
+                            "Done: rejected by validators.",
+                        );
+                        runtime.last_status = Some(SceneBuildAiStatus {
+                            run_id: run_id.clone(),
+                            message: "Rejected by validators.".to_string(),
+                        });
                     }
                 }
                 Err(err) => {
+                    error!("Scene build {run_id} apply/compile failed: {err}");
+                    let short = truncate_text(err.trim(), 240);
+                    set_progress(&progress, &run_id, &run_dir, format!("Failed: {short}"));
+                    ui.set_status(format!("Build failed (run_id={run_id})."));
                     ui.set_error(err);
+                    runtime.last_status = Some(SceneBuildAiStatus {
+                        run_id: run_id.clone(),
+                        message: format!("Failed: {short}"),
+                    });
                 }
             }
         }
     }
-}
 
+    runtime.in_flight = None;
+}
 fn default_scorecard() -> ScorecardSpecV1 {
     ScorecardSpecV1 {
         format_version: crate::scene_validation::SCORECARD_FORMAT_VERSION,
@@ -520,6 +713,9 @@ fn split_curl_http_status<'a>(stdout: &'a str, marker: &str) -> (&'a str, Option
 }
 
 fn call_openai_chat_json_object(
+    progress: &Arc<Mutex<SceneBuildAiProgress>>,
+    run_id: &str,
+    run_dir: &Path,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -529,6 +725,14 @@ fn call_openai_chat_json_object(
     llm_dir: &Path,
 ) -> Result<String, String> {
     let url = crate::config::join_base_url(base_url, "chat/completions");
+
+    set_progress(
+        progress,
+        run_id,
+        run_dir,
+        format!("Sending OpenAI request (model={model})…"),
+    );
+
     let mut body_json = serde_json::json!({
         "model": model,
         "stream": false,
@@ -545,7 +749,17 @@ fn call_openai_chat_json_object(
     let _ = write_json_artifact(&llm_dir.join("request.json"), &body_json);
     let body = serde_json::to_vec(&body_json).map_err(|err| err.to_string())?;
 
-    let auth_headers = curl_auth_header_file(api_key)?;
+    let auth_headers = match curl_auth_header_file(api_key) {
+        Ok(headers) => headers,
+        Err(err) => {
+            set_progress(progress, run_id, run_dir, format!("Failed: {err}"));
+            return Err(err);
+        }
+    };
+
+    set_progress(progress, run_id, run_dir, "Waiting for OpenAI response…");
+    let started = std::time::Instant::now();
+
     let mut cmd = std::process::Command::new("curl");
     cmd.arg("-sS")
         .arg("--connect-timeout")
@@ -567,9 +781,14 @@ fn call_openai_chat_json_object(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|err| format!("Failed to start curl: {err}"))?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            let msg = format!("Failed to start curl: {err}");
+            set_progress(progress, run_id, run_dir, format!("Failed: {msg}"));
+            return Err(msg);
+        }
+    };
 
     if let Some(stdin) = child.stdin.as_mut() {
         use std::io::Write;
@@ -582,9 +801,22 @@ fn call_openai_chat_json_object(
         .wait_with_output()
         .map_err(|err| format!("Failed to wait for curl: {err}"))?;
 
+    let elapsed = started.elapsed().as_secs_f32();
+    set_progress(
+        progress,
+        run_id,
+        run_dir,
+        format!("Received response ({elapsed:.1}s). Parsing…"),
+    );
+
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() {
-        return Err(format!("curl exited with non-zero status:\n{stderr}"));
+        let msg = format!(
+            "curl exited with non-zero status: {}",
+            truncate_text(stderr.trim(), 1200)
+        );
+        set_progress(progress, run_id, run_dir, format!("Failed: {msg}"));
+        return Err(msg);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -596,10 +828,12 @@ fn call_openai_chat_json_object(
         status_code.ok_or_else(|| "Missing HTTP status marker in curl output.".to_string())?;
 
     if !(200..=299).contains(&status_code) {
-        return Err(format!(
+        let msg = format!(
             "OpenAI request failed (HTTP {status_code}). Body (truncated): {}",
             truncate_text(body.trim(), 1200)
-        ));
+        );
+        set_progress(progress, run_id, run_dir, "OpenAI request failed.");
+        return Err(msg);
     }
 
     let json: Value = serde_json::from_str(body.trim()).map_err(|err| {
@@ -620,6 +854,12 @@ fn call_openai_chat_json_object(
         .ok_or_else(|| "OpenAI response missing choices[0].message.content".to_string())?
         .to_string();
 
+    set_progress(
+        progress,
+        run_id,
+        run_dir,
+        "OpenAI response parsed. Waiting for apply step…",
+    );
     Ok(text)
 }
 
