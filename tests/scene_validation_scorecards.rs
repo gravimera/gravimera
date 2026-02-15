@@ -263,4 +263,3 @@ fn validation_reports_contain_stable_codes_and_evidence() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
-

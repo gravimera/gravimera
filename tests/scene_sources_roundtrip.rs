@@ -167,21 +167,25 @@ fn scene_sources_roundtrip_minimal_fixture_via_automation() {
         "src_dir": fixture_src.display().to_string(),
     })
     .to_string();
-    let (status, body) =
-        http_request(addr, "POST", "/v1/scene_sources/import", Some(&import_body))
-            .expect("import request");
+    let (status, body) = http_request(addr, "POST", "/v1/scene_sources/import", Some(&import_body))
+        .expect("import request");
     assert_eq!(status, 200, "import failed: status={status} body={body}");
-    assert!(body.contains("\"ok\":true"), "unexpected import body: {body}");
+    assert!(
+        body.contains("\"ok\":true"),
+        "unexpected import body: {body}"
+    );
 
     let export_body = serde_json::json!({
         "out_dir": out_src.display().to_string(),
     })
     .to_string();
-    let (status, body) =
-        http_request(addr, "POST", "/v1/scene_sources/export", Some(&export_body))
-            .expect("export request");
+    let (status, body) = http_request(addr, "POST", "/v1/scene_sources/export", Some(&export_body))
+        .expect("export request");
     assert_eq!(status, 200, "export failed: status={status} body={body}");
-    assert!(body.contains("\"ok\":true"), "unexpected export body: {body}");
+    assert!(
+        body.contains("\"ok\":true"),
+        "unexpected export body: {body}"
+    );
 
     let fixture_files = collect_relative_json_files(&fixture_src);
     let out_files = collect_relative_json_files(&out_src);
@@ -217,4 +221,3 @@ fn scene_sources_roundtrip_minimal_fixture_via_automation() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
-

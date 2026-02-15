@@ -432,6 +432,7 @@ impl ObjectLibrary {
         self.defs.get(&object_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&u128, &ObjectDef)> {
         self.defs.iter()
     }

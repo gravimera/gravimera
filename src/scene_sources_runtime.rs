@@ -7,15 +7,13 @@ use std::path::{Path, PathBuf};
 
 use crate::constants::BUILD_UNIT_SIZE;
 use crate::object::registry::{ColliderProfile, ObjectLibrary};
+use crate::scene_sources::{SceneSourcesIndexPaths, SceneSourcesV1, SCENE_SOURCES_FORMAT_VERSION};
+use crate::scene_sources_patch::{
+    apply_patch_to_sources, SceneSourcesPatchSummaryV1, SceneSourcesPatchV1,
+};
 use crate::scene_validation::{
     HardGateSpecV1, ProvenanceSummaryV1, ScorecardSpecV1, ValidationReportV1,
     ValidationViolationV1, ViolationEvidenceV1, ViolationSeverityV1,
-};
-use crate::scene_sources::{
-    SceneSourcesIndexPaths, SceneSourcesV1, SCENE_SOURCES_FORMAT_VERSION,
-};
-use crate::scene_sources_patch::{
-    apply_patch_to_sources, SceneSourcesPatchSummaryV1, SceneSourcesPatchV1,
 };
 use crate::types::{
     AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, ObjectId, ObjectPrefabId,
@@ -84,13 +82,12 @@ pub(crate) fn export_scene_sources_from_world<'a>(
 
     let mut sources = base_sources.clone();
 
-    let index_paths =
-        SceneSourcesIndexPaths::from_index_json_value(&sources.index_json).map_err(|err| {
-            format!("Invalid scene sources index.json: {err}")
-        })?;
+    let index_paths = SceneSourcesIndexPaths::from_index_json_value(&sources.index_json)
+        .map_err(|err| format!("Invalid scene sources index.json: {err}"))?;
     let pinned_dir = index_paths.pinned_instances_dir;
 
-    let existing_docs_by_instance_id = map_existing_pinned_docs_by_instance_id(&sources, &pinned_dir);
+    let existing_docs_by_instance_id =
+        map_existing_pinned_docs_by_instance_id(&sources, &pinned_dir);
 
     // Replace pinned instances with the current world state.
     sources
@@ -106,10 +103,7 @@ pub(crate) fn export_scene_sources_from_world<'a>(
             transform,
             tint,
         )?;
-        let rel_path = pinned_dir.join(format!(
-            "{}.json",
-            uuid::Uuid::from_u128(instance_id.0)
-        ));
+        let rel_path = pinned_dir.join(format!("{}.json", uuid::Uuid::from_u128(instance_id.0)));
         sources.extra_json_files.insert(rel_path, doc);
         count += 1;
     }
@@ -138,11 +132,11 @@ struct PinnedInstance {
     source_rel_path: Option<PathBuf>,
 }
 
-fn parse_pinned_instances(sources: &SceneSourcesV1) -> Result<BTreeMap<u128, PinnedInstance>, String> {
-    let index_paths =
-        SceneSourcesIndexPaths::from_index_json_value(&sources.index_json).map_err(|err| {
-            format!("Invalid scene sources index.json: {err}")
-        })?;
+fn parse_pinned_instances(
+    sources: &SceneSourcesV1,
+) -> Result<BTreeMap<u128, PinnedInstance>, String> {
+    let index_paths = SceneSourcesIndexPaths::from_index_json_value(&sources.index_json)
+        .map_err(|err| format!("Invalid scene sources index.json: {err}"))?;
     let pinned_dir = index_paths.pinned_instances_dir;
 
     let mut out = BTreeMap::new();
@@ -426,7 +420,9 @@ fn build_pinned_instance_doc(
     transform: &Transform,
     tint: Option<&ObjectTint>,
 ) -> Result<Value, String> {
-    let mut doc = existing.cloned().unwrap_or_else(|| Value::Object(Default::default()));
+    let mut doc = existing
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()));
     if !doc.is_object() {
         doc = Value::Object(Default::default());
     }
@@ -664,7 +660,9 @@ pub(crate) struct SceneSignatureSummary {
     pub(crate) layer_instance_counts: BTreeMap<String, usize>,
 }
 
-pub(crate) fn reload_scene_sources_in_workspace(workspace: &mut SceneSourcesWorkspace) -> Result<(), String> {
+pub(crate) fn reload_scene_sources_in_workspace(
+    workspace: &mut SceneSourcesWorkspace,
+) -> Result<(), String> {
     let Some(src_dir) = workspace.loaded_from_dir.as_ref() else {
         return Err("No scene sources directory has been imported in this session.".to_string());
     };
@@ -725,10 +723,8 @@ struct ExplicitInstanceSpec {
 }
 
 fn parse_layers(sources: &SceneSourcesV1) -> Result<BTreeMap<String, SceneLayer>, String> {
-    let index_paths =
-        SceneSourcesIndexPaths::from_index_json_value(&sources.index_json).map_err(|err| {
-            format!("Invalid scene sources index.json: {err}")
-        })?;
+    let index_paths = SceneSourcesIndexPaths::from_index_json_value(&sources.index_json)
+        .map_err(|err| format!("Invalid scene sources index.json: {err}"))?;
     let layers_dir = index_paths.layers_dir;
 
     let mut out: BTreeMap<String, SceneLayer> = BTreeMap::new();
@@ -741,7 +737,9 @@ fn parse_layers(sources: &SceneSourcesV1) -> Result<BTreeMap<String, SceneLayer>
             SceneLayer::ExplicitInstances(layer) => {
                 (layer.layer_id.clone(), SceneLayer::ExplicitInstances(layer))
             }
-            SceneLayer::GridInstances(layer) => (layer.layer_id.clone(), SceneLayer::GridInstances(layer)),
+            SceneLayer::GridInstances(layer) => {
+                (layer.layer_id.clone(), SceneLayer::GridInstances(layer))
+            }
             SceneLayer::PolylineInstances(layer) => {
                 (layer.layer_id.clone(), SceneLayer::PolylineInstances(layer))
             }
@@ -866,14 +864,28 @@ fn parse_layer_doc(path: &Path, doc: &Value) -> Result<SceneLayer, String> {
                 .ok_or_else(|| format!("{}: step.z must be a number", path.display()))?
                 as f32;
             if !step_x.is_finite() || step_x == 0.0 {
-                return Err(format!("{}: step.x must be finite and non-zero", path.display()));
+                return Err(format!(
+                    "{}: step.x must be finite and non-zero",
+                    path.display()
+                ));
             }
             if !step_z.is_finite() || step_z == 0.0 {
-                return Err(format!("{}: step.z must be finite and non-zero", path.display()));
+                return Err(format!(
+                    "{}: step.z must be finite and non-zero",
+                    path.display()
+                ));
             }
 
-            let rotation = map.get("rotation").map(parse_quat).transpose()?.unwrap_or(Quat::IDENTITY);
-            let scale = map.get("scale").map(parse_vec3).transpose()?.unwrap_or(Vec3::ONE);
+            let rotation = map
+                .get("rotation")
+                .map(parse_quat)
+                .transpose()?
+                .unwrap_or(Quat::IDENTITY);
+            let scale = map
+                .get("scale")
+                .map(parse_vec3)
+                .transpose()?
+                .unwrap_or(Vec3::ONE);
             let tint = map.get("tint_rgba").map(parse_color).transpose()?;
 
             let template = sanitize_transform(
@@ -922,7 +934,11 @@ fn parse_layer_doc(path: &Path, doc: &Value) -> Result<SceneLayer, String> {
                     format!("{}: points[{}] invalid vec3: {err}", path.display(), idx)
                 })?;
                 if !p.is_finite() {
-                    return Err(format!("{}: points[{}] must be finite", path.display(), idx));
+                    return Err(format!(
+                        "{}: points[{}] must be finite",
+                        path.display(),
+                        idx
+                    ));
                 }
                 points.push(p);
             }
@@ -945,7 +961,10 @@ fn parse_layer_doc(path: &Path, doc: &Value) -> Result<SceneLayer, String> {
                 .ok_or_else(|| format!("{}: spacing must be a number", path.display()))?
                 as f32;
             if !spacing.is_finite() || spacing <= 0.0 {
-                return Err(format!("{}: spacing must be finite and > 0", path.display()));
+                return Err(format!(
+                    "{}: spacing must be finite and > 0",
+                    path.display()
+                ));
             }
 
             let start_offset = match map.get("start_offset") {
@@ -962,8 +981,16 @@ fn parse_layer_doc(path: &Path, doc: &Value) -> Result<SceneLayer, String> {
                 ));
             }
 
-            let rotation = map.get("rotation").map(parse_quat).transpose()?.unwrap_or(Quat::IDENTITY);
-            let scale = map.get("scale").map(parse_vec3).transpose()?.unwrap_or(Vec3::ONE);
+            let rotation = map
+                .get("rotation")
+                .map(parse_quat)
+                .transpose()?
+                .unwrap_or(Quat::IDENTITY);
+            let scale = map
+                .get("scale")
+                .map(parse_vec3)
+                .transpose()?
+                .unwrap_or(Vec3::ONE);
             let tint = map.get("tint_rgba").map(parse_color).transpose()?;
 
             let template = sanitize_transform(
@@ -992,7 +1019,11 @@ fn parse_layer_doc(path: &Path, doc: &Value) -> Result<SceneLayer, String> {
     }
 }
 
-fn parse_explicit_instance_spec(path: &Path, idx: usize, doc: &Value) -> Result<ExplicitInstanceSpec, String> {
+fn parse_explicit_instance_spec(
+    path: &Path,
+    idx: usize,
+    doc: &Value,
+) -> Result<ExplicitInstanceSpec, String> {
     let Value::Object(map) = doc else {
         return Err(format!(
             "{}: instances[{}] must be an object",
@@ -1057,9 +1088,8 @@ fn parse_explicit_instance_spec(path: &Path, idx: usize, doc: &Value) -> Result<
 }
 
 fn derived_layer_instance_id(scene_id: &str, layer_id: &str, local_id: &str) -> ObjectId {
-    let key = format!(
-        "gravimera/scene_sources/v1/scene/{scene_id}/layer/{layer_id}/instance/{local_id}"
-    );
+    let key =
+        format!("gravimera/scene_sources/v1/scene/{scene_id}/layer/{layer_id}/instance/{local_id}");
     ObjectId(uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, key.as_bytes()).as_u128())
 }
 
@@ -1072,10 +1102,8 @@ struct PortalSpec {
 }
 
 fn parse_portals(sources: &SceneSourcesV1) -> Result<Vec<PortalSpec>, String> {
-    let index_paths =
-        SceneSourcesIndexPaths::from_index_json_value(&sources.index_json).map_err(|err| {
-            format!("Invalid scene sources index.json: {err}")
-        })?;
+    let index_paths = SceneSourcesIndexPaths::from_index_json_value(&sources.index_json)
+        .map_err(|err| format!("Invalid scene sources index.json: {err}"))?;
     let portals_dir = index_paths.portals_dir;
 
     let mut out = Vec::new();
@@ -1176,7 +1204,11 @@ fn discover_known_scene_ids(src_dir: &Path) -> Result<HashSet<String>, String> {
 }
 
 fn marker_ids_from_sources(sources: &SceneSourcesV1) -> HashSet<String> {
-    let Some(markers_obj) = sources.markers_json.get("markers").and_then(|v| v.as_object()) else {
+    let Some(markers_obj) = sources
+        .markers_json
+        .get("markers")
+        .and_then(|v| v.as_object())
+    else {
         return HashSet::new();
     };
 
@@ -1388,7 +1420,8 @@ fn validate_scene_sources_impl(
                     for ix in 0..layer.count_x {
                         for iz in 0..layer.count_z {
                             let local_id = grid_instances_local_id(ix, iz);
-                            let derived_id = derived_layer_instance_id(scene_id, layer_id, &local_id);
+                            let derived_id =
+                                derived_layer_instance_id(scene_id, layer_id, &local_id);
                             if !pinned_ids.contains(&derived_id.0) {
                                 continue;
                             }
@@ -1403,7 +1436,9 @@ fn validate_scene_sources_impl(
                                     source_path: Some(layer.source_rel_path.display().to_string()),
                                     layer_id: Some(layer_id.clone()),
                                     local_id: Some(local_id),
-                                    instance_id: Some(uuid::Uuid::from_u128(derived_id.0).to_string()),
+                                    instance_id: Some(
+                                        uuid::Uuid::from_u128(derived_id.0).to_string(),
+                                    ),
                                     ..Default::default()
                                 }),
                             });
@@ -1664,7 +1699,9 @@ pub(crate) fn apply_scene_sources_patch(
         });
     }
 
-    patched.write_to_dir(src_dir).map_err(|err| err.to_string())?;
+    patched
+        .write_to_dir(src_dir)
+        .map_err(|err| err.to_string())?;
     workspace.sources = Some(patched);
 
     let compile_report =
@@ -2058,10 +2095,7 @@ fn desired_instances_for_layer(
             let total_length = cum_end;
             let mut seg_idx: usize = 0;
             let mut seg_start_dist: f32 = 0.0;
-            let mut seg_end_dist: f32 = segments
-                .first()
-                .map(|s| s.3)
-                .unwrap_or(0.0);
+            let mut seg_end_dist: f32 = segments.first().map(|s| s.3).unwrap_or(0.0);
 
             for k in 0..count {
                 let local_id = polyline_instances_local_id(k);
@@ -2069,7 +2103,9 @@ fn desired_instances_for_layer(
 
                 let mut d = layer.start_offset + (k as f32) * layer.spacing;
                 if !d.is_finite() {
-                    return Err(format!("Layer {layer_id} generated non-finite distance for {local_id}"));
+                    return Err(format!(
+                        "Layer {layer_id} generated non-finite distance for {local_id}"
+                    ));
                 }
                 if d > total_length {
                     d = total_length;
@@ -2190,7 +2226,9 @@ fn map_existing_instances_by_id(
     let mut map = HashMap::with_capacity(existing.len());
     for inst in existing.iter().cloned() {
         if map.insert(inst.instance_id.0, inst).is_some() {
-            return Err("World contains duplicate ObjectId components for scene instances".to_string());
+            return Err(
+                "World contains duplicate ObjectId components for scene instances".to_string(),
+            );
         }
     }
     Ok(map)
@@ -2372,10 +2410,7 @@ pub(crate) fn scene_signature_summary(
     let mut by_layer: BTreeMap<String, Vec<&SceneWorldInstance>> = BTreeMap::new();
     for inst in &instances {
         if let Some(layer_id) = inst.owner_layer_id.as_deref() {
-            by_layer
-                .entry(layer_id.to_string())
-                .or_default()
-                .push(inst);
+            by_layer.entry(layer_id.to_string()).or_default().push(inst);
         } else {
             pinned.push(inst);
         }
@@ -2529,7 +2564,8 @@ mod golden_scene_signatures {
     const GOLDEN_FORMAT_VERSION: u32 = 1;
 
     fn golden_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/scene_generation/golden_signatures.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/scene_generation/golden_signatures.json")
     }
 
     fn fixture_src_dir(name: &str) -> PathBuf {
@@ -2591,10 +2627,12 @@ mod golden_scene_signatures {
             return;
         }
 
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|err| panic!("read golden signatures failed ({}): {err}", path.display()));
-        let expected: serde_json::Value = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|err| panic!("parse golden signatures failed ({}): {err}", path.display()));
+        let bytes = std::fs::read(&path).unwrap_or_else(|err| {
+            panic!("read golden signatures failed ({}): {err}", path.display())
+        });
+        let expected: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+            panic!("parse golden signatures failed ({}): {err}", path.display())
+        });
 
         assert_eq!(expected, computed, "Golden scene signatures changed. If this is intended, re-run with GRAVIMERA_BLESS_SCENE_SIGNATURES=1.");
     }

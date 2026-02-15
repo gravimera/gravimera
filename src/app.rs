@@ -502,6 +502,8 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.init_resource::<crate::gen3d::Gen3dAiJob>();
     app.init_resource::<crate::gen3d::Gen3dToolFeedbackHistory>();
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
+    app.init_resource::<crate::realm::ActiveRealmScene>();
+    app.init_resource::<crate::realm::PendingRealmSceneSwitch>();
     app.add_plugins(crate::automation::AutomationPlugin);
     app.add_message::<AppExit>();
     app.add_message::<HealthChangeEvent>();
@@ -565,7 +567,13 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     );
     app.add_systems(
         Startup,
-        scene_store::load_scene_dat.after(setup::setup_rendered),
+        crate::realm::realm_startup_init.after(setup::setup_rendered),
+    );
+    app.add_systems(
+        Startup,
+        scene_store::load_scene_dat
+            .after(crate::realm::realm_startup_init)
+            .after(setup::setup_rendered),
     );
     app.add_systems(
         Update,
@@ -603,6 +611,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             scene_store::scene_autosave_detect_changes,
             scene_store::scene_save_requests.after(scene_store::scene_autosave_detect_changes),
             scene_store::scene_autosave_tick.after(scene_store::scene_save_requests),
+            scene_store::apply_pending_realm_scene_switch.after(scene_store::scene_autosave_tick),
         ),
     );
     app.add_systems(
@@ -635,20 +644,26 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .after(crate::scene_authoring_ui::scene_ui_toggle_button),
             crate::scene_authoring_ui::scene_ui_panel_visibility
                 .after(crate::scene_authoring_ui::scene_ui_close_button),
-            crate::scene_authoring_ui::scene_ui_tab_buttons,
-            crate::scene_authoring_ui::scene_ui_tab_visibility
-                .after(crate::scene_authoring_ui::scene_ui_tab_buttons),
+            crate::scene_authoring_ui::scene_ui_sync_active_scene
+                .after(crate::scene_authoring_ui::scene_ui_panel_visibility),
+            crate::scene_authoring_ui::scene_ui_realm_dropdown_button
+                .after(crate::scene_authoring_ui::scene_ui_sync_active_scene),
+            crate::scene_authoring_ui::scene_ui_rebuild_realm_list
+                .after(crate::scene_authoring_ui::scene_ui_realm_dropdown_button),
+            crate::scene_authoring_ui::scene_ui_rebuild_scene_tabs
+                .after(crate::scene_authoring_ui::scene_ui_rebuild_realm_list),
+            crate::scene_authoring_ui::scene_ui_realm_option_buttons
+                .after(crate::scene_authoring_ui::scene_ui_rebuild_scene_tabs),
+            crate::scene_authoring_ui::scene_ui_scene_tab_buttons
+                .after(crate::scene_authoring_ui::scene_ui_realm_option_buttons),
+            crate::scene_authoring_ui::scene_ui_update_realm_scene_button_styles
+                .after(crate::scene_authoring_ui::scene_ui_scene_tab_buttons),
             crate::scene_authoring_ui::scene_ui_text_field_focus,
             crate::scene_authoring_ui::scene_ui_action_buttons
                 .after(crate::scene_authoring_ui::scene_ui_text_field_focus),
-            crate::scene_authoring_ui::scene_ui_rebuild_layers_list
-                .after(crate::scene_authoring_ui::scene_ui_action_buttons),
-            crate::scene_authoring_ui::scene_ui_regen_layer_buttons
-                .after(crate::scene_authoring_ui::scene_ui_rebuild_layers_list),
-            crate::scene_authoring_ui::scene_ui_rebuild_prefabs_list,
-            crate::scene_authoring_ui::scene_ui_use_prefab_buttons
-                .after(crate::scene_authoring_ui::scene_ui_rebuild_prefabs_list),
-            crate::scene_authoring_ui::scene_ui_update_texts,
+            crate::scene_authoring_ui::scene_ui_update_texts
+                .after(crate::scene_authoring_ui::scene_ui_action_buttons)
+                .after(crate::scene_authoring_ui::scene_ui_update_realm_scene_button_styles),
         )
             .run_if(console::console_closed)
             .run_if(not(in_state(GameMode::Gen3D)))

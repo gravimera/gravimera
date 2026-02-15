@@ -2,6 +2,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 const GRAVIMERA_HOME_ENV: &str = "GRAVIMERA_HOME";
+const REALMS_DIR_NAME: &str = "realm";
+const DEFAULT_REALM_ID: &str = "default";
+const DEFAULT_SCENE_ID: &str = "default";
 
 pub(crate) fn home_dir() -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
@@ -38,7 +41,7 @@ pub(crate) fn default_config_path() -> PathBuf {
     gravimera_dir().join("config.toml")
 }
 
-pub(crate) fn default_scene_dat_path() -> PathBuf {
+pub(crate) fn legacy_scene_dat_path() -> PathBuf {
     gravimera_dir().join("scene.dat")
 }
 
@@ -53,9 +56,42 @@ pub(crate) fn default_gen3d_cache_dir() -> PathBuf {
 pub(crate) fn ensure_default_dirs() -> std::io::Result<()> {
     let base = gravimera_dir();
     std::fs::create_dir_all(&base)?;
+    std::fs::create_dir_all(realms_dir())?;
     std::fs::create_dir_all(default_cache_dir())?;
     std::fs::create_dir_all(default_gen3d_cache_dir())?;
     Ok(())
+}
+
+pub(crate) fn realms_dir() -> PathBuf {
+    gravimera_dir().join(REALMS_DIR_NAME)
+}
+
+pub(crate) fn default_realm_id() -> &'static str {
+    DEFAULT_REALM_ID
+}
+
+pub(crate) fn default_scene_id() -> &'static str {
+    DEFAULT_SCENE_ID
+}
+
+pub(crate) fn realm_dir(realm_id: &str) -> PathBuf {
+    realms_dir().join(realm_id)
+}
+
+pub(crate) fn scene_dir(realm_id: &str, scene_id: &str) -> PathBuf {
+    realm_dir(realm_id).join("scenes").join(scene_id)
+}
+
+pub(crate) fn scene_src_dir(realm_id: &str, scene_id: &str) -> PathBuf {
+    scene_dir(realm_id, scene_id).join("src")
+}
+
+pub(crate) fn scene_build_dir(realm_id: &str, scene_id: &str) -> PathBuf {
+    scene_dir(realm_id, scene_id).join("build")
+}
+
+pub(crate) fn scene_dat_path(realm_id: &str, scene_id: &str) -> PathBuf {
+    scene_build_dir(realm_id, scene_id).join("scene.dat")
 }
 
 pub(crate) fn exe_dir() -> Option<PathBuf> {

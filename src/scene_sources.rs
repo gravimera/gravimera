@@ -86,15 +86,16 @@ impl SceneSourcesV1 {
             let mut found = find_json_files(&dir_path)?;
             found.sort();
             for abs_path in found {
-                let rel_path = abs_path.strip_prefix(src_dir).map_err(|_| {
-                    SceneSourcesError::InvalidPath {
-                        message: format!(
-                            "JSON file is not under src dir: src_dir={} file={}",
-                            src_dir.display(),
-                            abs_path.display()
-                        ),
-                    }
-                })?;
+                let rel_path =
+                    abs_path
+                        .strip_prefix(src_dir)
+                        .map_err(|_| SceneSourcesError::InvalidPath {
+                            message: format!(
+                                "JSON file is not under src dir: src_dir={} file={}",
+                                src_dir.display(),
+                                abs_path.display()
+                            ),
+                        })?;
                 let mut value = read_json_file(&abs_path)?;
                 canonicalize_json_value(&mut value);
                 extra_json_files.insert(rel_path.to_path_buf(), value);
@@ -138,11 +139,25 @@ impl SceneSourcesV1 {
 
 #[derive(Debug)]
 pub(crate) enum SceneSourcesError {
-    Io { path: PathBuf, error: io::Error },
-    Json { path: PathBuf, error: serde_json::Error },
-    InvalidFormatVersion { path: PathBuf, message: String },
-    InvalidPath { message: String },
-    MissingRequiredField { path: PathBuf, field: &'static str },
+    Io {
+        path: PathBuf,
+        error: io::Error,
+    },
+    Json {
+        path: PathBuf,
+        error: serde_json::Error,
+    },
+    InvalidFormatVersion {
+        path: PathBuf,
+        message: String,
+    },
+    InvalidPath {
+        message: String,
+    },
+    MissingRequiredField {
+        path: PathBuf,
+        field: &'static str,
+    },
 }
 
 impl std::fmt::Display for SceneSourcesError {
@@ -229,10 +244,7 @@ fn validate_format_version(path: &Path, doc: &Value) -> Result<(), SceneSourcesE
     if v != SCENE_SOURCES_FORMAT_VERSION as u64 {
         return Err(SceneSourcesError::InvalidFormatVersion {
             path: path.to_path_buf(),
-            message: format!(
-                "expected {}, got {}",
-                SCENE_SOURCES_FORMAT_VERSION, v
-            ),
+            message: format!("expected {}, got {}", SCENE_SOURCES_FORMAT_VERSION, v),
         });
     }
 
@@ -260,7 +272,10 @@ fn get_required_rel_path(doc: &Value, field: &'static str) -> Result<PathBuf, Sc
     let rel = PathBuf::from(text);
     if rel.is_absolute() {
         return Err(SceneSourcesError::InvalidPath {
-            message: format!("index.{field} must be a relative path, got {}", rel.display()),
+            message: format!(
+                "index.{field} must be a relative path, got {}",
+                rel.display()
+            ),
         });
     }
     for component in rel.components() {
@@ -448,9 +463,18 @@ mod tests {
         let sources = SceneSourcesV1::load_from_dir(&src_dir).unwrap();
         assert_eq!(sources.index_json["unknown_index"]["a"], Value::from(1));
         assert_eq!(sources.index_json["unknown_index"]["b"], Value::from(2));
-        assert_eq!(sources.meta_json["unknown_meta"]["y"]["k1"], Value::from("v1"));
-        assert_eq!(sources.meta_json["unknown_meta"]["y"]["k2"], Value::from("v2"));
-        assert_eq!(sources.style_pack_ref_json["unknown_style"], Value::from(true));
+        assert_eq!(
+            sources.meta_json["unknown_meta"]["y"]["k1"],
+            Value::from("v1")
+        );
+        assert_eq!(
+            sources.meta_json["unknown_meta"]["y"]["k2"],
+            Value::from("v2")
+        );
+        assert_eq!(
+            sources.style_pack_ref_json["unknown_style"],
+            Value::from(true)
+        );
 
         // Canonicalization sorts and dedups meta.tags.
         assert_eq!(sources.meta_json["tags"], Value::from(vec!["a", "b"]));
@@ -539,9 +563,10 @@ mod tests {
                 }
                 if path.extension().and_then(|v| v.to_str()) == Some("json") {
                     let rel =
-                        path.strip_prefix(root).map_err(|_| SceneSourcesError::InvalidPath {
-                            message: "strip_prefix failed".to_string(),
-                        })?;
+                        path.strip_prefix(root)
+                            .map_err(|_| SceneSourcesError::InvalidPath {
+                                message: "strip_prefix failed".to_string(),
+                            })?;
                     out.push(rel.to_path_buf());
                 }
             }

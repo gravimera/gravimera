@@ -728,7 +728,7 @@ Response:
 
 ### `POST /v1/gen3d/save`
 
-Save the current draft into the world (spawns it near the hero and persists to `scene.dat`).
+Save the current draft into the world (spawns it near the hero and persists to the active scene’s `scene.dat` under `~/.gravimera/realm/.../build/scene.dat`, unless overridden by `scene.scene_dat_path` in config).
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/gen3d/save \

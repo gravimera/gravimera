@@ -117,7 +117,11 @@ fn get_signature(addr: SocketAddr) -> serde_json::Value {
     serde_json::from_str(&body).expect("signature json")
 }
 
-fn patch_validate(addr: SocketAddr, scorecard: serde_json::Value, patch: serde_json::Value) -> serde_json::Value {
+fn patch_validate(
+    addr: SocketAddr,
+    scorecard: serde_json::Value,
+    patch: serde_json::Value,
+) -> serde_json::Value {
     let body = serde_json::json!({ "scorecard": scorecard, "patch": patch }).to_string();
     let (status, body) = http_request(
         addr,
@@ -126,15 +130,25 @@ fn patch_validate(addr: SocketAddr, scorecard: serde_json::Value, patch: serde_j
         Some(&body),
     )
     .expect("patch_validate");
-    assert_eq!(status, 200, "patch_validate failed: status={status} body={body}");
+    assert_eq!(
+        status, 200,
+        "patch_validate failed: status={status} body={body}"
+    );
     serde_json::from_str(&body).expect("patch_validate json")
 }
 
-fn patch_apply(addr: SocketAddr, scorecard: serde_json::Value, patch: serde_json::Value) -> serde_json::Value {
+fn patch_apply(
+    addr: SocketAddr,
+    scorecard: serde_json::Value,
+    patch: serde_json::Value,
+) -> serde_json::Value {
     let body = serde_json::json!({ "scorecard": scorecard, "patch": patch }).to_string();
     let (status, body) =
         http_request(addr, "POST", "/v1/scene_sources/patch_apply", Some(&body)).expect("apply");
-    assert_eq!(status, 200, "patch_apply failed: status={status} body={body}");
+    assert_eq!(
+        status, 200,
+        "patch_apply failed: status={status} body={body}"
+    );
     serde_json::from_str(&body).expect("patch_apply json")
 }
 
@@ -229,12 +243,18 @@ fn patch_apply_is_idempotent_and_recompiles_deterministically() {
     assert!(dry["validation_report"]["hard_gates_passed"]
         .as_bool()
         .unwrap_or(false));
-    assert!(contains_path(&dry["patch_summary"]["changed_paths"], "layers/layer_a.json"));
+    assert!(contains_path(
+        &dry["patch_summary"]["changed_paths"],
+        "layers/layer_a.json"
+    ));
 
     let applied = patch_apply(addr, scorecard.clone(), patch.clone());
     assert!(applied["ok"].as_bool().unwrap_or(false));
     assert!(applied["applied"].as_bool().unwrap_or(false));
-    assert!(contains_path(&applied["patch_summary"]["changed_paths"], "layers/layer_a.json"));
+    assert!(contains_path(
+        &applied["patch_summary"]["changed_paths"],
+        "layers/layer_a.json"
+    ));
 
     let sig2 = get_signature(addr);
     assert_eq!(sig1["pinned_sig"], sig2["pinned_sig"]);
@@ -288,16 +308,18 @@ fn patch_apply_is_idempotent_and_recompiles_deterministically() {
         .as_str()
         .expect("derived id for local_ref new1");
 
-    let expected_key = format!(
-        "gravimera/scene_sources_patch/v1/scene/minimal/request/req_pinned_1/local/new1"
-    );
+    let expected_key =
+        format!("gravimera/scene_sources_patch/v1/scene/minimal/request/req_pinned_1/local/new1");
     let expected_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, expected_key.as_bytes());
     assert_eq!(derived_id, expected_uuid.to_string());
 
     let new_file = temp_minimal
         .join("pinned_instances")
         .join(format!("{derived_id}.json"));
-    assert!(new_file.exists(), "expected new pinned instance file: {new_file:?}");
+    assert!(
+        new_file.exists(),
+        "expected new pinned instance file: {new_file:?}"
+    );
 
     let sig = get_signature(addr);
     assert_eq!(sig["pinned_instances"].as_u64().unwrap_or(0), 2);
@@ -318,4 +340,3 @@ fn patch_apply_is_idempotent_and_recompiles_deterministically() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
-

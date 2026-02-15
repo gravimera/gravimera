@@ -716,16 +716,18 @@ fn handle_request_main_thread(
                 Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
             };
 
-            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
-                crate::scene_sources_runtime::SceneWorldInstance {
-                    entity: e,
-                    instance_id: *id,
-                    prefab_id: *prefab,
-                    transform: t.clone(),
-                    tint: tint.map(|t| t.0),
-                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
-                }
-            });
+            let existing = scene_instances
+                .iter()
+                .map(|(e, t, id, prefab, tint, owner)| {
+                    crate::scene_sources_runtime::SceneWorldInstance {
+                        entity: e,
+                        instance_id: *id,
+                        prefab_id: *prefab,
+                        transform: t.clone(),
+                        tint: tint.map(|t| t.0),
+                        owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                    }
+                });
 
             let report = match crate::scene_sources_runtime::compile_scene_sources_all_layers(
                 commands,
@@ -759,16 +761,18 @@ fn handle_request_main_thread(
                 Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
             };
 
-            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
-                crate::scene_sources_runtime::SceneWorldInstance {
-                    entity: e,
-                    instance_id: *id,
-                    prefab_id: *prefab,
-                    transform: t.clone(),
-                    tint: tint.map(|t| t.0),
-                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
-                }
-            });
+            let existing = scene_instances
+                .iter()
+                .map(|(e, t, id, prefab, tint, owner)| {
+                    crate::scene_sources_runtime::SceneWorldInstance {
+                        entity: e,
+                        instance_id: *id,
+                        prefab_id: *prefab,
+                        transform: t.clone(),
+                        tint: tint.map(|t| t.0),
+                        owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                    }
+                });
 
             let report = match crate::scene_sources_runtime::regenerate_scene_layer(
                 commands,
@@ -797,22 +801,23 @@ fn handle_request_main_thread(
             })
         }
         ("GET", "/v1/scene_sources/signature") => {
-            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
-                crate::scene_sources_runtime::SceneWorldInstance {
-                    entity: e,
-                    instance_id: *id,
-                    prefab_id: *prefab,
-                    transform: t.clone(),
-                    tint: tint.map(|t| t.0),
-                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
-                }
-            });
+            let existing = scene_instances
+                .iter()
+                .map(|(e, t, id, prefab, tint, owner)| {
+                    crate::scene_sources_runtime::SceneWorldInstance {
+                        entity: e,
+                        instance_id: *id,
+                        prefab_id: *prefab,
+                        transform: t.clone(),
+                        tint: tint.map(|t| t.0),
+                        owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                    }
+                });
 
-            let summary =
-                match crate::scene_sources_runtime::scene_signature_summary(existing) {
-                    Ok(v) => v,
-                    Err(err) => return Some(json_error(500, err)),
-                };
+            let summary = match crate::scene_sources_runtime::scene_signature_summary(existing) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(500, err)),
+            };
 
             let body = serde_json::json!({
                 "ok": true,
@@ -838,16 +843,18 @@ fn handle_request_main_thread(
                     Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
                 };
 
-            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
-                crate::scene_sources_runtime::SceneWorldInstance {
-                    entity: e,
-                    instance_id: *id,
-                    prefab_id: *prefab,
-                    transform: t.clone(),
-                    tint: tint.map(|t| t.0),
-                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
-                }
-            });
+            let existing = scene_instances
+                .iter()
+                .map(|(e, t, id, prefab, tint, owner)| {
+                    crate::scene_sources_runtime::SceneWorldInstance {
+                        entity: e,
+                        instance_id: *id,
+                        prefab_id: *prefab,
+                        transform: t.clone(),
+                        tint: tint.map(|t| t.0),
+                        owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                    }
+                });
 
             let report = match crate::scene_sources_runtime::validate_scene_sources(
                 scene_workspace,
@@ -906,16 +913,18 @@ fn handle_request_main_thread(
                 Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
             };
 
-            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
-                crate::scene_sources_runtime::SceneWorldInstance {
-                    entity: e,
-                    instance_id: *id,
-                    prefab_id: *prefab,
-                    transform: t.clone(),
-                    tint: tint.map(|t| t.0),
-                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
-                }
-            });
+            let existing = scene_instances
+                .iter()
+                .map(|(e, t, id, prefab, tint, owner)| {
+                    crate::scene_sources_runtime::SceneWorldInstance {
+                        entity: e,
+                        instance_id: *id,
+                        prefab_id: *prefab,
+                        transform: t.clone(),
+                        tint: tint.map(|t| t.0),
+                        owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                    }
+                });
 
             let result = match crate::scene_sources_runtime::apply_scene_sources_patch(
                 commands,
@@ -972,16 +981,18 @@ fn handle_request_main_thread(
                 Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
             };
 
-            let existing = scene_instances.iter().map(|(e, t, id, prefab, tint, owner)| {
-                crate::scene_sources_runtime::SceneWorldInstance {
-                    entity: e,
-                    instance_id: *id,
-                    prefab_id: *prefab,
-                    transform: t.clone(),
-                    tint: tint.map(|t| t.0),
-                    owner_layer_id: owner.map(|o| o.layer_id.clone()),
-                }
-            });
+            let existing = scene_instances
+                .iter()
+                .map(|(e, t, id, prefab, tint, owner)| {
+                    crate::scene_sources_runtime::SceneWorldInstance {
+                        entity: e,
+                        instance_id: *id,
+                        prefab_id: *prefab,
+                        transform: t.clone(),
+                        tint: tint.map(|t| t.0),
+                        owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                    }
+                });
 
             let response = match crate::scene_runs::scene_run_apply_patch_step(
                 commands,
@@ -1050,11 +1061,11 @@ fn handle_request_main_thread(
             };
 
             let out_dir = PathBuf::from(req.out_dir.trim());
-            let objects = scene_instances.iter().filter_map(
-                |(_e, t, id, prefab, tint, owner)| {
+            let objects = scene_instances
+                .iter()
+                .filter_map(|(_e, t, id, prefab, tint, owner)| {
                     owner.is_none().then_some((t, id, prefab, tint))
-                },
-            );
+                });
 
             let report = match crate::scene_sources_runtime::export_scene_sources_from_world(
                 scene_workspace,

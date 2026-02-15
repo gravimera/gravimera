@@ -9,7 +9,7 @@
 [scene]
 
 # Optional: override where build scene persistence is stored.
-# Default: `~/.gravimera/scene.dat`.
+# Default (active realm+scene): `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat`.
 # Relative paths are resolved relative to the config file directory.
 # scene_dat_path = "./scene.dat"
 

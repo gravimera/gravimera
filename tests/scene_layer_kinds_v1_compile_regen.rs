@@ -153,9 +153,8 @@ fn procedural_layer_kinds_compile_deterministically_and_regen_is_scoped() {
         "src_dir": temp_src.display().to_string(),
     })
     .to_string();
-    let (status, body) =
-        http_request(addr, "POST", "/v1/scene_sources/import", Some(&import_body))
-            .expect("import request");
+    let (status, body) = http_request(addr, "POST", "/v1/scene_sources/import", Some(&import_body))
+        .expect("import request");
     assert_eq!(status, 200, "import failed: status={status} body={body}");
 
     // Compile all layers twice: signatures must match.
@@ -303,4 +302,3 @@ fn procedural_layer_kinds_compile_deterministically_and_regen_is_scoped() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
-

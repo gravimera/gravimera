@@ -76,9 +76,7 @@ fn run_base_dir(src_dir: &Path, run_id: &str) -> Result<PathBuf, String> {
 }
 
 fn step_dir(run_base: &Path, step: u32) -> PathBuf {
-    run_base
-        .join("steps")
-        .join(format!("{:04}", step.max(1)))
+    run_base.join("steps").join(format!("{:04}", step.max(1)))
 }
 
 fn current_scene_id(sources: &SceneSourcesV1) -> Result<String, String> {
@@ -229,13 +227,15 @@ pub(crate) fn scene_run_apply_patch_step(
 
     let scorecard_doc = serde_json::to_value(scorecard)
         .map_err(|err| format!("scorecard to_value failed: {err}"))?;
-    let patch_doc = serde_json::to_value(patch).map_err(|err| format!("patch to_value failed: {err}"))?;
+    let patch_doc =
+        serde_json::to_value(patch).map_err(|err| format!("patch to_value failed: {err}"))?;
     write_json_value_atomic(&step_dir.join("scorecard.json"), &scorecard_doc)?;
     write_json_value_atomic(&step_dir.join("patch.json"), &patch_doc)?;
 
     let pre: SceneSourcesPatchValidateReport =
         validate_scene_sources_patch(workspace, library, scorecard, patch)?;
-    let pre_doc = serde_json::to_value(&pre).map_err(|err| format!("pre to_value failed: {err}"))?;
+    let pre_doc =
+        serde_json::to_value(&pre).map_err(|err| format!("pre to_value failed: {err}"))?;
     write_json_value_atomic(&step_dir.join("pre_validation_report.json"), &pre_doc)?;
 
     let apply: SceneSourcesPatchApplyReport = apply_scene_sources_patch(
@@ -255,8 +255,8 @@ pub(crate) fn scene_run_apply_patch_step(
             return Err("missing workspace.sources after apply".to_string());
         };
         let sig = scene_signature_summary_from_sources(patched_sources)?;
-        let sig_doc = serde_json::to_value(sig)
-            .map_err(|err| format!("signature to_value failed: {err}"))?;
+        let sig_doc =
+            serde_json::to_value(sig).map_err(|err| format!("signature to_value failed: {err}"))?;
         write_json_value_atomic(&step_dir.join("post_signature.json"), &sig_doc)?;
     }
 
@@ -275,4 +275,3 @@ pub(crate) fn scene_run_apply_patch_step(
         result: apply_doc,
     })
 }
-

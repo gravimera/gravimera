@@ -56,7 +56,9 @@ cargo run -- --headless --headless-seconds 10
 By default Gravimera stores runtime data under `~/.gravimera/`:
 
 - `~/.gravimera/config.toml` (settings, OpenAI)
-- `~/.gravimera/scene.dat` (saved world)
+- `~/.gravimera/realm/` (realms + scenes)
+  - `~/.gravimera/realm/active.json` (active realm/scene selection)
+  - `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
 - `~/.gravimera/cache/` (Gen3D artifacts, logs, screenshots)
 
 Override the base directory with `GRAVIMERA_HOME=/path/to/dir`.
@@ -79,7 +81,7 @@ Gen3D requires OpenAI settings in `config.toml` (or `OPENAI_API_KEY` via env).
 
 - Game design (long-term target): `docs/gamedesign/README.md`
 - Specs (contracts/formats): `docs/gamedesign/specs.md`
-- Scene sources authoring (human UI): click the **Scene** button in rendered mode to import/compile/regenerate/validate scene sources (`docs/gamedesign/30_scene_sources_and_build_artifacts.md`).
+- Scene panel (human UI): click the **Scene** button in rendered mode to select realm/scene, edit the scene description, and load/compile/validate scene sources (`docs/gamedesign/30_scene_sources_and_build_artifacts.md`).
 - Gen3D Workshop + schemas + cache layout: `gen_3d.md`
 - Local Automation HTTP API (tooling/tests): `docs/automation_http_api.md`
 - Controls: `docs/controls.md`

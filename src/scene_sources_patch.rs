@@ -125,7 +125,11 @@ fn upsert_extra_json(
     }
 }
 
-fn remove_extra_json(sources: &mut SceneSourcesV1, rel_path: PathBuf, changed: &mut BTreeSet<String>) {
+fn remove_extra_json(
+    sources: &mut SceneSourcesV1,
+    rel_path: PathBuf,
+    changed: &mut BTreeSet<String>,
+) {
     if sources.extra_json_files.remove(&rel_path).is_some() {
         changed.insert(rel_path.display().to_string());
     }
@@ -151,10 +155,8 @@ pub(crate) fn apply_patch_to_sources(
     let request_id = require_non_empty("request_id", &patch.request_id)?;
     let scene_id = resolve_scene_id_for_patch(sources)?;
 
-    let index_paths =
-        SceneSourcesIndexPaths::from_index_json_value(&sources.index_json).map_err(|err| {
-            format!("Invalid scene sources index.json: {err}")
-        })?;
+    let index_paths = SceneSourcesIndexPaths::from_index_json_value(&sources.index_json)
+        .map_err(|err| format!("Invalid scene sources index.json: {err}"))?;
     let pinned_dir = index_paths.pinned_instances_dir;
     let layers_dir = index_paths.layers_dir;
     let portals_dir = index_paths.portals_dir;
@@ -194,7 +196,8 @@ pub(crate) fn apply_patch_to_sources(
                     }
                     (None, None) => {
                         return Err(
-                            "upsert_pinned_instance must provide instance_id or local_ref".to_string(),
+                            "upsert_pinned_instance must provide instance_id or local_ref"
+                                .to_string(),
                         );
                     }
                 };
@@ -219,10 +222,8 @@ pub(crate) fn apply_patch_to_sources(
                 // Ensure deterministic doc bytes even when `transform` is injected from JSON.
                 canonicalize_json_value(&mut doc);
 
-                let rel_path = rel_path_join(
-                    &pinned_dir,
-                    &format!("{}.json", instance_uuid.to_string()),
-                );
+                let rel_path =
+                    rel_path_join(&pinned_dir, &format!("{}.json", instance_uuid.to_string()));
                 upsert_extra_json(sources, rel_path, doc, &mut changed);
 
                 let _ = local_ref_key;
@@ -231,10 +232,8 @@ pub(crate) fn apply_patch_to_sources(
                 let instance_id = require_non_empty("instance_id", instance_id)?;
                 let instance_uuid = uuid::Uuid::parse_str(&instance_id)
                     .map_err(|err| format!("invalid instance_id UUID: {err}"))?;
-                let rel_path = rel_path_join(
-                    &pinned_dir,
-                    &format!("{}.json", instance_uuid.to_string()),
-                );
+                let rel_path =
+                    rel_path_join(&pinned_dir, &format!("{}.json", instance_uuid.to_string()));
                 remove_extra_json(sources, rel_path, &mut changed);
             }
             SceneSourcesPatchOpV1::UpsertLayer { layer_id, doc } => {

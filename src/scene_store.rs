@@ -19,7 +19,6 @@ use crate::object::registry::{
 use crate::object::visuals;
 use crate::types::*;
 
-const SCENE_DAT_FILE_NAME: &str = "scene.dat";
 const SCENE_DAT_VERSION: u32 = 6;
 const DEFAULT_UNITS_PER_BUILD_UNIT: u32 = 4;
 const SCENE_AUTOSAVE_INTERVAL_SECS: f32 = 60.0;
@@ -581,57 +580,12 @@ struct SceneDatTorusParams {
     major_radius: f32,
 }
 
-fn default_scene_dat_path() -> PathBuf {
-    crate::paths::default_scene_dat_path()
-}
-
-fn scene_dat_path(config: &AppConfig) -> PathBuf {
+fn scene_dat_path(config: &AppConfig, active: &crate::realm::ActiveRealmScene) -> PathBuf {
     if let Some(path) = config.scene_dat_path.as_ref().cloned() {
         return path;
     }
 
-    let preferred = default_scene_dat_path();
-    if preferred.exists() {
-        return preferred;
-    }
-
-    let Some(legacy) = crate::paths::legacy_path_next_to_exe(SCENE_DAT_FILE_NAME) else {
-        return preferred;
-    };
-
-    if !legacy.exists() {
-        return preferred;
-    }
-
-    if let Some(parent) = preferred.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            warn!(
-                "Failed to create scene.dat directory {}: {err}. Using legacy {} instead.",
-                parent.display(),
-                legacy.display()
-            );
-            return legacy;
-        }
-    }
-
-    match std::fs::copy(&legacy, &preferred) {
-        Ok(_) => {
-            info!(
-                "Migrated scene.dat from legacy {} to {}.",
-                legacy.display(),
-                preferred.display()
-            );
-            preferred
-        }
-        Err(err) => {
-            warn!(
-                "Failed to migrate legacy scene.dat {} to {}: {err}. Using legacy path instead.",
-                legacy.display(),
-                preferred.display()
-            );
-            legacy
-        }
-    }
+    crate::realm::scene_dat_path(active)
 }
 
 fn quantize_world(value: f32, units_per_build_unit: u32) -> i32 {
@@ -1812,6 +1766,7 @@ fn spawn_scene_instance_from_scene(
 pub(crate) fn load_scene_dat(
     mut commands: Commands,
     config: Res<AppConfig>,
+    active: Res<crate::realm::ActiveRealmScene>,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1820,23 +1775,122 @@ pub(crate) fn load_scene_dat(
     mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
     mut library: ResMut<ObjectLibrary>,
 ) {
-    let path = scene_dat_path(&config);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return,
-        Err(err) => {
-            error!("Failed to read {}: {err}", path.display());
-            return;
+    let path = scene_dat_path(&config, &active);
+    match load_scene_dat_from_path(
+        &mut commands,
+        &asset_server,
+        &assets,
+        &mut meshes,
+        &mut materials,
+        &mut material_cache,
+        &mut mesh_cache,
+        &mut library,
+        &path,
+    ) {
+        Ok(spawned) => {
+            if spawned > 0 {
+                info!("Loaded {spawned} scene instances from {}.", path.display());
+            }
         }
+        Err(err) => {
+            error!("{err}");
+        }
+    }
+}
+
+pub(crate) fn apply_pending_realm_scene_switch(
+    mut commands: Commands,
+    config: Res<AppConfig>,
+    mut active: ResMut<crate::realm::ActiveRealmScene>,
+    mut pending: ResMut<crate::realm::PendingRealmSceneSwitch>,
+    mut autosave: ResMut<SceneAutosaveState>,
+    mut workspace: ResMut<crate::scene_sources_runtime::SceneSourcesWorkspace>,
+    asset_server: Res<AssetServer>,
+    assets: Res<SceneAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut material_cache: ResMut<crate::object::visuals::MaterialCache>,
+    mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
+    mut library: ResMut<ObjectLibrary>,
+    existing_scene_entities: Query<
+        Entity,
+        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+    >,
+) {
+    let Some(target) = pending.target.take() else {
+        return;
+    };
+    if target == *active {
+        return;
+    }
+
+    if let Err(err) = crate::realm::ensure_realm_scene_scaffold(&target.realm_id, &target.scene_id)
+    {
+        warn!("{err}");
+    }
+    if let Err(err) = crate::realm::persist_active_selection(&target.realm_id, &target.scene_id) {
+        warn!("{err}");
+    }
+
+    info!(
+        "Switching realm/scene: {}/{} -> {}/{}",
+        active.realm_id, active.scene_id, target.realm_id, target.scene_id
+    );
+    *active = target;
+
+    autosave.dirty = false;
+    autosave.primed = false;
+    autosave.timer.reset();
+
+    workspace.loaded_from_dir = Some(crate::realm::scene_src_dir(&active));
+    workspace.sources = None;
+
+    for entity in &existing_scene_entities {
+        commands.entity(entity).try_despawn();
+    }
+
+    let path = scene_dat_path(&config, &active);
+    match load_scene_dat_from_path(
+        &mut commands,
+        &asset_server,
+        &assets,
+        &mut meshes,
+        &mut materials,
+        &mut material_cache,
+        &mut mesh_cache,
+        &mut library,
+        &path,
+    ) {
+        Ok(spawned) => {
+            if spawned > 0 {
+                info!("Loaded {spawned} scene instances from {}.", path.display());
+            }
+        }
+        Err(err) => {
+            warn!("{err}");
+        }
+    }
+}
+
+fn load_scene_dat_from_path(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    assets: &SceneAssets,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    material_cache: &mut crate::object::visuals::MaterialCache,
+    mesh_cache: &mut crate::object::visuals::PrimitiveMeshCache,
+    library: &mut ObjectLibrary,
+    path: &Path,
+) -> Result<usize, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(format!("Failed to read {}: {err}", path.display())),
     };
 
-    let scene = match SceneDat::decode(bytes.as_slice()) {
-        Ok(scene) => scene,
-        Err(err) => {
-            error!("Failed to decode {}: {err}", path.display());
-            return;
-        }
-    };
+    let scene = SceneDat::decode(bytes.as_slice())
+        .map_err(|err| format!("Failed to decode {}: {err}", path.display()))?;
 
     if scene.version != SCENE_DAT_VERSION {
         warn!(
@@ -1845,7 +1899,7 @@ pub(crate) fn load_scene_dat(
             scene.version,
             SCENE_DAT_VERSION
         );
-        return;
+        return Ok(0);
     }
 
     for def in &scene.defs {
@@ -1899,14 +1953,14 @@ pub(crate) fn load_scene_dat(
         let tint = instance.tint.as_ref().map(unpack_color);
 
         spawn_scene_instance_from_scene(
-            &mut commands,
-            &asset_server,
-            &assets,
-            &mut meshes,
-            &mut materials,
-            &mut material_cache,
-            &mut mesh_cache,
-            &library,
+            commands,
+            asset_server,
+            assets,
+            meshes,
+            materials,
+            material_cache,
+            mesh_cache,
+            library,
             prefab_id,
             transform,
             instance_id,
@@ -1915,7 +1969,7 @@ pub(crate) fn load_scene_dat(
         spawned += 1;
     }
 
-    info!("Loaded {spawned} scene instances from {}.", path.display());
+    Ok(spawned)
 }
 
 pub(crate) fn request_scene_save_on_enter_play(mut saves: MessageWriter<SceneSaveRequest>) {
@@ -1969,6 +2023,7 @@ pub(crate) fn scene_save_requests(
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
     config: Res<AppConfig>,
+    active: Res<crate::realm::ActiveRealmScene>,
     library: Res<ObjectLibrary>,
     mut autosave: ResMut<SceneAutosaveState>,
 ) {
@@ -1980,7 +2035,7 @@ pub(crate) fn scene_save_requests(
         return;
     };
 
-    let path = scene_dat_path(&config);
+    let path = scene_dat_path(&config, &active);
     match save_scene_dat_internal(&objects, &library, &path) {
         Ok(instance_count) => {
             info!(
@@ -2004,6 +2059,7 @@ pub(crate) fn scene_autosave_tick(
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
     config: Res<AppConfig>,
+    active: Res<crate::realm::ActiveRealmScene>,
     library: Res<ObjectLibrary>,
     mut autosave: ResMut<SceneAutosaveState>,
 ) {
@@ -2012,7 +2068,7 @@ pub(crate) fn scene_autosave_tick(
         return;
     }
 
-    let path = scene_dat_path(&config);
+    let path = scene_dat_path(&config, &active);
     match save_scene_dat_internal(&objects, &library, &path) {
         Ok(instance_count) => {
             info!(

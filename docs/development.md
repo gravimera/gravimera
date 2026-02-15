@@ -23,5 +23,4 @@ GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --headless --headless-seconds 1
 - `src/gen3d/*`: Gen3D workshop UI + rendered preview world
 - `src/gen3d/ai/*`: Gen3D AI orchestration (OpenAI calls, schemas, cache artifacts)
 - `src/object/*`: object system (prefabs + composition + visuals)
-- `src/scene_store.rs`: load/save persisted scene (`scene.dat`)
-
+- `src/scene_store.rs`: load/save persisted scenes (`scene.dat` per realm/scene)

@@ -118,17 +118,28 @@ fn run_apply_patch(
         "patch": patch,
     })
     .to_string();
-    let (status, body) =
-        http_request(addr, "POST", "/v1/scene_sources/run_apply_patch", Some(&body)).expect("run_apply_patch");
-    assert_eq!(status, 200, "run_apply_patch failed: status={status} body={body}");
+    let (status, body) = http_request(
+        addr,
+        "POST",
+        "/v1/scene_sources/run_apply_patch",
+        Some(&body),
+    )
+    .expect("run_apply_patch");
+    assert_eq!(
+        status, 200,
+        "run_apply_patch failed: status={status} body={body}"
+    );
     serde_json::from_str(&body).expect("run_apply_patch json")
 }
 
 fn run_status(addr: SocketAddr, run_id: &str) -> serde_json::Value {
     let body = serde_json::json!({ "run_id": run_id }).to_string();
-    let (status, body) =
-        http_request(addr, "POST", "/v1/scene_sources/run_status", Some(&body)).expect("run_status");
-    assert_eq!(status, 200, "run_status failed: status={status} body={body}");
+    let (status, body) = http_request(addr, "POST", "/v1/scene_sources/run_status", Some(&body))
+        .expect("run_status");
+    assert_eq!(
+        status, 200,
+        "run_status failed: status={status} body={body}"
+    );
     serde_json::from_str(&body).expect("run_status json")
 }
 
@@ -276,4 +287,3 @@ fn run_directories_persist_and_steps_can_resume() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
-
