@@ -27,6 +27,7 @@ mod realm;
 mod rts;
 mod scene_authoring_ui;
 mod scene_build_ai;
+mod scene_instance_visuals;
 mod scene_runs;
 mod scene_sources;
 mod scene_sources_patch;

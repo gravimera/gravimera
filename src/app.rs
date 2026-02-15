@@ -584,7 +584,12 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     );
     app.add_systems(
         Update,
-        crate::object::visuals::apply_pending_scene_overrides,
+        crate::scene_instance_visuals::ensure_scene_instance_visuals_spawned,
+    );
+    app.add_systems(
+        Update,
+        crate::object::visuals::apply_pending_scene_overrides
+            .after(crate::scene_instance_visuals::ensure_scene_instance_visuals_spawned),
     );
     app.add_systems(
         Update,
