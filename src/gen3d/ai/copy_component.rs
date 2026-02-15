@@ -163,6 +163,22 @@ fn alignment_score(delta_mat: Mat4, source_anchors: &[AnchorDef], target_anchors
     if any { score } else { 0.0 }
 }
 
+fn mount_origin_layout_score(inv_source_mount: Mat4, inv_target_mount: Mat4, mirror_local: Mat4) -> (f32, f32) {
+    // When only the mount anchor is shared (or shared anchors are symmetric), the proper-rotation
+    // and mirrored candidates can tie on anchor alignment. Break ties using the implied layout of
+    // the component origin relative to the mount frame:
+    // - rot candidate keeps mount-local coords the same
+    // - mirror candidate flips mount-local right (X)
+    let source_origin_in_source_mount = transform_point(inv_source_mount, Vec3::ZERO);
+    let target_origin_in_target_mount = transform_point(inv_target_mount, Vec3::ZERO);
+
+    let score_rot = (source_origin_in_source_mount - target_origin_in_target_mount).length_squared();
+    let mirrored_origin_in_source_mount = transform_point(mirror_local, source_origin_in_source_mount);
+    let score_mirror =
+        (mirrored_origin_in_source_mount - target_origin_in_target_mount).length_squared();
+    (score_rot, score_mirror)
+}
+
 fn apply_delta_to_anchors(anchors: &[AnchorDef], delta: Transform) -> Vec<AnchorDef> {
     let delta_mat = delta.to_matrix();
     anchors
@@ -301,6 +317,17 @@ pub(super) fn copy_component_into(
 
                     let chosen = if score_mirror + 1e-4 < score_rot {
                         mirror_mat
+                    } else if (score_rot - score_mirror).abs() <= 1e-4 {
+                        // Tie-break with the component-origin layout around the mount interface.
+                        // This fixes mirrored copies when the only shared anchor is the mount itself.
+                        let inv_target_anchor = target_mat.inverse();
+                        let (layout_rot, layout_mirror) =
+                            mount_origin_layout_score(inv_source_anchor, inv_target_anchor, mirror_local);
+                        if layout_mirror + 1e-4 < layout_rot {
+                            mirror_mat
+                        } else {
+                            rot_mat
+                        }
                     } else {
                         rot_mat
                     };
@@ -2091,6 +2118,99 @@ mod tests {
         assert!(
             forward.dot(Vec3::NEG_Z) > 1.0 - 1e-4,
             "expected mirrored copy to keep fingers_mount forward=-Z; got {forward:?}"
+        );
+    }
+
+    #[test]
+    fn preserve_interfaces_can_choose_mirrored_alignment_with_only_mount_anchor() {
+        // If the only shared anchor is the mount interface, the proper-rotation and mirrored
+        // candidates tie on anchor alignment. The copy should still pick the mirrored candidate
+        // when the target's layout around the mount is mirrored (as in L/R wings).
+        let mut components = vec![stub_component("wing_left"), stub_component("wing_right")];
+        components[0].actual_size = Some(Vec3::ONE);
+        components[0].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "wing_mount_left".into(),
+            child_anchor: "body_mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "wing_mount_right".into(),
+            child_anchor: "body_mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        let wing_left_id = component_object_id("wing_left");
+        let wing_right_id = component_object_id("wing_right");
+
+        let source_mount = anchor_named(
+            "body_mount",
+            Vec3::new(0.55, 0.0, 0.2),
+            Vec3::NEG_X,
+            Vec3::Y,
+        );
+        let target_mount = anchor_named(
+            "body_mount",
+            Vec3::new(-0.55, 0.0, 0.2),
+            Vec3::X,
+            Vec3::Y,
+        );
+
+        let visual = crate::object::registry::PrimitiveVisualDef::Primitive {
+            mesh: crate::object::registry::MeshKey::UnitCube,
+            params: None,
+            color: Color::WHITE,
+            unlit: false,
+        };
+        // Place an asymmetric feature at mount-local (right=+1, forward=+1). Under a 180-degree
+        // rotation it would land at -Z, while a mirrored copy lands at +Z.
+        let source_feature_pos = source_mount.transform.translation + Vec3::Z - Vec3::X;
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![
+            ObjectDef {
+                anchors: vec![source_mount],
+                parts: vec![ObjectPartDef::primitive(visual.clone(), Transform::from_translation(source_feature_pos))],
+                ..stub_def(wing_left_id, "wing_left")
+            },
+            ObjectDef {
+                anchors: vec![target_mount],
+                parts: Vec::new(),
+                ..stub_def(wing_right_id, "wing_right")
+            },
+        ];
+
+        copy_component_into(
+            &mut components,
+            &mut draft,
+            0,
+            1,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Transform::IDENTITY,
+            None,
+        )
+        .expect("copy ok");
+
+        let wing_right_def = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == wing_right_id)
+            .unwrap();
+        let parts = strip_attach_refs(&wing_right_def.parts);
+        assert_eq!(parts.len(), 1);
+        let translated = parts[0].transform.translation;
+
+        let expected = Vec3::new(0.45, 0.0, 1.2);
+        let dp = (translated - expected).length();
+        assert!(
+            dp < 1e-3,
+            "expected mirrored layout to keep +Z feature; got {translated:?} (dp={dp})"
         );
     }
 
