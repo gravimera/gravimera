@@ -1,4 +1,5 @@
 use bevy::ecs::message::MessageWriter;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use uuid::Uuid;
 
@@ -19,6 +20,16 @@ use crate::types::{
 
 use super::ai::Gen3dAiJob;
 use super::state::{Gen3dDraft, Gen3dSaveButton, Gen3dWorkshop};
+
+#[derive(SystemParam)]
+pub(crate) struct Gen3dSaveRenderWorld<'w> {
+    asset_server: Res<'w, AssetServer>,
+    assets: Res<'w, SceneAssets>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    material_cache: ResMut<'w, visuals::MaterialCache>,
+    mesh_cache: ResMut<'w, visuals::PrimitiveMeshCache>,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Gen3dSavedInstance {
@@ -446,7 +457,7 @@ mod tests {
     }
 }
 
-fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<ObjectDef>), String> {
+pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<ObjectDef>), String> {
     let root_id = super::gen3d_draft_object_id();
     let Some(_root) = draft.defs.iter().find(|d| d.object_id == root_id) else {
         return Err("Gen3D: missing root draft object def.".into());
@@ -564,13 +575,9 @@ fn collider_half_xz(collider: ColliderProfile, size: Vec3) -> Vec2 {
 
 pub(crate) fn gen3d_save_button(
     mode: Res<State<crate::types::GameMode>>,
+    active: Res<crate::realm::ActiveRealmScene>,
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    assets: Res<SceneAssets>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut material_cache: ResMut<visuals::MaterialCache>,
-    mut mesh_cache: ResMut<visuals::PrimitiveMeshCache>,
+    mut render: Gen3dSaveRenderWorld,
     mut library: ResMut<ObjectLibrary>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut job: ResMut<Gen3dAiJob>,
@@ -626,13 +633,14 @@ pub(crate) fn gen3d_save_button(
             };
 
             if let Err(err) = gen3d_save_current_draft_from_api(
+                &active.realm_id,
                 &mut commands,
-                &asset_server,
-                &assets,
-                &mut meshes,
-                &mut materials,
-                &mut material_cache,
-                &mut mesh_cache,
+                &render.asset_server,
+                &render.assets,
+                &mut *render.meshes,
+                &mut *render.materials,
+                &mut *render.material_cache,
+                &mut *render.mesh_cache,
                 &mut library,
                 &mut workshop,
                 &mut job,
@@ -651,6 +659,7 @@ pub(crate) fn gen3d_save_button(
 }
 
 pub(crate) fn gen3d_save_current_draft_from_api(
+    realm_id: &str,
     commands: &mut Commands,
     asset_server: &AssetServer,
     assets: &SceneAssets,
@@ -675,6 +684,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         defs: draft.defs.clone(),
     };
     let (saved_root_id, defs) = draft_to_saved_defs(&snapshot)?;
+    crate::realm_prefabs::save_generated_prefab_defs_to_realm(realm_id, saved_root_id, &defs)?;
     for def in defs {
         library.upsert(def);
     }

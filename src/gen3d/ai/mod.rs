@@ -19,6 +19,7 @@ mod agent_loop;
 mod artifacts;
 mod convert;
 mod copy_component;
+mod headless_prefab;
 mod motion_validation;
 mod openai;
 mod parse;
@@ -34,6 +35,7 @@ use artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
     write_gen3d_json_artifact,
 };
+pub(crate) use headless_prefab::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 use prompts::{
     build_gen3d_component_system_instructions, build_gen3d_component_user_text,
     build_gen3d_plan_fill_system_instructions, build_gen3d_plan_fill_user_text,

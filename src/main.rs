@@ -24,6 +24,7 @@ mod physics;
 mod platform;
 mod player;
 mod realm;
+mod realm_prefabs;
 mod rts;
 mod scene_authoring_ui;
 mod scene_build_ai;

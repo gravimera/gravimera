@@ -1775,6 +1775,20 @@ pub(crate) fn load_scene_dat(
     mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
     mut library: ResMut<ObjectLibrary>,
 ) {
+    // Reset library to builtins + realm-shared prefabs for the active realm.
+    *library = ObjectLibrary::default();
+    match crate::realm_prefabs::load_realm_prefabs_into_library(&active.realm_id, &mut *library) {
+        Ok(count) => {
+            if count > 0 {
+                info!(
+                    "Loaded {count} realm prefab defs for realm {}.",
+                    active.realm_id
+                );
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
+
     let path = scene_dat_path(&config, &active);
     match load_scene_dat_from_path(
         &mut commands,
@@ -1847,6 +1861,20 @@ pub(crate) fn apply_pending_realm_scene_switch(
 
     for entity in &existing_scene_entities {
         commands.entity(entity).try_despawn();
+    }
+
+    // Reset library to builtins + realm-shared prefabs for the new realm.
+    *library = ObjectLibrary::default();
+    match crate::realm_prefabs::load_realm_prefabs_into_library(&active.realm_id, &mut *library) {
+        Ok(count) => {
+            if count > 0 {
+                info!(
+                    "Loaded {count} realm prefab defs for realm {}.",
+                    active.realm_id
+                );
+            }
+        }
+        Err(err) => warn!("{err}"),
     }
 
     let path = scene_dat_path(&config, &active);

@@ -58,6 +58,7 @@ By default Gravimera stores runtime data under `~/.gravimera/`:
 - `~/.gravimera/config.toml` (settings, OpenAI)
 - `~/.gravimera/realm/` (realms + scenes)
   - `~/.gravimera/realm/active.json` (active realm/scene selection)
+  - `~/.gravimera/realm/<realm_id>/prefabs/packs/` (realm-shared prefab packs; Gen3D saves to `packs/generated/`)
   - `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
 - `~/.gravimera/cache/` (Gen3D artifacts, logs, screenshots)
 

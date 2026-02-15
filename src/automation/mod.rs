@@ -428,6 +428,7 @@ fn automation_process_requests(
     mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
     config: Res<AppConfig>,
+    active: Option<Res<crate::realm::ActiveRealmScene>>,
     mut runtime: ResMut<AutomationRuntime>,
     mut scene_workspace: ResMut<crate::scene_sources_runtime::SceneSourcesWorkspace>,
     mode: Option<Res<State<GameMode>>>,
@@ -473,9 +474,15 @@ fn automation_process_requests(
             }
         };
 
+        let active_realm_id: &str = match active.as_ref() {
+            Some(active) => active.realm_id.as_str(),
+            None => crate::paths::default_realm_id(),
+        };
+
         let reply = handle_request_main_thread(
             &mut commands,
             &config,
+            active_realm_id,
             gen3d.log_sinks.as_deref(),
             &mut library,
             gen3d.workshop.as_deref_mut(),
@@ -611,6 +618,7 @@ struct SceneRunApplyPatchRequest {
 fn handle_request_main_thread(
     commands: &mut Commands,
     config: &AppConfig,
+    active_realm_id: &str,
     log_sinks: Option<&crate::app::Gen3dLogSinks>,
     library: &mut ObjectLibrary,
     mut gen3d_workshop: Option<&mut crate::gen3d::Gen3dWorkshop>,
@@ -1327,6 +1335,7 @@ fn handle_request_main_thread(
             };
 
             let saved = match crate::gen3d::gen3d_save_current_draft_from_api(
+                active_realm_id,
                 commands,
                 asset_server,
                 assets,
