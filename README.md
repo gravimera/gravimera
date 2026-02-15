@@ -81,7 +81,7 @@ Gen3D requires OpenAI settings in `config.toml` (or `OPENAI_API_KEY` via env).
 
 - Game design (long-term target): `docs/gamedesign/README.md`
 - Specs (contracts/formats): `docs/gamedesign/specs.md`
-- Scene Builder panel (human UI): click the **Scene** button in rendered mode to select realm/scene, paste a scene description, then click **Build** to generate/update `ai_` layers (requires OpenAI config). Build progress is shown in the panel and artifacts are saved under `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/runs/<run_id>/`. **Compile**/**Validate** are deterministic operations on scene sources (`docs/gamedesign/30_scene_sources_and_build_artifacts.md`).
+- Scene Builder panel (human UI): click the **Scene** button in rendered mode to select realm/scene, paste a scene description, then click **Build** to generate/update `ai_` layers (requires OpenAI config). Build runs as multiple steps; each step applies a patch + compiles immediately so objects appear progressively. Progress is shown in the panel; per-run artifacts (including `progress.log` and LLM plan/step requests) are saved under `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/runs/<run_id>/`. Gen3D can be used during build; both share a global AI request limiter so you may see "Waiting for AI slot…". **Compile**/**Validate** are deterministic operations on scene sources (`docs/gamedesign/30_scene_sources_and_build_artifacts.md`).
 - Gen3D Workshop + schemas + cache layout: `gen_3d.md`
 - Local Automation HTTP API (tooling/tests): `docs/automation_http_api.md`
 - Controls: `docs/controls.md`

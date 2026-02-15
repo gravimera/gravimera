@@ -398,6 +398,9 @@ fn run_rendered_catching_panics(config: crate::config::AppConfig) -> Result<(), 
 }
 
 fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) {
+    // Shared AI request limiter (Scene Build + Gen3D).
+    crate::ai_limiter::set_max_permits(config.gen3d_max_parallel_components.max(1) + 1);
+
     let mut app = App::new();
     app.insert_resource(config);
     app.add_plugins(
@@ -469,6 +472,9 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
 }
 
 fn run_rendered(config: crate::config::AppConfig) -> AppExit {
+    // Shared AI request limiter (Scene Build + Gen3D).
+    crate::ai_limiter::set_max_permits(config.gen3d_max_parallel_components.max(1) + 1);
+
     #[cfg(target_os = "linux")]
     fixup_linux_display_env_for_winit();
 

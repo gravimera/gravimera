@@ -1,5 +1,6 @@
 use bevy::log::{error, info, warn};
 use bevy::prelude::*;
+use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -30,6 +31,40 @@ struct SceneBuildAiProgress {
 struct SceneBuildAiStatus {
     run_id: String,
     message: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SceneBuildAiPlanStep {
+    step_id: String,
+    title: String,
+    goal: String,
+}
+
+#[derive(Clone, Debug)]
+enum SceneBuildAiPhase {
+    Cleanup,
+    PlanRequest,
+    StepRequest { step_index: usize },
+}
+
+struct SceneBuildAiJob {
+    run_id: String,
+    target_realm_id: String,
+    target_scene_id: String,
+    run_dir: PathBuf,
+    description: String,
+
+    openai_base_url: String,
+    openai_api_key: String,
+    openai_model: String,
+    openai_reasoning_effort: String,
+
+    phase: SceneBuildAiPhase,
+    plan_steps: Vec<SceneBuildAiPlanStep>,
+    next_run_step: u32,
+
+    progress: Arc<Mutex<SceneBuildAiProgress>>,
+    shared_result: Arc<Mutex<Option<Result<String, String>>>>,
 }
 
 #[derive(Resource, Default)]
@@ -113,20 +148,11 @@ fn set_progress(
     }
 }
 
-struct SceneBuildAiJob {
-    run_id: String,
-    target_realm_id: String,
-    target_scene_id: String,
-    run_dir: PathBuf,
-    progress: Arc<Mutex<SceneBuildAiProgress>>,
-    shared_result: Arc<Mutex<Option<Result<String, String>>>>,
-}
-
 pub(crate) fn start_scene_build_from_description(
     runtime: &mut SceneBuildAiRuntime,
     config: &AppConfig,
     active: &ActiveRealmScene,
-    library: &ObjectLibrary,
+    _library: &ObjectLibrary,
     description: &str,
 ) -> Result<String, String> {
     if runtime.in_flight.is_some() {
@@ -146,9 +172,9 @@ pub(crate) fn start_scene_build_from_description(
     let run_id = format!("scene_build_{}", uuid::Uuid::new_v4());
     let scene_dir = crate::paths::scene_dir(&active.realm_id, &active.scene_id);
     let run_dir = scene_dir.join("runs").join(&run_id);
-    let llm_dir = run_dir.join("llm");
-    std::fs::create_dir_all(&llm_dir)
-        .map_err(|err| format!("Failed to create {}: {err}", llm_dir.display()))?;
+    let llm_root = run_dir.join("llm");
+    std::fs::create_dir_all(&llm_root)
+        .map_err(|err| format!("Failed to create {}: {err}", llm_root.display()))?;
 
     info!(
         "Scene build {run_id} started: realm={}/{} run_dir={}",
@@ -161,7 +187,6 @@ pub(crate) fn start_scene_build_from_description(
 
     let progress: Arc<Mutex<SceneBuildAiProgress>> =
         Arc::new(Mutex::new(SceneBuildAiProgress::default()));
-
     set_progress(
         &progress,
         &run_id,
@@ -172,52 +197,21 @@ pub(crate) fn start_scene_build_from_description(
         ),
     );
 
-    let system_text = build_system_prompt();
-    let user_text = build_user_prompt(active, library, description);
-
-    write_text_artifact(&llm_dir.join("system.txt"), &system_text)?;
-    write_text_artifact(&llm_dir.join("user.txt"), &user_text)?;
-
-    let base_url = openai.base_url.clone();
-    let api_key = openai.api_key.clone();
-    let model = openai.model.clone();
-    let reasoning_effort = openai.model_reasoning_effort.clone();
-
-    let shared_result: Arc<Mutex<Option<Result<String, String>>>> = Arc::new(Mutex::new(None));
-    let shared_result_thread = shared_result.clone();
-    let llm_dir_thread = llm_dir.clone();
-    let progress_thread = progress.clone();
-    let run_id_thread = run_id.clone();
-    let run_dir_thread = run_dir.clone();
-
-    std::thread::Builder::new()
-        .name(format!("gravimera_scene_build_ai_{run_id}"))
-        .spawn(move || {
-            let res = call_openai_chat_json_object(
-                &progress_thread,
-                &run_id_thread,
-                &run_dir_thread,
-                &base_url,
-                &api_key,
-                &model,
-                &reasoning_effort,
-                &system_text,
-                &user_text,
-                &llm_dir_thread,
-            );
-            if let Ok(mut guard) = shared_result_thread.lock() {
-                *guard = Some(res);
-            }
-        })
-        .map_err(|err| format!("Failed to spawn build thread: {err}"))?;
-
     runtime.in_flight = Some(SceneBuildAiJob {
         run_id: run_id.clone(),
         target_realm_id: active.realm_id.clone(),
         target_scene_id: active.scene_id.clone(),
         run_dir,
+        description: description.to_string(),
+        openai_base_url: openai.base_url.clone(),
+        openai_api_key: openai.api_key.clone(),
+        openai_model: openai.model.clone(),
+        openai_reasoning_effort: openai.model_reasoning_effort.clone(),
+        phase: SceneBuildAiPhase::Cleanup,
+        plan_steps: Vec::new(),
+        next_run_step: 1,
         progress,
-        shared_result,
+        shared_result: Arc::new(Mutex::new(None)),
     });
 
     Ok(run_id)
@@ -242,103 +236,65 @@ pub(crate) fn scene_build_ai_poll(
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
 ) {
-    let Some(job) = runtime.in_flight.as_ref() else {
+    let Some(mut job) = runtime.in_flight.take() else {
         return;
     };
 
-    let result = {
-        let Ok(mut guard) = job.shared_result.lock() else {
-            return;
-        };
-        guard.take()
-    };
-    let Some(result) = result else {
-        return;
-    };
-
-    let run_id = job.run_id.clone();
-    let target_realm_id = job.target_realm_id.clone();
-    let target_scene_id = job.target_scene_id.clone();
-    let run_dir = job.run_dir.clone();
-    let progress = job.progress.clone();
-
-    if active.realm_id != target_realm_id || active.scene_id != target_scene_id {
+    if active.realm_id != job.target_realm_id || active.scene_id != job.target_scene_id {
         let msg = format!(
-            "Build finished for {}/{} but active scene is now {}/{}; ignoring result (run_id={}).",
-            target_realm_id, target_scene_id, active.realm_id, active.scene_id, run_id
+            "Build started for {}/{} but active scene is now {}/{}; ignoring (run_id={}).",
+            job.target_realm_id, job.target_scene_id, active.realm_id, active.scene_id, job.run_id
         );
         warn!("{msg}");
         set_progress(
-            &progress,
-            &run_id,
-            &run_dir,
-            "Ignored (active scene changed).",
+            &job.progress,
+            &job.run_id,
+            &job.run_dir,
+            "Ignored (scene changed).",
         );
-        ui.set_status("Build ignored (active scene changed).".to_string());
+        ui.set_status("Build ignored (scene changed).".to_string());
         ui.set_error(msg);
         runtime.last_status = Some(SceneBuildAiStatus {
-            run_id: run_id.clone(),
-            message: "Ignored (active scene changed).".to_string(),
+            run_id: job.run_id,
+            message: "Ignored (scene changed).".to_string(),
         });
-        runtime.in_flight = None;
         return;
     }
 
-    ui.clear_error();
-    match result {
-        Err(err) => {
-            error!("Scene build {run_id} failed: {err}");
-            let short = truncate_text(err.trim(), 240);
-            set_progress(&progress, &run_id, &run_dir, format!("Failed: {short}"));
-            ui.set_status(format!("Build failed (run_id={run_id})."));
-            ui.set_error(err);
-            runtime.last_status = Some(SceneBuildAiStatus {
-                run_id: run_id.clone(),
-                message: format!("Failed: {short}"),
-            });
+    let src_dir = crate::realm::scene_src_dir(&active);
+    if workspace.loaded_from_dir.as_deref() != Some(src_dir.as_path()) {
+        workspace.loaded_from_dir = Some(src_dir.clone());
+        workspace.sources = None;
+    }
+
+    if workspace.sources.is_none() {
+        if let Err(err) =
+            crate::scene_sources_runtime::reload_scene_sources_in_workspace(&mut workspace)
+        {
+            finish_with_error(&mut runtime, &mut ui, &job, err);
+            return;
         }
-        Ok(text) => {
+    }
+
+    ui.clear_error();
+
+    match job.phase.clone() {
+        SceneBuildAiPhase::Cleanup => {
+            let scorecard = default_scorecard();
             set_progress(
-                &progress,
-                &run_id,
-                &run_dir,
-                "LLM response received. Applying patch…",
+                &job.progress,
+                &job.run_id,
+                &job.run_dir,
+                "Cleanup: clearing previous ai_ layers…",
             );
 
-            let llm_dir = run_dir.join("llm");
-            let _ = std::fs::create_dir_all(&llm_dir);
-            let _ = write_text_artifact(&llm_dir.join("response.txt"), &text);
-
-            let src_dir = crate::realm::scene_src_dir(&active);
-            if workspace.loaded_from_dir.as_deref() != Some(src_dir.as_path()) {
-                workspace.loaded_from_dir = Some(src_dir.clone());
-                workspace.sources = None;
-            }
-
-            let scorecard = default_scorecard();
-            let patch = match build_patch_from_llm_layers(&src_dir, &run_id, &text) {
-                Ok(p) => p,
+            let cleanup_patch = match build_delete_ai_layers_patch(&src_dir, &job.run_id) {
+                Ok(patch) => patch,
                 Err(err) => {
-                    error!("Scene build {run_id} patch parse failed: {err}");
-                    let short = truncate_text(err.trim(), 240);
-                    set_progress(&progress, &run_id, &run_dir, format!("Failed: {short}"));
-                    ui.set_status(format!("Build failed (run_id={run_id})."));
-                    ui.set_error(err);
-                    runtime.last_status = Some(SceneBuildAiStatus {
-                        run_id: run_id.clone(),
-                        message: format!("Failed: {short}"),
-                    });
-                    runtime.in_flight = None;
+                    finish_with_error(&mut runtime, &mut ui, &job, err);
                     return;
                 }
             };
-
-            set_progress(
-                &progress,
-                &run_id,
-                &run_dir,
-                "Applying patch + compiling scene…",
-            );
 
             let existing = scene_instances
                 .iter()
@@ -351,84 +307,367 @@ pub(crate) fn scene_build_ai_poll(
                     owner_layer_id: owner.map(|o| o.layer_id.clone()),
                 });
 
-            let response = crate::scene_runs::scene_run_apply_patch_step(
+            let resp = crate::scene_runs::scene_run_apply_patch_step(
                 &mut commands,
                 &mut workspace,
                 &library,
                 existing,
-                &run_id,
-                1,
+                &job.run_id,
+                job.next_run_step,
                 &scorecard,
-                &patch,
+                &cleanup_patch,
             );
 
-            match response {
-                Ok(resp) => {
-                    let applied = resp
-                        .result
-                        .get("applied")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let compile = resp.result.get("compile_report");
-                    let spawned = compile
-                        .and_then(|c| c.get("spawned"))
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    let updated = compile
-                        .and_then(|c| c.get("updated"))
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    let despawned = compile
-                        .and_then(|c| c.get("despawned"))
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-
-                    if applied {
-                        ui.set_status(format!(
-                            "Built scene (run_id={}): spawned={} updated={} despawned={}.",
-                            run_id, spawned, updated, despawned
-                        ));
-                        let msg = format!(
-                            "OK spawned={} updated={} despawned={}.",
-                            spawned, updated, despawned
+            match resp {
+                Ok(r) => {
+                    let (applied, spawned, updated, despawned) = apply_counts(&r.result);
+                    if !applied {
+                        finish_with_error(
+                            &mut runtime,
+                            &mut ui,
+                            &job,
+                            format!("Cleanup rejected by validators (run_id={}).", job.run_id),
                         );
-                        set_progress(&progress, &run_id, &run_dir, format!("Done: {msg}"));
-                        runtime.last_status = Some(SceneBuildAiStatus {
-                            run_id: run_id.clone(),
-                            message: msg,
-                        });
-                    } else {
-                        ui.set_status(format!("Build rejected (run_id={run_id})."));
-                        ui.set_error(format!("Build rejected by validators (run_id={run_id})."));
-                        set_progress(
-                            &progress,
-                            &run_id,
-                            &run_dir,
-                            "Done: rejected by validators.",
-                        );
-                        runtime.last_status = Some(SceneBuildAiStatus {
-                            run_id: run_id.clone(),
-                            message: "Rejected by validators.".to_string(),
-                        });
+                        return;
                     }
+                    ui.set_status(format!(
+                        "Cleanup OK (run_id={}): spawned={} updated={} despawned={}.",
+                        job.run_id, spawned, updated, despawned
+                    ));
+                    job.next_run_step = job.next_run_step.saturating_add(1).max(1);
+
+                    // Start plan request (built after cleanup so it can include any new Gen3D prefabs).
+                    let llm_dir = job.run_dir.join("llm").join("plan");
+                    let _ = std::fs::create_dir_all(&llm_dir);
+
+                    let system_text = build_plan_system_prompt();
+                    let user_text = build_plan_user_prompt(&active, &library, &job.description);
+                    let _ = write_text_artifact(&llm_dir.join("system.txt"), &system_text);
+                    let _ = write_text_artifact(&llm_dir.join("user.txt"), &user_text);
+
+                    set_progress(&job.progress, &job.run_id, &job.run_dir, "Planning steps…");
+
+                    job.shared_result = Arc::new(Mutex::new(None));
+                    spawn_scene_build_llm_thread(
+                        job.shared_result.clone(),
+                        job.progress.clone(),
+                        job.run_id.clone(),
+                        job.run_dir.clone(),
+                        job.openai_base_url.clone(),
+                        job.openai_api_key.clone(),
+                        job.openai_model.clone(),
+                        job.openai_reasoning_effort.clone(),
+                        system_text,
+                        user_text,
+                        llm_dir,
+                        "Plan".to_string(),
+                    );
+
+                    job.phase = SceneBuildAiPhase::PlanRequest;
+                    runtime.in_flight = Some(job);
                 }
                 Err(err) => {
-                    error!("Scene build {run_id} apply/compile failed: {err}");
-                    let short = truncate_text(err.trim(), 240);
-                    set_progress(&progress, &run_id, &run_dir, format!("Failed: {short}"));
-                    ui.set_status(format!("Build failed (run_id={run_id})."));
-                    ui.set_error(err);
-                    runtime.last_status = Some(SceneBuildAiStatus {
-                        run_id: run_id.clone(),
-                        message: format!("Failed: {short}"),
-                    });
+                    finish_with_error(&mut runtime, &mut ui, &job, err);
+                }
+            }
+        }
+        SceneBuildAiPhase::PlanRequest => {
+            let result = take_shared_result(&job.shared_result);
+            let Some(result) = result else {
+                runtime.in_flight = Some(job);
+                return;
+            };
+
+            match result {
+                Err(err) => {
+                    finish_with_error(&mut runtime, &mut ui, &job, err);
+                }
+                Ok(text) => {
+                    let llm_dir = job.run_dir.join("llm").join("plan");
+                    let _ = write_text_artifact(&llm_dir.join("response.txt"), &text);
+
+                    let steps = match parse_plan_steps(&text) {
+                        Ok(steps) => steps,
+                        Err(err) => {
+                            finish_with_error(&mut runtime, &mut ui, &job, err);
+                            return;
+                        }
+                    };
+
+                    if steps.is_empty() {
+                        finish_with_error(
+                            &mut runtime,
+                            &mut ui,
+                            &job,
+                            "Plan returned zero steps.".to_string(),
+                        );
+                        return;
+                    }
+
+                    let steps_doc = serde_json::to_value(&steps).unwrap_or(Value::Null);
+                    let _ = write_json_artifact(&llm_dir.join("parsed_steps.json"), &steps_doc);
+
+                    job.plan_steps = steps;
+
+                    let total = job.plan_steps.len();
+                    let first = &job.plan_steps[0];
+                    set_progress(
+                        &job.progress,
+                        &job.run_id,
+                        &job.run_dir,
+                        format!(
+                            "Plan ready: {total} steps. Starting 1/{total}: {}",
+                            first.title
+                        ),
+                    );
+
+                    start_step_request(&mut job, &active, &library, &src_dir, 0);
+                    runtime.in_flight = Some(job);
+                }
+            }
+        }
+        SceneBuildAiPhase::StepRequest { step_index } => {
+            let result = take_shared_result(&job.shared_result);
+            let Some(result) = result else {
+                runtime.in_flight = Some(job);
+                return;
+            };
+
+            let total = job.plan_steps.len().max(1);
+            let Some(step) = job.plan_steps.get(step_index) else {
+                finish_with_error(
+                    &mut runtime,
+                    &mut ui,
+                    &job,
+                    format!("Internal error: missing plan step {step_index}."),
+                );
+                return;
+            };
+
+            match result {
+                Err(err) => {
+                    finish_with_error(&mut runtime, &mut ui, &job, err);
+                }
+                Ok(text) => {
+                    let llm_dir = job
+                        .run_dir
+                        .join("llm")
+                        .join(format!("step_{:04}", step_index + 1));
+                    let _ = write_text_artifact(&llm_dir.join("response.txt"), &text);
+
+                    let (summary, ops) = match parse_step_ops(&text) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            finish_with_error(&mut runtime, &mut ui, &job, err);
+                            return;
+                        }
+                    };
+
+                    let patch = match wrap_ops_as_patch(&job.run_id, step, step_index, &ops) {
+                        Ok(patch) => patch,
+                        Err(err) => {
+                            finish_with_error(&mut runtime, &mut ui, &job, err);
+                            return;
+                        }
+                    };
+
+                    set_progress(
+                        &job.progress,
+                        &job.run_id,
+                        &job.run_dir,
+                        format!("Applying step {}/{}…", step_index + 1, total),
+                    );
+
+                    let scorecard = default_scorecard();
+                    let existing = scene_instances
+                        .iter()
+                        .map(|(e, t, id, prefab, tint, owner)| SceneWorldInstance {
+                            entity: e,
+                            instance_id: *id,
+                            prefab_id: *prefab,
+                            transform: t.clone(),
+                            tint: tint.map(|t| t.0),
+                            owner_layer_id: owner.map(|o| o.layer_id.clone()),
+                        });
+
+                    let resp = crate::scene_runs::scene_run_apply_patch_step(
+                        &mut commands,
+                        &mut workspace,
+                        &library,
+                        existing,
+                        &job.run_id,
+                        job.next_run_step,
+                        &scorecard,
+                        &patch,
+                    );
+
+                    match resp {
+                        Ok(r) => {
+                            let (applied, spawned, updated, despawned) = apply_counts(&r.result);
+                            if !applied {
+                                finish_with_error(
+                                    &mut runtime,
+                                    &mut ui,
+                                    &job,
+                                    format!(
+                                        "Step {}/{} rejected by validators (run_id={}).",
+                                        step_index + 1,
+                                        total,
+                                        job.run_id
+                                    ),
+                                );
+                                return;
+                            }
+
+                            ui.set_status(format!(
+                                "Step {}/{} OK (run_id={}): spawned={} updated={} despawned={}.",
+                                step_index + 1,
+                                total,
+                                job.run_id,
+                                spawned,
+                                updated,
+                                despawned
+                            ));
+
+                            let short_summary = truncate_text(summary.trim(), 160);
+                            set_progress(
+                                &job.progress,
+                                &job.run_id,
+                                &job.run_dir,
+                                format!(
+                                    "Step {}/{} done: {}",
+                                    step_index + 1,
+                                    total,
+                                    if short_summary.is_empty() {
+                                        "(no summary)".to_string()
+                                    } else {
+                                        short_summary
+                                    }
+                                ),
+                            );
+
+                            job.next_run_step = job.next_run_step.saturating_add(1).max(1);
+
+                            let next = step_index + 1;
+                            if next < job.plan_steps.len() {
+                                start_step_request(&mut job, &active, &library, &src_dir, next);
+                                runtime.in_flight = Some(job);
+                                return;
+                            }
+
+                            runtime.last_status = Some(SceneBuildAiStatus {
+                                run_id: job.run_id.clone(),
+                                message: format!("Done ({total} steps)."),
+                            });
+                            set_progress(
+                                &job.progress,
+                                &job.run_id,
+                                &job.run_dir,
+                                format!("Build complete ({total} steps)."),
+                            );
+                            ui.set_status(format!(
+                                "Build complete (run_id={}, steps={total}).",
+                                job.run_id
+                            ));
+                        }
+                        Err(err) => {
+                            finish_with_error(&mut runtime, &mut ui, &job, err);
+                        }
+                    }
                 }
             }
         }
     }
-
-    runtime.in_flight = None;
 }
+
+fn start_step_request(
+    job: &mut SceneBuildAiJob,
+    active: &ActiveRealmScene,
+    library: &ObjectLibrary,
+    src_dir: &Path,
+    step_index: usize,
+) {
+    let total = job.plan_steps.len().max(1);
+    let Some(step) = job.plan_steps.get(step_index) else {
+        return;
+    };
+
+    let llm_dir = job
+        .run_dir
+        .join("llm")
+        .join(format!("step_{:04}", step_index + 1));
+    let _ = std::fs::create_dir_all(&llm_dir);
+
+    let system_text = build_step_system_prompt();
+    let user_text = build_step_user_prompt(
+        active,
+        library,
+        src_dir,
+        &job.description,
+        step,
+        step_index,
+        total,
+    );
+
+    let _ = write_text_artifact(&llm_dir.join("system.txt"), &system_text);
+    let _ = write_text_artifact(&llm_dir.join("user.txt"), &user_text);
+
+    set_progress(
+        &job.progress,
+        &job.run_id,
+        &job.run_dir,
+        format!("Step {}/{}: {}", step_index + 1, total, step.title),
+    );
+
+    job.shared_result = Arc::new(Mutex::new(None));
+    spawn_scene_build_llm_thread(
+        job.shared_result.clone(),
+        job.progress.clone(),
+        job.run_id.clone(),
+        job.run_dir.clone(),
+        job.openai_base_url.clone(),
+        job.openai_api_key.clone(),
+        job.openai_model.clone(),
+        job.openai_reasoning_effort.clone(),
+        system_text,
+        user_text,
+        llm_dir,
+        format!("Step {}/{}", step_index + 1, total),
+    );
+
+    job.phase = SceneBuildAiPhase::StepRequest { step_index };
+}
+
+fn take_shared_result(
+    shared: &Arc<Mutex<Option<Result<String, String>>>>,
+) -> Option<Result<String, String>> {
+    let Ok(mut guard) = shared.lock() else {
+        return None;
+    };
+    guard.take()
+}
+
+fn finish_with_error(
+    runtime: &mut SceneBuildAiRuntime,
+    ui: &mut SceneAuthoringUiState,
+    job: &SceneBuildAiJob,
+    err: String,
+) {
+    error!("Scene build {} failed: {}", job.run_id, err);
+    ui.set_status(format!("Build failed (run_id={}).", job.run_id));
+    ui.set_error(err.clone());
+    set_progress(
+        &job.progress,
+        &job.run_id,
+        &job.run_dir,
+        format!("Failed: {}", truncate_text(err.trim(), 240)),
+    );
+    runtime.last_status = Some(SceneBuildAiStatus {
+        run_id: job.run_id.clone(),
+        message: format!("Failed: {}", truncate_text(err.trim(), 160)),
+    });
+}
+
 fn default_scorecard() -> ScorecardSpecV1 {
     ScorecardSpecV1 {
         format_version: crate::scene_validation::SCORECARD_FORMAT_VERSION,
@@ -445,82 +684,195 @@ fn default_scorecard() -> ScorecardSpecV1 {
     }
 }
 
-fn build_patch_from_llm_layers(
-    src_dir: &Path,
-    request_id: &str,
-    raw_text: &str,
-) -> Result<SceneSourcesPatchV1, String> {
-    let doc = parse_layers_envelope(raw_text)?;
-    let layers_val = doc
-        .get("layers")
-        .ok_or_else(|| "LLM output missing `layers` field".to_string())?;
-    let layers = layers_val
-        .as_array()
-        .ok_or_else(|| "`layers` must be an array".to_string())?;
+fn apply_counts(result: &Value) -> (bool, u64, u64, u64) {
+    let applied = result
+        .get("applied")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let compile = result.get("compile_report");
+    let spawned = compile
+        .and_then(|c| c.get("spawned"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let updated = compile
+        .and_then(|c| c.get("updated"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let despawned = compile
+        .and_then(|c| c.get("despawned"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    (applied, spawned, updated, despawned)
+}
 
-    let mut desired_layer_docs: Vec<(String, Value)> = Vec::new();
-    for (idx, layer_val) in layers.iter().enumerate() {
-        let mut layer_doc = layer_val.clone();
-        let layer_id = layer_doc
-            .get("layer_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| format!("layers[{idx}] missing layer_id"))?
-            .to_string();
+fn truncate_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(max_chars + 16);
+    for ch in text.chars().take(max_chars) {
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
 
-        if !layer_id.starts_with("ai_") {
-            return Err(format!(
-                "layers[{idx}].layer_id must start with \"ai_\" (got {layer_id})"
-            ));
+fn sanitize_step_id(raw: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if matches!(ch, '_' | '-' | ' ' | '/') {
+            if !out.ends_with('_') {
+                out.push('_');
+            }
         }
+    }
+    let out = out.trim_matches('_').to_string();
+    let out = if out.is_empty() {
+        fallback.to_string()
+    } else {
+        out
+    };
+    out.chars().take(24).collect()
+}
 
-        layer_doc["format_version"] =
-            Value::from(crate::scene_sources::SCENE_SOURCES_FORMAT_VERSION);
-        layer_doc["layer_id"] = Value::from(layer_id.clone());
+fn parse_plan_steps(raw_text: &str) -> Result<Vec<SceneBuildAiPlanStep>, String> {
+    let doc = parse_json_object(raw_text)?;
+    let steps_val = doc
+        .get("steps")
+        .ok_or_else(|| "Plan JSON missing `steps`".to_string())?;
+    let steps = steps_val
+        .as_array()
+        .ok_or_else(|| "Plan `steps` must be an array".to_string())?;
 
-        let kind = layer_doc
-            .get("kind")
+    let mut out = Vec::new();
+    for (idx, step_val) in steps.iter().enumerate() {
+        let obj = step_val
+            .as_object()
+            .ok_or_else(|| format!("steps[{idx}] must be an object"))?;
+        let title = obj
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let goal = obj
+            .get("goal")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let raw_id = obj
+            .get("step_id")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim();
-        if !matches!(
-            kind,
-            "explicit_instances" | "grid_instances" | "polyline_instances"
-        ) {
-            return Err(format!(
-                "layers[{idx}] has unsupported kind {kind:?} (expected explicit_instances|grid_instances|polyline_instances)"
-            ));
-        }
+        let fallback = format!("step_{:02}", idx + 1);
+        let step_id = sanitize_step_id(raw_id, &fallback);
 
-        desired_layer_docs.push((layer_id, layer_doc));
+        let title = if title.is_empty() {
+            format!("Step {}", idx + 1)
+        } else {
+            title
+        };
+
+        out.push(SceneBuildAiPlanStep {
+            step_id,
+            title,
+            goal,
+        });
     }
 
-    let mut desired_layer_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for (layer_id, _doc) in &desired_layer_docs {
-        if !desired_layer_ids.insert(layer_id.clone()) {
-            return Err(format!("Duplicate layer_id in LLM output: {layer_id}"));
+    if out.len() > 12 {
+        out.truncate(12);
+    }
+
+    Ok(out)
+}
+
+fn parse_step_ops(raw_text: &str) -> Result<(String, Vec<SceneSourcesPatchOpV1>), String> {
+    let doc = parse_json_object(raw_text)?;
+
+    let summary = doc
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let ops_val = doc
+        .get("ops")
+        .ok_or_else(|| "Step JSON missing `ops`".to_string())?
+        .clone();
+
+    let mut ops: Vec<SceneSourcesPatchOpV1> =
+        serde_json::from_value(ops_val).map_err(|err| format!("Invalid ops array: {err}"))?;
+
+    for op in ops.iter_mut() {
+        match op {
+            SceneSourcesPatchOpV1::UpsertLayer { layer_id, doc } => {
+                if !layer_id.trim().starts_with("ai_") {
+                    return Err(format!(
+                        "upsert_layer.layer_id must start with ai_ (got {layer_id})"
+                    ));
+                }
+                let obj = doc
+                    .as_object_mut()
+                    .ok_or_else(|| format!("Layer doc for {layer_id} must be an object"))?;
+                obj.insert(
+                    "format_version".to_string(),
+                    Value::from(crate::scene_sources::SCENE_SOURCES_FORMAT_VERSION),
+                );
+                obj.insert("layer_id".to_string(), Value::from(layer_id.clone()));
+            }
+            SceneSourcesPatchOpV1::DeleteLayer { layer_id } => {
+                if !layer_id.trim().starts_with("ai_") {
+                    return Err(format!(
+                        "delete_layer.layer_id must start with ai_ (got {layer_id})"
+                    ));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "Unsupported patch op kind in scene build: {other:?} (only upsert_layer/delete_layer allowed)"
+                ));
+            }
         }
     }
 
+    Ok((summary, ops))
+}
+
+fn wrap_ops_as_patch(
+    run_id: &str,
+    step: &SceneBuildAiPlanStep,
+    step_index: usize,
+    ops: &[SceneSourcesPatchOpV1],
+) -> Result<SceneSourcesPatchV1, String> {
+    let request_id = format!("{}/llm_step_{:04}_{}", run_id, step_index + 1, step.step_id);
+
+    Ok(SceneSourcesPatchV1 {
+        format_version: SCENE_SOURCES_PATCH_FORMAT_VERSION,
+        request_id,
+        ops: ops.to_vec(),
+    })
+}
+
+fn build_delete_ai_layers_patch(
+    src_dir: &Path,
+    run_id: &str,
+) -> Result<SceneSourcesPatchV1, String> {
     let sources = SceneSourcesV1::load_from_dir(src_dir).map_err(|err| err.to_string())?;
-    let existing_ai_layer_ids = existing_layer_ids_with_prefix(&sources, "ai_")?;
+    let layer_ids = existing_layer_ids_with_prefix(&sources, "ai_")?;
 
-    let mut ops: Vec<SceneSourcesPatchOpV1> = Vec::new();
-    for layer_id in existing_ai_layer_ids {
-        if desired_layer_ids.contains(&layer_id) {
-            continue;
-        }
+    let mut ops = Vec::new();
+    for layer_id in layer_ids {
         ops.push(SceneSourcesPatchOpV1::DeleteLayer { layer_id });
-    }
-
-    for (layer_id, doc) in desired_layer_docs {
-        ops.push(SceneSourcesPatchOpV1::UpsertLayer { layer_id, doc });
     }
 
     Ok(SceneSourcesPatchV1 {
         format_version: SCENE_SOURCES_PATCH_FORMAT_VERSION,
-        request_id: request_id.to_string(),
+        request_id: format!("{run_id}/cleanup"),
         ops,
     })
 }
@@ -536,9 +888,13 @@ fn existing_layer_ids_with_prefix(
 
     let mut out = Vec::new();
     for (rel_path, doc) in &sources.extra_json_files {
-        if !is_under_dir(rel_path, &layers_dir) {
+        let Ok(rel) = rel_path.strip_prefix(&layers_dir) else {
+            continue;
+        };
+        if rel.as_os_str().is_empty() {
             continue;
         }
+
         let Some(layer_id) = doc.get("layer_id").and_then(|v| v.as_str()) else {
             continue;
         };
@@ -547,85 +903,128 @@ fn existing_layer_ids_with_prefix(
             out.push(layer_id.to_string());
         }
     }
+
     out.sort();
     out.dedup();
     Ok(out)
 }
 
-fn is_under_dir(path: &Path, dir: &Path) -> bool {
-    let Ok(rel) = path.strip_prefix(dir) else {
-        return false;
-    };
-    !rel.as_os_str().is_empty()
+fn build_plan_system_prompt() -> String {
+    "You are a scene build planner for the game Gravimera.\n\
+Return ONLY valid JSON.\n\
+\n\
+Output schema:\n\
+{\n\
+  \"steps\": [\n\
+    { \"step_id\": \"snake_case\", \"title\": \"...\", \"goal\": \"...\" },\n\
+    ...\n\
+  ]\n\
+}\n\
+\n\
+Rules:\n\
+- Provide 3 to 8 steps.\n\
+- step_id must be lowercase snake_case and short (<= 24 chars).\n\
+- Steps should be ordered from coarse-to-fine so the scene becomes usable early and gains detail later.\n"
+        .to_string()
 }
 
-fn parse_layers_envelope(raw_text: &str) -> Result<Value, String> {
-    let trimmed = raw_text.trim();
-    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
-        return Ok(v);
-    }
-    if let Some(extracted) = extract_json_object(trimmed) {
-        if let Ok(v) = serde_json::from_str::<Value>(&extracted) {
-            return Ok(v);
-        }
-    }
-    Err("Failed to parse LLM output as JSON.".to_string())
+fn build_plan_user_prompt(
+    active: &ActiveRealmScene,
+    library: &ObjectLibrary,
+    description: &str,
+) -> String {
+    let catalog = build_prefab_catalog(library);
+    format!(
+        "Target scene: realm_id={}/ scene_id={}\n\n\
+Scene description:\n\
+{}\n\n\
+Prefab catalog (prefab_id | kind | label):\n\
+{}\n\n\
+Now output JSON with `steps`.\n",
+        active.realm_id, active.scene_id, description, catalog
+    )
 }
 
-fn extract_json_object(text: &str) -> Option<String> {
-    let mut depth = 0i32;
-    let mut start: Option<usize> = None;
-    let mut last: Option<(usize, usize)> = None;
-
-    for (idx, ch) in text.char_indices() {
-        match ch {
-            '{' => {
-                if depth == 0 {
-                    start = Some(idx);
-                }
-                depth = depth.saturating_add(1);
-            }
-            '}' => {
-                if depth > 0 {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        if let Some(s) = start.take() {
-                            last = Some((s, idx + 1));
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    last.map(|(s, e)| text[s..e].to_string())
-}
-
-fn build_system_prompt() -> String {
+fn build_step_system_prompt() -> String {
     "You are a scene generation assistant for the game Gravimera.\n\
 Return ONLY valid JSON.\n\
 \n\
 Output schema:\n\
 {\n\
-  \"layers\": [ <layer_doc>, ... ]\n\
+  \"summary\": \"...\",\n\
+  \"ops\": [ <scene_sources_patch_op>, ... ]\n\
 }\n\
 \n\
+Where each `scene_sources_patch_op` is one of:\n\
+- { \"kind\": \"upsert_layer\", \"layer_id\": \"ai_*\", \"doc\": <layer_doc> }\n\
+- { \"kind\": \"delete_layer\", \"layer_id\": \"ai_*\" }\n\
+\n\
 Rules:\n\
+- Only use the op kinds above.\n\
 - Every layer_id MUST start with \"ai_\".\n\
-- Supported layer kinds: \"explicit_instances\", \"grid_instances\", \"polyline_instances\".\n\
+- For upsert_layer, `doc` MUST be a valid layer JSON document. Supported layer kinds: \"explicit_instances\", \"grid_instances\", \"polyline_instances\".\n\
 - Use only prefab_id values from the provided catalog.\n\
 - Coordinate system: XZ is ground plane, Y is up. Keep objects near the origin.\n\
-- Prefer a small number of layers. Keep instance counts reasonable (hundreds, not tens of thousands).\n\
-- For explicit_instances, each instance MUST have unique local_id.\n"
+- Prefer using your step_id as a namespace in layer_id, e.g. ai_<step_id>_main.\n"
         .to_string()
 }
 
-fn build_user_prompt(
+fn build_step_user_prompt(
     active: &ActiveRealmScene,
     library: &ObjectLibrary,
+    src_dir: &Path,
     description: &str,
+    step: &SceneBuildAiPlanStep,
+    step_index: usize,
+    total_steps: usize,
 ) -> String {
+    let catalog = build_prefab_catalog(library);
+
+    let existing_layers = SceneSourcesV1::load_from_dir(src_dir)
+        .ok()
+        .and_then(|sources| existing_layer_ids_with_prefix(&sources, "ai_").ok())
+        .unwrap_or_default();
+    let mut existing_lines = String::new();
+    for id in existing_layers {
+        existing_lines.push_str(&format!("- {id}\n"));
+    }
+    if existing_lines.trim().is_empty() {
+        existing_lines = "<none>\n".to_string();
+    }
+
+    let step_goal = if step.goal.trim().is_empty() {
+        "(no goal)".to_string()
+    } else {
+        step.goal.trim().to_string()
+    };
+
+    format!(
+        "Target scene: realm_id={}/ scene_id={}\n\n\
+Step {}/{}\n\
+step_id: {}\n\
+step_title: {}\n\
+step_goal: {}\n\n\
+Scene description:\n\
+{}\n\n\
+Existing ai_ layers:\n\
+{}\n\
+Prefab catalog (prefab_id | kind | label):\n\
+{}\n\n\
+Now output JSON with `summary` + `ops`.\n",
+        active.realm_id,
+        active.scene_id,
+        step_index + 1,
+        total_steps,
+        step.step_id,
+        step.title,
+        step_goal,
+        description,
+        existing_lines,
+        catalog
+    )
+}
+
+fn build_prefab_catalog(library: &ObjectLibrary) -> String {
     let mut prefabs: Vec<(String, String, &'static str)> = Vec::new();
     for (id, def) in library.iter() {
         let uuid = uuid::Uuid::from_u128(*id).to_string();
@@ -643,17 +1042,43 @@ fn build_user_prompt(
     for (uuid, label, kind) in prefabs {
         catalog.push_str(&format!("- {uuid} | {kind} | {label}\n"));
     }
+    catalog
+}
 
-    format!(
-        "Target scene: realm_id={}/ scene_id={}\n\n\
-Scene description:\n\
-{}\n\n\
-Prefab catalog (prefab_id | kind | label):\n\
-{}\n\n\
-Now output JSON with `layers`.\n\
-Hint: If you need bespoke placement, use one explicit_instances layer (ai_main).\n",
-        active.realm_id, active.scene_id, description, catalog
-    )
+fn spawn_scene_build_llm_thread(
+    shared: Arc<Mutex<Option<Result<String, String>>>>,
+    progress: Arc<Mutex<SceneBuildAiProgress>>,
+    run_id: String,
+    run_dir: PathBuf,
+    base_url: String,
+    api_key: String,
+    model: String,
+    reasoning_effort: String,
+    system_text: String,
+    user_text: String,
+    llm_dir: PathBuf,
+    label: String,
+) {
+    let _ = std::thread::Builder::new()
+        .name(format!("gravimera_scene_build_ai_{run_id}"))
+        .spawn(move || {
+            let res = call_openai_chat_json_object(
+                &progress,
+                &run_id,
+                &run_dir,
+                &label,
+                &base_url,
+                &api_key,
+                &model,
+                &reasoning_effort,
+                &system_text,
+                &user_text,
+                &llm_dir,
+            );
+            if let Ok(mut guard) = shared.lock() {
+                *guard = Some(res);
+            }
+        });
 }
 
 struct TempSecretFile {
@@ -716,6 +1141,7 @@ fn call_openai_chat_json_object(
     progress: &Arc<Mutex<SceneBuildAiProgress>>,
     run_id: &str,
     run_dir: &Path,
+    label: &str,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -730,7 +1156,7 @@ fn call_openai_chat_json_object(
         progress,
         run_id,
         run_dir,
-        format!("Sending OpenAI request (model={model})…"),
+        format!("{label}: preparing request (model={model})…"),
     );
 
     let mut body_json = serde_json::json!({
@@ -752,12 +1178,25 @@ fn call_openai_chat_json_object(
     let auth_headers = match curl_auth_header_file(api_key) {
         Ok(headers) => headers,
         Err(err) => {
-            set_progress(progress, run_id, run_dir, format!("Failed: {err}"));
+            set_progress(progress, run_id, run_dir, format!("{label}: failed: {err}"));
             return Err(err);
         }
     };
 
-    set_progress(progress, run_id, run_dir, "Waiting for OpenAI response…");
+    set_progress(
+        progress,
+        run_id,
+        run_dir,
+        format!("{label}: waiting for AI slot…"),
+    );
+    let _permit = crate::ai_limiter::acquire_permit();
+
+    set_progress(
+        progress,
+        run_id,
+        run_dir,
+        format!("{label}: waiting for response…"),
+    );
     let started = std::time::Instant::now();
 
     let mut cmd = std::process::Command::new("curl");
@@ -781,14 +1220,9 @@ fn call_openai_chat_json_object(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(err) => {
-            let msg = format!("Failed to start curl: {err}");
-            set_progress(progress, run_id, run_dir, format!("Failed: {msg}"));
-            return Err(msg);
-        }
-    };
+    let mut child = cmd
+        .spawn()
+        .map_err(|err| format!("Failed to start curl: {err}"))?;
 
     if let Some(stdin) = child.stdin.as_mut() {
         use std::io::Write;
@@ -806,17 +1240,15 @@ fn call_openai_chat_json_object(
         progress,
         run_id,
         run_dir,
-        format!("Received response ({elapsed:.1}s). Parsing…"),
+        format!("{label}: received response ({elapsed:.1}s). Parsing…"),
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() {
-        let msg = format!(
+        return Err(format!(
             "curl exited with non-zero status: {}",
             truncate_text(stderr.trim(), 1200)
-        );
-        set_progress(progress, run_id, run_dir, format!("Failed: {msg}"));
-        return Err(msg);
+        ));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -828,12 +1260,10 @@ fn call_openai_chat_json_object(
         status_code.ok_or_else(|| "Missing HTTP status marker in curl output.".to_string())?;
 
     if !(200..=299).contains(&status_code) {
-        let msg = format!(
+        return Err(format!(
             "OpenAI request failed (HTTP {status_code}). Body (truncated): {}",
             truncate_text(body.trim(), 1200)
-        );
-        set_progress(progress, run_id, run_dir, "OpenAI request failed.");
-        return Err(msg);
+        ));
     }
 
     let json: Value = serde_json::from_str(body.trim()).map_err(|err| {
@@ -854,25 +1284,7 @@ fn call_openai_chat_json_object(
         .ok_or_else(|| "OpenAI response missing choices[0].message.content".to_string())?
         .to_string();
 
-    set_progress(
-        progress,
-        run_id,
-        run_dir,
-        "OpenAI response parsed. Waiting for apply step…",
-    );
     Ok(text)
-}
-
-fn truncate_text(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out = String::with_capacity(max_chars + 16);
-    for ch in text.chars().take(max_chars) {
-        out.push(ch);
-    }
-    out.push('…');
-    out
 }
 
 fn write_text_artifact(path: &Path, text: &str) -> Result<(), String> {
@@ -893,4 +1305,47 @@ fn write_json_artifact(path: &Path, json: &Value) -> Result<(), String> {
         .map_err(|err| format!("json serialize failed: {err}"))?;
     std::fs::write(path, format!("{text}\n"))
         .map_err(|err| format!("Failed to write {}: {err}", path.display()))
+}
+
+fn parse_json_object(raw_text: &str) -> Result<Value, String> {
+    let trimmed = raw_text.trim();
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        return Ok(v);
+    }
+    if let Some(extracted) = extract_json_object(trimmed) {
+        if let Ok(v) = serde_json::from_str::<Value>(&extracted) {
+            return Ok(v);
+        }
+    }
+    Err("Failed to parse LLM output as JSON.".to_string())
+}
+
+fn extract_json_object(text: &str) -> Option<String> {
+    let mut depth = 0i32;
+    let mut start: Option<usize> = None;
+    let mut last: Option<(usize, usize)> = None;
+
+    for (idx, ch) in text.char_indices() {
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    start = Some(idx);
+                }
+                depth = depth.saturating_add(1);
+            }
+            '}' => {
+                if depth > 0 {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        if let Some(s) = start.take() {
+                            last = Some((s, idx + 1));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    last.map(|(s, e)| text[s..e].to_string())
 }

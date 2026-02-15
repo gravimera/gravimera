@@ -1124,6 +1124,7 @@ fn openai_responses_flow(
             ));
 
             let url = crate::config::join_base_url(base_url, &format!("responses/{id}"));
+            let _permit = crate::ai_limiter::acquire_permit();
             let poll = std::process::Command::new("curl")
                 .arg("-sS")
                 .arg("--connect-timeout")
@@ -1528,6 +1529,8 @@ fn openai_responses_curl(
             probe_only
         ),
     );
+    set_progress(progress, "Waiting for AI slot…");
+    let _permit = crate::ai_limiter::acquire_permit();
     set_progress(progress, "Sending request…");
     let auth_headers = curl_auth_header_file(api_key).map_err(|err| OpenAiError {
         summary: format!("Failed to create curl auth header file: {err}"),
@@ -1698,6 +1701,8 @@ fn openai_chat_completions_curl(
             expected_schema.is_some()
         ),
     );
+    set_progress(progress, "Waiting for AI slot…");
+    let _permit = crate::ai_limiter::acquire_permit();
     set_progress(progress, "Sending request…");
     let auth_headers = curl_auth_header_file(api_key).map_err(|err| OpenAiError {
         summary: format!("Failed to create curl auth header file: {err}"),
