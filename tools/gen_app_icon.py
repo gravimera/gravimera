@@ -6,7 +6,7 @@ Outputs:
   - assets/icon.png      (1024x1024 PNG)
   - assets/icon_64.png   (64x64 PNG, good for window icons)
   - assets/icon.ico      (Windows ICO with embedded PNG sizes)
-  - assets/icon.icns     (macOS ICNS; requires `iconutil`)
+  - assets/icon.icns     (macOS ICNS; pure Python writer)
 
 This script is deterministic and uses a tiny built-in PNG encoder (no Pillow).
 """
@@ -14,9 +14,7 @@ This script is deterministic and uses a tiny built-in PNG encoder (no Pillow).
 from __future__ import annotations
 
 import math
-import shutil
 import struct
-import subprocess
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,179 +98,348 @@ def flatten(grid: list[list[Rgba]]) -> bytes:
 
 
 def render_base_pixels() -> tuple[int, bytes]:
-    base = 32
+    base = 64
 
-    def c(r: int, g: int, b: int) -> Rgba:
+    def clamp01(v: float) -> float:
+        return 0.0 if v < 0.0 else (1.0 if v > 1.0 else v)
+
+    def lerp(a: float, b: float, t: float) -> float:
+        return a + (b - a) * t
+
+    def lerp3(a: tuple[float, float, float], b: tuple[float, float, float], t: float) -> tuple[float, float, float]:
+        return (lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t))
+
+    def add3(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple[float, float, float]:
+        return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+    def sub3(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple[float, float, float]:
+        return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+    def mul3(a: tuple[float, float, float], s: float) -> tuple[float, float, float]:
+        return (a[0] * s, a[1] * s, a[2] * s)
+
+    def dot3(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+    def cross3(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple[float, float, float]:
+        return (
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        )
+
+    def len3(v: tuple[float, float, float]) -> float:
+        return math.sqrt(dot3(v, v))
+
+    def norm3(v: tuple[float, float, float]) -> tuple[float, float, float]:
+        l = len3(v)
+        if l <= 1e-9:
+            return (0.0, 0.0, 0.0)
+        return (v[0] / l, v[1] / l, v[2] / l)
+
+    def rot_x(p: tuple[float, float, float], a: float) -> tuple[float, float, float]:
+        ca, sa = math.cos(a), math.sin(a)
+        return (p[0], p[1] * ca - p[2] * sa, p[1] * sa + p[2] * ca)
+
+    def rot_y(p: tuple[float, float, float], a: float) -> tuple[float, float, float]:
+        ca, sa = math.cos(a), math.sin(a)
+        return (p[0] * ca + p[2] * sa, p[1], -p[0] * sa + p[2] * ca)
+
+    def sd_sphere(p: tuple[float, float, float], r: float) -> float:
+        return len3(p) - r
+
+    def sd_box(p: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+        qx = abs(p[0]) - b[0]
+        qy = abs(p[1]) - b[1]
+        qz = abs(p[2]) - b[2]
+        ox = max(qx, 0.0)
+        oy = max(qy, 0.0)
+        oz = max(qz, 0.0)
+        outside = math.sqrt(ox * ox + oy * oy + oz * oz)
+        inside = min(max(qx, max(qy, qz)), 0.0)
+        return outside + inside
+
+    def sd_capped_cylinder_y(p: tuple[float, float, float], r: float, h: float) -> float:
+        dx = math.sqrt(p[0] * p[0] + p[2] * p[2]) - r
+        dy = abs(p[1]) - h
+        ox = max(dx, 0.0)
+        oy = max(dy, 0.0)
+        outside = math.sqrt(ox * ox + oy * oy)
+        inside = min(max(dx, dy), 0.0)
+        return outside + inside
+
+    # Cute, bright palette (sRGB-ish, stored as linear-ish floats for simple math).
+    bg_a = (0.47, 0.90, 1.00)  # cyan
+    bg_b = (1.00, 0.49, 0.88)  # pink
+    bg_glow = (1.00, 0.96, 0.72)  # soft yellow
+    outline = (0.18, 0.10, 0.30)  # deep purple
+    cube_col = (0.10, 0.92, 0.80)  # mint/teal
+    sphere_col = (1.00, 0.38, 0.72)  # bubblegum pink
+    cyl_col = (1.00, 0.85, 0.30)  # sunny yellow
+
+    pixels: list[list[Rgba]] = [[Rgba(0, 0, 0, 255) for _ in range(base)] for _ in range(base)]
+    mat: list[list[int]] = [[0 for _ in range(base)] for _ in range(base)]
+
+    def to_rgba(c: tuple[float, float, float]) -> Rgba:
+        r = int(clamp01(c[0]) * 255 + 0.5)
+        g = int(clamp01(c[1]) * 255 + 0.5)
+        b = int(clamp01(c[2]) * 255 + 0.5)
         return Rgba(r, g, b, 255)
 
-    bg0 = c(10, 12, 24)
-    bg1 = c(14, 18, 34)
-    bg2 = c(18, 26, 48)
-    border = c(4, 5, 10)
-    star1 = c(220, 232, 255)
-    star2 = c(170, 190, 230)
+    # Background: bright gradient + warm glow + gentle vignette.
+    for y in range(base):
+        for x in range(base):
+            u = (x + 0.5) / base
+            v = (y + 0.5) / base
 
-    stone0 = c(62, 66, 78)
-    stone1 = c(96, 102, 118)
-    stone2 = c(134, 140, 160)
-    stone3 = c(188, 194, 208)
-    stone_outline = c(20, 22, 30)
+            t = clamp01(0.58 * u + 0.42 * (1.0 - v))
+            c = lerp3(bg_a, bg_b, t)
 
-    teal_dark = c(14, 118, 112)
-    teal = c(34, 190, 172)
-    teal_light = c(84, 232, 214)
-    teal_outline = c(8, 44, 46)
+            dx = u - 0.52
+            dy = v - 0.55
+            glow = math.exp(-(dx * dx + dy * dy) / 0.035)
+            c = lerp3(c, bg_glow, glow * 0.70)
 
-    pixels: list[list[Rgba]] = [[bg0 for _ in range(base)] for _ in range(base)]
+            # Vignette so the center pops at small sizes.
+            ex = (u - 0.5) / 0.55
+            ey = (v - 0.5) / 0.55
+            edge = clamp01(math.sqrt(ex * ex + ey * ey))
+            c = mul3(c, 1.0 - 0.14 * (edge * edge))
+
+            pixels[y][x] = to_rgba(c)
+
+    # Little sparkles (kept sparse so the icon doesn't get noisy at 16x16).
+    sparkle = (1.0, 1.0, 1.0)
+    sparkle2 = (0.95, 0.98, 1.0)
+    sparkles = [
+        (10, 14),
+        (18, 8),
+        (46, 12),
+        (54, 22),
+        (14, 46),
+        (50, 44),
+    ]
+    for sx, sy in sparkles:
+        if 1 <= sx < base - 1 and 1 <= sy < base - 1:
+            pixels[sy][sx] = to_rgba(sparkle)
+            for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                pixels[sy + dy][sx + dx] = to_rgba(sparkle2)
+
+    # Soft shadow under the primitives to anchor them.
+    for y in range(base):
+        for x in range(base):
+            u = (x + 0.5) / base
+            v = (y + 0.5) / base
+            dx = (u - 0.52) / 0.24
+            dy = (v - 0.83) / 0.08
+            d = dx * dx + dy * dy
+            if d <= 1.0:
+                w = (1.0 - d) ** 2
+                cur = pixels[y][x]
+                c = (cur.r / 255.0, cur.g / 255.0, cur.b / 255.0)
+                c = mul3(c, 1.0 - 0.22 * w)
+                pixels[y][x] = to_rgba(c)
+
+    # 3D-ish primitives via a tiny SDF ray marcher (cute toy look).
+    light_dir = norm3((-0.62, 0.78, 0.35))
+    cam_pos = (0.0, 0.38, 3.25)
+    cam_target = (0.0, 0.05, 0.0)
+    cam_fwd = norm3(sub3(cam_target, cam_pos))
+    cam_right = norm3(cross3(cam_fwd, (0.0, 1.0, 0.0)))
+    cam_up = cross3(cam_right, cam_fwd)
+    fov = 1.05
+
+    cube_center = (0.0, -0.55, 0.35)
+    cube_half = (0.70, 0.70, 0.70)
+    cube_rot_y = -0.55
+    cube_rot_x = 0.25
+
+    sphere_center = (-1.00, 0.38, -0.18)
+    sphere_r = 0.58
+
+    cyl_center = (1.05, 0.35, -0.18)
+    cyl_r = 0.40
+    cyl_h = 0.62
+
+    def cube_local(p: tuple[float, float, float]) -> tuple[float, float, float]:
+        q = sub3(p, cube_center)
+        q = rot_y(q, -cube_rot_y)
+        q = rot_x(q, -cube_rot_x)
+        return q
+
+    def scene(p: tuple[float, float, float]) -> tuple[float, int]:
+        # 1=cube, 2=sphere, 3=cylinder
+        q = cube_local(p)
+        d1 = sd_box(q, cube_half)
+        d2 = sd_sphere(sub3(p, sphere_center), sphere_r)
+        d3 = sd_capped_cylinder_y(sub3(p, cyl_center), cyl_r, cyl_h)
+
+        d = d1
+        m = 1
+        if d2 < d:
+            d, m = d2, 2
+        if d3 < d:
+            d, m = d3, 3
+        return d, m
+
+    def scene_dist(p: tuple[float, float, float]) -> float:
+        return min(
+            sd_box(cube_local(p), cube_half),
+            sd_sphere(sub3(p, sphere_center), sphere_r),
+            sd_capped_cylinder_y(sub3(p, cyl_center), cyl_r, cyl_h),
+        )
+
+    def shade_quantize(v: float) -> float:
+        if v < 0.45:
+            return 0.42
+        if v < 0.63:
+            return 0.58
+        if v < 0.80:
+            return 0.76
+        return 0.92
+
+    def soft_shadow(p: tuple[float, float, float], n: tuple[float, float, float]) -> float:
+        # A few cheap steps are enough for an icon; keeps it cute/toony.
+        t = 0.035
+        for _ in range(18):
+            h = scene_dist(add3(p, mul3(light_dir, t)))
+            if h < 0.004:
+                return 0.55
+            t += h
+            if t > 3.0:
+                break
+        return 1.0
+
+    def apply_cute_face(
+        base_c: tuple[float, float, float],
+        p_world: tuple[float, float, float],
+        n_world: tuple[float, float, float],
+        mat_id: int,
+    ) -> tuple[float, float, float]:
+        if mat_id != 1:
+            return base_c
+
+        p = cube_local(p_world)
+
+        # Only draw the face on the "front" local +Z face.
+        if abs(p[2] - cube_half[2]) > 0.065:
+            return base_c
+
+        u = (p[0] / cube_half[0] + 1.0) * 0.5  # 0..1
+        v = (p[1] / cube_half[1] + 1.0) * 0.5  # 0..1 (bottom..top)
+        if not (0.0 <= u <= 1.0 and 0.0 <= v <= 1.0):
+            return base_c
+
+        # Keep face features away from the outline.
+        if u < 0.10 or u > 0.90 or v < 0.12 or v > 0.90:
+            return base_c
+
+        # Eyes.
+        eye_white = (0.98, 0.99, 1.00)
+        pupil = (0.14, 0.08, 0.24)
+        blush = (1.00, 0.63, 0.80)
+
+        def ellipse(px: float, py: float, cx: float, cy: float, rx: float, ry: float) -> bool:
+            dx = (px - cx) / rx
+            dy = (py - cy) / ry
+            return dx * dx + dy * dy <= 1.0
+
+        # Slightly larger eyes reads better at small sizes.
+        for cx in (0.36, 0.64):
+            if ellipse(u, v, cx, 0.66, 0.08, 0.11):
+                # Iris/pupil
+                if ellipse(u, v, cx + 0.012, 0.64, 0.035, 0.055):
+                    return pupil
+                # Highlight
+                if ellipse(u, v, cx - 0.020, 0.70, 0.018, 0.022):
+                    return (1.0, 1.0, 1.0)
+                return eye_white
+
+        # Blush dots.
+        if ellipse(u, v, 0.22, 0.50, 0.055, 0.040) or ellipse(u, v, 0.78, 0.50, 0.055, 0.040):
+            return lerp3(base_c, blush, 0.65)
+
+        # Small smile.
+        du = u - 0.50
+        dv = v - 0.38
+        curve = 0.10 * (du * du)  # gentle upward curve
+        if abs(dv - curve) < 0.018 and abs(du) < 0.16 and v < 0.46:
+            return pupil
+
+        # Tiny "nose" dot helps the face read at 16x16.
+        if (du * du + (v - 0.45) * (v - 0.45)) < 0.0065:
+            return lerp3(base_c, pupil, 0.35)
+
+        return base_c
 
     for y in range(base):
         for x in range(base):
-            t = (x + y) / (2 * (base - 1))
-            if t < 0.33:
-                pixels[y][x] = bg2
-            elif t < 0.66:
-                pixels[y][x] = bg1
-            else:
-                pixels[y][x] = bg0
+            sx = ((x + 0.5) / base) * 2.0 - 1.0
+            sy = 1.0 - ((y + 0.5) / base) * 2.0
+            rd = norm3(
+                add3(
+                    add3(mul3(cam_right, sx * fov), mul3(cam_up, sy * fov)),
+                    cam_fwd,
+                )
+            )
 
-    for x in range(base):
-        pixels[0][x] = border
-        pixels[base - 1][x] = border
-    for y in range(base):
-        pixels[y][0] = border
-        pixels[y][base - 1] = border
+            t = 0.0
+            hit_m = 0
+            hit_p = (0.0, 0.0, 0.0)
+            for _ in range(84):
+                p = add3(cam_pos, mul3(rd, t))
+                d, m = scene(p)
+                if d < 0.002:
+                    hit_m = m
+                    hit_p = p
+                    break
+                t += d
+                if t > 7.0:
+                    break
 
-    stars = [
-        (4, 5, 0),
-        (10, 3, 1),
-        (26, 6, 0),
-        (28, 12, 1),
-        (6, 22, 1),
-        (13, 26, 0),
-        (22, 25, 1),
-        (2, 15, 0),
-    ]
-    for x, y, kind in stars:
-        if 0 < x < base - 1 and 0 < y < base - 1:
-            pixels[y][x] = star1 if kind == 0 else star2
-            if kind == 0:
-                for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-                    xx, yy = x + dx, y + dy
-                    if 0 < xx < base - 1 and 0 < yy < base - 1:
-                        pixels[yy][xx] = star2
-
-    cx, cy = 16, 17
-    r = 11
-    lx, ly, lz = -0.6, -0.8, 0.4
-    ln = math.sqrt(lx * lx + ly * ly + lz * lz)
-    lx, ly, lz = lx / ln, ly / ln, lz / ln
-
-    inside: list[list[bool]] = [[False for _ in range(base)] for _ in range(base)]
-    for y in range(1, base - 1):
-        for x in range(1, base - 1):
-            dx = (x - cx) / r
-            dy = (y - cy) / r
-            d2 = dx * dx + dy * dy
-            if d2 <= 1.0:
-                inside[y][x] = True
-                nz = math.sqrt(max(0.0, 1.0 - d2))
-                dot = max(0.0, dx * lx + dy * ly + nz * lz)
-                dot = dot * (0.65 + 0.35 * nz)
-                if dot > 0.74:
-                    pixels[y][x] = stone3
-                elif dot > 0.50:
-                    pixels[y][x] = stone2
-                elif dot > 0.26:
-                    pixels[y][x] = stone1
-                else:
-                    pixels[y][x] = stone0
-
-    for ccx, ccy, cr in [(13, 15, 2), (20, 20, 3), (11, 22, 2)]:
-        for y in range(ccy - cr - 1, ccy + cr + 2):
-            for x in range(ccx - cr - 1, ccx + cr + 2):
-                if not (0 <= x < base and 0 <= y < base):
-                    continue
-                if not inside[y][x]:
-                    continue
-                dd = (x - ccx) * (x - ccx) + (y - ccy) * (y - ccy)
-                if dd <= cr * cr:
-                    pixels[y][x] = stone0
-                if dd == cr * cr:
-                    pixels[y][x] = stone1
-        hx, hy = ccx - 1, ccy - 1
-        if 0 <= hx < base and 0 <= hy < base and inside[hy][hx]:
-            pixels[hy][hx] = stone2
-
-    a = 6.8
-    b = 6.8
-    thick = 2.1
-    letter: list[list[bool]] = [[False for _ in range(base)] for _ in range(base)]
-    for y in range(1, base - 1):
-        for x in range(1, base - 1):
-            if not inside[y][x]:
+            if hit_m == 0:
                 continue
-            dx = x - cx
-            dy = y - cy
-            if abs(dx) > 9 or abs(dy) > 9:
-                continue
-            outer = (dx / a) ** 2 + (dy / b) ** 2 <= 1.0
-            inner_a = max(1.0, a - thick)
-            inner_b = max(1.0, b - thick)
-            inner = (dx / inner_a) ** 2 + (dy / inner_b) ** 2 <= 1.0
-            ring = outer and not inner
-            if ring and dx >= 2 and dy <= -2:
-                ring = False
-            fill = ring
-            if -1 <= dy <= 0 and dx >= 0 and (dx / a) ** 2 + (dy / b) ** 2 <= 1.0:
-                fill = True
-            if fill:
-                letter[y][x] = True
 
+            e = 0.0025
+            nx = scene_dist(add3(hit_p, (e, 0.0, 0.0))) - scene_dist(add3(hit_p, (-e, 0.0, 0.0)))
+            ny = scene_dist(add3(hit_p, (0.0, e, 0.0))) - scene_dist(add3(hit_p, (0.0, -e, 0.0)))
+            nz = scene_dist(add3(hit_p, (0.0, 0.0, e))) - scene_dist(add3(hit_p, (0.0, 0.0, -e)))
+            n = norm3((nx, ny, nz))
+
+            base_c = cube_col if hit_m == 1 else (sphere_col if hit_m == 2 else cyl_col)
+
+            ndl = max(0.0, dot3(n, light_dir))
+            ambient = 0.34
+            raw = ambient + 0.92 * ndl
+            raw *= soft_shadow(hit_p, n)
+            shade = shade_quantize(raw)
+
+            view_dir = mul3(rd, -1.0)
+            half_v = norm3(add3(light_dir, view_dir))
+            spec = pow(max(0.0, dot3(n, half_v)), 80.0) * 0.55
+            rim = pow(1.0 - max(0.0, dot3(n, view_dir)), 2.0) * 0.10
+
+            c = add3(mul3(base_c, shade), (spec + rim, spec + rim, spec + rim))
+            c = apply_cute_face(c, hit_p, n, hit_m)
+            pixels[y][x] = to_rgba(c)
+            mat[y][x] = hit_m
+
+    # Outline pass for readability at 16x16.
     for y in range(1, base - 1):
         for x in range(1, base - 1):
-            if not letter[y][x]:
-                continue
-            for oy in (-1, 0, 1):
-                for ox in (-1, 0, 1):
-                    if ox == 0 and oy == 0:
-                        continue
-                    xx, yy = x + ox, y + oy
-                    if (
-                        0 <= xx < base
-                        and 0 <= yy < base
-                        and inside[yy][xx]
-                        and not letter[yy][xx]
-                    ):
-                        pixels[yy][xx] = teal_outline
-
-    for y in range(1, base - 1):
-        for x in range(1, base - 1):
-            if not letter[y][x]:
-                continue
-            dx = x - cx
-            dy = y - cy
-            if dx + dy < 0:
-                pixels[y][x] = teal_light
-            elif dx - dy > 2:
-                pixels[y][x] = teal_dark
-            else:
-                pixels[y][x] = teal
-
-    for y in range(1, base - 1):
-        for x in range(1, base - 1):
-            if not inside[y][x]:
+            m = mat[y][x]
+            if m == 0:
                 continue
             if (
-                not inside[y][x + 1]
-                or not inside[y][x - 1]
-                or not inside[y + 1][x]
-                or not inside[y - 1][x]
+                mat[y][x - 1] != m
+                or mat[y][x + 1] != m
+                or mat[y - 1][x] != m
+                or mat[y + 1][x] != m
             ):
-                pixels[y][x] = stone_outline
-
-    for x, y in [(12, 9), (14, 8), (16, 8), (10, 11)]:
-        if 0 <= x < base and 0 <= y < base and inside[y][x]:
-            pixels[y][x] = stone3
+                cur = pixels[y][x]
+                c = (cur.r / 255.0, cur.g / 255.0, cur.b / 255.0)
+                c = lerp3(c, outline, 0.55)
+                pixels[y][x] = to_rgba(c)
 
     return base, flatten(pixels)
 
@@ -301,6 +468,36 @@ def write_ico(path: Path, size_to_png_bytes: dict[int, bytes]) -> None:
             f.write(payload)
 
 
+def write_icns(path: Path, size_to_png_bytes: dict[int, bytes]) -> None:
+    # https://en.wikipedia.org/wiki/Apple_Icon_Image_format
+    # Modern ICNS stores PNG payloads in type-tagged chunks.
+    tag_for_size: dict[int, bytes] = {
+        16: b"icp4",
+        32: b"icp5",
+        64: b"icp6",
+        128: b"ic07",
+        256: b"ic08",
+        512: b"ic09",
+        1024: b"ic10",
+    }
+
+    chunks: list[bytes] = []
+    for size in sorted(size_to_png_bytes.keys()):
+        tag = tag_for_size.get(size)
+        if not tag:
+            continue
+        data = size_to_png_bytes[size]
+        chunks.append(tag + struct.pack(">I", 8 + len(data)) + data)
+
+    payload = b"".join(chunks)
+    header = b"icns" + struct.pack(">I", 8 + len(payload))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(header)
+        f.write(payload)
+
+
 def main() -> None:
     base_size, base_bytes = render_base_pixels()
 
@@ -320,43 +517,27 @@ def main() -> None:
 
     write_ico(Path("assets/icon.ico"), ico_pngs)
 
-    iconutil = shutil.which("iconutil")
-    if not iconutil:
-        raise SystemExit("`iconutil` not found; cannot build assets/icon.icns")
+    icns_sizes = [16, 32, 64, 128, 256, 512, 1024]
+    icns_pngs: dict[int, bytes] = {}
+    for size in icns_sizes:
+        if size in ico_pngs:
+            icns_pngs[size] = ico_pngs[size]
+            continue
+        if size == 64:
+            icns_pngs[size] = Path("assets/icon_64.png").read_bytes()
+            continue
+        if size == 1024:
+            icns_pngs[size] = Path("assets/icon.png").read_bytes()
+            continue
+        if size == 512:
+            tmp_512 = Path("target/tmp_icon_512.png")
+            write_png(tmp_512, 512, 512, scale_square_image(base_bytes, base_size, 512))
+            icns_pngs[size] = tmp_512.read_bytes()
+            continue
+        raise RuntimeError(f"Missing ICNS PNG for size {size}")
 
-    iconset = Path("target/gravimera.iconset")
-    if iconset.exists():
-        shutil.rmtree(iconset)
-    iconset.mkdir(parents=True, exist_ok=True)
+    write_icns(Path("assets/icon.icns"), icns_pngs)
 
-    def copy_png(src: Path, dst_name: str) -> None:
-        (iconset / dst_name).write_bytes(src.read_bytes())
-
-    # Reuse the already written sizes where possible.
-    copy_png(Path("target/tmp_icon_16.png"), "icon_16x16.png")
-    copy_png(Path("target/tmp_icon_32.png"), "icon_16x16@2x.png")
-    copy_png(Path("target/tmp_icon_32.png"), "icon_32x32.png")
-    copy_png(Path("assets/icon_64.png"), "icon_32x32@2x.png")
-
-    copy_png(Path("target/tmp_icon_128.png"), "icon_128x128.png")
-    copy_png(Path("target/tmp_icon_256.png"), "icon_128x128@2x.png")
-    copy_png(Path("target/tmp_icon_256.png"), "icon_256x256.png")
-
-    tmp_512 = Path("target/tmp_icon_512.png")
-    write_png(
-        tmp_512,
-        512,
-        512,
-        scale_square_image(base_bytes, base_size, 512),
-    )
-    copy_png(tmp_512, "icon_256x256@2x.png")
-    copy_png(tmp_512, "icon_512x512.png")
-
-    copy_png(Path("assets/icon.png"), "icon_512x512@2x.png")
-
-    subprocess.check_call([iconutil, "-c", "icns", str(iconset), "-o", "assets/icon.icns"])
-
-    shutil.rmtree(iconset)
     for tmp in Path("target").glob("tmp_icon_*.png"):
         tmp.unlink()
 
