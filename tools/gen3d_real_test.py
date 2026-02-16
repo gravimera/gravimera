@@ -56,7 +56,7 @@ def _parse_automation_bind(config_text: str) -> str:
         m = re.match(r'bind\s*=\s*"([^"]+)"\s*$', line)
         if m:
             return m.group(1)
-    raise ValueError("config.toml: missing [automation].bind (example: bind = \"127.0.0.1:8792\")")
+    raise ValueError("config.toml: missing [automation].bind (example: bind = \"127.0.0.1:18792\")")
 
 
 def _parse_scene_dat_path(config_text: str) -> str | None:
