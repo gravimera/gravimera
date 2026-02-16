@@ -218,7 +218,7 @@ def render_base_pixels() -> tuple[int, bytes]:
     cube_rot_y = -0.68
     cube_rot_x = 0.36
 
-    sphere_center = (1.05, 0.12, 0.68)
+    sphere_center = (0.88, -0.15, 0.60)
     sphere_r = 0.60
 
     cone_center = (-0.30, 0.96, 0.15)
