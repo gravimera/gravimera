@@ -30,7 +30,7 @@ You can see it working by:
 - [x] (2026-02-16 05:41Z) Replaced “missing size” fallbacks that used `BUILD_UNIT_SIZE` with a stable meter-based default.
 - [x] (2026-02-16 05:41Z) Updated docs (`README.md`) to state the unit contract and grid step.
 - [x] (2026-02-16 05:41Z) Ran `cargo test` and the headless smoke test.
-- [ ] Commit with a clear message.
+- [x] (2026-02-16 05:41Z) Committed changes (`14b0730`).
 
 ## Surprises & Discoveries
 
