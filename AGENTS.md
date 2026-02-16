@@ -1,6 +1,3 @@
-Gravimera is a Minecraft like game.
-=====
-
 Note:
 1. Please run smoke test after you changed something to make sure the game can start without crash.
 2. Update the README.md file to match the code.
