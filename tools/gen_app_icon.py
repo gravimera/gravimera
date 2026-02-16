@@ -208,20 +208,20 @@ def render_base_pixels() -> tuple[int, bytes]:
     cam_fwd = norm3(sub3(cam_target, cam_pos))
     cam_right = norm3(cross3(cam_fwd, (0.0, 1.0, 0.0)))
     cam_up = cross3(cam_right, cam_fwd)
-    fov = 0.92
+    fov = 0.80
 
     light_dir = norm3((-0.65, 0.78, 0.28))
 
     # Scene: a mint "block" + a floating pink orb + a cone hat (Gravimera = build + magic/AI).
-    cube_center = (-0.10, -0.52, 0.35)
+    cube_center = (0.03, -0.14, 0.35)
     cube_half = (0.98, 0.98, 0.98)
     cube_rot_y = -0.68
     cube_rot_x = 0.36
 
-    sphere_center = (0.88, -0.15, 0.60)
+    sphere_center = (1.01, 0.23, 0.60)
     sphere_r = 0.60
 
-    cone_center = (-0.30, 0.96, 0.15)
+    cone_center = (-0.17, 1.34, 0.15)
     cone_r = 0.66
     cone_h = 0.54
     cone_rot_y = -0.35
