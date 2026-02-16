@@ -200,6 +200,7 @@ def render_base_pixels() -> tuple[int, bytes]:
     outline_col = (outline_rgb[0] / 255.0, outline_rgb[1] / 255.0, outline_rgb[2] / 255.0)
     cube_col = (0.08, 0.94, 0.86)  # mint block
     sphere_col = (1.00, 0.35, 0.72)  # "AI orb"
+    cone_col = (0.62, 0.44, 1.00)  # "creator hat"
 
     # Camera.
     cam_pos = (0.0, 0.95, 3.25)
@@ -211,7 +212,7 @@ def render_base_pixels() -> tuple[int, bytes]:
 
     light_dir = norm3((-0.65, 0.78, 0.28))
 
-    # Scene: a mint "block" + a floating pink orb (Gravimera = build + magic/AI).
+    # Scene: a mint "block" + a floating pink orb + a cone hat (Gravimera = build + magic/AI).
     cube_center = (-0.10, -0.52, 0.35)
     cube_half = (0.98, 0.98, 0.98)
     cube_rot_y = -0.68
@@ -219,6 +220,12 @@ def render_base_pixels() -> tuple[int, bytes]:
 
     sphere_center = (0.90, 0.78, -0.30)
     sphere_r = 0.60
+
+    cone_center = (-0.30, 0.96, 0.15)
+    cone_r = 0.66
+    cone_h = 0.54
+    cone_rot_y = -0.35
+    cone_rot_x = 0.10
 
     eps = 1e-4
 
@@ -236,6 +243,22 @@ def render_base_pixels() -> tuple[int, bytes]:
     def cube_to_world_dir(d: tuple[float, float, float]) -> tuple[float, float, float]:
         q = rot_x(d, cube_rot_x)
         q = rot_y(q, cube_rot_y)
+        return q
+
+    def cone_to_local_point(p: tuple[float, float, float]) -> tuple[float, float, float]:
+        q = sub3(p, cone_center)
+        q = rot_y(q, -cone_rot_y)
+        q = rot_x(q, -cone_rot_x)
+        return q
+
+    def cone_to_local_dir(d: tuple[float, float, float]) -> tuple[float, float, float]:
+        q = rot_y(d, -cone_rot_y)
+        q = rot_x(q, -cone_rot_x)
+        return q
+
+    def cone_to_world_dir(d: tuple[float, float, float]) -> tuple[float, float, float]:
+        q = rot_x(d, cone_rot_x)
+        q = rot_y(q, cone_rot_y)
         return q
 
     def intersect_sphere(
@@ -306,6 +329,74 @@ def render_base_pixels() -> tuple[int, bytes]:
             n_l = (0.0, 0.0, 1.0 if hp[2] > 0.0 else -1.0)
         return t, hp, n_l
 
+    def intersect_cone(
+        ro: tuple[float, float, float],
+        rd: tuple[float, float, float],
+    ) -> tuple[float, tuple[float, float, float], tuple[float, float, float]] | None:
+        ro_l = cone_to_local_point(ro)
+        rd_l = cone_to_local_dir(rd)
+
+        # Local-space cone:
+        # - axis: +Y
+        # - apex: y=+cone_h
+        # - base: y=-cone_h, radius=cone_r
+        k = cone_r / (2.0 * cone_h)
+        k2 = k * k
+
+        ox, oy, oz = ro_l
+        dx, dy, dz = rd_l
+
+        h_minus_oy = cone_h - oy
+        a = dx * dx + dz * dz - k2 * dy * dy
+        b = 2.0 * (ox * dx + oz * dz + k2 * h_minus_oy * dy)
+        c = ox * ox + oz * oz - k2 * h_minus_oy * h_minus_oy
+
+        best_t = None
+        best_p = (0.0, 0.0, 0.0)
+        best_n = (0.0, 0.0, 0.0)
+
+        def consider_side(t: float) -> None:
+            nonlocal best_t, best_p, best_n
+            if t <= eps:
+                return
+            py = oy + dy * t
+            if py < -cone_h - 1e-6 or py > cone_h + 1e-6:
+                return
+            px = ox + dx * t
+            pz = oz + dz * t
+            n = norm3((px, k2 * (cone_h - py), pz))
+            if best_t is None or t < best_t:
+                best_t = t
+                best_p = (px, py, pz)
+                best_n = n
+
+        if abs(a) < 1e-12:
+            if abs(b) > 1e-12:
+                consider_side(-c / b)
+        else:
+            disc = b * b - 4.0 * a * c
+            if disc > 0.0:
+                s = math.sqrt(disc)
+                inv = 0.5 / a
+                consider_side((-b - s) * inv)
+                consider_side((-b + s) * inv)
+
+        # Base disk.
+        if abs(dy) > 1e-12:
+            t = (-cone_h - oy) / dy
+            if t > eps:
+                px = ox + dx * t
+                pz = oz + dz * t
+                if px * px + pz * pz <= cone_r * cone_r + 1e-6:
+                    if best_t is None or t < best_t:
+                        best_t = t
+                        best_p = (px, -cone_h, pz)
+                        best_n = (0.0, -1.0, 0.0)
+
+        if best_t is None:
+            return None
+        return best_t, best_p, best_n
+
     def intersect_scene(
         ro: tuple[float, float, float],
         rd: tuple[float, float, float],
@@ -322,6 +413,12 @@ def render_base_pixels() -> tuple[int, bytes]:
             t2 = hit[0]
             if t2 < t_max and (t_min is None or t2 < t_min):
                 t_min = t2
+
+        hit2 = intersect_cone(ro, rd)
+        if hit2 is not None:
+            t3 = hit2[0]
+            if t3 < t_max and (t_min is None or t3 < t_min):
+                t_min = t3
 
         return t_min
 
@@ -371,7 +468,7 @@ def render_base_pixels() -> tuple[int, bytes]:
         return int(v * 255 + 0.5)
 
     out = bytearray(base * base * 4)  # starts transparent
-    mat = bytearray(base * base)  # 0=bg, 1=cube, 2=sphere
+    mat = bytearray(base * base)  # 0=bg, 1=cube, 2=sphere, 3=cone
 
     sx_vals = [((x + 0.5) / base) * 2.0 - 1.0 for x in range(base)]
     sy_vals = [1.0 - ((y + 0.5) / base) * 2.0 for y in range(base)]
@@ -415,6 +512,14 @@ def render_base_pixels() -> tuple[int, bytes]:
                     hit_n_local = n_l
                     hit_n_world = norm3(cube_to_world_dir(n_l))
 
+            cone_hit = intersect_cone(cam_pos, rd)
+            if cone_hit is not None:
+                t_k, _hp_l, n_l = cone_hit
+                if t_best is None or t_k < t_best:
+                    t_best = t_k
+                    hit_kind = 3
+                    hit_n_world = norm3(cone_to_world_dir(n_l))
+
             if t_best is None:
                 continue
 
@@ -424,8 +529,11 @@ def render_base_pixels() -> tuple[int, bytes]:
             elif hit_kind == 1:
                 # Cube normal already computed above.
                 hit_n_world = hit_n_world
+            elif hit_kind == 3:
+                # Cone normal already computed above.
+                hit_n_world = hit_n_world
 
-            base_col = cube_col if hit_kind == 1 else sphere_col
+            base_col = cube_col if hit_kind == 1 else (sphere_col if hit_kind == 2 else cone_col)
 
             ndl = max(0.0, dot3(hit_n_world, light_dir))
             shade = ambient + diff_k * ndl
@@ -438,9 +546,9 @@ def render_base_pixels() -> tuple[int, bytes]:
 
             view_dir = (-rd[0], -rd[1], -rd[2])
             half_v = norm3(add3(light_dir, view_dir))
-            kind_spec = spec_k * (1.35 if hit_kind == 2 else 1.0)
-            kind_rim = rim_k * (1.20 if hit_kind == 2 else 1.0)
-            kind_shiny = shininess * (1.15 if hit_kind == 2 else 1.0)
+            kind_spec = spec_k * (1.35 if hit_kind == 2 else (1.05 if hit_kind == 3 else 1.0))
+            kind_rim = rim_k * (1.20 if hit_kind == 2 else (1.10 if hit_kind == 3 else 1.0))
+            kind_shiny = shininess * (1.15 if hit_kind == 2 else (0.95 if hit_kind == 3 else 1.0))
             spec = pow(max(0.0, dot3(hit_n_world, half_v)), kind_shiny) * kind_spec
             rim = pow(1.0 - max(0.0, dot3(hit_n_world, view_dir)), 2.0) * kind_rim
 
@@ -476,7 +584,7 @@ def render_base_pixels() -> tuple[int, bytes]:
                         col[2] * (1.0 - w) + outline_col[2] * w,
                     )
                 col = apply_cute_face(col, hit_local, hit_n_local)
-            else:
+            elif hit_kind == 2:
                 # Slight emissive lift for the "orb" so it pops on any background.
                 col = (col[0] + 0.06, col[1] + 0.02, col[2] + 0.08)
 
