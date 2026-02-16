@@ -63,7 +63,9 @@ pub(super) struct MotionValidationReport {
 }
 
 const DEFAULT_CYCLE_M: f32 = 1.0;
+const DEFAULT_ATTACK_WINDOW_SECS: f32 = 0.35;
 const SAMPLE_COUNT: usize = 24;
+const ATTACK_SAMPLE_COUNT: usize = 12;
 const MAX_ISSUES: usize = 8;
 
 pub(super) fn build_motion_validation_report(
@@ -119,6 +121,7 @@ pub(super) fn build_motion_validation_report(
         components,
         &mut issues,
     );
+    validate_attack_self_intersection(root_idx, components, &mut issues);
 
     issues.sort_by(|a, b| {
         a.severity
@@ -1126,6 +1129,600 @@ fn validate_contacts(
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct PairDeltaSample {
+    delta_m: f32,
+    baseline_m: f32,
+    attack_m: f32,
+    at_phase_01: f32,
+    at_time_secs: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Obb {
+    center: Vec3,
+    axes: [Vec3; 3],
+    half_extents: Vec3,
+}
+
+fn validate_attack_self_intersection(
+    root_idx: usize,
+    components: &[Gen3dPlannedComponent],
+    issues: &mut Vec<MotionIssue>,
+) {
+    if components.len() < 2 {
+        return;
+    }
+
+    let has_attack_primary = components.iter().any(|c| {
+        c.attach_to.as_ref().is_some_and(|att| {
+            att.animations
+                .iter()
+                .any(|slot| slot.channel.as_ref() == "attack_primary")
+        })
+    });
+    if !has_attack_primary {
+        return;
+    }
+
+    let mut name_to_idx: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (idx, c) in components.iter().enumerate() {
+        name_to_idx.insert(c.name.as_str(), idx);
+    }
+
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); components.len()];
+    for (idx, c) in components.iter().enumerate() {
+        let Some(att) = c.attach_to.as_ref() else {
+            continue;
+        };
+        if let Some(p) = name_to_idx.get(att.parent.as_str()).copied() {
+            children[p].push(idx);
+        }
+    }
+
+    let has_attack_slot: Vec<bool> = components
+        .iter()
+        .map(|c| {
+            c.attach_to.as_ref().is_some_and(|att| {
+                att.animations
+                    .iter()
+                    .any(|slot| slot.channel.as_ref() == "attack_primary")
+            })
+        })
+        .collect();
+
+    let mut depth: Vec<usize> = vec![0; components.len()];
+    let mut nearest_attack_ancestor: Vec<Option<usize>> = vec![None; components.len()];
+    let mut influenced_by_attack: Vec<bool> = vec![false; components.len()];
+
+    fn dfs_attack_influence(
+        idx: usize,
+        depth_here: usize,
+        parent_influenced: bool,
+        parent_nearest_attack: Option<usize>,
+        children: &[Vec<usize>],
+        has_attack_slot: &[bool],
+        depth: &mut [usize],
+        nearest_attack_ancestor: &mut [Option<usize>],
+        influenced_by_attack: &mut [bool],
+    ) {
+        depth[idx] = depth_here;
+        let nearest = if has_attack_slot[idx] {
+            Some(idx)
+        } else {
+            parent_nearest_attack
+        };
+        let influenced = parent_influenced || has_attack_slot[idx];
+        nearest_attack_ancestor[idx] = nearest;
+        influenced_by_attack[idx] = influenced;
+
+        for &child in children.get(idx).into_iter().flatten() {
+            dfs_attack_influence(
+                child,
+                depth_here.saturating_add(1),
+                influenced,
+                nearest,
+                children,
+                has_attack_slot,
+                depth,
+                nearest_attack_ancestor,
+                influenced_by_attack,
+            );
+        }
+    }
+
+    dfs_attack_influence(
+        root_idx,
+        0,
+        false,
+        None,
+        &children,
+        &has_attack_slot,
+        &mut depth,
+        &mut nearest_attack_ancestor,
+        &mut influenced_by_attack,
+    );
+
+    let mut inferred_window_secs: Option<f32> = None;
+    for comp in components.iter() {
+        let Some(att) = comp.attach_to.as_ref() else {
+            continue;
+        };
+        for slot in att.animations.iter() {
+            if slot.channel.as_ref() != "attack_primary" {
+                continue;
+            }
+            let PartAnimationDef::Loop { duration_secs, .. } = &slot.spec.clip else {
+                continue;
+            };
+            if !duration_secs.is_finite() || *duration_secs <= 0.0 {
+                continue;
+            }
+            let speed = slot.spec.speed_scale.max(1e-3);
+            let wall_duration = (*duration_secs / speed).abs();
+            if wall_duration.is_finite() && wall_duration > 1e-3 {
+                inferred_window_secs =
+                    Some(inferred_window_secs.map_or(wall_duration, |b| b.max(wall_duration)));
+            }
+        }
+    }
+    let attack_window_secs = inferred_window_secs
+        .unwrap_or(DEFAULT_ATTACK_WINDOW_SECS)
+        .max(1e-3);
+
+    let sizes: Vec<Vec3> = components
+        .iter()
+        .map(|c| c.actual_size.unwrap_or(c.planned_size).abs().max(Vec3::splat(0.001)))
+        .collect();
+    let max_dims: Vec<f32> = sizes.iter().map(|s| s.max_element()).collect();
+
+    let n = components.len();
+    let mut pair_eps_m: Vec<f32> = vec![0.0; n * n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let scale = max_dims[i].min(max_dims[j]).max(1e-3);
+            pair_eps_m[i * n + j] = (0.01 * scale).clamp(0.002, 0.05);
+        }
+    }
+
+    let mut best: Vec<PairDeltaSample> = vec![PairDeltaSample::default(); n * n];
+    let mut idle_world: Vec<Transform>;
+    let mut attack_world: Vec<Transform>;
+    let mut idle_obbs: Vec<Option<Obb>> = vec![None; n];
+    let mut attack_obbs: Vec<Option<Obb>> = vec![None; n];
+
+    for s in 0..ATTACK_SAMPLE_COUNT {
+        let phase_01 = (s as f32) / (ATTACK_SAMPLE_COUNT as f32);
+        let t_secs = phase_01 * attack_window_secs;
+
+        idle_world = compute_world_transforms_for_channels(
+            components,
+            &children,
+            root_idx,
+            t_secs,
+            0.0,
+            0.0,
+            0.0,
+            false,
+            false,
+            true,
+        );
+        attack_world = compute_world_transforms_for_channels(
+            components,
+            &children,
+            root_idx,
+            t_secs,
+            0.0,
+            0.0,
+            t_secs,
+            true,
+            false,
+            false,
+        );
+
+        for idx in 0..n {
+            idle_obbs[idx] = obb_from_transform_and_size(idle_world[idx], sizes[idx]);
+            attack_obbs[idx] = obb_from_transform_and_size(attack_world[idx], sizes[idx]);
+        }
+
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if nearest_attack_ancestor[i].is_none() && nearest_attack_ancestor[j].is_none() {
+                    continue;
+                }
+                if !influenced_by_attack[i] && !influenced_by_attack[j] {
+                    continue;
+                }
+
+                let Some(a_idle) = idle_obbs[i] else {
+                    continue;
+                };
+                let Some(b_idle) = idle_obbs[j] else {
+                    continue;
+                };
+                let Some(a_attack) = attack_obbs[i] else {
+                    continue;
+                };
+                let Some(b_attack) = attack_obbs[j] else {
+                    continue;
+                };
+
+                let baseline_m = obb_penetration_m(&a_idle, &b_idle);
+                let attack_m = obb_penetration_m(&a_attack, &b_attack);
+                let delta_m = attack_m - baseline_m;
+                if !delta_m.is_finite() {
+                    continue;
+                }
+
+                let idx_flat = i * n + j;
+                if delta_m > best[idx_flat].delta_m {
+                    best[idx_flat] = PairDeltaSample {
+                        delta_m,
+                        baseline_m,
+                        attack_m,
+                        at_phase_01: phase_01,
+                        at_time_secs: t_secs,
+                    };
+                }
+            }
+        }
+    }
+
+    let mut candidates: Vec<(f32, usize, usize, usize, PairDeltaSample, f32)> = Vec::new();
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let idx_flat = i * n + j;
+            let sample = best[idx_flat];
+            if sample.delta_m <= 0.0 {
+                continue;
+            }
+            let eps_m = pair_eps_m[idx_flat];
+            if sample.delta_m <= eps_m {
+                continue;
+            }
+
+            let a = nearest_attack_ancestor[i];
+            let b = nearest_attack_ancestor[j];
+            let blame = match (a, b) {
+                (Some(x), Some(y)) if x == y => Some(x),
+                (Some(x), Some(y)) => {
+                    let dx = depth[x];
+                    let dy = depth[y];
+                    if dx != dy {
+                        Some(if dx > dy { x } else { y })
+                    } else {
+                        let nx = components[x].name.as_str();
+                        let ny = components[y].name.as_str();
+                        Some(if nx <= ny { x } else { y })
+                    }
+                }
+                (Some(x), None) => Some(x),
+                (None, Some(y)) => Some(y),
+                (None, None) => None,
+            };
+            let Some(blame_idx) = blame else {
+                continue;
+            };
+
+            candidates.push((
+                sample.delta_m,
+                blame_idx,
+                i,
+                j,
+                sample,
+                eps_m,
+            ));
+        }
+    }
+
+    candidates.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    for (delta_m, blame_idx, i, j, sample, eps_m) in candidates.into_iter().take(MAX_ISSUES) {
+        let component_name = components[blame_idx].name.clone();
+        issues.push(MotionIssue {
+            severity: MotionSeverity::Error,
+            kind: "attack_self_intersection",
+            component_id: component_id_uuid_for_name(&component_name),
+            component_name,
+            channel: "attack_primary".to_string(),
+            message: "Attack animation increases self-intersection relative to idle pose."
+                .into(),
+            evidence: serde_json::json!({
+                "attack_window_secs": attack_window_secs,
+                "pair": {
+                    "a": { "component_name": components[i].name.as_str(), "component_id": component_id_uuid_for_name(&components[i].name) },
+                    "b": { "component_name": components[j].name.as_str(), "component_id": component_id_uuid_for_name(&components[j].name) },
+                },
+                "penetration_m": {
+                    "baseline": sample.baseline_m,
+                    "attack": sample.attack_m,
+                    "delta": sample.delta_m,
+                },
+                "at": { "time_secs": sample.at_time_secs, "phase_01": sample.at_phase_01 },
+                "tolerances": { "min_delta_m": eps_m },
+            }),
+            score: delta_m,
+        });
+    }
+}
+
+fn compute_world_transforms_for_channels(
+    components: &[Gen3dPlannedComponent],
+    children: &[Vec<usize>],
+    root_idx: usize,
+    wall_time_secs: f32,
+    move_phase_m: f32,
+    move_distance_m: f32,
+    attack_elapsed_secs: f32,
+    attacking_primary: bool,
+    moving: bool,
+    idle: bool,
+) -> Vec<Transform> {
+    let mut world: Vec<Transform> = vec![Transform::IDENTITY; components.len()];
+    let mut visiting = vec![false; components.len()];
+    let mut visited = vec![false; components.len()];
+    world[root_idx] = Transform::IDENTITY;
+
+    fn choose_slot<'a>(
+        att: &'a Gen3dPlannedAttachment,
+        attacking_primary: bool,
+        moving: bool,
+        idle: bool,
+    ) -> Option<&'a PartAnimationSlot> {
+        for channel in ["attack_primary", "move", "idle", "ambient"] {
+            let active = match channel {
+                "attack_primary" => attacking_primary,
+                "move" => moving,
+                "idle" => idle,
+                "ambient" => true,
+                _ => false,
+            };
+            if !active {
+                continue;
+            }
+            if let Some(slot) = att
+                .animations
+                .iter()
+                .find(|slot| slot.channel.as_ref() == channel)
+            {
+                return Some(slot);
+            }
+        }
+        None
+    }
+
+    fn sample_slot_delta_runtime(
+        slot: &PartAnimationSlot,
+        wall_time_secs: f32,
+        move_phase_m: f32,
+        move_distance_m: f32,
+        attack_elapsed_secs: f32,
+    ) -> Transform {
+        let driver_t = match slot.spec.driver {
+            PartAnimationDriver::Always => wall_time_secs,
+            PartAnimationDriver::MovePhase => move_phase_m,
+            PartAnimationDriver::MoveDistance => move_distance_m,
+            PartAnimationDriver::AttackTime => attack_elapsed_secs,
+        };
+
+        let mut t = if driver_t.is_finite() { driver_t } else { 0.0 };
+        t *= slot.spec.speed_scale.max(0.0);
+        if slot.spec.time_offset_units.is_finite() {
+            t += slot.spec.time_offset_units;
+        }
+        sample_part_animation(&slot.spec.clip, t)
+    }
+
+    fn dfs(
+        idx: usize,
+        components: &[Gen3dPlannedComponent],
+        children: &[Vec<usize>],
+        wall_time_secs: f32,
+        move_phase_m: f32,
+        move_distance_m: f32,
+        attack_elapsed_secs: f32,
+        attacking_primary: bool,
+        moving: bool,
+        idle: bool,
+        world: &mut [Transform],
+        visiting: &mut [bool],
+        visited: &mut [bool],
+    ) {
+        if visited[idx] || visiting[idx] {
+            return;
+        }
+        visiting[idx] = true;
+
+        let parent_world = world[idx];
+        for &child_idx in &children[idx] {
+            let Some(att) = components[child_idx].attach_to.as_ref() else {
+                continue;
+            };
+
+            let parent_anchor =
+                anchor_transform_from_component(&components[idx], att.parent_anchor.as_str());
+            let child_anchor =
+                anchor_transform_from_component(&components[child_idx], att.child_anchor.as_str());
+
+            let mut animated_offset = att.offset;
+            if let Some(slot) = choose_slot(att, attacking_primary, moving, idle) {
+                let delta = sample_slot_delta_runtime(
+                    slot,
+                    wall_time_secs,
+                    move_phase_m,
+                    move_distance_m,
+                    attack_elapsed_secs,
+                );
+                animated_offset = mul_transform(&animated_offset, &delta);
+            }
+
+            let inv_child = child_anchor.to_matrix().inverse();
+            let composed = parent_world.to_matrix()
+                * parent_anchor.to_matrix()
+                * animated_offset.to_matrix()
+                * inv_child;
+            let (scale, rot, translation) = composed.to_scale_rotation_translation();
+            if translation.is_finite() && rot.is_finite() && scale.is_finite() {
+                world[child_idx] = Transform {
+                    translation,
+                    rotation: rot.normalize(),
+                    scale,
+                };
+            } else {
+                world[child_idx] = Transform::IDENTITY;
+            }
+
+            dfs(
+                child_idx,
+                components,
+                children,
+                wall_time_secs,
+                move_phase_m,
+                move_distance_m,
+                attack_elapsed_secs,
+                attacking_primary,
+                moving,
+                idle,
+                world,
+                visiting,
+                visited,
+            );
+        }
+
+        visiting[idx] = false;
+        visited[idx] = true;
+    }
+
+    dfs(
+        root_idx,
+        components,
+        children,
+        wall_time_secs,
+        move_phase_m,
+        move_distance_m,
+        attack_elapsed_secs,
+        attacking_primary,
+        moving,
+        idle,
+        &mut world,
+        &mut visiting,
+        &mut visited,
+    );
+
+    world
+}
+
+fn obb_from_transform_and_size(transform: Transform, size: Vec3) -> Option<Obb> {
+    let mut half_extents = size * 0.5;
+    if !half_extents.is_finite() {
+        return None;
+    }
+    half_extents = half_extents.max(Vec3::splat(1e-4));
+
+    let scale = if transform.scale.is_finite() {
+        transform.scale.abs()
+    } else {
+        Vec3::ONE
+    };
+    half_extents *= scale;
+
+    let rot = if transform.rotation.is_finite() {
+        transform.rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    };
+
+    let mut x = rot * Vec3::X;
+    let mut y = rot * Vec3::Y;
+    let mut z = rot * Vec3::Z;
+    if x.length_squared() > 1e-8 {
+        x = x.normalize();
+    }
+    if y.length_squared() > 1e-8 {
+        y = y.normalize();
+    }
+    if z.length_squared() > 1e-8 {
+        z = z.normalize();
+    }
+
+    let center = transform.translation;
+    if !center.is_finite() {
+        return None;
+    }
+
+    Some(Obb {
+        center,
+        axes: [x, y, z],
+        half_extents,
+    })
+}
+
+fn obb_projection_radius_m(obb: &Obb, axis: Vec3) -> f32 {
+    let axis = if axis.length_squared() > 1e-12 {
+        axis.normalize()
+    } else {
+        return 0.0;
+    };
+    let [ax, ay, az] = obb.axes;
+    obb.half_extents.x * axis.dot(ax).abs()
+        + obb.half_extents.y * axis.dot(ay).abs()
+        + obb.half_extents.z * axis.dot(az).abs()
+}
+
+fn obb_penetration_m(a: &Obb, b: &Obb) -> f32 {
+    let t = b.center - a.center;
+    if !t.is_finite() {
+        return 0.0;
+    }
+
+    let axes_a = a.axes;
+    let axes_b = b.axes;
+    let axes = [
+        axes_a[0],
+        axes_a[1],
+        axes_a[2],
+        axes_b[0],
+        axes_b[1],
+        axes_b[2],
+        axes_a[0].cross(axes_b[0]),
+        axes_a[0].cross(axes_b[1]),
+        axes_a[0].cross(axes_b[2]),
+        axes_a[1].cross(axes_b[0]),
+        axes_a[1].cross(axes_b[1]),
+        axes_a[1].cross(axes_b[2]),
+        axes_a[2].cross(axes_b[0]),
+        axes_a[2].cross(axes_b[1]),
+        axes_a[2].cross(axes_b[2]),
+    ];
+
+    let mut min_overlap = f32::INFINITY;
+    for axis in axes {
+        if !axis.is_finite() || axis.length_squared() <= 1e-8 {
+            continue;
+        }
+        let l = axis.normalize();
+        let ra = obb_projection_radius_m(a, l);
+        let rb = obb_projection_radius_m(b, l);
+        let dist = t.dot(l).abs();
+        let overlap = ra + rb - dist;
+        if overlap <= 0.0 {
+            return 0.0;
+        }
+        if overlap < min_overlap {
+            min_overlap = overlap;
+        }
+    }
+
+    if min_overlap.is_finite() {
+        min_overlap.max(0.0)
+    } else {
+        0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1688,6 +2285,140 @@ mod tests {
                 Some("contact_slip" | "contact_lift")
             )),
             "expected no contact slip/lift issues for spin move component, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn attack_self_intersection_is_reported() {
+        let mut root = stub_component("root", Vec::new());
+        root.planned_size = Vec3::splat(1.0);
+
+        let attack_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::AttackTime,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.0,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.5,
+                        delta: Transform::from_translation(Vec3::new(-1.0, 0.0, 0.0)),
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.0,
+                        delta: Transform::IDENTITY,
+                    },
+                ],
+            },
+        };
+
+        let mut child = stub_component("child", Vec::new());
+        child.planned_size = Vec3::splat(1.0);
+        child.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "origin".into(),
+            child_anchor: "origin".into(),
+            offset: Transform::from_translation(Vec3::new(1.5, 0.0, 0.0)),
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "attack_primary".into(),
+                spec: attack_spec,
+            }],
+        });
+
+        let components = vec![root, child];
+        let report = build_motion_validation_report(None, &components);
+        let ok = report
+            .motion_validation
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        assert!(!ok, "expected motion validation to fail");
+
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("attack_self_intersection")
+                    && i.get("channel").and_then(|v| v.as_str()) == Some("attack_primary")
+                    && i.get("component_name").and_then(|v| v.as_str()) == Some("child")
+            }),
+            "expected attack_self_intersection issue, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn attack_self_intersection_is_not_reported_without_increase() {
+        let mut root = stub_component("root", Vec::new());
+        root.planned_size = Vec3::splat(1.0);
+
+        let attack_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::AttackTime,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.0,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.5,
+                        delta: Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.0,
+                        delta: Transform::IDENTITY,
+                    },
+                ],
+            },
+        };
+
+        let mut child = stub_component("child", Vec::new());
+        child.planned_size = Vec3::splat(1.0);
+        // Idle pose already intersects; attack moves away, so there should be no "increased"
+        // self-intersection relative to idle.
+        child.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "origin".into(),
+            child_anchor: "origin".into(),
+            offset: Transform::from_translation(Vec3::new(0.5, 0.0, 0.0)),
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "attack_primary".into(),
+                spec: attack_spec,
+            }],
+        });
+
+        let components = vec![root, child];
+        let report = build_motion_validation_report(None, &components);
+        let ok = report
+            .motion_validation
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(ok, "expected motion validation to pass");
+
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("attack_self_intersection")
+            }),
+            "expected no attack_self_intersection issues, got {issues:?}"
         );
     }
 }

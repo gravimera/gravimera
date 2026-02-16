@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::object::registry::{
-    builtin_object_id, ObjectPartDef, ObjectPartKind, PartAnimationSlot,
+    builtin_object_id, ObjectPartDef, ObjectPartKind, PartAnimationDef, PartAnimationDriver,
+    PartAnimationSlot,
 };
 use crate::types::{AnimationChannelsActive, AttackClock, GameMode, LocomotionClock};
 
@@ -4117,23 +4118,108 @@ fn poll_gen3d_motion_capture(
 
     let total_frames = FRAMES.len() as u8;
     let frame_idx = motion.frame_idx.min(total_frames.saturating_sub(1));
-    let sample = FRAMES[frame_idx as usize];
+    let sample_phase_01 = FRAMES[frame_idx as usize];
+
+    fn infer_move_cycle_m(rig_move_cycle_m: Option<f32>, components: &[Gen3dPlannedComponent]) -> f32 {
+        if let Some(v) = rig_move_cycle_m
+            .filter(|v| v.is_finite())
+            .map(|v| v.abs())
+            .filter(|v| *v > 1e-3)
+        {
+            return v;
+        }
+
+        let mut best: Option<f32> = None;
+        for comp in components.iter() {
+            let Some(att) = comp.attach_to.as_ref() else {
+                continue;
+            };
+            let Some(slot) = att.animations.iter().find(|s| s.channel.as_ref() == "move") else {
+                continue;
+            };
+            if !matches!(
+                slot.spec.driver,
+                PartAnimationDriver::MovePhase | PartAnimationDriver::MoveDistance
+            ) {
+                continue;
+            }
+            let PartAnimationDef::Loop { duration_secs, .. } = &slot.spec.clip else {
+                continue;
+            };
+            if !duration_secs.is_finite() || *duration_secs <= 0.0 {
+                continue;
+            }
+            let speed_scale = slot.spec.speed_scale.max(1e-6);
+            let effective = (*duration_secs / speed_scale).abs();
+            if !effective.is_finite() || effective <= 1e-3 {
+                continue;
+            }
+            best = Some(best.map_or(effective, |b| b.max(effective)));
+        }
+
+        best.unwrap_or(1.0)
+    }
+
+    fn infer_attack_window_secs(draft: &Gen3dDraft, components: &[Gen3dPlannedComponent]) -> f32 {
+        if let Some(v) = draft
+            .root_def()
+            .and_then(|def| def.attack.as_ref())
+            .map(|a| a.anim_window_secs)
+            .filter(|v| v.is_finite())
+            .map(|v| v.abs())
+            .filter(|v| *v > 1e-3)
+        {
+            return v;
+        }
+
+        let mut best: Option<f32> = None;
+        for comp in components.iter() {
+            let Some(att) = comp.attach_to.as_ref() else {
+                continue;
+            };
+            for slot in att.animations.iter() {
+                if slot.channel.as_ref() != "attack_primary" {
+                    continue;
+                }
+                let PartAnimationDef::Loop { duration_secs, .. } = &slot.spec.clip else {
+                    continue;
+                };
+                if !duration_secs.is_finite() || *duration_secs <= 0.0 {
+                    continue;
+                }
+                let speed = slot.spec.speed_scale.max(1e-3);
+                let wall_duration = (*duration_secs / speed).abs();
+                if !wall_duration.is_finite() || wall_duration <= 1e-3 {
+                    continue;
+                }
+                best = Some(best.map_or(wall_duration, |b| b.max(wall_duration)));
+            }
+        }
+
+        best.unwrap_or(1.0)
+    }
 
     if motion.frame_capture.is_none() {
         match motion.kind {
             Gen3dMotionCaptureKind::Move => {
+                let cycle_m = infer_move_cycle_m(job.rig_move_cycle_m, &job.planned_components)
+                    .max(1e-3);
+                let sample_m = (sample_phase_01 * cycle_m).clamp(0.0, cycle_m);
                 channels.moving = true;
                 channels.attacking_primary = false;
-                locomotion.t = sample;
-                locomotion.distance_m = sample;
-                locomotion.signed_distance_m = sample;
+                locomotion.t = sample_m;
+                locomotion.distance_m = sample_m;
+                locomotion.signed_distance_m = sample_m;
                 locomotion.speed_mps = 1.0;
             }
             Gen3dMotionCaptureKind::Attack => {
+                let window_secs = infer_attack_window_secs(draft, &job.planned_components)
+                    .max(1e-3);
+                let sample_secs = (sample_phase_01 * window_secs).clamp(0.0, window_secs);
                 channels.moving = false;
                 channels.attacking_primary = true;
-                attack_clock.duration_secs = 1.0;
-                attack_clock.started_at_secs = time.elapsed_secs() - sample;
+                attack_clock.duration_secs = window_secs;
+                attack_clock.started_at_secs = time.elapsed_secs() - sample_secs;
             }
         }
 
