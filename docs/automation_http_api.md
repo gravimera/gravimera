@@ -33,6 +33,9 @@ On startup, the game prints a line like:
 Automation API listening on http://127.0.0.1:8791
 ```
 
+Note (Windows): some port ranges may be excluded/reserved by the OS. If the game logs a bind failure like
+`os error 10013`, pick a different port (e.g. `127.0.0.1:18791`).
+
 ## Authentication (optional)
 
 If `[automation].token` (or `--automation-token`) is set, **every request** must include:

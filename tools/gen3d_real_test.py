@@ -364,7 +364,14 @@ def run_one(
     dx, dz = world_move_offset
     dest_x = x + dx
     dest_z = z + dz
-    post("/v1/move", {"x": dest_x, "z": dest_z})
+    try:
+        post("/v1/move", {"x": dest_x, "z": dest_z})
+    except RuntimeError as err:
+        msg = str(err)
+        if "HTTP 409" in msg:
+            print(f"skip move: {msg}")
+        else:
+            raise
 
     # Capture movement frames.
     for i in range(capture_count):
@@ -381,7 +388,14 @@ def run_one(
         # (unit moves one way while aiming/firing another way).
         fire_move_x = dest_x + dx
         fire_move_z = dest_z + dz
-        post("/v1/move", {"x": fire_move_x, "z": fire_move_z})
+        try:
+            post("/v1/move", {"x": fire_move_x, "z": fire_move_z})
+        except RuntimeError as err:
+            msg = str(err)
+            if "HTTP 409" in msg:
+                print(f"skip fire-move: {msg}")
+            else:
+                raise
 
         # Fire at a point offset to +X so the aim direction differs from the move direction.
         fire_x = fire_move_x + 8.0
