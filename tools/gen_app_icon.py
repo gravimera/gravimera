@@ -58,23 +58,30 @@ def resample_square_image(src_bytes: bytes, src_size: int, dst_size: int) -> byt
             sy0 = dy * factor
             for dx in range(dst_size):
                 sx0 = dx * factor
-                sum_r = 0
-                sum_g = 0
-                sum_b = 0
                 sum_a = 0
+                sum_rp = 0
+                sum_gp = 0
+                sum_bp = 0
                 for oy in range(factor):
                     row = ((sy0 + oy) * src_size + sx0) * 4
                     for ox in range(factor):
                         i = row + ox * 4
-                        sum_r += src[i]
-                        sum_g += src[i + 1]
-                        sum_b += src[i + 2]
-                        sum_a += src[i + 3]
+                        a = src[i + 3]
+                        sum_a += a
+                        sum_rp += src[i] * a
+                        sum_gp += src[i + 1] * a
+                        sum_bp += src[i + 2] * a
                 j = (dy * dst_size + dx) * 4
-                out[j] = (sum_r + n // 2) // n
-                out[j + 1] = (sum_g + n // 2) // n
-                out[j + 2] = (sum_b + n // 2) // n
-                out[j + 3] = (sum_a + n // 2) // n
+                out_a = (sum_a + n // 2) // n
+                out[j + 3] = out_a
+                if sum_a == 0:
+                    out[j] = 0
+                    out[j + 1] = 0
+                    out[j + 2] = 0
+                else:
+                    out[j] = (sum_rp + sum_a // 2) // sum_a
+                    out[j + 1] = (sum_gp + sum_a // 2) // sum_a
+                    out[j + 2] = (sum_bp + sum_a // 2) // sum_a
         return bytes(out)
 
     # Bilinear (works for both upscale + arbitrary downscale).
@@ -117,27 +124,39 @@ def resample_square_image(src_bytes: bytes, src_size: int, dst_size: int) -> byt
             i01 = (y1 * src_size + x0) * 4
             i11 = (y1 * src_size + x1) * 4
 
-            def interp(ch: int) -> int:
-                a00 = src[i00 + ch]
-                a10 = src[i10 + ch]
-                a01 = src[i01 + ch]
-                a11 = src[i11 + ch]
-                v0 = a00 + (a10 - a00) * wx
-                v1 = a01 + (a11 - a01) * wx
-                v = v0 + (v1 - v0) * wy
-                return int(v + 0.5)
-
             j = (dy * dst_size + dx) * 4
-            out[j] = interp(0)
-            out[j + 1] = interp(1)
-            out[j + 2] = interp(2)
-            out[j + 3] = interp(3)
+            w00 = (1.0 - wx) * (1.0 - wy)
+            w10 = wx * (1.0 - wy)
+            w01 = (1.0 - wx) * wy
+            w11 = wx * wy
+
+            a00 = src[i00 + 3]
+            a10 = src[i10 + 3]
+            a01 = src[i01 + 3]
+            a11 = src[i11 + 3]
+            a = a00 * w00 + a10 * w10 + a01 * w01 + a11 * w11
+
+            if a <= 1e-6:
+                out[j] = 0
+                out[j + 1] = 0
+                out[j + 2] = 0
+                out[j + 3] = 0
+                continue
+
+            rp = (src[i00] * a00) * w00 + (src[i10] * a10) * w10 + (src[i01] * a01) * w01 + (src[i11] * a11) * w11
+            gp = (src[i00 + 1] * a00) * w00 + (src[i10 + 1] * a10) * w10 + (src[i01 + 1] * a01) * w01 + (src[i11 + 1] * a11) * w11
+            bp = (src[i00 + 2] * a00) * w00 + (src[i10 + 2] * a10) * w10 + (src[i01 + 2] * a01) * w01 + (src[i11 + 2] * a11) * w11
+
+            out[j] = int(rp / a + 0.5)
+            out[j + 1] = int(gp / a + 0.5)
+            out[j + 2] = int(bp / a + 0.5)
+            out[j + 3] = int(a + 0.5)
 
     return bytes(out)
 
 
 def render_base_pixels() -> tuple[int, bytes]:
-    base = 512
+    base = 1024
 
     def clamp01(v: float) -> float:
         return 0.0 if v < 0.0 else (1.0 if v > 1.0 else v)
@@ -178,13 +197,13 @@ def render_base_pixels() -> tuple[int, bytes]:
 
     # Bright, cute palette.
     outline_rgb = (46, 20, 72)  # deep purple (used for edge darkening)
-    cube_col = (0.08, 0.94, 0.86)  # mint
-    sphere_col = (1.00, 0.35, 0.72)  # pink
-    cyl_col = (1.00, 0.84, 0.22)  # yellow
+    outline_col = (outline_rgb[0] / 255.0, outline_rgb[1] / 255.0, outline_rgb[2] / 255.0)
+    cube_col = (0.08, 0.94, 0.86)  # mint block
+    sphere_col = (1.00, 0.35, 0.72)  # "AI orb"
 
     # Camera.
-    cam_pos = (0.0, 1.10, 3.10)
-    cam_target = (0.0, 0.05, 0.0)
+    cam_pos = (0.0, 0.95, 3.25)
+    cam_target = (0.10, 0.05, 0.0)
     cam_fwd = norm3(sub3(cam_target, cam_pos))
     cam_right = norm3(cross3(cam_fwd, (0.0, 1.0, 0.0)))
     cam_up = cross3(cam_right, cam_fwd)
@@ -192,18 +211,14 @@ def render_base_pixels() -> tuple[int, bytes]:
 
     light_dir = norm3((-0.65, 0.78, 0.28))
 
-    # Scene: cube (center) + sphere (left) + cylinder (right).
-    cube_center = (0.0, -0.30, 0.25)
-    cube_half = (0.85, 0.85, 0.85)
-    cube_rot_y = -0.62
-    cube_rot_x = 0.34
+    # Scene: a mint "block" + a floating pink orb (Gravimera = build + magic/AI).
+    cube_center = (-0.10, -0.52, 0.35)
+    cube_half = (0.98, 0.98, 0.98)
+    cube_rot_y = -0.68
+    cube_rot_x = 0.36
 
-    sphere_center = (-1.05, 0.52, -0.20)
-    sphere_r = 0.62
-
-    cyl_center = (1.10, 0.32, -0.10)
-    cyl_r = 0.44
-    cyl_h = 0.70
+    sphere_center = (0.90, 0.78, -0.30)
+    sphere_r = 0.60
 
     eps = 1e-4
 
@@ -291,57 +306,6 @@ def render_base_pixels() -> tuple[int, bytes]:
             n_l = (0.0, 0.0, 1.0 if hp[2] > 0.0 else -1.0)
         return t, hp, n_l
 
-    def intersect_capped_cylinder_y(
-        ro: tuple[float, float, float],
-        rd: tuple[float, float, float],
-        center: tuple[float, float, float],
-        r: float,
-        h: float,
-    ) -> tuple[float, tuple[float, float, float]] | None:
-        o = sub3(ro, center)
-        dx = rd[0]
-        dz = rd[2]
-        ox = o[0]
-        oz = o[2]
-        a = dx * dx + dz * dz
-        t_best = None
-        n_best = (0.0, 0.0, 0.0)
-
-        if a > 1e-12:
-            b = ox * dx + oz * dz
-            c = ox * ox + oz * oz - r * r
-            disc = b * b - a * c
-            if disc > 0.0:
-                s = math.sqrt(disc)
-                t0 = (-b - s) / a
-                t1 = (-b + s) / a
-                for t in (t0, t1):
-                    if t <= eps:
-                        continue
-                    y = o[1] + rd[1] * t
-                    if abs(y) <= h + 1e-6:
-                        t_best = t if t_best is None else min(t_best, t)
-                        if t_best == t:
-                            hit_x = ox + dx * t
-                            hit_z = oz + dz * t
-                            n_best = norm3((hit_x, 0.0, hit_z))
-
-        if abs(rd[1]) > 1e-12:
-            for cap_y in (-h, h):
-                t = (cap_y - o[1]) / rd[1]
-                if t <= eps:
-                    continue
-                hit_x = ox + dx * t
-                hit_z = oz + dz * t
-                if hit_x * hit_x + hit_z * hit_z <= r * r + 1e-6:
-                    if t_best is None or t < t_best:
-                        t_best = t
-                        n_best = (0.0, -1.0 if cap_y < 0.0 else 1.0, 0.0)
-
-        if t_best is None:
-            return None
-        return t_best, n_best
-
     def intersect_scene(
         ro: tuple[float, float, float],
         rd: tuple[float, float, float],
@@ -358,12 +322,6 @@ def render_base_pixels() -> tuple[int, bytes]:
             t2 = hit[0]
             if t2 < t_max and (t_min is None or t2 < t_min):
                 t_min = t2
-
-        hit2 = intersect_capped_cylinder_y(ro, rd, cyl_center, cyl_r, cyl_h)
-        if hit2 is not None:
-            t3 = hit2[0]
-            if t3 < t_max and (t_min is None or t3 < t_min):
-                t_min = t3
 
         return t_min
 
@@ -413,7 +371,7 @@ def render_base_pixels() -> tuple[int, bytes]:
         return int(v * 255 + 0.5)
 
     out = bytearray(base * base * 4)  # starts transparent
-    mat = bytearray(base * base)  # 0=bg, 1=cube, 2=sphere, 3=cyl
+    mat = bytearray(base * base)  # 0=bg, 1=cube, 2=sphere
 
     sx_vals = [((x + 0.5) / base) * 2.0 - 1.0 for x in range(base)]
     sy_vals = [1.0 - ((y + 0.5) / base) * 2.0 for y in range(base)]
@@ -457,28 +415,17 @@ def render_base_pixels() -> tuple[int, bytes]:
                     hit_n_local = n_l
                     hit_n_world = norm3(cube_to_world_dir(n_l))
 
-            cyl_hit = intersect_capped_cylinder_y(cam_pos, rd, cyl_center, cyl_r, cyl_h)
-            if cyl_hit is not None:
-                t_y, n_l = cyl_hit
-                if t_best is None or t_y < t_best:
-                    t_best = t_y
-                    hit_kind = 3
-                    hit_n_world = n_l
-
             if t_best is None:
                 continue
 
             hit_p = add3(cam_pos, mul3(rd, t_best))
             if hit_kind == 2:
                 hit_n_world = norm3(sub3(hit_p, sphere_center))
-            elif hit_kind == 3:
-                # Cylinder normal already in world space (axis-aligned).
-                hit_n_world = hit_n_world
             elif hit_kind == 1:
                 # Cube normal already computed above.
                 hit_n_world = hit_n_world
 
-            base_col = cube_col if hit_kind == 1 else (sphere_col if hit_kind == 2 else cyl_col)
+            base_col = cube_col if hit_kind == 1 else sphere_col
 
             ndl = max(0.0, dot3(hit_n_world, light_dir))
             shade = ambient + diff_k * ndl
@@ -491,8 +438,11 @@ def render_base_pixels() -> tuple[int, bytes]:
 
             view_dir = (-rd[0], -rd[1], -rd[2])
             half_v = norm3(add3(light_dir, view_dir))
-            spec = pow(max(0.0, dot3(hit_n_world, half_v)), shininess) * spec_k
-            rim = pow(1.0 - max(0.0, dot3(hit_n_world, view_dir)), 2.0) * rim_k
+            kind_spec = spec_k * (1.35 if hit_kind == 2 else 1.0)
+            kind_rim = rim_k * (1.20 if hit_kind == 2 else 1.0)
+            kind_shiny = shininess * (1.15 if hit_kind == 2 else 1.0)
+            spec = pow(max(0.0, dot3(hit_n_world, half_v)), kind_shiny) * kind_spec
+            rim = pow(1.0 - max(0.0, dot3(hit_n_world, view_dir)), 2.0) * kind_rim
 
             col = (
                 base_col[0] * shade + spec + rim,
@@ -501,7 +451,34 @@ def render_base_pixels() -> tuple[int, bytes]:
             )
 
             if hit_kind == 1:
+                # Add crisp cube edge lines to make the primitive read at small sizes.
+                edge_w = cube_half[0] * 0.11
+                if abs(hit_n_local[0]) > 0.9:
+                    edge = max(
+                        abs(hit_local[1]) - (cube_half[1] - edge_w),
+                        abs(hit_local[2]) - (cube_half[2] - edge_w),
+                    )
+                elif abs(hit_n_local[1]) > 0.9:
+                    edge = max(
+                        abs(hit_local[0]) - (cube_half[0] - edge_w),
+                        abs(hit_local[2]) - (cube_half[2] - edge_w),
+                    )
+                else:
+                    edge = max(
+                        abs(hit_local[0]) - (cube_half[0] - edge_w),
+                        abs(hit_local[1]) - (cube_half[1] - edge_w),
+                    )
+                if edge > 0.0:
+                    w = clamp01(edge / edge_w) * 0.70
+                    col = (
+                        col[0] * (1.0 - w) + outline_col[0] * w,
+                        col[1] * (1.0 - w) + outline_col[1] * w,
+                        col[2] * (1.0 - w) + outline_col[2] * w,
+                    )
                 col = apply_cute_face(col, hit_local, hit_n_local)
+            else:
+                # Slight emissive lift for the "orb" so it pops on any background.
+                col = (col[0] + 0.06, col[1] + 0.02, col[2] + 0.08)
 
             i = y * base + x
             j = i * 4
@@ -520,7 +497,12 @@ def render_base_pixels() -> tuple[int, bytes]:
             i = row + x
             if mat[i] == 0:
                 continue
-            if mat[i - 1] == 0 or mat[i + 1] == 0 or mat[i - base] == 0 or mat[i + base] == 0:
+            if (
+                mat[i - 1] != mat[i]
+                or mat[i + 1] != mat[i]
+                or mat[i - base] != mat[i]
+                or mat[i + base] != mat[i]
+            ):
                 j = i * 4
                 out[j] = (out[j] * inv + outline_rgb[0] * k) // 255
                 out[j + 1] = (out[j + 1] * inv + outline_rgb[1] * k) // 255
