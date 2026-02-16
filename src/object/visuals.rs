@@ -5,8 +5,9 @@ use crate::assets::SceneAssets;
 use crate::object::registry::{
     AttachmentDef, MaterialKey, MeshKey, ObjectLibrary, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, PartAnimationSlot, PartAnimationSpec, PrimitiveParams, PrimitiveVisualDef,
+    UnitAttackKind,
 };
-use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
+use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock, ObjectPrefabId};
 
 const MAX_VISUAL_DEPTH: usize = 32;
 
@@ -700,6 +701,7 @@ fn signed_move_distance_for_spin_axis(
 pub(crate) fn update_part_animations(
     time: Res<Time>,
     library: Res<ObjectLibrary>,
+    prefabs: Query<&ObjectPrefabId>,
     locomotion: Query<&LocomotionClock>,
     attacks: Query<&AttackClock>,
     channels: Query<&AnimationChannelsActive>,
@@ -743,7 +745,23 @@ pub(crate) fn update_part_animations(
 
         let spec = chosen;
 
-        let aim_delta = if player.apply_aim_yaw {
+        let allow_aim_yaw = if player.apply_aim_yaw {
+            // Melee units look better when they *only* apply attention yaw during the active
+            // attack window; otherwise the weapon can appear "stuck" pointing at the target
+            // between swings.
+            let is_melee = prefabs
+                .get(player.root_entity)
+                .ok()
+                .and_then(|prefab_id| library.get(prefab_id.0))
+                .and_then(|def| def.attack.as_ref())
+                .map(|attack| attack.kind == UnitAttackKind::Melee)
+                .unwrap_or(false);
+            !is_melee || attack_active
+        } else {
+            false
+        };
+
+        let aim_delta = if allow_aim_yaw {
             aim_deltas
                 .get(player.root_entity)
                 .ok()
@@ -759,7 +777,7 @@ pub(crate) fn update_part_animations(
         };
 
         let mut base = player.base_transform;
-        if player.apply_aim_yaw {
+        if allow_aim_yaw {
             // `AimYawDelta` is expressed in the root body's frame (+Y is up). For attachments,
             // the join frame at `parent_anchor` can be arbitrarily oriented (e.g. a neck anchor's
             // +Z points "out of the joint", not necessarily world-forward). Convert the yaw
@@ -1130,6 +1148,109 @@ mod tests {
             anchor_rot,
             delta,
             expected,
+        );
+    }
+
+    #[test]
+    fn melee_aim_yaw_only_applies_during_attack_window() {
+        use crate::object::registry::{
+            ColliderProfile, MeleeAttackProfile, ObjectDef, ObjectInteraction, UnitAttackProfile,
+        };
+        use crate::types::{AimYawDelta, ObjectPrefabId};
+
+        let root_object_id = 0xabc0_def1_u128;
+        let mut library = ObjectLibrary::default();
+        library.upsert(ObjectDef {
+            object_id: root_object_id,
+            label: "root".into(),
+            size: Vec3::ONE,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: Some(UnitAttackProfile {
+                kind: crate::object::registry::UnitAttackKind::Melee,
+                cooldown_secs: 0.0,
+                damage: 0,
+                anim_window_secs: 0.25,
+                melee: Some(MeleeAttackProfile {
+                    range: 1.0,
+                    radius: 0.5,
+                    arc_degrees: 90.0,
+                }),
+                ranged: None,
+            }),
+        });
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(library);
+        app.add_systems(Update, update_part_animations);
+
+        let aim_delta = core::f32::consts::FRAC_PI_2;
+        let root = app
+            .world_mut()
+            .spawn((
+                ObjectPrefabId(root_object_id),
+                AimYawDelta(aim_delta),
+                AnimationChannelsActive {
+                    moving: false,
+                    attacking_primary: false,
+                },
+            ))
+            .id();
+
+        let part = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                PartAnimationPlayer {
+                    root_entity: root,
+                    parent_object_id: root_object_id,
+                    child_object_id: None,
+                    attachment: None,
+                    base_transform: Transform::IDENTITY,
+                    animations: Vec::new(),
+                    apply_aim_yaw: true,
+                },
+            ))
+            .id();
+
+        app.update();
+        let transform = app
+            .world()
+            .get::<Transform>(part)
+            .copied()
+            .expect("part entity has Transform");
+        assert!(
+            transform.rotation.angle_between(Quat::IDENTITY) < 1e-3,
+            "expected melee aim yaw to be suppressed when not attacking; rot={:?}",
+            transform.rotation
+        );
+
+        app.world_mut().entity_mut(root).insert(AnimationChannelsActive {
+            moving: false,
+            attacking_primary: true,
+        });
+        app.update();
+        let transform = app
+            .world()
+            .get::<Transform>(part)
+            .copied()
+            .expect("part entity has Transform");
+        let expected = Quat::from_rotation_y(aim_delta);
+        assert!(
+            transform.rotation.angle_between(expected) < 1e-3,
+            "expected melee aim yaw to apply during attack window; rot={:?} expected={:?}",
+            transform.rotation,
+            expected
         );
     }
 
