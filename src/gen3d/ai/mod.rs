@@ -4594,6 +4594,45 @@ fn build_gen3d_scene_graph_summary(
                             Some(v.normalize())
                         }
                     });
+                let joint = att.joint.as_ref().map(|joint| {
+                    let mut json = serde_json::Map::new();
+                    json.insert(
+                        "kind".into(),
+                        serde_json::Value::String(match joint.kind {
+                            AiJointKindJson::Fixed => "fixed",
+                            AiJointKindJson::Hinge => "hinge",
+                            AiJointKindJson::Ball => "ball",
+                            AiJointKindJson::Free => "free",
+                            AiJointKindJson::Unknown => "unknown",
+                        }
+                        .to_string()),
+                    );
+                    if let Some(axis) = joint.axis_join {
+                        json.insert(
+                            "axis_join".into(),
+                            serde_json::json!([axis[0], axis[1], axis[2]]),
+                        );
+                    }
+                    if let Some(limits) = joint.limits_degrees {
+                        json.insert(
+                            "limits_degrees".into(),
+                            serde_json::json!([limits[0], limits[1]]),
+                        );
+                    }
+                    if let Some(limits) = joint.swing_limits_degrees {
+                        json.insert(
+                            "swing_limits_degrees".into(),
+                            serde_json::json!([limits[0], limits[1]]),
+                        );
+                    }
+                    if let Some(limits) = joint.twist_limits_degrees {
+                        json.insert(
+                            "twist_limits_degrees".into(),
+                            serde_json::json!([limits[0], limits[1]]),
+                        );
+                    }
+                    serde_json::Value::Object(json)
+                });
                 let animations: Vec<serde_json::Value> = att
                     .animations
                     .iter()
@@ -4647,6 +4686,7 @@ fn build_gen3d_scene_graph_summary(
                         "rot_quat_xyzw": [q.x, q.y, q.z, q.w],
                         "scale": [s.x, s.y, s.z],
                     },
+                    "joint": joint,
                     "animations": animations,
                 })
             });

@@ -442,6 +442,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             - For rolling wheels/tracks, contacts are optional; if you include them, omit `stance` (the physical ground contact point moves around the wheel).\n\
             - Joint constraints:\n\
             - `attach_to.joint.kind`: `fixed` | `hinge` | `ball` | `free`.\n\
+            - IMPORTANT: If `joint.kind == \"fixed\"`, do NOT author rotation in `attach_to.animations` for that attachment edge.\n\
+              The engine clamps fixed-joint rotation deterministically to avoid motion validation regressions.\n\
+              If you need rotational motion, choose `hinge`/`ball`/`free` (and provide axes/limits where appropriate).\n\
             - Joint axes/limits are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
             - For `hinge`, provide `axis_join` and optional `limits_degrees` [min,max].\n\
             - For `hinge`/`ball` joints, prefer ROTATION deltas in animations; avoid large `delta.pos` translations (motion validation warns `constrained_joint_translates`).\n\
@@ -673,6 +676,9 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
         (It is computed from the component's child anchor forward vector so the part spins around the attachment axis.)\n\
       - Whenever you use a keyframe `delta` rotation (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`), ALWAYS include `delta.rot_frame` explicitly.\n\
         Prefer `delta.rot_frame=\"parent\"` when you are thinking in the PARENT COMPONENT axes (+Y up, +Z forward). Use `\"join\"` only if you are intentionally authoring in the joint/join frame axes.\n\
+      - IMPORTANT: Do NOT try to rotate fixed joints.\n\
+        If `scene_graph_summary` shows `joint=fixed` for an attachment edge, the engine clamps any attachment rotation deltas to identity and ignores spin clips.\n\
+        If you need visible motion, animate a non-fixed joint in the chain (hinge/ball/free), or change the joint kind/limits via `tweak_attachment`.\n\
       - `tweak_animation.spec.time_offset_units` is an additive offset in the clip's time domain. Use it to phase-stagger repeated limbs (instead of duplicating or rewriting keyframes).\n\
       - If an animation channel is undesirable or too broken to repair, you may disable ANY channel (ambient/idle/move/attack_primary)\n\
         by replacing it with an identity loop (a `loop` whose keyframes' `delta` transforms are all identity).\n\
@@ -887,6 +893,21 @@ pub(super) fn build_gen3d_review_delta_user_text(
                 .and_then(|a| a.get("offset"))
                 .and_then(|o| o.get("pos"))
                 .and_then(read_vec3);
+            let joint_kind = c
+                .get("attach_to")
+                .and_then(|a| a.get("joint"))
+                .and_then(|j| j.get("kind"))
+                .and_then(|v| v.as_str());
+            let joint_axis_join = c
+                .get("attach_to")
+                .and_then(|a| a.get("joint"))
+                .and_then(|j| j.get("axis_join"))
+                .and_then(read_vec3);
+            let joint_limits_degrees = c
+                .get("attach_to")
+                .and_then(|a| a.get("joint"))
+                .and_then(|j| j.get("limits_degrees"))
+                .and_then(read_vec2);
             let join_forward_world = c
                 .get("attach_to")
                 .and_then(|a| a.get("join_forward_world"))
@@ -935,6 +956,20 @@ pub(super) fn build_gen3d_review_delta_user_text(
             ));
 
             if parent_name != "(root)" {
+                if let Some(joint_kind) = joint_kind {
+                    out.push_str(&format!(" joint={joint_kind}"));
+                    if joint_kind == "hinge" {
+                        if joint_axis_join.is_some() {
+                            out.push_str(&format!(" axis_join={}", fmt_vec3(joint_axis_join)));
+                        }
+                        if joint_limits_degrees.is_some() {
+                            out.push_str(&format!(
+                                " limits_deg={}",
+                                fmt_vec2(joint_limits_degrees)
+                            ));
+                        }
+                    }
+                }
                 out.push_str(&format!(
                     " offset.pos(join_frame)={} join_right_world={} join_up_world={} join_forward_world={}",
                     fmt_vec3(offset_pos_join),

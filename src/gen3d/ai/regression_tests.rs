@@ -2,7 +2,7 @@ use super::schema::AiJointKindJson;
 use super::{convert, parse};
 use crate::gen3d::state::Gen3dDraft;
 use crate::object::registry::{builtin_object_id, ObjectPartDef, ObjectPartKind, PartAnimationDef};
-use bevy::prelude::Quat;
+use bevy::prelude::{Quat, Transform, Vec3};
 use serde_json::json;
 
 fn id_hex32(id: u128) -> String {
@@ -421,7 +421,8 @@ fn gen3d_review_delta_prompt_includes_join_axes_and_offset_pos() {
                     "join_forward_world": [0.0, 1.0, 0.0],
                     "join_up_world": [0.0, 0.0, 1.0],
                     "join_right_world": [-1.0, 0.0, 0.0],
-                    "offset": { "pos": [0.0, 0.0, -0.02] }
+                    "offset": { "pos": [0.0, 0.0, -0.02] },
+                    "joint": { "kind": "hinge", "axis_join": [0.0, 1.0, 0.0], "limits_degrees": [-90.0, 90.0] }
                 }
             }
         ]
@@ -455,6 +456,90 @@ fn gen3d_review_delta_prompt_includes_join_axes_and_offset_pos() {
             && text.contains("join_forward_world="),
         "missing join axes in prompt:\n{text}"
     );
+    assert!(
+        text.contains("joint=hinge") && text.contains("limits_deg="),
+        "missing joint kind/limits in prompt:\n{text}"
+    );
+}
+
+#[test]
+fn gen3d_scene_graph_summary_includes_joint_kind() {
+    use crate::object::registry::AnchorDef;
+    use std::borrow::Cow;
+
+    let components = vec![
+        super::Gen3dPlannedComponent {
+            display_name: "Root".into(),
+            name: "root".into(),
+            purpose: "".into(),
+            modeling_notes: "".into(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: None,
+            anchors: vec![AnchorDef {
+                name: Cow::Borrowed("child_mount"),
+                transform: Transform::IDENTITY,
+            }],
+            contacts: vec![],
+            attach_to: None,
+        },
+        super::Gen3dPlannedComponent {
+            display_name: "Child".into(),
+            name: "child".into(),
+            purpose: "".into(),
+            modeling_notes: "".into(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: None,
+            anchors: vec![AnchorDef {
+                name: Cow::Borrowed("base"),
+                transform: Transform::IDENTITY,
+            }],
+            contacts: vec![],
+            attach_to: Some(super::Gen3dPlannedAttachment {
+                parent: "root".into(),
+                parent_anchor: "child_mount".into(),
+                child_anchor: "base".into(),
+                offset: Transform::IDENTITY,
+                joint: Some(super::AiJointJson {
+                    kind: super::AiJointKindJson::Fixed,
+                    axis_join: None,
+                    limits_degrees: None,
+                    swing_limits_degrees: None,
+                    twist_limits_degrees: None,
+                }),
+                animations: vec![],
+            }),
+        },
+    ];
+
+    let summary = super::build_gen3d_scene_graph_summary(
+        "deadbeef-dead-beef-dead-beefdeadbeef",
+        0,
+        0,
+        "sha256:abc",
+        1,
+        &components,
+        &Gen3dDraft::default(),
+    );
+
+    let comps = summary
+        .get("components")
+        .and_then(|v| v.as_array())
+        .expect("components array");
+    let child = comps
+        .iter()
+        .find(|c| c.get("name").and_then(|v| v.as_str()) == Some("child"))
+        .expect("child component");
+    let kind = child
+        .get("attach_to")
+        .and_then(|a| a.get("joint"))
+        .and_then(|j| j.get("kind"))
+        .and_then(|v| v.as_str())
+        .expect("joint kind");
+    assert_eq!(kind, "fixed");
 }
 
 #[test]
