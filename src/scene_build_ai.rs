@@ -180,7 +180,7 @@ fn scene_build_focus_and_half_extents(
 
         let base_size = library
             .size(prefab_id.0)
-            .unwrap_or_else(|| Vec3::splat(crate::constants::BUILD_UNIT_SIZE));
+            .unwrap_or_else(|| Vec3::splat(crate::constants::DEFAULT_OBJECT_SIZE_M));
         let size = base_size.abs() * transform.scale.abs().max(Vec3::splat(0.001));
         let half = (size * 0.5).max(Vec3::splat(0.001));
 

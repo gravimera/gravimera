@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::constants::BUILD_UNIT_SIZE;
+use crate::constants::DEFAULT_OBJECT_SIZE_M;
 use crate::object::registry::{ColliderProfile, ObjectLibrary};
 use crate::scene_sources::{SceneSourcesIndexPaths, SceneSourcesV1, SCENE_SOURCES_FORMAT_VERSION};
 use crate::scene_sources_patch::{
@@ -291,7 +291,7 @@ fn spawn_build_object_minimal(
 ) -> Entity {
     let base_size = library
         .size(prefab_id)
-        .unwrap_or_else(|| Vec3::splat(BUILD_UNIT_SIZE));
+        .unwrap_or_else(|| Vec3::splat(DEFAULT_OBJECT_SIZE_M));
 
     transform.scale = sanitize_scale(transform.scale);
 
@@ -366,7 +366,7 @@ fn spawn_unit_minimal(
 ) -> Entity {
     let base_size = library
         .size(prefab_id)
-        .unwrap_or_else(|| Vec3::splat(BUILD_UNIT_SIZE));
+        .unwrap_or_else(|| Vec3::splat(DEFAULT_OBJECT_SIZE_M));
 
     transform.scale = sanitize_scale(transform.scale);
 
@@ -2314,7 +2314,7 @@ fn compute_unit_radius_and_transform(
     let mut transform = transform;
     let base_size = library
         .size(prefab_id)
-        .unwrap_or_else(|| Vec3::splat(BUILD_UNIT_SIZE));
+        .unwrap_or_else(|| Vec3::splat(DEFAULT_OBJECT_SIZE_M));
     transform.scale = sanitize_scale(transform.scale);
 
     let scale = transform.scale;
@@ -2348,7 +2348,7 @@ fn compute_build_object_collider_and_transform(
     let mut transform = transform;
     let base_size = library
         .size(prefab_id)
-        .unwrap_or_else(|| Vec3::splat(BUILD_UNIT_SIZE));
+        .unwrap_or_else(|| Vec3::splat(DEFAULT_OBJECT_SIZE_M));
 
     transform.scale = sanitize_scale(transform.scale);
 

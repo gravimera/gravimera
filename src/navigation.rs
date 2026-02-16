@@ -146,13 +146,13 @@ pub(crate) fn find_path_height_aware(
     let start_world = start_world.clamp(min, max);
     let goal_world = goal_world.clamp(min, max);
 
-    let start_ground_units = quantize_units(start_ground_y.max(0.0), BUILD_GRID_SIZE).max(0);
-    let goal_ground_units = quantize_units(goal_ground_y.max(0.0), BUILD_GRID_SIZE).max(0);
+    let start_ground_units = quantize_units(start_ground_y.max(0.0), NAV_HEIGHT_QUANT_SIZE).max(0);
+    let goal_ground_units = quantize_units(goal_ground_y.max(0.0), NAV_HEIGHT_QUANT_SIZE).max(0);
 
     if blocked_at(
         goal_world,
         radius,
-        units_to_world(goal_ground_units, BUILD_GRID_SIZE),
+        units_to_world(goal_ground_units, NAV_HEIGHT_QUANT_SIZE),
         character_height,
         obstacles,
     ) {
@@ -235,7 +235,7 @@ pub(crate) fn find_path_height_aware(
             return Some(path);
         }
 
-        let current_ground_y = units_to_world(node.key.ground_units, BUILD_GRID_SIZE);
+        let current_ground_y = units_to_world(node.key.ground_units, NAV_HEIGHT_QUANT_SIZE);
         for (dx, dy, step_units) in neighbors {
             let next_cell = IVec2::new(node.key.cell.x + dx, node.key.cell.y + dy);
             if !in_bounds(next_cell, min_cell, max_cell) {
@@ -287,7 +287,7 @@ pub(crate) fn find_path_height_aware(
                 character_height,
                 obstacles,
             );
-            let next_units = quantize_units(next_ground.max(0.0), BUILD_GRID_SIZE).max(0);
+            let next_units = quantize_units(next_ground.max(0.0), NAV_HEIGHT_QUANT_SIZE).max(0);
             let next_key = NodeKey {
                 cell: next_cell,
                 ground_units: next_units,

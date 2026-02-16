@@ -4,7 +4,9 @@ use bevy::prelude::*;
 use uuid::Uuid;
 
 use crate::assets::SceneAssets;
-use crate::constants::{BUILD_GRID_SIZE, CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION, WORLD_HALF_SIZE};
+use crate::constants::{
+    BUILD_GRID_SIZE, BUILD_UNIT_SIZE, CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION, WORLD_HALF_SIZE,
+};
 use crate::geometry::{normalize_flat_direction, snap_to_grid};
 use crate::object::registry::{
     ColliderProfile, MeshKey, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction,
@@ -703,7 +705,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
 
     let forward = normalize_flat_direction(player_transform.rotation * Vec3::Z).unwrap_or(Vec3::Z);
     let right = Vec3::Y.cross(forward).normalize_or_zero();
-    let distance = player_collider.radius + object_radius + BUILD_GRID_SIZE;
+    let distance = player_collider.radius + object_radius + BUILD_UNIT_SIZE;
 
     // Avoid stacking multiple saved models on top of each other: scatter spawn positions around
     // the hero deterministically using the current save sequence.
@@ -718,7 +720,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     if dir.length_squared() <= 0.0001 {
         dir = Vec3::X;
     }
-    let spacing = (object_radius * 2.0 + BUILD_GRID_SIZE * 2.0).max(BUILD_GRID_SIZE * 4.0);
+    let spacing = (object_radius * 2.0 + BUILD_UNIT_SIZE * 2.0).max(BUILD_UNIT_SIZE * 4.0);
     let radial = distance + ring as f32 * spacing;
 
     let mut pos = player_transform.translation + dir * radial;
@@ -726,7 +728,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     pos.z = snap_to_grid(pos.z, BUILD_GRID_SIZE);
     let ground_y = size.y.max(0.01) * 0.5;
     pos.y = match mobility_mode {
-        Some(MobilityMode::Air) => ground_y + BUILD_GRID_SIZE * 8.0,
+        Some(MobilityMode::Air) => ground_y + BUILD_UNIT_SIZE * 8.0,
         _ => ground_y,
     };
 

@@ -51,6 +51,12 @@ Headless (no GPU / CI):
 cargo run -- --headless --headless-seconds 10
 ```
 
+## Units / Scale
+
+- World space uses meters: `1.0` world unit = `1 meter`.
+- Build mode snapping uses a small grid: `0.05m` (5 cm).
+- Scene persistence (`scene.dat`) quantizes positions to centimeters (1 cm).
+
 ## Config & Data Directory
 
 By default Gravimera stores runtime data under `~/.gravimera/`:

@@ -29,9 +29,9 @@ pub(crate) fn def() -> ObjectDef {
     let stake_thick = BUILD_FENCE_WIDTH * 0.85;
     let stick_thick_y = BUILD_UNIT_SIZE * 0.20;
     let stick_thick_across = BUILD_FENCE_WIDTH * 0.35;
-    let stake_offset = BUILD_FENCE_LENGTH * 0.5 - BUILD_GRID_SIZE * 0.5;
+    let stake_offset = BUILD_FENCE_LENGTH * 0.5 - stake_thick * 0.5;
     let stake_scale = fence_basis(axis, stake_thick, BUILD_FENCE_HEIGHT, stake_thick);
-    let stick_length = (BUILD_FENCE_LENGTH - stake_thick * 2.0).max(BUILD_GRID_SIZE);
+    let stick_length = (BUILD_FENCE_LENGTH - stake_thick * 2.0).max(BUILD_UNIT_SIZE);
     let stick_scale = fence_basis(axis, stick_length, stick_thick_y, stick_thick_across);
     let bottom_y = -BUILD_FENCE_HEIGHT * 0.5 + BUILD_UNIT_SIZE * 0.60;
     let top_y = -BUILD_FENCE_HEIGHT * 0.5 + BUILD_UNIT_SIZE * 2.00;

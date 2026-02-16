@@ -19,8 +19,9 @@ use crate::object::registry::{
 use crate::object::visuals;
 use crate::types::*;
 
-const SCENE_DAT_VERSION: u32 = 6;
-const DEFAULT_UNITS_PER_BUILD_UNIT: u32 = 4;
+const SCENE_DAT_VERSION: u32 = 7;
+// Persist positions in centimeters (stable and easy to reason about for AI-authored worlds).
+const DEFAULT_UNITS_PER_METER: u32 = 100;
 const SCENE_AUTOSAVE_INTERVAL_SECS: f32 = 60.0;
 
 #[derive(bevy::ecs::message::Message, Debug, Clone, Copy)]
@@ -56,7 +57,7 @@ struct SceneDat {
     #[prost(uint32, tag = "1")]
     version: u32,
     #[prost(uint32, tag = "2")]
-    units_per_build_unit: u32,
+    units_per_meter: u32,
     #[prost(message, repeated, tag = "3")]
     defs: Vec<SceneDatObjectDef>,
     #[prost(message, repeated, tag = "4")]
@@ -588,15 +589,14 @@ fn scene_dat_path(config: &AppConfig, active: &crate::realm::ActiveRealmScene) -
     crate::realm::scene_dat_path(active)
 }
 
-fn quantize_world(value: f32, units_per_build_unit: u32) -> i32 {
-    let units_per_build_unit = units_per_build_unit.max(1) as f32;
-    let scale = units_per_build_unit / BUILD_UNIT_SIZE.max(1e-6);
-    (value * scale).round() as i32
+fn quantize_world(value_m: f32, units_per_meter: u32) -> i32 {
+    let units_per_meter = units_per_meter.max(1) as f32;
+    (value_m * units_per_meter).round() as i32
 }
 
-fn dequantize_world(value: i32, units_per_build_unit: u32) -> f32 {
-    let units_per_build_unit = units_per_build_unit.max(1) as f32;
-    (value as f32) * BUILD_UNIT_SIZE / units_per_build_unit
+fn dequantize_world(value_units: i32, units_per_meter: u32) -> f32 {
+    let units_per_meter = units_per_meter.max(1) as f32;
+    (value_units as f32) / units_per_meter
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -1470,7 +1470,7 @@ fn save_scene_dat_internal(
     library: &ObjectLibrary,
     path: &Path,
 ) -> io::Result<usize> {
-    let units_per_build_unit = DEFAULT_UNITS_PER_BUILD_UNIT;
+    let units_per_meter = DEFAULT_UNITS_PER_METER;
 
     let mut instances: Vec<SceneDatObjectInstance> = Vec::with_capacity(objects.iter().len());
     let mut root_defs: Vec<u128> = Vec::with_capacity(objects.iter().len());
@@ -1483,9 +1483,9 @@ fn save_scene_dat_internal(
         instances.push(SceneDatObjectInstance {
             instance_id: Some(u128_to_uuid(instance_id.0)),
             base_object_id: Some(u128_to_uuid(prefab_id.0)),
-            x_units: quantize_world(pos.x, units_per_build_unit),
-            y_units: quantize_world(pos.y, units_per_build_unit),
-            z_units: quantize_world(pos.z, units_per_build_unit),
+            x_units: quantize_world(pos.x, units_per_meter),
+            y_units: quantize_world(pos.y, units_per_meter),
+            z_units: quantize_world(pos.z, units_per_meter),
             rot_x: transform.rotation.x,
             rot_y: transform.rotation.y,
             rot_z: transform.rotation.z,
@@ -1524,7 +1524,7 @@ fn save_scene_dat_internal(
 
     let scene = SceneDat {
         version: SCENE_DAT_VERSION,
-        units_per_build_unit,
+        units_per_meter,
         defs,
         instances,
     };
@@ -1552,7 +1552,7 @@ fn spawn_build_object_from_scene(
 ) -> Entity {
     let base_size = library
         .size(prefab_id)
-        .unwrap_or_else(|| Vec3::splat(BUILD_UNIT_SIZE));
+        .unwrap_or_else(|| Vec3::splat(DEFAULT_OBJECT_SIZE_M));
 
     let mut scale = transform.scale;
     if !scale.x.is_finite() || scale.x.abs() < 1e-4 {
@@ -1655,7 +1655,7 @@ fn spawn_unit_from_scene(
 ) -> Entity {
     let base_size = library
         .size(prefab_id)
-        .unwrap_or_else(|| Vec3::splat(BUILD_UNIT_SIZE));
+        .unwrap_or_else(|| Vec3::splat(DEFAULT_OBJECT_SIZE_M));
 
     let mut scale = transform.scale;
     if !scale.x.is_finite() || scale.x.abs() < 1e-4 {
@@ -1975,7 +1975,7 @@ fn load_scene_dat_from_path(
         }
     }
 
-    let units_per_build_unit = scene.units_per_build_unit.max(1);
+    let units_per_meter = scene.units_per_meter.max(1);
     let mut spawned = 0usize;
 
     for instance in &scene.instances {
@@ -1995,9 +1995,9 @@ fn load_scene_dat_from_path(
             .unwrap_or_else(ObjectId::new_v4);
 
         let pos = Vec3::new(
-            dequantize_world(instance.x_units, units_per_build_unit),
-            dequantize_world(instance.y_units, units_per_build_unit),
-            dequantize_world(instance.z_units, units_per_build_unit),
+            dequantize_world(instance.x_units, units_per_meter),
+            dequantize_world(instance.y_units, units_per_meter),
+            dequantize_world(instance.z_units, units_per_meter),
         );
         let rotation = Quat::from_xyzw(
             instance.rot_x,

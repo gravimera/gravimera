@@ -183,7 +183,8 @@ fn find_fence_center_y(
     let half_y = size_y * 0.5;
     let half = Vec3::new(size_xz.x * 0.5, half_y, size_xz.y * 0.5);
 
-    let stake_offset = BUILD_FENCE_LENGTH * 0.5 - BUILD_GRID_SIZE * 0.5;
+    let stake_thick = BUILD_FENCE_WIDTH * 0.85;
+    let stake_offset = BUILD_FENCE_LENGTH * 0.5 - stake_thick * 0.5;
     let stake_left = center_xz
         + match axis {
             FenceAxis::X => Vec2::new(-stake_offset, 0.0),
@@ -876,7 +877,7 @@ pub(crate) fn build_draw_preview_gizmos(
             let stick_thick_y = BUILD_UNIT_SIZE * 0.20;
             let stick_thick_across = BUILD_FENCE_WIDTH * 0.35;
 
-            let stake_offset = BUILD_FENCE_LENGTH * 0.5 - BUILD_GRID_SIZE * 0.5;
+            let stake_offset = BUILD_FENCE_LENGTH * 0.5 - stake_thick * 0.5;
             let stake_size = fence_basis(axis, stake_thick, BUILD_FENCE_HEIGHT, stake_thick);
             let stake_half = stake_size * 0.5;
             draw_box_outline(
@@ -892,7 +893,7 @@ pub(crate) fn build_draw_preview_gizmos(
                 color,
             );
 
-            let stick_length = (BUILD_FENCE_LENGTH - stake_thick * 2.0).max(BUILD_GRID_SIZE);
+            let stick_length = (BUILD_FENCE_LENGTH - stake_thick * 2.0).max(BUILD_UNIT_SIZE);
             let stick_size = fence_basis(axis, stick_length, stick_thick_y, stick_thick_across);
             let stick_half = stick_size * 0.5;
             let bottom_y = -BUILD_FENCE_HEIGHT * 0.5 + BUILD_UNIT_SIZE * 0.60;
@@ -979,7 +980,7 @@ fn build_instance_bounds(
 ) -> (Vec3, Vec2) {
     let base_size = library
         .size(prefab_id)
-        .unwrap_or_else(|| Vec3::splat(BUILD_UNIT_SIZE));
+        .unwrap_or_else(|| Vec3::splat(DEFAULT_OBJECT_SIZE_M));
 
     let mut scale = scale;
     if !scale.x.is_finite() || scale.x.abs() < 1e-4 {

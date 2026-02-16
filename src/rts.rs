@@ -546,7 +546,7 @@ pub(crate) fn move_command_input(
             cursor_move_pick(window, camera, &camera_global, &library, &objects).map(|pick| {
                 let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
                 if let Some((center, half)) = pick.block_top {
-                    let min_half = BUILD_GRID_SIZE * 0.5;
+                    let min_half = BUILD_UNIT_SIZE * 0.5;
                     if half.x > min_half && half.y > min_half {
                         goal.x = goal
                             .x
@@ -563,7 +563,7 @@ pub(crate) fn move_command_input(
         cursor_move_pick(window, camera, &camera_global, &library, &objects).map(|pick| {
             let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
             if let Some((center, half)) = pick.block_top {
-                let min_half = BUILD_GRID_SIZE * 0.5;
+                let min_half = BUILD_UNIT_SIZE * 0.5;
                 if half.x > min_half && half.y > min_half {
                     goal.x = goal
                         .x
@@ -926,8 +926,9 @@ pub(crate) fn build_unit_hotkeys(
         return;
     }
 
-    let step = BUILD_GRID_SIZE.max(0.01);
-    let offset = Vec3::new(step, 0.0, step);
+    let snap_step = BUILD_GRID_SIZE.max(0.01);
+    let offset_step = BUILD_UNIT_SIZE.max(snap_step);
+    let offset = Vec3::new(offset_step, 0.0, offset_step);
     let mut new_selected: HashSet<Entity> = HashSet::new();
     let selected: Vec<Entity> = selection.selected.iter().copied().collect();
     for entity in selected {
@@ -937,8 +938,8 @@ pub(crate) fn build_unit_hotkeys(
 
         let mut new_transform = transform.clone();
         new_transform.translation += offset;
-        new_transform.translation.x = snap_to_grid(new_transform.translation.x, step);
-        new_transform.translation.z = snap_to_grid(new_transform.translation.z, step);
+        new_transform.translation.x = snap_to_grid(new_transform.translation.x, snap_step);
+        new_transform.translation.z = snap_to_grid(new_transform.translation.z, snap_step);
 
         let radius = collider.radius.max(0.01);
         new_transform.translation.x = new_transform

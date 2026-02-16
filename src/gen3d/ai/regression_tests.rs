@@ -1,10 +1,8 @@
-use super::{convert, parse};
 use super::schema::AiJointKindJson;
-use bevy::prelude::Quat;
+use super::{convert, parse};
 use crate::gen3d::state::Gen3dDraft;
-use crate::object::registry::{
-    builtin_object_id, ObjectPartDef, ObjectPartKind, PartAnimationDef,
-};
+use crate::object::registry::{builtin_object_id, ObjectPartDef, ObjectPartKind, PartAnimationDef};
+use bevy::prelude::Quat;
 use serde_json::json;
 
 fn id_hex32(id: u128) -> String {
@@ -576,7 +574,8 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_review_delta_tweak_animation() {
 
     let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
     let plan_collider = plan.collider.clone();
-    let (mut planned, _notes, defs) = convert::ai_plan_to_initial_draft_defs(plan).expect("convert");
+    let (mut planned, _notes, defs) =
+        convert::ai_plan_to_initial_draft_defs(plan).expect("convert");
     let mut draft = Gen3dDraft { defs };
 
     let hair_id = id_hex32(builtin_object_id("gravimera/gen3d/component/hair"));
@@ -670,7 +669,8 @@ fn gen3d_ignores_spin_tweak_animation_on_fixed_joint() {
 
     let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
     let plan_collider = plan.collider.clone();
-    let (mut planned, _notes, defs) = convert::ai_plan_to_initial_draft_defs(plan).expect("convert");
+    let (mut planned, _notes, defs) =
+        convert::ai_plan_to_initial_draft_defs(plan).expect("convert");
     let mut draft = Gen3dDraft { defs };
 
     let hair_id = id_hex32(builtin_object_id("gravimera/gen3d/component/hair"));

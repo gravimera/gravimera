@@ -199,10 +199,7 @@ fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
                 if let Some(tagged) = spec_obj.remove(tagged_kind) {
                     if let Value::Object(inner) = tagged {
                         let mut clip_obj = inner;
-                        clip_obj.insert(
-                            "kind".to_string(),
-                            Value::String(tagged_kind.to_string()),
-                        );
+                        clip_obj.insert("kind".to_string(), Value::String(tagged_kind.to_string()));
                         clip_value = Some(Value::Object(clip_obj));
                         changed = true;
                         break;
@@ -261,25 +258,27 @@ fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
                 };
                 changed = true;
                 let should_overwrite = match key {
-                    "keyframes" => clip_obj
-                        .get("keyframes")
-                        .and_then(|v| v.as_array())
-                        .is_some_and(|arr| arr.is_empty())
-                        && spec_val
-                            .as_array()
-                            .is_some_and(|arr| !arr.is_empty()),
-                    "duration_secs" => clip_obj
-                        .get("duration_secs")
-                        .and_then(|v| v.as_f64())
-                        .is_none_or(|v| !(v.is_finite() && v > 0.0))
-                        && spec_val
-                            .as_f64()
-                            .is_some_and(|v| v.is_finite() && v > 0.0),
-                    "kind" => clip_obj
-                        .get("kind")
-                        .and_then(|v| v.as_str())
-                        .is_none_or(|s| s.trim().is_empty())
-                        && spec_val.as_str().is_some_and(|s| !s.trim().is_empty()),
+                    "keyframes" => {
+                        clip_obj
+                            .get("keyframes")
+                            .and_then(|v| v.as_array())
+                            .is_some_and(|arr| arr.is_empty())
+                            && spec_val.as_array().is_some_and(|arr| !arr.is_empty())
+                    }
+                    "duration_secs" => {
+                        clip_obj
+                            .get("duration_secs")
+                            .and_then(|v| v.as_f64())
+                            .is_none_or(|v| !(v.is_finite() && v > 0.0))
+                            && spec_val.as_f64().is_some_and(|v| v.is_finite() && v > 0.0)
+                    }
+                    "kind" => {
+                        clip_obj
+                            .get("kind")
+                            .and_then(|v| v.as_str())
+                            .is_none_or(|s| s.trim().is_empty())
+                            && spec_val.as_str().is_some_and(|s| !s.trim().is_empty())
+                    }
                     _ => false,
                 };
                 if should_overwrite || !clip_obj.contains_key(key) {
@@ -298,10 +297,7 @@ fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
                 };
                 if let Some(Value::Object(inner)) = clip_obj.remove(wrapper_key) {
                     let mut flattened = inner;
-                    flattened.insert(
-                        "kind".to_string(),
-                        Value::String(wrapper_key.to_string()),
-                    );
+                    flattened.insert("kind".to_string(), Value::String(wrapper_key.to_string()));
                     clip_obj = flattened;
                     changed = true;
                 }

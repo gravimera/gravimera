@@ -76,8 +76,9 @@ fn find_anchor_world_matrix(
             continue;
         };
 
-        let apply_aim_yaw =
-            !ancestor_apply_aim_yaw && !aim_object_ids.is_empty() && aim_object_ids.contains(child_id);
+        let apply_aim_yaw = !ancestor_apply_aim_yaw
+            && !aim_object_ids.is_empty()
+            && aim_object_ids.contains(child_id);
 
         let mut offset = part.transform;
         if apply_aim_yaw {
@@ -113,9 +114,8 @@ fn find_anchor_world_matrix(
             let child_def = library.get(*child_id)?;
             let child_anchor = anchor_transform(child_def, att.child_anchor.as_ref())
                 .unwrap_or(Transform::IDENTITY);
-            child_local = parent_anchor.to_matrix()
-                * offset.to_matrix()
-                * child_anchor.to_matrix().inverse();
+            child_local =
+                parent_anchor.to_matrix() * offset.to_matrix() * child_anchor.to_matrix().inverse();
         }
 
         let child_to_world = object_to_world * child_local;
@@ -226,7 +226,9 @@ mod tests {
             }],
             parts: vec![ObjectPartDef {
                 part_id: None,
-                kind: ObjectPartKind::ObjectRef { object_id: child_id },
+                kind: ObjectPartKind::ObjectRef {
+                    object_id: child_id,
+                },
                 attachment: Some(AttachmentDef {
                     parent_anchor: "neck".into(),
                     child_anchor: "neck_mount".into(),
@@ -1027,9 +1029,14 @@ pub(crate) fn unit_attack_execute(
                     continue;
                 };
 
-                let muzzle_pos =
-                    anchor_world_position(&library, prefab_id.0, transform, &ranged.muzzle, aim_rot)
-                        .unwrap_or_else(|| transform.translation + Vec3::Y * 1.0);
+                let muzzle_pos = anchor_world_position(
+                    &library,
+                    prefab_id.0,
+                    transform,
+                    &ranged.muzzle,
+                    aim_rot,
+                )
+                .unwrap_or_else(|| transform.translation + Vec3::Y * 1.0);
 
                 let radius = projectile_collider_radius(projectile_def);
                 let spawn_pos = muzzle_pos + direction * (radius * 1.05 + 0.01);

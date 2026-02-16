@@ -159,8 +159,16 @@ pub(crate) const GUNDAM_HEIGHT_WORLD: f32 =
 pub(crate) const CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION: f32 = 2.0 / 3.0;
 // Fences block movement only if they rise into the character's upper body.
 pub(crate) const CROSS_FENCE_BLOCKING_HEIGHT_FRACTION: f32 = 2.0 / 3.0;
-pub(crate) const BUILD_UNIT_SIZE: f32 = HERO_HEIGHT_WORLD / 7.0;
-pub(crate) const BUILD_GRID_SIZE: f32 = BUILD_UNIT_SIZE;
+
+// Units contract:
+// - All distances in gameplay code are expressed in world-space meters.
+// - Build mode uses a small fixed snap grid for predictable alignment.
+//
+// NOTE: `BUILD_UNIT_SIZE` is a convenience scale used by some built-in prefabs; it must NOT be
+// derived from character sizes (to avoid hidden coupling between gameplay tuning and content).
+pub(crate) const BUILD_UNIT_SIZE: f32 = 0.25; // 25 cm
+pub(crate) const BUILD_GRID_SIZE: f32 = 0.05; // 5 cm build snap step
+pub(crate) const DEFAULT_OBJECT_SIZE_M: f32 = 1.0;
 
 pub(crate) const BUILD_BLOCK_SIZE: Vec3 = Vec3::new(
     3.0 * BUILD_UNIT_SIZE,
@@ -194,8 +202,9 @@ pub(crate) const CAMERA_ZOOM_FAR_SCALE: f32 = 8.0;
 pub(crate) const DEFAULT_HEADLESS_SECONDS: f32 = 5.0;
 
 // Click-to-move (A* grid) and marker.
-pub(crate) const NAV_GRID_SIZE: f32 = BUILD_GRID_SIZE * 2.0;
-pub(crate) const CLICK_MOVE_WAYPOINT_EPS: f32 = BUILD_GRID_SIZE * 0.75;
+pub(crate) const NAV_GRID_SIZE: f32 = 0.50; // 50 cm navigation cells (decoupled from Build snap)
+pub(crate) const NAV_HEIGHT_QUANT_SIZE: f32 = 0.25; // 25 cm ground-height quantization for nav
+pub(crate) const CLICK_MOVE_WAYPOINT_EPS: f32 = 0.18; // ~18 cm "close enough" for waypoints
 pub(crate) const CLICK_MOVE_MAX_TURN_RATE_RADS_PER_SEC: f32 = 10.0;
 pub(crate) const COMMANDABLE_MIN_SEPARATION_RADIUS: f32 = PLAYER_RADIUS * 0.6;
 pub(crate) const MOVE_TARGET_MARKER_RADIUS: f32 = PLAYER_RADIUS * 0.5;

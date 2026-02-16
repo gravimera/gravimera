@@ -658,10 +658,10 @@ impl Gen3dAiJob {
         fn summarize_tool_for_step(tool_id: &str) -> String {
             use crate::gen3d::agent::tools::{
                 TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DETACH_COMPONENT,
-                TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_LLM_GENERATE_COMPONENT,
-                TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-                TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
-                TOOL_ID_VALIDATE,
+                TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY,
+                TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+                TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW,
+                TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
             };
 
             match tool_id {
@@ -673,9 +673,9 @@ impl Gen3dAiJob {
                 TOOL_ID_RENDER_PREVIEW => "Render".into(),
                 TOOL_ID_VALIDATE => "Validate".into(),
                 TOOL_ID_SMOKE_CHECK => "Smoke".into(),
-                TOOL_ID_COPY_COMPONENT | TOOL_ID_COPY_COMPONENT_SUBTREE | TOOL_ID_DETACH_COMPONENT => {
-                    "Copy".into()
-                }
+                TOOL_ID_COPY_COMPONENT
+                | TOOL_ID_COPY_COMPONENT_SUBTREE
+                | TOOL_ID_DETACH_COMPONENT => "Copy".into(),
                 TOOL_ID_GET_STATE_SUMMARY | TOOL_ID_GET_SCENE_GRAPH_SUMMARY => "Inspect".into(),
                 TOOL_ID_SUBMIT_TOOLING_FEEDBACK => "Feedback".into(),
                 other => short_tool_id(other).to_string(),
