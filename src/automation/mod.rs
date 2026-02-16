@@ -431,6 +431,7 @@ fn automation_process_requests(
     active: Option<Res<crate::realm::ActiveRealmScene>>,
     mut runtime: ResMut<AutomationRuntime>,
     mut scene_workspace: ResMut<crate::scene_sources_runtime::SceneSourcesWorkspace>,
+    mut scene_build_runtime: Option<ResMut<crate::scene_build_ai::SceneBuildAiRuntime>>,
     mode: Option<Res<State<GameMode>>>,
     mut next_mode: Option<ResMut<NextState<GameMode>>>,
     mut selection: Option<ResMut<SelectionState>>,
@@ -478,11 +479,16 @@ fn automation_process_requests(
             Some(active) => active.realm_id.as_str(),
             None => crate::paths::default_realm_id(),
         };
+        let active_scene_id: &str = match active.as_ref() {
+            Some(active) => active.scene_id.as_str(),
+            None => crate::paths::default_scene_id(),
+        };
 
         let reply = handle_request_main_thread(
             &mut commands,
             &config,
             active_realm_id,
+            active_scene_id,
             gen3d.log_sinks.as_deref(),
             &mut library,
             gen3d.workshop.as_deref_mut(),
@@ -510,6 +516,7 @@ fn automation_process_requests(
             fire.as_deref_mut(),
             &mut runtime,
             &mut scene_workspace,
+            scene_build_runtime.as_deref_mut(),
             &msg,
             &mut exit,
         );
@@ -576,6 +583,14 @@ struct Gen3dPromptRequest {
 }
 
 #[derive(Deserialize)]
+struct SceneBuildStartRequest {
+    description: String,
+}
+
+#[derive(Deserialize)]
+struct SceneBuildStopRequest {}
+
+#[derive(Deserialize)]
 struct SceneSourcesImportRequest {
     src_dir: String,
 }
@@ -619,6 +634,7 @@ fn handle_request_main_thread(
     commands: &mut Commands,
     config: &AppConfig,
     active_realm_id: &str,
+    active_scene_id: &str,
     log_sinks: Option<&crate::app::Gen3dLogSinks>,
     library: &mut ObjectLibrary,
     mut gen3d_workshop: Option<&mut crate::gen3d::Gen3dWorkshop>,
@@ -677,6 +693,7 @@ fn handle_request_main_thread(
     mut fire: Option<&mut FireControl>,
     runtime: &mut AutomationRuntime,
     scene_workspace: &mut crate::scene_sources_runtime::SceneSourcesWorkspace,
+    mut scene_build_runtime: Option<&mut crate::scene_build_ai::SceneBuildAiRuntime>,
     msg: &AutomationRequest,
     exit: &mut MessageWriter<AppExit>,
 ) -> Option<AutomationReply> {
@@ -1363,6 +1380,89 @@ fn handle_request_main_thread(
                 "pos": [saved.position.x, saved.position.y, saved.position.z],
             })
             .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/scene_build/status") => {
+            let Some(scene_build) = scene_build_runtime.as_deref() else {
+                return Some(json_error(
+                    501,
+                    "Scene Build is not available in this app mode.",
+                ));
+            };
+            let status = scene_build.automation_status();
+            let body = serde_json::json!({ "ok": true, "status": status }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/scene_build/start") => {
+            let Some(mode) = mode else {
+                return Some(json_error(501, "Scene Build requires rendered mode."));
+            };
+            if matches!(mode.get(), GameMode::Gen3D) {
+                return Some(json_error(409, "Switch to build mode first."));
+            }
+            let Some(scene_build) = scene_build_runtime.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "Scene Build is not available in this app mode.",
+                ));
+            };
+            let req: SceneBuildStartRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let active = crate::realm::ActiveRealmScene {
+                realm_id: active_realm_id.to_string(),
+                scene_id: active_scene_id.to_string(),
+            };
+            let run_id = match crate::scene_build_ai::start_scene_build_from_description(
+                scene_build,
+                config,
+                &active,
+                library,
+                &req.description,
+            ) {
+                Ok(run_id) => run_id,
+                Err(err) => {
+                    let status = if err.to_lowercase().contains("already running") {
+                        409
+                    } else {
+                        400
+                    };
+                    return Some(json_error(status, err));
+                }
+            };
+
+            let body = serde_json::json!({ "ok": true, "run_id": run_id }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/scene_build/stop") => {
+            let _req: SceneBuildStopRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            let Some(scene_build) = scene_build_runtime.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "Scene Build is not available in this app mode.",
+                ));
+            };
+            let run_id = scene_build.cancel_in_flight(commands, "canceled via API");
+            let body =
+                serde_json::json!({ "ok": true, "canceled": run_id.is_some(), "run_id": run_id })
+                    .to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),

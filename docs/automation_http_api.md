@@ -748,6 +748,73 @@ Response (shape):
 }
 ```
 
+## Scene Build endpoints
+
+Scene Build runs the **Scene Builder** (AI-driven scene generation) for the active realm/scene.
+
+Requirements:
+
+- Rendered mode (not headless).
+- `mode != gen3d` (switch to `build` first).
+- OpenAI config in `config.toml`.
+
+### `GET /v1/scene_build/status`
+
+Fetch current build status (or the last build summary).
+
+```bash
+curl -s http://127.0.0.1:8791/v1/scene_build/status
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "status": {
+    "running": true,
+    "run_id": "scene_build_...",
+    "message": "Step 2/5 done: ...",
+    "run_dir": "/abs/path/to/.gravimera/realm/<realm_id>/scenes/<scene_id>/runs/<run_id>",
+    "phase": "step_request",
+    "step_index": 2,
+    "total_steps": 5
+  }
+}
+```
+
+### `POST /v1/scene_build/start`
+
+Start a new Scene Build from a text description.
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/scene_build/start \
+  -H 'Content-Type: application/json' \
+  -d '{"description":"A small garden with a cottage, trees, flowers, and a path."}'
+```
+
+Response:
+
+```json
+{"ok":true,"run_id":"scene_build_..."}
+```
+
+### `POST /v1/scene_build/stop`
+
+Cancel the current Scene Build (best-effort; in-flight LLM calls may still finish but are ignored).
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/scene_build/stop \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Response (shape):
+
+```json
+{"ok":true,"canceled":true,"run_id":"scene_build_..."}
+```
+
 ## `POST /v1/shutdown`
 
 Request a clean shutdown.

@@ -400,6 +400,22 @@ pub(crate) struct SceneBuildAiRuntime {
     last_status: Option<SceneBuildAiStatus>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct SceneBuildAiAutomationStatus {
+    pub(crate) running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) run_id: Option<String>,
+    pub(crate) message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) run_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) step_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) total_steps: Option<usize>,
+}
+
 impl SceneBuildAiRuntime {
     pub(crate) fn ui_progress_summary(&self) -> String {
         if let Some(job) = &self.in_flight {
@@ -426,6 +442,71 @@ impl SceneBuildAiRuntime {
             "No build running.".to_string()
         }
     }
+
+    pub(crate) fn automation_status(&self) -> SceneBuildAiAutomationStatus {
+        if let Some(job) = &self.in_flight {
+            let message = job
+                .progress
+                .lock()
+                .ok()
+                .map(|p| p.message.clone())
+                .unwrap_or_default();
+            let (phase, step_index, total_steps) = phase_summary(&job.phase, job.plan_steps.len());
+            SceneBuildAiAutomationStatus {
+                running: true,
+                run_id: Some(job.run_id.clone()),
+                message,
+                run_dir: Some(job.run_dir.display().to_string()),
+                phase: Some(phase),
+                step_index,
+                total_steps,
+            }
+        } else if let Some(status) = &self.last_status {
+            SceneBuildAiAutomationStatus {
+                running: false,
+                run_id: Some(status.run_id.clone()),
+                message: status.message.clone(),
+                run_dir: None,
+                phase: None,
+                step_index: None,
+                total_steps: None,
+            }
+        } else {
+            SceneBuildAiAutomationStatus {
+                running: false,
+                run_id: None,
+                message: String::new(),
+                run_dir: None,
+                phase: None,
+                step_index: None,
+                total_steps: None,
+            }
+        }
+    }
+
+    pub(crate) fn cancel_in_flight(
+        &mut self,
+        commands: &mut Commands,
+        reason: impl Into<String>,
+    ) -> Option<String> {
+        let reason = reason.into();
+        let Some(job) = self.in_flight.take() else {
+            return None;
+        };
+        if let Some(capture) = job.capture.as_ref() {
+            cleanup_scene_build_step_screenshot_capture(commands, capture);
+        }
+
+        set_progress(&job.progress, &job.run_id, &job.run_dir, "Canceled.");
+        append_scene_build_run_log(&job.run_dir, format!("canceled: {reason}"));
+
+        self.last_status = Some(SceneBuildAiStatus {
+            run_id: job.run_id.clone(),
+            message: format!("Canceled: {reason}"),
+        });
+
+        Some(job.run_id)
+    }
 }
 
 fn brief_run_id(run_id: &str) -> String {
@@ -442,6 +523,31 @@ fn brief_run_id(run_id: &str) -> String {
     let start = run_id.get(..8).unwrap_or(run_id);
     let end = run_id.get(run_id.len().saturating_sub(4)..).unwrap_or("");
     format!("{start}…{end}")
+}
+
+fn phase_summary(
+    phase: &SceneBuildAiPhase,
+    total_steps: usize,
+) -> (String, Option<usize>, Option<usize>) {
+    match phase {
+        SceneBuildAiPhase::Cleanup => ("cleanup".to_string(), None, None),
+        SceneBuildAiPhase::PlanRequest => ("plan_request".to_string(), None, None),
+        SceneBuildAiPhase::StepRequest { step_index, .. } => (
+            "step_request".to_string(),
+            Some(step_index.saturating_add(1)),
+            Some(total_steps),
+        ),
+        SceneBuildAiPhase::CaptureInit { step_index, .. } => (
+            "capture_init".to_string(),
+            Some(step_index.saturating_add(1)),
+            Some(total_steps),
+        ),
+        SceneBuildAiPhase::CaptureWait { step_index } => (
+            "capture_wait".to_string(),
+            Some(step_index.saturating_add(1)),
+            Some(total_steps),
+        ),
+    }
 }
 
 fn append_scene_build_run_log(run_dir: &Path, message: impl AsRef<str>) {
