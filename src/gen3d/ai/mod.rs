@@ -595,12 +595,14 @@ impl Gen3dAiJob {
         // cause avoidable 0-token failed requests.
         let responses_supported = self.session.responses_supported;
         let responses_continuation_supported = self.session.responses_continuation_supported;
+        let responses_background_supported = self.session.responses_background_supported;
         let responses_structured_outputs_supported =
             self.session.responses_structured_outputs_supported;
         let chat_structured_outputs_supported = self.session.chat_structured_outputs_supported;
         self.session = Gen3dAiSessionState::default();
         self.session.responses_supported = responses_supported;
         self.session.responses_continuation_supported = responses_continuation_supported;
+        self.session.responses_background_supported = responses_background_supported;
         self.session.responses_structured_outputs_supported =
             responses_structured_outputs_supported;
         self.session.chat_structured_outputs_supported = chat_structured_outputs_supported;
@@ -874,6 +876,7 @@ struct Gen3dAiTextResponse {
 struct Gen3dAiSessionState {
     responses_supported: Option<bool>,
     responses_continuation_supported: Option<bool>,
+    responses_background_supported: Option<bool>,
     responses_previous_id: Option<String>,
     responses_structured_outputs_supported: Option<bool>,
     chat_structured_outputs_supported: Option<bool>,

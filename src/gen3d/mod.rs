@@ -19,7 +19,10 @@ const GEN3D_MAX_REQUEST_IMAGES: usize = GEN3D_MAX_IMAGES + GEN3D_REVIEW_VIEW_IMA
 const GEN3D_MAX_PARTS: usize = 1024;
 const GEN3D_MAX_COMPONENTS: usize = 64;
 const GEN3D_MAX_CHAT_HISTORY_MESSAGES: usize = 24;
-const GEN3D_RESPONSES_POLL_MAX_SECS: u64 = 180;
+// Long-running Structured Outputs generations (large schemas + high reasoning effort) can exceed a
+// few minutes on some providers. Keep this generous so background /responses polling doesn't time
+// out prematurely.
+const GEN3D_RESPONSES_POLL_MAX_SECS: u64 = 1_800;
 const GEN3D_RESPONSES_POLL_INITIAL_DELAY_MS: u64 = 250;
 const GEN3D_RESPONSES_POLL_MAX_DELAY_MS: u64 = 2_000;
 const GEN3D_PREVIEW_LAYER: usize = 30;

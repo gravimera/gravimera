@@ -348,6 +348,7 @@ struct SceneBuildAiProgress {
 #[derive(Clone, Debug)]
 struct SceneBuildAiStatus {
     run_id: String,
+    run_dir: PathBuf,
     message: String,
 }
 
@@ -466,7 +467,7 @@ impl SceneBuildAiRuntime {
                 running: false,
                 run_id: Some(status.run_id.clone()),
                 message: status.message.clone(),
-                run_dir: None,
+                run_dir: Some(status.run_dir.display().to_string()),
                 phase: None,
                 step_index: None,
                 total_steps: None,
@@ -502,6 +503,7 @@ impl SceneBuildAiRuntime {
 
         self.last_status = Some(SceneBuildAiStatus {
             run_id: job.run_id.clone(),
+            run_dir: job.run_dir.clone(),
             message: format!("Canceled: {reason}"),
         });
 
@@ -722,6 +724,7 @@ pub(crate) fn scene_build_ai_poll(
         }
         runtime.last_status = Some(SceneBuildAiStatus {
             run_id: job.run_id,
+            run_dir: job.run_dir,
             message: "Ignored (scene changed).".to_string(),
         });
         return;
@@ -1313,6 +1316,7 @@ pub(crate) fn scene_build_ai_poll(
 
                     runtime.last_status = Some(SceneBuildAiStatus {
                         run_id: job.run_id.clone(),
+                        run_dir: job.run_dir.clone(),
                         message: format!("Done ({total} steps)."),
                     });
                     set_progress(
@@ -1356,6 +1360,7 @@ pub(crate) fn scene_build_ai_poll(
 
                 runtime.last_status = Some(SceneBuildAiStatus {
                     run_id: job.run_id.clone(),
+                    run_dir: job.run_dir.clone(),
                     message: format!("Done ({total} steps)."),
                 });
                 set_progress(
@@ -1445,6 +1450,7 @@ pub(crate) fn scene_build_ai_poll(
 
                 runtime.last_status = Some(SceneBuildAiStatus {
                     run_id: job.run_id.clone(),
+                    run_dir: job.run_dir.clone(),
                     message: format!("Done ({total} steps)."),
                 });
                 set_progress(
@@ -1646,6 +1652,7 @@ fn finish_with_error(
     );
     runtime.last_status = Some(SceneBuildAiStatus {
         run_id: job.run_id.clone(),
+        run_dir: job.run_dir.clone(),
         message: format!("Failed: {}", truncate_text(err.trim(), 160)),
     });
 }
@@ -2170,7 +2177,7 @@ fn spawn_scene_build_llm_thread(
     let _ = std::thread::Builder::new()
         .name(format!("gravimera_scene_build_ai_{run_id}"))
         .spawn(move || {
-            let res = call_openai_chat_json_object(
+            let res = call_openai_json_object(
                 &progress,
                 &run_id,
                 &run_dir,
@@ -2243,6 +2250,327 @@ fn split_curl_http_status<'a>(stdout: &'a str, marker: &str) -> (&'a str, Option
     let (body, rest) = stdout.split_at(pos);
     let code_str = rest[marker.len()..].lines().next().unwrap_or("").trim();
     (body, code_str.parse::<u16>().ok())
+}
+
+#[derive(Clone, Debug)]
+struct OpenAiCurlError {
+    summary: String,
+    status: Option<u16>,
+}
+
+impl OpenAiCurlError {
+    fn short(&self) -> String {
+        match self.status {
+            Some(code) => format!("{} (status={code})", self.summary),
+            None => self.summary.clone(),
+        }
+    }
+}
+
+fn extract_openai_responses_output_text(json: &Value) -> Option<String> {
+    let output = json.get("output")?.as_array()?;
+    let mut out = String::new();
+    for item in output {
+        let Some(parts) = item.get("content").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for part in parts {
+            let ty = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if matches!(ty, "output_text" | "text") {
+                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                    out.push_str(text);
+                }
+            }
+        }
+    }
+    (!out.trim().is_empty()).then_some(out)
+}
+
+fn extract_openai_responses_sse_output_text(body: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut saw_delta = false;
+
+    for line in body.lines() {
+        let line = line.trim();
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let Ok(json) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+
+        match json.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+            "response.output_text.delta" => {
+                if let Some(delta) = json.get("delta").and_then(|v| v.as_str()) {
+                    saw_delta = true;
+                    out.push_str(delta);
+                }
+            }
+            "response.output_text.done" => {
+                if let Some(text) = json.get("text").and_then(|v| v.as_str()) {
+                    saw_delta = true;
+                    out.push_str(text);
+                }
+            }
+            // Some SSE streams include the full part payload instead of deltas.
+            "response.content_part.added" | "response.content_part.done" => {
+                if saw_delta {
+                    continue;
+                }
+                let Some(part) = json.get("part") else {
+                    continue;
+                };
+                if part.get("type").and_then(|v| v.as_str()) != Some("output_text") {
+                    continue;
+                }
+                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                    out.push_str(text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (!out.trim().is_empty()).then_some(out)
+}
+
+fn call_openai_responses_json_object(
+    progress: &Arc<Mutex<SceneBuildAiProgress>>,
+    run_id: &str,
+    run_dir: &Path,
+    label: &str,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    reasoning_effort: &str,
+    system_instructions: &str,
+    user_text: &str,
+    llm_dir: &Path,
+) -> Result<String, OpenAiCurlError> {
+    let url = crate::config::join_base_url(base_url, "responses");
+
+    set_progress(
+        progress,
+        run_id,
+        run_dir,
+        format!("{label}: preparing request (api=/responses, model={model})..."),
+    );
+
+    let mut body_json = serde_json::json!({
+        "model": model,
+        "stream": false,
+        "input": [
+            {
+                "role": "system",
+                "content": [{ "type": "input_text", "text": system_instructions }]
+            },
+            {
+                "role": "user",
+                "content": [{ "type": "input_text", "text": user_text }]
+            }
+        ],
+        "text": { "format": { "type": "json_object" } }
+    });
+    if reasoning_effort.trim() != "none" && !reasoning_effort.trim().is_empty() {
+        body_json["reasoning"] = serde_json::json!({ "effort": reasoning_effort.trim() });
+    }
+
+    let _ = write_json_artifact(&llm_dir.join("request.json"), &body_json);
+    let body = serde_json::to_vec(&body_json).map_err(|err| OpenAiCurlError {
+        summary: err.to_string(),
+        status: None,
+    })?;
+
+    let auth_headers = curl_auth_header_file(api_key).map_err(|err| OpenAiCurlError {
+        summary: err,
+        status: None,
+    })?;
+
+    set_progress(
+        progress,
+        run_id,
+        run_dir,
+        format!("{label}: waiting for AI slot (api=/responses)..."),
+    );
+    let _permit = crate::ai_limiter::acquire_permit();
+
+    set_progress(
+        progress,
+        run_id,
+        run_dir,
+        format!("{label}: waiting for response (api=/responses)..."),
+    );
+    let started = std::time::Instant::now();
+
+    let mut cmd = std::process::Command::new("curl");
+    cmd.arg("-sS")
+        .arg("--connect-timeout")
+        .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
+        .arg("--max-time")
+        .arg(CURL_MAX_TIME_SECS.to_string())
+        .arg("-X")
+        .arg("POST")
+        .arg("-H")
+        .arg("Content-Type: application/json")
+        .arg("-H")
+        .arg(auth_headers.curl_header_arg())
+        .arg("-d")
+        .arg("@-")
+        .arg(&url)
+        .arg("-w")
+        .arg("\n__GRAVIMERA_HTTP_STATUS__%{http_code}\n")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|err| OpenAiCurlError {
+        summary: format!("Failed to start curl: {err}"),
+        status: None,
+    })?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        use std::io::Write;
+        stdin.write_all(&body).map_err(|err| OpenAiCurlError {
+            summary: format!("Failed to write request to curl stdin: {err}"),
+            status: None,
+        })?;
+    }
+
+    let output = child.wait_with_output().map_err(|err| OpenAiCurlError {
+        summary: format!("Failed to wait for curl: {err}"),
+        status: None,
+    })?;
+
+    let elapsed = started.elapsed().as_secs_f32();
+    set_progress(
+        progress,
+        run_id,
+        run_dir,
+        format!("{label}: received response ({elapsed:.1}s). Parsing (api=/responses)..."),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        return Err(OpenAiCurlError {
+            summary: format!(
+                "curl exited with non-zero status: {}",
+                truncate_text(stderr.trim(), 1200)
+            ),
+            status: None,
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = std::fs::write(llm_dir.join("api_response_raw.txt"), &stdout);
+
+    const STATUS_MARKER: &str = "\n__GRAVIMERA_HTTP_STATUS__";
+    let (body, status_code) = split_curl_http_status(&stdout, STATUS_MARKER);
+    let status_code = status_code.ok_or_else(|| OpenAiCurlError {
+        summary: "Missing HTTP status marker in curl output.".to_string(),
+        status: None,
+    })?;
+
+    if !(200..=299).contains(&status_code) {
+        return Err(OpenAiCurlError {
+            summary: format!(
+                "OpenAI request failed (HTTP {status_code}). Body (truncated): {}",
+                truncate_text(body.trim(), 1200)
+            ),
+            status: Some(status_code),
+        });
+    }
+
+    let body_trim = body.trim();
+    match serde_json::from_str::<Value>(body_trim) {
+        Ok(json) => {
+            let _ = write_json_artifact(&llm_dir.join("api_response.json"), &json);
+            let text = extract_openai_responses_output_text(&json).ok_or_else(|| OpenAiCurlError {
+                summary: "OpenAI response missing output text".to_string(),
+                status: Some(status_code),
+            })?;
+            Ok(text)
+        }
+        Err(err) => {
+            if let Some(text) = extract_openai_responses_sse_output_text(body_trim) {
+                let _ = write_text_artifact(&llm_dir.join("output_text_sse.txt"), &text);
+                return Ok(text);
+            }
+            Err(OpenAiCurlError {
+                summary: format!(
+                    "Failed to parse OpenAI response JSON: {err}. Body (truncated): {}",
+                    truncate_text(body_trim, 1200)
+                ),
+                status: Some(status_code),
+            })
+        }
+    }
+}
+
+fn call_openai_json_object(
+    progress: &Arc<Mutex<SceneBuildAiProgress>>,
+    run_id: &str,
+    run_dir: &Path,
+    label: &str,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    reasoning_effort: &str,
+    system_instructions: &str,
+    user_text: &str,
+    llm_dir: &Path,
+) -> Result<String, String> {
+    let responses_dir = llm_dir.join("responses");
+    match call_openai_responses_json_object(
+        progress,
+        run_id,
+        run_dir,
+        label,
+        base_url,
+        api_key,
+        model,
+        reasoning_effort,
+        system_instructions,
+        user_text,
+        &responses_dir,
+    ) {
+        Ok(text) => Ok(text),
+        Err(err) => {
+            // Fallback for providers that don't support /responses (or transient failures).
+            set_progress(
+                progress,
+                run_id,
+                run_dir,
+                format!(
+                    "{label}: /responses failed ({}); falling back to /chat/completions...",
+                    err.short()
+                ),
+            );
+            let chat_dir = llm_dir.join("chat");
+            match call_openai_chat_json_object(
+                progress,
+                run_id,
+                run_dir,
+                label,
+                base_url,
+                api_key,
+                model,
+                reasoning_effort,
+                system_instructions,
+                user_text,
+                &chat_dir,
+            ) {
+                Ok(text) => Ok(text),
+                Err(chat_err) => Err(format!(
+                    "OpenAI failed. /responses: {}. /chat/completions: {chat_err}",
+                    err.short()
+                )),
+            }
+        }
+    }
 }
 
 fn call_openai_chat_json_object(

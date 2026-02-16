@@ -22,7 +22,12 @@ use super::{
 };
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
-const CURL_MAX_TIME_SECS: u32 = 600;
+const CURL_MAX_TIME_SECS_DEFAULT: u32 = 600;
+// Structured-output requests (large JSON Schemas + high reasoning effort) can take significantly
+// longer on some OpenAI-compatible providers (especially those that do not support background
+// /responses polling). Keep a more generous max-time so we don't prematurely abort and restart
+// the generation.
+const CURL_MAX_TIME_SECS_STRUCTURED: u32 = 1_800;
 
 struct TempSecretFile {
     path: PathBuf,
@@ -902,6 +907,22 @@ fn openai_responses_flow(
                 || preview.contains("not supported"))
     }
 
+    fn is_responses_background_unsupported(err: &OpenAiError) -> bool {
+        if err.status != Some(400) {
+            return false;
+        }
+        let Some(preview) = err.body_preview.as_deref() else {
+            return false;
+        };
+        let preview = preview.to_ascii_lowercase();
+        (preview.contains("background") || preview.contains("store"))
+            && (preview.contains("unsupported parameter")
+                || preview.contains("unknown field")
+                || preview.contains("unrecognized field")
+                || preview.contains("not supported")
+                || preview.contains("invalid request"))
+    }
+
     fn is_responses_endpoint_unsupported(err: &OpenAiError) -> bool {
         match err.status {
             Some(404 | 405 | 501) => true,
@@ -951,6 +972,9 @@ fn openai_responses_flow(
             None
         };
 
+        let background_for_request = schema_for_request.is_some()
+            && session.responses_background_supported != Some(false);
+
         match openai_responses_curl(
             progress,
             base_url,
@@ -963,18 +987,29 @@ fn openai_responses_flow(
             images,
             image_paths,
             previous_response_id.as_deref(),
+            background_for_request,
             run_dir,
             artifact_prefix,
             false,
         ) {
             Ok(body) => {
                 session.responses_supported = Some(true);
+                if background_for_request {
+                    session.responses_background_supported = Some(true);
+                }
                 if schema_for_request.is_some() {
                     session.responses_structured_outputs_supported = Some(true);
                 }
                 break body;
             }
             Err(err) => {
+                if background_for_request && is_responses_background_unsupported(&err) {
+                    warn!("Gen3D: /responses background unsupported; retrying without it.");
+                    session.responses_supported = Some(true);
+                    session.responses_background_supported = Some(false);
+                    continue;
+                }
+
                 if attempted_previous_response_id && is_unsupported_previous_response_id(&err) {
                     warn!("Gen3D: /responses continuation unsupported (previous_response_id); retrying without it.");
                     session.responses_supported = Some(true);
@@ -1047,6 +1082,8 @@ fn openai_responses_flow(
                 } else {
                     None
                 };
+                let background_for_request = schema_for_request.is_some()
+                    && session.responses_background_supported != Some(false);
                 body = openai_responses_curl(
                     progress,
                     base_url,
@@ -1059,6 +1096,7 @@ fn openai_responses_flow(
                     images,
                     image_paths,
                     previous_response_id.as_deref(),
+                    background_for_request,
                     run_dir,
                     artifact_prefix,
                     false,
@@ -1130,7 +1168,7 @@ fn openai_responses_flow(
                 .arg("--connect-timeout")
                 .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
                 .arg("--max-time")
-                .arg(CURL_MAX_TIME_SECS.to_string())
+                .arg(CURL_MAX_TIME_SECS_DEFAULT.to_string())
                 .arg("-H")
                 .arg(poll_headers.curl_header_arg())
                 .arg(&url)
@@ -1346,6 +1384,7 @@ fn build_openai_responses_request_json(
     images: &[(&'static str, Vec<u8>)],
     image_paths: &[PathBuf],
     previous_response_id: Option<&str>,
+    background: bool,
 ) -> serde_json::Value {
     let mut input = serde_json::json!({
       "model": model,
@@ -1365,6 +1404,16 @@ fn build_openai_responses_request_json(
         }
       ],
     });
+    if background {
+        // Background mode enables polling via `GET /responses/<id>` when the response returns
+        // `status=queued|in_progress`. This avoids client-side timeouts on long structured-output
+        // generations (large schemas + high reasoning effort).
+        //
+        // OpenAI requires `store=true` for background responses; some OpenAI-compatible providers
+        // may ignore or reject these fields (handled by feature-detection in `openai_responses_flow`).
+        input["background"] = serde_json::json!(true);
+        input["store"] = serde_json::json!(true);
+    }
     if let Some(previous) = previous_response_id {
         input["previous_response_id"] = serde_json::json!(previous);
     }
@@ -1487,6 +1536,7 @@ fn openai_responses_curl(
     images: &[(&'static str, Vec<u8>)],
     image_paths: &[PathBuf],
     previous_response_id: Option<&str>,
+    background: bool,
     run_dir: Option<&Path>,
     artifact_prefix: &str,
     probe_only: bool,
@@ -1501,6 +1551,7 @@ fn openai_responses_curl(
         images,
         image_paths,
         previous_response_id,
+        background,
     );
 
     write_gen3d_json_artifact(
@@ -1538,12 +1589,18 @@ fn openai_responses_curl(
         status: None,
         body_preview: None,
     })?;
+
+    let max_time_secs = if expected_schema.is_some() && !background {
+        CURL_MAX_TIME_SECS_STRUCTURED
+    } else {
+        CURL_MAX_TIME_SECS_DEFAULT
+    };
     let mut cmd = std::process::Command::new("curl");
     cmd.arg("-sS")
         .arg("--connect-timeout")
         .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
         .arg("--max-time")
-        .arg(CURL_MAX_TIME_SECS.to_string())
+        .arg(max_time_secs.to_string())
         .arg("-X")
         .arg("POST")
         .arg("-H")
@@ -1711,12 +1768,18 @@ fn openai_chat_completions_curl(
         body_preview: None,
     })?;
 
+    let max_time_secs = if expected_schema.is_some() {
+        CURL_MAX_TIME_SECS_STRUCTURED
+    } else {
+        CURL_MAX_TIME_SECS_DEFAULT
+    };
+
     let mut cmd = std::process::Command::new("curl");
     cmd.arg("-sS")
         .arg("--connect-timeout")
         .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
         .arg("--max-time")
-        .arg(CURL_MAX_TIME_SECS.to_string())
+        .arg(max_time_secs.to_string())
         .arg("-X")
         .arg("POST")
         .arg("-H")
@@ -1911,6 +1974,7 @@ mod tests {
             &[],
             &[],
             None,
+            false,
         );
 
         let format = json
@@ -1940,8 +2004,26 @@ mod tests {
             &[],
             &[],
             None,
+            false,
         );
         assert!(json.get("text").is_none());
+    }
+
+    #[test]
+    fn responses_request_enables_background_with_store_when_requested() {
+        let json = build_openai_responses_request_json(
+            "gpt-test",
+            "high",
+            Some(Gen3dAiJsonSchemaKind::PlanV1),
+            "sys",
+            "user",
+            &[],
+            &[],
+            None,
+            true,
+        );
+        assert_eq!(json.get("background").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(json.get("store").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]
