@@ -508,7 +508,12 @@ fn attachment_offset_from_ai(
         let mut q = Quat::from_xyzw(q[0], q[1], q[2], q[3]).normalize();
         if matches!(rot_frame, AiRotationFrameJson::Parent) {
             if let Some(parent_anchor_rot) = parent_anchor_rot {
-                q = (parent_anchor_rot.inverse() * q).normalize();
+                let r = if parent_anchor_rot.is_finite() {
+                    parent_anchor_rot.normalize()
+                } else {
+                    Quat::IDENTITY
+                };
+                q = (r.inverse() * q * r).normalize();
             } else {
                 debug!(
                     "Gen3D: offset rot_frame=parent but parent anchor rotation is unavailable; treating rot_quat_xyzw as join-frame quaternion"
@@ -3012,6 +3017,80 @@ mod tests {
         let rot = keyframes[0].delta.rotation.normalize();
         assert!(rot.is_finite(), "rotation should be finite");
         // Rest pose should be identity in the join frame.
+        assert!(
+            rot.dot(Quat::IDENTITY).abs() > 0.9999,
+            "expected identity delta rotation in join frame; rot={:?}",
+            rot
+        );
+    }
+
+    #[test]
+    fn animation_keyframe_quaternion_is_converted_into_join_frame() {
+        let plan_text = r##"{
+          "version": 7,
+          "components": [
+            {
+              "name": "body",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "neck", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
+              ]
+            },
+            {
+              "name": "head",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "neck_mount", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
+              ],
+              "attach_to": {
+                "parent": "body",
+                "parent_anchor": "neck",
+                "child_anchor": "neck_mount",
+                "offset": { "pos": [0,0,0] },
+                "animations": {
+                  "idle": {
+                    "driver": "always",
+                    "clip": {
+                      "kind": "loop",
+                      "duration_secs": 1.0,
+                      "keyframes": [
+                        { "time_secs": 0.0, "delta": { "rot_frame": "parent", "rot_quat_xyzw": [0.0, 0.0, 0.0, 1.0] } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let (_planned, _notes, defs) =
+            ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+
+        let body_id = builtin_object_id("gravimera/gen3d/component/body");
+        let head_id = builtin_object_id("gravimera/gen3d/component/head");
+        let body_def = defs
+            .iter()
+            .find(|def| def.object_id == body_id)
+            .expect("body def");
+        let head_part = body_def
+            .parts
+            .iter()
+            .find(|p| matches!(p.kind, ObjectPartKind::ObjectRef { object_id } if object_id == head_id))
+            .expect("head part ref");
+        let idle = head_part
+            .animations
+            .iter()
+            .find(|s| s.channel.as_ref() == "idle")
+            .expect("idle slot");
+
+        let PartAnimationDef::Loop { keyframes, .. } = &idle.spec.clip else {
+            panic!("expected loop clip");
+        };
+        assert_eq!(keyframes.len(), 1, "expected one keyframe");
+        let rot = keyframes[0].delta.rotation.normalize();
+        assert!(rot.is_finite(), "rotation should be finite");
         assert!(
             rot.dot(Quat::IDENTITY).abs() > 0.9999,
             "expected identity delta rotation in join frame; rot={:?}",

@@ -7,3 +7,4 @@
 config.toml
 cases
 game_test
+/test/
