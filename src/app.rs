@@ -418,6 +418,7 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.add_plugins(crate::automation::AutomationPlugin);
     app.add_systems(Startup, log_file_startup_banner);
     app.init_resource::<ObjectLibrary>();
+    app.init_resource::<crate::prefab_descriptors::PrefabDescriptorLibrary>();
     app.init_resource::<crate::object::visuals::MaterialCache>();
     app.init_resource::<crate::object::visuals::PrimitiveMeshCache>();
     app.init_resource::<Game>();
@@ -482,6 +483,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.insert_resource(config);
     app.insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.06)));
     app.init_resource::<ObjectLibrary>();
+    app.init_resource::<crate::prefab_descriptors::PrefabDescriptorLibrary>();
     app.init_resource::<crate::object::visuals::MaterialCache>();
     app.init_resource::<crate::object::visuals::PrimitiveMeshCache>();
     app.init_resource::<Game>();

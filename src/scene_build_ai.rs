@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::AppConfig;
 use crate::object::registry::ObjectLibrary;
+use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::realm::ActiveRealmScene;
 use crate::scene_authoring_ui::SceneAuthoringUiState;
 use crate::scene_sources::SceneSourcesV1;
@@ -577,6 +578,7 @@ pub(crate) fn scene_build_ai_poll(
     mut ui: ResMut<SceneAuthoringUiState>,
     active: Res<ActiveRealmScene>,
     library: Res<ObjectLibrary>,
+    mut prefab_descriptors: ResMut<PrefabDescriptorLibrary>,
     mut workspace: ResMut<SceneSourcesWorkspace>,
     mut images: ResMut<Assets<Image>>,
     scene_instances: Query<
@@ -694,12 +696,35 @@ pub(crate) fn scene_build_ai_poll(
                     ));
                     job.next_run_step = job.next_run_step.saturating_add(1).max(1);
 
+                    // Refresh optional realm prefab descriptors so the plan prompt can use them
+                    // (e.g. right after Gen3D saves a new prefab).
+                    prefab_descriptors.clear();
+                    match crate::prefab_descriptors::load_realm_prefab_descriptors_into_library(
+                        &active.realm_id,
+                        &mut *prefab_descriptors,
+                    ) {
+                        Ok(count) => {
+                            if count > 0 {
+                                info!(
+                                    "Loaded {count} realm prefab descriptors for realm {}.",
+                                    active.realm_id
+                                );
+                            }
+                        }
+                        Err(err) => warn!("{err}"),
+                    }
+
                     // Start plan request (built after cleanup so it can include any new Gen3D prefabs).
                     let llm_dir = job.run_dir.join("llm").join("plan");
                     let _ = std::fs::create_dir_all(&llm_dir);
 
                     let system_text = build_plan_system_prompt();
-                    let user_text = build_plan_user_prompt(&active, &library, &job.description);
+                    let user_text = build_plan_user_prompt(
+                        &active,
+                        &library,
+                        &prefab_descriptors,
+                        &job.description,
+                    );
                     let _ = write_text_artifact(&llm_dir.join("system.txt"), &system_text);
                     let _ = write_text_artifact(&llm_dir.join("user.txt"), &user_text);
 
@@ -779,7 +804,16 @@ pub(crate) fn scene_build_ai_poll(
                         ),
                     );
 
-                    start_step_request(&mut job, &active, &library, &src_dir, 0, 0, None);
+                    start_step_request(
+                        &mut job,
+                        &active,
+                        &library,
+                        &prefab_descriptors,
+                        &src_dir,
+                        0,
+                        0,
+                        None,
+                    );
                     runtime.in_flight = Some(job);
                 }
             }
@@ -824,6 +858,7 @@ pub(crate) fn scene_build_ai_poll(
                             &mut job,
                             &active,
                             &library,
+                            &prefab_descriptors,
                             &src_dir,
                             step_index,
                             attempt + 1,
@@ -862,6 +897,7 @@ pub(crate) fn scene_build_ai_poll(
                                     &mut job,
                                     &active,
                                     &library,
+                                    &prefab_descriptors,
                                     &src_dir,
                                     step_index,
                                     attempt + 1,
@@ -974,6 +1010,7 @@ pub(crate) fn scene_build_ai_poll(
                                         &mut job,
                                         &active,
                                         &library,
+                                        &prefab_descriptors,
                                         &src_dir,
                                         step_index,
                                         attempt + 1,
@@ -1064,6 +1101,7 @@ pub(crate) fn scene_build_ai_poll(
                                     &mut job,
                                     &active,
                                     &library,
+                                    &prefab_descriptors,
                                     &src_dir,
                                     step_index,
                                     attempt + 1,
@@ -1153,7 +1191,16 @@ pub(crate) fn scene_build_ai_poll(
                     // Continue without screenshots.
                     let next = step_index + 1;
                     if next < job.plan_steps.len() {
-                        start_step_request(&mut job, &active, &library, &src_dir, next, 0, None);
+                        start_step_request(
+                            &mut job,
+                            &active,
+                            &library,
+                            &prefab_descriptors,
+                            &src_dir,
+                            next,
+                            0,
+                            None,
+                        );
                         runtime.in_flight = Some(job);
                         return;
                     }
@@ -1187,7 +1234,16 @@ pub(crate) fn scene_build_ai_poll(
 
                 let next = step_index + 1;
                 if next < job.plan_steps.len() {
-                    start_step_request(&mut job, &active, &library, &src_dir, next, 0, None);
+                    start_step_request(
+                        &mut job,
+                        &active,
+                        &library,
+                        &prefab_descriptors,
+                        &src_dir,
+                        next,
+                        0,
+                        None,
+                    );
                     runtime.in_flight = Some(job);
                     return;
                 }
@@ -1267,7 +1323,16 @@ pub(crate) fn scene_build_ai_poll(
 
                 let next = step_index + 1;
                 if next < job.plan_steps.len() {
-                    start_step_request(&mut job, &active, &library, &src_dir, next, 0, None);
+                    start_step_request(
+                        &mut job,
+                        &active,
+                        &library,
+                        &prefab_descriptors,
+                        &src_dir,
+                        next,
+                        0,
+                        None,
+                    );
                     runtime.in_flight = Some(job);
                     return;
                 }
@@ -1298,6 +1363,7 @@ fn start_step_request(
     job: &mut SceneBuildAiJob,
     active: &ActiveRealmScene,
     library: &ObjectLibrary,
+    prefab_descriptors: &PrefabDescriptorLibrary,
     src_dir: &Path,
     step_index: usize,
     attempt: u8,
@@ -1315,6 +1381,7 @@ fn start_step_request(
     let mut user_text = build_step_user_prompt(
         active,
         library,
+        prefab_descriptors,
         src_dir,
         &job.description,
         step,
@@ -1740,14 +1807,15 @@ Rules:\n\
 fn build_plan_user_prompt(
     active: &ActiveRealmScene,
     library: &ObjectLibrary,
+    prefab_descriptors: &PrefabDescriptorLibrary,
     description: &str,
 ) -> String {
-    let catalog = build_prefab_catalog(library);
+    let catalog = build_prefab_catalog(library, prefab_descriptors);
     format!(
         "Target scene: realm_id={}/ scene_id={}\n\n\
 Scene description:\n\
 {}\n\n\
-Prefab catalog (prefab_id | kind | label | size):\n\
+Prefab catalog (prefab_id | kind | label | size | roles | tags | anchors | anims | short):\n\
 {}\n\n\
 Now output JSON with `steps`.\n",
         active.realm_id, active.scene_id, description, catalog
@@ -1839,13 +1907,14 @@ Do NOT invent alternate field names (for example: "position", "rotation_y", arra
 fn build_step_user_prompt(
     active: &ActiveRealmScene,
     library: &ObjectLibrary,
+    prefab_descriptors: &PrefabDescriptorLibrary,
     src_dir: &Path,
     description: &str,
     step: &SceneBuildAiPlanStep,
     step_index: usize,
     total_steps: usize,
 ) -> String {
-    let catalog = build_prefab_catalog(library);
+    let catalog = build_prefab_catalog(library, prefab_descriptors);
 
     let existing_layers = SceneSourcesV1::load_from_dir(src_dir)
         .ok()
@@ -1875,7 +1944,7 @@ Scene description:\n\
 {}\n\n\
 Existing ai_ layers:\n\
 {}\n\
-Prefab catalog (prefab_id | kind | label | size):\n\
+Prefab catalog (prefab_id | kind | label | size | roles | tags | anchors | anims | short):\n\
 {}\n\n\
 Now output JSON with `summary` + `ops`.\n",
         active.realm_id,
@@ -1891,25 +1960,88 @@ Now output JSON with `summary` + `ops`.\n",
     )
 }
 
-fn build_prefab_catalog(library: &ObjectLibrary) -> String {
-    let mut prefabs: Vec<(String, String, &'static str, Vec3)> = Vec::new();
+fn build_prefab_catalog(
+    library: &ObjectLibrary,
+    prefab_descriptors: &PrefabDescriptorLibrary,
+) -> String {
+    fn normalize_one_line(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn clamp_chars(text: &str, max_chars: usize) -> String {
+        if text.chars().count() <= max_chars {
+            return text.to_string();
+        }
+        let mut out = String::new();
+        for (idx, ch) in text.chars().enumerate() {
+            if idx + 1 >= max_chars {
+                break;
+            }
+            out.push(ch);
+        }
+        out.push('…');
+        out
+    }
+
+    let mut prefabs: Vec<(
+        String,
+        String,
+        &'static str,
+        Vec3,
+        Vec<String>,
+        Vec<String>,
+        Vec<String>,
+        Vec<String>,
+        Option<String>,
+    )> = Vec::new();
     for (id, def) in library.iter() {
         let uuid = uuid::Uuid::from_u128(*id).to_string();
-        let label = def.label.to_string();
+        let mut label = def.label.to_string();
         let kind = if def.mobility.is_some() {
             "unit"
         } else {
             "building"
         };
-        prefabs.push((uuid, label, kind, def.size));
+
+        let mut roles: Vec<String> = Vec::new();
+        let mut tags: Vec<String> = Vec::new();
+        let mut anchors: Vec<String> = Vec::new();
+        let mut anims: Vec<String> = Vec::new();
+        let mut short: Option<String> = None;
+
+        if let Some(desc) = prefab_descriptors.get(*id) {
+            if let Some(desc_label) = desc.label.as_ref() {
+                if !desc_label.trim().is_empty() {
+                    label = desc_label.trim().to_string();
+                }
+            }
+
+            roles = desc.roles.clone();
+            tags = desc.tags.clone();
+            if let Some(interfaces) = desc.interfaces.as_ref() {
+                anchors = interfaces.anchors.iter().map(|a| a.name.clone()).collect();
+                anims = interfaces.animation_channels.clone();
+            }
+            short = desc
+                .text
+                .as_ref()
+                .and_then(|t| t.short.as_ref())
+                .map(|v| normalize_one_line(v))
+                .map(|v| clamp_chars(&v, 200))
+                .filter(|v| !v.is_empty());
+        }
+
+        prefabs.push((
+            uuid, label, kind, def.size, roles, tags, anchors, anims, short,
+        ));
     }
     prefabs.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
 
     let mut catalog = String::new();
-    for (uuid, label, kind, size) in prefabs {
+    for (uuid, label, kind, size, roles, tags, anchors, anims, short) in prefabs {
         catalog.push_str(&format!(
-            "- {uuid} | {kind} | {label} | size=({:.3},{:.3},{:.3})\n",
-            size.x, size.y, size.z
+            "- {uuid} | {kind} | {label} | size=({:.3},{:.3},{:.3}) | roles={:?} | tags={:?} | anchors={:?} | anims={:?} | short={:?}\n",
+            size.x, size.y, size.z, roles, tags, anchors, anims, short
         ));
     }
     catalog

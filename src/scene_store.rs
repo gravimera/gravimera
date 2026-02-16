@@ -1774,6 +1774,7 @@ pub(crate) fn load_scene_dat(
     mut material_cache: ResMut<crate::object::visuals::MaterialCache>,
     mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
     mut library: ResMut<ObjectLibrary>,
+    mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
 ) {
     // Reset library to builtins + realm-shared prefabs for the active realm.
     *library = ObjectLibrary::default();
@@ -1782,6 +1783,23 @@ pub(crate) fn load_scene_dat(
             if count > 0 {
                 info!(
                     "Loaded {count} realm prefab defs for realm {}.",
+                    active.realm_id
+                );
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
+
+    // Load optional realm prefab descriptors for the active realm.
+    prefab_descriptors.clear();
+    match crate::prefab_descriptors::load_realm_prefab_descriptors_into_library(
+        &active.realm_id,
+        &mut *prefab_descriptors,
+    ) {
+        Ok(count) => {
+            if count > 0 {
+                info!(
+                    "Loaded {count} realm prefab descriptors for realm {}.",
                     active.realm_id
                 );
             }
@@ -1826,6 +1844,7 @@ pub(crate) fn apply_pending_realm_scene_switch(
     mut material_cache: ResMut<crate::object::visuals::MaterialCache>,
     mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
     mut library: ResMut<ObjectLibrary>,
+    mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
     existing_scene_entities: Query<
         Entity,
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
@@ -1870,6 +1889,23 @@ pub(crate) fn apply_pending_realm_scene_switch(
             if count > 0 {
                 info!(
                     "Loaded {count} realm prefab defs for realm {}.",
+                    active.realm_id
+                );
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
+
+    // Load optional realm prefab descriptors for the new realm.
+    prefab_descriptors.clear();
+    match crate::prefab_descriptors::load_realm_prefab_descriptors_into_library(
+        &active.realm_id,
+        &mut *prefab_descriptors,
+    ) {
+        Ok(count) => {
+            if count > 0 {
+                info!(
+                    "Loaded {count} realm prefab descriptors for realm {}.",
                     active.realm_id
                 );
             }

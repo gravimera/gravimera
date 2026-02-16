@@ -693,6 +693,8 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         return Err("Cannot save: missing saved prefab def.".into());
     };
 
+    save_generated_prefab_descriptor_best_effort(realm_id, root_def, job, workshop);
+
     let size = root_def.size;
     let half_xz = collider_half_xz(root_def.collider, size);
     let object_radius = half_xz.x.max(half_xz.y).max(0.1);
@@ -823,4 +825,104 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         mobility,
         position: pos,
     })
+}
+
+fn save_generated_prefab_descriptor_best_effort(
+    realm_id: &str,
+    root_def: &ObjectDef,
+    job: &Gen3dAiJob,
+    workshop: &Gen3dWorkshop,
+) {
+    let created_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u128)
+        .unwrap_or(0);
+
+    let prefab_uuid = uuid::Uuid::from_u128(root_def.object_id).to_string();
+    let prefab_json = crate::realm_prefabs::realm_generated_prefabs_dir(realm_id)
+        .join(format!("{prefab_uuid}.json"));
+    let descriptor_path =
+        crate::prefab_descriptors::prefab_descriptor_path_for_prefab_json(&prefab_json);
+
+    let mut anchors: Vec<crate::prefab_descriptors::PrefabDescriptorAnchorV1> = root_def
+        .anchors
+        .iter()
+        .map(|a| crate::prefab_descriptors::PrefabDescriptorAnchorV1 {
+            name: a.name.as_ref().to_string(),
+            meaning: None,
+            notes: None,
+            required: None,
+            extra: Default::default(),
+        })
+        .collect();
+    anchors.sort_by(|a, b| a.name.cmp(&b.name));
+    anchors.dedup_by(|a, b| a.name == b.name);
+
+    let mut animation_channels: Vec<String> = Vec::new();
+    for part in root_def.parts.iter() {
+        for slot in part.animations.iter() {
+            animation_channels.push(slot.channel.as_ref().to_string());
+        }
+    }
+    animation_channels.sort();
+    animation_channels.dedup();
+
+    let roles = vec![if root_def.mobility.is_some() {
+        "unit".to_string()
+    } else {
+        "building".to_string()
+    }];
+
+    let short = workshop
+        .prompt
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let descriptor = crate::prefab_descriptors::PrefabDescriptorFileV1 {
+        format_version: crate::prefab_descriptors::PREFAB_DESCRIPTOR_FORMAT_VERSION,
+        prefab_id: prefab_uuid,
+        label: Some(root_def.label.to_string()),
+        text: short.map(|short| crate::prefab_descriptors::PrefabDescriptorTextV1 {
+            short: Some(short),
+            long: None,
+        }),
+        tags: Vec::new(),
+        roles,
+        interfaces: Some(crate::prefab_descriptors::PrefabDescriptorInterfacesV1 {
+            anchors,
+            animation_channels,
+            notes: None,
+            extra: Default::default(),
+        }),
+        provenance: Some(crate::prefab_descriptors::PrefabDescriptorProvenanceV1 {
+            source: Some("gen3d".to_string()),
+            created_at_ms: Some(created_at_ms),
+            gen3d: Some(crate::prefab_descriptors::PrefabDescriptorGen3dV1 {
+                prompt: Some(workshop.prompt.trim().to_string()).filter(|v| !v.is_empty()),
+                style_prompt: None,
+                run_id: job.run_id().map(|id| id.to_string()),
+                extra: Default::default(),
+            }),
+            revisions: vec![crate::prefab_descriptors::PrefabDescriptorRevisionV1 {
+                rev: 1,
+                created_at_ms,
+                actor: "agent:object".to_string(),
+                summary: "generated".to_string(),
+                extra: Default::default(),
+            }],
+            extra: Default::default(),
+        }),
+        extra: Default::default(),
+    };
+
+    if let Err(err) =
+        crate::prefab_descriptors::save_prefab_descriptor_file(&descriptor_path, &descriptor)
+    {
+        warn!(
+            "Gen3D: failed to write prefab descriptor {}: {err}",
+            descriptor_path.display()
+        );
+    }
 }

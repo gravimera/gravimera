@@ -23,6 +23,7 @@ mod paths;
 mod physics;
 mod platform;
 mod player;
+mod prefab_descriptors;
 mod realm;
 mod realm_prefabs;
 mod rts;
