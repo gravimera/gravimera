@@ -1423,7 +1423,10 @@ fn validate_attack_self_intersection(
     for (delta_m, blame_idx, i, j, sample, eps_m) in candidates.into_iter().take(MAX_ISSUES) {
         let component_name = components[blame_idx].name.clone();
         issues.push(MotionIssue {
-            severity: MotionSeverity::Error,
+            // Self-intersection is often a cosmetic issue (and OBB tests can be conservative).
+            // Keep reporting it, but do not block Gen3D acceptance or encourage "disable attack_primary"
+            // fixes that remove all attack motion.
+            severity: MotionSeverity::Warn,
             kind: "attack_self_intersection",
             component_id: component_id_uuid_for_name(&component_name),
             component_name,
@@ -2336,8 +2339,8 @@ mod tests {
             .motion_validation
             .get("ok")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        assert!(!ok, "expected motion validation to fail");
+            .unwrap_or(false);
+        assert!(ok, "expected motion validation to pass (warn-only issue)");
 
         let issues = report
             .motion_validation
@@ -2350,6 +2353,7 @@ mod tests {
                 i.get("kind").and_then(|v| v.as_str()) == Some("attack_self_intersection")
                     && i.get("channel").and_then(|v| v.as_str()) == Some("attack_primary")
                     && i.get("component_name").and_then(|v| v.as_str()) == Some("child")
+                    && i.get("severity").and_then(|v| v.as_str()) == Some("warn")
             }),
             "expected attack_self_intersection issue, got {issues:?}"
         );
