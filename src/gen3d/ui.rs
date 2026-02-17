@@ -333,7 +333,7 @@ pub(crate) fn enter_gen3d_mode(
                                             Node {
                                                 flex_direction: FlexDirection::Row,
                                                 column_gap: Val::Px(6.0),
-                                                align_items: AlignItems::Center,
+                                                align_items: AlignItems::FlexStart,
                                                 ..default()
                                             },
                                             BackgroundColor(Color::NONE),
@@ -349,53 +349,76 @@ pub(crate) fn enter_gen3d_mode(
                                             ));
 
                                             row.spawn((
-                                                Button,
                                                 Node {
-                                                    width: Val::Px(120.0),
-                                                    height: Val::Px(22.0),
-                                                    justify_content: JustifyContent::Center,
-                                                    align_items: AlignItems::Center,
-                                                    border: UiRect::all(Val::Px(1.0)),
+                                                    width: Val::Px(140.0),
+                                                    flex_direction: FlexDirection::Column,
+                                                    row_gap: Val::Px(2.0),
+                                                    align_items: AlignItems::Stretch,
                                                     ..default()
                                                 },
-                                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.70)),
-                                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                                                Gen3dPreviewAnimationDropdownButton,
+                                                BackgroundColor(Color::NONE),
                                             ))
-                                            .with_children(|button| {
-                                                button.spawn((
-                                                    Text::new("Idle ▾"),
-                                                    TextFont {
-                                                        font_size: 13.0,
-                                                        ..default()
-                                                    },
-                                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                                    Gen3dPreviewAnimationDropdownButtonText,
-                                                ));
+                                            .with_children(|dropdown| {
+                                                dropdown
+                                                    .spawn((
+                                                        Button,
+                                                        Node {
+                                                            width: Val::Percent(100.0),
+                                                            height: Val::Px(22.0),
+                                                            justify_content: JustifyContent::Center,
+                                                            align_items: AlignItems::Center,
+                                                            border: UiRect::all(Val::Px(1.0)),
+                                                            ..default()
+                                                        },
+                                                        BackgroundColor(Color::srgba(
+                                                            0.02, 0.02, 0.03, 0.70,
+                                                        )),
+                                                        BorderColor::all(Color::srgba(
+                                                            0.25, 0.25, 0.30, 0.65,
+                                                        )),
+                                                        Gen3dPreviewAnimationDropdownButton,
+                                                    ))
+                                                    .with_children(|button| {
+                                                        button.spawn((
+                                                            Text::new("Idle ▾"),
+                                                            TextFont {
+                                                                font_size: 13.0,
+                                                                ..default()
+                                                            },
+                                                            TextColor(Color::srgb(
+                                                                0.92, 0.92, 0.96,
+                                                            )),
+                                                            Gen3dPreviewAnimationDropdownButtonText,
+                                                        ));
+                                                    });
+
+                                                dropdown
+                                                    .spawn((
+                                                        Node {
+                                                            width: Val::Percent(100.0),
+                                                            max_height: Val::Px(240.0),
+                                                            min_height: Val::Px(0.0),
+                                                            flex_direction: FlexDirection::Column,
+                                                            row_gap: Val::Px(2.0),
+                                                            padding: UiRect::all(Val::Px(4.0)),
+                                                            border: UiRect::all(Val::Px(1.0)),
+                                                            display: Display::None,
+                                                            overflow: Overflow::scroll_y(),
+                                                            ..default()
+                                                        },
+                                                        BackgroundColor(Color::srgba(
+                                                            0.02, 0.02, 0.03, 0.92,
+                                                        )),
+                                                        BorderColor::all(Color::srgba(
+                                                            0.25, 0.25, 0.30, 0.65,
+                                                        )),
+                                                        Visibility::Hidden,
+                                                        ScrollPosition::default(),
+                                                        Gen3dPreviewAnimationDropdownList,
+                                                    ))
+                                                    .with_children(|_list| {});
                                             });
                                         });
-
-                                    stats
-                                        .spawn((
-                                            Node {
-                                                width: Val::Px(140.0),
-                                                max_height: Val::Px(240.0),
-                                                min_height: Val::Px(0.0),
-                                                flex_direction: FlexDirection::Column,
-                                                row_gap: Val::Px(2.0),
-                                                padding: UiRect::all(Val::Px(4.0)),
-                                                border: UiRect::all(Val::Px(1.0)),
-                                                display: Display::None,
-                                                overflow: Overflow::scroll_y(),
-                                                ..default()
-                                            },
-                                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.92)),
-                                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                                            Visibility::Hidden,
-                                            ScrollPosition::default(),
-                                            Gen3dPreviewAnimationDropdownList,
-                                        ))
-                                        .with_children(|_list| {});
                                 });
 
                             // Collapsible side panel toggle.
@@ -1571,7 +1594,13 @@ pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
             Without<Gen3dPreviewAnimationOptionButtonText>,
         ),
     >,
-    mut list: Query<(&mut Node, &mut Visibility), With<Gen3dPreviewAnimationDropdownList>>,
+    mut list: Query<
+        (&mut Node, &mut Visibility),
+        (
+            With<Gen3dPreviewAnimationDropdownList>,
+            Without<Gen3dPreviewAnimationOptionButton>,
+        ),
+    >,
     mut option_texts: Query<
         (&Gen3dPreviewAnimationOptionButtonText, &mut Text),
         (

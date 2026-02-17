@@ -516,19 +516,32 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     let model_id = model_entity.id();
     commands.entity(preview_root).add_child(model_id);
 
-    preview.animation_channels = library.animation_channels_ordered(super::gen3d_draft_object_id());
-    if preview.animation_channels.is_empty() {
-        preview.animation_channel = "idle".to_string();
-    } else if !preview
-        .animation_channels
-        .iter()
-        .any(|ch| ch == &preview.animation_channel)
-    {
-        if preview.animation_channels.iter().any(|ch| ch == "idle") {
-            preview.animation_channel = "idle".to_string();
-        } else {
-            preview.animation_channel = preview.animation_channels[0].clone();
+    let mut ordered = library.animation_channels_ordered(super::gen3d_draft_object_id());
+    let mut channels: Vec<String> = vec![
+        "idle".to_string(),
+        "move".to_string(),
+        "attack_primary".to_string(),
+    ];
+    for ch in ordered.drain(..) {
+        let trimmed = ch.trim();
+        if trimmed.is_empty() {
+            continue;
         }
+        if channels.iter().any(|existing| existing == trimmed) {
+            continue;
+        }
+        channels.push(trimmed.to_string());
+    }
+    preview.animation_channels = channels;
+
+    let selected = preview.animation_channel.trim();
+    if selected.is_empty()
+        || !preview
+            .animation_channels
+            .iter()
+            .any(|ch| ch == selected)
+    {
+        preview.animation_channel = "idle".to_string();
     }
 
     preview.collision_dirty = true;
