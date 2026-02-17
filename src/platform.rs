@@ -15,6 +15,7 @@ pub(crate) fn is_wsl() -> bool {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 pub(crate) fn is_wsl() -> bool {
     false
 }

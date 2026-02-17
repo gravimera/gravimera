@@ -220,7 +220,7 @@ fn validate_chain_anchor_axes(components: &[Gen3dPlannedComponent], issues: &mut
         let axis_dir = axis.normalize();
 
         let forward = if proximal_tf.rotation.is_finite() {
-            (proximal_tf.rotation.normalize() * Vec3::Z)
+            proximal_tf.rotation.normalize() * Vec3::Z
         } else {
             Vec3::Z
         };
