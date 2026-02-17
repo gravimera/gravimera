@@ -532,6 +532,10 @@ impl Gen3dAiJob {
         self.build_complete
     }
 
+    pub(crate) fn is_capturing_motion_sheets(&self) -> bool {
+        self.motion_capture.is_some()
+    }
+
     pub(crate) fn run_dir_path(&self) -> Option<&Path> {
         self.run_dir.as_deref()
     }
@@ -4123,7 +4127,10 @@ fn poll_gen3d_motion_capture(
     let frame_idx = motion.frame_idx.min(total_frames.saturating_sub(1));
     let sample_phase_01 = FRAMES[frame_idx as usize];
 
-    fn infer_move_cycle_m(rig_move_cycle_m: Option<f32>, components: &[Gen3dPlannedComponent]) -> f32 {
+    fn infer_move_cycle_m(
+        rig_move_cycle_m: Option<f32>,
+        components: &[Gen3dPlannedComponent],
+    ) -> f32 {
         if let Some(v) = rig_move_cycle_m
             .filter(|v| v.is_finite())
             .map(|v| v.abs())
@@ -4205,8 +4212,8 @@ fn poll_gen3d_motion_capture(
     if motion.frame_capture.is_none() {
         match motion.kind {
             Gen3dMotionCaptureKind::Move => {
-                let cycle_m = infer_move_cycle_m(job.rig_move_cycle_m, &job.planned_components)
-                    .max(1e-3);
+                let cycle_m =
+                    infer_move_cycle_m(job.rig_move_cycle_m, &job.planned_components).max(1e-3);
                 let sample_m = (sample_phase_01 * cycle_m).clamp(0.0, cycle_m);
                 channels.moving = true;
                 channels.attacking_primary = false;
@@ -4216,8 +4223,8 @@ fn poll_gen3d_motion_capture(
                 locomotion.speed_mps = 1.0;
             }
             Gen3dMotionCaptureKind::Attack => {
-                let window_secs = infer_attack_window_secs(draft, &job.planned_components)
-                    .max(1e-3);
+                let window_secs =
+                    infer_attack_window_secs(draft, &job.planned_components).max(1e-3);
                 let sample_secs = (sample_phase_01 * window_secs).clamp(0.0, window_secs);
                 channels.moving = false;
                 channels.attacking_primary = true;

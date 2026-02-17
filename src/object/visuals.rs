@@ -1235,10 +1235,12 @@ mod tests {
             transform.rotation
         );
 
-        app.world_mut().entity_mut(root).insert(AnimationChannelsActive {
-            moving: false,
-            attacking_primary: true,
-        });
+        app.world_mut()
+            .entity_mut(root)
+            .insert(AnimationChannelsActive {
+                moving: false,
+                attacking_primary: true,
+            });
         app.update();
         let transform = app
             .world()

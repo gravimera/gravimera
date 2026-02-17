@@ -8,6 +8,7 @@ use crate::object::registry::{ColliderProfile, ObjectLibrary, ObjectPartKind};
 use crate::object::visuals::{MaterialCache, VisualSpawnSettings};
 use crate::types::{AnimationChannelsActive, AttackClock, GameMode, LocomotionClock};
 
+use super::ai::Gen3dAiJob;
 use super::state::{
     Gen3dDraft, Gen3dPreview, Gen3dPreviewAnimation, Gen3dPreviewAnimationDropdownButton,
     Gen3dPreviewAnimationDropdownList, Gen3dPreviewCamera, Gen3dPreviewCollisionRoot,
@@ -224,6 +225,7 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
     mode: Res<State<GameMode>>,
     time: Res<Time>,
     preview: Res<Gen3dPreview>,
+    job: Res<Gen3dAiJob>,
     mut roots: Query<
         (
             &mut AnimationChannelsActive,
@@ -234,6 +236,11 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
     >,
 ) {
     if !matches!(mode.get(), GameMode::Gen3D) {
+        return;
+    }
+    // Agent-driven render/motion capture sets locomotion/attack clocks deterministically.
+    // Don't overwrite them with the interactive preview ticker while capture is active.
+    if job.is_capturing_motion_sheets() {
         return;
     }
 

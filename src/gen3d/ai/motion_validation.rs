@@ -1272,7 +1272,12 @@ fn validate_attack_self_intersection(
 
     let sizes: Vec<Vec3> = components
         .iter()
-        .map(|c| c.actual_size.unwrap_or(c.planned_size).abs().max(Vec3::splat(0.001)))
+        .map(|c| {
+            c.actual_size
+                .unwrap_or(c.planned_size)
+                .abs()
+                .max(Vec3::splat(0.001))
+        })
         .collect();
     let max_dims: Vec<f32> = sizes.iter().map(|s| s.max_element()).collect();
 
@@ -1296,28 +1301,10 @@ fn validate_attack_self_intersection(
         let t_secs = phase_01 * attack_window_secs;
 
         idle_world = compute_world_transforms_for_channels(
-            components,
-            &children,
-            root_idx,
-            t_secs,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            false,
-            true,
+            components, &children, root_idx, t_secs, 0.0, 0.0, 0.0, false, false, true,
         );
         attack_world = compute_world_transforms_for_channels(
-            components,
-            &children,
-            root_idx,
-            t_secs,
-            0.0,
-            0.0,
-            t_secs,
-            true,
-            false,
-            false,
+            components, &children, root_idx, t_secs, 0.0, 0.0, t_secs, true, false, false,
         );
 
         for idx in 0..n {
@@ -1404,21 +1391,11 @@ fn validate_attack_self_intersection(
                 continue;
             };
 
-            candidates.push((
-                sample.delta_m,
-                blame_idx,
-                i,
-                j,
-                sample,
-                eps_m,
-            ));
+            candidates.push((sample.delta_m, blame_idx, i, j, sample, eps_m));
         }
     }
 
-    candidates.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
     for (delta_m, blame_idx, i, j, sample, eps_m) in candidates.into_iter().take(MAX_ISSUES) {
         let component_name = components[blame_idx].name.clone();
