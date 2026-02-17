@@ -185,10 +185,10 @@ pub(crate) fn camera_keyboard_pan(
         dir -= forward;
     }
     if keys.pressed(KeyCode::KeyD) {
-        dir += right;
+        dir -= right;
     }
     if keys.pressed(KeyCode::KeyA) {
-        dir -= right;
+        dir += right;
     }
 
     if dir.length_squared() <= 1e-6 {
