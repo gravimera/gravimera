@@ -82,31 +82,14 @@ pub(crate) struct Gen3dPreview {
     pub(crate) pitch: f32,
     pub(crate) distance: f32,
     pub(crate) last_cursor: Option<Vec2>,
-    pub(crate) animation: Gen3dPreviewAnimation,
+    pub(crate) animation_channel: String,
+    pub(crate) animation_channels: Vec<String>,
     pub(crate) animation_dropdown_open: bool,
 }
 
 #[derive(Resource, Default)]
 pub(crate) struct Gen3dDraft {
     pub(crate) defs: Vec<ObjectDef>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(crate) enum Gen3dPreviewAnimation {
-    #[default]
-    Idle,
-    Move,
-    Attack,
-}
-
-impl Gen3dPreviewAnimation {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Idle => "Idle",
-            Self::Move => "Move",
-            Self::Attack => "Attack",
-        }
-    }
 }
 
 impl Gen3dDraft {
@@ -346,16 +329,31 @@ pub(crate) struct Gen3dPreviewAnimationDropdownList;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewAnimationOptionButton {
-    animation: Gen3dPreviewAnimation,
+    index: usize,
 }
 
 impl Gen3dPreviewAnimationOptionButton {
-    pub(crate) fn new(animation: Gen3dPreviewAnimation) -> Self {
-        Self { animation }
+    pub(crate) fn new(index: usize) -> Self {
+        Self { index }
     }
 
-    pub(crate) fn animation(&self) -> Gen3dPreviewAnimation {
-        self.animation
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
+}
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewAnimationOptionButtonText {
+    index: usize,
+}
+
+impl Gen3dPreviewAnimationOptionButtonText {
+    pub(crate) fn new(index: usize) -> Self {
+        Self { index }
+    }
+
+    pub(crate) fn index(&self) -> usize {
+        self.index
     }
 }
 

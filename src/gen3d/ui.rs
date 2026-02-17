@@ -70,7 +70,8 @@ pub(crate) fn enter_gen3d_mode(
     workshop.side_tab = Gen3dSideTab::Status;
     workshop.side_panel_open = false;
     workshop.tool_feedback_unread = false;
-    preview_state.animation = Gen3dPreviewAnimation::Idle;
+    preview_state.animation_channel = "idle".to_string();
+    preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
 
     let target = preview::setup_preview_scene(
@@ -378,50 +379,23 @@ pub(crate) fn enter_gen3d_mode(
                                         .spawn((
                                             Node {
                                                 width: Val::Px(140.0),
+                                                max_height: Val::Px(240.0),
+                                                min_height: Val::Px(0.0),
                                                 flex_direction: FlexDirection::Column,
                                                 row_gap: Val::Px(2.0),
                                                 padding: UiRect::all(Val::Px(4.0)),
                                                 border: UiRect::all(Val::Px(1.0)),
                                                 display: Display::None,
+                                                overflow: Overflow::scroll_y(),
                                                 ..default()
                                             },
                                             BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.92)),
                                             BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
                                             Visibility::Hidden,
+                                            ScrollPosition::default(),
                                             Gen3dPreviewAnimationDropdownList,
                                         ))
-                                        .with_children(|list| {
-                                            for animation in [
-                                                Gen3dPreviewAnimation::Idle,
-                                                Gen3dPreviewAnimation::Move,
-                                                Gen3dPreviewAnimation::Attack,
-                                            ] {
-                                                list.spawn((
-                                                    Button,
-                                                    Node {
-                                                        width: Val::Percent(100.0),
-                                                        height: Val::Px(22.0),
-                                                        justify_content: JustifyContent::Center,
-                                                        align_items: AlignItems::Center,
-                                                        border: UiRect::all(Val::Px(1.0)),
-                                                        ..default()
-                                                    },
-                                                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
-                                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                                                    Gen3dPreviewAnimationOptionButton::new(animation),
-                                                ))
-                                                .with_children(|button| {
-                                                    button.spawn((
-                                                        Text::new(animation.label()),
-                                                        TextFont {
-                                                            font_size: 13.0,
-                                                            ..default()
-                                                        },
-                                                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                                    ));
-                                                });
-                                            }
-                                        });
+                                        .with_children(|_list| {});
                                 });
 
                             // Collapsible side panel toggle.
@@ -1071,7 +1045,8 @@ pub(crate) fn exit_gen3d_mode(
     preview_state.root = None;
     preview_state.last_cursor = None;
     preview_state.collision_dirty = false;
-    preview_state.animation = Gen3dPreviewAnimation::Idle;
+    preview_state.animation_channel = "idle".to_string();
+    preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
     workshop.image_viewer = None;
 }
@@ -1393,18 +1368,195 @@ pub(crate) fn gen3d_preview_animation_option_buttons(
 
     for (interaction, button, mut bg, mut border) in &mut buttons {
         if matches!(*interaction, Interaction::Pressed) {
-            preview_state.animation = button.animation();
+            if let Some(channel) = preview_state
+                .animation_channels
+                .get(button.index())
+                .cloned()
+                .filter(|v| !v.trim().is_empty())
+            {
+                preview_state.animation_channel = channel;
+            }
             preview_state.animation_dropdown_open = false;
         }
-        let selected = button.animation() == preview_state.animation;
+        let selected = preview_state
+            .animation_channels
+            .get(button.index())
+            .is_some_and(|v| v == &preview_state.animation_channel);
         apply_gen3d_preview_animation_option_style(selected, *interaction, &mut bg, &mut border);
     }
+}
+
+pub(crate) fn gen3d_rebuild_preview_animation_dropdown_options_ui(
+    mode: Res<State<GameMode>>,
+    preview_state: Res<Gen3dPreview>,
+    mut last_hash: Local<Option<u64>>,
+    mut scroll_panels: Query<&mut ScrollPosition, With<Gen3dPreviewAnimationDropdownList>>,
+    lists: Query<Entity, With<Gen3dPreviewAnimationDropdownList>>,
+    existing_text: Query<Entity, With<Gen3dPreviewAnimationOptionButtonText>>,
+    existing_buttons: Query<Entity, With<Gen3dPreviewAnimationOptionButton>>,
+    mut commands: Commands,
+) {
+    if !matches!(mode.get(), GameMode::Gen3D) {
+        return;
+    }
+
+    let channels_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        preview_state.animation_channels.hash(&mut hasher);
+        hasher.finish()
+    };
+    if last_hash.as_ref() == Some(&channels_hash) {
+        return;
+    }
+    *last_hash = Some(channels_hash);
+
+    let Ok(list_entity) = lists.single() else {
+        return;
+    };
+
+    if let Ok(mut scroll) = scroll_panels.single_mut() {
+        scroll.y = 0.0;
+    }
+
+    for entity in &existing_text {
+        commands.entity(entity).try_despawn();
+    }
+    for entity in &existing_buttons {
+        commands.entity(entity).try_despawn();
+    }
+    commands.entity(list_entity).with_children(|list| {
+        for (index, channel) in preview_state.animation_channels.iter().enumerate() {
+            let selected = channel == &preview_state.animation_channel;
+            let mut bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65));
+            let mut border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            apply_gen3d_preview_animation_option_style(
+                selected,
+                Interaction::None,
+                &mut bg,
+                &mut border,
+            );
+
+            list.spawn((
+                Button,
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Px(22.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                bg,
+                border,
+                Gen3dPreviewAnimationOptionButton::new(index),
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new(gen3d_ui_motion_label(channel)),
+                    TextFont {
+                        font_size: 13.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    Gen3dPreviewAnimationOptionButtonText::new(index),
+                ));
+            });
+        }
+    });
+}
+
+fn gen3d_ui_motion_label(channel: &str) -> String {
+    let channel = channel.trim();
+    if channel.is_empty() {
+        return "Idle".to_string();
+    }
+    if channel == "attack_primary" {
+        return "Attack".to_string();
+    }
+
+    let mut words: Vec<String> = Vec::new();
+    for w in channel.split('_').filter(|w| !w.is_empty()) {
+        let mut chars = w.chars();
+        let Some(first) = chars.next() else {
+            continue;
+        };
+        let rest = chars.as_str();
+        let mut word = first.to_uppercase().to_string();
+        word.push_str(rest);
+        words.push(word);
+    }
+    if words.is_empty() {
+        return channel.to_string();
+    }
+    words.join(" ")
+}
+
+pub(crate) fn gen3d_preview_animation_dropdown_scroll_wheel(
+    mode: Res<State<GameMode>>,
+    preview_state: Res<Gen3dPreview>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
+    mut panels: Query<
+        (
+            &ComputedNode,
+            &UiGlobalTransform,
+            Option<&Visibility>,
+            &mut ScrollPosition,
+        ),
+        With<Gen3dPreviewAnimationDropdownList>,
+    >,
+) {
+    if !matches!(mode.get(), GameMode::Gen3D) {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+    if !preview_state.animation_dropdown_open {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+
+    let Ok((node, transform, vis, mut scroll)) = panels.single_mut() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+    let visible = vis
+        .map(|v| !matches!(*v, Visibility::Hidden))
+        .unwrap_or(true);
+    if !visible || !node.contains_point(*transform, cursor) {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+
+    let mut delta_lines = 0.0f32;
+    for ev in mouse_wheel.read() {
+        let lines = match ev.unit {
+            bevy::input::mouse::MouseScrollUnit::Line => ev.y,
+            bevy::input::mouse::MouseScrollUnit::Pixel => ev.y / 120.0,
+        };
+        delta_lines += lines;
+    }
+    if delta_lines.abs() < 1e-4 {
+        return;
+    }
+
+    let delta_px = delta_lines * 24.0;
+    scroll.y = (scroll.y - delta_px).max(0.0);
 }
 
 pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
     mode: Res<State<GameMode>>,
     preview_state: Res<Gen3dPreview>,
-    mut last_state: Local<Option<(Gen3dPreviewAnimation, bool)>>,
+    mut last_state: Local<Option<(String, bool, u64)>>,
     mut dropdown_button: Query<
         (&Interaction, &mut BackgroundColor),
         (
@@ -1414,10 +1566,16 @@ pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
     >,
     mut dropdown_text: Query<&mut Text, With<Gen3dPreviewAnimationDropdownButtonText>>,
     mut list: Query<(&mut Node, &mut Visibility), With<Gen3dPreviewAnimationDropdownList>>,
+    mut option_texts: Query<
+        (&Gen3dPreviewAnimationOptionButtonText, &mut Text),
+        Without<Gen3dPreviewAnimationDropdownButton>,
+    >,
     mut option_buttons: Query<
         (
             &Interaction,
             &Gen3dPreviewAnimationOptionButton,
+            &mut Node,
+            &mut Visibility,
             &mut BackgroundColor,
             &mut BorderColor,
         ),
@@ -1428,16 +1586,26 @@ pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
         return;
     }
 
+    let channels_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        preview_state.animation_channels.hash(&mut hasher);
+        hasher.finish()
+    };
     let state = (
-        preview_state.animation,
+        preview_state.animation_channel.clone(),
         preview_state.animation_dropdown_open,
+        channels_hash,
     );
     if last_state.as_ref() == Some(&state) {
         return;
     }
     *last_state = Some(state);
 
-    let label = format!("{} ▾", preview_state.animation.label());
+    let label = format!(
+        "{} ▾",
+        gen3d_ui_motion_label(&preview_state.animation_channel)
+    );
     for mut text in &mut dropdown_text {
         **text = label.clone().into();
     }
@@ -1460,8 +1628,26 @@ pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
         );
     }
 
-    for (interaction, button, mut bg, mut border) in &mut option_buttons {
-        let selected = button.animation() == preview_state.animation;
+    for (marker, mut text) in &mut option_texts {
+        let label = preview_state
+            .animation_channels
+            .get(marker.index())
+            .map(|v| gen3d_ui_motion_label(v))
+            .unwrap_or_default();
+        **text = label.into();
+    }
+
+    for (interaction, button, mut node, mut vis, mut bg, mut border) in &mut option_buttons {
+        let channel = preview_state.animation_channels.get(button.index());
+        if channel.is_some() {
+            node.display = Display::Flex;
+            *vis = Visibility::Visible;
+        } else {
+            node.display = Display::None;
+            *vis = Visibility::Hidden;
+        }
+
+        let selected = channel.is_some_and(|v| v == &preview_state.animation_channel);
         apply_gen3d_preview_animation_option_style(selected, *interaction, &mut bg, &mut border);
     }
 }

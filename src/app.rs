@@ -726,6 +726,8 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             crate::gen3d::gen3d_tool_feedback_scroll_wheel
                 .run_if(crate::automation::local_input_enabled),
             crate::gen3d::gen3d_prompt_scroll_wheel.run_if(crate::automation::local_input_enabled),
+            crate::gen3d::gen3d_preview_animation_dropdown_scroll_wheel
+                .run_if(crate::automation::local_input_enabled),
             crate::gen3d::gen3d_preview_orbit_controls
                 .run_if(crate::automation::local_input_enabled),
             crate::gen3d::gen3d_copy_tool_feedback_buttons
@@ -788,6 +790,8 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .after(crate::gen3d::gen3d_preview_animation_option_buttons)
                 .after(crate::gen3d::gen3d_collision_toggle_button)
                 .after(crate::gen3d::gen3d_poll_ai_job),
+            crate::gen3d::gen3d_rebuild_preview_animation_dropdown_options_ui
+                .after(crate::gen3d::gen3d_apply_draft_to_preview),
             crate::gen3d::gen3d_update_preview_animation_dropdown_ui
                 .after(crate::gen3d::gen3d_update_ui_text),
             crate::gen3d::gen3d_update_side_panel_ui
@@ -824,6 +828,10 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .run_if(crate::automation::local_input_enabled),
             rts::update_selection_box_ui.after(rts::selection_input),
             rts::draw_selected_player_gizmos.after(rts::selection_input),
+            rts::unit_animation_hotkeys
+                .after(rts::selection_input)
+                .before(rts::update_fire_control)
+                .run_if(crate::automation::local_input_enabled),
             rts::update_fire_control
                 .after(rts::selection_input)
                 .run_if(crate::automation::local_input_enabled),
@@ -844,6 +852,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             combat::unit_attack_execute
                 .after(rts::update_unit_aim_yaw_delta)
                 .after(combat::tick_attack_cooldowns),
+            rts::clear_forced_animation_channel_after_one_shot.after(combat::unit_attack_execute),
         )
             .run_if(console::console_closed)
             .run_if(crate::scene_authoring_ui::scene_ui_closed)

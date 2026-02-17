@@ -236,12 +236,16 @@ fn schema_animation_spec() -> serde_json::Value {
 }
 
 fn schema_animations_by_channel() -> serde_json::Value {
-    schema_object(vec![
-        ("ambient", schema_nullable(schema_animation_spec())),
-        ("idle", schema_nullable(schema_animation_spec())),
-        ("move", schema_nullable(schema_animation_spec())),
-        ("attack_primary", schema_nullable(schema_animation_spec())),
-    ])
+    // Open vocabulary map: channel_name -> animation spec (or null).
+    //
+    // The engine has special behavior for canonical channels (`idle`, `move`, `attack_primary`,
+    // `ambient`), but Gen3D is allowed to author additional channels (e.g. `dance`, `wave`) which
+    // can be user-triggered in gameplay.
+    json!({
+        "type": "object",
+        "additionalProperties": schema_nullable(schema_animation_spec()),
+        "maxProperties": 10
+    })
 }
 
 fn schema_joint() -> serde_json::Value {
@@ -505,10 +509,7 @@ fn schema_review_delta_action() -> serde_json::Value {
     let tweak_animation = schema_object(vec![
         ("kind", schema_enum(&["tweak_animation"])),
         ("component_id", schema_string()),
-        (
-            "channel",
-            schema_enum(&["ambient", "idle", "move", "attack_primary"]),
-        ),
+        ("channel", schema_string()),
         ("spec", schema_animation_spec()),
         ("reason", schema_string()),
     ]);

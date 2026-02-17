@@ -43,6 +43,36 @@ fn sanitize_fixed_joint_attachment_animations(
     });
 }
 
+fn normalize_motion_channel(raw: &str) -> Option<String> {
+    let mut channel = raw.trim().to_ascii_lowercase();
+    if channel.is_empty() {
+        return None;
+    }
+
+    channel = channel.replace([' ', '-'], "_");
+    let mut out = String::with_capacity(channel.len());
+    let mut prev_underscore = false;
+    for ch in channel.chars() {
+        let keep = ch.is_ascii_alphanumeric() || ch == '_';
+        let next = if keep { ch } else { '_' };
+        if next == '_' {
+            if prev_underscore {
+                continue;
+            }
+            prev_underscore = true;
+            out.push('_');
+        } else {
+            prev_underscore = false;
+            out.push(next);
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 pub(super) fn plan_rotation_from_forward_up(forward: Vec3, up: Option<Vec3>) -> Quat {
     const EPS: f32 = 1e-5;
 
@@ -944,15 +974,16 @@ pub(super) fn ai_plan_to_initial_draft_defs(
 
                 let mut animations: Vec<PartAnimationSlot> = Vec::new();
                 if let Some(map) = att.animations.as_ref() {
+                    let mut seen_channels: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
                     for (channel, spec) in map.iter() {
                         let Some(spec) = spec.as_ref() else {
                             continue;
                         };
-                        let channel = channel.trim();
-                        if channel.is_empty() {
+                        let Some(channel) = normalize_motion_channel(channel) else {
                             continue;
-                        }
-                        if !matches!(channel, "ambient" | "idle" | "move" | "attack_primary") {
+                        };
+                        if !seen_channels.insert(channel.clone()) {
                             continue;
                         }
                         if let Some(mut spec) = part_animation_spec_from_ai(spec, parent_anchor_rot)
@@ -964,7 +995,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                                 *axis = offset.rotation * (child_anchor_rot.inverse() * *axis);
                             }
                             animations.push(PartAnimationSlot {
-                                channel: channel.to_string().into(),
+                                channel: channel.into(),
                                 spec,
                             });
                         }
@@ -1319,11 +1350,118 @@ pub(super) fn ai_plan_to_initial_draft_defs(
     }
 
     let root_component_id = component_ids[root_idx];
-    let root_part = ObjectPartDef::object_ref(root_component_id, Transform::IDENTITY)
+    let mut root_part = ObjectPartDef::object_ref(root_component_id, Transform::IDENTITY)
         .with_attachment(crate::object::registry::AttachmentDef {
             parent_anchor: "origin".into(),
             child_anchor: "origin".into(),
         });
+
+    if mobility.is_some() {
+        let mut has_idle = false;
+        let mut has_move = false;
+        for def in defs.iter() {
+            for part in def.parts.iter() {
+                for slot in part.animations.iter() {
+                    match slot.channel.as_ref() {
+                        "idle" => has_idle = true,
+                        "move" => has_move = true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let default_idle = || PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 2.0,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.5,
+                        delta: Transform {
+                            rotation: Quat::from_rotation_x(0.05),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.5,
+                        delta: Transform {
+                            rotation: Quat::from_rotation_x(-0.05),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 2.0,
+                        delta: Transform::IDENTITY,
+                    },
+                ],
+            },
+        };
+
+        let default_move = || {
+            let amp = (root_size.y.abs() * 0.02).clamp(0.0025, 0.06);
+            PartAnimationSpec {
+                driver: PartAnimationDriver::MovePhase,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Loop {
+                    // Units are meters traveled (XZ) for move-driven channels.
+                    duration_secs: 2.0,
+                    keyframes: vec![
+                        PartAnimationKeyframeDef {
+                            time_secs: 0.0,
+                            delta: Transform::IDENTITY,
+                        },
+                        PartAnimationKeyframeDef {
+                            time_secs: 0.5,
+                            delta: Transform {
+                                translation: Vec3::Y * amp,
+                                ..default()
+                            },
+                        },
+                        PartAnimationKeyframeDef {
+                            time_secs: 1.0,
+                            delta: Transform::IDENTITY,
+                        },
+                        PartAnimationKeyframeDef {
+                            time_secs: 1.5,
+                            delta: Transform {
+                                translation: Vec3::Y * amp,
+                                ..default()
+                            },
+                        },
+                        PartAnimationKeyframeDef {
+                            time_secs: 2.0,
+                            delta: Transform::IDENTITY,
+                        },
+                    ],
+                },
+            }
+        };
+
+        if !has_idle {
+            root_part.animations.push(PartAnimationSlot {
+                channel: "idle".into(),
+                spec: default_idle(),
+            });
+        }
+        if !has_move {
+            root_part.animations.push(PartAnimationSlot {
+                channel: "move".into(),
+                spec: default_move(),
+            });
+        }
+    }
 
     defs.push(ObjectDef {
         object_id: gen3d_draft_object_id(),

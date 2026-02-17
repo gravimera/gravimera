@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
@@ -813,6 +813,132 @@ pub(crate) fn keyboard_move_input(
             let max_delta = CLICK_MOVE_MAX_TURN_RATE_RADS_PER_SEC * dt;
             let new_yaw = turn_towards_yaw(current_yaw, desired_yaw, max_delta);
             transform.rotation = Quat::from_rotation_y(new_yaw);
+        }
+    }
+}
+
+pub(crate) fn unit_animation_hotkeys(
+    mut commands: Commands,
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mode: Res<State<GameMode>>,
+    library: Res<ObjectLibrary>,
+    selection: Res<SelectionState>,
+    units: Query<&ObjectPrefabId, (With<Commandable>, Without<Player>)>,
+) {
+    if !matches!(mode.get(), GameMode::Play) {
+        return;
+    }
+    if selection.selected.is_empty() {
+        return;
+    }
+
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if !shift {
+        return;
+    }
+
+    let requested_slot =
+        if keys.just_pressed(KeyCode::Digit1) || keys.just_pressed(KeyCode::Numpad1) {
+            Some(0usize)
+        } else if keys.just_pressed(KeyCode::Digit2) || keys.just_pressed(KeyCode::Numpad2) {
+            Some(1)
+        } else if keys.just_pressed(KeyCode::Digit3) || keys.just_pressed(KeyCode::Numpad3) {
+            Some(2)
+        } else if keys.just_pressed(KeyCode::Digit4) || keys.just_pressed(KeyCode::Numpad4) {
+            Some(3)
+        } else if keys.just_pressed(KeyCode::Digit5) || keys.just_pressed(KeyCode::Numpad5) {
+            Some(4)
+        } else if keys.just_pressed(KeyCode::Digit6) || keys.just_pressed(KeyCode::Numpad6) {
+            Some(5)
+        } else if keys.just_pressed(KeyCode::Digit7) || keys.just_pressed(KeyCode::Numpad7) {
+            Some(6)
+        } else if keys.just_pressed(KeyCode::Digit8) || keys.just_pressed(KeyCode::Numpad8) {
+            Some(7)
+        } else if keys.just_pressed(KeyCode::Digit9) || keys.just_pressed(KeyCode::Numpad9) {
+            Some(8)
+        } else if keys.just_pressed(KeyCode::Digit0) || keys.just_pressed(KeyCode::Numpad0) {
+            Some(9)
+        } else {
+            None
+        };
+
+    let Some(slot_idx) = requested_slot else {
+        return;
+    };
+
+    let wall_time = time.elapsed_secs();
+    let mut channels_by_prefab: HashMap<u128, Vec<String>> = HashMap::new();
+
+    for entity in selection.selected.iter().copied() {
+        let Ok(prefab_id) = units.get(entity) else {
+            continue;
+        };
+        let channels = channels_by_prefab
+            .entry(prefab_id.0)
+            .or_insert_with(|| library.animation_channels_ordered_top10(prefab_id.0));
+        let Some(channel) = channels.get(slot_idx) else {
+            continue;
+        };
+        let channel = channel.trim();
+        if channel.is_empty() {
+            continue;
+        }
+
+        commands.entity(entity).insert(ForcedAnimationChannel {
+            channel: channel.to_string(),
+        });
+
+        if let Some(duration_secs) = library.channel_attack_duration_secs(prefab_id.0, channel) {
+            commands.entity(entity).insert(AttackClock {
+                started_at_secs: wall_time,
+                duration_secs,
+            });
+        }
+    }
+}
+
+pub(crate) fn clear_forced_animation_channel_after_one_shot(
+    mut commands: Commands,
+    time: Res<Time>,
+    mode: Res<State<GameMode>>,
+    library: Res<ObjectLibrary>,
+    q: Query<
+        (
+            Entity,
+            &ObjectPrefabId,
+            &ForcedAnimationChannel,
+            &AttackClock,
+        ),
+        With<Commandable>,
+    >,
+) {
+    if !matches!(mode.get(), GameMode::Play) {
+        return;
+    }
+
+    let wall_time = time.elapsed_secs();
+    for (entity, prefab_id, forced, attack_clock) in &q {
+        let channel = forced.channel.trim();
+        if channel.is_empty() {
+            continue;
+        }
+
+        if library
+            .channel_attack_duration_secs(prefab_id.0, channel)
+            .is_none()
+        {
+            continue;
+        }
+
+        let duration = attack_clock.duration_secs;
+        if !duration.is_finite() || duration <= 0.0 {
+            continue;
+        }
+
+        let elapsed = (wall_time - attack_clock.started_at_secs).max(0.0);
+        if elapsed > duration {
+            commands.entity(entity).remove::<ForcedAnimationChannel>();
         }
     }
 }

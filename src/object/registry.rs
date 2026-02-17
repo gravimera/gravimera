@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(crate) fn builtin_object_id(key: &str) -> u128 {
     // Deterministic UUID so builtin prefab ids are stable across runs and machines.
@@ -477,5 +477,165 @@ impl ObjectLibrary {
 
     pub(crate) fn mobility(&self, object_id: u128) -> Option<MobilityDef> {
         self.get(object_id).and_then(|def| def.mobility)
+    }
+
+    pub(crate) fn animation_channels_ordered(&self, object_id: u128) -> Vec<String> {
+        fn visit(
+            library: &ObjectLibrary,
+            object_id: u128,
+            visited: &mut HashSet<u128>,
+            channels: &mut HashSet<String>,
+        ) {
+            if !visited.insert(object_id) {
+                return;
+            }
+            let Some(def) = library.get(object_id) else {
+                return;
+            };
+            for part in def.parts.iter() {
+                for slot in part.animations.iter() {
+                    let ch = slot.channel.as_ref().trim();
+                    if !ch.is_empty() {
+                        channels.insert(ch.to_string());
+                    }
+                }
+                if let ObjectPartKind::ObjectRef { object_id: child } = &part.kind {
+                    visit(library, *child, visited, channels);
+                }
+            }
+        }
+
+        let mut visited: HashSet<u128> = HashSet::new();
+        let mut channels: HashSet<String> = HashSet::new();
+        visit(self, object_id, &mut visited, &mut channels);
+
+        let mut out: Vec<String> = Vec::new();
+        for key in ["idle", "move", "attack_primary"] {
+            if channels.remove(key) {
+                out.push(key.to_string());
+            }
+        }
+        let mut rest: Vec<String> = channels.into_iter().collect();
+        rest.sort();
+        out.extend(rest);
+        out
+    }
+
+    pub(crate) fn animation_channels_ordered_top10(&self, object_id: u128) -> Vec<String> {
+        let mut out = self.animation_channels_ordered(object_id);
+        out.truncate(10);
+        out
+    }
+
+    pub(crate) fn channel_uses_move_driver(&self, object_id: u128, channel: &str) -> bool {
+        let channel = channel.trim();
+        if channel.is_empty() {
+            return false;
+        }
+
+        fn visit(
+            library: &ObjectLibrary,
+            object_id: u128,
+            visited: &mut HashSet<u128>,
+            channel: &str,
+        ) -> bool {
+            if !visited.insert(object_id) {
+                return false;
+            }
+            let Some(def) = library.get(object_id) else {
+                return false;
+            };
+            for part in def.parts.iter() {
+                for slot in part.animations.iter() {
+                    if slot.channel.as_ref() != channel {
+                        continue;
+                    }
+                    if matches!(
+                        slot.spec.driver,
+                        PartAnimationDriver::MovePhase | PartAnimationDriver::MoveDistance
+                    ) {
+                        return true;
+                    }
+                }
+                if let ObjectPartKind::ObjectRef { object_id: child } = &part.kind {
+                    if visit(library, *child, visited, channel) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+
+        let mut visited: HashSet<u128> = HashSet::new();
+        visit(self, object_id, &mut visited, channel)
+    }
+
+    pub(crate) fn channel_attack_duration_secs(
+        &self,
+        object_id: u128,
+        channel: &str,
+    ) -> Option<f32> {
+        let channel = channel.trim();
+        if channel.is_empty() {
+            return None;
+        }
+
+        if channel == "attack_primary" {
+            if let Some(v) = self
+                .get(object_id)
+                .and_then(|def| def.attack.as_ref())
+                .map(|a| a.anim_window_secs)
+                .filter(|v| v.is_finite())
+                .map(|v| v.abs())
+                .filter(|v| *v > 1e-3)
+            {
+                return Some(v.clamp(0.05, 10.0));
+            }
+        }
+
+        fn visit(
+            library: &ObjectLibrary,
+            object_id: u128,
+            visited: &mut HashSet<u128>,
+            channel: &str,
+            best: &mut Option<f32>,
+        ) {
+            if !visited.insert(object_id) {
+                return;
+            }
+            let Some(def) = library.get(object_id) else {
+                return;
+            };
+            for part in def.parts.iter() {
+                for slot in part.animations.iter() {
+                    if slot.channel.as_ref() != channel {
+                        continue;
+                    }
+                    if slot.spec.driver != PartAnimationDriver::AttackTime {
+                        continue;
+                    }
+
+                    let candidate = match &slot.spec.clip {
+                        PartAnimationDef::Loop { duration_secs, .. } => {
+                            let speed = slot.spec.speed_scale.max(1e-3);
+                            (duration_secs / speed).abs()
+                        }
+                        PartAnimationDef::Spin { .. } => 1.0,
+                    };
+
+                    if candidate.is_finite() && candidate > 1e-3 {
+                        *best = Some(best.map_or(candidate, |b| b.max(candidate)));
+                    }
+                }
+                if let ObjectPartKind::ObjectRef { object_id: child } = &part.kind {
+                    visit(library, *child, visited, channel, best);
+                }
+            }
+        }
+
+        let mut visited: HashSet<u128> = HashSet::new();
+        let mut best: Option<f32> = None;
+        visit(self, object_id, &mut visited, channel, &mut best);
+        best.map(|v| v.clamp(0.05, 10.0))
     }
 }

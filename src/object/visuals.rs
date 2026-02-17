@@ -7,7 +7,9 @@ use crate::object::registry::{
     PartAnimationDriver, PartAnimationSlot, PartAnimationSpec, PrimitiveParams, PrimitiveVisualDef,
     UnitAttackKind,
 };
-use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock, ObjectPrefabId};
+use crate::types::{
+    AnimationChannelsActive, AttackClock, ForcedAnimationChannel, LocomotionClock, ObjectPrefabId,
+};
 
 const MAX_VISUAL_DEPTH: usize = 32;
 
@@ -705,6 +707,7 @@ pub(crate) fn update_part_animations(
     locomotion: Query<&LocomotionClock>,
     attacks: Query<&AttackClock>,
     channels: Query<&AnimationChannelsActive>,
+    forced: Query<&ForcedAnimationChannel>,
     aim_deltas: Query<&crate::types::AimYawDelta>,
     mut q: Query<(&PartAnimationPlayer, &mut Transform)>,
 ) {
@@ -721,25 +724,45 @@ pub(crate) fn update_part_animations(
         let idle_active = !attack_active && !move_active;
 
         let mut chosen: Option<&PartAnimationSpec> = None;
-        for channel in ["attack_primary", "move", "idle", "ambient"] {
-            let channel_active = match channel {
-                "attack_primary" => attack_active,
-                "move" => move_active,
-                "idle" => idle_active,
-                // Ambient is always active (fallback animation like fans/spinners).
-                "ambient" => true,
-                _ => false,
-            };
-            if !channel_active {
-                continue;
-            }
+
+        // If the root entity has a forced channel override, prefer it when this part has a
+        // matching slot.
+        let forced_channel = forced
+            .get(player.root_entity)
+            .ok()
+            .map(|c| c.channel.trim())
+            .filter(|c| !c.is_empty());
+        if let Some(channel) = forced_channel {
             if let Some(slot) = player
                 .animations
                 .iter()
                 .find(|slot| slot.channel.as_ref() == channel)
             {
                 chosen = Some(&slot.spec);
-                break;
+            }
+        }
+
+        if chosen.is_none() {
+            for channel in ["attack_primary", "move", "idle", "ambient"] {
+                let channel_active = match channel {
+                    "attack_primary" => attack_active,
+                    "move" => move_active,
+                    "idle" => idle_active,
+                    // Ambient is always active (fallback animation like fans/spinners).
+                    "ambient" => true,
+                    _ => false,
+                };
+                if !channel_active {
+                    continue;
+                }
+                if let Some(slot) = player
+                    .animations
+                    .iter()
+                    .find(|slot| slot.channel.as_ref() == channel)
+                {
+                    chosen = Some(&slot.spec);
+                    break;
+                }
             }
         }
 

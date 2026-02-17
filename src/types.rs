@@ -236,6 +236,11 @@ pub(crate) struct AnimationChannelsActive {
     pub(crate) attacking_primary: bool,
 }
 
+#[derive(Component, Clone, Debug, Default)]
+pub(crate) struct ForcedAnimationChannel {
+    pub(crate) channel: String,
+}
+
 #[derive(Component)]
 pub(crate) struct PlayerAnimator {
     pub(crate) phase: f32,

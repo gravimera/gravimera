@@ -6,11 +6,14 @@ use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use crate::assets::SceneAssets;
 use crate::object::registry::{ColliderProfile, ObjectLibrary, ObjectPartKind};
 use crate::object::visuals::{MaterialCache, VisualSpawnSettings};
-use crate::types::{AnimationChannelsActive, AttackClock, GameMode, LocomotionClock};
+use crate::types::{
+    AnimationChannelsActive, AttackClock, ForcedAnimationChannel, GameMode, LocomotionClock,
+    ObjectPrefabId,
+};
 
 use super::ai::Gen3dAiJob;
 use super::state::{
-    Gen3dDraft, Gen3dPreview, Gen3dPreviewAnimation, Gen3dPreviewAnimationDropdownButton,
+    Gen3dDraft, Gen3dPreview, Gen3dPreviewAnimationDropdownButton,
     Gen3dPreviewAnimationDropdownList, Gen3dPreviewCamera, Gen3dPreviewCollisionRoot,
     Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel, Gen3dPreviewSceneRoot,
     Gen3dReviewOverlayRoot, Gen3dSidePanelRoot, Gen3dSidePanelToggleButton,
@@ -224,13 +227,17 @@ pub(super) fn setup_preview_scene(
 pub(crate) fn gen3d_preview_tick_selected_animation(
     mode: Res<State<GameMode>>,
     time: Res<Time>,
-    preview: Res<Gen3dPreview>,
+    mut preview: ResMut<Gen3dPreview>,
     job: Res<Gen3dAiJob>,
+    library: Res<ObjectLibrary>,
+    mut last_channel: Local<String>,
     mut roots: Query<
         (
+            Entity,
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut ForcedAnimationChannel,
         ),
         With<Gen3dPreviewModelRoot>,
     >,
@@ -245,47 +252,64 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
     }
 
     let dt = time.delta_secs();
-    let speed_mps = 1.0;
+    let wall_time = time.elapsed_secs();
+    let object_id = super::gen3d_draft_object_id();
 
-    for (mut channels, mut locomotion, mut attack) in &mut roots {
-        match preview.animation {
-            Gen3dPreviewAnimation::Idle => {
-                channels.moving = false;
-                channels.attacking_primary = false;
-                locomotion.speed_mps = 0.0;
-                attack.duration_secs = 0.0;
-            }
-            Gen3dPreviewAnimation::Move => {
-                channels.moving = true;
-                channels.attacking_primary = false;
+    let mut selected = preview.animation_channel.trim().to_string();
+    if selected.is_empty() {
+        selected = "idle".to_string();
+    }
 
-                if dt.is_finite() && dt > 0.0 {
-                    locomotion.speed_mps = speed_mps;
-                    locomotion.t += dt;
-                    locomotion.distance_m += speed_mps * dt;
-                    locomotion.signed_distance_m += speed_mps * dt;
-                    if !locomotion.t.is_finite() {
-                        locomotion.t = 0.0;
-                    }
-                    if !locomotion.distance_m.is_finite() {
-                        locomotion.distance_m = 0.0;
-                    }
-                    if !locomotion.signed_distance_m.is_finite() {
-                        locomotion.signed_distance_m = 0.0;
-                    }
-                } else {
-                    locomotion.speed_mps = 0.0;
-                }
-                attack.duration_secs = 0.0;
-            }
-            Gen3dPreviewAnimation::Attack => {
-                channels.moving = false;
-                channels.attacking_primary = true;
+    let channel_changed = selected != *last_channel;
+    if channel_changed {
+        *last_channel = selected.clone();
+    }
 
-                locomotion.speed_mps = 0.0;
-                attack.duration_secs = 1.0;
-                attack.started_at_secs = 0.0;
+    for (_entity, mut channels, mut locomotion, mut attack, mut forced) in &mut roots {
+        forced.channel = selected.clone();
+
+        let wants_move =
+            selected == "move" || library.channel_uses_move_driver(object_id, &selected);
+        channels.moving = wants_move;
+        channels.attacking_primary = selected == "attack_primary";
+
+        let speed_mps = library
+            .mobility(object_id)
+            .map(|m| m.max_speed.abs())
+            .filter(|v| v.is_finite())
+            .unwrap_or(1.0)
+            .max(0.25);
+
+        if wants_move && dt.is_finite() && dt > 0.0 {
+            locomotion.speed_mps = speed_mps;
+            locomotion.t += speed_mps * dt;
+            locomotion.distance_m += speed_mps * dt;
+            locomotion.signed_distance_m += speed_mps * dt;
+            if !locomotion.t.is_finite() {
+                locomotion.t = 0.0;
             }
+            if !locomotion.distance_m.is_finite() {
+                locomotion.distance_m = 0.0;
+            }
+            if !locomotion.signed_distance_m.is_finite() {
+                locomotion.signed_distance_m = 0.0;
+            }
+        } else {
+            locomotion.speed_mps = 0.0;
+        }
+
+        if let Some(duration_secs) = library.channel_attack_duration_secs(object_id, &selected) {
+            if channel_changed || attack.duration_secs <= 0.0 {
+                attack.started_at_secs = wall_time;
+                attack.duration_secs = duration_secs;
+            }
+
+            let elapsed = (wall_time - attack.started_at_secs).max(0.0);
+            if attack.duration_secs > 0.0 && elapsed > attack.duration_secs {
+                preview.animation_channel = "idle".to_string();
+            }
+        } else {
+            attack.duration_secs = 0.0;
         }
     }
 }
@@ -459,6 +483,10 @@ pub(crate) fn gen3d_apply_draft_to_preview(
         Transform::IDENTITY,
         Visibility::Inherited,
         Gen3dPreviewModelRoot,
+        ObjectPrefabId(super::gen3d_draft_object_id()),
+        ForcedAnimationChannel {
+            channel: preview.animation_channel.clone(),
+        },
         AnimationChannelsActive::default(),
         LocomotionClock {
             t: 0.0,
@@ -487,6 +515,21 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     );
     let model_id = model_entity.id();
     commands.entity(preview_root).add_child(model_id);
+
+    preview.animation_channels = library.animation_channels_ordered(super::gen3d_draft_object_id());
+    if preview.animation_channels.is_empty() {
+        preview.animation_channel = "idle".to_string();
+    } else if !preview
+        .animation_channels
+        .iter()
+        .any(|ch| ch == &preview.animation_channel)
+    {
+        if preview.animation_channels.iter().any(|ch| ch == "idle") {
+            preview.animation_channel = "idle".to_string();
+        } else {
+            preview.animation_channel = preview.animation_channels[0].clone();
+        }
+    }
 
     preview.collision_dirty = true;
 }

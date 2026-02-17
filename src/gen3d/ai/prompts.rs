@@ -376,15 +376,20 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            - smaller values (e.g. 45..120) limit how far the weapon/head can turn away from the body.\n\
          - `aim.components`: list of component NAMES that should yaw with the attention direction (e.g. `head`, `turret`, `weapon`, `cannon`).\n\
          - If `aim` is omitted for a ranged unit, the engine will aim the muzzle component by default (or its parent component when the muzzle is a nested helper).\n\n\
-         Animation channels (optional):\n\
-         - Attachments may include `animations` as a map from channel -> animation spec.\n\
-         - Valid channels: `ambient`, `idle`, `move`, `attack_primary`.\n\
-         - Per-part channel priority is: `attack_primary` > `move` > `idle` > `ambient`.\n\
-         - Use `move` for locomotion motion (legs swing, wheels spin).\n\
-         - Use `attack_primary` for weapon/attack motion if the object has a weapon/tool.\n\
-         - Use `idle` for subtle idle motions.\n\
-         - Use `ambient` for motions that should run regardless (fans/propellers).\n\
-         - Avoid `ambient` for weapons/turrets (a cannon spinning constantly looks wrong); prefer `attack_primary` recoil or no animation.\n\n\
+         Animation channels (optional, up to 10 total meaningful channels per unit):\n\
+         - Attachments may include `animations` as a map from `channel_name` -> animation spec.\n\
+         - Channel names are open vocabulary, non-empty strings (recommended: lower_snake_case).\n\
+         - Canonical channels (engine-driven activation) and per-part priority:\n\
+           `attack_primary` > `move` > `idle` > `ambient`.\n\
+           - `move`: locomotion motion (legs swing, wheels spin).\n\
+           - `attack_primary`: weapon/attack motion if the object has a weapon/tool.\n\
+           - `idle`: subtle idle motions when not moving/attacking.\n\
+           - `ambient`: fallback motion for parts that should always run when no higher-priority slot exists (fans/propellers).\n\
+         - Custom channels (e.g. `dance`, `wave`, `emote_happy`) are allowed, but are NOT auto-activated by the engine.\n\
+           They are intended for user-triggered playback (gameplay hotkeys: Shift + 1..9/0 plays the first 10 channels for the selected unit).\n\
+         - If `mobility.kind` is `ground` or `air`, you MUST ensure the unit has at least `idle` and `move` channels on at least one visible attachment edge.\n\
+           If you cannot identify a good sub-part to animate, attach subtle `idle`/`move` motion to the root component's attachment.\n\
+         - If the user explicitly asks for extra motions/emotes/animations, add additional custom channels up to 10 total meaningful channels.\n\n\
          Animation spec (inside `attach_to.animations[channel]`):\n\
          - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
          - Prefer `attack_time` for `attack_primary` so the animation runs once per attack event (instead of continuously while the player holds the attack key).\n\
@@ -544,8 +549,11 @@ pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
      - For `ground` and `air`, provide `max_speed`.\n\n\
      Animation channels:\n\
      - Provide `animations` per component (these are for that component's attachment to its parent).\n\
-     - Valid channels: `ambient`, `idle`, `move`, `attack_primary`.\n\
-     - Channel priority: `attack_primary` > `move` > `idle` > `ambient`.\n\n\
+     - Channel names are open vocabulary strings (recommended: lower_snake_case) and should be kept to <= 10 meaningful channels.\n\
+     - Canonical channels and priority: `attack_primary` > `move` > `idle` > `ambient`.\n\
+     - Custom channels (e.g. `dance`) are allowed, but are user-triggered (not auto-activated).\n\
+       The game can play them via Shift + 1..9/0 (first 10 channels).\n\
+     - If mobility is `ground` or `air`, ensure `idle` and `move` exist.\n\n\
      Animation spec (inside `animations[channel]`):\n\
      - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
      - `speed_scale`: number (optional; default 1)\n\
@@ -571,7 +579,7 @@ pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
        \"components\": [\n\
          {\n\
            \"name\": \"component_name\",\n\
-           \"animations\": { \"ambient\" | \"idle\" | \"move\" | \"attack_primary\": { ...spec... } }\n\
+           \"animations\": { \"<channel_name>\": { ...spec... }, ... }\n\
          }\n\
        ]\n\
      }\n"
@@ -680,7 +688,7 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
         If `scene_graph_summary` shows `joint=fixed` for an attachment edge, the engine clamps any attachment rotation deltas to identity and ignores spin clips.\n\
         If you need visible motion, animate a non-fixed joint in the chain (hinge/ball/free), or change the joint kind/limits via `tweak_attachment`.\n\
       - `tweak_animation.spec.time_offset_units` is an additive offset in the clip's time domain. Use it to phase-stagger repeated limbs (instead of duplicating or rewriting keyframes).\n\
-      - If an animation channel is undesirable or too broken to repair, you may disable ANY channel (ambient/idle/move/attack_primary)\n\
+      - If an animation channel is undesirable or too broken to repair, you may disable ANY channel\n\
         by replacing it with an identity loop (a `loop` whose keyframes' `delta` transforms are all identity).\n\
         IMPORTANT: include at least 1 keyframe (example: one keyframe at time_secs=0 with no delta / identity delta).\n\n\
       If the scene graph shows no generated geometry yet (e.g. 0 primitive parts / components_generated=0), blank renders are expected.\n\
@@ -708,7 +716,7 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
          {\"kind\":\"tweak_anchor\",\"component_id\":\"<uuid>\",\"anchor_name\":\"name\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_attachment\",\"component_id\":\"<uuid>\",\"set\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_contact\",\"component_id\":\"<uuid>\",\"contact_name\":\"name\",\"stance\": null (optional),\"reason\":\"...\" (optional)},\n\
-         {\"kind\":\"tweak_animation\",\"component_id\":\"<uuid>\",\"channel\":\"ambient|idle|move|attack_primary\",\"spec\":{...},\"reason\":\"...\" (optional)},\n\
+         {\"kind\":\"tweak_animation\",\"component_id\":\"<uuid>\",\"channel\":\"<channel_name>\",\"spec\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_mobility\",\"mobility\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_attack\",\"attack\":{...},\"reason\":\"...\" (optional)}\n\
        ]\n\

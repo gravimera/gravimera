@@ -52,7 +52,8 @@ Units in Build mode:
 
 - Move selected: `RMB`
 - Fire: hold `Space` to fire at the cursor (point or enemy under cursor)
-- Switch weapon: `1/2/3`
+- Switch weapon: `1/2/3` (when not holding `Shift`)
+- Play unit motions: `Shift + 1..9` and `Shift + 0` (slot 10) for selected units
 - Restart: `R`
 
 ## Gen3D
