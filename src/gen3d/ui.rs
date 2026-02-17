@@ -1564,11 +1564,20 @@ pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
             Without<Gen3dPreviewAnimationOptionButton>,
         ),
     >,
-    mut dropdown_text: Query<&mut Text, With<Gen3dPreviewAnimationDropdownButtonText>>,
+    mut dropdown_text: Query<
+        &mut Text,
+        (
+            With<Gen3dPreviewAnimationDropdownButtonText>,
+            Without<Gen3dPreviewAnimationOptionButtonText>,
+        ),
+    >,
     mut list: Query<(&mut Node, &mut Visibility), With<Gen3dPreviewAnimationDropdownList>>,
     mut option_texts: Query<
         (&Gen3dPreviewAnimationOptionButtonText, &mut Text),
-        Without<Gen3dPreviewAnimationDropdownButton>,
+        (
+            Without<Gen3dPreviewAnimationDropdownButton>,
+            Without<Gen3dPreviewAnimationDropdownButtonText>,
+        ),
     >,
     mut option_buttons: Query<
         (
