@@ -237,7 +237,7 @@ pub(crate) fn selection_input(
     >,
     build_objects: Query<(Entity, &Transform), With<BuildObject>>,
 ) {
-    // While holding Space (fire), LMB is reserved for attack targeting, not selection.
+    // While holding Space (fire), selection is disabled to avoid fighting the aim cursor.
     if keys.pressed(KeyCode::Space) {
         selection.drag_start = None;
         selection.drag_end = None;
@@ -1138,7 +1138,6 @@ pub(crate) fn execute_move_orders(
 
 pub(crate) fn update_fire_control(
     keys: Res<ButtonInput<KeyCode>>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
     mode: Res<State<GameMode>>,
     game: Res<Game>,
     selection: Res<SelectionState>,
@@ -1150,37 +1149,34 @@ pub(crate) fn update_fire_control(
 ) {
     if matches!(mode.get(), GameMode::Play) && game.game_over {
         fire.active = false;
+        fire.target = None;
         return;
     }
 
     if !keys.pressed(KeyCode::Space) {
         fire.active = false;
+        fire.target = None;
         return;
     }
 
     if selection.selected.is_empty() {
         fire.active = false;
+        fire.target = None;
         return;
     }
     fire.active = true;
 
-    if mouse_buttons.just_pressed(MouseButton::Left) {
-        if let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), camera_q.single())
-        {
-            if let Some(cursor) = window.cursor_position() {
-                let camera_global = GlobalTransform::from(*camera_transform);
-                if let Some(enemy_entity) = pick_enemy_entity_under_cursor(
-                    cursor,
-                    camera,
-                    &camera_global,
-                    &library,
-                    &enemies,
-                ) {
-                    fire.target = Some(FireTarget::Enemy(enemy_entity));
-                } else if let Ok(ray) = camera.viewport_to_world(&camera_global, cursor) {
-                    if let Some(hit) = ray_plane_intersection_y(ray, 0.0) {
-                        fire.target = Some(FireTarget::Point(Vec2::new(hit.x, hit.z)));
-                    }
+    fire.target = None;
+    if let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), camera_q.single()) {
+        if let Some(cursor) = window.cursor_position() {
+            let camera_global = GlobalTransform::from(*camera_transform);
+            if let Some(enemy_entity) =
+                pick_enemy_entity_under_cursor(cursor, camera, &camera_global, &library, &enemies)
+            {
+                fire.target = Some(FireTarget::Enemy(enemy_entity));
+            } else if let Ok(ray) = camera.viewport_to_world(&camera_global, cursor) {
+                if let Some(hit) = ray_plane_intersection_y(ray, 0.0) {
+                    fire.target = Some(FireTarget::Point(Vec2::new(hit.x, hit.z)));
                 }
             }
         }

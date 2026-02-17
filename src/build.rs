@@ -559,7 +559,7 @@ pub(crate) fn build_place_object(
     if !build.placing_active {
         return;
     }
-    // While firing (Space held), LMB is reserved for selecting the fire target, not placing.
+    // While firing (Space held), don't place objects.
     if keys.pressed(KeyCode::Space) {
         return;
     }

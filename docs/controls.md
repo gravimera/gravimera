@@ -51,7 +51,7 @@ Units in Build mode:
 ## Play mode
 
 - Move selected: `RMB`
-- Fire: hold `Space`, then `LMB` sets target (point or enemy)
+- Fire: hold `Space` to fire at the cursor (point or enemy under cursor)
 - Switch weapon: `1/2/3`
 - Restart: `R`
 
