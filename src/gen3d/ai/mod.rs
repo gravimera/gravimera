@@ -5132,24 +5132,28 @@ fn spawn_gen3d_ai_text_thread(
 ) {
     let url = crate::config::join_base_url(&openai.base_url, "responses");
     std::thread::spawn(move || {
+        let thread_id = std::thread::current().id();
+        let started_at = std::time::Instant::now();
         append_gen3d_run_log(
             Some(&run_dir),
             format!(
-                "request_thread_started prefix={} model={} images={} url={} reasoning_effort={}",
+                "request_thread_started prefix={} model={} images={} url={} reasoning_effort={} thread={:?}",
                 prefix,
                 openai.model,
                 image_paths.len(),
                 url,
-                reasoning_effort
+                reasoning_effort,
+                thread_id
             ),
         );
         debug!(
-            "Gen3D: request started (prefix={}, model={}, images={}, url={}, cache_dir={})",
+            "Gen3D: request started (prefix={}, model={}, images={}, url={}, cache_dir={}, thread={:?})",
             prefix,
             openai.model,
             image_paths.len(),
             url,
             run_dir.display(),
+            thread_id,
         );
         let result = openai::generate_text_via_openai(
             &progress,
@@ -5165,9 +5169,57 @@ fn spawn_gen3d_ai_text_thread(
             Some(&run_dir),
             &prefix,
         );
-        if let Ok(mut guard) = shared.lock() {
-            *guard = Some(result);
+        let openai_elapsed_ms = started_at.elapsed().as_millis();
+        append_gen3d_run_log(
+            Some(&run_dir),
+            format!(
+                "request_thread_openai_done prefix={} ok={} elapsed_ms={}",
+                prefix,
+                result.is_ok(),
+                openai_elapsed_ms
+            ),
+        );
+        debug!(
+            "Gen3D: request thread OpenAI done (prefix={}, ok={}, elapsed_ms={}, thread={:?})",
+            prefix,
+            result.is_ok(),
+            openai_elapsed_ms,
+            thread_id,
+        );
+
+        let shared_lock_started_at = std::time::Instant::now();
+        let mut guard = match shared.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!(
+                    "Gen3D: shared_result lock poisoned; continuing (prefix={}, thread={:?})",
+                    prefix, thread_id
+                );
+                poisoned.into_inner()
+            }
+        };
+        let shared_lock_wait_ms = shared_lock_started_at.elapsed().as_millis();
+        append_gen3d_run_log(
+            Some(&run_dir),
+            format!(
+                "request_thread_shared_lock_acquired prefix={} wait_ms={}",
+                prefix, shared_lock_wait_ms
+            ),
+        );
+        if shared_lock_wait_ms >= 1_000 {
+            warn!(
+                "Gen3D: shared_result lock wait high (prefix={}, wait_ms={}, thread={:?})",
+                prefix, shared_lock_wait_ms, thread_id
+            );
+        } else {
+            debug!(
+                "Gen3D: shared_result lock acquired (prefix={}, wait_ms={}, thread={:?})",
+                prefix, shared_lock_wait_ms, thread_id
+            );
         }
+
+        *guard = Some(result);
+        append_gen3d_run_log(Some(&run_dir), format!("request_thread_shared_set prefix={}", prefix));
     });
 }
 

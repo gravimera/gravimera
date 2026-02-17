@@ -3927,6 +3927,18 @@ fn poll_agent_tool(
         return;
     };
 
+    append_gen3d_run_log(
+        job.pass_dir.as_deref(),
+        format!(
+            "shared_result_taken tool_id={} call_id={} kind={kind:?}",
+            call.tool_id, call.call_id
+        ),
+    );
+    debug!(
+        "Gen3D: shared result taken (tool_id={}, call_id={}, kind={kind:?})",
+        call.tool_id, call.call_id
+    );
+
     let mut stop_best_effort_after_tool: Option<String> = None;
 
     fn schedule_llm_tool_schema_repair(

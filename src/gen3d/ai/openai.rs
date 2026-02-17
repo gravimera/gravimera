@@ -1005,6 +1005,14 @@ fn openai_responses_flow(
             Err(err) => {
                 if background_for_request && is_responses_background_unsupported(&err) {
                     warn!("Gen3D: /responses background unsupported; retrying without it.");
+                    append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "responses_retry prefix={} reason=background_unsupported err={}",
+                            artifact_prefix,
+                            err.short()
+                        ),
+                    );
                     session.responses_supported = Some(true);
                     session.responses_background_supported = Some(false);
                     continue;
@@ -1012,6 +1020,14 @@ fn openai_responses_flow(
 
                 if attempted_previous_response_id && is_unsupported_previous_response_id(&err) {
                     warn!("Gen3D: /responses continuation unsupported (previous_response_id); retrying without it.");
+                    append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "responses_retry prefix={} reason=previous_response_id_unsupported err={}",
+                            artifact_prefix,
+                            err.short()
+                        ),
+                    );
                     session.responses_supported = Some(true);
                     session.responses_continuation_supported = Some(false);
                     success_used_previous_response_id = false;
@@ -1026,6 +1042,14 @@ fn openai_responses_flow(
 
                 if schema_for_request.is_some() && is_structured_outputs_rejected(&err) {
                     warn!("Gen3D: /responses structured outputs rejected; retrying without structured outputs for this session.");
+                    append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "responses_retry prefix={} reason=structured_outputs_rejected err={}",
+                            artifact_prefix,
+                            err.short()
+                        ),
+                    );
                     session.responses_structured_outputs_supported = Some(false);
                     continue;
                 }
@@ -1038,6 +1062,17 @@ fn openai_responses_flow(
                         attempt,
                         max_attempts,
                         err.short()
+                    );
+                    append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "responses_retry prefix={} reason=transient_failure attempt={}/{} delay_ms={} err={}",
+                            artifact_prefix,
+                            attempt,
+                            max_attempts,
+                            retry_delay.as_millis(),
+                            err.short()
+                        ),
                     );
                     std::thread::sleep(retry_delay);
                     retry_delay = (retry_delay * 2).min(std::time::Duration::from_secs(4));
@@ -1068,11 +1103,28 @@ fn openai_responses_flow(
                 warn!(
                     "Gen3D: failed to parse /responses JSON envelope, but SSE output text was extracted; continuing. err={err}"
                 );
+                append_gen3d_run_log(
+                    run_dir,
+                    format!(
+                        "responses_parse_warning prefix={} reason=json_envelope_parse_failed err={err}",
+                        artifact_prefix
+                    ),
+                );
                 serde_json::Value::Null
             } else if attempt < max_attempts {
                 warn!(
                     "Gen3D: failed to parse /responses JSON; retrying (attempt {}/{}) err={err}",
                     attempt, max_attempts
+                );
+                append_gen3d_run_log(
+                    run_dir,
+                    format!(
+                        "responses_retry prefix={} reason=parse_json attempt={}/{} delay_ms={} err={err}",
+                        artifact_prefix,
+                        attempt,
+                        max_attempts,
+                        retry_delay.as_millis(),
+                    ),
                 );
                 std::thread::sleep(retry_delay);
                 let schema_for_request = if expected_schema.is_some()
