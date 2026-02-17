@@ -84,6 +84,11 @@ pub(crate) fn load_realm_prefabs_into_library(
             if path.extension().and_then(|v| v.to_str()) != Some("json") {
                 continue;
             }
+            if let Some(file_name) = path.file_name().and_then(|v| v.to_str()) {
+                if file_name.ends_with(".desc.json") {
+                    continue;
+                }
+            }
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(err) => {
