@@ -71,10 +71,10 @@ pub(crate) fn camera_keyboard_rotate(
     }
 
     let mut yaw_dir = 0.0f32;
-    if keys.pressed(KeyCode::KeyJ) {
+    if keys.pressed(KeyCode::KeyQ) {
         yaw_dir += 1.0;
     }
-    if keys.pressed(KeyCode::KeyL) {
+    if keys.pressed(KeyCode::KeyE) {
         yaw_dir -= 1.0;
     }
     if yaw_dir.abs() > 1e-4 {
@@ -84,10 +84,10 @@ pub(crate) fn camera_keyboard_rotate(
     }
 
     let mut pitch_dir = 0.0f32;
-    if keys.pressed(KeyCode::KeyI) {
+    if keys.pressed(KeyCode::KeyZ) {
         pitch_dir -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyK) {
+    if keys.pressed(KeyCode::KeyX) {
         pitch_dir += 1.0;
     }
     if pitch_dir.abs() > 1e-4 {
@@ -145,6 +145,128 @@ pub(crate) fn camera_edge_pan(
     let delta = pan.normalize() * speed * dt * pan.length().clamp(0.0, 1.0);
     focus.position.x = (focus.position.x + delta.x).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
     focus.position.z = (focus.position.z + delta.z).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+}
+
+pub(crate) fn camera_keyboard_pan(
+    time: Res<Time>,
+    zoom: Res<CameraZoom>,
+    keys: Res<ButtonInput<KeyCode>>,
+    console: Res<CommandConsole>,
+    selection: Res<SelectionState>,
+    camera_yaw: Res<CameraYaw>,
+    mut focus: ResMut<CameraFocus>,
+) {
+    if console.open {
+        return;
+    }
+
+    if !selection.selected.is_empty() {
+        return;
+    }
+
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+
+    if !focus.initialized {
+        return;
+    }
+
+    let mut dir = Vec3::ZERO;
+    let yaw = camera_yaw.yaw;
+    let forward = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+    let right = Vec3::Y.cross(forward);
+
+    if keys.pressed(KeyCode::KeyW) {
+        dir += forward;
+    }
+    if keys.pressed(KeyCode::KeyS) {
+        dir -= forward;
+    }
+    if keys.pressed(KeyCode::KeyD) {
+        dir += right;
+    }
+    if keys.pressed(KeyCode::KeyA) {
+        dir -= right;
+    }
+
+    if dir.length_squared() <= 1e-6 {
+        return;
+    }
+
+    let zoom_t = zoom.t.clamp(0.0, CAMERA_ZOOM_MAX);
+    let speed = CAMERA_EDGE_PAN_SPEED_FAR_UNITS_PER_SEC
+        + (CAMERA_EDGE_PAN_SPEED_NEAR_UNITS_PER_SEC - CAMERA_EDGE_PAN_SPEED_FAR_UNITS_PER_SEC)
+            * zoom_t;
+
+    let delta = dir.normalize() * speed * dt;
+    focus.position.x = (focus.position.x + delta.x).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+    focus.position.z = (focus.position.z + delta.z).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+}
+
+pub(crate) fn camera_follow_selection(
+    console: Res<CommandConsole>,
+    selection: Res<SelectionState>,
+    mut focus: ResMut<CameraFocus>,
+    transforms: Query<&Transform, Without<MainCamera>>,
+) {
+    if console.open {
+        return;
+    }
+
+    if selection.selected.is_empty() {
+        return;
+    }
+
+    let mut min_x = f32::INFINITY;
+    let mut min_z = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_z = f32::NEG_INFINITY;
+    let mut sum_y = 0.0f32;
+    let mut count = 0u32;
+
+    for entity in selection.selected.iter().copied() {
+        let Ok(transform) = transforms.get(entity) else {
+            continue;
+        };
+        let pos = transform.translation;
+        min_x = min_x.min(pos.x);
+        min_z = min_z.min(pos.z);
+        max_x = max_x.max(pos.x);
+        max_z = max_z.max(pos.z);
+        sum_y += pos.y;
+        count += 1;
+    }
+
+    if count == 0 {
+        return;
+    }
+
+    let target = Vec3::new(
+        (min_x + max_x) * 0.5,
+        sum_y / count as f32,
+        (min_z + max_z) * 0.5,
+    );
+
+    if !focus.initialized {
+        focus.position = target;
+        focus.initialized = true;
+        return;
+    }
+
+    focus.position.y = target.y;
+
+    let delta = Vec2::new(target.x - focus.position.x, target.z - focus.position.z);
+    let deadzone = CAMERA_FOLLOW_SELECTION_DEADZONE_UNITS.max(0.0);
+    if delta.length_squared() <= deadzone * deadzone {
+        return;
+    }
+
+    let dist = delta.length().max(1e-6);
+    let correction = delta - (delta / dist) * deadzone;
+    focus.position.x = (focus.position.x + correction.x).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+    focus.position.z = (focus.position.z + correction.y).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
 }
 
 pub(crate) fn camera_follow(

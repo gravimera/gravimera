@@ -506,7 +506,7 @@ pub(crate) fn build_toggle_fence_axis(
     keys: Res<ButtonInput<KeyCode>>,
     mut build: ResMut<BuildState>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyX) {
+    if !keys.just_pressed(KeyCode::KeyF) {
         return;
     }
 
@@ -663,7 +663,7 @@ pub(crate) fn build_place_object(
         object_id,
     );
 
-    // Tree type is selected via X key; placing does not auto-cycle.
+    // Tree type is selected via F key; placing does not auto-cycle.
 
     if let Ok((mut player_transform, _collider)) = player.single_mut() {
         let to = Vec3::new(
@@ -1213,10 +1213,10 @@ pub(crate) fn build_edit_selected_objects(
 
     let rot_step_deg = if shift { 45.0 } else { 15.0 };
     let mut yaw_delta_deg = 0.0f32;
-    if keys.just_pressed(KeyCode::KeyQ) {
+    if keys.just_pressed(KeyCode::Comma) {
         yaw_delta_deg -= rot_step_deg;
     }
-    if keys.just_pressed(KeyCode::KeyE) {
+    if keys.just_pressed(KeyCode::Period) {
         yaw_delta_deg += rot_step_deg;
     }
 

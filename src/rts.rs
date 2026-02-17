@@ -362,6 +362,8 @@ pub(crate) fn selection_input(
             selection.selected.insert(entity);
         } else if let Some((entity, _)) = best_other {
             selection.selected.insert(entity);
+        } else {
+            selection.selected.clear();
         }
 
         return;
@@ -387,6 +389,8 @@ pub(crate) fn selection_input(
         selection.selected.extend(non_units);
     } else if !non_units.is_empty() {
         selection.selected.extend(non_units);
+    } else {
+        selection.selected.clear();
     }
 }
 

@@ -932,6 +932,10 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             player::camera_edge_pan
                 .after(player::camera_keyboard_rotate)
                 .run_if(crate::automation::local_input_enabled),
+            player::camera_keyboard_pan
+                .after(player::camera_edge_pan)
+                .run_if(crate::automation::local_input_enabled),
+            player::camera_follow_selection.after(player::camera_keyboard_pan),
         )
             .before(player::camera_follow)
             .run_if(console::console_closed)
@@ -941,6 +945,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(
         Update,
         player::camera_follow
+            .before(rts::selection_input)
             .run_if(console::console_closed)
             .run_if(not(in_state(GameMode::Gen3D))),
     );

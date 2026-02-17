@@ -18,10 +18,10 @@ pub(crate) fn setup_rendered(
         "Controls: LMB selects (click/drag), RMB issues move orders.\n\
          Tab toggles Build/Play.\n\
          Build/Play: hold Space to fire; while holding Space, LMB sets fire direction/target (click ground or an enemy).\n\
-         Build: 1/2/3 select (Block/Fence/Tree), X fence dir / tree size, LMB place, Esc select, LMB drag select, Delete remove, M duplicate unit, Ctrl/Cmd+D duplicate build.\n\
-         Edit: WASD move selected (camera-relative; CapsLock = 1/3 speed), Q/E rotate builds, -/= scale selected (Shift bigger).\n\
+         Build: 1/2/3 select (Block/Fence/Tree), F fence dir / tree size, LMB place, Esc select, LMB drag select, Delete remove, M duplicate unit, Ctrl/Cmd+D duplicate build.\n\
+         Edit: WASD move selected (camera-relative; CapsLock = 1/3 speed), ,/. rotate builds, -/= scale selected (Shift bigger).\n\
          Play: 1/2/3 switch guns (Normal/Shotgun/Laser), R restarts, Enter command.\n\
-         Camera: edge-pan (cursor near window edge), rotate with I/J/K/L, zoom with mouse wheel.\n\
+         Camera: edge-pan (cursor near window edge), rotate with Z/X/Q/E, zoom with mouse wheel (WASD pans camera when nothing selected).\n\
          Minimap: top-right."
     );
 

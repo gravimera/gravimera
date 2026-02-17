@@ -220,6 +220,10 @@ pub(crate) const CAMERA_KEY_ROTATE_PITCH_RADS_PER_SEC: f32 = 1.2;
 pub(crate) const CAMERA_PITCH_DELTA_MIN_RADS: f32 = -0.6;
 pub(crate) const CAMERA_PITCH_DELTA_MAX_RADS: f32 = 0.6;
 
+// When units/build objects are selected, the camera focus follows them while allowing
+// some slack so the view isn't rigidly locked to the selection center.
+pub(crate) const CAMERA_FOLLOW_SELECTION_DEADZONE_UNITS: f32 = 1.25;
+
 // UI indicator shown when edge-scroll is active.
 pub(crate) const EDGE_SCROLL_INDICATOR_SIZE_PX: f32 = 44.0;
 pub(crate) const EDGE_SCROLL_INDICATOR_FONT_SIZE_PX: f32 = 32.0;
