@@ -477,6 +477,50 @@ fn merge_component_anchors_from_plan_and_draft(
     Ok(merged)
 }
 
+fn override_required_anchor_rotations_from_plan(
+    component_name: &str,
+    required_plan_anchors: &[crate::object::registry::AnchorDef],
+    anchors: &mut [crate::object::registry::AnchorDef],
+) {
+    if required_plan_anchors.is_empty() || anchors.is_empty() {
+        return;
+    }
+
+    for required in required_plan_anchors.iter() {
+        let name = required.name.as_ref();
+        if name.trim().is_empty() || name == "origin" {
+            continue;
+        }
+
+        let Some(anchor) = anchors.iter_mut().find(|a| a.name.as_ref() == name) else {
+            continue;
+        };
+
+        let desired = if required.transform.rotation.is_finite() {
+            required.transform.rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+
+        let current = if anchor.transform.rotation.is_finite() {
+            anchor.transform.rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+
+        // Join frames are part of the plan contract: draft geometry may adjust anchor *positions*,
+        // but letting the draft override anchor orientation breaks attachment and animation axes
+        // (e.g. melee swing yaw becomes a twist).
+        if current.dot(desired).abs() < 0.999 {
+            debug!(
+                "Gen3D: overriding anchor rotation from draft to plan for component `{}` anchor `{}`",
+                component_name, name
+            );
+        }
+        anchor.transform.rotation = desired;
+    }
+}
+
 fn attachment_offset_from_ai(
     offset: Option<&AiAttachmentOffsetJson>,
     parent_anchor_rot: Option<Quat>,
@@ -2264,6 +2308,7 @@ pub(super) fn ai_to_component_def(
         &mut parts,
         &mut anchors,
     );
+    override_required_anchor_rotations_from_plan(component_name, &component.anchors, &mut anchors);
     maybe_align_axially_symmetric_spinner_to_spin_axis(
         component_name,
         component,
@@ -3171,6 +3216,70 @@ mod tests {
             rot.dot(Quat::IDENTITY).abs() > 0.9999,
             "expected identity delta rotation in join frame; rot={:?}",
             rot
+        );
+    }
+
+    #[test]
+    fn component_def_uses_plan_anchor_rotations_over_draft() {
+        // Regression: letting the draft override required anchor orientation breaks join-frame
+        // axes used by attachments and animations (e.g. melee swing yaw turns into a twist).
+        let planned = Gen3dPlannedComponent {
+            display_name: "1. arm".into(),
+            name: "arm".into(),
+            purpose: String::new(),
+            modeling_notes: String::new(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: None,
+            anchors: vec![crate::object::registry::AnchorDef {
+                name: "hand_grip".into(),
+                transform: Transform::from_translation(Vec3::new(0.0, 0.5, 0.0)),
+            }],
+            contacts: Vec::new(),
+            attach_to: None,
+        };
+
+        let ai = AiDraftJsonV1 {
+            version: 2,
+            collider: None,
+            anchors: vec![AiAnchorJson {
+                name: "hand_grip".into(),
+                pos: [1.0, 2.0, 3.0],
+                forward: Some([0.0, -1.0, 0.0]),
+                up: Some([0.0, 0.0, 1.0]),
+            }],
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cuboid,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 1.0]),
+                pos: [0.0, 0.0, 0.0],
+                forward: None,
+                up: None,
+                scale: [1.0, 1.0, 1.0],
+            }],
+        };
+
+        let def = ai_to_component_def(&planned, ai).expect("component def should build");
+        let anchor = def
+            .anchors
+            .iter()
+            .find(|a| a.name.as_ref() == "hand_grip")
+            .expect("hand_grip anchor");
+
+        assert!(
+            (anchor.transform.translation - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5,
+            "expected draft anchor translation to be preserved; got={:?}",
+            anchor.transform.translation
+        );
+
+        let expected = planned.anchors[0].transform.rotation.normalize();
+        let got = anchor.transform.rotation.normalize();
+        assert!(
+            got.dot(expected).abs() > 0.9999,
+            "expected required anchor rotation to match plan; expected={:?} got={:?}",
+            expected,
+            got
         );
     }
 
