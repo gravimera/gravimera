@@ -822,12 +822,19 @@ pub(crate) fn unit_animation_hotkeys(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<GameMode>>,
+    build: Res<BuildState>,
     library: Res<ObjectLibrary>,
     selection: Res<SelectionState>,
-    units: Query<&ObjectPrefabId, (With<Commandable>, Without<Player>)>,
+    targets: Query<&ObjectPrefabId, Without<Player>>,
 ) {
-    if !matches!(mode.get(), GameMode::Play) {
-        return;
+    match mode.get() {
+        GameMode::Play => {}
+        GameMode::Build => {
+            if build.placing_active {
+                return;
+            }
+        }
+        _ => return,
     }
     if selection.selected.is_empty() {
         return;
@@ -874,7 +881,7 @@ pub(crate) fn unit_animation_hotkeys(
     let mut channels_by_prefab: HashMap<u128, Vec<String>> = HashMap::new();
 
     for entity in selection.selected.iter().copied() {
-        let Ok(prefab_id) = units.get(entity) else {
+        let Ok(prefab_id) = targets.get(entity) else {
             continue;
         };
         let channels = channels_by_prefab
@@ -913,10 +920,10 @@ pub(crate) fn clear_forced_animation_channel_after_one_shot(
             &ForcedAnimationChannel,
             &AttackClock,
         ),
-        With<Commandable>,
+        Without<Player>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Play) {
+    if !matches!(mode.get(), GameMode::Play | GameMode::Build) {
         return;
     }
 

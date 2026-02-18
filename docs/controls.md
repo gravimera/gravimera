@@ -47,13 +47,14 @@ Units in Build mode:
 
 - Duplicate selected units: `M`
 - Scale selected units: `-` / `=` (`Shift` = bigger steps)
+- Play selected motions (units/build objects): `1..9` and `0` (slot 10)
 
 ## Play mode
 
 - Move selected: `RMB`
 - Fire: hold `Space` to fire at the cursor (point or enemy under cursor)
 - Switch weapon: `Ctrl/Cmd + 1/2/3`
-- Play unit motions: `1..9` and `0` (slot 10) for selected units
+- Play selected motions (units/build objects): `1..9` and `0` (slot 10)
 - Restart: `R`
 
 ## Gen3D

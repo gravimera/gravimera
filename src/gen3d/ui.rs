@@ -1423,20 +1423,21 @@ pub(crate) fn gen3d_rebuild_preview_animation_dropdown_options_ui(
         return;
     }
 
+    let Ok(list_entity) = lists.single() else {
+        return;
+    };
+
     let channels_hash = {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         preview_state.animation_channels.hash(&mut hasher);
         hasher.finish()
     };
-    if last_hash.as_ref() == Some(&channels_hash) {
+    let ui_missing = !preview_state.animation_channels.is_empty() && existing_buttons.is_empty();
+    if last_hash.as_ref() == Some(&channels_hash) && !ui_missing {
         return;
     }
     *last_hash = Some(channels_hash);
-
-    let Ok(list_entity) = lists.single() else {
-        return;
-    };
 
     if let Ok(mut scroll) = scroll_panels.single_mut() {
         scroll.y = 0.0;
