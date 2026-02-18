@@ -389,6 +389,11 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            They are intended for user-triggered playback (gameplay hotkeys: 1..9/0 plays the first 10 channels for the selected unit).\n\
          - If `mobility.kind` is `ground` or `air`, you MUST ensure the unit has at least `idle` and `move` channels on at least one visible attachment edge.\n\
            If you cannot identify a good sub-part to animate, attach subtle `idle`/`move` motion to the root component's attachment.\n\
+         - Expressiveness guideline (for better-looking locomotion):\n\
+           - Avoid keeping the MAIN BODY (torso/chest/hips/chassis) completely rigid in `move`.\n\
+             Distribute some subtle motion across major visible components (body/torso/head/arms/weapon/tail) using small rotations and/or small `delta.pos` offsets.\n\
+           - IMPORTANT: The root component itself has no parent attachment edge.\n\
+             If you want the torso/chest to bob/sway and it would otherwise be the root, introduce a small root/base component (e.g. `pelvis`, `body_root`, `chassis_root`) and attach the torso to it so the torso can have `attach_to.animations`.\n\
          - If the user explicitly asks for extra motions/emotes/animations, add additional custom channels up to 10 total meaningful channels.\n\n\
          Animation spec (inside `attach_to.animations[channel]`):\n\
          - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
@@ -554,6 +559,10 @@ pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
      - Custom channels (e.g. `dance`) are allowed, but are user-triggered (not auto-activated).\n\
        The game can play them via 1..9/0 (first 10 channels).\n\
      - If mobility is `ground` or `air`, ensure `idle` and `move` exist.\n\n\
+     Expressiveness guideline:\n\
+     - For `move`, avoid keeping the main body completely rigid.\n\
+       Add subtle bob/sway to a core body component if appropriate (torso/chest/hips/chassis), in addition to limb motion.\n\
+\n\
      Animation spec (inside `animations[channel]`):\n\
      - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
      - `speed_scale`: number (optional; default 1)\n\
