@@ -4,6 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+fn normalize_slashes(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.contains('\\') {
+        std::borrow::Cow::Owned(value.replace('\\', "/"))
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    }
+}
+
 fn http_request(
     addr: SocketAddr,
     method: &str,
@@ -188,7 +196,7 @@ fn validation_reports_contain_stable_codes_and_evidence() {
     assert!(!report["hard_gates_passed"].as_bool().unwrap_or(true));
     let violation = find_violation(report, "unknown_prefab_id").expect("unknown_prefab_id");
     assert_eq!(
-        violation["evidence"]["source_path"].as_str().unwrap_or(""),
+        normalize_slashes(violation["evidence"]["source_path"].as_str().unwrap_or("")).as_ref(),
         "pinned_instances/7df705fe-80cb-4d77-9c0a-8e1472ac2dc5.json"
     );
     assert_eq!(
@@ -237,7 +245,7 @@ fn validation_reports_contain_stable_codes_and_evidence() {
     let violation = find_violation(report, "unknown_portal_destination_scene")
         .expect("unknown_portal_destination_scene");
     assert_eq!(
-        violation["evidence"]["source_path"].as_str().unwrap_or(""),
+        normalize_slashes(violation["evidence"]["source_path"].as_str().unwrap_or("")).as_ref(),
         "portals/to_missing.json"
     );
     assert_eq!(

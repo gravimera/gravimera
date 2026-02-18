@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -78,6 +79,25 @@ fn collect_relative_json_files(root: &Path) -> Vec<PathBuf> {
 
 fn read_file_bytes(path: &Path) -> Vec<u8> {
     std::fs::read(path).expect("read file")
+}
+
+fn normalize_crlf(bytes: &[u8]) -> Cow<'_, [u8]> {
+    if !bytes.windows(2).any(|w| w == b"\r\n") {
+        return Cow::Borrowed(bytes);
+    }
+
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'\r' && bytes[i + 1] == b'\n' {
+            out.push(b'\n');
+            i += 2;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    Cow::Owned(out)
 }
 
 fn diff_bytes(expected: &[u8], got: &[u8]) -> String {
@@ -194,14 +214,16 @@ fn scene_sources_roundtrip_minimal_fixture_via_automation() {
     for rel in fixture_files {
         let expected_path = fixture_src.join(&rel);
         let got_path = out_src.join(&rel);
-        let expected = read_file_bytes(&expected_path);
-        let got = read_file_bytes(&got_path);
+        let expected_raw = read_file_bytes(&expected_path);
+        let got_raw = read_file_bytes(&got_path);
+        let expected = normalize_crlf(&expected_raw);
+        let got = normalize_crlf(&got_raw);
         assert_eq!(
-            expected,
-            got,
+            expected.as_ref(),
+            got.as_ref(),
             "file mismatch for {} diff:\n{}",
             rel.display(),
-            diff_bytes(&expected, &got)
+            diff_bytes(expected.as_ref(), got.as_ref())
         );
     }
 

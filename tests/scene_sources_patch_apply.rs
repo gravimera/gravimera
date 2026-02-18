@@ -153,8 +153,20 @@ fn patch_apply(
 }
 
 fn contains_path(list: &serde_json::Value, path: &str) -> bool {
+    fn norm(value: &str) -> std::borrow::Cow<'_, str> {
+        if value.contains('\\') {
+            std::borrow::Cow::Owned(value.replace('\\', "/"))
+        } else {
+            std::borrow::Cow::Borrowed(value)
+        }
+    }
     list.as_array()
-        .map(|items| items.iter().any(|v| v.as_str() == Some(path)))
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|v| norm(v).as_ref() == path)
+        })
         .unwrap_or(false)
 }
 

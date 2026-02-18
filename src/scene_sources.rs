@@ -429,6 +429,25 @@ mod tests {
     use super::*;
     use std::borrow::Cow;
 
+    fn normalize_crlf(bytes: &[u8]) -> Cow<'_, [u8]> {
+        if !bytes.windows(2).any(|w| w == b"\r\n") {
+            return Cow::Borrowed(bytes);
+        }
+
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if i + 1 < bytes.len() && bytes[i] == b'\r' && bytes[i + 1] == b'\n' {
+                out.push(b'\n');
+                i += 2;
+                continue;
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        Cow::Owned(out)
+    }
+
     fn fixture_src_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/scene_generation/fixtures/minimal/src")
@@ -447,6 +466,8 @@ mod tests {
         for rel in rel_files {
             let expected = read_file_bytes(&fixture_src.join(&rel)).unwrap();
             let got = read_file_bytes(&temp_src.join(&rel)).unwrap();
+            let expected = normalize_crlf(&expected);
+            let got = normalize_crlf(&got);
             assert_eq!(
                 expected,
                 got,
