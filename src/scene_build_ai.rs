@@ -2488,10 +2488,11 @@ fn call_openai_responses_json_object(
     match serde_json::from_str::<Value>(body_trim) {
         Ok(json) => {
             let _ = write_json_artifact(&llm_dir.join("api_response.json"), &json);
-            let text = extract_openai_responses_output_text(&json).ok_or_else(|| OpenAiCurlError {
-                summary: "OpenAI response missing output text".to_string(),
-                status: Some(status_code),
-            })?;
+            let text =
+                extract_openai_responses_output_text(&json).ok_or_else(|| OpenAiCurlError {
+                    summary: "OpenAI response missing output text".to_string(),
+                    status: Some(status_code),
+                })?;
             Ok(text)
         }
         Err(err) => {

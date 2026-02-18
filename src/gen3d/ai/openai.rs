@@ -1,5 +1,6 @@
 use bevy::log::{debug, error, warn};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::gen3d::agent::{
@@ -22,10 +23,15 @@ use super::{
 };
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
-// Cap per-request wall time so a single hung OpenAI-compatible request can't stall an entire run.
-// (Gen3D has its own retries + overall run time budget.)
-const CURL_MAX_TIME_SECS_DEFAULT: u32 = 300;
-const CURL_MAX_TIME_SECS_STRUCTURED: u32 = 300;
+// Curl timeout strategy:
+// - `--connect-timeout`: fail fast if TCP/TLS can't connect.
+// - First-byte timeout: fail fast if the provider never starts sending a body.
+// - Idle timeout: allow long responses if bytes keep arriving, but abort if the transfer stalls.
+// - Hard timeout: absolute safety net so a single request can't monopolize the whole build budget.
+const CURL_FIRST_BYTE_TIMEOUT_SECS: u32 = 120;
+const CURL_IDLE_TIMEOUT_SECS: u32 = 300;
+const CURL_HARD_TIMEOUT_SECS_DEFAULT: u32 = 1_200;
+const CURL_HARD_TIMEOUT_SECS_STRUCTURED: u32 = 1_200;
 
 const OPENAI_CAPABILITIES_CACHE_FILE_NAME: &str = "openai_capabilities_cache.json";
 const OPENAI_CAPABILITIES_CACHE_VERSION: u32 = 1;
@@ -365,6 +371,188 @@ fn curl_auth_header_file(api_key: &str) -> Result<TempSecretFile, std::io::Error
     let api_key = api_key.replace(['\n', '\r'], "");
     let headers = format!("Authorization: Bearer {api_key}\n");
     TempSecretFile::create("openai_auth", &headers)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CurlByteTimeouts {
+    first_byte: std::time::Duration,
+    idle: std::time::Duration,
+    hard: std::time::Duration,
+}
+
+fn read_stream_to_end(
+    mut reader: impl std::io::Read,
+    start: std::time::Instant,
+    bytes_total: Arc<AtomicU64>,
+    last_activity_ms: Arc<AtomicU64>,
+    saw_any_byte: Option<Arc<AtomicBool>>,
+) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 16 * 1024];
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => break,
+        };
+        out.extend_from_slice(&buf[..n]);
+        bytes_total.fetch_add(n as u64, Ordering::Relaxed);
+        last_activity_ms.store(start.elapsed().as_millis() as u64, Ordering::Relaxed);
+        if let Some(flag) = &saw_any_byte {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+    out
+}
+
+fn wait_curl_with_byte_timeouts(
+    mut child: std::process::Child,
+    stdin_body: Option<&[u8]>,
+    timeouts: CurlByteTimeouts,
+    url: &str,
+) -> Result<std::process::Output, OpenAiError> {
+    if let Some(body) = stdin_body {
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(body).map_err(|err| OpenAiError {
+                summary: format!("Failed to write request to curl stdin: {err}"),
+                url: url.to_string(),
+                status: None,
+                body_preview: None,
+            })?;
+        }
+    }
+
+    let start = std::time::Instant::now();
+    let stdout_bytes_total = Arc::new(AtomicU64::new(0));
+    let stdout_last_activity_ms = Arc::new(AtomicU64::new(0));
+    let stdout_saw_any_byte = Arc::new(AtomicBool::new(false));
+
+    let stderr_bytes_total = Arc::new(AtomicU64::new(0));
+    let stderr_last_activity_ms = Arc::new(AtomicU64::new(0));
+
+    let stdout = child.stdout.take().ok_or_else(|| OpenAiError {
+        summary: "Internal error: missing curl stdout pipe".into(),
+        url: url.to_string(),
+        status: None,
+        body_preview: None,
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| OpenAiError {
+        summary: "Internal error: missing curl stderr pipe".into(),
+        url: url.to_string(),
+        status: None,
+        body_preview: None,
+    })?;
+
+    let stdout_handle = {
+        let bytes_total = stdout_bytes_total.clone();
+        let last_activity_ms = stdout_last_activity_ms.clone();
+        let saw = stdout_saw_any_byte.clone();
+        std::thread::spawn(move || {
+            read_stream_to_end(stdout, start, bytes_total, last_activity_ms, Some(saw))
+        })
+    };
+    let stderr_handle = {
+        let bytes_total = stderr_bytes_total.clone();
+        let last_activity_ms = stderr_last_activity_ms.clone();
+        std::thread::spawn(move || {
+            read_stream_to_end(stderr, start, bytes_total, last_activity_ms, None)
+        })
+    };
+
+    let sleep_step = std::time::Duration::from_millis(50);
+    let mut status: Option<std::process::ExitStatus> = None;
+    let mut timed_out_summary: Option<String> = None;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(s)) => {
+                status = Some(s);
+                break;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                let _ = child.kill();
+                return Err(OpenAiError {
+                    summary: format!("Failed to poll curl status: {err}"),
+                    url: url.to_string(),
+                    status: None,
+                    body_preview: None,
+                });
+            }
+        }
+
+        let elapsed = start.elapsed();
+        if elapsed > timeouts.hard {
+            timed_out_summary = Some(format!(
+                "curl timed out (hard cap {}s)",
+                timeouts.hard.as_secs()
+            ));
+            break;
+        }
+
+        if !stdout_saw_any_byte.load(Ordering::Relaxed) {
+            if elapsed > timeouts.first_byte {
+                timed_out_summary = Some(format!(
+                    "curl timed out waiting for first response byte ({}s)",
+                    timeouts.first_byte.as_secs()
+                ));
+                break;
+            }
+        } else {
+            let elapsed_ms = elapsed.as_millis() as u64;
+            let last_ms = stdout_last_activity_ms.load(Ordering::Relaxed);
+            let since_last_ms = elapsed_ms.saturating_sub(last_ms);
+            if since_last_ms > timeouts.idle.as_millis() as u64 {
+                timed_out_summary = Some(format!(
+                    "curl timed out waiting for more bytes (idle {}s)",
+                    timeouts.idle.as_secs()
+                ));
+                break;
+            }
+        }
+
+        std::thread::sleep(sleep_step);
+    }
+
+    if let Some(summary) = timed_out_summary {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _stdout = stdout_handle.join().unwrap_or_default();
+        let stderr = stderr_handle.join().unwrap_or_default();
+        let bytes = stdout_bytes_total.load(Ordering::Relaxed);
+        let stderr_bytes = stderr_bytes_total.load(Ordering::Relaxed);
+        let err = if stderr_bytes > 0 {
+            let tail = String::from_utf8_lossy(&stderr);
+            format!(
+                "{summary} (stdout_bytes={bytes}, stderr_tail={})",
+                truncate_for_ui(tail.trim(), 240)
+            )
+        } else {
+            format!("{summary} (stdout_bytes={bytes})")
+        };
+        return Err(OpenAiError {
+            summary: err,
+            url: url.to_string(),
+            status: None,
+            body_preview: None,
+        });
+    }
+
+    let status = status.ok_or_else(|| OpenAiError {
+        summary: "Internal error: missing curl exit status".into(),
+        url: url.to_string(),
+        status: None,
+        body_preview: None,
+    })?;
+
+    let stdout = stdout_handle.join().unwrap_or_default();
+    let stderr = stderr_handle.join().unwrap_or_default();
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1510,17 +1698,32 @@ fn openai_responses_flow(
 
             let url = crate::config::join_base_url(base_url, &format!("responses/{id}"));
             let _permit = crate::ai_limiter::acquire_permit();
-            let poll = std::process::Command::new("curl")
-                .arg("-sS")
+            let mut cmd = std::process::Command::new("curl");
+            cmd.arg("-sS")
+                .arg("--no-buffer")
                 .arg("--connect-timeout")
                 .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
                 .arg("--max-time")
-                .arg(CURL_MAX_TIME_SECS_DEFAULT.to_string())
+                .arg(CURL_HARD_TIMEOUT_SECS_DEFAULT.to_string())
                 .arg("-H")
                 .arg(poll_headers.curl_header_arg())
                 .arg(&url)
-                .output()
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
+            let poll = cmd
+                .spawn()
                 .map_err(|err| OpenAiError::new(format!("Failed to start curl: {err}")))?;
+            let poll = wait_curl_with_byte_timeouts(
+                poll,
+                None,
+                CurlByteTimeouts {
+                    first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+                    idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
+                    hard: std::time::Duration::from_secs(CURL_HARD_TIMEOUT_SECS_DEFAULT.into()),
+                },
+                &url,
+            )?;
             if !poll.status.success() {
                 let stderr = String::from_utf8_lossy(&poll.stderr);
                 return Err(OpenAiError::new(format!(
@@ -1937,17 +2140,18 @@ fn openai_responses_curl(
         body_preview: None,
     })?;
 
-    let max_time_secs = if expected_schema.is_some() && !background {
-        CURL_MAX_TIME_SECS_STRUCTURED
+    let hard_timeout_secs = if expected_schema.is_some() && !background {
+        CURL_HARD_TIMEOUT_SECS_STRUCTURED
     } else {
-        CURL_MAX_TIME_SECS_DEFAULT
+        CURL_HARD_TIMEOUT_SECS_DEFAULT
     };
     let mut cmd = std::process::Command::new("curl");
     cmd.arg("-sS")
+        .arg("--no-buffer")
         .arg("--connect-timeout")
         .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
         .arg("--max-time")
-        .arg(max_time_secs.to_string())
+        .arg(hard_timeout_secs.to_string())
         .arg("-X")
         .arg("POST")
         .arg("-H")
@@ -1963,29 +2167,23 @@ fn openai_responses_curl(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|err| OpenAiError {
+    let child = cmd.spawn().map_err(|err| OpenAiError {
         summary: format!("Failed to start curl: {err}"),
         url: url.clone(),
         status: None,
         body_preview: None,
     })?;
 
-    if let Some(stdin) = child.stdin.as_mut() {
-        use std::io::Write;
-        stdin.write_all(&body).map_err(|err| OpenAiError {
-            summary: format!("Failed to write request to curl stdin: {err}"),
-            url: url.clone(),
-            status: None,
-            body_preview: None,
-        })?;
-    }
-
-    let output = child.wait_with_output().map_err(|err| OpenAiError {
-        summary: format!("Failed to wait for curl: {err}"),
-        url: url.clone(),
-        status: None,
-        body_preview: None,
-    })?;
+    let output = wait_curl_with_byte_timeouts(
+        child,
+        Some(&body),
+        CurlByteTimeouts {
+            first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+            idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
+            hard: std::time::Duration::from_secs(hard_timeout_secs.into()),
+        },
+        &url,
+    )?;
 
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() {
@@ -2115,18 +2313,19 @@ fn openai_chat_completions_curl(
         body_preview: None,
     })?;
 
-    let max_time_secs = if expected_schema.is_some() {
-        CURL_MAX_TIME_SECS_STRUCTURED
+    let hard_timeout_secs = if expected_schema.is_some() {
+        CURL_HARD_TIMEOUT_SECS_STRUCTURED
     } else {
-        CURL_MAX_TIME_SECS_DEFAULT
+        CURL_HARD_TIMEOUT_SECS_DEFAULT
     };
 
     let mut cmd = std::process::Command::new("curl");
     cmd.arg("-sS")
+        .arg("--no-buffer")
         .arg("--connect-timeout")
         .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
         .arg("--max-time")
-        .arg(max_time_secs.to_string())
+        .arg(hard_timeout_secs.to_string())
         .arg("-X")
         .arg("POST")
         .arg("-H")
@@ -2142,29 +2341,23 @@ fn openai_chat_completions_curl(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|err| OpenAiError {
+    let child = cmd.spawn().map_err(|err| OpenAiError {
         summary: format!("Failed to start curl: {err}"),
         url: url.clone(),
         status: None,
         body_preview: None,
     })?;
 
-    if let Some(stdin) = child.stdin.as_mut() {
-        use std::io::Write;
-        stdin.write_all(&body).map_err(|err| OpenAiError {
-            summary: format!("Failed to write request to curl stdin: {err}"),
-            url: url.clone(),
-            status: None,
-            body_preview: None,
-        })?;
-    }
-
-    let output = child.wait_with_output().map_err(|err| OpenAiError {
-        summary: format!("Failed to wait for curl: {err}"),
-        url: url.clone(),
-        status: None,
-        body_preview: None,
-    })?;
+    let output = wait_curl_with_byte_timeouts(
+        child,
+        Some(&body),
+        CurlByteTimeouts {
+            first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+            idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
+            hard: std::time::Duration::from_secs(hard_timeout_secs.into()),
+        },
+        &url,
+    )?;
 
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() {

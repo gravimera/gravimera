@@ -977,13 +977,57 @@ fn is_motion_preview_image(path: &Path) -> bool {
         || name.contains("attack_frame")
 }
 
+fn motion_sheets_needed_from_smoke_results(smoke_results: &serde_json::Value) -> (bool, bool) {
+    // Returns (include_move_sheet, include_attack_sheet).
+    //
+    // We rely on motion_validation's structured issue list rather than prompt heuristics so we can
+    // be conservative with large motion-sheet images unless smoke_check has concrete errors.
+    let motion_ok = smoke_results
+        .get("motion_validation")
+        .and_then(|v| v.get("ok"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let Some(issues) = smoke_results
+        .get("motion_validation")
+        .and_then(|v| v.get("issues"))
+        .and_then(|v| v.as_array())
+    else {
+        // If validation failed but the issue list is missing/unparseable, fall back to including
+        // the move sheet for extra visual context (it is usually the most informative).
+        return (!motion_ok, false);
+    };
+
+    let mut include_move_sheet = false;
+    let mut include_attack_sheet = false;
+    for issue in issues {
+        let severity = issue
+            .get("severity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if severity != "error" {
+            continue;
+        }
+
+        match issue.get("channel").and_then(|v| v.as_str()).map(str::trim) {
+            Some("attack_primary") => include_attack_sheet = true,
+            Some("move") => include_move_sheet = true,
+            Some(_) | None => include_move_sheet = true,
+        }
+    }
+
+    (include_move_sheet || !motion_ok, include_attack_sheet)
+}
+
 fn select_review_preview_images(
     preview_images: &[PathBuf],
-    include_motion_sheets: bool,
+    include_move_sheet: bool,
+    include_attack_sheet: bool,
 ) -> Vec<PathBuf> {
     // Default policy for "routine" visual reviews:
     // - Prefer 5 static render views (front/left_back/right_back/top/bottom).
-    // - Only include motion/attack sheets when smoke_check reports motion/attack issues.
+    // - Only include the relevant motion sheet(s) when smoke_check reports motion/attack issues.
     let preferred_static = [
         "render_front.png",
         "render_left_back.png",
@@ -1018,20 +1062,28 @@ fn select_review_preview_images(
         out.extend(preview_images.iter().take(5).cloned());
     }
 
-    if include_motion_sheets {
-        for desired in ["move_sheet.png", "attack_sheet.png"] {
-            if out
-                .iter()
-                .any(|p| file_name_lower(p).as_deref() == Some(desired))
-            {
-                continue;
-            }
-            if let Some(p) = preview_images
-                .iter()
-                .find(|p| file_name_lower(p).as_deref() == Some(desired))
-            {
-                out.push(p.clone());
-            }
+    if include_move_sheet
+        && !out
+            .iter()
+            .any(|p| file_name_lower(p).as_deref() == Some("move_sheet.png"))
+    {
+        if let Some(p) = preview_images
+            .iter()
+            .find(|p| file_name_lower(p).as_deref() == Some("move_sheet.png"))
+        {
+            out.push(p.clone());
+        }
+    }
+    if include_attack_sheet
+        && !out
+            .iter()
+            .any(|p| file_name_lower(p).as_deref() == Some("attack_sheet.png"))
+    {
+        if let Some(p) = preview_images
+            .iter()
+            .find(|p| file_name_lower(p).as_deref() == Some("attack_sheet.png"))
+        {
+            out.push(p.clone());
         }
     }
 
@@ -3591,16 +3643,15 @@ fn execute_tool_call(
                 draft,
             );
 
-            let motion_ok = smoke_results
-                .get("motion_validation")
-                .and_then(|v| v.get("ok"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            let include_motion_sheets = !motion_ok;
+            let (include_move_sheet, include_attack_sheet) =
+                motion_sheets_needed_from_smoke_results(&smoke_results);
 
             if !preview_images_were_explicit {
-                preview_images =
-                    select_review_preview_images(&preview_images, include_motion_sheets);
+                preview_images = select_review_preview_images(
+                    &preview_images,
+                    include_move_sheet,
+                    include_attack_sheet,
+                );
             }
 
             let mut images_to_send: Vec<PathBuf> = Vec::new();
@@ -4759,9 +4810,23 @@ fn poll_agent_tool(
 
                                             let mut preview_images =
                                                 parse_review_preview_images_from_args(&call.args);
+                                            let preview_images_were_explicit =
+                                                !preview_images.is_empty();
                                             if preview_images.is_empty() {
                                                 preview_images =
                                                     job.agent.last_render_images.clone();
+                                            }
+
+                                            let (include_move_sheet, include_attack_sheet) =
+                                                motion_sheets_needed_from_smoke_results(
+                                                    &smoke_results,
+                                                );
+                                            if !preview_images_were_explicit {
+                                                preview_images = select_review_preview_images(
+                                                    &preview_images,
+                                                    include_move_sheet,
+                                                    include_attack_sheet,
+                                                );
                                             }
                                             let include_original_images = call
                                                 .args
@@ -4844,8 +4909,19 @@ fn poll_agent_tool(
 
                                 let mut preview_images =
                                     parse_review_preview_images_from_args(&call.args);
+                                let preview_images_were_explicit = !preview_images.is_empty();
                                 if preview_images.is_empty() {
                                     preview_images = job.agent.last_render_images.clone();
+                                }
+
+                                let (include_move_sheet, include_attack_sheet) =
+                                    motion_sheets_needed_from_smoke_results(&smoke_results);
+                                if !preview_images_were_explicit {
+                                    preview_images = select_review_preview_images(
+                                        &preview_images,
+                                        include_move_sheet,
+                                        include_attack_sheet,
+                                    );
                                 }
                                 let include_original_images = call
                                     .args
@@ -5965,7 +6041,7 @@ mod tests {
             PathBuf::from("move_sheet.png"),
             PathBuf::from("attack_sheet.png"),
         ];
-        let selected = select_review_preview_images(&images, false);
+        let selected = select_review_preview_images(&images, false, false);
         assert_eq!(
             selected,
             vec![
@@ -5989,7 +6065,7 @@ mod tests {
             PathBuf::from("move_sheet.png"),
             PathBuf::from("attack_sheet.png"),
         ];
-        let selected = select_review_preview_images(&images, true);
+        let selected = select_review_preview_images(&images, true, true);
         assert_eq!(
             selected,
             vec![
@@ -6010,8 +6086,39 @@ mod tests {
             PathBuf::from("move_sheet.png"),
             PathBuf::from("attack_sheet.png"),
         ];
-        let selected = select_review_preview_images(&images, false);
+        let selected = select_review_preview_images(&images, false, false);
         assert_eq!(selected, images);
+    }
+
+    #[test]
+    fn motion_sheets_needed_from_smoke_results_is_channel_specific() {
+        let smoke_results = serde_json::json!({
+            "motion_validation": {
+                "ok": false,
+                "issues": [
+                    { "severity": "error", "kind": "chain_axis_mismatch", "channel": "move" },
+                    { "severity": "error", "kind": "attack_self_intersection", "channel": "attack_primary" },
+                    { "severity": "warn", "kind": "some_warn", "channel": "move" },
+                ]
+            }
+        });
+        assert_eq!(
+            motion_sheets_needed_from_smoke_results(&smoke_results),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn motion_sheets_needed_from_smoke_results_falls_back_when_issues_missing() {
+        let smoke_results = serde_json::json!({
+            "motion_validation": {
+                "ok": false
+            }
+        });
+        assert_eq!(
+            motion_sheets_needed_from_smoke_results(&smoke_results),
+            (true, false)
+        );
     }
 
     #[test]

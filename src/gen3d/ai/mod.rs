@@ -5219,7 +5219,10 @@ fn spawn_gen3d_ai_text_thread(
         }
 
         *guard = Some(result);
-        append_gen3d_run_log(Some(&run_dir), format!("request_thread_shared_set prefix={}", prefix));
+        append_gen3d_run_log(
+            Some(&run_dir),
+            format!("request_thread_shared_set prefix={}", prefix),
+        );
     });
 }
 

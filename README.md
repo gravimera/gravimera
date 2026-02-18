@@ -11,7 +11,7 @@ Attachment offset/keyframe rotations support `rot_frame` (author in join frame o
 When regen budgets are exhausted and the reviewer only requests regenerations, Gen3D stops best-effort instead of looping on no-op passes.
 
 When supported by your OpenAI-compatible endpoint, Gen3D requests API-level **Structured Outputs** (strict JSON Schema) for plan / component / review JSON so runs spend less time in schema-repair loops. If the provider rejects structured outputs, Gravimera automatically disables it for the current session and falls back to the legacy “free-form JSON + local repair” behavior.
-Gen3D also caps each individual OpenAI request to 5 minutes to avoid multi-pass runs getting stuck on a single hung request. For visual reviews, Gen3D sends 5 static preview views by default and only attaches motion sheets when smoke validation reports motion/attack issues.
+Gen3D also enforces per-request network timeouts so multi-pass runs don’t get stuck on a single hung request: connect timeout (15s), time-to-first-byte timeout (2m), idle timeout (5m since the last received byte), plus an absolute hard cap (20m). For visual reviews, Gen3D sends 5 static preview views by default and only attaches motion sheets (move/attack) when smoke validation reports channel-scoped motion errors.
 OpenAI endpoint capability flags (e.g., `/responses` background, continuation, structured outputs) are cached per `base_url` + `model` under `~/.gravimera/openai_capabilities_cache.json` to avoid repeated “unsupported parameter” probes across runs.
 
 <img src="assets/icon.png" width="128" height="128" alt="Gravimera app icon" />
