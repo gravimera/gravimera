@@ -397,9 +397,12 @@ fn laser_effective_range(
 }
 
 pub(crate) fn switch_player_weapon(keys: Res<ButtonInput<KeyCode>>, mut game: ResMut<Game>) {
-    // Shift+digit is reserved for unit animation hotkeys.
-    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    if shift {
+    // Digit keys are reserved for unit animation hotkeys. Use Ctrl/Cmd + digit for weapon switching.
+    let modifier = keys.pressed(KeyCode::ControlLeft)
+        || keys.pressed(KeyCode::ControlRight)
+        || keys.pressed(KeyCode::SuperLeft)
+        || keys.pressed(KeyCode::SuperRight);
+    if !modifier {
         return;
     }
 

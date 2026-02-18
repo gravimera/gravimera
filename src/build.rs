@@ -478,17 +478,17 @@ pub(crate) fn build_select_object(
     mut selection: ResMut<SelectionState>,
     player: Query<Entity, With<Player>>,
 ) {
-    if keys.just_pressed(KeyCode::Digit1) {
+    if keys.just_pressed(KeyCode::KeyB) {
         build.selected = BuildObjectKind::Block;
         build.placing_active = true;
         selection.drag_start = None;
         selection.drag_end = None;
-    } else if keys.just_pressed(KeyCode::Digit2) {
+    } else if keys.just_pressed(KeyCode::KeyF) {
         build.selected = BuildObjectKind::Fence;
         build.placing_active = true;
         selection.drag_start = None;
         selection.drag_end = None;
-    } else if keys.just_pressed(KeyCode::Digit3) {
+    } else if keys.just_pressed(KeyCode::KeyT) {
         build.selected = BuildObjectKind::Tree;
         build.placing_active = true;
         selection.drag_start = None;
@@ -506,7 +506,7 @@ pub(crate) fn build_toggle_fence_axis(
     keys: Res<ButtonInput<KeyCode>>,
     mut build: ResMut<BuildState>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyF) {
+    if !keys.just_pressed(KeyCode::KeyG) {
         return;
     }
 

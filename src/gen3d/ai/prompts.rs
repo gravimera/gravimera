@@ -386,7 +386,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            - `idle`: subtle idle motions when not moving/attacking.\n\
            - `ambient`: fallback motion for parts that should always run when no higher-priority slot exists (fans/propellers).\n\
          - Custom channels (e.g. `dance`, `wave`, `emote_happy`) are allowed, but are NOT auto-activated by the engine.\n\
-           They are intended for user-triggered playback (gameplay hotkeys: Shift + 1..9/0 plays the first 10 channels for the selected unit).\n\
+           They are intended for user-triggered playback (gameplay hotkeys: 1..9/0 plays the first 10 channels for the selected unit).\n\
          - If `mobility.kind` is `ground` or `air`, you MUST ensure the unit has at least `idle` and `move` channels on at least one visible attachment edge.\n\
            If you cannot identify a good sub-part to animate, attach subtle `idle`/`move` motion to the root component's attachment.\n\
          - If the user explicitly asks for extra motions/emotes/animations, add additional custom channels up to 10 total meaningful channels.\n\n\
@@ -552,7 +552,7 @@ pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
      - Channel names are open vocabulary strings (recommended: lower_snake_case) and should be kept to <= 10 meaningful channels.\n\
      - Canonical channels and priority: `attack_primary` > `move` > `idle` > `ambient`.\n\
      - Custom channels (e.g. `dance`) are allowed, but are user-triggered (not auto-activated).\n\
-       The game can play them via Shift + 1..9/0 (first 10 channels).\n\
+       The game can play them via 1..9/0 (first 10 channels).\n\
      - If mobility is `ground` or `air`, ensure `idle` and `move` exist.\n\n\
      Animation spec (inside `animations[channel]`):\n\
      - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\

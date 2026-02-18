@@ -29,9 +29,9 @@ Selection is disabled while:
 
 Place objects:
 
-- Choose object: `1` Block, `2` Fence, `3` Tree
+- Choose object: `B` Block, `F` Fence, `T` Tree
 - Place: `LMB`
-- Fence axis / tree size: `F`
+- Fence axis / tree size: `G`
 - Exit placement (selection/edit mode): `Esc`
 
 Edit selected build objects (when not placing):
@@ -52,8 +52,8 @@ Units in Build mode:
 
 - Move selected: `RMB`
 - Fire: hold `Space` to fire at the cursor (point or enemy under cursor)
-- Switch weapon: `1/2/3` (when not holding `Shift`)
-- Play unit motions: `Shift + 1..9` and `Shift + 0` (slot 10) for selected units
+- Switch weapon: `Ctrl/Cmd + 1/2/3`
+- Play unit motions: `1..9` and `0` (slot 10) for selected units
 - Restart: `R`
 
 ## Gen3D
