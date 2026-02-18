@@ -11,6 +11,8 @@ Attachment offset/keyframe rotations support `rot_frame` (author in join frame o
 When regen budgets are exhausted and the reviewer only requests regenerations, Gen3D stops best-effort instead of looping on no-op passes.
 
 When supported by your OpenAI-compatible endpoint, Gen3D requests API-level **Structured Outputs** (strict JSON Schema) for plan / component / review JSON so runs spend less time in schema-repair loops. If the provider rejects structured outputs, Gravimera automatically disables it for the current session and falls back to the legacy “free-form JSON + local repair” behavior.
+Gen3D also caps each individual OpenAI request to 5 minutes to avoid multi-pass runs getting stuck on a single hung request. For visual reviews, Gen3D sends 5 static preview views by default and only attaches motion sheets when smoke validation reports motion/attack issues.
+OpenAI endpoint capability flags (e.g., `/responses` background, continuation, structured outputs) are cached per `base_url` + `model` under `~/.gravimera/openai_capabilities_cache.json` to avoid repeated “unsupported parameter” probes across runs.
 
 <img src="assets/icon.png" width="128" height="128" alt="Gravimera app icon" />
 
@@ -63,6 +65,7 @@ cargo run -- --headless --headless-seconds 10
 By default Gravimera stores runtime data under `~/.gravimera/`:
 
 - `~/.gravimera/config.toml` (settings, OpenAI)
+- `~/.gravimera/openai_capabilities_cache.json` (cached OpenAI-compatible endpoint capabilities, keyed by `base_url` + `model`)
 - `~/.gravimera/realm/` (realms + scenes)
 - `~/.gravimera/realm/active.json` (active realm/scene selection)
   - `~/.gravimera/realm/<realm_id>/prefabs/packs/` (realm-shared prefab packs; Gen3D saves to `packs/generated/`)

@@ -1,7 +1,7 @@
 use bevy::log::{debug, info, warn};
 use bevy::prelude::*;
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
@@ -958,6 +958,84 @@ fn parse_review_preview_images_from_args(args: &serde_json::Value) -> Vec<PathBu
             "preview_image_paths",
         ],
     )
+}
+
+fn file_name_lower(path: &Path) -> Option<String> {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+}
+
+fn is_motion_preview_image(path: &Path) -> bool {
+    let Some(name) = file_name_lower(path) else {
+        return false;
+    };
+    name.contains("move_sheet")
+        || name.contains("attack_sheet")
+        || name.contains("move_frame")
+        || name.contains("attack_frame")
+}
+
+fn select_review_preview_images(
+    preview_images: &[PathBuf],
+    include_motion_sheets: bool,
+) -> Vec<PathBuf> {
+    // Default policy for "routine" visual reviews:
+    // - Prefer 5 static render views (front/left_back/right_back/top/bottom).
+    // - Only include motion/attack sheets when smoke_check reports motion/attack issues.
+    let preferred_static = [
+        "render_front.png",
+        "render_left_back.png",
+        "render_right_back.png",
+        "render_top.png",
+        "render_bottom.png",
+    ];
+
+    let mut out: Vec<PathBuf> = Vec::new();
+    for desired in preferred_static {
+        if let Some(p) = preview_images
+            .iter()
+            .find(|p| file_name_lower(p).as_deref() == Some(desired))
+        {
+            out.push(p.clone());
+        }
+    }
+
+    if out.is_empty() {
+        for p in preview_images {
+            if out.len() >= 5 {
+                break;
+            }
+            if is_motion_preview_image(p) {
+                continue;
+            }
+            out.push(p.clone());
+        }
+    }
+
+    if out.is_empty() {
+        out.extend(preview_images.iter().take(5).cloned());
+    }
+
+    if include_motion_sheets {
+        for desired in ["move_sheet.png", "attack_sheet.png"] {
+            if out
+                .iter()
+                .any(|p| file_name_lower(p).as_deref() == Some(desired))
+            {
+                continue;
+            }
+            if let Some(p) = preview_images
+                .iter()
+                .find(|p| file_name_lower(p).as_deref() == Some(desired))
+            {
+                out.push(p.clone());
+            }
+        }
+    }
+
+    out
 }
 
 fn ensure_agent_regen_budget_len(job: &mut Gen3dAiJob) {
@@ -3485,6 +3563,7 @@ fn execute_tool_call(
             };
 
             let mut preview_images = parse_review_preview_images_from_args(&call.args);
+            let preview_images_were_explicit = !preview_images.is_empty();
             if preview_images.is_empty() {
                 preview_images = job.agent.last_render_images.clone();
             }
@@ -3493,15 +3572,6 @@ fn execute_tool_call(
                 .get("include_original_images")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-
-            let mut images_to_send: Vec<PathBuf> = Vec::new();
-            if include_original_images {
-                images_to_send.extend(job.user_images.clone());
-            }
-            images_to_send.extend(preview_images);
-            if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
-                images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
-            }
 
             let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
             let scene_graph_summary = super::build_gen3d_scene_graph_summary(
@@ -3520,6 +3590,27 @@ fn execute_tool_call(
                 &job.planned_components,
                 draft,
             );
+
+            let motion_ok = smoke_results
+                .get("motion_validation")
+                .and_then(|v| v.get("ok"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let include_motion_sheets = !motion_ok;
+
+            if !preview_images_were_explicit {
+                preview_images =
+                    select_review_preview_images(&preview_images, include_motion_sheets);
+            }
+
+            let mut images_to_send: Vec<PathBuf> = Vec::new();
+            if include_original_images {
+                images_to_send.extend(job.user_images.clone());
+            }
+            images_to_send.extend(preview_images);
+            if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
+                images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
+            }
 
             if let Some(dir) = job.pass_dir.as_deref() {
                 write_gen3d_json_artifact(
@@ -5008,6 +5099,15 @@ fn poll_agent_component_batch(
                 if let Some(flag) = resp.session.responses_continuation_supported {
                     job.session.responses_continuation_supported = Some(flag);
                 }
+                if let Some(flag) = resp.session.responses_background_supported {
+                    job.session.responses_background_supported = Some(flag);
+                }
+                if let Some(flag) = resp.session.responses_structured_outputs_supported {
+                    job.session.responses_structured_outputs_supported = Some(flag);
+                }
+                if let Some(flag) = resp.session.chat_structured_outputs_supported {
+                    job.session.chat_structured_outputs_supported = Some(flag);
+                }
 
                 let ai = match parse::parse_ai_draft_from_text(&resp.text) {
                     Ok(ai) => ai,
@@ -5853,6 +5953,66 @@ mod tests {
     use crate::gen3d::state::{Gen3dDraft, Gen3dPreview, Gen3dSpeedMode, Gen3dWorkshop};
     use crate::gen3d::tool_feedback::Gen3dToolFeedbackHistory;
     use uuid::Uuid;
+
+    #[test]
+    fn select_review_preview_images_prefers_five_static_views() {
+        let images = vec![
+            PathBuf::from("render_front.png"),
+            PathBuf::from("render_left_back.png"),
+            PathBuf::from("render_right_back.png"),
+            PathBuf::from("render_top.png"),
+            PathBuf::from("render_bottom.png"),
+            PathBuf::from("move_sheet.png"),
+            PathBuf::from("attack_sheet.png"),
+        ];
+        let selected = select_review_preview_images(&images, false);
+        assert_eq!(
+            selected,
+            vec![
+                PathBuf::from("render_front.png"),
+                PathBuf::from("render_left_back.png"),
+                PathBuf::from("render_right_back.png"),
+                PathBuf::from("render_top.png"),
+                PathBuf::from("render_bottom.png"),
+            ]
+        );
+    }
+
+    #[test]
+    fn select_review_preview_images_includes_motion_sheets_when_requested() {
+        let images = vec![
+            PathBuf::from("render_front.png"),
+            PathBuf::from("render_left_back.png"),
+            PathBuf::from("render_right_back.png"),
+            PathBuf::from("render_top.png"),
+            PathBuf::from("render_bottom.png"),
+            PathBuf::from("move_sheet.png"),
+            PathBuf::from("attack_sheet.png"),
+        ];
+        let selected = select_review_preview_images(&images, true);
+        assert_eq!(
+            selected,
+            vec![
+                PathBuf::from("render_front.png"),
+                PathBuf::from("render_left_back.png"),
+                PathBuf::from("render_right_back.png"),
+                PathBuf::from("render_top.png"),
+                PathBuf::from("render_bottom.png"),
+                PathBuf::from("move_sheet.png"),
+                PathBuf::from("attack_sheet.png"),
+            ]
+        );
+    }
+
+    #[test]
+    fn select_review_preview_images_falls_back_when_only_motion_present() {
+        let images = vec![
+            PathBuf::from("move_sheet.png"),
+            PathBuf::from("attack_sheet.png"),
+        ];
+        let selected = select_review_preview_images(&images, false);
+        assert_eq!(selected, images);
+    }
 
     #[test]
     fn gen3d_no_progress_state_hash_ignores_assembly_rev_churn() {

@@ -22,12 +22,301 @@ use super::{
 };
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
-const CURL_MAX_TIME_SECS_DEFAULT: u32 = 600;
-// Structured-output requests (large JSON Schemas + high reasoning effort) can take significantly
-// longer on some OpenAI-compatible providers (especially those that do not support background
-// /responses polling). Keep a more generous max-time so we don't prematurely abort and restart
-// the generation.
-const CURL_MAX_TIME_SECS_STRUCTURED: u32 = 1_800;
+// Cap per-request wall time so a single hung OpenAI-compatible request can't stall an entire run.
+// (Gen3D has its own retries + overall run time budget.)
+const CURL_MAX_TIME_SECS_DEFAULT: u32 = 300;
+const CURL_MAX_TIME_SECS_STRUCTURED: u32 = 300;
+
+const OPENAI_CAPABILITIES_CACHE_FILE_NAME: &str = "openai_capabilities_cache.json";
+const OPENAI_CAPABILITIES_CACHE_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+struct OpenAiCapabilitiesCacheV1 {
+    version: u32,
+    entries: Vec<OpenAiCapabilitiesCacheEntryV1>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+struct OpenAiCapabilitiesCacheEntryV1 {
+    base_url: String,
+    model: String,
+    responses_supported: Option<bool>,
+    responses_continuation_supported: Option<bool>,
+    responses_background_supported: Option<bool>,
+    responses_structured_outputs_supported: Option<bool>,
+    chat_structured_outputs_supported: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct OpenAiCapabilityFlagsSnapshot {
+    responses_supported: Option<bool>,
+    responses_continuation_supported: Option<bool>,
+    responses_background_supported: Option<bool>,
+    responses_structured_outputs_supported: Option<bool>,
+    chat_structured_outputs_supported: Option<bool>,
+}
+
+impl OpenAiCapabilityFlagsSnapshot {
+    fn from_session(session: &Gen3dAiSessionState) -> Self {
+        Self {
+            responses_supported: session.responses_supported,
+            responses_continuation_supported: session.responses_continuation_supported,
+            responses_background_supported: session.responses_background_supported,
+            responses_structured_outputs_supported: session.responses_structured_outputs_supported,
+            chat_structured_outputs_supported: session.chat_structured_outputs_supported,
+        }
+    }
+}
+
+fn openai_capabilities_cache_lock() -> &'static Mutex<()> {
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn normalize_openai_base_url(value: &str) -> String {
+    value.trim().trim_end_matches('/').to_string()
+}
+
+fn normalize_openai_model(value: &str) -> String {
+    value.trim().to_string()
+}
+
+fn openai_capabilities_cache_path() -> PathBuf {
+    crate::paths::gravimera_dir().join(OPENAI_CAPABILITIES_CACHE_FILE_NAME)
+}
+
+fn read_openai_capabilities_cache(path: &Path) -> OpenAiCapabilitiesCacheV1 {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return OpenAiCapabilitiesCacheV1 {
+                version: OPENAI_CAPABILITIES_CACHE_VERSION,
+                entries: Vec::new(),
+            };
+        }
+        Err(err) => {
+            warn!(
+                "Gen3D: failed to read OpenAI capabilities cache {}: {err}",
+                path.display()
+            );
+            return OpenAiCapabilitiesCacheV1 {
+                version: OPENAI_CAPABILITIES_CACHE_VERSION,
+                entries: Vec::new(),
+            };
+        }
+    };
+
+    let mut cache: OpenAiCapabilitiesCacheV1 = match serde_json::from_slice(&bytes) {
+        Ok(cache) => cache,
+        Err(err) => {
+            warn!(
+                "Gen3D: failed to parse OpenAI capabilities cache {}: {err}",
+                path.display()
+            );
+            return OpenAiCapabilitiesCacheV1 {
+                version: OPENAI_CAPABILITIES_CACHE_VERSION,
+                entries: Vec::new(),
+            };
+        }
+    };
+
+    if cache.version != OPENAI_CAPABILITIES_CACHE_VERSION {
+        warn!(
+            "Gen3D: ignoring OpenAI capabilities cache {} due to version mismatch (have {}, want {})",
+            path.display(),
+            cache.version,
+            OPENAI_CAPABILITIES_CACHE_VERSION
+        );
+        cache = OpenAiCapabilitiesCacheV1 {
+            version: OPENAI_CAPABILITIES_CACHE_VERSION,
+            entries: Vec::new(),
+        };
+    }
+
+    for entry in cache.entries.iter_mut() {
+        entry.base_url = normalize_openai_base_url(&entry.base_url);
+        entry.model = normalize_openai_model(&entry.model);
+    }
+
+    cache
+}
+
+fn write_openai_capabilities_cache(
+    path: &Path,
+    cache: &OpenAiCapabilitiesCacheV1,
+) -> std::io::Result<()> {
+    let Some(parent) = path.parent() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "missing cache parent dir",
+        ));
+    };
+    std::fs::create_dir_all(parent)?;
+
+    let pretty = serde_json::to_vec_pretty(cache)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+    let tmp = parent.join(format!(
+        "{}.tmp.{}",
+        OPENAI_CAPABILITIES_CACHE_FILE_NAME,
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::write(&tmp, pretty)?;
+
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(path);
+            std::fs::rename(&tmp, path)
+        }
+        Err(err) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(err)
+        }
+    }
+}
+
+fn hydrate_session_capabilities_from_cache_path(
+    session: &mut Gen3dAiSessionState,
+    base_url: &str,
+    model: &str,
+    path: &Path,
+) {
+    let needs_hydration = session.responses_supported.is_none()
+        || session.responses_continuation_supported.is_none()
+        || session.responses_background_supported.is_none()
+        || session.responses_structured_outputs_supported.is_none()
+        || session.chat_structured_outputs_supported.is_none();
+    if !needs_hydration {
+        return;
+    }
+
+    let base_url = normalize_openai_base_url(base_url);
+    let model = normalize_openai_model(model);
+    if base_url.is_empty() || model.is_empty() {
+        return;
+    }
+
+    let cache = read_openai_capabilities_cache(path);
+    let Some(entry) = cache
+        .entries
+        .iter()
+        .find(|e| e.base_url == base_url && e.model == model)
+    else {
+        return;
+    };
+
+    if session.responses_supported.is_none() {
+        session.responses_supported = entry.responses_supported;
+    }
+    if session.responses_continuation_supported.is_none() {
+        session.responses_continuation_supported = entry.responses_continuation_supported;
+    }
+    if session.responses_background_supported.is_none() {
+        session.responses_background_supported = entry.responses_background_supported;
+    }
+    if session.responses_structured_outputs_supported.is_none() {
+        session.responses_structured_outputs_supported =
+            entry.responses_structured_outputs_supported;
+    }
+    if session.chat_structured_outputs_supported.is_none() {
+        session.chat_structured_outputs_supported = entry.chat_structured_outputs_supported;
+    }
+}
+
+fn hydrate_session_capabilities_from_cache(
+    session: &mut Gen3dAiSessionState,
+    base_url: &str,
+    model: &str,
+) {
+    let path = openai_capabilities_cache_path();
+    let _guard = openai_capabilities_cache_lock()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    hydrate_session_capabilities_from_cache_path(session, base_url, model, &path);
+}
+
+fn persist_session_capabilities_to_cache_path(
+    base_url: &str,
+    model: &str,
+    session: &Gen3dAiSessionState,
+    path: &Path,
+) {
+    let base_url = normalize_openai_base_url(base_url);
+    let model = normalize_openai_model(model);
+    if base_url.is_empty() || model.is_empty() {
+        return;
+    }
+
+    let mut cache = read_openai_capabilities_cache(path);
+
+    let existing_idx = cache
+        .entries
+        .iter()
+        .position(|e| e.base_url == base_url && e.model == model);
+    let idx = match existing_idx {
+        Some(idx) => idx,
+        None => {
+            cache.entries.push(OpenAiCapabilitiesCacheEntryV1 {
+                base_url: base_url.clone(),
+                model: model.clone(),
+                ..Default::default()
+            });
+            cache.entries.len().saturating_sub(1)
+        }
+    };
+    let Some(entry) = cache.entries.get_mut(idx) else {
+        return;
+    };
+    entry.base_url = base_url;
+    entry.model = model;
+    if session.responses_supported.is_some() {
+        entry.responses_supported = session.responses_supported;
+    }
+    if session.responses_continuation_supported.is_some() {
+        entry.responses_continuation_supported = session.responses_continuation_supported;
+    }
+    if session.responses_background_supported.is_some() {
+        entry.responses_background_supported = session.responses_background_supported;
+    }
+    if session.responses_structured_outputs_supported.is_some() {
+        entry.responses_structured_outputs_supported =
+            session.responses_structured_outputs_supported;
+    }
+    if session.chat_structured_outputs_supported.is_some() {
+        entry.chat_structured_outputs_supported = session.chat_structured_outputs_supported;
+    }
+
+    if let Err(err) = write_openai_capabilities_cache(path, &cache) {
+        warn!(
+            "Gen3D: failed to persist OpenAI capabilities cache {}: {err}",
+            path.display()
+        );
+    }
+}
+
+fn persist_session_capabilities_to_cache(
+    base_url: &str,
+    model: &str,
+    session: &Gen3dAiSessionState,
+) {
+    let path = openai_capabilities_cache_path();
+    let _guard = openai_capabilities_cache_lock()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    persist_session_capabilities_to_cache_path(base_url, model, session, &path);
+}
+
+fn persist_session_capabilities_if_changed(
+    base_url: &str,
+    model: &str,
+    before: OpenAiCapabilityFlagsSnapshot,
+    session: &Gen3dAiSessionState,
+) {
+    let after = OpenAiCapabilityFlagsSnapshot::from_session(session);
+    if after != before {
+        persist_session_capabilities_to_cache(base_url, model, session);
+    }
+}
 
 struct TempSecretFile {
     path: PathBuf,
@@ -264,6 +553,9 @@ pub(super) fn generate_text_via_openai(
         }
     }
 
+    hydrate_session_capabilities_from_cache(&mut session, base_url, model);
+    let caps_before = OpenAiCapabilityFlagsSnapshot::from_session(&session);
+
     let responses_summary = match openai_responses_flow(
         progress,
         &mut session,
@@ -301,6 +593,7 @@ pub(super) fn generate_text_via_openai(
                     resp.total_tokens.unwrap_or(0)
                 ),
             );
+            persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
             return Ok(resp);
         }
         Err(err) => {
@@ -371,6 +664,7 @@ pub(super) fn generate_text_via_openai(
                     resp.total_tokens.unwrap_or(0)
                 ),
             );
+            persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
             return Ok(resp);
         }
         Err(err) => {
@@ -405,6 +699,7 @@ pub(super) fn generate_text_via_openai(
         responses_summary.short(),
         chat_summary.short()
     );
+    persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
     Err(format!(
         "OpenAI request failed.\n/responses: {responses_summary}\n/chat/completions: {chat_summary}\n(See terminal logs for details.)"
     ))
@@ -972,8 +1267,8 @@ fn openai_responses_flow(
             None
         };
 
-        let background_for_request = schema_for_request.is_some()
-            && session.responses_background_supported != Some(false);
+        let background_for_request =
+            schema_for_request.is_some() && session.responses_background_supported != Some(false);
 
         match openai_responses_curl(
             progress,
@@ -2143,5 +2438,123 @@ mod tests {
             body_preview: Some("unknown field `previous_response_id`".into()),
         };
         assert!(!is_structured_outputs_rejected(&other));
+    }
+
+    #[test]
+    fn hydrates_capabilities_by_base_url_and_model() {
+        let dir = std::env::temp_dir().join(format!(
+            "gravimera_openai_caps_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = dir.join(OPENAI_CAPABILITIES_CACHE_FILE_NAME);
+
+        let cache = OpenAiCapabilitiesCacheV1 {
+            version: OPENAI_CAPABILITIES_CACHE_VERSION,
+            entries: vec![
+                OpenAiCapabilitiesCacheEntryV1 {
+                    base_url: "https://example.invalid/v1/".into(),
+                    model: "gpt-a".into(),
+                    responses_supported: Some(true),
+                    responses_continuation_supported: Some(false),
+                    responses_background_supported: Some(false),
+                    responses_structured_outputs_supported: Some(true),
+                    chat_structured_outputs_supported: Some(true),
+                },
+                OpenAiCapabilitiesCacheEntryV1 {
+                    base_url: "https://example.invalid/v1".into(),
+                    model: "gpt-b".into(),
+                    responses_supported: Some(false),
+                    responses_continuation_supported: Some(false),
+                    responses_background_supported: Some(false),
+                    responses_structured_outputs_supported: Some(false),
+                    chat_structured_outputs_supported: Some(false),
+                },
+            ],
+        };
+        write_openai_capabilities_cache(&path, &cache).expect("write caps cache");
+
+        let mut session = Gen3dAiSessionState::default();
+        hydrate_session_capabilities_from_cache_path(
+            &mut session,
+            "https://example.invalid/v1",
+            "gpt-a",
+            &path,
+        );
+        assert_eq!(session.responses_supported, Some(true));
+        assert_eq!(session.responses_continuation_supported, Some(false));
+        assert_eq!(session.responses_background_supported, Some(false));
+        assert_eq!(session.responses_structured_outputs_supported, Some(true));
+        assert_eq!(session.chat_structured_outputs_supported, Some(true));
+
+        // Does not override existing flags.
+        let mut session2 = Gen3dAiSessionState::default();
+        session2.responses_supported = Some(false);
+        hydrate_session_capabilities_from_cache_path(
+            &mut session2,
+            "https://example.invalid/v1/",
+            "gpt-a",
+            &path,
+        );
+        assert_eq!(session2.responses_supported, Some(false));
+        assert_eq!(session2.responses_structured_outputs_supported, Some(true));
+
+        // Separate model key uses separate entry.
+        let mut session3 = Gen3dAiSessionState::default();
+        hydrate_session_capabilities_from_cache_path(
+            &mut session3,
+            "https://example.invalid/v1",
+            "gpt-b",
+            &path,
+        );
+        assert_eq!(session3.responses_supported, Some(false));
+        assert_eq!(session3.responses_structured_outputs_supported, Some(false));
+    }
+
+    #[test]
+    fn persists_capabilities_merging_known_flags() {
+        let dir = std::env::temp_dir().join(format!(
+            "gravimera_openai_caps_persist_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = dir.join(OPENAI_CAPABILITIES_CACHE_FILE_NAME);
+
+        let mut session = Gen3dAiSessionState::default();
+        session.responses_supported = Some(true);
+        session.responses_background_supported = Some(false);
+        persist_session_capabilities_to_cache_path(
+            "https://example.invalid/v1/",
+            "gpt-a",
+            &session,
+            &path,
+        );
+
+        let cache = read_openai_capabilities_cache(&path);
+        assert_eq!(cache.version, OPENAI_CAPABILITIES_CACHE_VERSION);
+        let entry = cache
+            .entries
+            .iter()
+            .find(|e| e.base_url == "https://example.invalid/v1" && e.model == "gpt-a")
+            .expect("expected persisted entry");
+        assert_eq!(entry.responses_supported, Some(true));
+        assert_eq!(entry.responses_background_supported, Some(false));
+
+        // New information updates the entry without clearing other fields.
+        let mut session2 = Gen3dAiSessionState::default();
+        session2.responses_structured_outputs_supported = Some(false);
+        persist_session_capabilities_to_cache_path(
+            "https://example.invalid/v1",
+            "gpt-a",
+            &session2,
+            &path,
+        );
+        let cache2 = read_openai_capabilities_cache(&path);
+        let entry2 = cache2
+            .entries
+            .iter()
+            .find(|e| e.base_url == "https://example.invalid/v1" && e.model == "gpt-a")
+            .expect("expected updated entry");
+        assert_eq!(entry2.responses_supported, Some(true));
+        assert_eq!(entry2.responses_background_supported, Some(false));
+        assert_eq!(entry2.responses_structured_outputs_supported, Some(false));
     }
 }
