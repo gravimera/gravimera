@@ -392,3 +392,24 @@ fn cursor_offset_xz(
     let offset = Vec2::new(transform.translation.x - pick.hit.x, transform.translation.z - pick.hit.z);
     Some(offset)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn world_drag_update_has_disjoint_transform_queries() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_message::<SceneSaveRequest>();
+        app.init_resource::<WorldDragState>();
+        app.init_resource::<BuildState>();
+        app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();
+        app.init_resource::<SelectionState>();
+        app.init_resource::<ObjectLibrary>();
+        app.insert_resource(ButtonInput::<MouseButton>::default());
+
+        app.add_systems(Update, world_drag_update);
+        app.update();
+    }
+}

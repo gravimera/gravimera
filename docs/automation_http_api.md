@@ -654,6 +654,12 @@ Response:
 {"ok":true,"path":"./shots/frame.png"}
 ```
 
+Notes:
+
+- Screenshot saving is **asynchronous** (it is written on a later frame). If you run with
+  `--automation-pause-on-start`, call `/v1/step` for 1–2 frames after `/v1/screenshot` before you
+  read the file.
+
 Limitations:
 
 - Not available in headless mode.
