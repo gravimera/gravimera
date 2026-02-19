@@ -51,7 +51,7 @@ pub(crate) fn world_drag_start(
     model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     selection: Res<SelectionState>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
     commandables: Query<(Entity, &Transform, &Collider, &ObjectPrefabId), With<Commandable>>,
     players: Query<(), With<Player>>,
@@ -82,10 +82,9 @@ pub(crate) fn world_drag_start(
     let Some(cursor) = window.cursor_position() else {
         return;
     };
-    let Ok((camera, camera_transform)) = camera_q.single() else {
+    let Ok((camera, camera_global)) = camera_q.single() else {
         return;
     };
-    let camera_global = GlobalTransform::from(*camera_transform);
 
     let entity = *selection.selected.iter().next().unwrap();
     if players.contains(entity) {
@@ -97,8 +96,7 @@ pub(crate) fn world_drag_start(
         if cursor_hits_unit(
             cursor,
             camera,
-            &camera_global,
-            camera_transform,
+            camera_global,
             &library,
             prefab_id.0,
             transform,
@@ -145,12 +143,15 @@ pub(crate) fn world_drag_update(
     build: Res<BuildState>,
     model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
-    mut units: Query<(&mut Transform, &Collider, &ObjectPrefabId), (With<Commandable>, Without<Player>)>,
+    mut units: Query<
+        (&mut Transform, &Collider, &ObjectPrefabId),
+        (With<Commandable>, Without<Player>, Without<BuildObject>),
+    >,
     mut build_objects: Query<
         (Entity, &mut Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
-        With<BuildObject>,
+        (With<BuildObject>, Without<Commandable>),
     >,
     mut selection: ResMut<SelectionState>,
     mut scene_saves: bevy::ecs::message::MessageWriter<SceneSaveRequest>,
@@ -198,10 +199,9 @@ pub(crate) fn world_drag_update(
     let Some(active) = state.active else {
         return;
     };
-    let Ok((camera, camera_transform)) = camera_q.single() else {
+    let Ok((camera, camera_global)) = camera_q.single() else {
         return;
     };
-    let camera_global = GlobalTransform::from(*camera_transform);
     let Ok(window) = windows.single() else {
         return;
     };
@@ -336,7 +336,6 @@ fn cursor_hits_unit(
     cursor: Vec2,
     camera: &Camera,
     camera_global: &GlobalTransform,
-    camera_transform: &Transform,
     library: &ObjectLibrary,
     prefab_id: u128,
     transform: &Transform,
@@ -352,7 +351,7 @@ fn cursor_hits_unit(
         return false;
     };
 
-    let camera_right = camera_transform.rotation * Vec3::X;
+    let camera_right = camera_global.rotation() * Vec3::X;
     let scale = transform
         .scale
         .x

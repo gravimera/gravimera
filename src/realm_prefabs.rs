@@ -14,24 +14,8 @@ use crate::object::registry::{
 
 pub(crate) const REALM_PREFAB_FORMAT_VERSION: u32 = 1;
 
-const GENERATED_PACK_ID: &str = "generated";
-
 pub(crate) fn realm_prefabs_root_dir(realm_id: &str) -> PathBuf {
     crate::paths::realm_dir(realm_id).join("prefabs")
-}
-
-pub(crate) fn realm_generated_prefabs_dir(realm_id: &str) -> PathBuf {
-    realm_prefabs_root_dir(realm_id)
-        .join("packs")
-        .join(GENERATED_PACK_ID)
-        .join("prefabs")
-}
-
-pub(crate) fn ensure_realm_generated_prefabs_dir(realm_id: &str) -> Result<PathBuf, String> {
-    let dir = realm_generated_prefabs_dir(realm_id);
-    std::fs::create_dir_all(&dir)
-        .map_err(|err| format!("Failed to create {}: {err}", dir.display()))?;
-    Ok(dir)
 }
 
 pub(crate) fn save_prefab_defs_to_dir(
@@ -58,15 +42,6 @@ pub(crate) fn save_prefab_defs_to_dir(
     }
 
     Ok(())
-}
-
-pub(crate) fn save_generated_prefab_defs_to_realm(
-    realm_id: &str,
-    root_prefab_id: u128,
-    defs: &[ObjectDef],
-) -> Result<(), String> {
-    let dir = ensure_realm_generated_prefabs_dir(realm_id)?;
-    save_prefab_defs_to_dir(&dir, root_prefab_id, defs)
 }
 
 pub(crate) fn load_realm_prefabs_into_library(
