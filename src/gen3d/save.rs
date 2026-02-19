@@ -10,8 +10,8 @@ use crate::constants::{
 use crate::geometry::{normalize_flat_direction, snap_to_grid};
 use crate::object::registry::{
     ColliderProfile, MeshKey, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction,
-    ObjectLibrary, ObjectPartKind, PartAnimationDef, PrimitiveParams, PrimitiveVisualDef,
-    UnitAttackKind,
+    ObjectLibrary, ObjectPartKind, PartAnimationDef, PartAnimationDriver, PrimitiveParams,
+    PrimitiveVisualDef, UnitAttackKind,
 };
 use crate::object::visuals;
 use crate::scene_store::SceneSaveRequest;
@@ -699,7 +699,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         return Err("Cannot save: missing saved prefab def.".into());
     };
 
-    save_generated_prefab_descriptor_best_effort(realm_id, root_def, job, workshop);
+    save_generated_prefab_descriptor_best_effort(realm_id, root_def, library, job, workshop);
 
     let size = root_def.size;
     let half_xz = collider_half_xz(root_def.collider, size);
@@ -836,9 +836,252 @@ pub(crate) fn gen3d_save_current_draft_from_api(
 fn save_generated_prefab_descriptor_best_effort(
     realm_id: &str,
     root_def: &ObjectDef,
+    library: &ObjectLibrary,
     job: &Gen3dAiJob,
     workshop: &Gen3dWorkshop,
 ) {
+    fn load_optional_json(path: &std::path::Path) -> Option<serde_json::Value> {
+        let bytes = std::fs::read(path).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    fn fmt_vec3(v: Vec3) -> String {
+        format!("[{:.3},{:.3},{:.3}]", v.x, v.y, v.z)
+    }
+
+    fn fmt_vec3_value(value: &serde_json::Value) -> Option<String> {
+        let arr = value.as_array()?;
+        if arr.len() != 3 {
+            return None;
+        }
+        let x = arr.get(0)?.as_f64()? as f32;
+        let y = arr.get(1)?.as_f64()? as f32;
+        let z = arr.get(2)?.as_f64()? as f32;
+        Some(format!("[{x:.3},{y:.3},{z:.3}]"))
+    }
+
+    fn motion_summary_json(library: &ObjectLibrary, root_id: u128) -> serde_json::Value {
+        use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+        #[derive(Default)]
+        struct Summary {
+            slots: u32,
+            animated_parts: u32,
+            drivers: BTreeSet<String>,
+            clip_kinds: BTreeSet<String>,
+            loop_duration_min: Option<f32>,
+            loop_duration_max: Option<f32>,
+            speed_scale_min: Option<f32>,
+            speed_scale_max: Option<f32>,
+            has_time_offsets: bool,
+        }
+
+        fn driver_name(driver: PartAnimationDriver) -> &'static str {
+            match driver {
+                PartAnimationDriver::Always => "always",
+                PartAnimationDriver::MovePhase => "move_phase",
+                PartAnimationDriver::MoveDistance => "move_distance",
+                PartAnimationDriver::AttackTime => "attack_time",
+            }
+        }
+
+        fn visit(
+            library: &ObjectLibrary,
+            object_id: u128,
+            visited: &mut HashSet<u128>,
+            summaries: &mut BTreeMap<String, Summary>,
+        ) {
+            if !visited.insert(object_id) {
+                return;
+            }
+            let Some(def) = library.get(object_id) else {
+                return;
+            };
+
+            for part in def.parts.iter() {
+                let mut channels_in_part: BTreeSet<String> = BTreeSet::new();
+                for slot in part.animations.iter() {
+                    let channel = slot.channel.as_ref().trim();
+                    if channel.is_empty() {
+                        continue;
+                    }
+                    channels_in_part.insert(channel.to_string());
+                    let entry = summaries.entry(channel.to_string()).or_default();
+                    entry.slots = entry.slots.saturating_add(1);
+                    entry
+                        .drivers
+                        .insert(driver_name(slot.spec.driver).to_string());
+                    entry.speed_scale_min = Some(
+                        entry
+                            .speed_scale_min
+                            .map_or(slot.spec.speed_scale, |v| v.min(slot.spec.speed_scale)),
+                    );
+                    entry.speed_scale_max = Some(
+                        entry
+                            .speed_scale_max
+                            .map_or(slot.spec.speed_scale, |v| v.max(slot.spec.speed_scale)),
+                    );
+                    if slot.spec.time_offset_units.abs() > 1e-6 {
+                        entry.has_time_offsets = true;
+                    }
+                    match &slot.spec.clip {
+                        PartAnimationDef::Loop { duration_secs, .. } => {
+                            entry.clip_kinds.insert("loop".to_string());
+                            if duration_secs.is_finite() && *duration_secs > 0.0 {
+                                entry.loop_duration_min = Some(
+                                    entry
+                                        .loop_duration_min
+                                        .map_or(*duration_secs, |v| v.min(*duration_secs)),
+                                );
+                                entry.loop_duration_max = Some(
+                                    entry
+                                        .loop_duration_max
+                                        .map_or(*duration_secs, |v| v.max(*duration_secs)),
+                                );
+                            }
+                        }
+                        PartAnimationDef::Spin { .. } => {
+                            entry.clip_kinds.insert("spin".to_string());
+                        }
+                    }
+                }
+
+                for channel in channels_in_part {
+                    if let Some(entry) = summaries.get_mut(&channel) {
+                        entry.animated_parts = entry.animated_parts.saturating_add(1);
+                    }
+                }
+
+                if let ObjectPartKind::ObjectRef { object_id: child } = &part.kind {
+                    visit(library, *child, visited, summaries);
+                }
+            }
+        }
+
+        let mut visited: HashSet<u128> = HashSet::new();
+        let mut summaries: BTreeMap<String, Summary> = BTreeMap::new();
+        visit(library, root_id, &mut visited, &mut summaries);
+
+        let mut channels: Vec<serde_json::Value> = Vec::new();
+        for (channel, summary) in summaries {
+            let drivers: Vec<String> = summary.drivers.into_iter().collect();
+            let clip_kinds: Vec<String> = summary.clip_kinds.into_iter().collect();
+            channels.push(serde_json::json!({
+                "channel": channel,
+                "slots": summary.slots,
+                "animated_parts": summary.animated_parts,
+                "drivers": drivers,
+                "clip_kinds": clip_kinds,
+                "loop_duration_secs_min": summary.loop_duration_min,
+                "loop_duration_secs_max": summary.loop_duration_max,
+                "speed_scale_min": summary.speed_scale_min,
+                "speed_scale_max": summary.speed_scale_max,
+                "has_time_offsets": summary.has_time_offsets,
+            }));
+        }
+
+        serde_json::json!({
+            "version": 1,
+            "channels": channels,
+        })
+    }
+
+    fn plan_extracted_to_long_text(plan: &serde_json::Value) -> String {
+        let mut out = String::new();
+        out.push_str("AI plan (extracted):\n");
+        if let Some(notes) = plan
+            .get("assembly_notes")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            out.push_str(&format!("- assembly_notes: {notes}\n"));
+        }
+        if let Some(components) = plan.get("components").and_then(|v| v.as_array()) {
+            out.push_str("- components:\n");
+            for comp in components {
+                let name = comp
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if name.is_empty() {
+                    continue;
+                }
+                let purpose = comp
+                    .get("purpose")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let modeling = comp
+                    .get("modeling_notes")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let size = comp
+                    .get("size")
+                    .and_then(fmt_vec3_value)
+                    .unwrap_or_default();
+                if purpose.is_empty() {
+                    out.push_str(&format!("  - {name} size≈{size}\n"));
+                } else {
+                    out.push_str(&format!("  - {name}: {purpose} size≈{size}\n"));
+                }
+                if !modeling.is_empty() {
+                    out.push_str(&format!("    notes: {modeling}\n"));
+                }
+            }
+        }
+        out
+    }
+
+    fn motion_summary_to_long_text(summary: &serde_json::Value) -> String {
+        let mut out = String::new();
+        out.push_str("Motions (derived):\n");
+        let Some(channels) = summary.get("channels").and_then(|v| v.as_array()) else {
+            out.push_str("- <none>\n");
+            return out;
+        };
+        for ch in channels {
+            let name = ch
+                .get("channel")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if name.is_empty() {
+                continue;
+            }
+            let drivers = ch
+                .get("drivers")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let clip_kinds = ch
+                .get("clip_kinds")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let parts = ch
+                .get("animated_parts")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            out.push_str(&format!(
+                "- {name}: drivers={drivers:?} clip_kinds={clip_kinds:?} animated_parts={parts}\n"
+            ));
+        }
+        out
+    }
+
     let created_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u128)
@@ -864,14 +1107,7 @@ fn save_generated_prefab_descriptor_best_effort(
     anchors.sort_by(|a, b| a.name.cmp(&b.name));
     anchors.dedup_by(|a, b| a.name == b.name);
 
-    let mut animation_channels: Vec<String> = Vec::new();
-    for part in root_def.parts.iter() {
-        for slot in part.animations.iter() {
-            animation_channels.push(slot.channel.as_ref().to_string());
-        }
-    }
-    animation_channels.sort();
-    animation_channels.dedup();
+    let animation_channels = library.animation_channels_ordered(root_def.object_id);
 
     let roles = vec![if root_def.mobility.is_some() {
         "unit".to_string()
@@ -879,20 +1115,116 @@ fn save_generated_prefab_descriptor_best_effort(
         "building".to_string()
     }];
 
-    let short = workshop
-        .prompt
+    let prompt_used = {
+        let job_prompt = job.user_prompt_raw().trim();
+        if job_prompt.is_empty() {
+            workshop.prompt.trim().to_string()
+        } else {
+            job_prompt.to_string()
+        }
+    };
+
+    let short = prompt_used
         .lines()
         .find(|line| !line.trim().is_empty())
         .map(|line| line.trim().to_string())
         .filter(|v| !v.is_empty());
 
+    let ground_origin_y_m = library.ground_origin_y_or_default(root_def.object_id);
+    let mobility_str = root_def.mobility.map(|m| match m.mode {
+        MobilityMode::Ground => "ground".to_string(),
+        MobilityMode::Air => "air".to_string(),
+    });
+    let attack_kind_str = root_def.attack.as_ref().map(|a| match a.kind {
+        UnitAttackKind::Melee => "melee".to_string(),
+        UnitAttackKind::RangedProjectile => "ranged_projectile".to_string(),
+    });
+
+    let mut anchor_names: Vec<String> = anchors.iter().map(|a| a.name.clone()).collect();
+    anchor_names.sort();
+    anchor_names.dedup();
+
+    let motion_summary = motion_summary_json(library, root_def.object_id);
+
+    let mut gen3d_extra: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
+    gen3d_extra.insert("attempt".to_string(), serde_json::json!(job.attempt()));
+    gen3d_extra.insert("pass".to_string(), serde_json::json!(job.pass()));
+    gen3d_extra.insert("plan_hash".to_string(), serde_json::json!(job.plan_hash()));
+    gen3d_extra.insert(
+        "assembly_rev".to_string(),
+        serde_json::json!(job.assembly_rev()),
+    );
+
+    let plan_extracted_value = job
+        .pass_dir_path()
+        .and_then(|dir| load_optional_json(&dir.join("plan_extracted.json")));
+    if let Some(plan) = plan_extracted_value.as_ref() {
+        gen3d_extra.insert("plan_extracted".to_string(), plan.clone());
+    }
+
+    let anchors_for_ai = anchor_names.clone();
+    let roles_for_ai = roles.clone();
+    let animation_channels_for_ai = animation_channels.clone();
+    let animation_channels_for_facts = animation_channels.clone();
+
+    let facts = serde_json::json!({
+        "version": 1,
+        "size_m": [root_def.size.x, root_def.size.y, root_def.size.z],
+        "ground_origin_y_m": ground_origin_y_m,
+        "mobility": root_def.mobility.map(|m| serde_json::json!({"mode": match m.mode { MobilityMode::Ground => "ground", MobilityMode::Air => "air" }, "max_speed": m.max_speed})),
+        "attack": root_def.attack.as_ref().map(|a| serde_json::json!({"kind": match a.kind { UnitAttackKind::Melee => "melee", UnitAttackKind::RangedProjectile => "ranged_projectile" }, "cooldown_secs": a.cooldown_secs, "damage": a.damage})),
+        "anchors": anchor_names,
+        "animation_channels": animation_channels_for_facts,
+        "label": root_def.label.to_string(),
+    });
+
+    let long = {
+        let mut out = String::new();
+        out.push_str("Prefab facts:\n");
+        out.push_str(&format!("- label: {}\n", root_def.label));
+        out.push_str(&format!("- roles: {:?}\n", roles));
+        out.push_str(&format!("- size_m: {}\n", fmt_vec3(root_def.size)));
+        out.push_str(&format!("- ground_origin_y_m: {ground_origin_y_m:.3}\n"));
+        out.push_str(&format!(
+            "- mobility: {}\n",
+            mobility_str.as_deref().unwrap_or("static")
+        ));
+        out.push_str(&format!(
+            "- attack: {}\n",
+            attack_kind_str.as_deref().unwrap_or("none")
+        ));
+        out.push_str(&format!(
+            "- anchors: {:?}\n",
+            anchors.iter().map(|a| a.name.as_str()).collect::<Vec<_>>()
+        ));
+        out.push_str(&format!(
+            "- animation_channels: {:?}\n\n",
+            animation_channels
+        ));
+
+        if let Some(plan) = plan_extracted_value.as_ref() {
+            out.push_str(&plan_extracted_to_long_text(plan));
+            out.push('\n');
+        }
+
+        out.push_str(&motion_summary_to_long_text(&motion_summary));
+        out
+    };
+
+    let mut interfaces_extra: std::collections::BTreeMap<String, serde_json::Value> =
+        Default::default();
+    interfaces_extra.insert("motion_summary".to_string(), motion_summary.clone());
+
+    let mut top_extra: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
+    top_extra.insert("facts".to_string(), facts);
+
     let descriptor = crate::prefab_descriptors::PrefabDescriptorFileV1 {
         format_version: crate::prefab_descriptors::PREFAB_DESCRIPTOR_FORMAT_VERSION,
         prefab_id: prefab_uuid,
         label: Some(root_def.label.to_string()),
-        text: short.map(|short| crate::prefab_descriptors::PrefabDescriptorTextV1 {
-            short: Some(short),
-            long: None,
+        text: Some(crate::prefab_descriptors::PrefabDescriptorTextV1 {
+            short,
+            long: Some(long),
         }),
         tags: Vec::new(),
         roles,
@@ -900,16 +1232,16 @@ fn save_generated_prefab_descriptor_best_effort(
             anchors,
             animation_channels,
             notes: None,
-            extra: Default::default(),
+            extra: interfaces_extra,
         }),
         provenance: Some(crate::prefab_descriptors::PrefabDescriptorProvenanceV1 {
             source: Some("gen3d".to_string()),
             created_at_ms: Some(created_at_ms),
             gen3d: Some(crate::prefab_descriptors::PrefabDescriptorGen3dV1 {
-                prompt: Some(workshop.prompt.trim().to_string()).filter(|v| !v.is_empty()),
+                prompt: Some(prompt_used.trim().to_string()).filter(|v| !v.is_empty()),
                 style_prompt: None,
                 run_id: job.run_id().map(|id| id.to_string()),
-                extra: Default::default(),
+                extra: gen3d_extra,
             }),
             revisions: vec![crate::prefab_descriptors::PrefabDescriptorRevisionV1 {
                 rev: 1,
@@ -920,7 +1252,7 @@ fn save_generated_prefab_descriptor_best_effort(
             }],
             extra: Default::default(),
         }),
-        extra: Default::default(),
+        extra: top_extra,
     };
 
     if let Err(err) =
@@ -931,4 +1263,22 @@ fn save_generated_prefab_descriptor_best_effort(
             descriptor_path.display()
         );
     }
+
+    let plan_extracted_text = plan_extracted_value
+        .as_ref()
+        .and_then(|v| serde_json::to_string_pretty(v).ok());
+    super::ai::spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
+        job,
+        descriptor_path,
+        root_def.label.to_string(),
+        roles_for_ai,
+        root_def.size,
+        ground_origin_y_m,
+        mobility_str,
+        attack_kind_str,
+        anchors_for_ai,
+        animation_channels_for_ai,
+        plan_extracted_text,
+        Some(motion_summary),
+    );
 }

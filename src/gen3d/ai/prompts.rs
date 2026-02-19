@@ -1025,3 +1025,85 @@ pub(super) fn build_gen3d_review_delta_user_text(
     out.push('\n');
     out
 }
+
+pub(super) fn build_gen3d_descriptor_meta_system_instructions() -> String {
+    "You are a metadata assistant for Gravimera.\n\
+You will be given information about a generated 3D prefab (prompt + derived facts + AI plan extract).\n\
+Return ONLY a single JSON object for gen3d_descriptor_meta_v1 (no markdown, no prose).\n\n\
+Schema:\n\
+{\n\
+  \"version\": 1,\n\
+  \"short\": \"1–2 lines: an AI conclusion describing what the prefab is (do NOT copy the user prompt)\",\n\
+  \"tags\": [\"lower_snake_case\", \"searchable\", \"style\", \"species\", \"category\", \"materials\", \"theme\"]\n\
+}\n\n\
+Rules:\n\
+- `short` must be a conclusion based on the provided facts (not the prompt text).\n\
+- Prefer concrete nouns/adjectives; avoid marketing fluff.\n\
+- `tags` must be lower_snake_case tokens (no spaces, no hyphens).\n\
+- Include tags that help scene building search (style/species/category/theme/material/function).\n\
+- Keep tags stable and generic (open vocabulary); avoid internal ids/UUIDs.\n"
+        .to_string()
+}
+
+pub(super) fn build_gen3d_descriptor_meta_user_text(
+    prefab_label: &str,
+    user_prompt: &str,
+    roles: &[String],
+    size_m: Vec3,
+    ground_origin_y_m: f32,
+    mobility: Option<&str>,
+    attack_kind: Option<&str>,
+    anchors: &[String],
+    animation_channels: &[String],
+    plan_extracted_text: Option<&str>,
+    motion_summary_json: Option<&serde_json::Value>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("Generate searchable semantic metadata for this prefab.\n\n");
+
+    let label = prefab_label.trim();
+    if !label.is_empty() {
+        out.push_str(&format!("Prefab label: {label}\n"));
+    } else {
+        out.push_str("Prefab label: <none>\n");
+    }
+
+    out.push_str(&format!(
+        "Size (m): [{:.3}, {:.3}, {:.3}]\n",
+        size_m.x, size_m.y, size_m.z
+    ));
+    out.push_str(&format!("ground_origin_y (m): {ground_origin_y_m:.3}\n"));
+    out.push_str(&format!("Mobility: {}\n", mobility.unwrap_or("static")));
+    out.push_str(&format!("Attack: {}\n", attack_kind.unwrap_or("none")));
+    out.push_str(&format!("Roles: {:?}\n", roles));
+    out.push_str(&format!("Anchors: {:?}\n", anchors));
+    out.push_str(&format!("Animation channels: {:?}\n", animation_channels));
+
+    if let Some(summary) = motion_summary_json {
+        out.push_str("\nMotion summary (derived JSON):\n");
+        out.push_str(
+            &serde_json::to_string_pretty(summary).unwrap_or_else(|_| summary.to_string()),
+        );
+        out.push('\n');
+    }
+
+    let prompt = user_prompt.trim();
+    if prompt.is_empty() {
+        out.push_str("\nUser prompt: (none)\n");
+    } else {
+        out.push_str("\nUser prompt (context only; DO NOT copy as short):\n");
+        out.push_str(prompt);
+        out.push('\n');
+    }
+
+    if let Some(plan) = plan_extracted_text
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        out.push_str("\nAI plan extract (more context):\n");
+        out.push_str(plan);
+        out.push('\n');
+    }
+
+    out
+}

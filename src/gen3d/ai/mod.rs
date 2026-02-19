@@ -540,8 +540,16 @@ impl Gen3dAiJob {
         self.run_dir.as_deref()
     }
 
+    pub(crate) fn pass_dir_path(&self) -> Option<&Path> {
+        self.pass_dir.as_deref()
+    }
+
     pub(crate) fn run_id(&self) -> Option<Uuid> {
         self.run_id
+    }
+
+    pub(crate) fn user_prompt_raw(&self) -> &str {
+        self.user_prompt_raw.as_str()
     }
 
     pub(crate) fn attempt(&self) -> u32 {
@@ -5223,6 +5231,148 @@ fn spawn_gen3d_ai_text_thread(
             Some(&run_dir),
             format!("request_thread_shared_set prefix={}", prefix),
         );
+    });
+}
+
+pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
+    job: &Gen3dAiJob,
+    descriptor_path: PathBuf,
+    prefab_label: String,
+    roles: Vec<String>,
+    size_m: Vec3,
+    ground_origin_y_m: f32,
+    mobility: Option<String>,
+    attack_kind: Option<String>,
+    anchors: Vec<String>,
+    animation_channels: Vec<String>,
+    plan_extracted_text: Option<String>,
+    motion_summary_json: Option<serde_json::Value>,
+) {
+    let Some(openai) = job.openai.clone() else {
+        return;
+    };
+
+    let session = job.session.clone();
+    let pass_dir = job.pass_dir.clone();
+    let user_prompt = job.user_prompt_raw.clone();
+
+    std::thread::spawn(move || {
+        let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+            message: "Generating prefab metadata…".into(),
+        }));
+        let system = prompts::build_gen3d_descriptor_meta_system_instructions();
+        let user_text = prompts::build_gen3d_descriptor_meta_user_text(
+            &prefab_label,
+            &user_prompt,
+            &roles,
+            size_m,
+            ground_origin_y_m,
+            mobility.as_deref(),
+            attack_kind.as_deref(),
+            &anchors,
+            &animation_channels,
+            plan_extracted_text.as_deref(),
+            motion_summary_json.as_ref(),
+        );
+
+        let reasoning_effort = openai::cap_reasoning_effort(&openai.model_reasoning_effort, "low");
+        let resp = openai::generate_text_via_openai(
+            &progress,
+            session,
+            Some(Gen3dAiJsonSchemaKind::DescriptorMetaV1),
+            &openai.base_url,
+            &openai.api_key,
+            &openai.model,
+            &reasoning_effort,
+            &system,
+            &user_text,
+            &[],
+            pass_dir.as_deref(),
+            "descriptor_meta",
+        );
+
+        let meta = match resp {
+            Ok(resp) => match parse::parse_ai_descriptor_meta_from_text(&resp.text) {
+                Ok(meta) => meta,
+                Err(err) => {
+                    warn!("Gen3D: failed to parse descriptor-meta response: {err}");
+                    return;
+                }
+            },
+            Err(err) => {
+                warn!("Gen3D: descriptor-meta request failed: {err}");
+                return;
+            }
+        };
+
+        let bytes = match std::fs::read(&descriptor_path) {
+            Ok(b) => b,
+            Err(err) => {
+                warn!(
+                    "Gen3D: descriptor-meta could not read {}: {err}",
+                    descriptor_path.display()
+                );
+                return;
+            }
+        };
+        let json: serde_json::Value = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(err) => {
+                warn!(
+                    "Gen3D: descriptor-meta invalid JSON {}: {err}",
+                    descriptor_path.display()
+                );
+                return;
+            }
+        };
+        let mut doc: crate::prefab_descriptors::PrefabDescriptorFileV1 =
+            match serde_json::from_value(json) {
+                Ok(v) => v,
+                Err(err) => {
+                    warn!(
+                        "Gen3D: descriptor-meta schema mismatch {}: {err}",
+                        descriptor_path.display()
+                    );
+                    return;
+                }
+            };
+
+        let mut should_update_short = true;
+        if let Some(text) = doc.text.as_ref().and_then(|t| t.short.as_deref()) {
+            if !text.trim().is_empty() {
+                should_update_short = false;
+                if let Some(prompt) = doc
+                    .provenance
+                    .as_ref()
+                    .and_then(|p| p.gen3d.as_ref())
+                    .and_then(|g| g.prompt.as_deref())
+                {
+                    if let Some(first_line) = prompt.lines().find(|l| !l.trim().is_empty()) {
+                        if text.trim() == first_line.trim() {
+                            should_update_short = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if should_update_short && !meta.short.trim().is_empty() {
+            let text = doc.text.get_or_insert_with(Default::default);
+            text.short = Some(meta.short.trim().to_string());
+        }
+
+        let mut merged_tags: Vec<String> = doc.tags;
+        merged_tags.extend(meta.tags);
+        doc.tags = merged_tags;
+
+        if let Err(err) =
+            crate::prefab_descriptors::save_prefab_descriptor_file(&descriptor_path, &doc)
+        {
+            warn!(
+                "Gen3D: descriptor-meta failed to save {}: {err}",
+                descriptor_path.display()
+            );
+        }
     });
 }
 

@@ -517,10 +517,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     commands.entity(preview_root).add_child(model_id);
 
     let mut ordered = library.animation_channels_ordered(super::gen3d_draft_object_id());
-    let mut channels: Vec<String> = vec![
-        "idle".to_string(),
-        "move".to_string(),
-    ];
+    let mut channels: Vec<String> = vec!["idle".to_string(), "move".to_string()];
     for ch in ordered.drain(..) {
         let trimmed = ch.trim();
         if trimmed.is_empty() {
@@ -534,12 +531,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     preview.animation_channels = channels;
 
     let selected = preview.animation_channel.trim();
-    if selected.is_empty()
-        || !preview
-            .animation_channels
-            .iter()
-            .any(|ch| ch == selected)
-    {
+    if selected.is_empty() || !preview.animation_channels.iter().any(|ch| ch == selected) {
         preview.animation_channel = "idle".to_string();
     }
 

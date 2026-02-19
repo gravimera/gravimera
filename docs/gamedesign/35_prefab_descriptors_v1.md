@@ -105,6 +105,12 @@ Fields:
   - `prompt`: optional string (the user’s intent; may be multi-line).
   - `style_prompt`: optional string
   - `run_id`: optional string (links to Gen3D run artifacts)
+  - `extra`: arbitrary JSON (best-effort, tool-specific). Recommended keys when present:
+    - `attempt`: integer (Gen3D attempt index)
+    - `pass`: integer (Gen3D pass index)
+    - `plan_hash`: string (hash of the plan context)
+    - `assembly_rev`: integer (monotonic assembly revision)
+    - `plan_extracted`: object (a compact plan extract written by Gen3D; similar to the `plan_extracted.json` artifact)
 - `revisions`: optional array of revision entries:
   - `rev`: integer (monotonic)
   - `created_at_ms`: integer
@@ -138,3 +144,11 @@ Agents should select prefabs using a combination of:
 
 Descriptors are optional; when missing, agents fall back to prefab-def `label` and derived facts.
 
+## Gen3D Descriptor Enrichment (Best-Effort)
+
+Gen3D writes descriptor files for saved models. In addition to filling standard fields (label/roles/anchors/animation_channels/provenance), Gen3D may:
+
+- Populate `text.long` with a compact summary including derived facts, an AI plan extract (when available), and a derived motion summary.
+- Populate `interfaces.extra.motion_summary` with a structured summary of available animation channels (drivers/clip kinds/counts).
+- Populate `extra.facts` with a structured set of derived facts (size, mobility/attack presence, grounding, etc.).
+- Populate `text.short` and `tags` via a best-effort AI call (when OpenAI config is available). Tools should treat these as suggestions and preserve human edits.

@@ -611,3 +611,14 @@ pub(crate) struct AiPlanFillComponentJson {
     #[serde(default)]
     pub(crate) animations: BTreeMap<String, Option<AiAnimationSpecJson>>,
 }
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiDescriptorMetaJsonV1 {
+    #[serde(default)]
+    pub(crate) version: u32,
+    #[serde(default)]
+    pub(crate) short: String,
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
+}

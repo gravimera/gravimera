@@ -1020,8 +1020,7 @@ pub(crate) fn build_unit_hotkeys(
                 .mobility(_prefab_id.0)
                 .map(|mobility| mobility.mode)
                 .unwrap_or(crate::object::registry::MobilityMode::Ground);
-            let base_origin_y = library
-                .ground_origin_y_or_default(_prefab_id.0);
+            let base_origin_y = library.ground_origin_y_or_default(_prefab_id.0);
 
             let current_scale_y = safe_abs_scale_y(transform.scale);
             let current_scale = transform

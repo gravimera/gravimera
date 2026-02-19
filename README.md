@@ -70,7 +70,7 @@ By default Gravimera stores runtime data under `~/.gravimera/`:
 - `~/.gravimera/realm/active.json` (active realm/scene selection)
   - `~/.gravimera/realm/<realm_id>/prefabs/packs/` (realm-shared prefab packs; Gen3D saves to `packs/generated/`)
     - `.../<prefab_uuid>.json` (structural prefab def; spec `docs/gamedesign/34_realm_prefabs_v1.md`)
-    - `.../<prefab_uuid>.desc.json` (optional semantic descriptor; spec `docs/gamedesign/35_prefab_descriptors_v1.md`)
+    - `.../<prefab_uuid>.desc.json` (semantic descriptor; Gen3D writes derived facts + plan/motion summaries and best-effort AI-generated `text.short` + `tags`; spec `docs/gamedesign/35_prefab_descriptors_v1.md`)
   - `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
 - `~/.gravimera/cache/` (Gen3D artifacts, logs, screenshots)
 

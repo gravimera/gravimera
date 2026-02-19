@@ -6,6 +6,7 @@ pub(super) enum Gen3dAiJsonSchemaKind {
     PlanFillV1,
     ComponentDraftV1,
     ReviewDeltaV1,
+    DescriptorMetaV1,
 }
 
 pub(super) struct Gen3dAiJsonSchemaSpec {
@@ -557,6 +558,14 @@ fn schema_review_delta() -> serde_json::Value {
     ])
 }
 
+fn schema_descriptor_meta() -> serde_json::Value {
+    schema_object(vec![
+        ("version", schema_integer()),
+        ("short", schema_string()),
+        ("tags", schema_array_of(schema_string())),
+    ])
+}
+
 pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchemaSpec {
     match kind {
         Gen3dAiJsonSchemaKind::PlanV1 => Gen3dAiJsonSchemaSpec {
@@ -574,6 +583,10 @@ pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchema
         Gen3dAiJsonSchemaKind::ReviewDeltaV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_review_delta_v1",
             schema: schema_review_delta(),
+        },
+        Gen3dAiJsonSchemaKind::DescriptorMetaV1 => Gen3dAiJsonSchemaSpec {
+            name: "gen3d_descriptor_meta_v1",
+            schema: schema_descriptor_meta(),
         },
     }
 }

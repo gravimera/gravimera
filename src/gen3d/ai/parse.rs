@@ -3,7 +3,9 @@ use bevy::prelude::{EulerRot, Quat, Vec3};
 
 use super::super::GEN3D_MAX_PARTS;
 use super::artifacts::write_gen3d_json_artifact;
-use super::schema::{AiDraftJsonV1, AiPlanFillJsonV1, AiPlanJsonV1, AiReviewDeltaJsonV1};
+use super::schema::{
+    AiDescriptorMetaJsonV1, AiDraftJsonV1, AiPlanFillJsonV1, AiPlanJsonV1, AiReviewDeltaJsonV1,
+};
 
 fn normalize_attack_kind(kind: &str) -> Option<&'static str> {
     let mut normalized = kind.trim().to_ascii_lowercase();
@@ -90,6 +92,22 @@ fn normalize_snake_case_token(raw: &str) -> String {
         normalized = normalized.replace("__", "_");
     }
     normalized
+}
+
+fn normalize_descriptor_tag(raw: &str) -> String {
+    let normalized = normalize_snake_case_token(raw);
+    let mut out = String::with_capacity(normalized.len());
+    for ch in normalized.chars() {
+        if ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    while out.contains("__") {
+        out = out.replace("__", "_");
+    }
+    out.trim_matches('_').to_string()
 }
 
 fn normalize_animation_driver(raw: &str) -> Option<&'static str> {
@@ -656,6 +674,58 @@ pub(super) fn parse_ai_review_delta_from_text(text: &str) -> Result<AiReviewDelt
     Ok(delta)
 }
 
+pub(super) fn parse_ai_descriptor_meta_from_text(
+    text: &str,
+) -> Result<AiDescriptorMetaJsonV1, String> {
+    debug!(
+        "Gen3D: extracted descriptor-meta output text (chars={})",
+        text.chars().count()
+    );
+    let json_text = extract_json_object(text).unwrap_or_else(|| text.to_string());
+    debug!(
+        "Gen3D: parsing descriptor-meta JSON (chars={})",
+        json_text.trim().chars().count()
+    );
+    if cfg!(debug_assertions) {
+        debug!(
+            "Gen3D: descriptor-meta output preview (start): {}",
+            super::truncate_for_ui(json_text.trim(), 800)
+        );
+    }
+
+    let json_text = json_text.trim();
+    let json_value: serde_json::Value =
+        serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
+
+    let mut meta: AiDescriptorMetaJsonV1 = serde_json::from_value(json_value.clone())
+        .map_err(|err| format!("AI JSON schema error: {err}"))?;
+    if meta.version == 0 {
+        meta.version = 1;
+    }
+    if meta.version != 1 {
+        return Err(format!(
+            "Unsupported AI descriptor-meta version {} (expected 1)",
+            meta.version
+        ));
+    }
+
+    meta.short = meta.short.trim().to_string();
+    meta.short = meta.short.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let mut tags: Vec<String> = meta
+        .tags
+        .iter()
+        .map(|tag| normalize_descriptor_tag(tag))
+        .filter(|tag| !tag.trim().is_empty())
+        .take(64)
+        .collect();
+    tags.sort();
+    tags.dedup();
+    meta.tags = tags;
+
+    Ok(meta)
+}
+
 pub(super) fn extract_json_object(text: &str) -> Option<String> {
     let mut depth = 0i32;
     let mut start: Option<usize> = None;
@@ -1177,6 +1247,22 @@ mod tests {
             }
             other => panic!("expected tweak_animation, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_descriptor_meta_and_normalizes_tags() {
+        let text = r#"ok {"version":1,"short":"  A cute rabbit.\n","tags":["Voxel Art","rabbit","Rabbit","cute!!",""]}"#;
+        let meta = parse_ai_descriptor_meta_from_text(text).expect("meta should parse");
+        assert_eq!(meta.version, 1);
+        assert_eq!(meta.short.as_str(), "A cute rabbit.");
+        assert_eq!(
+            meta.tags,
+            vec![
+                "cute".to_string(),
+                "rabbit".to_string(),
+                "voxel_art".to_string()
+            ]
+        );
     }
 
     #[test]
