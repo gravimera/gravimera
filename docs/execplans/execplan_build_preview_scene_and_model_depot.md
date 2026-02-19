@@ -31,7 +31,7 @@ You can see this working by:
 - [x] (2026-02-19) Update Automation HTTP API mode surface to reflect `build_scene` while keeping best-effort compatibility with `"gen3d"`.
 - [x] (2026-02-19) Update docs to match: depot layout + UI/mode behavior.
 - [x] (2026-02-19) Run `cargo test` and a headless smoke start (`cargo run -- --headless --headless-seconds 1`).
-- [ ] Commit with a clear message.
+- [x] (2026-02-19) Commit: Build: add Preview scene + depot model panel.
 
 ## Surprises & Discoveries
 
