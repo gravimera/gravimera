@@ -489,8 +489,14 @@ pub(crate) fn move_command_input(
 
     let goal_pick = if matches!(mode.get(), GameMode::Play) {
         pick_enemy_under_cursor(cursor, camera, &camera_global, &library, &enemies).or_else(|| {
-            crate::cursor_pick::cursor_surface_pick(window, camera, &camera_global, &library, &objects)
-                .map(|pick| {
+            crate::cursor_pick::cursor_surface_pick(
+                window,
+                camera,
+                &camera_global,
+                &library,
+                &objects,
+            )
+            .map(|pick| {
                 let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
                 if let Some((center, half)) = pick.block_top {
                     let min_half = BUILD_UNIT_SIZE * 0.5;
@@ -509,20 +515,20 @@ pub(crate) fn move_command_input(
     } else {
         crate::cursor_pick::cursor_surface_pick(window, camera, &camera_global, &library, &objects)
             .map(|pick| {
-            let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
-            if let Some((center, half)) = pick.block_top {
-                let min_half = BUILD_UNIT_SIZE * 0.5;
-                if half.x > min_half && half.y > min_half {
-                    goal.x = goal
-                        .x
-                        .clamp(center.x - half.x + min_half, center.x + half.x - min_half);
-                    goal.y = goal
-                        .y
-                        .clamp(center.y - half.y + min_half, center.y + half.y - min_half);
+                let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
+                if let Some((center, half)) = pick.block_top {
+                    let min_half = BUILD_UNIT_SIZE * 0.5;
+                    if half.x > min_half && half.y > min_half {
+                        goal.x = goal
+                            .x
+                            .clamp(center.x - half.x + min_half, center.x + half.x - min_half);
+                        goal.y = goal
+                            .y
+                            .clamp(center.y - half.y + min_half, center.y + half.y - min_half);
+                    }
                 }
-            }
-            (goal, pick.surface_y)
-        })
+                (goal, pick.surface_y)
+            })
     };
 
     let Some((goal, goal_ground_y)) = goal_pick else {
@@ -914,6 +920,7 @@ pub(crate) fn build_unit_hotkeys(
             &ObjectPrefabId,
             &mut Collider,
             Option<&ObjectTint>,
+            Option<&ObjectForms>,
         ),
         (With<Commandable>, Without<Player>),
     >,
@@ -953,7 +960,7 @@ pub(crate) fn build_unit_hotkeys(
     if (scale_mul - 1.0).abs() > 1e-6 {
         let selected: Vec<Entity> = selection.selected.iter().copied().collect();
         for entity in selected {
-            let Ok((_entity, mut transform, _prefab_id, mut collider, _tint)) =
+            let Ok((_entity, mut transform, _prefab_id, mut collider, _tint, _forms)) =
                 units.get_mut(entity)
             else {
                 continue;
@@ -1010,9 +1017,13 @@ pub(crate) fn build_unit_hotkeys(
     let mut new_selected: HashSet<Entity> = HashSet::new();
     let selected: Vec<Entity> = selection.selected.iter().copied().collect();
     for entity in selected {
-        let Ok((_entity, transform, prefab_id, collider, tint)) = units.get_mut(entity) else {
+        let Ok((_entity, transform, prefab_id, collider, tint, forms)) = units.get_mut(entity)
+        else {
             continue;
         };
+        let forms = forms
+            .cloned()
+            .unwrap_or_else(|| ObjectForms::new_single(prefab_id.0));
 
         let mut new_transform = transform.clone();
         new_transform.translation += offset;
@@ -1033,6 +1044,7 @@ pub(crate) fn build_unit_hotkeys(
         let mut entity_commands = commands.spawn((
             ObjectId::new_v4(),
             *prefab_id,
+            forms,
             Commandable,
             Collider { radius },
             new_transform,

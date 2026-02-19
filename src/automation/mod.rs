@@ -403,6 +403,7 @@ struct AutomationWorld<'w, 's> {
             &'static ObjectId,
             &'static ObjectPrefabId,
             Option<&'static ObjectTint>,
+            Option<&'static ObjectForms>,
             Option<&'static SceneLayerOwner>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
@@ -687,6 +688,7 @@ fn handle_request_main_thread(
             &ObjectId,
             &ObjectPrefabId,
             Option<&ObjectTint>,
+            Option<&ObjectForms>,
             Option<&SceneLayerOwner>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
@@ -749,7 +751,7 @@ fn handle_request_main_thread(
 
             let existing = scene_instances
                 .iter()
-                .map(|(e, t, id, prefab, tint, owner)| {
+                .map(|(e, t, id, prefab, tint, _forms, owner)| {
                     crate::scene_sources_runtime::SceneWorldInstance {
                         entity: e,
                         instance_id: *id,
@@ -794,7 +796,7 @@ fn handle_request_main_thread(
 
             let existing = scene_instances
                 .iter()
-                .map(|(e, t, id, prefab, tint, owner)| {
+                .map(|(e, t, id, prefab, tint, _forms, owner)| {
                     crate::scene_sources_runtime::SceneWorldInstance {
                         entity: e,
                         instance_id: *id,
@@ -834,7 +836,7 @@ fn handle_request_main_thread(
         ("GET", "/v1/scene_sources/signature") => {
             let existing = scene_instances
                 .iter()
-                .map(|(e, t, id, prefab, tint, owner)| {
+                .map(|(e, t, id, prefab, tint, _forms, owner)| {
                     crate::scene_sources_runtime::SceneWorldInstance {
                         entity: e,
                         instance_id: *id,
@@ -876,7 +878,7 @@ fn handle_request_main_thread(
 
             let existing = scene_instances
                 .iter()
-                .map(|(e, t, id, prefab, tint, owner)| {
+                .map(|(e, t, id, prefab, tint, _forms, owner)| {
                     crate::scene_sources_runtime::SceneWorldInstance {
                         entity: e,
                         instance_id: *id,
@@ -946,7 +948,7 @@ fn handle_request_main_thread(
 
             let existing = scene_instances
                 .iter()
-                .map(|(e, t, id, prefab, tint, owner)| {
+                .map(|(e, t, id, prefab, tint, _forms, owner)| {
                     crate::scene_sources_runtime::SceneWorldInstance {
                         entity: e,
                         instance_id: *id,
@@ -1014,7 +1016,7 @@ fn handle_request_main_thread(
 
             let existing = scene_instances
                 .iter()
-                .map(|(e, t, id, prefab, tint, owner)| {
+                .map(|(e, t, id, prefab, tint, _forms, owner)| {
                     crate::scene_sources_runtime::SceneWorldInstance {
                         entity: e,
                         instance_id: *id,
@@ -1060,7 +1062,7 @@ fn handle_request_main_thread(
             };
 
             let src_dir = PathBuf::from(req.src_dir.trim());
-            let existing_entities = scene_instances.iter().map(|(e, _, _, _, _, _)| e);
+            let existing_entities = scene_instances.iter().map(|(e, _, _, _, _, _, _)| e);
 
             let report = match crate::scene_sources_runtime::import_scene_sources_replace_world(
                 commands,
@@ -1092,11 +1094,12 @@ fn handle_request_main_thread(
             };
 
             let out_dir = PathBuf::from(req.out_dir.trim());
-            let objects = scene_instances
-                .iter()
-                .filter_map(|(_e, t, id, prefab, tint, owner)| {
-                    owner.is_none().then_some((t, id, prefab, tint))
-                });
+            let objects =
+                scene_instances
+                    .iter()
+                    .filter_map(|(_e, t, id, prefab, tint, forms, owner)| {
+                        owner.is_none().then_some((t, id, prefab, tint, forms))
+                    });
 
             let report = match crate::scene_sources_runtime::export_scene_sources_from_world(
                 scene_workspace,
@@ -1264,11 +1267,10 @@ fn handle_request_main_thread(
             let Some(build_scene) = build_scene else {
                 return Some(json_error(501, "Gen3D build requires rendered mode."));
             };
-            if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Preview) {
-                return Some(json_error(
-                    409,
-                    "Switch to Build Preview scene first.",
-                ));
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
             }
             let Some(workshop) = gen3d_workshop.as_deref_mut() else {
                 return Some(json_error(501, "Gen3D is not available in this app mode."));
@@ -1327,11 +1329,10 @@ fn handle_request_main_thread(
             let Some(build_scene) = build_scene else {
                 return Some(json_error(501, "Gen3D save requires rendered mode."));
             };
-            if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Preview) {
-                return Some(json_error(
-                    409,
-                    "Switch to Build Preview scene first.",
-                ));
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
             }
             let Some(workshop) = gen3d_workshop.as_deref_mut() else {
                 return Some(json_error(501, "Gen3D is not available in this app mode."));

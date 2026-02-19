@@ -112,6 +112,10 @@ struct SceneDatObjectInstance {
     scale_y: Option<Float32Dat>,
     #[prost(message, optional, tag = "13")]
     scale_z: Option<Float32Dat>,
+    #[prost(message, repeated, tag = "14")]
+    forms: Vec<Uuid128Dat>,
+    #[prost(uint32, tag = "15")]
+    active_form: u32,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1477,7 +1481,13 @@ fn attack_from_dat(attack: &SceneDatUnitAttack) -> Result<UnitAttackProfile, Str
 
 fn save_scene_dat_internal(
     objects: &Query<
-        (&Transform, &ObjectId, &ObjectPrefabId, Option<&ObjectTint>),
+        (
+            &Transform,
+            &ObjectId,
+            &ObjectPrefabId,
+            Option<&ObjectTint>,
+            Option<&ObjectForms>,
+        ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
     library: &ObjectLibrary,
@@ -1488,10 +1498,31 @@ fn save_scene_dat_internal(
     let mut instances: Vec<SceneDatObjectInstance> = Vec::with_capacity(objects.iter().len());
     let mut root_defs: Vec<u128> = Vec::with_capacity(objects.iter().len());
 
-    for (transform, instance_id, prefab_id, tint) in objects {
+    for (transform, instance_id, prefab_id, tint, forms) in objects {
         let pos = transform.translation;
-        root_defs.push(prefab_id.0);
         let scale = transform.scale;
+
+        let (forms, active) = if let Some(forms) = forms {
+            let mut forms_list = forms.forms.clone();
+            if forms_list.is_empty() {
+                forms_list.push(prefab_id.0);
+            }
+            let mut active = forms.active.min(forms_list.len().saturating_sub(1));
+            if forms_list.get(active).copied().unwrap_or(prefab_id.0) != prefab_id.0 {
+                if let Some(found) = forms_list.iter().position(|v| *v == prefab_id.0) {
+                    active = found;
+                } else {
+                    forms_list.clear();
+                    forms_list.push(prefab_id.0);
+                    active = 0;
+                }
+            }
+            (forms_list, active)
+        } else {
+            (vec![prefab_id.0], 0usize)
+        };
+
+        root_defs.extend(forms.iter().copied());
 
         instances.push(SceneDatObjectInstance {
             instance_id: Some(u128_to_uuid(instance_id.0)),
@@ -1507,6 +1538,8 @@ fn save_scene_dat_internal(
             scale_x: pack_non_default_scale(scale.x),
             scale_y: pack_non_default_scale(scale.y),
             scale_z: pack_non_default_scale(scale.z),
+            forms: forms.into_iter().map(u128_to_uuid).collect(),
+            active_form: active as u32,
         });
     }
 
@@ -2024,9 +2057,18 @@ fn load_scene_dat_from_path(
     let mut spawned = 0usize;
 
     for instance in &scene.instances {
-        let Some(prefab_id) = instance.base_object_id.as_ref().map(uuid_to_u128) else {
+        let Some(base_prefab_id) = instance.base_object_id.as_ref().map(uuid_to_u128) else {
             continue;
         };
+        let mut forms: Vec<u128> = instance.forms.iter().map(uuid_to_u128).collect();
+        if forms.is_empty() {
+            forms.push(base_prefab_id);
+        }
+        let mut active = instance.active_form as usize;
+        if active >= forms.len() {
+            active = 0;
+        }
+        let prefab_id = forms.get(active).copied().unwrap_or(base_prefab_id);
         if library.get(prefab_id).is_none() {
             warn!("scene.dat: missing prefab for instance {prefab_id:#x}");
             continue;
@@ -2061,7 +2103,7 @@ fn load_scene_dat_from_path(
 
         let tint = instance.tint.as_ref().map(unpack_color);
 
-        spawn_scene_instance_from_scene(
+        let entity = spawn_scene_instance_from_scene(
             commands,
             asset_server,
             assets,
@@ -2075,6 +2117,9 @@ fn load_scene_dat_from_path(
             instance_id,
             tint,
         );
+        commands
+            .entity(entity)
+            .insert(ObjectForms { forms, active });
         spawned += 1;
     }
 
@@ -2099,6 +2144,8 @@ pub(crate) fn scene_autosave_detect_changes(
         Entity,
         (With<Commandable>, Without<Player>, Changed<ObjectPrefabId>),
     >,
+    changed_building_forms: Query<Entity, (With<BuildObject>, Changed<ObjectForms>)>,
+    changed_unit_forms: Query<Entity, (With<Commandable>, Without<Player>, Changed<ObjectForms>)>,
     changed_building_tints: Query<Entity, (With<BuildObject>, Changed<ObjectTint>)>,
     changed_unit_tints: Query<Entity, (With<Commandable>, Without<Player>, Changed<ObjectTint>)>,
     mut removed: RemovedComponents<BuildObject>,
@@ -2111,6 +2158,8 @@ pub(crate) fn scene_autosave_detect_changes(
         || changed_unit_transforms.iter().next().is_some();
     let prefab_any = changed_building_prefabs.iter().next().is_some()
         || changed_unit_prefabs.iter().next().is_some();
+    let forms_any = changed_building_forms.iter().next().is_some()
+        || changed_unit_forms.iter().next().is_some();
     let tint_any = changed_building_tints.iter().next().is_some()
         || changed_unit_tints.iter().next().is_some();
 
@@ -2120,7 +2169,14 @@ pub(crate) fn scene_autosave_detect_changes(
         return;
     }
 
-    if removed_any || removed_units_any || added_any || moved_any || prefab_any || tint_any {
+    if removed_any
+        || removed_units_any
+        || added_any
+        || moved_any
+        || prefab_any
+        || forms_any
+        || tint_any
+    {
         autosave.dirty = true;
     }
 }
@@ -2128,7 +2184,13 @@ pub(crate) fn scene_autosave_detect_changes(
 pub(crate) fn scene_save_requests(
     mut requests: MessageReader<SceneSaveRequest>,
     objects: Query<
-        (&Transform, &ObjectId, &ObjectPrefabId, Option<&ObjectTint>),
+        (
+            &Transform,
+            &ObjectId,
+            &ObjectPrefabId,
+            Option<&ObjectTint>,
+            Option<&ObjectForms>,
+        ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
     config: Res<AppConfig>,
@@ -2164,7 +2226,13 @@ pub(crate) fn scene_save_requests(
 pub(crate) fn scene_autosave_tick(
     time: Res<Time>,
     objects: Query<
-        (&Transform, &ObjectId, &ObjectPrefabId, Option<&ObjectTint>),
+        (
+            &Transform,
+            &ObjectId,
+            &ObjectPrefabId,
+            Option<&ObjectTint>,
+            Option<&ObjectForms>,
+        ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
     config: Res<AppConfig>,

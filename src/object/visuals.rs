@@ -132,7 +132,7 @@ fn quantize_milli(v: f32) -> i32 {
 }
 
 impl PrimitiveMeshCache {
-    fn get_or_create(
+    pub(crate) fn get_or_create(
         &mut self,
         meshes: &mut Assets<Mesh>,
         params: PrimitiveParams,

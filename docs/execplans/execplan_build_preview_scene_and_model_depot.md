@@ -16,7 +16,7 @@ Gen3D exists only in the 3D Preview scene. A **Models** side panel on the left l
 You can see this working by:
 
 1. Running the rendered game (`cargo run`).
-2. Pressing `Tab` to switch between Build and Play.
+2. Pressing `F1` (or the top-left button) to switch between Build and Play.
 3. In Build mode, using the scene switch button to enter the 3D Preview scene and back to the Realm scene.
 4. In the Models panel, clicking to spawn a depot model near the hero, or dragging to place it (dashed frame preview).
 5. Selecting a spawned instance and dragging it to move it.
@@ -101,7 +101,7 @@ In `src/gen3d/state.rs` and `src/gen3d/ui.rs`:
 ### 3) Update mode-conditional behavior elsewhere
 
 - `src/ui.rs`: window title should show Build/Play, and in Build include whether the user is in Preview (e.g., “BUILD (Preview)”).
-- `src/build.rs`: `toggle_game_mode` (Tab) should remain disabled while in Preview (to match prior behavior in Gen3D).
+- `src/build.rs`: `toggle_game_mode` (`F1`) and the mode toggle UI should remain disabled/hidden while in Preview (to match prior behavior in Gen3D).
 - `src/model_library_ui.rs`: visibility should be `Build` (regardless of `BuildScene`) and hidden in Play.
 - Any other direct checks of `GameMode::Gen3D` should be replaced with `BuildScene::Preview` checks.
 

@@ -352,6 +352,7 @@ fn spawn_build_object_with_collider_half_xz(
     let mut entity_commands = commands.spawn((
         object_id,
         ObjectPrefabId(prefab_id),
+        ObjectForms::new_single(prefab_id),
         BuildObject,
         BuildDimensions { size },
         AabbCollider {
@@ -378,16 +379,131 @@ fn spawn_build_object_with_collider_half_xz(
     entity_commands.id()
 }
 
+#[derive(Component)]
+pub(crate) struct GameModeToggleButton;
+
+#[derive(Component)]
+pub(crate) struct GameModeToggleButtonText;
+
+pub(crate) fn setup_game_mode_toggle_ui(mut commands: Commands) {
+    commands
+        .spawn((
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(8.0),
+                left: Val::Px(10.0),
+                width: Val::Px(92.0),
+                height: Val::Px(34.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60)),
+            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+            Outline {
+                width: Val::Px(1.0),
+                color: Color::srgba(0.25, 0.25, 0.30, 0.65),
+                offset: Val::Px(0.0),
+            },
+            ZIndex(965),
+            GameModeToggleButton,
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Text::new("Play"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                GameModeToggleButtonText,
+            ));
+        });
+}
+
 pub(crate) fn toggle_game_mode(
     keys: Res<ButtonInput<KeyCode>>,
+    build_scene: Res<State<BuildScene>>,
     mode: Res<State<GameMode>>,
     mut next_mode: ResMut<NextState<GameMode>>,
 ) {
-    if keys.just_pressed(KeyCode::Tab) {
-        match mode.get() {
-            GameMode::Build => next_mode.set(GameMode::Play),
-            GameMode::Play => next_mode.set(GameMode::Build),
+    if !matches!(build_scene.get(), BuildScene::Realm) {
+        return;
+    }
+
+    if !keys.just_pressed(KeyCode::F1) {
+        return;
+    }
+
+    match mode.get() {
+        GameMode::Build => next_mode.set(GameMode::Play),
+        GameMode::Play => next_mode.set(GameMode::Build),
+    }
+}
+
+pub(crate) fn handle_game_mode_toggle_button(
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<GameModeToggleButton>),
+    >,
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    mut next_mode: ResMut<NextState<GameMode>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Realm) {
+        return;
+    }
+
+    for (interaction, mut bg) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.85));
+                match mode.get() {
+                    GameMode::Build => next_mode.set(GameMode::Play),
+                    GameMode::Play => next_mode.set(GameMode::Build),
+                }
+            }
         }
+    }
+}
+
+pub(crate) fn update_game_mode_toggle_button_label(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    mut buttons: Query<(&mut Visibility, &mut Node), With<GameModeToggleButton>>,
+    mut texts: Query<&mut Text, With<GameModeToggleButtonText>>,
+) {
+    let visible = matches!(build_scene.get(), BuildScene::Realm);
+    for (mut visibility, mut node) in &mut buttons {
+        *visibility = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+
+        // Keep the mode toggle button adjacent to the workspace controls in Build mode,
+        // and flush-left in Play mode.
+        node.left = match mode.get() {
+            GameMode::Build => Val::Px(10.0 + 170.0 + 8.0 + 132.0 + 8.0),
+            GameMode::Play => Val::Px(10.0),
+        };
+    }
+
+    let label = match mode.get() {
+        GameMode::Build => "Play",
+        GameMode::Play => "Build",
+    };
+    for mut text in &mut texts {
+        **text = label.into();
     }
 }
 
@@ -1051,6 +1167,7 @@ pub(crate) fn build_edit_selected_objects(
             &mut BuildDimensions,
             &ObjectPrefabId,
             Option<&ObjectTint>,
+            Option<&ObjectForms>,
         ),
         With<BuildObject>,
     >,
@@ -1083,7 +1200,7 @@ pub(crate) fn build_edit_selected_objects(
         let mut new_selected: HashSet<Entity> = HashSet::new();
         let selected: Vec<Entity> = selection.selected.iter().copied().collect();
         for entity in selected {
-            let Ok((_entity, transform, collider, dimensions, prefab_id, tint)) =
+            let Ok((_entity, transform, collider, dimensions, prefab_id, tint, forms)) =
                 objects.get_mut(entity)
             else {
                 continue;
@@ -1092,6 +1209,7 @@ pub(crate) fn build_edit_selected_objects(
             let size = dimensions.size;
             let half_extents = collider.half_extents;
             let tint = tint.map(|t| t.0);
+            let forms = forms.cloned();
 
             let mut transform = transform.clone();
             transform.translation += offset;
@@ -1122,6 +1240,9 @@ pub(crate) fn build_edit_selected_objects(
                 ObjectId::new_v4(),
                 tint,
             );
+            if let Some(forms) = forms {
+                commands.entity(new_entity).insert(forms);
+            }
             new_selected.insert(new_entity);
         }
         if new_selected.is_empty() {
@@ -1241,7 +1362,7 @@ pub(crate) fn build_edit_selected_objects(
     let yaw_delta = Quat::from_rotation_y(yaw_delta_deg.to_radians());
     let selected: Vec<Entity> = selection.selected.iter().copied().collect();
     for entity in selected {
-        let Ok((_entity, mut transform, mut collider, mut dimensions, prefab_id, _tint)) =
+        let Ok((_entity, mut transform, mut collider, mut dimensions, prefab_id, _tint, _forms)) =
             objects.get_mut(entity)
         else {
             continue;

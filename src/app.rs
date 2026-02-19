@@ -492,6 +492,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.init_resource::<PlayerMuzzles>();
     app.init_resource::<BuildState>();
     app.init_resource::<SelectionState>();
+    app.init_resource::<crate::object_forms::FormCopyState>();
     app.init_resource::<MoveCommandState>();
     app.init_resource::<SlowMoveMode>();
     app.init_resource::<BuildPreview>();
@@ -575,6 +576,10 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(Startup, setup::setup_rendered);
     app.add_systems(
         Startup,
+        crate::build::setup_game_mode_toggle_ui.after(setup::setup_rendered),
+    );
+    app.add_systems(
+        Startup,
         crate::workspace_ui::setup_workspace_ui.after(setup::setup_rendered),
     );
     app.add_systems(
@@ -598,6 +603,17 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(
         Update,
         crate::scene_instance_visuals::ensure_scene_instance_visuals_spawned,
+    );
+    app.add_systems(Update, crate::object_forms::ensure_object_forms_component);
+    app.add_systems(
+        Update,
+        (
+            crate::object_forms::tick_form_transform_animations,
+            crate::object_forms::sync_form_badges
+                .after(crate::object_forms::tick_form_transform_animations),
+            crate::object_forms::update_form_badges.after(crate::object_forms::sync_form_badges),
+        )
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,
@@ -652,6 +668,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(
         Update,
         (
+            crate::build::update_game_mode_toggle_button_label,
             crate::workspace_ui::workspace_ui_update_visibility,
             crate::workspace_ui::workspace_ui_dropdown_list_visibility
                 .after(crate::workspace_ui::workspace_ui_update_visibility),
@@ -667,6 +684,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .after(crate::workspace_ui::workspace_ui_dropdown_button),
             crate::workspace_ui::workspace_ui_action_button
                 .after(crate::workspace_ui::workspace_ui_dropdown_option_buttons),
+            crate::build::handle_game_mode_toggle_button,
         )
             .run_if(console::console_closed)
             .run_if(crate::automation::local_input_enabled),
@@ -895,6 +913,11 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         Update,
         (
             rts::selection_input.run_if(crate::automation::local_input_enabled),
+            crate::object_forms::object_forms_copy_input_begin.after(rts::selection_input),
+            crate::object_forms::object_forms_copy_apply_on_source_selected
+                .after(crate::object_forms::object_forms_copy_input_begin)
+                .after(rts::selection_input),
+            crate::object_forms::object_forms_tab_switch_selected.after(rts::selection_input),
             rts::toggle_slow_move_mode
                 .after(rts::selection_input)
                 .before(rts::keyboard_move_input)

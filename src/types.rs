@@ -15,6 +15,51 @@ impl ObjectId {
 #[derive(Component, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ObjectPrefabId(pub(crate) u128);
 
+/// Per-instance multi-form state (see `docs/gamedesign/37_object_forms_and_transformations.md`).
+///
+/// Invariants:
+/// - `forms.len() >= 1`
+/// - `active < forms.len()`
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ObjectForms {
+    pub(crate) forms: Vec<u128>,
+    pub(crate) active: usize,
+}
+
+impl ObjectForms {
+    pub(crate) fn new_single(prefab_id: u128) -> Self {
+        Self {
+            forms: vec![prefab_id],
+            active: 0,
+        }
+    }
+
+    pub(crate) fn active_prefab_id(&self) -> u128 {
+        self.forms
+            .get(self.active)
+            .copied()
+            .unwrap_or_else(|| self.forms.first().copied().unwrap_or(0))
+    }
+
+    pub(crate) fn ensure_valid(&mut self, fallback_prefab_id: u128) {
+        if self.forms.is_empty() {
+            self.forms.push(fallback_prefab_id);
+        }
+        if self.active >= self.forms.len() {
+            self.active = 0;
+        }
+    }
+
+    /// Appends `prefab_id` if missing and returns its index.
+    pub(crate) fn append_dedupe(&mut self, prefab_id: u128) -> usize {
+        if let Some(idx) = self.forms.iter().position(|v| *v == prefab_id) {
+            return idx;
+        }
+        self.forms.push(prefab_id);
+        self.forms.len().saturating_sub(1)
+    }
+}
+
 #[derive(Component, Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ObjectTint(pub(crate) Color);
 

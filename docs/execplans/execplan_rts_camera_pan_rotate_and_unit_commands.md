@@ -81,7 +81,7 @@ In `src/app.rs` and/or a small new system:
 
 - Ensure a sensible default selection so the user can immediately attack without first re-selecting:
   - On startup, auto-select the hero entity once it exists.
-  - On entering Play mode (Tab), if selection is empty, auto-select the hero.
+  - On entering Play mode (F1 / UI toggle), if selection is empty, auto-select the hero.
 
 This addresses “weapons not working” when the player forgets to re-select after clicking on empty ground or after switching modes.
 

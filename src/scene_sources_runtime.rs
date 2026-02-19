@@ -16,8 +16,8 @@ use crate::scene_validation::{
     ValidationViolationV1, ViolationEvidenceV1, ViolationSeverityV1,
 };
 use crate::types::{
-    AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, ObjectId, ObjectPrefabId,
-    ObjectTint, SceneLayerOwner,
+    AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, ObjectForms, ObjectId,
+    ObjectPrefabId, ObjectTint, SceneLayerOwner,
 };
 
 #[derive(Resource, Default)]
@@ -72,6 +72,7 @@ pub(crate) fn export_scene_sources_from_world<'a>(
             &'a ObjectId,
             &'a ObjectPrefabId,
             Option<&'a ObjectTint>,
+            Option<&'a ObjectForms>,
         ),
     >,
     out_dir: &Path,
@@ -95,11 +96,12 @@ pub(crate) fn export_scene_sources_from_world<'a>(
         .retain(|path, _| !is_under_dir(path, &pinned_dir));
 
     let mut count = 0usize;
-    for (transform, instance_id, prefab_id, tint) in objects {
+    for (transform, instance_id, prefab_id, tint, forms) in objects {
         let doc = build_pinned_instance_doc(
             existing_docs_by_instance_id.get(&instance_id.0),
             instance_id,
             prefab_id,
+            forms,
             transform,
             tint,
         )?;
@@ -127,6 +129,8 @@ pub(crate) fn export_scene_sources_from_world<'a>(
 struct PinnedInstance {
     instance_id: ObjectId,
     prefab_id: ObjectPrefabId,
+    forms: Vec<u128>,
+    active: usize,
     transform: Transform,
     tint: Option<Color>,
     source_rel_path: Option<PathBuf>,
@@ -218,9 +222,56 @@ fn parse_pinned_instance_doc(path: &Path, doc: &Value) -> Result<PinnedInstance,
             .with_scale(scale),
     )?;
 
+    let prefab_id_u128 = prefab_uuid.as_u128();
+    let mut forms: Vec<u128> = Vec::new();
+    if let Some(forms_val) = map.get("forms") {
+        let Some(items) = forms_val.as_array() else {
+            return Err(format!("{}: forms must be an array", path.display()));
+        };
+        for (idx, item) in items.iter().enumerate() {
+            let Some(uuid_str) = item.as_str() else {
+                return Err(format!(
+                    "{}: forms[{idx}] must be a UUID string",
+                    path.display()
+                ));
+            };
+            let uuid = uuid::Uuid::parse_str(uuid_str.trim())
+                .map_err(|err| format!("{}: invalid forms[{idx}] UUID: {err}", path.display()))?;
+            forms.push(uuid.as_u128());
+        }
+    }
+    if forms.is_empty() {
+        forms.push(prefab_id_u128);
+    }
+    let mut seen = HashSet::new();
+    forms.retain(|id| seen.insert(*id));
+    if forms.is_empty() {
+        forms.push(prefab_id_u128);
+    }
+
+    let active_field = map.get("active_form").and_then(|v| v.as_u64());
+    let mut active = active_field
+        .map(|v| v as usize)
+        .or_else(|| forms.iter().position(|id| *id == prefab_id_u128))
+        .unwrap_or(0);
+    if active >= forms.len() {
+        active = 0;
+    }
+    if forms.get(active).copied().unwrap_or(prefab_id_u128) != prefab_id_u128 {
+        if let Some(found) = forms.iter().position(|id| *id == prefab_id_u128) {
+            active = found;
+        } else {
+            forms.clear();
+            forms.push(prefab_id_u128);
+            active = 0;
+        }
+    }
+
     Ok(PinnedInstance {
         instance_id: ObjectId(instance_uuid.as_u128()),
-        prefab_id: ObjectPrefabId(prefab_uuid.as_u128()),
+        prefab_id: ObjectPrefabId(prefab_id_u128),
+        forms,
+        active,
         transform,
         tint,
         source_rel_path: Some(path.to_path_buf()),
@@ -260,25 +311,30 @@ fn spawn_scene_instance_minimal(
     library: &ObjectLibrary,
     instance: &PinnedInstance,
 ) -> Result<Entity, String> {
-    if library.mobility(instance.prefab_id.0).is_some() {
-        Ok(spawn_unit_minimal(
+    let entity = if library.mobility(instance.prefab_id.0).is_some() {
+        spawn_unit_minimal(
             commands,
             library,
             instance.prefab_id.0,
             instance.transform,
             instance.instance_id,
             instance.tint,
-        ))
+        )
     } else {
-        Ok(spawn_build_object_minimal(
+        spawn_build_object_minimal(
             commands,
             library,
             instance.prefab_id.0,
             instance.transform,
             instance.instance_id,
             instance.tint,
-        ))
-    }
+        )
+    };
+    commands.entity(entity).insert(ObjectForms {
+        forms: instance.forms.clone(),
+        active: instance.active,
+    });
+    Ok(entity)
 }
 
 fn spawn_build_object_minimal(
@@ -417,6 +473,7 @@ fn build_pinned_instance_doc(
     existing: Option<&Value>,
     instance_id: &ObjectId,
     prefab_id: &ObjectPrefabId,
+    forms: Option<&ObjectForms>,
     transform: &Transform,
     tint: Option<&ObjectTint>,
 ) -> Result<Value, String> {
@@ -440,6 +497,42 @@ fn build_pinned_instance_doc(
         "prefab_id".to_string(),
         Value::from(uuid::Uuid::from_u128(prefab_id.0).to_string()),
     );
+
+    if let Some(forms) = forms {
+        let mut forms_list = forms.forms.clone();
+        if forms_list.is_empty() {
+            forms_list.push(prefab_id.0);
+        }
+        let mut active = forms.active.min(forms_list.len().saturating_sub(1));
+        if forms_list.get(active).copied().unwrap_or(prefab_id.0) != prefab_id.0 {
+            if let Some(found) = forms_list.iter().position(|v| *v == prefab_id.0) {
+                active = found;
+            } else {
+                forms_list.clear();
+                forms_list.push(prefab_id.0);
+                active = 0;
+            }
+        }
+
+        if forms_list.len() > 1 {
+            map.insert(
+                "forms".to_string(),
+                Value::Array(
+                    forms_list
+                        .into_iter()
+                        .map(|id| Value::from(uuid::Uuid::from_u128(id).to_string()))
+                        .collect(),
+                ),
+            );
+            map.insert("active_form".to_string(), Value::from(active as u64));
+        } else {
+            map.remove("forms");
+            map.remove("active_form");
+        }
+    } else {
+        map.remove("forms");
+        map.remove("active_form");
+    }
 
     let translation = vec3_json(transform.translation);
     let rotation = quat_json(transform.rotation);
@@ -1768,9 +1861,13 @@ pub(crate) fn compile_scene_sources_all_layers(
                 pinned.tint,
                 None,
             );
+            commands.entity(existing.entity).insert(ObjectForms {
+                forms: pinned.forms.clone(),
+                active: pinned.active,
+            });
             report.updated += 1;
         } else {
-            spawn_scene_instance_entity(
+            let entity = spawn_scene_instance_entity(
                 commands,
                 library,
                 pinned.instance_id,
@@ -1779,6 +1876,10 @@ pub(crate) fn compile_scene_sources_all_layers(
                 pinned.tint,
                 None,
             );
+            commands.entity(entity).insert(ObjectForms {
+                forms: pinned.forms.clone(),
+                active: pinned.active,
+            });
             report.spawned += 1;
         }
     }
@@ -2004,6 +2105,8 @@ fn desired_instances_for_layer(
                         PinnedInstance {
                             instance_id,
                             prefab_id: inst.prefab_id,
+                            forms: vec![inst.prefab_id.0],
+                            active: 0,
                             transform: inst.transform,
                             tint: inst.tint,
                             source_rel_path: None,
@@ -2048,6 +2151,8 @@ fn desired_instances_for_layer(
                             PinnedInstance {
                                 instance_id,
                                 prefab_id: layer.prefab_id,
+                                forms: vec![layer.prefab_id.0],
+                                active: 0,
                                 transform,
                                 tint: layer.tint,
                                 source_rel_path: None,
@@ -2138,6 +2243,8 @@ fn desired_instances_for_layer(
                         PinnedInstance {
                             instance_id,
                             prefab_id: layer.prefab_id,
+                            forms: vec![layer.prefab_id.0],
+                            active: 0,
                             transform,
                             tint: layer.tint,
                             source_rel_path: None,
@@ -2248,6 +2355,9 @@ fn spawn_scene_instance_entity(
     } else {
         spawn_build_object_minimal(commands, library, prefab_id, transform, instance_id, tint)
     };
+    commands
+        .entity(entity)
+        .insert(ObjectForms::new_single(prefab_id));
     if let Some(owner_layer_id) = owner_layer_id {
         commands.entity(entity).insert(SceneLayerOwner {
             layer_id: owner_layer_id.to_string(),
@@ -2296,6 +2406,8 @@ fn upsert_scene_instance_entity(
     } else {
         ec.remove::<ObjectTint>();
     }
+
+    ec.insert(ObjectForms::new_single(prefab_id));
 
     if let Some(owner_layer_id) = owner_layer_id {
         ec.insert(SceneLayerOwner {

@@ -22,6 +22,7 @@ mod model_tool;
 mod models;
 mod navigation;
 mod object;
+mod object_forms;
 mod paths;
 mod physics;
 mod platform;
