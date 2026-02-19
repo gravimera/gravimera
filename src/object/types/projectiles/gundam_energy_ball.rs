@@ -19,6 +19,7 @@ pub(crate) fn def() -> ObjectDef {
         object_id: object_id(),
         label: LABEL.into(),
         size: Vec3::splat(GUNDAM_ENERGY_BALL_RADIUS * 2.0),
+        ground_origin_y: None,
         collider: ColliderProfile::CircleXZ {
             radius: GUNDAM_ENERGY_BALL_RADIUS,
         },

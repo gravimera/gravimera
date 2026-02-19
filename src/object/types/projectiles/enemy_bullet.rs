@@ -19,6 +19,7 @@ pub(crate) fn def() -> ObjectDef {
         object_id: object_id(),
         label: LABEL.into(),
         size: Vec3::splat(ENEMY_BULLET_RADIUS * 2.0),
+        ground_origin_y: None,
         collider: ColliderProfile::CircleXZ {
             radius: ENEMY_BULLET_RADIUS,
         },

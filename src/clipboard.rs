@@ -653,6 +653,7 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::decode_clipboard_stdout;
+    #[cfg(target_os = "linux")]
     use std::time::{Duration, Instant};
 
     #[test]

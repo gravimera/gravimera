@@ -299,6 +299,7 @@ mod tests {
             object_id: child_id,
             label: "child".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::None,
             interaction: ObjectInteraction::none(),
             aim: None,
@@ -334,6 +335,7 @@ mod tests {
             object_id: parent_id,
             label: "parent".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::None,
             interaction: ObjectInteraction::none(),
             aim: None,
@@ -376,6 +378,7 @@ mod tests {
             object_id: child_id,
             label: "child".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::None,
             interaction: ObjectInteraction::none(),
             aim: None,
@@ -419,6 +422,7 @@ mod tests {
             object_id: parent_id,
             label: "parent".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::None,
             interaction: ObjectInteraction::none(),
             aim: None,
@@ -726,7 +730,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     let mut pos = player_transform.translation + dir * radial;
     pos.x = snap_to_grid(pos.x, BUILD_GRID_SIZE);
     pos.z = snap_to_grid(pos.z, BUILD_GRID_SIZE);
-    let ground_y = size.y.max(0.01) * 0.5;
+    let ground_y = library.ground_origin_y_or_default(saved_root_id);
     pos.y = match mobility_mode {
         Some(MobilityMode::Air) => ground_y + BUILD_UNIT_SIZE * 8.0,
         _ => ground_y,

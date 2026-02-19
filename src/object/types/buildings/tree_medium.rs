@@ -32,6 +32,7 @@ pub(crate) fn def() -> ObjectDef {
         object_id: object_id(),
         label: LABEL.into(),
         size,
+        ground_origin_y: None,
         collider: ColliderProfile::AabbXZ {
             half_extents: Vec2::splat(trunk_radius),
         },

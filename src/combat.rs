@@ -213,6 +213,7 @@ mod tests {
             object_id: parent_id,
             label: "parent".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::None,
             interaction: ObjectInteraction::none(),
             aim: Some(AimProfile {
@@ -248,6 +249,7 @@ mod tests {
             object_id: child_id,
             label: "child".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::None,
             interaction: ObjectInteraction::none(),
             aim: None,

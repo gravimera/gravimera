@@ -32,6 +32,7 @@ Top-level fields:
 - `role`: `"root"` | `"internal"`. Informational hint for tooling (root prefab vs internal component).
 - `label`: string. Human-friendly name.
 - `size`: `{x,y,z}` floats. Authoring/physics extents used by the engine.
+- `ground_origin_y`: optional float. Distance from the prefab’s local origin to the ground plane when the object is resting on the ground. When absent, the engine assumes the prefab is vertically centered and uses `size.y / 2`. When an instance is scaled, grounding uses `ground_origin_y * abs(scale.y)`.
 - `collider`: collider profile (see below).
 - `interaction`: interaction profile (see below).
 - `aim`: optional aim profile (units/weapons).
@@ -46,6 +47,12 @@ Top-level fields:
 ### `size`
 
 - `size.x`, `size.y`, `size.z`: floats.
+
+### `ground_origin_y` (optional)
+
+- Float. Must be finite and `>= 0`.
+- Interpreted as a local-space distance from the prefab origin to the ground plane when resting.
+- If omitted, the engine falls back to `size.y / 2`.
 
 ### `collider`
 
@@ -199,4 +206,3 @@ For stable diffs, writers **should**:
 
 - sort JSON object keys recursively,
 - pretty-print with a trailing newline.
-

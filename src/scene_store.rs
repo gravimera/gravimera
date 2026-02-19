@@ -146,6 +146,8 @@ struct SceneDatObjectDef {
     attack: Option<SceneDatUnitAttack>,
     #[prost(message, optional, tag = "15")]
     aim: Option<SceneDatAimProfile>,
+    #[prost(message, optional, tag = "16")]
+    ground_origin_y: Option<Float32Dat>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1212,6 +1214,10 @@ fn def_to_dat(def: &ObjectDef) -> SceneDatObjectDef {
         size_x: def.size.x,
         size_y: def.size.y,
         size_z: def.size.z,
+        ground_origin_y: def
+            .ground_origin_y
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map(|value| Float32Dat { value }),
         collider: Some(collider_to_dat(def.collider)),
         interaction: Some(interaction_to_dat(def.interaction)),
         anchors: def
@@ -1240,6 +1246,12 @@ fn def_from_dat(def: &SceneDatObjectDef) -> Result<ObjectDef, String> {
         return Err("Missing object id".into());
     };
     let object_id = uuid_to_u128(id);
+
+    let ground_origin_y = def
+        .ground_origin_y
+        .as_ref()
+        .map(|value| value.value)
+        .filter(|value| value.is_finite() && *value >= 0.0);
 
     let collider = match def.collider.as_ref() {
         Some(c) => collider_from_dat(c)?,
@@ -1284,6 +1296,7 @@ fn def_from_dat(def: &SceneDatObjectDef) -> Result<ObjectDef, String> {
         object_id,
         label: def.label.clone().into(),
         size: Vec3::new(def.size_x, def.size_y, def.size_z),
+        ground_origin_y,
         collider,
         interaction,
         aim,
@@ -2160,6 +2173,7 @@ mod tests {
             object_id: 0x9999_u128,
             label: "test_object".into(),
             size: Vec3::new(1.0, 2.0, 3.0),
+            ground_origin_y: Some(0.75),
             collider: ColliderProfile::CircleXZ { radius: 1.25 },
             interaction: ObjectInteraction {
                 blocks_bullets: true,
@@ -2249,6 +2263,7 @@ mod tests {
         assert_eq!(decoded.object_id, def.object_id);
         assert_eq!(decoded.label, def.label);
         assert_eq!(decoded.size, def.size);
+        assert_eq!(decoded.ground_origin_y, def.ground_origin_y);
         assert!(
             matches!(decoded.aim.as_ref(), Some(aim) if aim.components == vec![child_id] && (aim.max_yaw_delta_degrees.unwrap_or(0.0) - 90.0).abs() < 1e-6)
         );
@@ -2361,6 +2376,7 @@ mod tests {
             object_id: muzzle_id,
             label: "muzzle_component".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::None,
             interaction: ObjectInteraction::none(),
             aim: None,
@@ -2381,6 +2397,7 @@ mod tests {
             object_id: projectile_id,
             label: "projectile".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::CircleXZ { radius: 0.1 },
             interaction: ObjectInteraction::none(),
             aim: None,
@@ -2404,6 +2421,7 @@ mod tests {
             object_id: root_id,
             label: "root".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::AabbXZ {
                 half_extents: Vec2::ONE,
             },

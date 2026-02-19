@@ -1245,7 +1245,17 @@ pub(crate) fn build_edit_selected_objects(
             continue;
         };
 
-        let bottom_y = transform.translation.y - dimensions.size.y * 0.5;
+        let base_size_y = library
+            .size(prefab_id.0)
+            .map(|size| size.y.abs())
+            .unwrap_or(dimensions.size.y.abs());
+        let scale_y = if base_size_y.is_finite() && base_size_y > 1e-6 {
+            (dimensions.size.y / base_size_y).abs()
+        } else {
+            1.0
+        };
+        let base_origin_y = library.ground_origin_y_or_default(prefab_id.0);
+        let bottom_y = transform.translation.y - base_origin_y * scale_y;
 
         transform.translation += move_delta;
         if yaw_delta_deg.abs() > 1e-6 {
@@ -1261,7 +1271,12 @@ pub(crate) fn build_edit_selected_objects(
         let (new_size, new_half) =
             build_instance_bounds(&library, prefab_id.0, transform.rotation, transform.scale);
         if (scale_mul - 1.0).abs() > 1e-6 {
-            transform.translation.y = bottom_y + new_size.y * 0.5;
+            let new_scale_y = if base_size_y.is_finite() && base_size_y > 1e-6 {
+                (new_size.y / base_size_y).abs()
+            } else {
+                1.0
+            };
+            transform.translation.y = bottom_y + base_origin_y * new_scale_y;
         }
 
         transform.translation.x = snap_to_grid(transform.translation.x, BUILD_GRID_SIZE);

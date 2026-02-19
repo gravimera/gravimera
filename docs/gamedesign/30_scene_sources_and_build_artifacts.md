@@ -167,8 +167,9 @@ Fields:
 Placement notes (non-normative):
 
 - `transform.translation` is applied to the instance root as-is.
-- Many prefabs are modeled around their center; to rest an object on the ground plane (y=0), set
-  `translation.y = (prefab_size.y * abs(scale.y)) / 2`.
+- To rest an object on the ground plane (y=0), set:
+  - `translation.y = ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y` (realm prefab packs).
+  - otherwise `translation.y = (prefab_size.y * abs(scale.y)) / 2`.
 
 Additional fields are allowed and must be preserved by round-trip tools when possible.
 
@@ -231,8 +232,9 @@ Pinned instances are authored as JSON objects:
 Placement notes (non-normative):
 
 - `transform.translation` is applied to the instance root as-is.
-- Many prefabs are modeled around their center; to rest an object on the ground plane (y=0), set
-  `translation.y = (prefab_size.y * abs(scale.y)) / 2`.
+- To rest an object on the ground plane (y=0), set:
+  - `translation.y = ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y` (realm prefab packs).
+  - otherwise `translation.y = (prefab_size.y * abs(scale.y)) / 2`.
 
 Additional fields are allowed and must be preserved by round-trip tools when possible.
 

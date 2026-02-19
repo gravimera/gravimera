@@ -18,6 +18,7 @@ pub(crate) fn def() -> ObjectDef {
         object_id: object_id(),
         label: LABEL.into(),
         size: Vec3::ONE,
+        ground_origin_y: None,
         collider: ColliderProfile::None,
         interaction: ObjectInteraction::none(),
         aim: None,

@@ -8,7 +8,7 @@ use crate::constants::*;
 use crate::effects::{spawn_blood_particles, spawn_energy_impact_particles};
 use crate::geometry::{
     circle_intersects_aabb_xz, circles_intersect_xz, normalize_flat_direction,
-    resolve_circle_against_aabbs,
+    resolve_circle_against_aabbs, safe_abs_scale_y,
 };
 use crate::models::{spawn_dog_model, spawn_enemy_human_model, spawn_gundam_model};
 use crate::object::registry::{
@@ -309,9 +309,10 @@ pub(crate) fn spawn_enemies(
                 return None;
             };
 
-            let half_y = dimensions.size.y * 0.5;
-            let bottom_y = transform.translation.y - half_y;
-            let top_y = transform.translation.y + half_y;
+            let scale_y = safe_abs_scale_y(transform.scale);
+            let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+            let bottom_y = transform.translation.y - origin_y;
+            let top_y = bottom_y + dimensions.size.y;
             match rule {
                 MovementBlockRule::Always => Some((
                     Vec2::new(transform.translation.x, transform.translation.z),
@@ -679,13 +680,16 @@ pub(crate) fn update_dog_pounces(
     let mut all_obstacles: Vec<ObstacleAabb> = Vec::new();
     all_obstacles.reserve(objects.iter().len());
     for (transform, collider, dimensions, prefab_id) in &objects {
-        let half_y = dimensions.size.y * 0.5;
+        let scale_y = safe_abs_scale_y(transform.scale);
+        let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+        let bottom_y = transform.translation.y - origin_y;
+        let top_y = bottom_y + dimensions.size.y;
         let interaction = library.interaction(prefab_id.0);
         all_obstacles.push(ObstacleAabb {
             center: Vec2::new(transform.translation.x, transform.translation.z),
             half: collider.half_extents,
-            bottom_y: transform.translation.y - half_y,
-            top_y: transform.translation.y + half_y,
+            bottom_y,
+            top_y,
             movement_block: interaction.movement_block,
         });
     }

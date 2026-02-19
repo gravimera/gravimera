@@ -20,6 +20,7 @@ pub(crate) fn def() -> ObjectDef {
             MOVE_TARGET_MARKER_HEIGHT,
             MOVE_TARGET_MARKER_RADIUS * 2.0,
         ),
+        ground_origin_y: None,
         collider: ColliderProfile::None,
         interaction: ObjectInteraction::none(),
         aim: None,

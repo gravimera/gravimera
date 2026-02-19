@@ -24,6 +24,7 @@ pub(crate) fn def() -> ObjectDef {
             GUNDAM_HEIGHT_WORLD,
             GUNDAM_RADIUS * 2.0,
         ),
+        ground_origin_y: None,
         collider: ColliderProfile::CircleXZ {
             radius: GUNDAM_RADIUS,
         },

@@ -386,6 +386,9 @@ pub(crate) struct ObjectDef {
     pub(crate) object_id: u128,
     pub(crate) label: Cow<'static, str>,
     pub(crate) size: Vec3,
+    // Distance from the prefab's local origin to the ground plane when the object is resting on
+    // the ground. When absent, the engine assumes the prefab is centered and uses `size.y * 0.5`.
+    pub(crate) ground_origin_y: Option<f32>,
     pub(crate) collider: ColliderProfile,
     pub(crate) interaction: ObjectInteraction,
     pub(crate) aim: Option<AimProfile>,
@@ -449,6 +452,22 @@ impl ObjectLibrary {
 
     pub(crate) fn size(&self, object_id: u128) -> Option<Vec3> {
         self.get(object_id).map(|def| def.size)
+    }
+
+    pub(crate) fn ground_origin_y_or_default(&self, object_id: u128) -> f32 {
+        let Some(def) = self.get(object_id) else {
+            return 0.0;
+        };
+        if let Some(value) = def.ground_origin_y {
+            if value.is_finite() && value >= 0.0 {
+                return value;
+            }
+        }
+        if def.size.y.is_finite() {
+            def.size.y.abs() * 0.5
+        } else {
+            0.0
+        }
     }
 
     pub(crate) fn collider(&self, object_id: u128) -> Option<ColliderProfile> {

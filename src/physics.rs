@@ -34,13 +34,16 @@ pub(crate) fn separate_enemies(
 ) {
     let mut aabbs: Vec<BuildAabb> = Vec::new();
     for (transform, collider, dimensions, prefab_id) in &objects {
-        let half_y = dimensions.size.y * 0.5;
+        let scale_y = safe_abs_scale_y(transform.scale);
+        let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+        let bottom_y = transform.translation.y - origin_y;
+        let top_y = bottom_y + dimensions.size.y;
         let interaction = library.interaction(prefab_id.0);
         let aabb = BuildAabb {
             center: Vec2::new(transform.translation.x, transform.translation.z),
             half: collider.half_extents,
-            bottom_y: transform.translation.y - half_y,
-            top_y: transform.translation.y + half_y,
+            bottom_y,
+            top_y,
             movement_block: interaction.movement_block,
             supports_standing: interaction.supports_standing,
         };
@@ -166,13 +169,16 @@ pub(crate) fn separate_commandables(
 
     let mut aabbs: Vec<BuildAabb> = Vec::new();
     for (transform, collider, dimensions, prefab_id) in &objects {
-        let half_y = dimensions.size.y * 0.5;
+        let scale_y = safe_abs_scale_y(transform.scale);
+        let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+        let bottom_y = transform.translation.y - origin_y;
+        let top_y = bottom_y + dimensions.size.y;
         let interaction = library.interaction(prefab_id.0);
         let aabb = BuildAabb {
             center: Vec2::new(transform.translation.x, transform.translation.z),
             half: collider.half_extents,
-            bottom_y: transform.translation.y - half_y,
-            top_y: transform.translation.y + half_y,
+            bottom_y,
+            top_y,
             movement_block: interaction.movement_block,
             supports_standing: interaction.supports_standing,
         };
@@ -232,10 +238,7 @@ pub(crate) fn separate_commandables(
             (PLAYER_Y, HERO_HEIGHT_WORLD)
         } else {
             (
-                library
-                    .size(prefab_id.0)
-                    .map(|size| size.y * 0.5 * scale_y)
-                    .unwrap_or(0.0),
+                library.ground_origin_y_or_default(prefab_id.0) * scale_y,
                 library
                     .size(prefab_id.0)
                     .map(|size| size.y * scale_y)
@@ -323,13 +326,16 @@ pub(crate) fn separate_player_from_enemies(
 
     let mut aabbs: Vec<BuildAabb> = Vec::new();
     for (transform, collider, dimensions, prefab_id) in &objects {
-        let half_y = dimensions.size.y * 0.5;
+        let scale_y = safe_abs_scale_y(transform.scale);
+        let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+        let bottom_y = transform.translation.y - origin_y;
+        let top_y = bottom_y + dimensions.size.y;
         let interaction = library.interaction(prefab_id.0);
         let aabb = BuildAabb {
             center: Vec2::new(transform.translation.x, transform.translation.z),
             half: collider.half_extents,
-            bottom_y: transform.translation.y - half_y,
-            top_y: transform.translation.y + half_y,
+            bottom_y,
+            top_y,
             movement_block: interaction.movement_block,
             supports_standing: interaction.supports_standing,
         };
@@ -437,6 +443,7 @@ mod tests {
             object_id: building_id,
             label: "TestBuilding".into(),
             size: Vec3::new(2.0, 2.0, 2.0),
+            ground_origin_y: None,
             collider: ColliderProfile::AabbXZ {
                 half_extents: Vec2::splat(1.0),
             },
@@ -463,6 +470,7 @@ mod tests {
             object_id: unit_id,
             label: "TestUnit".into(),
             size: Vec3::new(1.0, 2.0, 1.0),
+            ground_origin_y: None,
             collider: ColliderProfile::CircleXZ { radius: 0.5 },
             interaction: ObjectInteraction::none(),
             aim: None,
@@ -525,6 +533,7 @@ mod tests {
             object_id: unit_id,
             label: "ScaledUnit".into(),
             size: Vec3::new(1.0, 2.0, 1.0),
+            ground_origin_y: None,
             collider: ColliderProfile::CircleXZ { radius: 0.5 },
             interaction: ObjectInteraction::none(),
             aim: None,
@@ -562,6 +571,57 @@ mod tests {
         assert!(
             (transform.translation.y - 2.0).abs() < 1e-4,
             "expected y≈2.0 for scale=2 (half-height), got {}",
+            transform.translation.y
+        );
+    }
+
+    #[test]
+    fn commandable_ground_origin_override_is_used() {
+        let mut library = ObjectLibrary::default();
+
+        let unit_id: u128 = 0xBEEF;
+        library.upsert(ObjectDef {
+            object_id: unit_id,
+            label: "GroundedUnit".into(),
+            size: Vec3::new(1.0, 2.0, 1.0),
+            ground_origin_y: Some(0.25),
+            collider: ColliderProfile::CircleXZ { radius: 0.5 },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let mut world = World::new();
+        world.insert_resource(State::<GameMode>::new(GameMode::Build));
+        world.insert_resource(Game::default());
+        world.insert_resource(library);
+
+        let unit_entity = world
+            .spawn((
+                Commandable,
+                ObjectPrefabId(unit_id),
+                Collider { radius: 0.5 },
+                Transform::from_xyz(0.0, 10.0, 0.0).with_scale(Vec3::splat(2.0)),
+            ))
+            .id();
+
+        let _ = world.run_system_once(separate_commandables);
+
+        let transform = world.get::<Transform>(unit_entity).expect("unit transform");
+        assert!(
+            (transform.translation.y - 0.5).abs() < 1e-4,
+            "expected y≈0.5 for ground_origin_y=0.25 and scale=2.0, got {}",
             transform.translation.y
         );
     }

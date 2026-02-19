@@ -5939,6 +5939,7 @@ fn build_component_subset_workspace_defs(
         object_id: root_id,
         label: "gen3d_draft".into(),
         size: Vec3::ONE,
+        ground_origin_y: None,
         collider: crate::object::registry::ColliderProfile::None,
         interaction: crate::object::registry::ObjectInteraction::none(),
         aim: None,

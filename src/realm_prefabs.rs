@@ -148,6 +148,7 @@ struct PrefabFileV1 {
     role: PrefabRoleV1,
     label: String,
     size: Vec3Json,
+    ground_origin_y: Option<f32>,
     collider: ColliderProfileJson,
     interaction: ObjectInteractionJson,
     aim: Option<AimProfileJson>,
@@ -168,6 +169,7 @@ impl PrefabFileV1 {
             role,
             label: def.label.to_string(),
             size: Vec3Json::from_vec3(def.size),
+            ground_origin_y: def.ground_origin_y,
             collider: ColliderProfileJson::from_profile(def.collider),
             interaction: ObjectInteractionJson::from_interaction(def.interaction),
             aim: def.aim.as_ref().map(AimProfileJson::from_aim),
@@ -185,10 +187,21 @@ impl PrefabFileV1 {
         let prefab_uuid = uuid::Uuid::parse_str(self.prefab_id.trim())
             .map_err(|err| format!("Invalid prefab_id UUID: {err}"))?;
 
+        let ground_origin_y = match self.ground_origin_y {
+            None => None,
+            Some(value) if value.is_finite() && value >= 0.0 => Some(value),
+            Some(value) => {
+                return Err(format!(
+                    "Invalid ground_origin_y (expected finite >= 0): {value}"
+                ));
+            }
+        };
+
         Ok(ObjectDef {
             object_id: prefab_uuid.as_u128(),
             label: self.label.clone().into(),
             size: self.size.to_vec3(),
+            ground_origin_y,
             collider: self.collider.to_profile()?,
             interaction: self.interaction.to_interaction()?,
             aim: self.aim.as_ref().map(AimProfileJson::to_aim).transpose()?,

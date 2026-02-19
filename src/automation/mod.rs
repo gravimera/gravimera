@@ -1637,10 +1637,7 @@ fn handle_request_main_thread(
                 let origin_y = if players.contains(entity) {
                     PLAYER_Y
                 } else {
-                    library
-                        .size(prefab_id.0)
-                        .map(|s| s.y * 0.5 * scale_y)
-                        .unwrap_or(0.0)
+                    library.ground_origin_y_or_default(prefab_id.0) * scale_y
                 };
                 let current_ground_y = (transform.translation.y - origin_y).max(0.0);
                 let height = library
@@ -1815,15 +1812,18 @@ fn collect_nav_obstacles(
 ) -> Vec<navigation::NavObstacle> {
     let mut obstacles = Vec::with_capacity(objects.iter().len());
     for (transform, collider, dimensions, prefab_id) in objects.iter() {
-        let half_y = dimensions.size.y * 0.5;
+        let scale_y = safe_abs_scale_y(transform.scale);
+        let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+        let bottom_y = transform.translation.y - origin_y;
+        let top_y = bottom_y + dimensions.size.y;
         let interaction = library.interaction(prefab_id.0);
         obstacles.push(navigation::NavObstacle {
             movement_block: interaction.movement_block,
             supports_standing: interaction.supports_standing,
             center: Vec2::new(transform.translation.x, transform.translation.z),
             half: collider.half_extents,
-            bottom_y: transform.translation.y - half_y,
-            top_y: transform.translation.y + half_y,
+            bottom_y,
+            top_y,
         });
     }
     obstacles

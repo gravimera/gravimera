@@ -20,6 +20,7 @@ pub(crate) fn def() -> ObjectDef {
         object_id: object_id(),
         label: LABEL.into(),
         size: Vec3::new(HUMAN_RADIUS * 2.0, HERO_HEIGHT_WORLD, HUMAN_RADIUS * 2.0),
+        ground_origin_y: None,
         collider: ColliderProfile::CircleXZ {
             radius: HUMAN_RADIUS,
         },

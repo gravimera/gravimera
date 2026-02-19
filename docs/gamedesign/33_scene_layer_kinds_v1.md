@@ -71,8 +71,10 @@ Generate one instance with:
 
 Placement notes (non-normative):
 
-- `origin.y` is the center height of the placed instances. To rest objects on the ground plane (y=0),
-  choose `origin.y = (prefab_size.y * abs(scale.y)) / 2`.
+- `origin.y` is the origin height of the placed instances. To rest objects on the ground plane (y=0),
+  choose:
+  - `origin.y = ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y`.
+  - otherwise `origin.y = (prefab_size.y * abs(scale.y)) / 2`.
 
 Constraints:
 
@@ -126,11 +128,12 @@ For each `k` in `[0, count)`:
 
 Placement notes (non-normative):
 
-- The `points[].y` values are the center heights of the placed instances. To rest objects on the ground plane (y=0),
-  author points with `y = (prefab_size.y * abs(scale.y)) / 2` (or set `scale` appropriately).
+- The `points[].y` values are the origin heights of the placed instances. To rest objects on the ground plane (y=0),
+  author points with:
+  - `y = ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y`.
+  - otherwise `y = (prefab_size.y * abs(scale.y)) / 2` (or set `scale` appropriately).
 
 Notes:
 
 - This layer does not impose orientation alignment to the path tangent in v1; authors can use
   multiple layers or explicit instances if they need per-instance rotations.
-

@@ -141,6 +141,7 @@ mod tests {
             object_id: prefab_id,
             label: "test_prefab".into(),
             size: Vec3::ONE,
+            ground_origin_y: None,
             collider: ColliderProfile::None,
             interaction: ObjectInteraction::none(),
             aim: None,
