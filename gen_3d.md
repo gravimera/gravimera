@@ -52,6 +52,7 @@ In practice, the agent usually gets good results by calling:
 - `llm_generate_component_v1` (generate one component’s primitives + anchors)
 - `render_preview_v1` + `validate_v1` / `smoke_check_v1` (self-review inputs)
 - `llm_review_delta_v1` (apply machine-appliable tweaks / request replan / request regen)
+  - If `preview_images` is omitted, the engine uses the latest render outputs; if those are missing or stale for the current `assembly_rev`, it auto-captures a minimal set of review renders (and only captures motion sheets when motion validation reports errors) before calling the model.
 
 Plan-level reuse:
 

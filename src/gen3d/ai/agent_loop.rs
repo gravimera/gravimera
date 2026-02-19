@@ -1090,6 +1090,126 @@ fn select_review_preview_images(
     out
 }
 
+fn review_capture_dimensions_for_max_dim(max_dim_px: u32) -> (u32, u32) {
+    let size = max_dim_px.clamp(256, 4096) as f32;
+    let base_w = super::super::GEN3D_REVIEW_CAPTURE_WIDTH_PX as f32;
+    let base_h = super::super::GEN3D_REVIEW_CAPTURE_HEIGHT_PX as f32;
+    let base_max = base_w.max(base_h).max(1.0);
+    let scale = (size / base_max).max(1e-3);
+    let w = (base_w * scale).round().clamp(256.0, 4096.0) as u32;
+    let h = (base_h * scale).round().clamp(256.0, 4096.0) as u32;
+    (w, h)
+}
+
+fn start_agent_llm_review_delta_call(
+    config: &AppConfig,
+    job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+    call: Gen3dToolCallJsonV1,
+) -> Result<(), String> {
+    let Some(openai) = job.openai.clone() else {
+        return Err("Missing OpenAI config".into());
+    };
+    let Some(pass_dir) = job.pass_dir.clone() else {
+        return Err("Missing pass dir".into());
+    };
+
+    let mut preview_images = parse_review_preview_images_from_args(&call.args);
+    let preview_images_were_explicit = !preview_images.is_empty();
+    if preview_images.is_empty() {
+        preview_images = job.agent.last_render_images.clone();
+    }
+    let include_original_images = call
+        .args
+        .get("include_original_images")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
+    let scene_graph_summary = super::build_gen3d_scene_graph_summary(
+        &run_id,
+        job.attempt,
+        job.pass,
+        &job.plan_hash,
+        job.assembly_rev,
+        &job.planned_components,
+        draft,
+    );
+    let smoke_results = super::build_gen3d_smoke_results(
+        &job.user_prompt_raw,
+        !job.user_images.is_empty(),
+        job.rig_move_cycle_m,
+        &job.planned_components,
+        draft,
+    );
+
+    let (include_move_sheet, include_attack_sheet) =
+        motion_sheets_needed_from_smoke_results(&smoke_results);
+
+    if !preview_images_were_explicit {
+        preview_images =
+            select_review_preview_images(&preview_images, include_move_sheet, include_attack_sheet);
+    }
+
+    let mut images_to_send: Vec<PathBuf> = Vec::new();
+    if include_original_images {
+        images_to_send.extend(job.user_images.clone());
+    }
+    images_to_send.extend(preview_images);
+    if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
+        images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
+    }
+
+    if let Some(dir) = job.pass_dir.as_deref() {
+        write_gen3d_json_artifact(Some(dir), "scene_graph_summary.json", &scene_graph_summary);
+        write_gen3d_json_artifact(Some(dir), "smoke_results.json", &smoke_results);
+    }
+
+    let system = super::prompts::build_gen3d_review_delta_system_instructions();
+    let user_text = super::prompts::build_gen3d_review_delta_user_text(
+        &run_id,
+        job.attempt,
+        &job.plan_hash,
+        job.assembly_rev,
+        &job.user_prompt_raw,
+        !job.user_images.is_empty(),
+        &scene_graph_summary,
+        &smoke_results,
+    );
+
+    let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
+        Arc::new(Mutex::new(None));
+    job.shared_result = Some(shared.clone());
+    let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+        message: "Reviewing…".into(),
+    }));
+    job.shared_progress = Some(progress.clone());
+    set_progress(&progress, "Calling model for review delta…");
+    job.agent.pending_llm_repair_attempt = 0;
+
+    let reasoning_effort = super::openai::cap_reasoning_effort(
+        &openai.model_reasoning_effort,
+        &config.gen3d_reasoning_effort_review,
+    );
+    spawn_gen3d_ai_text_thread(
+        shared,
+        progress,
+        job.session.clone(),
+        Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1),
+        openai,
+        reasoning_effort,
+        system,
+        user_text,
+        images_to_send,
+        pass_dir,
+        sanitize_prefix(&format!("tool_review_{}", &call.call_id)),
+    );
+    job.agent.pending_tool_call = Some(call);
+    job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::ReviewDelta);
+    job.phase = Gen3dAiPhase::AgentWaitingTool;
+    Ok(())
+}
+
 fn ensure_agent_regen_budget_len(job: &mut Gen3dAiJob) {
     let planned_len = job.planned_components.len();
     if job.regen_per_component.len() != planned_len {
@@ -3599,7 +3719,7 @@ fn execute_tool_call(
             }
         }
         TOOL_ID_LLM_REVIEW_DELTA => {
-            let Some(openai) = job.openai.clone() else {
+            if job.openai.is_none() {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
@@ -3614,107 +3734,59 @@ fn execute_tool_call(
                 ));
             };
 
-            let mut preview_images = parse_review_preview_images_from_args(&call.args);
-            let preview_images_were_explicit = !preview_images.is_empty();
-            if preview_images.is_empty() {
-                preview_images = job.agent.last_render_images.clone();
-            }
-            let include_original_images = call
-                .args
-                .get("include_original_images")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
+            let preview_images_were_explicit =
+                !parse_review_preview_images_from_args(&call.args).is_empty();
+            let last_render_fresh = !job.agent.last_render_images.is_empty()
+                && job.agent.last_render_assembly_rev == Some(job.assembly_rev);
+            let can_render = draft.total_non_projectile_primitive_parts() > 0;
 
-            let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
-            let scene_graph_summary = super::build_gen3d_scene_graph_summary(
-                &run_id,
-                job.attempt,
-                job.pass,
-                &job.plan_hash,
-                job.assembly_rev,
-                &job.planned_components,
-                draft,
-            );
-            let smoke_results = super::build_gen3d_smoke_results(
-                &job.user_prompt_raw,
-                !job.user_images.is_empty(),
-                job.rig_move_cycle_m,
-                &job.planned_components,
-                draft,
-            );
-
-            let (include_move_sheet, include_attack_sheet) =
-                motion_sheets_needed_from_smoke_results(&smoke_results);
-
-            if !preview_images_were_explicit {
-                preview_images = select_review_preview_images(
-                    &preview_images,
-                    include_move_sheet,
-                    include_attack_sheet,
+            if !preview_images_were_explicit && !last_render_fresh && can_render {
+                let smoke_results = super::build_gen3d_smoke_results(
+                    &job.user_prompt_raw,
+                    !job.user_images.is_empty(),
+                    job.rig_move_cycle_m,
+                    &job.planned_components,
+                    draft,
                 );
+                let (include_move_sheet, include_attack_sheet) =
+                    motion_sheets_needed_from_smoke_results(&smoke_results);
+                let include_motion_sheets = include_move_sheet || include_attack_sheet;
+
+                let prefix = sanitize_prefix(&format!("review_prerender_{}", call.call_id));
+                let views = [
+                    super::Gen3dReviewView::Front,
+                    super::Gen3dReviewView::LeftBack,
+                    super::Gen3dReviewView::RightBack,
+                    super::Gen3dReviewView::Top,
+                    super::Gen3dReviewView::Bottom,
+                ];
+                let (width_px, height_px) = review_capture_dimensions_for_max_dim(960);
+                match super::start_gen3d_review_capture(
+                    commands, images, &pass_dir, draft, false, &prefix, &views, width_px, height_px,
+                ) {
+                    Ok(state) => {
+                        job.agent.pending_render_include_motion_sheets = include_motion_sheets;
+                        job.agent.pending_tool_call = Some(call);
+                        job.agent.pending_render = Some(state);
+                        job.phase = Gen3dAiPhase::AgentCapturingRender;
+                        ToolCallOutcome::StartedAsync
+                    }
+                    Err(err) => ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    )),
+                }
+            } else {
+                let call_id = call.call_id.clone();
+                let tool_id = call.tool_id.clone();
+                match start_agent_llm_review_delta_call(config, job, draft, call) {
+                    Ok(()) => ToolCallOutcome::StartedAsync,
+                    Err(err) => ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    )),
+                }
             }
-
-            let mut images_to_send: Vec<PathBuf> = Vec::new();
-            if include_original_images {
-                images_to_send.extend(job.user_images.clone());
-            }
-            images_to_send.extend(preview_images);
-            if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
-                images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
-            }
-
-            if let Some(dir) = job.pass_dir.as_deref() {
-                write_gen3d_json_artifact(
-                    Some(dir),
-                    "scene_graph_summary.json",
-                    &scene_graph_summary,
-                );
-                write_gen3d_json_artifact(Some(dir), "smoke_results.json", &smoke_results);
-            }
-
-            let system = super::prompts::build_gen3d_review_delta_system_instructions();
-            let user_text = super::prompts::build_gen3d_review_delta_user_text(
-                &run_id,
-                job.attempt,
-                &job.plan_hash,
-                job.assembly_rev,
-                &job.user_prompt_raw,
-                !job.user_images.is_empty(),
-                &scene_graph_summary,
-                &smoke_results,
-            );
-
-            let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-                Arc::new(Mutex::new(None));
-            job.shared_result = Some(shared.clone());
-            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
-                message: "Reviewing…".into(),
-            }));
-            job.shared_progress = Some(progress.clone());
-            set_progress(&progress, "Calling model for review delta…");
-            job.agent.pending_llm_repair_attempt = 0;
-
-            let reasoning_effort = super::openai::cap_reasoning_effort(
-                &openai.model_reasoning_effort,
-                &config.gen3d_reasoning_effort_review,
-            );
-            spawn_gen3d_ai_text_thread(
-                shared,
-                progress,
-                job.session.clone(),
-                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1),
-                openai,
-                reasoning_effort,
-                system,
-                user_text,
-                images_to_send,
-                pass_dir,
-                sanitize_prefix(&format!("tool_review_{}", &call.call_id)),
-            );
-            job.agent.pending_tool_call = Some(call);
-            job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::ReviewDelta);
-            job.phase = Gen3dAiPhase::AgentWaitingTool;
-            ToolCallOutcome::StartedAsync
         }
         TOOL_ID_CREATE_WORKSPACE => {
             let from = call
@@ -4239,6 +4311,7 @@ fn poll_agent_tool(
                                     job.agent.next_workspace_seq = 1;
                                     job.agent.rendered_since_last_review = false;
                                     job.agent.last_render_images.clear();
+                                    job.agent.last_render_assembly_rev = None;
                                     job.agent.pending_regen_component_indices.clear();
                                     job.agent
                                         .pending_regen_component_indices_skipped_due_to_budget
@@ -5641,7 +5714,7 @@ fn poll_agent_component_batch(
 }
 
 fn poll_agent_render_capture(
-    _config: &AppConfig,
+    config: &AppConfig,
     time: &Time,
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -5657,11 +5730,11 @@ fn poll_agent_render_capture(
         With<Gen3dPreviewModelRoot>,
     >,
 ) {
-    fn finish(
+    fn finish_paths(
         workshop: &mut Gen3dWorkshop,
         job: &mut Gen3dAiJob,
         paths: Vec<PathBuf>,
-    ) -> Option<Gen3dToolResultJsonV1> {
+    ) -> Option<(Gen3dToolCallJsonV1, Vec<PathBuf>)> {
         for path in &paths {
             if std::fs::metadata(path).is_err() {
                 fail_job(
@@ -5676,18 +5749,13 @@ fn poll_agent_render_capture(
         job.agent.rendered_since_last_review = true;
         job.agent.ever_rendered = true;
         job.agent.last_render_images = paths.clone();
+        job.agent.last_render_assembly_rev = Some(job.assembly_rev);
 
         let Some(call) = job.agent.pending_tool_call.take() else {
             fail_job(workshop, job, "Internal error: missing pending tool call");
             return None;
         };
-        Some(Gen3dToolResultJsonV1::ok(
-            call.call_id,
-            call.tool_id,
-            serde_json::json!({
-                "images": paths.iter().map(|p| p.display().to_string()).collect::<Vec<String>>(),
-            }),
-        ))
+        Some((call, paths))
     }
 
     // If motion capture is active, keep polling it until it finishes, then finalize the tool result.
@@ -5709,9 +5777,52 @@ fn poll_agent_render_capture(
     // If motion capture finished, the combined static+motion paths live in `job.review_static_paths`.
     if job.agent.pending_render.is_none() && !job.review_static_paths.is_empty() {
         let paths = std::mem::take(&mut job.review_static_paths);
-        let Some(result) = finish(workshop, job, paths) else {
+        let Some((call, paths)) = finish_paths(workshop, job, paths) else {
             return;
         };
+
+        if call.tool_id == TOOL_ID_LLM_REVIEW_DELTA {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            match start_agent_llm_review_delta_call(config, job, draft, call) {
+                Ok(()) => return,
+                Err(err) => {
+                    let result = Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!("Review prerender completed, but review call failed: {err}"),
+                    );
+                    job.metrics.note_tool_result(&result);
+                    append_agent_trace_event_v1(
+                        job.run_dir.as_deref(),
+                        &AgentTraceEventV1::ToolResult {
+                            call_id: result.call_id.clone(),
+                            tool_id: result.tool_id.clone(),
+                            ok: result.ok,
+                            result: result.result.clone(),
+                            error: result.error.clone(),
+                        },
+                    );
+                    append_gen3d_jsonl_artifact(
+                        job.pass_dir.as_deref(),
+                        "tool_results.jsonl",
+                        &serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+                    );
+                    note_observable_tool_result(job, &result);
+                    job.agent.step_tool_results.push(result);
+                    job.phase = Gen3dAiPhase::AgentExecutingActions;
+                    return;
+                }
+            }
+        }
+
+        let result = Gen3dToolResultJsonV1::ok(
+            call.call_id,
+            call.tool_id,
+            serde_json::json!({
+                "images": paths.iter().map(|p| p.display().to_string()).collect::<Vec<String>>(),
+            }),
+        );
         job.metrics.note_tool_result(&result);
         append_agent_trace_event_v1(
             job.run_dir.as_deref(),
@@ -5775,9 +5886,51 @@ fn poll_agent_render_capture(
         return;
     }
 
-    let Some(result) = finish(workshop, job, paths) else {
+    let Some((call, paths)) = finish_paths(workshop, job, paths) else {
         return;
     };
+    if call.tool_id == TOOL_ID_LLM_REVIEW_DELTA {
+        let call_id = call.call_id.clone();
+        let tool_id = call.tool_id.clone();
+        match start_agent_llm_review_delta_call(config, job, draft, call) {
+            Ok(()) => return,
+            Err(err) => {
+                let result = Gen3dToolResultJsonV1::err(
+                    call_id,
+                    tool_id,
+                    format!("Review prerender completed, but review call failed: {err}"),
+                );
+                job.metrics.note_tool_result(&result);
+                append_agent_trace_event_v1(
+                    job.run_dir.as_deref(),
+                    &AgentTraceEventV1::ToolResult {
+                        call_id: result.call_id.clone(),
+                        tool_id: result.tool_id.clone(),
+                        ok: result.ok,
+                        result: result.result.clone(),
+                        error: result.error.clone(),
+                    },
+                );
+                append_gen3d_jsonl_artifact(
+                    job.pass_dir.as_deref(),
+                    "tool_results.jsonl",
+                    &serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+                );
+                note_observable_tool_result(job, &result);
+                job.agent.step_tool_results.push(result);
+                job.phase = Gen3dAiPhase::AgentExecutingActions;
+                return;
+            }
+        }
+    }
+
+    let result = Gen3dToolResultJsonV1::ok(
+        call.call_id,
+        call.tool_id,
+        serde_json::json!({
+            "images": paths.iter().map(|p| p.display().to_string()).collect::<Vec<String>>(),
+        }),
+    );
     job.metrics.note_tool_result(&result);
     append_agent_trace_event_v1(
         job.run_dir.as_deref(),
@@ -6079,6 +6232,13 @@ mod tests {
                 PathBuf::from("attack_sheet.png"),
             ]
         );
+    }
+
+    #[test]
+    fn review_capture_dimensions_for_max_dim_matches_expected_scale() {
+        assert_eq!(review_capture_dimensions_for_max_dim(960), (960, 540));
+        assert_eq!(review_capture_dimensions_for_max_dim(768), (768, 432));
+        assert_eq!(review_capture_dimensions_for_max_dim(1920), (1920, 1080));
     }
 
     #[test]
