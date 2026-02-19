@@ -75,6 +75,7 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
                 top: Val::Px(44.0),
                 left: Val::Px(10.0),
                 width: Val::Px(PANEL_WIDTH_PX),
+                height: Val::Px(680.0),
                 max_height: Val::Px(680.0),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(10.0),
@@ -131,9 +132,13 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
 
 pub(crate) fn model_library_update_visibility(
     mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    workspace: Res<crate::workspace_ui::WorkspaceUiState>,
     mut roots: Query<&mut Visibility, With<ModelLibraryRoot>>,
 ) {
-    let visible = matches!(mode.get(), GameMode::Build);
+    let visible = matches!(mode.get(), GameMode::Build)
+        && matches!(workspace.tab, crate::workspace_ui::WorkspaceTab::ObjectPreview)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
     for mut visibility in &mut roots {
         *visibility = if visible {
             Visibility::Visible

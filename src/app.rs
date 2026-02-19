@@ -510,6 +510,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.init_resource::<crate::gen3d::Gen3dToolFeedbackHistory>();
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
     app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();
+    app.init_resource::<crate::workspace_ui::WorkspaceUiState>();
     app.init_resource::<crate::world_drag::WorldDragState>();
     app.init_resource::<crate::scene_build_ai::SceneBuildAiRuntime>();
     app.init_resource::<crate::realm::ActiveRealmScene>();
@@ -572,6 +573,10 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(Startup, crate::gen3d::gen3d_load_tool_feedback_history);
 
     app.add_systems(Startup, setup::setup_rendered);
+    app.add_systems(
+        Startup,
+        crate::workspace_ui::setup_workspace_ui.after(setup::setup_rendered),
+    );
     app.add_systems(
         Startup,
         crate::scene_authoring_ui::setup_scene_authoring_ui.after(setup::setup_rendered),
@@ -642,6 +647,29 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .after(crate::scene_authoring_ui::scene_ui_text_input),
         )
             .after(bevy::input::InputSystems),
+    );
+
+    app.add_systems(
+        Update,
+        (
+            crate::workspace_ui::workspace_ui_update_visibility,
+            crate::workspace_ui::workspace_ui_dropdown_list_visibility
+                .after(crate::workspace_ui::workspace_ui_update_visibility),
+            crate::workspace_ui::workspace_ui_update_labels
+                .after(crate::workspace_ui::workspace_ui_dropdown_list_visibility),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            crate::workspace_ui::workspace_ui_dropdown_button,
+            crate::workspace_ui::workspace_ui_dropdown_option_buttons
+                .after(crate::workspace_ui::workspace_ui_dropdown_button),
+            crate::workspace_ui::workspace_ui_action_button
+                .after(crate::workspace_ui::workspace_ui_dropdown_option_buttons),
+        )
+            .run_if(console::console_closed)
+            .run_if(crate::automation::local_input_enabled),
     );
 
     app.add_systems(

@@ -42,6 +42,7 @@ mod scene_validation;
 mod setup;
 mod types;
 mod ui;
+mod workspace_ui;
 mod world_drag;
 
 fn main() {

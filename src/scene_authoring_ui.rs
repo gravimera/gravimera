@@ -62,6 +62,31 @@ impl Default for SceneAuthoringUiState {
 }
 
 impl SceneAuthoringUiState {
+    pub(crate) fn set_open(&mut self, open: bool) {
+        if open {
+            if self.open {
+                return;
+            }
+            self.open = true;
+            self.realms_dirty = true;
+            self.scenes_dirty = true;
+            self.error = None;
+            return;
+        }
+
+        if !self.open {
+            return;
+        }
+        self.open = false;
+        self.realm_dropdown_open = false;
+        self.focused_field = SceneUiField::None;
+    }
+
+    pub(crate) fn toggle_open(&mut self) {
+        let open = !self.open;
+        self.set_open(open);
+    }
+
     pub(crate) fn set_status(&mut self, status: impl Into<String>) {
         self.status = status.into();
     }
@@ -135,38 +160,6 @@ pub(crate) struct SceneUiActionButton {
 }
 
 pub(crate) fn setup_scene_authoring_ui(mut commands: Commands) {
-    commands
-        .spawn((
-            Button,
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(8.0),
-                left: Val::Px(92.0),
-                padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60)),
-            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-            Outline {
-                width: Val::Px(1.0),
-                color: Color::srgba(0.25, 0.25, 0.30, 0.65),
-                offset: Val::Px(0.0),
-            },
-            ZIndex(PANEL_Z_INDEX + 10),
-            SceneUiToggleButton,
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("Scene"),
-                TextFont {
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.92, 0.92, 0.96)),
-            ));
-        });
-
     commands
         .spawn((
             Node {
