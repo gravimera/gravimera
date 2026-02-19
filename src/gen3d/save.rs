@@ -580,12 +580,12 @@ fn collider_half_xz(collider: ColliderProfile, size: Vec3) -> Vec2 {
 }
 
 pub(crate) fn gen3d_save_button(
-    mode: Res<State<crate::types::GameMode>>,
-    active: Res<crate::realm::ActiveRealmScene>,
+    build_scene: Res<State<crate::types::BuildScene>>,
     mut commands: Commands,
     mut render: Gen3dSaveRenderWorld,
     mut library: ResMut<ObjectLibrary>,
     mut workshop: ResMut<Gen3dWorkshop>,
+    mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
     mut job: ResMut<Gen3dAiJob>,
     draft: Res<Gen3dDraft>,
     player_q: Query<(&Transform, &Collider), With<Player>>,
@@ -596,7 +596,7 @@ pub(crate) fn gen3d_save_button(
         With<Gen3dSaveButton>,
     >,
 ) {
-    if !matches!(mode.get(), crate::types::GameMode::Gen3D) {
+    if !matches!(build_scene.get(), crate::types::BuildScene::Preview) {
         return;
     }
 
@@ -638,8 +638,7 @@ pub(crate) fn gen3d_save_button(
                 return;
             };
 
-            if let Err(err) = gen3d_save_current_draft_from_api(
-                &active.realm_id,
+            match gen3d_save_current_draft_from_api(
                 &mut commands,
                 &render.asset_server,
                 &render.assets,
@@ -655,8 +654,11 @@ pub(crate) fn gen3d_save_button(
                 player_collider,
                 &mut scene_saves,
             ) {
-                workshop.error = Some(err);
-                workshop.status = "Save failed.".into();
+                Ok(_) => model_library.mark_models_dirty(),
+                Err(err) => {
+                    workshop.error = Some(err);
+                    workshop.status = "Save failed.".into();
+                }
             }
         }
     }
@@ -665,7 +667,6 @@ pub(crate) fn gen3d_save_button(
 }
 
 pub(crate) fn gen3d_save_current_draft_from_api(
-    realm_id: &str,
     commands: &mut Commands,
     asset_server: &AssetServer,
     assets: &SceneAssets,
@@ -690,7 +691,11 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         defs: draft.defs.clone(),
     };
     let (saved_root_id, defs) = draft_to_saved_defs(&snapshot)?;
-    crate::realm_prefabs::save_generated_prefab_defs_to_realm(realm_id, saved_root_id, &defs)?;
+    let depot_prefabs_dir = crate::model_depot::save_model_prefab_defs_to_depot(
+        saved_root_id,
+        saved_root_id,
+        &defs,
+    )?;
     for def in defs {
         library.upsert(def);
     }
@@ -699,7 +704,13 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         return Err("Cannot save: missing saved prefab def.".into());
     };
 
-    save_generated_prefab_descriptor_best_effort(realm_id, root_def, library, job, workshop);
+    save_generated_prefab_descriptor_best_effort(
+        &depot_prefabs_dir,
+        root_def,
+        library,
+        job,
+        workshop,
+    );
 
     let size = root_def.size;
     let half_xz = collider_half_xz(root_def.collider, size);
@@ -784,9 +795,11 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     );
 
     workshop.status = if mobility {
-        "Saved model as a unit next to the hero. Exit Gen3D to select and move it.".into()
+        "Saved model to the depot and spawned it next to the hero. Exit Gen3D to select and move it."
+            .into()
     } else {
-        "Saved model to the world. Exit Gen3D to move/rotate/scale it.".into()
+        "Saved model to the depot and spawned it to the world. Exit Gen3D to move/rotate/scale it."
+            .into()
     };
     workshop.error = None;
     scene_saves.write(SceneSaveRequest::new("Gen3D saved model"));
@@ -834,7 +847,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
 }
 
 fn save_generated_prefab_descriptor_best_effort(
-    realm_id: &str,
+    prefabs_dir: &std::path::Path,
     root_def: &ObjectDef,
     library: &ObjectLibrary,
     job: &Gen3dAiJob,
@@ -1088,8 +1101,7 @@ fn save_generated_prefab_descriptor_best_effort(
         .unwrap_or(0);
 
     let prefab_uuid = uuid::Uuid::from_u128(root_def.object_id).to_string();
-    let prefab_json = crate::realm_prefabs::realm_generated_prefabs_dir(realm_id)
-        .join(format!("{prefab_uuid}.json"));
+    let prefab_json = prefabs_dir.join(format!("{prefab_uuid}.json"));
     let descriptor_path =
         crate::prefab_descriptors::prefab_descriptor_path_for_prefab_json(&prefab_json);
 

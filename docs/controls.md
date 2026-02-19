@@ -6,6 +6,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 
 - Toggle Build/Play: `Tab`
 - Scene Builder panel: click **Scene** (top-left)
+- Switch Build scene (Realm/Preview): click **Preview** / **Realm** (top-left; Build mode only)
 - Console: `Enter` (commands: `/easy`, `/hard`, `/hell`)
 - Zoom: mouse wheel (in/out; no orbit/rotation)
 - Camera pan (mouse): move cursor near the window edge
@@ -57,6 +58,6 @@ Units in Build mode:
 - Play selected motions (units/build objects): `1..9` and `0` (slot 10)
 - Restart: `R`
 
-## Gen3D
+## Build Preview (Gen3D)
 
-Enter/exit Gen3D using the in-game **Gen3D** button. Full workflow: `gen_3d.md`.
+Enter/exit the Gen3D workshop by switching Build scenes using the in-game **Preview** / **Realm** button. Full workflow: `gen_3d.md`.

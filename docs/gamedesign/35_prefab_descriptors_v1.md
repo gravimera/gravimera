@@ -24,15 +24,22 @@ definition in `docs/gamedesign/34_realm_prefabs_v1.md`.
 
 ## Directory Layout
 
-Prefab descriptor files live **next to** their prefab definition JSON:
+Prefab descriptor files live **next to** their prefab definition JSON.
+
+They may be stored either:
+
+- in a realm prefab pack (portable/sharable), or
+- in the local model depot (realm-independent library).
 
 - `~/.gravimera/realm/<realm_id>/prefabs/packs/<pack_id>/prefabs/<prefab_uuid>.json`
 - `~/.gravimera/realm/<realm_id>/prefabs/packs/<pack_id>/prefabs/<prefab_uuid>.desc.json`
+- `~/.gravimera/depot/models/<model_uuid>/prefabs/<prefab_uuid>.json`
+- `~/.gravimera/depot/models/<model_uuid>/prefabs/<prefab_uuid>.desc.json`
 
 Notes:
 
 - `<prefab_uuid>` is the prefab id (UUID). The filename should match the document’s `prefab_id`.
-- `generated` is the reserved pack id for engine/AI-generated prefabs (Gen3D/Object agent).
+- `generated` is the reserved pack id for engine/AI-generated prefabs stored inside a realm pack.
 
 ## Descriptor Document: `PrefabDescriptorFileV1`
 

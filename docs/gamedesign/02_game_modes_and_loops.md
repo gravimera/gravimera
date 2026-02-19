@@ -17,6 +17,11 @@ Build mode is for placing and editing objects in a scene:
 
 Build mode is not “paused by definition”; a realm can be live while authoring, but certain high-impact operations require permissions (see API design).
 
+Build mode has two scene views:
+
+- **Realm scene**: the normal in-world camera view where instances live.
+- **3D Preview scene**: an asset-creation view for Gen3D (workshop UI + model preview). Gen3D exists only in this view.
+
 ### Play Mode (Gameplay)
 
 Play mode is for moment-to-moment gameplay:
@@ -26,9 +31,9 @@ Play mode is for moment-to-moment gameplay:
 - interacting with NPCs (dialogue, trades, quest handoffs),
 - traveling across scenes via portals.
 
-### Gen3D Workshop Mode (Asset Creation)
+### Build: 3D Preview Scene (Gen3D Workshop)
 
-Gen3D is the in-game workflow for generating new prefabs from prompts and optional reference images, then saving them into the realm so they are playable as units/buildings/props.
+Gen3D is the in-game workflow for generating new prefabs from prompts and optional reference images, then saving them into the **local model depot** so they can be spawned into the world as units/buildings/props.
 
 Gen3D is an authoring tool; it does not define gameplay rules. Generated prefabs become ordinary objects that can be assigned mobility/interaction/attack/brains.
 

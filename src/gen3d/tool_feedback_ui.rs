@@ -1,20 +1,20 @@
 use bevy::prelude::*;
 
 use crate::config::AppConfig;
-use crate::types::GameMode;
+use crate::types::BuildScene;
 
 use super::state::*;
 use super::tool_feedback::{gen3d_cache_base_dir, Gen3dToolFeedbackHistory};
 
 pub(crate) fn gen3d_side_tab_buttons(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut buttons: Query<
         (&Interaction, &Gen3dSideTabButton, &mut BackgroundColor),
         Changed<Interaction>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -36,7 +36,7 @@ pub(crate) fn gen3d_side_tab_buttons(
 }
 
 pub(crate) fn gen3d_update_side_tab_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     mut panels: ParamSet<(
         Query<(&mut Node, &mut Visibility), With<Gen3dStatusPanelRoot>>,
@@ -45,7 +45,7 @@ pub(crate) fn gen3d_update_side_tab_ui(
     mut buttons: Query<(&Gen3dSideTabButton, &Interaction, &mut BackgroundColor)>,
     mut texts: Query<(&Gen3dSideTabButtonText, &mut Text)>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -94,13 +94,13 @@ pub(crate) fn gen3d_update_side_tab_ui(
 }
 
 pub(crate) fn gen3d_update_tool_feedback_text(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     config: Res<AppConfig>,
     workshop: Res<Gen3dWorkshop>,
     history: Res<Gen3dToolFeedbackHistory>,
     mut texts: Query<&mut Text, With<Gen3dToolFeedbackText>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -157,7 +157,7 @@ pub(crate) fn gen3d_update_tool_feedback_text(
 }
 
 pub(crate) fn gen3d_tool_feedback_scroll_wheel(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
@@ -166,7 +166,7 @@ pub(crate) fn gen3d_tool_feedback_scroll_wheel(
         With<Gen3dToolFeedbackScrollPanel>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if !matches!(workshop.side_tab, Gen3dSideTab::ToolFeedback) {
@@ -208,13 +208,13 @@ pub(crate) fn gen3d_tool_feedback_scroll_wheel(
 }
 
 pub(crate) fn gen3d_update_tool_feedback_scrollbar_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     panels: Query<&ComputedNode, With<Gen3dToolFeedbackScrollPanel>>,
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dToolFeedbackScrollbarTrack>>,
     mut thumbs: Query<&mut Node, With<Gen3dToolFeedbackScrollbarThumb>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if !matches!(workshop.side_tab, Gen3dSideTab::ToolFeedback) {
@@ -261,7 +261,7 @@ pub(crate) fn gen3d_update_tool_feedback_scrollbar_ui(
 }
 
 pub(crate) fn gen3d_copy_tool_feedback_buttons(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     config: Res<AppConfig>,
     mut workshop: ResMut<Gen3dWorkshop>,
     history: Res<Gen3dToolFeedbackHistory>,
@@ -275,7 +275,7 @@ pub(crate) fn gen3d_copy_tool_feedback_buttons(
         Changed<Interaction>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 

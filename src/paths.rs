@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 const GRAVIMERA_HOME_ENV: &str = "GRAVIMERA_HOME";
 const REALMS_DIR_NAME: &str = "realm";
+const DEPOT_DIR_NAME: &str = "depot";
+const DEPOT_MODELS_DIR_NAME: &str = "models";
 const DEFAULT_REALM_ID: &str = "default";
 const DEFAULT_SCENE_ID: &str = "default";
 
@@ -57,6 +59,7 @@ pub(crate) fn ensure_default_dirs() -> std::io::Result<()> {
     let base = gravimera_dir();
     std::fs::create_dir_all(&base)?;
     std::fs::create_dir_all(realms_dir())?;
+    std::fs::create_dir_all(depot_models_dir())?;
     std::fs::create_dir_all(default_cache_dir())?;
     std::fs::create_dir_all(default_gen3d_cache_dir())?;
     Ok(())
@@ -64,6 +67,14 @@ pub(crate) fn ensure_default_dirs() -> std::io::Result<()> {
 
 pub(crate) fn realms_dir() -> PathBuf {
     gravimera_dir().join(REALMS_DIR_NAME)
+}
+
+pub(crate) fn depot_dir() -> PathBuf {
+    gravimera_dir().join(DEPOT_DIR_NAME)
+}
+
+pub(crate) fn depot_models_dir() -> PathBuf {
+    depot_dir().join(DEPOT_MODELS_DIR_NAME)
 }
 
 pub(crate) fn default_realm_id() -> &'static str {

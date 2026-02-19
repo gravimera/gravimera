@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use std::path::PathBuf;
 
 use crate::object::registry::{ObjectDef, ObjectPartKind};
-use crate::types::GameMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Gen3dSpeedMode {
@@ -26,15 +25,6 @@ impl Gen3dSpeedMode {
 
     pub(crate) fn short_label(self) -> &'static str {
         "L3"
-    }
-}
-
-#[derive(Resource, Clone, Copy)]
-pub(crate) struct Gen3dReturnMode(pub(crate) GameMode);
-
-impl Default for Gen3dReturnMode {
-    fn default() -> Self {
-        Self(GameMode::Build)
     }
 }
 

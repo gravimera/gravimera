@@ -373,6 +373,13 @@ pub(crate) fn load_realm_prefab_descriptors_into_library(
     load_prefab_descriptors_from_packs_dir(&packs_dir, library)
 }
 
+pub(crate) fn load_prefab_descriptors_from_dir(
+    root: &Path,
+    library: &mut PrefabDescriptorLibrary,
+) -> Result<usize, String> {
+    load_prefab_descriptors_from_packs_dir(root, library)
+}
+
 fn load_prefab_descriptors_from_packs_dir(
     packs_dir: &Path,
     library: &mut PrefabDescriptorLibrary,

@@ -9,12 +9,15 @@ mod common;
 mod config;
 mod console;
 mod constants;
+mod cursor_pick;
 mod effects;
 mod enemies;
 mod gen3d;
 mod geometry;
 mod headless;
 mod locomotion;
+mod model_depot;
+mod model_library_ui;
 mod model_tool;
 mod models;
 mod navigation;
@@ -39,6 +42,7 @@ mod scene_validation;
 mod setup;
 mod types;
 mod ui;
+mod world_drag;
 
 fn main() {
     app::run();

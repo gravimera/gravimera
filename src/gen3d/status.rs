@@ -1,11 +1,11 @@
 use bevy::prelude::*;
 
-use crate::types::GameMode;
+use crate::types::BuildScene;
 
 use super::state::*;
 
 pub(crate) fn gen3d_status_scroll_wheel(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
@@ -14,7 +14,7 @@ pub(crate) fn gen3d_status_scroll_wheel(
         With<Gen3dStatusScrollPanel>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if !matches!(workshop.side_tab, Gen3dSideTab::Status) {
@@ -56,13 +56,13 @@ pub(crate) fn gen3d_status_scroll_wheel(
 }
 
 pub(crate) fn gen3d_update_status_scrollbar_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     panels: Query<&ComputedNode, With<Gen3dStatusScrollPanel>>,
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dStatusScrollbarTrack>>,
     mut thumbs: Query<&mut Node, With<Gen3dStatusScrollbarThumb>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if !matches!(workshop.side_tab, Gen3dSideTab::Status) {

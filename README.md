@@ -66,11 +66,15 @@ By default Gravimera stores runtime data under `~/.gravimera/`:
 
 - `~/.gravimera/config.toml` (settings, OpenAI)
 - `~/.gravimera/openai_capabilities_cache.json` (cached OpenAI-compatible endpoint capabilities, keyed by `base_url` + `model`)
+- `~/.gravimera/depot/models/` (local 3D model depot; Gen3D saves generated models here; layout spec `docs/gamedesign/36_model_depot_v1.md`)
+  - `~/.gravimera/depot/models/<model_uuid>/prefabs/`
+    - `.../<prefab_uuid>.json` (structural prefab def; spec `docs/gamedesign/34_realm_prefabs_v1.md`)
+    - `.../<prefab_uuid>.desc.json` (semantic descriptor; spec `docs/gamedesign/35_prefab_descriptors_v1.md`)
 - `~/.gravimera/realm/` (realms + scenes)
 - `~/.gravimera/realm/active.json` (active realm/scene selection)
-  - `~/.gravimera/realm/<realm_id>/prefabs/packs/` (realm-shared prefab packs; Gen3D saves to `packs/generated/`)
+  - `~/.gravimera/realm/<realm_id>/prefabs/packs/` (realm-shared prefab packs)
     - `.../<prefab_uuid>.json` (structural prefab def; spec `docs/gamedesign/34_realm_prefabs_v1.md`)
-    - `.../<prefab_uuid>.desc.json` (semantic descriptor; Gen3D writes derived facts + plan/motion summaries and best-effort AI-generated `text.short` + `tags`; spec `docs/gamedesign/35_prefab_descriptors_v1.md`)
+    - `.../<prefab_uuid>.desc.json` (semantic descriptor; spec `docs/gamedesign/35_prefab_descriptors_v1.md`)
   - `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
 - `~/.gravimera/cache/` (Gen3D artifacts, logs, screenshots)
 

@@ -555,7 +555,7 @@ pub(crate) fn setup_rendered(
         ))
         .with_children(|parent| {
             parent.spawn((
-                Text::new("Gen3D"),
+                Text::new("Preview"),
                 TextFont {
                     font_size: 16.0,
                     ..default()

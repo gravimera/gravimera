@@ -50,79 +50,6 @@ fn ray_plane_intersection_y(ray: Ray3d, y: f32) -> Option<Vec3> {
     Some(origin + direction * t)
 }
 
-#[derive(Clone, Copy)]
-struct MovePick {
-    hit: Vec3,
-    surface_y: f32,
-    block_top: Option<(Vec2, Vec2)>,
-}
-
-fn cursor_move_pick(
-    window: &Window,
-    camera: &Camera,
-    camera_transform: &GlobalTransform,
-    library: &ObjectLibrary,
-    objects: &Query<
-        (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
-        With<BuildObject>,
-    >,
-) -> Option<MovePick> {
-    let cursor_pos = window.cursor_position()?;
-    let ray = camera
-        .viewport_to_world(camera_transform, cursor_pos)
-        .ok()?;
-
-    let origin = ray.origin;
-    let direction = ray.direction.as_vec3();
-    let denom = direction.y;
-    if denom.abs() < 1e-5 {
-        return None;
-    }
-
-    let mut best_t = f32::INFINITY;
-    let mut pick = None;
-
-    let t_ground = (0.0 - origin.y) / denom;
-    if t_ground >= 0.0 {
-        best_t = t_ground;
-        pick = Some(MovePick {
-            hit: origin + direction * t_ground,
-            surface_y: 0.0,
-            block_top: None,
-        });
-    }
-
-    for (transform, collider, dimensions, prefab_id) in objects.iter() {
-        if !library.interaction(prefab_id.0).supports_standing {
-            continue;
-        }
-
-        let scale_y = safe_abs_scale_y(transform.scale);
-        let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-        let top_y = transform.translation.y - origin_y + dimensions.size.y;
-        let t = (top_y - origin.y) / denom;
-        if t < 0.0 || t >= best_t {
-            continue;
-        }
-
-        let hit = origin + direction * t;
-        let point = Vec2::new(hit.x, hit.z);
-        let center = Vec2::new(transform.translation.x, transform.translation.z);
-        if !point_inside_aabb_xz(point, center, collider.half_extents) {
-            continue;
-        }
-
-        best_t = t;
-        pick = Some(MovePick {
-            hit,
-            surface_y: top_y,
-            block_top: Some((center, collider.half_extents)),
-        });
-    }
-
-    pick
-}
-
 fn collect_nav_obstacles(
     objects: &Query<
         (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
@@ -232,6 +159,8 @@ pub(crate) fn selection_input(
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<GameMode>>,
     build: Res<BuildState>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    world_drag: Res<crate::world_drag::WorldDragState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
@@ -243,6 +172,18 @@ pub(crate) fn selection_input(
 ) {
     // While holding Space (fire), selection is disabled to avoid fighting the aim cursor.
     if keys.pressed(KeyCode::Space) {
+        selection.drag_start = None;
+        selection.drag_end = None;
+        return;
+    }
+
+    if model_library.is_drag_active() {
+        selection.drag_start = None;
+        selection.drag_end = None;
+        return;
+    }
+
+    if world_drag.blocks_selection() {
         selection.drag_start = None;
         selection.drag_end = None;
         return;
@@ -548,7 +489,8 @@ pub(crate) fn move_command_input(
 
     let goal_pick = if matches!(mode.get(), GameMode::Play) {
         pick_enemy_under_cursor(cursor, camera, &camera_global, &library, &enemies).or_else(|| {
-            cursor_move_pick(window, camera, &camera_global, &library, &objects).map(|pick| {
+            crate::cursor_pick::cursor_surface_pick(window, camera, &camera_global, &library, &objects)
+                .map(|pick| {
                 let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
                 if let Some((center, half)) = pick.block_top {
                     let min_half = BUILD_UNIT_SIZE * 0.5;
@@ -565,7 +507,8 @@ pub(crate) fn move_command_input(
             })
         })
     } else {
-        cursor_move_pick(window, camera, &camera_global, &library, &objects).map(|pick| {
+        crate::cursor_pick::cursor_surface_pick(window, camera, &camera_global, &library, &objects)
+            .map(|pick| {
             let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
             if let Some((center, half)) = pick.block_top {
                 let min_half = BUILD_UNIT_SIZE * 0.5;
@@ -693,6 +636,7 @@ pub(crate) fn keyboard_move_input(
     keys: Res<ButtonInput<KeyCode>>,
     slow_move: Res<SlowMoveMode>,
     mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     build: Res<BuildState>,
     mut move_state: ResMut<MoveCommandState>,
     camera_q: Query<&Transform, With<MainCamera>>,
@@ -709,7 +653,7 @@ pub(crate) fn keyboard_move_input(
         (With<Commandable>, Without<MainCamera>),
     >,
 ) {
-    if matches!(mode.get(), GameMode::Gen3D) {
+    if matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if matches!(mode.get(), GameMode::Build) && build.placing_active {
@@ -832,7 +776,6 @@ pub(crate) fn unit_animation_hotkeys(
                 return;
             }
         }
-        _ => return,
     }
     if selection.selected.is_empty() {
         return;

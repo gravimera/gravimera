@@ -1,6 +1,8 @@
 # Realm Prefabs (v1)
 
-This spec defines the **realm-shared prefab pack** format: how prefab definitions are stored on disk so any scene in the same realm can reuse them (including Gen3D-generated prefabs).
+This spec defines the **realm-shared prefab pack** format: how prefab definitions are stored on disk so any scene in the same realm can reuse them.
+
+Note: Gen3D-generated prefabs are stored in the **local model depot** (realm-independent) by default, and can be spawned into a realm as ordinary instances. Realm prefab packs remain the portable, shareable on-disk format for realm-scoped prefab definitions.
 
 ## Goals
 
@@ -18,7 +20,7 @@ Realm prefabs live under the realm directory:
 Notes:
 
 - `<pack_id>` is a stable identifier for a prefab pack (recommended: `snake_case` / `[a-z0-9_-]+`).
-- `generated` is a **reserved** pack id for engine/AI-generated prefabs (Gen3D/Object agent).
+- `generated` is a **reserved** pack id for engine/AI-generated prefabs stored inside a realm package.
 - `<prefab_uuid>.json` filename **should match** the document’s `prefab_id`.
 
 ## Prefab Document: `PrefabFileV1`

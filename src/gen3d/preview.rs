@@ -7,7 +7,7 @@ use crate::assets::SceneAssets;
 use crate::object::registry::{ColliderProfile, ObjectLibrary, ObjectPartKind};
 use crate::object::visuals::{MaterialCache, VisualSpawnSettings};
 use crate::types::{
-    AnimationChannelsActive, AttackClock, ForcedAnimationChannel, GameMode, LocomotionClock,
+    AnimationChannelsActive, AttackClock, BuildScene, ForcedAnimationChannel, LocomotionClock,
     ObjectPrefabId,
 };
 
@@ -225,7 +225,7 @@ pub(super) fn setup_preview_scene(
 }
 
 pub(crate) fn gen3d_preview_tick_selected_animation(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     time: Res<Time>,
     mut preview: ResMut<Gen3dPreview>,
     job: Res<Gen3dAiJob>,
@@ -242,7 +242,7 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
         With<Gen3dPreviewModelRoot>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     // Agent-driven render/motion capture sets locomotion/attack clocks deterministically.
@@ -315,7 +315,7 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
 }
 
 pub(crate) fn gen3d_preview_orbit_controls(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
@@ -339,7 +339,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
     mut preview: ResMut<Gen3dPreview>,
     mut cameras: Query<&mut Transform, With<Gen3dPreviewCamera>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let Ok(window) = windows.single() else {
@@ -435,7 +435,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
 }
 
 pub(crate) fn gen3d_apply_draft_to_preview(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
@@ -448,7 +448,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     mut preview: ResMut<Gen3dPreview>,
     existing: Query<Entity, With<Gen3dPreviewModelRoot>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let Some(preview_root) = preview.root else {
@@ -539,7 +539,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
 }
 
 pub(crate) fn gen3d_update_collision_overlay(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut commands: Commands,
     assets: Res<SceneAssets>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -547,7 +547,7 @@ pub(crate) fn gen3d_update_collision_overlay(
     mut preview: ResMut<Gen3dPreview>,
     existing: Query<Entity, With<Gen3dPreviewCollisionRoot>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if !preview.collision_dirty {

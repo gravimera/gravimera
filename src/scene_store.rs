@@ -1791,6 +1791,14 @@ pub(crate) fn load_scene_dat(
 ) {
     // Reset library to builtins + realm-shared prefabs for the active realm.
     *library = ObjectLibrary::default();
+    match crate::model_depot::load_depot_prefabs_into_library(&mut *library) {
+        Ok(count) => {
+            if count > 0 {
+                info!("Loaded {count} depot prefab defs.");
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
     match crate::realm_prefabs::load_realm_prefabs_into_library(&active.realm_id, &mut *library) {
         Ok(count) => {
             if count > 0 {
@@ -1805,6 +1813,14 @@ pub(crate) fn load_scene_dat(
 
     // Load optional realm prefab descriptors for the active realm.
     prefab_descriptors.clear();
+    match crate::model_depot::load_depot_prefab_descriptors_into_library(&mut *prefab_descriptors) {
+        Ok(count) => {
+            if count > 0 {
+                info!("Loaded {count} depot prefab descriptors.");
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
     match crate::prefab_descriptors::load_realm_prefab_descriptors_into_library(
         &active.realm_id,
         &mut *prefab_descriptors,
@@ -1897,6 +1913,14 @@ pub(crate) fn apply_pending_realm_scene_switch(
 
     // Reset library to builtins + realm-shared prefabs for the new realm.
     *library = ObjectLibrary::default();
+    match crate::model_depot::load_depot_prefabs_into_library(&mut *library) {
+        Ok(count) => {
+            if count > 0 {
+                info!("Loaded {count} depot prefab defs.");
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
     match crate::realm_prefabs::load_realm_prefabs_into_library(&active.realm_id, &mut *library) {
         Ok(count) => {
             if count > 0 {
@@ -1911,6 +1935,14 @@ pub(crate) fn apply_pending_realm_scene_switch(
 
     // Load optional realm prefab descriptors for the new realm.
     prefab_descriptors.clear();
+    match crate::model_depot::load_depot_prefab_descriptors_into_library(&mut *prefab_descriptors) {
+        Ok(count) => {
+            if count > 0 {
+                info!("Loaded {count} depot prefab descriptors.");
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
     match crate::prefab_descriptors::load_realm_prefab_descriptors_into_library(
         &active.realm_id,
         &mut *prefab_descriptors,

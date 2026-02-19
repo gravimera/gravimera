@@ -16,6 +16,7 @@ The product goals and intent live in the design docs in `docs/gamedesign/`. The 
 - Scene sources and build artifacts (git/process-friendly scenes): `docs/gamedesign/30_scene_sources_and_build_artifacts.md`
 - Realm prefab packs (v1): `docs/gamedesign/34_realm_prefabs_v1.md`
 - Prefab descriptors (v1): `docs/gamedesign/35_prefab_descriptors_v1.md`
+- Local model depot (v1): `docs/gamedesign/36_model_depot_v1.md`
 - Scene procedural layer kinds (v1): `docs/gamedesign/33_scene_layer_kinds_v1.md`
 - Scene sources patch format (BlueprintPatch subset): `docs/gamedesign/31_scene_sources_patch_v1.md`
 - Scene run directories + resume (durable artifacts): `docs/gamedesign/32_scene_runs_v1.md`

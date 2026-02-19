@@ -3,17 +3,17 @@ use bevy::prelude::*;
 use bevy::window::FileDragAndDrop;
 use std::path::PathBuf;
 
-use crate::types::GameMode;
+use crate::types::BuildScene;
 
 use super::ai::Gen3dAiJob;
 use super::state::*;
 
 pub(crate) fn gen3d_update_images_tip_visibility(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     mut tips: Query<(&mut Node, &mut Visibility), With<Gen3dImagesTipText>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let show = workshop.images.is_empty();
@@ -30,7 +30,7 @@ pub(crate) fn gen3d_update_images_tip_visibility(
 }
 
 pub(crate) fn gen3d_images_scroll_wheel(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
     mut panels: Query<
@@ -38,7 +38,7 @@ pub(crate) fn gen3d_images_scroll_wheel(
         With<Gen3dImagesScrollPanel>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let Ok(window) = windows.single() else {
@@ -78,12 +78,12 @@ pub(crate) fn gen3d_images_scroll_wheel(
 }
 
 pub(crate) fn gen3d_update_images_scrollbar_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     panels: Query<&ComputedNode, With<Gen3dImagesScrollPanel>>,
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dImagesScrollbarTrack>>,
     mut thumbs: Query<&mut Node, With<Gen3dImagesScrollbarThumb>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let Ok(panel) = panels.single() else {
@@ -126,7 +126,7 @@ pub(crate) fn gen3d_update_images_scrollbar_ui(
 }
 
 pub(crate) fn gen3d_clear_images_button(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut job: ResMut<Gen3dAiJob>,
     mut scroll_panels: Query<&mut ScrollPosition, With<Gen3dImagesScrollPanel>>,
@@ -135,7 +135,7 @@ pub(crate) fn gen3d_clear_images_button(
         (Changed<Interaction>, With<Gen3dClearImagesButton>),
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     for (interaction, mut bg) in &mut buttons {
@@ -171,13 +171,13 @@ pub(crate) fn gen3d_clear_images_button(
 }
 
 pub(crate) fn gen3d_handle_drag_and_drop(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     job: Res<Gen3dAiJob>,
     mut images: ResMut<Assets<Image>>,
     mut drag_and_drop: bevy::ecs::message::MessageReader<FileDragAndDrop>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -226,14 +226,14 @@ pub(crate) fn gen3d_handle_drag_and_drop(
 }
 
 pub(crate) fn gen3d_rebuild_images_list_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut commands: Commands,
     workshop: Res<Gen3dWorkshop>,
     list_root: Query<Entity, With<Gen3dImagesList>>,
     existing_items: Query<Entity, With<Gen3dImagesListItem>>,
     mut last_paths: Local<Vec<PathBuf>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let Ok(root) = list_root.single() else {
@@ -299,11 +299,11 @@ pub(crate) fn gen3d_rebuild_images_list_ui(
 }
 
 pub(crate) fn gen3d_thumbnail_button_open_viewer(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut buttons: Query<(&Interaction, &Gen3dThumbnailButton), Changed<Interaction>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     for (interaction, button) in &mut buttons {
@@ -318,7 +318,7 @@ pub(crate) fn gen3d_thumbnail_button_open_viewer(
 }
 
 pub(crate) fn gen3d_thumbnail_button_style_on_interaction(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     mut buttons: Query<
         (
@@ -330,7 +330,7 @@ pub(crate) fn gen3d_thumbnail_button_style_on_interaction(
         Changed<Interaction>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     for (interaction, button, mut bg, mut border) in &mut buttons {
@@ -340,7 +340,7 @@ pub(crate) fn gen3d_thumbnail_button_style_on_interaction(
 }
 
 pub(crate) fn gen3d_thumbnail_button_style_on_selection(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     mut last_selected: Local<Option<usize>>,
     mut buttons: Query<(
@@ -350,7 +350,7 @@ pub(crate) fn gen3d_thumbnail_button_style_on_selection(
         &mut BorderColor,
     )>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if *last_selected == workshop.image_viewer {
@@ -399,14 +399,14 @@ fn apply_gen3d_thumbnail_style(
 }
 
 pub(crate) fn gen3d_update_thumbnail_tooltip(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     workshop: Res<Gen3dWorkshop>,
     thumbnails: Query<(&Interaction, &Gen3dThumbnailButton)>,
     mut tooltip: Query<(&mut Node, &mut Visibility), With<Gen3dThumbnailTooltipRoot>>,
     mut tooltip_text: Query<&mut Text, With<Gen3dThumbnailTooltipText>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -470,11 +470,11 @@ pub(crate) fn gen3d_update_thumbnail_tooltip(
 }
 
 pub(crate) fn gen3d_image_viewer_keyboard_navigation(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     input: Res<ButtonInput<KeyCode>>,
     mut workshop: ResMut<Gen3dWorkshop>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let Some(current) = workshop.image_viewer else {
@@ -499,11 +499,11 @@ pub(crate) fn gen3d_image_viewer_keyboard_navigation(
 }
 
 pub(crate) fn gen3d_image_viewer_click_to_close(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut overlays: Query<&Interaction, (Changed<Interaction>, With<Gen3dImageViewerRoot>)>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if workshop.image_viewer.is_none() {
@@ -517,14 +517,14 @@ pub(crate) fn gen3d_image_viewer_click_to_close(
 }
 
 pub(crate) fn gen3d_update_image_viewer_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut commands: Commands,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     workshop: Res<Gen3dWorkshop>,
     existing: Query<Entity, With<Gen3dImageViewerRoot>>,
     mut last_open: Local<Option<usize>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 

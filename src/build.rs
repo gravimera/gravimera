@@ -387,7 +387,6 @@ pub(crate) fn toggle_game_mode(
         match mode.get() {
             GameMode::Build => next_mode.set(GameMode::Play),
             GameMode::Play => next_mode.set(GameMode::Build),
-            GameMode::Gen3D => {}
         }
     }
 }
@@ -432,6 +431,7 @@ pub(crate) fn enter_build_mode(
 pub(crate) fn enter_play_mode(
     mut commands: Commands,
     mut game: ResMut<Game>,
+    mut next_build_scene: ResMut<NextState<BuildScene>>,
     lasers: Query<Entity, With<Laser>>,
     enemy_projectiles: Query<Entity, With<EnemyProjectile>>,
     explosions: Query<Entity, With<ExplosionParticle>>,
@@ -439,6 +439,8 @@ pub(crate) fn enter_play_mode(
     mut preview: ResMut<BuildPreview>,
     player: Query<Entity, With<Player>>,
 ) {
+    next_build_scene.set(BuildScene::Realm);
+
     game.enemy_spawn.reset();
     game.fire_cooldown_secs = 0.0;
 

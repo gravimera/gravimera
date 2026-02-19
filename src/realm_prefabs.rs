@@ -34,12 +34,13 @@ pub(crate) fn ensure_realm_generated_prefabs_dir(realm_id: &str) -> Result<PathB
     Ok(dir)
 }
 
-pub(crate) fn save_generated_prefab_defs_to_realm(
-    realm_id: &str,
+pub(crate) fn save_prefab_defs_to_dir(
+    dir: &Path,
     root_prefab_id: u128,
     defs: &[ObjectDef],
 ) -> Result<(), String> {
-    let dir = ensure_realm_generated_prefabs_dir(realm_id)?;
+    std::fs::create_dir_all(dir)
+        .map_err(|err| format!("Failed to create {}: {err}", dir.display()))?;
 
     for def in defs {
         let role = if def.object_id == root_prefab_id {
@@ -59,18 +60,34 @@ pub(crate) fn save_generated_prefab_defs_to_realm(
     Ok(())
 }
 
+pub(crate) fn save_generated_prefab_defs_to_realm(
+    realm_id: &str,
+    root_prefab_id: u128,
+    defs: &[ObjectDef],
+) -> Result<(), String> {
+    let dir = ensure_realm_generated_prefabs_dir(realm_id)?;
+    save_prefab_defs_to_dir(&dir, root_prefab_id, defs)
+}
+
 pub(crate) fn load_realm_prefabs_into_library(
     realm_id: &str,
     library: &mut ObjectLibrary,
 ) -> Result<usize, String> {
     let root = realm_prefabs_root_dir(realm_id);
     let packs_dir = root.join("packs");
-    if !packs_dir.exists() {
+    load_prefabs_into_library_from_dir(&packs_dir, library)
+}
+
+pub(crate) fn load_prefabs_into_library_from_dir(
+    root: &Path,
+    library: &mut ObjectLibrary,
+) -> Result<usize, String> {
+    if !root.exists() {
         return Ok(0);
     }
 
     let mut loaded = 0usize;
-    let mut stack = vec![packs_dir];
+    let mut stack = vec![root.to_path_buf()];
     while let Some(next) = stack.pop() {
         let entries = std::fs::read_dir(&next)
             .map_err(|err| format!("Failed to list {}: {err}", next.display()))?;

@@ -14,7 +14,7 @@ use crate::object::registry::{
     builtin_object_id, ObjectPartDef, ObjectPartKind, PartAnimationDef, PartAnimationDriver,
     PartAnimationSlot,
 };
-use crate::types::{AnimationChannelsActive, AttackClock, GameMode, LocomotionClock};
+use crate::types::{AnimationChannelsActive, AttackClock, BuildScene, LocomotionClock};
 
 mod agent_loop;
 mod artifacts;
@@ -1050,7 +1050,7 @@ impl Gen3dMotionCaptureState {
 }
 
 pub(crate) fn gen3d_generate_button(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     config: Res<AppConfig>,
     log_sinks: Option<Res<crate::app::Gen3dLogSinks>>,
     mut workshop: ResMut<Gen3dWorkshop>,
@@ -1061,7 +1061,7 @@ pub(crate) fn gen3d_generate_button(
         (Changed<Interaction>, With<Gen3dGenerateButton>),
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -1082,7 +1082,7 @@ pub(crate) fn gen3d_generate_button(
                     continue;
                 }
                 match gen3d_start_build_from_api(
-                    mode.as_ref(),
+                    build_scene.as_ref(),
                     &config,
                     log_sinks.clone(),
                     &mut workshop,
@@ -1132,15 +1132,15 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
 }
 
 pub(crate) fn gen3d_start_build_from_api(
-    mode: &State<GameMode>,
+    build_scene: &State<BuildScene>,
     config: &AppConfig,
     log_sinks: Option<crate::app::Gen3dLogSinks>,
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
     draft: &mut Gen3dDraft,
 ) -> Result<(), String> {
-    if !matches!(mode.get(), GameMode::Gen3D) {
-        return Err("Gen3D build requires Gen3D mode.".into());
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return Err("Gen3D build requires Build Preview scene.".into());
     }
     if job.running {
         return Err("Gen3D build is already running (stop it first).".into());
@@ -1300,7 +1300,7 @@ fn max_components_for_speed(speed: Gen3dSpeedMode) -> usize {
 }
 
 pub(crate) fn gen3d_poll_ai_job(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     config: Res<AppConfig>,
     time: Res<Time>,
     mut commands: Commands,
@@ -1320,7 +1320,7 @@ pub(crate) fn gen3d_poll_ai_job(
     >,
     review_cameras: Query<Entity, With<Gen3dReviewCaptureCamera>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if !job.running {

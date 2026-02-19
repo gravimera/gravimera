@@ -503,13 +503,14 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.init_resource::<EnemyKillEffects>();
     app.init_resource::<SpawnRatios>();
     app.init_resource::<CommandConsole>();
-    app.init_resource::<crate::gen3d::Gen3dReturnMode>();
     app.init_resource::<crate::gen3d::Gen3dWorkshop>();
     app.init_resource::<crate::gen3d::Gen3dPreview>();
     app.init_resource::<crate::gen3d::Gen3dDraft>();
     app.init_resource::<crate::gen3d::Gen3dAiJob>();
     app.init_resource::<crate::gen3d::Gen3dToolFeedbackHistory>();
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
+    app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();
+    app.init_resource::<crate::world_drag::WorldDragState>();
     app.init_resource::<crate::scene_build_ai::SceneBuildAiRuntime>();
     app.init_resource::<crate::realm::ActiveRealmScene>();
     app.init_resource::<crate::realm::PendingRealmSceneSwitch>();
@@ -564,6 +565,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     );
 
     app.init_state::<GameMode>();
+    app.init_state::<BuildScene>();
     app.add_systems(PreUpdate, effects::clear_killed_enemies);
     app.add_systems(Update, try_set_primary_window_icon);
     app.add_systems(Startup, log_file_startup_banner);
@@ -573,6 +575,10 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(
         Startup,
         crate::scene_authoring_ui::setup_scene_authoring_ui.after(setup::setup_rendered),
+    );
+    app.add_systems(
+        Startup,
+        crate::model_library_ui::setup_model_library_ui.after(setup::setup_rendered),
     );
     app.add_systems(
         Startup,
@@ -616,7 +622,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             .after(rts::update_fire_control)
             .after(combat::unit_attack_execute)
             .before(crate::object::visuals::update_part_animations)
-            .run_if(not(in_state(GameMode::Gen3D))),
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(Update, crate::object::visuals::update_part_animations);
     app.add_systems(
@@ -641,11 +647,34 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(
         Update,
         (
+            crate::model_library_ui::model_library_update_visibility,
+            crate::model_library_ui::model_library_rebuild_list_ui
+                .after(crate::model_library_ui::model_library_update_visibility),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            crate::model_library_ui::model_library_item_button_interactions
+                .run_if(crate::automation::local_input_enabled),
+            crate::model_library_ui::model_library_drag_update
+                .after(crate::model_library_ui::model_library_item_button_interactions)
+                .run_if(crate::automation::local_input_enabled),
+            crate::model_library_ui::model_library_draw_drag_preview_gizmos
+                .after(crate::model_library_ui::model_library_drag_update),
+        )
+            .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed),
+    );
+
+    app.add_systems(
+        Update,
+        (
             console::toggle_command_console,
             console::command_console_text_input.after(console::toggle_command_console),
             console::update_command_console_ui.after(console::command_console_text_input),
         )
-            .run_if(not(in_state(GameMode::Gen3D)))
+            .run_if(in_state(BuildScene::Realm))
             .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(crate::automation::local_input_enabled),
     );
@@ -682,7 +711,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .after(crate::scene_authoring_ui::scene_ui_update_realm_scene_button_styles),
         )
             .run_if(console::console_closed)
-            .run_if(not(in_state(GameMode::Gen3D)))
+            .run_if(in_state(BuildScene::Realm))
             .run_if(crate::automation::local_input_enabled),
     );
     app.add_systems(
@@ -733,7 +762,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             crate::gen3d::gen3d_copy_tool_feedback_buttons
                 .run_if(crate::automation::local_input_enabled),
         )
-            .run_if(in_state(GameMode::Gen3D)),
+            .run_if(in_state(BuildScene::Preview)),
     );
     app.add_systems(
         Update,
@@ -749,7 +778,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .after(crate::gen3d::gen3d_apply_draft_to_preview)
                 .after(crate::gen3d::gen3d_collision_toggle_button),
         )
-            .run_if(in_state(GameMode::Gen3D)),
+            .run_if(in_state(BuildScene::Preview)),
     );
     app.add_systems(
         Update,
@@ -801,13 +830,13 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             crate::gen3d::gen3d_update_tool_feedback_text
                 .after(crate::gen3d::gen3d_update_side_tab_ui),
         )
-            .run_if(in_state(GameMode::Gen3D)),
+            .run_if(in_state(BuildScene::Preview)),
     );
     app.add_systems(
         Update,
         player::update_edge_scroll_cursor_indicator
             .after(console::update_command_console_ui)
-            .run_if(not(in_state(GameMode::Gen3D)))
+            .run_if(in_state(BuildScene::Realm))
             .run_if(crate::automation::local_input_enabled),
     );
     app.add_systems(
@@ -815,8 +844,24 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         (common::restart_game, build::toggle_game_mode)
             .run_if(console::console_closed)
             .run_if(crate::scene_authoring_ui::scene_ui_closed)
-            .run_if(not(in_state(GameMode::Gen3D)))
+            .run_if(in_state(BuildScene::Realm))
             .run_if(crate::automation::local_input_enabled),
+    );
+    app.add_systems(
+        Update,
+        (
+            crate::world_drag::world_drag_start
+                .before(rts::selection_input)
+                .run_if(crate::automation::local_input_enabled),
+            crate::world_drag::world_drag_update
+                .after(crate::world_drag::world_drag_start)
+                .before(rts::selection_input)
+                .run_if(crate::automation::local_input_enabled),
+        )
+            .run_if(in_state(GameMode::Build))
+            .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,
@@ -856,7 +901,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         )
             .run_if(console::console_closed)
             .run_if(crate::scene_authoring_ui::scene_ui_closed)
-            .run_if(not(in_state(GameMode::Gen3D))),
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,
@@ -891,13 +936,13 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             crate::gen3d::gen3d_update_tool_feedback_scrollbar_ui,
         )
             .in_set(UiSystems::Content)
-            .run_if(in_state(GameMode::Gen3D)),
+            .run_if(in_state(BuildScene::Preview)),
     );
     app.add_systems(
         Update,
         common::tick_cooldowns
             .run_if(console::console_closed)
-            .run_if(not(in_state(GameMode::Gen3D))),
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,
@@ -905,7 +950,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             .after(rts::execute_move_orders)
             .after(physics::separate_enemies)
             .run_if(console::console_closed)
-            .run_if(not(in_state(GameMode::Gen3D))),
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,
@@ -914,14 +959,14 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             .after(rts::execute_move_orders)
             .after(physics::separate_enemies)
             .run_if(console::console_closed)
-            .run_if(not(in_state(GameMode::Gen3D))),
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,
         player::animate_player_model
             .after(physics::separate_player_from_enemies)
             .run_if(console::console_closed)
-            .run_if(not(in_state(GameMode::Gen3D))),
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,
@@ -929,7 +974,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             .before(player::camera_follow)
             .run_if(console::console_closed)
             .run_if(crate::scene_authoring_ui::scene_ui_closed)
-            .run_if(not(in_state(GameMode::Gen3D)))
+            .run_if(in_state(BuildScene::Realm))
             .run_if(crate::automation::local_input_enabled),
     );
     app.add_systems(
@@ -949,14 +994,14 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             .before(player::camera_follow)
             .run_if(console::console_closed)
             .run_if(crate::scene_authoring_ui::scene_ui_closed)
-            .run_if(not(in_state(GameMode::Gen3D))),
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,
         player::camera_follow
             .before(rts::selection_input)
             .run_if(console::console_closed)
-            .run_if(not(in_state(GameMode::Gen3D))),
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,
@@ -964,7 +1009,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             .after(player::camera_follow)
             .run_if(console::console_closed)
             .run_if(crate::scene_authoring_ui::scene_ui_closed)
-            .run_if(not(in_state(GameMode::Gen3D)))
+            .run_if(in_state(BuildScene::Realm))
             .run_if(crate::automation::local_input_enabled),
     );
     app.add_systems(OnEnter(GameMode::Build), build::enter_build_mode);
@@ -975,8 +1020,8 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             rts::ensure_default_selection_on_enter_play.after(build::enter_play_mode),
         ),
     );
-    app.add_systems(OnEnter(GameMode::Gen3D), crate::gen3d::enter_gen3d_mode);
-    app.add_systems(OnExit(GameMode::Gen3D), crate::gen3d::exit_gen3d_mode);
+    app.add_systems(OnEnter(BuildScene::Preview), crate::gen3d::enter_gen3d_mode);
+    app.add_systems(OnExit(BuildScene::Preview), crate::gen3d::exit_gen3d_mode);
     app.add_systems(
         OnEnter(GameMode::Play),
         scene_store::request_scene_save_on_enter_play.after(build::enter_play_mode),
@@ -1010,6 +1055,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             build::build_draw_selection_gizmos.after(build::build_remove_selected_objects),
         )
             .run_if(in_state(GameMode::Build))
+            .run_if(in_state(BuildScene::Realm))
             .run_if(console::console_closed)
             .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(crate::automation::local_input_enabled),
@@ -1028,6 +1074,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             combat::laser_kill_enemies.after(enemies::move_enemies),
         )
             .run_if(in_state(GameMode::Play).or(in_state(GameMode::Build)))
+            .run_if(in_state(BuildScene::Realm))
             .run_if(console::console_closed),
     );
     app.add_systems(
@@ -1046,6 +1093,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
             combat::despawn_expired_bullets.after(combat::move_bullets),
         )
             .run_if(in_state(GameMode::Play).or(in_state(GameMode::Build)))
+            .run_if(in_state(BuildScene::Realm))
             .run_if(console::console_closed),
     );
     app.add_systems(

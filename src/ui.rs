@@ -35,6 +35,7 @@ pub(crate) fn update_window_title(
     game: Res<Game>,
     build: Res<BuildState>,
     mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
 ) {
     let mut window = match windows.single_mut() {
         Ok(w) => w,
@@ -43,6 +44,12 @@ pub(crate) fn update_window_title(
 
     match mode.get() {
         GameMode::Build => {
+            if matches!(build_scene.get(), BuildScene::Preview) {
+                window.title =
+                    "Gravimera — BUILD (Preview) | drag & drop photos | Build/Stop | Scene: Realm"
+                        .into();
+                return;
+            }
             if build.placing_active {
                 window.title = format!(
                     "Gravimera — BUILD ({}) | score: {} | health: {} | B/F/T place | Esc select | Tab play",
@@ -71,9 +78,6 @@ pub(crate) fn update_window_title(
                     game.health,
                 );
             }
-        }
-        GameMode::Gen3D => {
-            window.title = "Gravimera — GEN3D | drag & drop photos | Build/Stop".into();
         }
     }
 }

@@ -305,7 +305,13 @@ pub(crate) enum GameMode {
     #[default]
     Build,
     Play,
-    Gen3D,
+}
+
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
+pub(crate) enum BuildScene {
+    #[default]
+    Realm,
+    Preview,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

@@ -434,6 +434,8 @@ fn automation_process_requests(
     mut scene_build_runtime: Option<ResMut<crate::scene_build_ai::SceneBuildAiRuntime>>,
     mode: Option<Res<State<GameMode>>>,
     mut next_mode: Option<ResMut<NextState<GameMode>>>,
+    build_scene: Option<Res<State<BuildScene>>>,
+    mut next_build_scene: Option<ResMut<NextState<BuildScene>>>,
     mut selection: Option<ResMut<SelectionState>>,
     mut fire: Option<ResMut<FireControl>>,
     mut library: ResMut<ObjectLibrary>,
@@ -512,6 +514,8 @@ fn automation_process_requests(
             &world.scene_instances,
             mode.as_deref(),
             next_mode.as_deref_mut(),
+            build_scene.as_deref(),
+            next_build_scene.as_deref_mut(),
             selection.as_deref_mut(),
             fire.as_deref_mut(),
             &mut runtime,
@@ -689,6 +693,8 @@ fn handle_request_main_thread(
     >,
     mode: Option<&State<GameMode>>,
     next_mode: Option<&mut NextState<GameMode>>,
+    build_scene: Option<&State<BuildScene>>,
+    next_build_scene: Option<&mut NextState<BuildScene>>,
     mut selection: Option<&mut SelectionState>,
     mut fire: Option<&mut FireControl>,
     runtime: &mut AutomationRuntime,
@@ -1141,8 +1147,16 @@ fn handle_request_main_thread(
             let mode_str = mode.map(|m| match m.get() {
                 GameMode::Build => "build",
                 GameMode::Play => "play",
-                GameMode::Gen3D => "gen3d",
             });
+            let build_scene_str = match (mode, build_scene) {
+                (Some(mode), Some(scene)) if matches!(mode.get(), GameMode::Build) => {
+                    Some(match scene.get() {
+                        BuildScene::Realm => "realm",
+                        BuildScene::Preview => "preview",
+                    })
+                }
+                _ => None,
+            };
 
             let selected_ids: Vec<String> = selection
                 .as_deref()
@@ -1186,6 +1200,7 @@ fn handle_request_main_thread(
             let body = serde_json::json!({
                 "ok": true,
                 "mode": mode_str,
+                "build_scene": build_scene_str,
                 "selected_instance_ids": selected_ids,
                 "objects": objects,
             })
@@ -1246,8 +1261,14 @@ fn handle_request_main_thread(
             let Some(mode) = mode else {
                 return Some(json_error(501, "Gen3D build requires rendered mode."));
             };
-            if !matches!(mode.get(), GameMode::Gen3D) {
-                return Some(json_error(409, "Switch to Gen3D mode first."));
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(501, "Gen3D build requires rendered mode."));
+            };
+            if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Preview) {
+                return Some(json_error(
+                    409,
+                    "Switch to Build Preview scene first.",
+                ));
             }
             let Some(workshop) = gen3d_workshop.as_deref_mut() else {
                 return Some(json_error(501, "Gen3D is not available in this app mode."));
@@ -1263,9 +1284,14 @@ fn handle_request_main_thread(
             }
 
             let sinks = log_sinks.cloned();
-            if let Err(err) =
-                crate::gen3d::gen3d_start_build_from_api(mode, config, sinks, workshop, job, draft)
-            {
+            if let Err(err) = crate::gen3d::gen3d_start_build_from_api(
+                build_scene,
+                config,
+                sinks,
+                workshop,
+                job,
+                draft,
+            ) {
                 return Some(json_error(400, err));
             }
 
@@ -1298,8 +1324,14 @@ fn handle_request_main_thread(
             let Some(mode) = mode else {
                 return Some(json_error(501, "Gen3D save requires rendered mode."));
             };
-            if !matches!(mode.get(), GameMode::Gen3D) {
-                return Some(json_error(409, "Switch to Gen3D mode first."));
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(501, "Gen3D save requires rendered mode."));
+            };
+            if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Preview) {
+                return Some(json_error(
+                    409,
+                    "Switch to Build Preview scene first.",
+                ));
             }
             let Some(workshop) = gen3d_workshop.as_deref_mut() else {
                 return Some(json_error(501, "Gen3D is not available in this app mode."));
@@ -1352,7 +1384,6 @@ fn handle_request_main_thread(
             };
 
             let saved = match crate::gen3d::gen3d_save_current_draft_from_api(
-                active_realm_id,
                 commands,
                 asset_server,
                 assets,
@@ -1405,8 +1436,12 @@ fn handle_request_main_thread(
             let Some(mode) = mode else {
                 return Some(json_error(501, "Scene Build requires rendered mode."));
             };
-            if matches!(mode.get(), GameMode::Gen3D) {
-                return Some(json_error(409, "Switch to build mode first."));
+            if let Some(build_scene) = build_scene {
+                if matches!(mode.get(), GameMode::Build)
+                    && matches!(build_scene.get(), BuildScene::Preview)
+                {
+                    return Some(json_error(409, "Switch to the Realm scene first."));
+                }
             }
             let Some(scene_build) = scene_build_runtime.as_deref_mut() else {
                 return Some(json_error(
@@ -1756,13 +1791,37 @@ fn handle_request_main_thread(
                 Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
             };
             let mode_str = req.mode.trim().to_ascii_lowercase();
-            let new_mode = match mode_str.as_str() {
-                "build" => GameMode::Build,
-                "play" => GameMode::Play,
-                "gen3d" | "gen3d_workshop" => GameMode::Gen3D,
-                _ => return Some(json_error(400, "Invalid mode (expected build/play/gen3d).")),
-            };
-            next_mode.set(new_mode);
+            match mode_str.as_str() {
+                "build" => {
+                    next_mode.set(GameMode::Build);
+                    if let Some(next_build_scene) = next_build_scene {
+                        next_build_scene.set(BuildScene::Realm);
+                    }
+                }
+                "play" => {
+                    next_mode.set(GameMode::Play);
+                    if let Some(next_build_scene) = next_build_scene {
+                        next_build_scene.set(BuildScene::Realm);
+                    }
+                }
+                // Legacy compatibility: treat Gen3D as Build Preview scene.
+                "gen3d" | "gen3d_workshop" | "preview" | "build_preview" => {
+                    let Some(next_build_scene) = next_build_scene else {
+                        return Some(json_error(
+                            501,
+                            "Build scene switching is not available in this app mode.",
+                        ));
+                    };
+                    next_mode.set(GameMode::Build);
+                    next_build_scene.set(BuildScene::Preview);
+                }
+                _ => {
+                    return Some(json_error(
+                        400,
+                        "Invalid mode (expected build/play; legacy: gen3d).",
+                    ));
+                }
+            }
             let body = serde_json::json!({ "ok": true }).to_string();
             Some(AutomationReply {
                 status: 200,

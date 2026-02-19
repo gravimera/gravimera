@@ -142,6 +142,7 @@ Response (shape):
 {
   "ok": true,
   "mode": "build",
+  "build_scene": "realm",
   "selected_instance_ids": ["..."],
   "objects": [
     {
@@ -160,6 +161,10 @@ Response (shape):
   ]
 }
 ```
+
+Notes:
+
+- `build_scene` is only meaningful when `mode="build"` and is one of: `realm`, `preview`.
 
 ### `POST /v1/scene_sources/import`
 
@@ -480,12 +485,15 @@ Notes:
 
 ### `POST /v1/mode`
 
-Switch game mode: `build`, `play`, `gen3d` (alias `gen3d_workshop`).
+Switch game mode: `build`, `play`.
+
+To enter the Gen3D workshop (Build Preview scene), set `mode` to `preview` / `build_preview`.
+For legacy compatibility, `gen3d` (alias `gen3d_workshop`) maps to the same behavior.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/mode \
   -H 'Content-Type: application/json' \
-  -d '{"mode":"gen3d"}'
+  -d '{"mode":"build_preview"}'
 ```
 
 Response:
@@ -653,7 +661,7 @@ Limitations:
 
 ## Gen3D endpoints
 
-Gen3D build/save require rendered mode and `mode=gen3d`.
+Gen3D build/save require rendered mode and the Build Preview scene (`mode=build`, `build_scene=preview`).
 
 ### `GET /v1/gen3d/status`
 
@@ -731,7 +739,10 @@ Response:
 
 ### `POST /v1/gen3d/save`
 
-Save the current draft into the world (spawns it near the hero and persists to the active scene’s `scene.dat` under `~/.gravimera/realm/.../build/scene.dat`, unless overridden by `scene.scene_dat_path` in config).
+Save the current draft into the world:
+
+- saves prefab defs (and an optional descriptor) into the local model depot under `~/.gravimera/depot/models/<model_uuid>/prefabs/`, and
+- spawns an instance near the hero and persists to the active scene’s `scene.dat` under `~/.gravimera/realm/.../build/scene.dat` (unless overridden by `scene.scene_dat_path` in config).
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/gen3d/save \
@@ -758,7 +769,7 @@ Scene Build runs the **Scene Builder** (AI-driven scene generation) for the acti
 Requirements:
 
 - Rendered mode (not headless).
-- `mode != gen3d` (switch to `build` first).
+- Build Realm scene (not Preview).
 - OpenAI config in `config.toml`.
 
 ### `GET /v1/scene_build/status`
@@ -836,7 +847,7 @@ Response:
 
 This is the minimal flow for a deterministic script (pseudo-code):
 
-1. `POST /v1/mode {"mode":"gen3d"}`
+1. `POST /v1/mode {"mode":"build_preview"}`
 2. Step a few frames: `POST /v1/step {"frames":3}`
 3. `POST /v1/gen3d/prompt {"prompt":"A warcar with a cannon as weapon"}`
 4. `POST /v1/gen3d/build {}`

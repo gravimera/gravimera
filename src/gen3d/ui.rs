@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::assets::SceneAssets;
-use crate::types::GameMode;
+use crate::types::{BuildScene, GameMode};
 
 use super::ai::Gen3dAiJob;
 use super::preview;
@@ -13,9 +13,12 @@ pub(crate) fn handle_gen3d_toggle_button(
         (Changed<Interaction>, With<Gen3dToggleButton>),
     >,
     mode: Res<State<GameMode>>,
-    mut next_mode: ResMut<NextState<GameMode>>,
-    mut return_mode: ResMut<Gen3dReturnMode>,
+    build_scene: Res<State<BuildScene>>,
+    mut next_build_scene: ResMut<NextState<BuildScene>>,
 ) {
+    if !matches!(mode.get(), GameMode::Build) {
+        return;
+    }
     for (interaction, mut bg) in &mut buttons {
         match *interaction {
             Interaction::None => {
@@ -26,12 +29,9 @@ pub(crate) fn handle_gen3d_toggle_button(
             }
             Interaction::Pressed => {
                 *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.85));
-                match mode.get() {
-                    GameMode::Gen3D => next_mode.set(return_mode.0),
-                    other => {
-                        return_mode.0 = *other;
-                        next_mode.set(GameMode::Gen3D);
-                    }
+                match build_scene.get() {
+                    BuildScene::Preview => next_build_scene.set(BuildScene::Realm),
+                    BuildScene::Realm => next_build_scene.set(BuildScene::Preview),
                 }
             }
         }
@@ -40,11 +40,23 @@ pub(crate) fn handle_gen3d_toggle_button(
 
 pub(crate) fn update_gen3d_toggle_button_label(
     mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    mut buttons: Query<&mut Visibility, With<Gen3dToggleButton>>,
     mut texts: Query<&mut Text, With<Gen3dToggleButtonText>>,
 ) {
-    let label = match mode.get() {
-        GameMode::Gen3D => "Back",
-        _ => "Gen3D",
+    let visible = matches!(mode.get(), GameMode::Build);
+    for mut visibility in &mut buttons {
+        *visibility = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    let label = match (mode.get(), build_scene.get()) {
+        (GameMode::Build, BuildScene::Preview) => "Realm",
+        (GameMode::Build, BuildScene::Realm) => "Preview",
+        _ => "Preview",
     };
     for mut text in &mut texts {
         **text = label.into();
@@ -1099,14 +1111,14 @@ pub(crate) fn gen3d_prompt_box_focus(
 }
 
 pub(crate) fn gen3d_side_panel_toggle_button(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Gen3dSidePanelToggleButton>),
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -1127,12 +1139,12 @@ pub(crate) fn gen3d_side_panel_toggle_button(
 }
 
 pub(crate) fn gen3d_update_side_panel_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     mut panels: Query<(&mut Node, &mut Visibility), With<Gen3dSidePanelRoot>>,
     mut texts: Query<&mut Text, With<Gen3dSidePanelToggleButtonText>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -1160,7 +1172,7 @@ pub(crate) fn gen3d_update_side_panel_ui(
 }
 
 pub(crate) fn gen3d_prompt_scroll_wheel(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
     mut panels: Query<
@@ -1168,7 +1180,7 @@ pub(crate) fn gen3d_prompt_scroll_wheel(
         With<Gen3dPromptScrollPanel>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let Ok(window) = windows.single() else {
@@ -1206,12 +1218,12 @@ pub(crate) fn gen3d_prompt_scroll_wheel(
 }
 
 pub(crate) fn gen3d_update_prompt_scrollbar_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     panels: Query<&ComputedNode, With<Gen3dPromptScrollPanel>>,
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dPromptScrollbarTrack>>,
     mut thumbs: Query<&mut Node, With<Gen3dPromptScrollbarThumb>>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let Ok(panel) = panels.single() else {
@@ -1254,12 +1266,12 @@ pub(crate) fn gen3d_update_prompt_scrollbar_ui(
 }
 
 pub(crate) fn gen3d_prompt_text_input(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard: bevy::ecs::message::MessageReader<bevy::input::keyboard::KeyboardInput>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if !workshop.prompt_focused {
@@ -1318,14 +1330,14 @@ fn push_prompt_text(prompt: &mut String, text: &str) {
 }
 
 pub(crate) fn gen3d_collision_toggle_button(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut preview_state: ResMut<Gen3dPreview>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Gen3dCollisionToggleButton>),
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     for (interaction, mut bg) in &mut buttons {
@@ -1346,7 +1358,7 @@ pub(crate) fn gen3d_collision_toggle_button(
 }
 
 pub(crate) fn gen3d_preview_animation_dropdown_button(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut preview_state: ResMut<Gen3dPreview>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor),
@@ -1356,7 +1368,7 @@ pub(crate) fn gen3d_preview_animation_dropdown_button(
         ),
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -1373,7 +1385,7 @@ pub(crate) fn gen3d_preview_animation_dropdown_button(
 }
 
 pub(crate) fn gen3d_preview_animation_option_buttons(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut preview_state: ResMut<Gen3dPreview>,
     mut buttons: Query<
         (
@@ -1385,7 +1397,7 @@ pub(crate) fn gen3d_preview_animation_option_buttons(
         Changed<Interaction>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -1410,7 +1422,7 @@ pub(crate) fn gen3d_preview_animation_option_buttons(
 }
 
 pub(crate) fn gen3d_rebuild_preview_animation_dropdown_options_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     preview_state: Res<Gen3dPreview>,
     mut last_hash: Local<Option<u64>>,
     mut scroll_panels: Query<&mut ScrollPosition, With<Gen3dPreviewAnimationDropdownList>>,
@@ -1419,7 +1431,7 @@ pub(crate) fn gen3d_rebuild_preview_animation_dropdown_options_ui(
     existing_buttons: Query<Entity, With<Gen3dPreviewAnimationOptionButton>>,
     mut commands: Commands,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -1517,7 +1529,7 @@ fn gen3d_ui_motion_label(channel: &str) -> String {
 }
 
 pub(crate) fn gen3d_preview_animation_dropdown_scroll_wheel(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     preview_state: Res<Gen3dPreview>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
@@ -1531,7 +1543,7 @@ pub(crate) fn gen3d_preview_animation_dropdown_scroll_wheel(
         With<Gen3dPreviewAnimationDropdownList>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         for _ in mouse_wheel.read() {}
         return;
     }
@@ -1578,7 +1590,7 @@ pub(crate) fn gen3d_preview_animation_dropdown_scroll_wheel(
 }
 
 pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     preview_state: Res<Gen3dPreview>,
     mut last_state: Local<Option<(String, bool, u64)>>,
     mut dropdown_button: Query<
@@ -1621,7 +1633,7 @@ pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
         Without<Gen3dPreviewAnimationDropdownButton>,
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
@@ -1751,7 +1763,7 @@ fn apply_gen3d_preview_animation_option_style(
 }
 
 pub(crate) fn gen3d_clear_prompt_button(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     job: Res<Gen3dAiJob>,
     mut scroll_panels: Query<&mut ScrollPosition, With<Gen3dPromptScrollPanel>>,
@@ -1760,7 +1772,7 @@ pub(crate) fn gen3d_clear_prompt_button(
         (Changed<Interaction>, With<Gen3dClearPromptButton>),
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     for (interaction, mut bg) in &mut buttons {
@@ -1789,7 +1801,7 @@ pub(crate) fn gen3d_clear_prompt_button(
 }
 
 pub(crate) fn gen3d_update_ui_text(
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     preview_state: Res<Gen3dPreview>,
     draft: Res<Gen3dDraft>,
@@ -1802,7 +1814,7 @@ pub(crate) fn gen3d_update_ui_text(
         Query<&mut Text, With<Gen3dPreviewStatsText>>,
     )>,
 ) {
-    if !matches!(mode.get(), GameMode::Gen3D) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
