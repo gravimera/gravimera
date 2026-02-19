@@ -520,7 +520,6 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     let mut channels: Vec<String> = vec![
         "idle".to_string(),
         "move".to_string(),
-        "attack_primary".to_string(),
     ];
     for ch in ordered.drain(..) {
         let trimmed = ch.trim();
