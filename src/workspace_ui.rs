@@ -112,7 +112,7 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new("Object Preview ▾"),
+                    Text::new("Object Preview v"),
                     TextFont {
                         font_size: 16.0,
                         ..default()
@@ -310,7 +310,7 @@ pub(crate) fn workspace_ui_update_labels(
         Query<&mut Text, With<WorkspaceActionButtonText>>,
     )>,
 ) {
-    let dropdown_label = format!("{} ▾", state.tab.label());
+    let dropdown_label = format!("{} v", state.tab.label());
     for mut text in &mut texts.p0() {
         **text = dropdown_label.clone();
     }
