@@ -28,6 +28,8 @@ Notes:
 
 - Units and buildings cannot transform between each other.
 - Multi-form objects show a circular `i/n` badge above them.
+- Selected units render a ground selection ring sized to `1.1x` their collision radius.
+- Units have no extra spacing padding beyond their collision radii.
 
 Selection is disabled while:
 

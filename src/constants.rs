@@ -206,7 +206,9 @@ pub(crate) const NAV_GRID_SIZE: f32 = 0.50; // 50 cm navigation cells (decoupled
 pub(crate) const NAV_HEIGHT_QUANT_SIZE: f32 = 0.25; // 25 cm ground-height quantization for nav
 pub(crate) const CLICK_MOVE_WAYPOINT_EPS: f32 = 0.18; // ~18 cm "close enough" for waypoints
 pub(crate) const CLICK_MOVE_MAX_TURN_RATE_RADS_PER_SEC: f32 = 10.0;
-pub(crate) const COMMANDABLE_MIN_SEPARATION_RADIUS: f32 = PLAYER_RADIUS * 0.6;
+// Extra separation padding applied between `Commandable` units during physics resolution.
+// Set to 0.0 so units can get as close as their actual collision radii allow.
+pub(crate) const COMMANDABLE_MIN_SEPARATION_RADIUS: f32 = 0.0;
 pub(crate) const MOVE_TARGET_MARKER_RADIUS: f32 = PLAYER_RADIUS * 0.5;
 pub(crate) const MOVE_TARGET_MARKER_HEIGHT: f32 = 0.03;
 pub(crate) const MOVE_TARGET_MARKER_Y: f32 = MOVE_TARGET_MARKER_HEIGHT * 0.5 + 0.005;

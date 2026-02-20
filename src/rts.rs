@@ -14,6 +14,7 @@ use crate::types::*;
 const SELECTION_DRAG_MIN_PX: f32 = 8.0;
 const SELECTION_CLICK_RADIUS_PX: f32 = 26.0;
 const SELECTION_RING_Y_OFFSET: f32 = 0.06;
+const SELECTION_RING_RADIUS_MULT: f32 = 1.10;
 const SELECTION_RING_SEGMENTS: usize = 32;
 const MOVE_ENEMY_CLICK_RADIUS_PX: f32 = 30.0;
 
@@ -431,7 +432,7 @@ pub(crate) fn draw_selected_player_gizmos(
         draw_circle_xz(
             &mut gizmos,
             center,
-            collider.radius * 1.45,
+            collider.radius * SELECTION_RING_RADIUS_MULT,
             Color::srgb(0.25, 0.95, 0.45),
         );
     }
