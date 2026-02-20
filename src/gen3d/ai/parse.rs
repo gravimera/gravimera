@@ -191,6 +191,237 @@ fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
         changed
     }
 
+    fn json_vec3(value: &serde_json::Value) -> Option<Vec3> {
+        let arr = value.as_array()?;
+        if arr.len() != 3 {
+            return None;
+        }
+        let x = arr[0].as_f64()? as f32;
+        let y = arr[1].as_f64()? as f32;
+        let z = arr[2].as_f64()? as f32;
+        let v = Vec3::new(x, y, z);
+        if v.is_finite() {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    fn normalize_rotation_basis_to_quat_xyzw(
+        map: &mut serde_json::Map<String, serde_json::Value>,
+        forward_key: &str,
+        up_key: &str,
+    ) -> Option<[f32; 4]> {
+        let forward = map.get(forward_key).and_then(json_vec3)?;
+        let up = map.get(up_key).and_then(json_vec3);
+        let q = super::convert::plan_rotation_from_forward_up(forward, up);
+        if q.is_finite() {
+            Some([q.x, q.y, q.z, q.w])
+        } else {
+            None
+        }
+    }
+
+    fn normalize_transform_set_json(map: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+        use serde_json::Value;
+
+        let mut changed = false;
+
+        changed |= normalize_transform_set_delta_aliases(map);
+
+        // Some models incorrectly emit `quat_xyzw`/`forward`/`up` at the top level instead of
+        // nesting under `set.rot`.
+        if !map.contains_key("rot") {
+            if let Some(q) = map.remove("quat_xyzw") {
+                map.insert(
+                    "rot".to_string(),
+                    Value::Object(serde_json::Map::from_iter([("quat_xyzw".to_string(), q)])),
+                );
+                changed = true;
+            } else if let Some(q) = map.remove("rot_quat_xyzw") {
+                map.insert(
+                    "rot".to_string(),
+                    Value::Object(serde_json::Map::from_iter([("quat_xyzw".to_string(), q)])),
+                );
+                changed = true;
+            } else if map.contains_key("forward") {
+                let forward = map.remove("forward").unwrap_or(Value::Null);
+                let up = map.remove("up").unwrap_or(Value::Null);
+                let mut rot_obj = serde_json::Map::new();
+                rot_obj.insert("forward".to_string(), forward);
+                if !matches!(up, Value::Null) {
+                    rot_obj.insert("up".to_string(), up);
+                }
+                map.insert("rot".to_string(), Value::Object(rot_obj));
+                changed = true;
+            }
+        }
+
+        // Some models incorrectly nest set transforms under `offset` (copied from scene_graph_summary label).
+        if let Some(Value::Object(mut offset_obj)) = map.remove("offset") {
+            changed = true;
+            changed |= normalize_transform_set_delta_aliases(&mut offset_obj);
+
+            if !map.contains_key("pos") {
+                if let Some(v) = offset_obj.get("pos").cloned() {
+                    map.insert("pos".to_string(), v);
+                }
+            }
+            if !map.contains_key("scale") {
+                if let Some(v) = offset_obj.get("scale").cloned() {
+                    map.insert("scale".to_string(), v);
+                }
+            }
+            if !map.contains_key("rot") {
+                if let Some(q) = offset_obj.get("quat_xyzw").cloned() {
+                    map.insert(
+                        "rot".to_string(),
+                        Value::Object(serde_json::Map::from_iter([("quat_xyzw".to_string(), q)])),
+                    );
+                } else if let Some(q) = offset_obj.get("rot_quat_xyzw").cloned() {
+                    map.insert(
+                        "rot".to_string(),
+                        Value::Object(serde_json::Map::from_iter([("quat_xyzw".to_string(), q)])),
+                    );
+                } else if offset_obj.contains_key("forward") {
+                    let forward = offset_obj.get("forward").cloned().unwrap_or(Value::Null);
+                    let up = offset_obj.get("up").cloned().unwrap_or(Value::Null);
+                    let mut rot_obj = serde_json::Map::new();
+                    rot_obj.insert("forward".to_string(), forward);
+                    if !matches!(up, Value::Null) {
+                        rot_obj.insert("up".to_string(), up);
+                    }
+                    map.insert("rot".to_string(), Value::Object(rot_obj));
+                }
+            }
+        }
+
+        changed
+    }
+
+    fn normalize_transform_delta_json(
+        map: &mut serde_json::Map<String, serde_json::Value>,
+    ) -> bool {
+        use serde_json::Value;
+
+        let mut changed = false;
+
+        changed |= normalize_transform_set_delta_aliases(map);
+        changed |= rename_key(map, "quat_xyzw", "rot_quat_xyzw");
+
+        // Some models incorrectly use `rot: {quat_xyzw|forward/up}` in deltas; convert to `rot_quat_xyzw`.
+        for rot_key in ["rot", "rotation"] {
+            let Some(rot_value) = map.remove(rot_key) else {
+                continue;
+            };
+            changed = true;
+            let mut rot_obj = match rot_value {
+                Value::Object(obj) => obj,
+                _ => continue,
+            };
+            if !map.contains_key("rot_quat_xyzw") {
+                if let Some(q) = rot_obj
+                    .remove("rot_quat_xyzw")
+                    .or_else(|| rot_obj.remove("quat_xyzw"))
+                {
+                    map.insert("rot_quat_xyzw".to_string(), q);
+                } else if let Some(quat_xyzw) =
+                    normalize_rotation_basis_to_quat_xyzw(&mut rot_obj, "forward", "up")
+                {
+                    map.insert("rot_quat_xyzw".to_string(), serde_json::json!(quat_xyzw));
+                }
+            }
+        }
+
+        // Some models incorrectly nest deltas under `offset`.
+        if let Some(Value::Object(mut offset_obj)) = map.remove("offset") {
+            changed = true;
+            changed |= normalize_transform_set_delta_aliases(&mut offset_obj);
+
+            if !map.contains_key("pos") {
+                if let Some(v) = offset_obj.get("pos").cloned() {
+                    map.insert("pos".to_string(), v);
+                }
+            }
+            if !map.contains_key("scale") {
+                if let Some(v) = offset_obj.get("scale").cloned() {
+                    map.insert("scale".to_string(), v);
+                }
+            }
+            if !map.contains_key("rot_quat_xyzw") {
+                if let Some(q) = offset_obj
+                    .get("rot_quat_xyzw")
+                    .cloned()
+                    .or_else(|| offset_obj.get("quat_xyzw").cloned())
+                {
+                    map.insert("rot_quat_xyzw".to_string(), q);
+                } else if let Some(Value::Object(mut inner_rot)) = offset_obj.get("rot").cloned() {
+                    if let Some(q) = inner_rot
+                        .remove("rot_quat_xyzw")
+                        .or_else(|| inner_rot.remove("quat_xyzw"))
+                    {
+                        map.insert("rot_quat_xyzw".to_string(), q);
+                    } else if let Some(quat_xyzw) =
+                        normalize_rotation_basis_to_quat_xyzw(&mut inner_rot, "forward", "up")
+                    {
+                        map.insert("rot_quat_xyzw".to_string(), serde_json::json!(quat_xyzw));
+                    }
+                } else if let Some(quat_xyzw) =
+                    normalize_rotation_basis_to_quat_xyzw(&mut offset_obj, "forward", "up")
+                {
+                    map.insert("rot_quat_xyzw".to_string(), serde_json::json!(quat_xyzw));
+                }
+            }
+        }
+
+        // Some models incorrectly emit `forward`/`up` at the top level for delta rotations.
+        if !map.contains_key("rot_quat_xyzw") && map.contains_key("forward") {
+            if let Some(quat_xyzw) = normalize_rotation_basis_to_quat_xyzw(map, "forward", "up") {
+                map.insert("rot_quat_xyzw".to_string(), serde_json::json!(quat_xyzw));
+            }
+            map.remove("forward");
+            map.remove("up");
+            changed = true;
+        }
+
+        changed
+    }
+
+    fn normalize_anchor_delta_json(map: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+        let mut changed = false;
+
+        changed |= rename_key(map, "quat_xyzw", "rot_quat_xyzw");
+        if !map.contains_key("rot_quat_xyzw") && map.contains_key("forward") {
+            if let Some(quat_xyzw) = normalize_rotation_basis_to_quat_xyzw(map, "forward", "up") {
+                map.insert("rot_quat_xyzw".to_string(), serde_json::json!(quat_xyzw));
+            }
+            map.remove("forward");
+            map.remove("up");
+            changed = true;
+        }
+        if let Some(offset) = map.remove("offset") {
+            // Reject/strip nested shapes like `{delta:{offset:{pos,quat_xyzw}}}`.
+            if let serde_json::Value::Object(mut offset_obj) = offset {
+                if !map.contains_key("pos") {
+                    if let Some(v) = offset_obj.remove("pos") {
+                        map.insert("pos".to_string(), v);
+                    }
+                }
+                if !map.contains_key("rot_quat_xyzw") {
+                    if let Some(v) = offset_obj
+                        .remove("rot_quat_xyzw")
+                        .or_else(|| offset_obj.remove("quat_xyzw"))
+                    {
+                        map.insert("rot_quat_xyzw".to_string(), v);
+                    }
+                }
+            }
+            changed = true;
+        }
+
+        changed
+    }
+
     fn normalize_animation_spec_clip_shorthand(
         spec_obj: &mut serde_json::Map<String, serde_json::Value>,
     ) -> bool {
@@ -349,13 +580,22 @@ fn normalize_review_delta_json(value: &mut serde_json::Value) -> bool {
             "tweak_animation" => {}
             "tweak_component_transform" => {
                 if let Some(set_obj) = action_obj.get_mut("set").and_then(|v| v.as_object_mut()) {
-                    if normalize_transform_set_delta_aliases(set_obj) {
+                    if normalize_transform_set_json(set_obj) {
                         changed = true;
                     }
                 }
                 if let Some(delta_obj) = action_obj.get_mut("delta").and_then(|v| v.as_object_mut())
                 {
-                    if normalize_transform_set_delta_aliases(delta_obj) {
+                    if normalize_transform_delta_json(delta_obj) {
+                        changed = true;
+                    }
+                }
+                continue;
+            }
+            "tweak_anchor" => {
+                if let Some(delta_obj) = action_obj.get_mut("delta").and_then(|v| v.as_object_mut())
+                {
+                    if normalize_anchor_delta_json(delta_obj) {
                         changed = true;
                     }
                 }
@@ -1394,6 +1634,88 @@ mod tests {
                 assert_eq!(delta.pos, Some([0.0, 0.0, 0.06]));
             }
             other => panic!("expected tweak_component_transform, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizes_review_delta_transform_delta_nested_offset_pos() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "actions": [
+            {
+              "kind":"tweak_component_transform",
+              "component_id":"deadbeef",
+              "delta": { "offset": { "pos": [0.0, 0.0, 0.06] } }
+            }
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("delta should parse");
+        assert_eq!(delta.actions.len(), 1);
+        match &delta.actions[0] {
+            AiReviewDeltaActionJsonV1::TweakComponentTransform { delta, .. } => {
+                let Some(delta) = delta.as_ref() else {
+                    panic!("expected delta to be present");
+                };
+                assert_eq!(delta.pos, Some([0.0, 0.0, 0.06]));
+            }
+            other => panic!("expected tweak_component_transform, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizes_review_delta_transform_delta_quat_xyzw_alias() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "actions": [
+            {
+              "kind":"tweak_component_transform",
+              "component_id":"deadbeef",
+              "delta": { "quat_xyzw": [0.0, 0.0, 0.0, 1.0] }
+            }
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("delta should parse");
+        assert_eq!(delta.actions.len(), 1);
+        match &delta.actions[0] {
+            AiReviewDeltaActionJsonV1::TweakComponentTransform { delta, .. } => {
+                let Some(delta) = delta.as_ref() else {
+                    panic!("expected delta to be present");
+                };
+                assert_eq!(delta.rot_quat_xyzw, Some([0.0, 0.0, 0.0, 1.0]));
+            }
+            other => panic!("expected tweak_component_transform, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizes_review_delta_anchor_delta_quat_xyzw_alias() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "actions": [
+            {
+              "kind":"tweak_anchor",
+              "component_id":"deadbeef",
+              "anchor_name":"mount",
+              "delta": { "quat_xyzw": [0.0, 0.0, 0.0, 1.0] }
+            }
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("delta should parse");
+        assert_eq!(delta.actions.len(), 1);
+        match &delta.actions[0] {
+            AiReviewDeltaActionJsonV1::TweakAnchor { delta, .. } => {
+                let Some(delta) = delta.as_ref() else {
+                    panic!("expected delta to be present");
+                };
+                assert_eq!(delta.rot_quat_xyzw, Some([0.0, 0.0, 0.0, 1.0]));
+            }
+            other => panic!("expected tweak_anchor, got {other:?}"),
         }
     }
 

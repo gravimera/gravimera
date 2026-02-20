@@ -28,6 +28,7 @@ User-visible outcomes:
 - [x] (2026-02-10) Update prompts to teach `tweak_contact` and stance repair strategy.
 - [x] (2026-02-10) Add unit tests for parsing normalization + contact tweak application.
 - [x] (2026-02-10) Run `cargo test` and a headless smoke start.
+- [x] (2026-02-20) Normalize transform-delta near-misses (`delta.offset.*`, `delta.quat_xyzw`) and clarify review-delta prompt field names (`delta.pos`, `delta.rot_quat_xyzw`).
 - [ ] Run a real rendered Gen3D regression and record the run id + results.
 
 ## Surprises & Discoveries
@@ -56,6 +57,9 @@ User-visible outcomes:
     - fills missing `spec.driver` based on `channel`
     - fills or fixes missing/invalid `loop.duration_secs`
     - infers/normalizes `clip.kind`
+  - Review-delta parser now also normalizes common near-misses for transform actions:
+    - accepts nested `delta.offset.{pos,scale,quat_xyzw}` for `tweak_component_transform` and rewrites to the strict schema
+    - accepts `delta.quat_xyzw` and rewrites to `delta.rot_quat_xyzw` (and similarly for `tweak_anchor.delta`)
 - Added unit tests:
   - `gen3d::ai::parse::tests::normalizes_review_delta_missing_driver_and_duration`
   - `gen3d::ai::convert::tests::applies_review_delta_tweak_contact_clears_stance`

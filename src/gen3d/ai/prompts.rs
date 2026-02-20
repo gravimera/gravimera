@@ -670,9 +670,11 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
      Return ONLY JSON. Do NOT output markdown.\n\n\
      IMPORTANT:\n\
      - Do NOT assume the engine will \"auto-fix\" placement. If something is wrong, request explicit edits.\n\
-     - Do NOT output Euler angles. For rotations, use either:\n\
-       - a basis: {\"forward\":[x,y,z],\"up\":[x,y,z]}\n\
-       - or a quaternion: {\"quat_xyzw\":[x,y,z,w]}\n\
+     - Do NOT output Euler angles.\n\
+       - For `set.rot`, use either:\n\
+         - a basis: {\"forward\":[x,y,z],\"up\":[x,y,z]}\n\
+         - or a quaternion: {\"quat_xyzw\":[x,y,z,w]}\n\
+       - For deltas (`tweak_component_transform.delta` / `tweak_anchor.delta`), use `rot_quat_xyzw` (NOT `quat_xyzw`).\n\
       - Target components by `component_id` (UUID), not by name.\n\
       - Keep changes minimal: prefer adjusting attachment offsets / anchors over regenerating geometry.\n\
       - Focus on HIGH-IMPACT structural issues. If only minor cosmetic tweaks remain, return ONLY {\"kind\":\"accept\"}.\n\
@@ -684,7 +686,7 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
       Anchor edits and regression safety:\n\
       - `tweak_anchor` is for changing JOINT FRAMES / pivot placement in COMPONENT-LOCAL space.\n\
       - The engine automatically rebases affected attachment offsets when anchors move/rotate so the assembled REST POSE stays stable.\n\
-        If you WANT to move/rotate a component in the assembly, use `tweak_component_transform` (offset) instead.\n\n\
+        If you WANT to move/rotate a component in the assembly, use `tweak_component_transform` instead (flat `set`/`delta`; do NOT nest under `offset`).\n\n\
       - If motion validation reports `chain_axis_mismatch`, fix the COMPONENT ANCHORS (not offsets): reorient the child component's joint anchors so the vector from its parent joint anchor to its child joint anchor aligns with the proximal anchor's +Z (forward) in component-local space.\n\n\
       - If motion validation reports `constrained_joint_translates`, fix the ANIMATION (not the mesh): hinge/ball joints should not translate. Set keyframe `delta.pos` near [0,0,0] and drive motion via rotation deltas instead.\n\n\
       Animation notes:\n\
@@ -736,14 +738,14 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
        - Set stance: `\"stance\": {\"phase_01\": number, \"duty_factor_01\": number}`\n\
        - Clear stance: `\"stance\": null`\n\
        If motion validation reports `contact_slip`/`contact_lift` during stance and you cannot author truly planted foot motion, prefer clearing stance.\n\
-     - IMPORTANT: Attachment offsets are expressed in the PARENT ANCHOR join frame.\n\
-       In that join frame, `offset.pos = [x,y,z]` means:\n\
+     - IMPORTANT: For `tweak_component_transform`, `set.pos` / `delta.pos` are expressed in the PARENT ANCHOR join frame (same frame as `attach_to.offset.pos`).\n\
+       In that join frame, `pos = [x,y,z]` means:\n\
        - +X (`pos[0]`) is `join_right_world`\n\
        - +Y (`pos[1]`) is `join_up_world`\n\
        - +Z (`pos[2]`) is `join_forward_world` (this is `parent_anchor.forward`, defined to point from the parent toward the child)\n\
        Therefore:\n\
-       - If a child looks DETACHED and you want to pull it TOWARD its parent, use a NEGATIVE delta on `pos[2]` (decrease `offset.pos[2]`).\n\
-       - If you want to push a child further away along the attachment direction, use a POSITIVE delta on `pos[2]` (increase `offset.pos[2]`).\n\
+       - If a child looks DETACHED and you want to pull it TOWARD its parent, use a NEGATIVE `delta.pos[2]` (decrease `pos[2]`).\n\
+       - If you want to push a child further away along the attachment direction, use a POSITIVE `delta.pos[2]` (increase `pos[2]`).\n\
        - If you want to apply a desired WORLD-space translation delta `W = [wx,wy,wz]`, convert it into join-frame deltas:\n\
          - `delta.pos[0] = dot(W, join_right_world)`\n\
          - `delta.pos[1] = dot(W, join_up_world)`\n\
