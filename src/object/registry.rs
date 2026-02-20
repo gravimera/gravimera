@@ -141,6 +141,7 @@ pub(crate) struct PartAnimationSlot {
 #[derive(Clone, Debug)]
 pub(crate) struct ObjectPartDef {
     pub(crate) part_id: Option<u128>,
+    pub(crate) render_priority: Option<i32>,
     pub(crate) kind: ObjectPartKind,
     pub(crate) attachment: Option<AttachmentDef>,
     pub(crate) animations: Vec<PartAnimationSlot>,
@@ -151,6 +152,7 @@ impl ObjectPartDef {
     pub(crate) fn object_ref(object_id: u128, transform: Transform) -> Self {
         Self {
             part_id: None,
+            render_priority: None,
             kind: ObjectPartKind::ObjectRef { object_id },
             attachment: None,
             animations: Vec::new(),
@@ -161,6 +163,7 @@ impl ObjectPartDef {
     pub(crate) fn primitive(primitive: PrimitiveVisualDef, transform: Transform) -> Self {
         Self {
             part_id: None,
+            render_priority: None,
             kind: ObjectPartKind::Primitive { primitive },
             attachment: None,
             animations: Vec::new(),
@@ -172,6 +175,7 @@ impl ObjectPartDef {
     pub(crate) fn model(scene: impl Into<Cow<'static, str>>, transform: Transform) -> Self {
         Self {
             part_id: None,
+            render_priority: None,
             kind: ObjectPartKind::Model {
                 scene: scene.into(),
             },
@@ -184,6 +188,12 @@ impl ObjectPartDef {
     #[allow(dead_code)]
     pub(crate) fn with_part_id(mut self, part_id: u128) -> Self {
         self.part_id = Some(part_id);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn with_render_priority(mut self, render_priority: i32) -> Self {
+        self.render_priority = Some(render_priority);
         self
     }
 

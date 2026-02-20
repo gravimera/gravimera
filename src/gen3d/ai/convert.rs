@@ -2428,7 +2428,7 @@ pub(super) fn ai_to_component_def(
 
         let rot = quat_from_forward_up_or_identity(part.forward, part.up);
 
-        parts.push(ObjectPartDef::primitive(
+        let mut part_def = ObjectPartDef::primitive(
             PrimitiveVisualDef::Primitive {
                 mesh,
                 params,
@@ -2438,7 +2438,9 @@ pub(super) fn ai_to_component_def(
             Transform::from_translation(Vec3::new(part.pos[0], part.pos[1], part.pos[2]))
                 .with_rotation(rot)
                 .with_scale(Vec3::new(part.scale[0], part.scale[1], part.scale[2])),
-        ));
+        );
+        part_def.render_priority = part.render_priority;
+        parts.push(part_def);
     }
 
     sanitize_component_part_transforms(component_name, &mut parts);
@@ -2949,15 +2951,16 @@ mod tests {
                 forward: Some([0.0, 0.0, 1.0]),
                 up: Some([0.0, 1.0, 0.0]),
             }],
-            parts: vec![AiPartJson {
-                primitive: AiPrimitiveJson::Cuboid,
-                params: None,
-                color: Some([0.2, 0.3, 0.4, 1.0]),
-                pos: [1.0, 0.0, 0.0],
-                forward: None,
-                up: None,
-                scale: [1.0, 1.0, 1.0],
-            }],
+	            parts: vec![AiPartJson {
+	                primitive: AiPrimitiveJson::Cuboid,
+	                params: None,
+	                color: Some([0.2, 0.3, 0.4, 1.0]),
+	                render_priority: None,
+	                pos: [1.0, 0.0, 0.0],
+	                forward: None,
+	                up: None,
+	                scale: [1.0, 1.0, 1.0],
+	            }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");
@@ -3006,15 +3009,16 @@ mod tests {
                 forward: Some([0.0, 0.0, 1.0]),
                 up: Some([0.0, 1.0, 0.0]),
             }],
-            parts: vec![AiPartJson {
-                primitive: AiPrimitiveJson::Cuboid,
-                params: None,
-                color: Some([0.2, 0.3, 0.4, 1.0]),
-                pos: [0.0, 0.0, 0.0],
-                forward: None,
-                up: None,
-                scale: [1.0, 0.38, 1.0],
-            }],
+	            parts: vec![AiPartJson {
+	                primitive: AiPrimitiveJson::Cuboid,
+	                params: None,
+	                color: Some([0.2, 0.3, 0.4, 1.0]),
+	                render_priority: None,
+	                pos: [0.0, 0.0, 0.0],
+	                forward: None,
+	                up: None,
+	                scale: [1.0, 0.38, 1.0],
+	            }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");
@@ -3099,15 +3103,16 @@ mod tests {
                 forward: Some([1.0, 0.0, 0.0]),
                 up: Some([0.0, 1.0, 0.0]),
             }],
-            parts: vec![AiPartJson {
-                primitive: AiPrimitiveJson::Cuboid,
-                params: None,
-                color: Some([0.2, 0.3, 0.4, 1.0]),
-                pos: [0.0, 0.0, 0.0],
-                forward: None,
-                up: None,
-                scale: [0.60, 0.60, 0.12],
-            }],
+	            parts: vec![AiPartJson {
+	                primitive: AiPrimitiveJson::Cuboid,
+	                params: None,
+	                color: Some([0.2, 0.3, 0.4, 1.0]),
+	                render_priority: None,
+	                pos: [0.0, 0.0, 0.0],
+	                forward: None,
+	                up: None,
+	                scale: [0.60, 0.60, 0.12],
+	            }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");
@@ -3391,15 +3396,16 @@ mod tests {
                 forward: Some([0.0, -1.0, 0.0]),
                 up: Some([0.0, 0.0, 1.0]),
             }],
-            parts: vec![AiPartJson {
-                primitive: AiPrimitiveJson::Cuboid,
-                params: None,
-                color: Some([0.2, 0.3, 0.4, 1.0]),
-                pos: [0.0, 0.0, 0.0],
-                forward: None,
-                up: None,
-                scale: [1.0, 1.0, 1.0],
-            }],
+	            parts: vec![AiPartJson {
+	                primitive: AiPrimitiveJson::Cuboid,
+	                params: None,
+	                color: Some([0.2, 0.3, 0.4, 1.0]),
+	                render_priority: None,
+	                pos: [0.0, 0.0, 0.0],
+	                forward: None,
+	                up: None,
+	                scale: [1.0, 1.0, 1.0],
+	            }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");

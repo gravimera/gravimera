@@ -1190,6 +1190,7 @@ fn part_from_dat(part: &SceneDatPartDef) -> Result<ObjectPartDef, String> {
 
     Ok(ObjectPartDef {
         part_id: part.part_id.as_ref().map(uuid_to_u128),
+        render_priority: None,
         kind,
         attachment: part.attachment.as_ref().and_then(|a| {
             let parent_anchor = a.parent_anchor.trim();
@@ -2297,6 +2298,7 @@ mod tests {
             }],
             parts: vec![ObjectPartDef {
                 part_id: Some(0xABCD_u128),
+                render_priority: None,
                 kind: ObjectPartKind::ObjectRef {
                     object_id: child_id,
                 },

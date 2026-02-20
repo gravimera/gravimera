@@ -391,6 +391,7 @@ fn schema_part() -> serde_json::Value {
         ),
         ("params", schema_nullable(schema_primitive_params())),
         ("color", schema_nullable(schema_fixed_num_array(4))),
+        ("render_priority", schema_nullable(schema_integer())),
         ("pos", schema_vec3()),
         ("forward", schema_nullable(schema_vec3())),
         ("up", schema_nullable(schema_vec3())),

@@ -240,17 +240,19 @@ Rig / motion contract (optional; used for locomotion validation and AI repair):
   "anchors": [
     { "name": "bottom_socket", "pos": [0.0, -0.4, 0.1], "forward": [0.0, 0.0, -1.0], "up": [0.0, 1.0, 0.0] }
   ],
-  "parts": [
-    {
-      "primitive": "cuboid",
-      "color": [0.8, 0.8, 0.8, 1.0],
-      "pos": [0.0, 0.2, 0.0],
-      "forward": [0.0, 0.0, -1.0],
-      "up": [0.0, 1.0, 0.0],
-      "scale": [1.2, 0.4, 1.2]
-    }
-  ]
-}
+	  "parts": [
+	    {
+	      "primitive": "cuboid",
+	      "params": null,
+	      "color": [0.8, 0.8, 0.8, 1.0],
+	      "render_priority": 0,
+	      "pos": [0.0, 0.2, 0.0],
+	      "forward": [0.0, 0.0, -1.0],
+	      "up": [0.0, 1.0, 0.0],
+	      "scale": [1.2, 0.4, 1.2]
+	    }
+	  ]
+	}
 ```
 
 Notes:
@@ -259,13 +261,14 @@ Notes:
 - `color` is **required** for every part (RGBA in 0..1). The engine rejects drafts that omit it.
 - `forward` / `up` are direction vectors (no Euler angles). The engine normalizes them and repairs common degeneracies.
 - `params` is accepted for a small set of primitive variants (`capsule`, `conical_frustum`, `torus`).
-- IMPORTANT: all `anchors[]` and `parts[]` transforms are **component-local**. The engine assembles components by aligning anchors.
-- The engine does **not** auto-nudge part placement. If you add thin surface details, place them slightly proud of the supporting surface so they remain visible.
-  - To avoid z-fighting (coplanar overlapping faces), do not place multiple primitives with the exact same planar face plane; use a small inset/outset epsilon, and avoid concentric capped cylinders with identical cap planes.
-  - The renderer applies a small per-part depth bias as a best-effort tie-break for coplanar overlaps, but you should not rely on it.
-- The draft must include **all anchors required by the plan** (extra anchors are ignored).
-- Convention: component origin is the component's center, so the component center should be at local `[0,0,0]`.
-- Robustness: the engine recenters each generated component to its primitive bounds center (and shifts anchors by the same amount).
+	- IMPORTANT: all `anchors[]` and `parts[]` transforms are **component-local**. The engine assembles components by aligning anchors.
+	- The engine does **not** auto-nudge part placement. If you add thin surface details, place them slightly proud of the supporting surface so they remain visible.
+	  - To avoid z-fighting (coplanar overlapping faces), do not place multiple primitives with the exact same planar face plane; use a small inset/outset epsilon, and avoid concentric capped cylinders with identical cap planes.
+	  - The renderer applies a small per-part depth bias as a best-effort tie-break for coplanar overlaps, but you should not rely on it.
+	  - Optional: set `render_priority` (small integer) to hint which parts should be rendered “in front” when faces end up coplanar. Higher values are biased slightly closer to the camera; keep values small (|render_priority| <= 3).
+	- The draft must include **all anchors required by the plan** (extra anchors are ignored).
+	- Convention: component origin is the component's center, so the component center should be at local `[0,0,0]`.
+	- Robustness: the engine recenters each generated component to its primitive bounds center (and shifts anchors by the same amount).
 
 ---
 

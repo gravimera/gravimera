@@ -227,6 +227,7 @@ mod tests {
             }],
             parts: vec![ObjectPartDef {
                 part_id: None,
+                render_priority: None,
                 kind: ObjectPartKind::ObjectRef {
                     object_id: child_id,
                 },

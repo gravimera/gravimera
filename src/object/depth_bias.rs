@@ -8,6 +8,22 @@ const NORMAL_DOT_THRESHOLD: f32 = 0.9995;
 const PLANE_DISTANCE_EPS: f32 = 1e-4;
 const OVERLAP_EPS: f32 = 1e-5;
 const MAX_DEPTH_BIAS: i32 = 8;
+const MAX_RENDER_PRIORITY_ABS: i32 = 3;
+const RENDER_PRIORITY_DEPTH_BIAS_STEP: i32 = 2;
+const MAX_TOTAL_DEPTH_BIAS_ABS: i32 = 32;
+
+pub(crate) fn depth_bias_delta_from_render_priority(render_priority: Option<i32>) -> i32 {
+    let Some(render_priority) = render_priority else {
+        return 0;
+    };
+    render_priority
+        .clamp(-MAX_RENDER_PRIORITY_ABS, MAX_RENDER_PRIORITY_ABS)
+        .saturating_mul(RENDER_PRIORITY_DEPTH_BIAS_STEP)
+}
+
+pub(crate) fn clamp_depth_bias(depth_bias: i32) -> i32 {
+    depth_bias.clamp(-MAX_TOTAL_DEPTH_BIAS_ABS, MAX_TOTAL_DEPTH_BIAS_ABS)
+}
 
 #[derive(Clone, Copy, Debug)]
 struct PlanarFace {

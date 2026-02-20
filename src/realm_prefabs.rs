@@ -990,6 +990,8 @@ impl ObjectPartKindJson {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ObjectPartDefJson {
     part_id: Option<String>,
+    #[serde(default)]
+    render_priority: Option<i32>,
     kind: ObjectPartKindJson,
     attachment: Option<AttachmentDefJson>,
     animations: Vec<PartAnimationSlotJson>,
@@ -1000,6 +1002,7 @@ impl ObjectPartDefJson {
     fn from_part(part: &ObjectPartDef) -> Self {
         Self {
             part_id: part.part_id.map(|id| uuid::Uuid::from_u128(id).to_string()),
+            render_priority: part.render_priority,
             kind: ObjectPartKindJson::from_kind(&part.kind),
             attachment: part
                 .attachment
@@ -1031,6 +1034,7 @@ impl ObjectPartDefJson {
 
         Ok(ObjectPartDef {
             part_id,
+            render_priority: self.render_priority,
             kind: self.kind.to_kind()?,
             attachment: self
                 .attachment

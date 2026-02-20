@@ -47,6 +47,8 @@ pub(crate) struct AiPartJson {
     pub(crate) params: Option<serde_json::Value>,
     #[serde(default)]
     pub(crate) color: Option<[f32; 4]>,
+    #[serde(default)]
+    pub(crate) render_priority: Option<i32>,
     pub(crate) pos: [f32; 3],
     #[serde(default)]
     pub(crate) forward: Option<[f32; 3]>,
