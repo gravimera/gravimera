@@ -20,6 +20,7 @@ The AI is instructed to prioritize **basic structure and proportions** over smal
    - You must provide at least one: a reference photo or a text prompt.
 4. Click **Build** (each click starts a fresh run and overwrites the current draft).
    - While building, click **Stop** to cancel.
+   - You can switch back to **Realm** while building; Gen3D keeps working in the background. Return to Preview any time to inspect progress.
 5. Review in the preview panel:
    - Orbit/zoom (LMB drag / mouse wheel).
    - Select preview animation state via the **Anim** dropdown (Idle / Move / Attack).

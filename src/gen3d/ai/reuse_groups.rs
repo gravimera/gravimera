@@ -246,17 +246,17 @@ pub(super) fn missing_only_generation_indices(
                     }
                 }
                 for &target_root in &group.target_root_indices {
-                    let preflight = super::copy_component::preflight_subtree_copy_compatibility(
+                    let pairs = super::copy_component::preflight_subtree_copy_pairs(
                         planned_components,
                         source_idx,
                         target_root,
                     );
-                    if preflight.is_err() {
+                    let Ok(pairs) = pairs else {
                         continue;
-                    }
-                    for idx in collect_subtree_indices(&children, target_root) {
-                        if idx < skip_targets.len() {
-                            skip_targets[idx] = true;
+                    };
+                    for (_source_idx, target_idx) in pairs {
+                        if target_idx < skip_targets.len() {
+                            skip_targets[target_idx] = true;
                         }
                     }
                 }
@@ -315,17 +315,17 @@ pub(super) fn copyable_target_count(
                     }
                 }
                 for &target_root in &group.target_root_indices {
-                    let preflight = super::copy_component::preflight_subtree_copy_compatibility(
+                    let pairs = super::copy_component::preflight_subtree_copy_pairs(
                         planned_components,
                         source_idx,
                         target_root,
                     );
-                    if preflight.is_err() {
+                    let Ok(pairs) = pairs else {
                         continue;
-                    }
-                    for idx in collect_subtree_indices(&children, target_root) {
-                        if idx < skip_targets.len() {
-                            skip_targets[idx] = true;
+                    };
+                    for (_source_idx, target_idx) in pairs {
+                        if target_idx < skip_targets.len() {
+                            skip_targets[target_idx] = true;
                         }
                     }
                 }
@@ -434,44 +434,49 @@ pub(super) fn apply_auto_copy(
                             report.component_copies_applied += 1;
                             report.outcomes.push(outcome);
                         }
-                        Err(err) => report.errors.push(err),
+                        Err(err) => {
+                            report.errors.push(err);
+                            fallback_component_indices.insert(target_idx);
+                        }
                     }
                 }
             }
             Gen3dReuseGroupKind::Subtree => {
                 for &target_root_idx in &group.target_root_indices {
-                    if let Err(err) = super::copy_component::preflight_subtree_copy_compatibility(
+                    let pairs = match super::copy_component::preflight_subtree_copy_pairs(
                         planned_components,
                         source_root_idx,
                         target_root_idx,
                     ) {
-                        let source_name = planned_components
-                            .get(source_root_idx)
-                            .map(|c| c.name.as_str())
-                            .unwrap_or("<missing>");
-                        let target_name = planned_components
-                            .get(target_root_idx)
-                            .map(|c| c.name.as_str())
-                            .unwrap_or("<missing>");
-                        report.preflight_mismatches.push(format!(
-                            "auto_copy: preflight mismatch for subtree `{source_name}` -> `{target_name}`: {err}; fallback to llm_generate_component_v1"
-                        ));
-                        for idx in collect_subtree_indices(&children, target_root_idx) {
-                            if planned_components
-                                .get(idx)
-                                .is_some_and(|c| c.actual_size.is_none())
-                            {
-                                fallback_component_indices.insert(idx);
+                        Ok(pairs) => pairs,
+                        Err(err) => {
+                            let source_name = planned_components
+                                .get(source_root_idx)
+                                .map(|c| c.name.as_str())
+                                .unwrap_or("<missing>");
+                            let target_name = planned_components
+                                .get(target_root_idx)
+                                .map(|c| c.name.as_str())
+                                .unwrap_or("<missing>");
+                            report.preflight_mismatches.push(format!(
+                                "auto_copy: preflight mismatch for subtree `{source_name}` -> `{target_name}`: {err}; fallback to llm_generate_component_v1"
+                            ));
+                            for idx in collect_subtree_indices(&children, target_root_idx) {
+                                if planned_components
+                                    .get(idx)
+                                    .is_some_and(|c| c.actual_size.is_none())
+                                {
+                                    fallback_component_indices.insert(idx);
+                                }
                             }
+                            continue;
                         }
-                        continue;
-                    }
+                    };
 
-                    let subtree_indices = collect_subtree_indices(&children, target_root_idx);
                     let mut any_generated = false;
-                    for idx in &subtree_indices {
+                    for (_source_idx, target_idx) in pairs.iter().copied() {
                         if planned_components
-                            .get(*idx)
+                            .get(target_idx)
                             .is_some_and(|c| c.actual_size.is_some())
                         {
                             any_generated = true;
@@ -498,7 +503,18 @@ pub(super) fn apply_auto_copy(
                             report.component_copies_applied += outcomes.len();
                             report.outcomes.extend(outcomes);
                         }
-                        Err(err) => report.errors.push(err),
+                        Err(err) => {
+                            report.errors.push(err);
+                            let children = build_children_map(planned_components);
+                            for idx in collect_subtree_indices(&children, target_root_idx) {
+                                if planned_components
+                                    .get(idx)
+                                    .is_some_and(|c| c.actual_size.is_none())
+                                {
+                                    fallback_component_indices.insert(idx);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -663,8 +679,8 @@ mod tests {
         let indices = missing_only_generation_indices(&components, &validated);
         assert_eq!(
             indices,
-            vec![0, 1, 2, 3, 4, 5],
-            "shape mismatch should preflight-fallback to generation for target subtree"
+            vec![0, 1, 2, 5],
+            "expected to generate the extra target-only branch (spur), but skip copyable targets"
         );
     }
 
@@ -702,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_copy_reports_preflight_mismatch_and_fallback_targets() {
+    fn auto_copy_subtree_reuse_allows_extra_target_branches() {
         let mut components = vec![
             stub_component("body"),
             stub_component("leg0_root"),
@@ -711,6 +727,14 @@ mod tests {
             stub_component("leg1_foot"),
             stub_component("leg1_spur"),
         ];
+        components[0].anchors.push(anchor("mount0"));
+        components[0].anchors.push(anchor("mount1"));
+        components[1].anchors.push(anchor("knee"));
+        components[2].anchors.push(anchor("hip"));
+        components[3].anchors.push(anchor("knee"));
+        components[3].anchors.push(anchor("spur"));
+        components[4].anchors.push(anchor("hip"));
+        components[5].anchors.push(anchor("hip"));
         attach_with_edge(&mut components[1], "body", "mount0", "hip");
         attach_with_edge(&mut components[2], "leg0_root", "knee", "hip");
         attach_with_edge(&mut components[3], "body", "mount1", "hip");
@@ -720,6 +744,8 @@ mod tests {
         // Source subtree is generated; target subtree is missing.
         components[1].actual_size = Some(Vec3::ONE);
         components[2].actual_size = Some(Vec3::ONE);
+        // Extra target-only branch can still be generated without blocking subtree reuse.
+        components[5].actual_size = Some(Vec3::ONE);
 
         let (validated, warnings) = validate_reuse_groups(
             &[AiReuseGroupJson {
@@ -734,18 +760,105 @@ mod tests {
         assert!(warnings.is_empty());
 
         let mut draft = crate::gen3d::state::Gen3dDraft::default();
+        let mut defs = Vec::new();
+        for comp in components.iter() {
+            let object_id = crate::object::registry::builtin_object_id(&format!(
+                "gravimera/gen3d/component/{}",
+                comp.name
+            ));
+            defs.push(crate::object::registry::ObjectDef {
+                object_id,
+                label: comp.name.clone().into(),
+                size: Vec3::ONE,
+                ground_origin_y: None,
+                collider: crate::object::registry::ColliderProfile::None,
+                interaction: crate::object::registry::ObjectInteraction::none(),
+                aim: None,
+                mobility: None,
+                anchors: comp.anchors.clone(),
+                parts: vec![crate::object::registry::ObjectPartDef::primitive(
+                    crate::object::registry::PrimitiveVisualDef::Primitive {
+                        mesh: crate::object::registry::MeshKey::UnitCube,
+                        params: None,
+                        color: Color::WHITE,
+                        unlit: false,
+                    },
+                    Transform::from_scale(Vec3::ONE),
+                )],
+                minimap_color: None,
+                health_bar_offset_y: None,
+                enemy: None,
+                muzzle: None,
+                projectile: None,
+                attack: None,
+            });
+        }
+
+        // Mirror Gen3D's plan-to-draft attachment encoding: child ObjectRefs live under the parent def.
+        for comp in components.iter() {
+            let Some(att) = comp.attach_to.as_ref() else {
+                continue;
+            };
+            let child_id = crate::object::registry::builtin_object_id(&format!(
+                "gravimera/gen3d/component/{}",
+                comp.name
+            ));
+            let parent_id = crate::object::registry::builtin_object_id(&format!(
+                "gravimera/gen3d/component/{}",
+                att.parent
+            ));
+            let part = crate::object::registry::ObjectPartDef::object_ref(child_id, att.offset)
+                .with_attachment(crate::object::registry::AttachmentDef {
+                    parent_anchor: att.parent_anchor.clone().into(),
+                    child_anchor: att.child_anchor.clone().into(),
+                });
+            if let Some(parent_def) = defs.iter_mut().find(|d| d.object_id == parent_id) {
+                parent_def.parts.push(part);
+            }
+        }
+        draft.defs = defs;
+
         let report = apply_auto_copy(&mut components, &mut draft, &validated);
-        assert_eq!(report.component_copies_applied, 0);
-        assert_eq!(report.subtree_copies_applied, 0);
-        assert!(report.errors.is_empty());
-        assert_eq!(report.fallback_component_indices, vec![3, 4, 5]);
         assert!(
-            report
-                .preflight_mismatches
-                .iter()
-                .any(|m| m.contains("preflight mismatch")),
-            "expected a preflight mismatch note, got {:?}",
-            report.preflight_mismatches
+            report.errors.is_empty(),
+            "expected subtree reuse to succeed, got errors: {:?}",
+            report.errors
+        );
+        assert!(report.preflight_mismatches.is_empty());
+        assert!(report.fallback_component_indices.is_empty());
+        assert_eq!(report.subtree_copies_applied, 1);
+        assert_eq!(report.component_copies_applied, 2);
+
+        assert!(
+            components[3].actual_size.is_some(),
+            "expected subtree reuse to copy leg1_root"
+        );
+        assert!(
+            components[4].actual_size.is_some(),
+            "expected subtree reuse to copy leg1_foot"
+        );
+        assert!(
+            components[5].actual_size.is_some(),
+            "expected pre-generated extra branch to remain generated"
+        );
+
+        let leg1_root_id =
+            crate::object::registry::builtin_object_id("gravimera/gen3d/component/leg1_root");
+        let leg1_spur_id =
+            crate::object::registry::builtin_object_id("gravimera/gen3d/component/leg1_spur");
+        let leg1_root_def = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == leg1_root_id)
+            .expect("leg1_root def");
+        assert!(
+            leg1_root_def.parts.iter().any(|p| {
+                matches!(p.kind, crate::object::registry::ObjectPartKind::ObjectRef { object_id } if object_id == leg1_spur_id)
+                    && p.attachment.as_ref().is_some_and(|att| {
+                        att.parent_anchor.as_ref() == "spur" && att.child_anchor.as_ref() == "hip"
+                    })
+            }),
+            "expected subtree reuse to preserve extra spur attachment ref"
         );
     }
 }

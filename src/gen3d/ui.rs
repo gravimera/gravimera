@@ -68,17 +68,20 @@ pub(crate) fn enter_gen3d_mode(
     mut images: ResMut<Assets<Image>>,
     assets: Res<SceneAssets>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    job: Res<Gen3dAiJob>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut preview_state: ResMut<Gen3dPreview>,
 ) {
-    workshop.status = format!(
-        "Drop 0–{} images and/or type a prompt, then click Build.",
-        super::GEN3D_MAX_IMAGES
-    );
+    if !job.is_running() {
+        workshop.status = format!(
+            "Drop 0–{} images and/or type a prompt, then click Build.",
+            super::GEN3D_MAX_IMAGES
+        );
+        workshop.speed_mode = Gen3dSpeedMode::Level3;
+    }
     workshop.error = None;
     workshop.prompt_focused = true;
     workshop.image_viewer = None;
-    workshop.speed_mode = Gen3dSpeedMode::Level3;
     workshop.side_tab = Gen3dSideTab::Status;
     workshop.side_panel_open = false;
     workshop.tool_feedback_unread = false;
@@ -86,13 +89,29 @@ pub(crate) fn enter_gen3d_mode(
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
 
-    let target = preview::setup_preview_scene(
-        &mut commands,
-        &mut images,
-        &assets,
-        &mut materials,
-        &mut preview_state,
-    );
+    let needs_setup = preview_state.target.is_none()
+        || preview_state.root.is_none()
+        || preview_state.camera.is_none();
+    let target = if needs_setup {
+        preview::setup_preview_scene(
+            &mut commands,
+            &mut images,
+            &assets,
+            &mut materials,
+            &mut preview_state,
+        )
+    } else {
+        preview_state
+            .target
+            .clone()
+            .unwrap_or_else(|| preview::setup_preview_scene(
+                &mut commands,
+                &mut images,
+                &assets,
+                &mut materials,
+                &mut preview_state,
+            ))
+    };
 
     commands
         .spawn((
@@ -1053,12 +1072,71 @@ pub(crate) fn exit_gen3d_mode(
     preview_roots: Query<Entity, With<Gen3dPreviewSceneRoot>>,
     preview_lights: Query<Entity, With<Gen3dPreviewLight>>,
     viewer_roots: Query<Entity, With<Gen3dImageViewerRoot>>,
+    job: Res<Gen3dAiJob>,
     mut preview_state: ResMut<Gen3dPreview>,
     mut workshop: ResMut<Gen3dWorkshop>,
 ) {
     for entity in &roots {
         commands.entity(entity).try_despawn();
     }
+    for entity in &viewer_roots {
+        commands.entity(entity).try_despawn();
+    }
+
+    if !job.is_running() {
+        for entity in &preview_cameras {
+            commands.entity(entity).try_despawn();
+        }
+        for entity in &review_cameras {
+            commands.entity(entity).try_despawn();
+        }
+        for entity in &preview_roots {
+            commands.entity(entity).try_despawn();
+        }
+        for entity in &preview_lights {
+            commands.entity(entity).try_despawn();
+        }
+
+        preview_state.target = None;
+        preview_state.camera = None;
+        preview_state.root = None;
+        preview_state.last_cursor = None;
+        preview_state.collision_dirty = false;
+        preview_state.animation_channel = "idle".to_string();
+        preview_state.animation_channels.clear();
+        preview_state.animation_dropdown_open = false;
+    } else {
+        // Keep the preview scene alive so Gen3D can keep rendering/reviewing in the background.
+        preview_state.last_cursor = None;
+        preview_state.animation_dropdown_open = false;
+    }
+    workshop.image_viewer = None;
+}
+
+pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
+    mut commands: Commands,
+    job: Res<Gen3dAiJob>,
+    preview_cameras: Query<Entity, With<Gen3dPreviewCamera>>,
+    review_cameras: Query<Entity, With<Gen3dReviewCaptureCamera>>,
+    preview_roots: Query<Entity, With<Gen3dPreviewSceneRoot>>,
+    preview_lights: Query<Entity, With<Gen3dPreviewLight>>,
+    mut preview_state: ResMut<Gen3dPreview>,
+) {
+    if job.is_running() {
+        return;
+    }
+
+    let should_cleanup = preview_state.root.is_some()
+        || preview_state.camera.is_some()
+        || preview_state.target.is_some()
+        || !preview_roots.is_empty()
+        || !preview_lights.is_empty()
+        || !preview_cameras.is_empty()
+        || !review_cameras.is_empty();
+    if !should_cleanup {
+        return;
+    }
+
     for entity in &preview_cameras {
         commands.entity(entity).try_despawn();
     }
@@ -1071,9 +1149,6 @@ pub(crate) fn exit_gen3d_mode(
     for entity in &preview_lights {
         commands.entity(entity).try_despawn();
     }
-    for entity in &viewer_roots {
-        commands.entity(entity).try_despawn();
-    }
 
     preview_state.target = None;
     preview_state.camera = None;
@@ -1083,7 +1158,6 @@ pub(crate) fn exit_gen3d_mode(
     preview_state.animation_channel = "idle".to_string();
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
-    workshop.image_viewer = None;
 }
 
 pub(crate) fn gen3d_prompt_box_focus(

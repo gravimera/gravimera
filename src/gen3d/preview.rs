@@ -436,6 +436,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
 
 pub(crate) fn gen3d_apply_draft_to_preview(
     build_scene: Res<State<BuildScene>>,
+    job: Res<Gen3dAiJob>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
@@ -448,7 +449,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     mut preview: ResMut<Gen3dPreview>,
     existing: Query<Entity, With<Gen3dPreviewModelRoot>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !matches!(build_scene.get(), BuildScene::Preview) && !job.is_running() {
         return;
     }
     let Some(preview_root) = preview.root else {

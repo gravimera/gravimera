@@ -765,22 +765,6 @@ fn map_subtree_pairs(
         let target_by_key =
             children_by_attachment_edge_key(components, target_idx, target_children)?;
 
-        let mut extra_target_keys: Vec<AttachmentEdgeKey> = target_by_key
-            .keys()
-            .filter(|key| !source_by_key.contains_key(*key))
-            .cloned()
-            .collect();
-        extra_target_keys.sort();
-        if !extra_target_keys.is_empty() {
-            return Err(format!(
-                "copy_component_subtree: subtree shape mismatch at `{}`: target `{}` has extra child attachments {:?} not present in source `{}`",
-                components[source_idx].name,
-                components[target_idx].name,
-                extra_target_keys,
-                components[source_idx].name,
-            ));
-        }
-
         let mut ordered_source: Vec<(AttachmentEdgeKey, usize)> =
             source_by_key.into_iter().collect();
         ordered_source.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -866,11 +850,11 @@ pub(super) fn copy_component_subtree_into(
     Ok(out)
 }
 
-pub(super) fn preflight_subtree_copy_compatibility(
+pub(super) fn preflight_subtree_copy_pairs(
     components: &[Gen3dPlannedComponent],
     source_root_idx: usize,
     target_root_idx: usize,
-) -> Result<(), String> {
+) -> Result<Vec<(usize, usize)>, String> {
     // Run the same structural checks as the real subtree copy path, but on scratch state so we
     // can decide whether to copy or generate before mutating live draft/component data.
     let mut scratch_components = components.to_vec();
@@ -882,13 +866,13 @@ pub(super) fn preflight_subtree_copy_compatibility(
         target_root_idx,
     )?;
     let children = build_children_map(&scratch_components);
-    let _ = map_subtree_pairs(
+    let pairs = map_subtree_pairs(
         &scratch_components,
         &children,
         source_root_idx,
         target_root_idx,
     )?;
-    Ok(())
+    Ok(pairs)
 }
 
 fn ensure_target_subtree_shape(
@@ -1047,22 +1031,6 @@ fn ensure_target_subtree_shape(
             children_by_attachment_edge_key(components.as_slice(), source_idx, &source_children)?;
         let mut target_by_key =
             children_by_attachment_edge_key(components.as_slice(), target_idx, &target_children)?;
-
-        let mut extra_target_keys: Vec<AttachmentEdgeKey> = target_by_key
-            .keys()
-            .filter(|key| !source_by_key.contains_key(*key))
-            .cloned()
-            .collect();
-        extra_target_keys.sort();
-        if !extra_target_keys.is_empty() {
-            return Err(format!(
-                "copy_component_subtree: subtree shape mismatch at `{}`: target `{}` has extra child attachments {:?} not present in source `{}`",
-                components[source_idx].name,
-                components[target_idx].name,
-                extra_target_keys,
-                components[source_idx].name,
-            ));
-        }
 
         // Clone any missing branches under the target node (allowed even if the target subtree is
         // partially populated), as long as attachment edge keys are unambiguous.
@@ -1460,6 +1428,154 @@ mod tests {
                 .iter()
                 .any(|p| matches!(p.kind, ObjectPartKind::Primitive { .. })),
             "expected subtree copy to materialize primitives into foot_b"
+        );
+    }
+
+    #[test]
+    fn subtree_copy_allows_extra_target_child_attachments() {
+        let mut components = vec![
+            stub_component("hand_l"),
+            stub_component("finger_l"),
+            stub_component("hand_r"),
+            stub_component("finger_r"),
+            stub_component("grip_socket"),
+        ];
+
+        components[0].anchors.push(anchor_named_forward("mount", Vec3::Z));
+        components[0].anchors.push(anchor_named_forward("grip", Vec3::X));
+        components[1].anchors.push(anchor_named_forward("socket", Vec3::Z));
+        components[2].anchors.push(anchor_named_forward("mount", Vec3::Z));
+        components[2].anchors.push(anchor_named_forward("grip", Vec3::X));
+        components[3].anchors.push(anchor_named_forward("socket", Vec3::Z));
+        components[4].anchors.push(anchor_named_forward("grip_socket", Vec3::Z));
+
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "hand_l".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "socket".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[3].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "hand_r".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "socket".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[4].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "hand_r".into(),
+            parent_anchor: "grip".into(),
+            child_anchor: "grip_socket".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        // Source subtree is generated.
+        components[0].actual_size = Some(Vec3::ONE);
+        components[1].actual_size = Some(Vec3::ONE);
+
+        let hand_l_id = component_object_id("hand_l");
+        let finger_l_id = component_object_id("finger_l");
+        let hand_r_id = component_object_id("hand_r");
+        let finger_r_id = component_object_id("finger_r");
+        let grip_socket_id = component_object_id("grip_socket");
+
+        let mut hand_l_def = stub_def(hand_l_id, "hand_l");
+        hand_l_def.anchors = vec![
+            AnchorDef {
+                name: "origin".into(),
+                transform: Transform::IDENTITY,
+            },
+            anchor_named_forward("mount", Vec3::Z),
+            anchor_named_forward("grip", Vec3::NEG_X),
+        ];
+
+        let mut finger_l_def = stub_def(finger_l_id, "finger_l");
+        finger_l_def.anchors.push(anchor_named_forward("socket", Vec3::Z));
+
+        let mut hand_r_def = stub_def(hand_r_id, "hand_r");
+        let grip_before = anchor_named_forward("grip", Vec3::X);
+        hand_r_def.anchors = vec![
+            AnchorDef {
+                name: "origin".into(),
+                transform: Transform::IDENTITY,
+            },
+            anchor_named_forward("mount", Vec3::Z),
+            grip_before.clone(),
+        ];
+        hand_r_def.parts = vec![
+            ObjectPartDef::primitive(
+                crate::object::registry::PrimitiveVisualDef::Primitive {
+                    mesh: crate::object::registry::MeshKey::UnitCube,
+                    params: None,
+                    color: Color::WHITE,
+                    unlit: false,
+                },
+                Transform::from_scale(Vec3::splat(1.0)),
+            ),
+            ObjectPartDef::object_ref(finger_r_id, Transform::IDENTITY)
+                .with_attachment(crate::object::registry::AttachmentDef {
+                    parent_anchor: "mount".into(),
+                    child_anchor: "socket".into(),
+                }),
+            ObjectPartDef::object_ref(grip_socket_id, Transform::IDENTITY)
+                .with_attachment(crate::object::registry::AttachmentDef {
+                    parent_anchor: "grip".into(),
+                    child_anchor: "grip_socket".into(),
+                }),
+        ];
+
+        let mut finger_r_def = stub_def(finger_r_id, "finger_r");
+        finger_r_def.anchors.push(anchor_named_forward("socket", Vec3::Z));
+        let mut grip_socket_def = stub_def(grip_socket_id, "grip_socket");
+        grip_socket_def
+            .anchors
+            .push(anchor_named_forward("grip_socket", Vec3::Z));
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![
+            hand_l_def,
+            finger_l_def,
+            hand_r_def,
+            finger_r_def,
+            grip_socket_def,
+        ];
+
+        copy_component_subtree_into(
+            &mut components,
+            &mut draft,
+            0,
+            2,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
+            Transform::IDENTITY,
+        )
+        .expect("subtree copy ok");
+
+        let hand_r_after = draft.defs.iter().find(|d| d.object_id == hand_r_id).unwrap();
+        assert!(
+            hand_r_after
+                .parts
+                .iter()
+                .any(|p| matches!(p.kind, ObjectPartKind::ObjectRef { object_id } if object_id == grip_socket_id)
+                    && p.attachment.as_ref().is_some_and(|att| att.parent_anchor.as_ref() == "grip" && att.child_anchor.as_ref() == "grip_socket")),
+            "expected subtree copy to preserve extra target attachment ref to grip_socket"
+        );
+
+        let grip_after = anchor_transform_from_defs(&hand_r_after.anchors, "grip");
+        let forward = grip_after.rotation * Vec3::Z;
+        assert!(
+            forward.dot(Vec3::X) > 0.99,
+            "expected preserve_interfaces subtree copy to preserve target grip anchor, got {forward:?}"
+        );
+        assert_eq!(
+            grip_after, grip_before.transform,
+            "expected target grip anchor transform to be preserved"
         );
     }
 

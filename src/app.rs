@@ -813,10 +813,6 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(
         Update,
         (
-            crate::gen3d::gen3d_poll_ai_job.after(crate::gen3d::gen3d_generate_button),
-            crate::gen3d::gen3d_apply_draft_to_preview
-                .after(crate::gen3d::gen3d_poll_ai_job)
-                .after(crate::gen3d::gen3d_collision_toggle_button),
             crate::gen3d::gen3d_preview_tick_selected_animation
                 .after(crate::gen3d::gen3d_apply_draft_to_preview)
                 .before(crate::object::visuals::update_part_animations),
@@ -825,6 +821,22 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
                 .after(crate::gen3d::gen3d_collision_toggle_button),
         )
             .run_if(in_state(BuildScene::Preview)),
+    );
+    app.add_systems(
+        Update,
+        crate::gen3d::gen3d_poll_ai_job.after(crate::gen3d::gen3d_generate_button),
+    );
+    app.add_systems(
+        Update,
+        crate::gen3d::gen3d_apply_draft_to_preview
+            .after(crate::gen3d::gen3d_poll_ai_job)
+            .after(crate::gen3d::gen3d_collision_toggle_button),
+    );
+    app.add_systems(
+        Update,
+        crate::gen3d::gen3d_cleanup_preview_scene_when_idle
+            .after(crate::gen3d::gen3d_apply_draft_to_preview)
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(
         Update,

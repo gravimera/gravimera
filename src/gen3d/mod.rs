@@ -76,10 +76,11 @@ pub(crate) use tool_feedback_ui::{
 };
 pub(crate) use ui::{
     enter_gen3d_mode, exit_gen3d_mode, gen3d_clear_prompt_button, gen3d_collision_toggle_button,
-    gen3d_preview_animation_dropdown_button, gen3d_preview_animation_dropdown_scroll_wheel,
-    gen3d_preview_animation_option_buttons, gen3d_prompt_box_focus, gen3d_prompt_scroll_wheel,
-    gen3d_prompt_text_input, gen3d_rebuild_preview_animation_dropdown_options_ui,
-    gen3d_side_panel_toggle_button, gen3d_update_preview_animation_dropdown_ui,
-    gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
-    handle_gen3d_toggle_button, update_gen3d_toggle_button_label,
+    gen3d_cleanup_preview_scene_when_idle, gen3d_preview_animation_dropdown_button,
+    gen3d_preview_animation_dropdown_scroll_wheel, gen3d_preview_animation_option_buttons,
+    gen3d_prompt_box_focus, gen3d_prompt_scroll_wheel, gen3d_prompt_text_input,
+    gen3d_rebuild_preview_animation_dropdown_options_ui, gen3d_side_panel_toggle_button,
+    gen3d_update_preview_animation_dropdown_ui, gen3d_update_prompt_scrollbar_ui,
+    gen3d_update_side_panel_ui, gen3d_update_ui_text, handle_gen3d_toggle_button,
+    update_gen3d_toggle_button_label,
 };

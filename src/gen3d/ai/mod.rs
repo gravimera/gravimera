@@ -1306,7 +1306,6 @@ fn max_components_for_speed(speed: Gen3dSpeedMode) -> usize {
 }
 
 pub(crate) fn gen3d_poll_ai_job(
-    build_scene: Res<State<BuildScene>>,
     config: Res<AppConfig>,
     time: Res<Time>,
     mut commands: Commands,
@@ -1326,9 +1325,6 @@ pub(crate) fn gen3d_poll_ai_job(
     >,
     review_cameras: Query<Entity, With<Gen3dReviewCaptureCamera>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return;
-    }
     if !job.running {
         return;
     }
