@@ -193,6 +193,15 @@ pub(crate) fn object_forms_copy_mode_start_cancel(
     eligible: Query<(), (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>)>,
     mut copy: ResMut<FormCopyState>,
 ) {
+    // Copy mode is "hold C". If we missed the release (e.g., UI capture / focus changes), exit
+    // once C is no longer held.
+    if copy.active && !keys.pressed(KeyCode::KeyC) && !keys.just_released(KeyCode::KeyC) {
+        copy.active = false;
+        copy.destinations.clear();
+        copy.hovered_source = None;
+        return;
+    }
+
     if keys.just_pressed(KeyCode::Escape) && copy.active {
         copy.active = false;
         copy.destinations.clear();
