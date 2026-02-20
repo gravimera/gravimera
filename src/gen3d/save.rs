@@ -491,6 +491,114 @@ mod tests {
         assert!(bounds.max.y >= 0.5 - 1e-3);
         assert!(memo.contains_key(&parent_id));
     }
+
+    #[test]
+    fn draft_to_saved_defs_preserves_root_unit_collider_profile() {
+        use crate::object::registry::MobilityDef;
+        use crate::object::registry::ObjectPartDef;
+
+        let root_id = super::super::gen3d_draft_object_id();
+        let body_root_id = 0x10u128;
+        let torso_id = 0x11u128;
+
+        let torso_def = ObjectDef {
+            object_id: torso_id,
+            label: "torso".into(),
+            size: Vec3::new(1.3, 1.0, 1.3),
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(1.0, 0.0, 0.0),
+                    unlit: false,
+                },
+                Transform::from_scale(Vec3::new(1.3, 1.0, 1.3)),
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let body_root_def = ObjectDef {
+            object_id: body_root_id,
+            label: "body_root".into(),
+            size: Vec3::new(0.3, 0.2, 0.3),
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![
+                ObjectPartDef::primitive(
+                    PrimitiveVisualDef::Primitive {
+                        mesh: MeshKey::UnitCube,
+                        params: None,
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.0),
+                        unlit: true,
+                    },
+                    Transform::from_scale(Vec3::new(0.3, 0.2, 0.3)),
+                ),
+                ObjectPartDef::object_ref(torso_id, Transform::from_translation(Vec3::X * 0.8)),
+            ],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let root_def = ObjectDef {
+            object_id: root_id,
+            label: "gen3d_draft".into(),
+            size: Vec3::new(1.3, 1.0, 1.3),
+            ground_origin_y: None,
+            collider: ColliderProfile::CircleXZ { radius: 0.65 },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::object_ref(body_root_id, Transform::IDENTITY)
+                .with_attachment(AttachmentDef {
+                    parent_anchor: "origin".into(),
+                    child_anchor: "origin".into(),
+                })],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let draft = Gen3dDraft {
+            defs: vec![root_def, body_root_def, torso_def],
+        };
+        let (saved_root_id, saved_defs) = draft_to_saved_defs(&draft).expect("save ok");
+        let saved_root = saved_defs
+            .iter()
+            .find(|def| def.object_id == saved_root_id)
+            .expect("saved root present");
+        match saved_root.collider {
+            ColliderProfile::CircleXZ { radius } => {
+                assert!((radius - 0.65).abs() < 1e-6, "radius={radius}");
+            }
+            other => panic!("expected CircleXZ collider, got {other:?}"),
+        }
+    }
 }
 
 pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<ObjectDef>), String> {
@@ -508,12 +616,11 @@ pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<Objec
     let mut memo = std::collections::HashMap::<u128, Bounds>::new();
     let mut stack = Vec::new();
     let root_bounds = bounds_of_object(root_id, &defs_map, &mut stack, &mut memo);
-    let root_size_override = (!root_bounds.is_empty())
-        .then(|| root_bounds.size().abs().max(Vec3::splat(0.01)));
+    let root_size_override =
+        (!root_bounds.is_empty()).then(|| root_bounds.size().abs().max(Vec3::splat(0.01)));
 
     let mut recenter = Vec3::ZERO;
     let mut root_ground_origin_y = None;
-    let mut root_unit_collider_radius = None;
     if root_is_unit {
         let root_ref = root_def.parts.iter().find_map(|part| match &part.kind {
             ObjectPartKind::ObjectRef { object_id } => Some((part, *object_id)),
@@ -529,17 +636,6 @@ pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<Objec
                         .transform
                         .to_matrix()
                         .transform_point3(torso_center_local);
-
-                    let size = bounds.size().abs().max(Vec3::splat(0.01));
-                    let base_radius = (size.x.max(size.z) * 0.5).max(0.01);
-                    let scale_xz = root_ref
-                        .transform
-                        .scale
-                        .x
-                        .abs()
-                        .max(root_ref.transform.scale.z.abs())
-                        .max(1e-3);
-                    root_unit_collider_radius = Some(base_radius * scale_xz);
                 }
             }
         }
@@ -581,9 +677,6 @@ pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<Objec
             if root_is_unit {
                 if let Some(ground_origin_y) = root_ground_origin_y {
                     new_def.ground_origin_y = Some(ground_origin_y);
-                }
-                if let Some(radius) = root_unit_collider_radius {
-                    new_def.collider = ColliderProfile::CircleXZ { radius };
                 }
             } else if let Some(size) = root_size_override {
                 new_def.collider = match new_def.collider {
@@ -770,11 +863,8 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         defs: draft.defs.clone(),
     };
     let (saved_root_id, defs) = draft_to_saved_defs(&snapshot)?;
-    let depot_prefabs_dir = crate::model_depot::save_model_prefab_defs_to_depot(
-        saved_root_id,
-        saved_root_id,
-        &defs,
-    )?;
+    let depot_prefabs_dir =
+        crate::model_depot::save_model_prefab_defs_to_depot(saved_root_id, saved_root_id, &defs)?;
     for def in defs {
         library.upsert(def);
     }
