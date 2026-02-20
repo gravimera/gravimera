@@ -281,7 +281,7 @@ Include `component_id` in each issue to match `review_delta_v1` / `tweak_animati
 
 Goal: if validation fails, the engine requests repair; only if repair does not converge, disable the failing channels.
 
-1) Update `build_gen3d_review_delta_system_instructions()`:
+1) Update `build_gen3d_review_delta_system_instructions(review_appearance: bool)`:
 
 - Explicitly state that validation issues are authoritative and should be addressed first.
 - Allow disabling any channel (not just `ambient`) via an identity loop as a last resort.

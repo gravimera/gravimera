@@ -471,6 +471,7 @@ pub(crate) struct Gen3dAiJob {
     plan_attempt: u8,
     max_parallel_components: usize,
     review_kind: Gen3dAutoReviewKind,
+    review_appearance: bool,
     review_component_idx: Option<usize>,
     auto_refine_passes_remaining: u32,
     auto_refine_passes_done: u32,
@@ -1205,12 +1206,13 @@ pub(crate) fn gen3d_start_build_from_api(
     append_gen3d_run_log(
         Some(&pass_dir),
         format!(
-            "run_start speed={} max_parallel={} model={} reasoning_effort={} base_url={} images={} prompt_chars={}",
+            "run_start speed={} max_parallel={} model={} reasoning_effort={} base_url={} review_appearance={} images={} prompt_chars={}",
             workshop.speed_mode.short_label(),
             config.gen3d_max_parallel_components.max(1),
             openai.model,
             openai.model_reasoning_effort,
             openai.base_url,
+            config.gen3d_review_appearance,
             cached_image_paths.len(),
             workshop.prompt.chars().count()
         ),
@@ -1244,6 +1246,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.run_dir = Some(run_dir.clone());
     job.pass_dir = Some(pass_dir.clone());
     job.review_kind = Gen3dAutoReviewKind::EndOfRun;
+    job.review_appearance = config.gen3d_review_appearance;
     job.review_component_idx = None;
     job.auto_refine_passes_done = 0;
     job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
@@ -1595,6 +1598,9 @@ pub(crate) fn gen3d_poll_ai_job(
                 );
                 review_inputs.truncate(GEN3D_MAX_REQUEST_IMAGES);
             }
+            if !job.review_appearance {
+                review_inputs.clear();
+            }
 
             job.phase = Gen3dAiPhase::WaitingReview;
             job.last_review_inputs = review_inputs.clone();
@@ -1676,14 +1682,14 @@ pub(crate) fn gen3d_poll_ai_job(
             );
             write_gen3d_json_artifact(job.artifact_dir(), "smoke_results.json", &smoke_results);
 
-            let system = build_gen3d_review_delta_system_instructions();
+            let system = build_gen3d_review_delta_system_instructions(job.review_appearance);
             let user_text = build_gen3d_review_delta_user_text(
                 &run_id,
                 job.attempt,
                 &plan_hash,
                 job.assembly_rev,
                 &job.user_prompt_raw,
-                !job.user_images.is_empty(),
+                job.review_appearance && !job.user_images.is_empty(),
                 &scene_graph_summary,
                 &smoke_results,
             );
@@ -2958,7 +2964,7 @@ fn retry_gen3d_review_delta(
     set_progress(&progress, "Repairing review-delta JSON…");
     job.phase = Gen3dAiPhase::WaitingReview;
 
-    let system = build_gen3d_review_delta_system_instructions();
+    let system = build_gen3d_review_delta_system_instructions(job.review_appearance);
     let mut user_text = job.last_review_user_text.clone();
     user_text.push_str("\n\nYour previous response was invalid.\nError:\n");
     user_text.push_str(reason.trim());

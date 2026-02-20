@@ -667,12 +667,38 @@ pub(super) fn build_gen3d_component_system_instructions() -> String {
     )
 }
 
-pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
-    "You are a 3D modeling assistant.\n\
-     You will be given: (1) reference photos (optional), (2) multiple rendered preview images of the CURRENT assembled draft, and (3) structured summaries of the draft and smoke checks.\n\
-     Your job is to propose machine-appliable fixes as STRICT JSON.\n\
-     Return ONLY JSON. Do NOT output markdown.\n\n\
-     IMPORTANT:\n\
+pub(super) fn build_gen3d_review_delta_system_instructions(review_appearance: bool) -> String {
+    let mut out = String::new();
+    out.push_str("You are a 3D modeling assistant.\n");
+    out.push_str(
+        "You will be given structured summaries of the CURRENT assembled draft and smoke checks.\n",
+    );
+    if review_appearance {
+        out.push_str("You will also be given: (1) reference photos (optional) and (2) multiple rendered preview images of the CURRENT assembled draft.\n");
+    } else {
+        out.push_str(
+            "Appearance review is DISABLED by configuration: preview images and reference photos may be omitted.\n",
+        );
+    }
+    out.push_str(
+        "Your job is to propose machine-appliable fixes as STRICT JSON.\n\
+Return ONLY JSON. Do NOT output markdown.\n\n\
+Review mode:\n",
+    );
+    if review_appearance {
+        out.push_str("- appearance_review_enabled: true\n");
+    } else {
+        out.push_str("- appearance_review_enabled: false\n");
+        out.push_str(
+            "- Only fix structural issues:\n\
+  - smoke_results.motion_validation issues with severity=\"error\"\n\
+  - other smoke_results issues with severity=\"error\" (if present)\n\
+- Do NOT propose cosmetic-only tweaks, aesthetic regens, or transform nudges.\n\
+- Ignore smoke severity=\"warn\" issues unless they imply a severity=\"error\".\n",
+        );
+    }
+    out.push_str(
+        "\nIMPORTANT:\n\
      - Do NOT assume the engine will \"auto-fix\" placement. If something is wrong, request explicit edits.\n\
      - Do NOT output Euler angles.\n\
        - For `set.rot`, use either:\n\
@@ -685,8 +711,17 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
       - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\
       - Preview images may include `move_sheet.png` and `attack_sheet.png` (2x2 sprite sheets, 4 frames each). Use them to debug animation issues (e.g. hair/legs moving in the wrong direction).\n\
       - If smoke results include `motion_validation.issues`, treat ONLY `severity=error` issues as authoritative and prioritize fixing them first.\n\
-        `severity=warn` issues are suggestions; fix them only when it will not regress visuals.\n\n\
-\n\
+",
+    );
+    if review_appearance {
+        out.push_str(
+            "        `severity=warn` issues are suggestions; fix them only when it will not regress visuals.\n\n",
+        );
+    } else {
+        out.push_str("        `severity=warn` issues are suggestions; ignore them.\n\n");
+    }
+    out.push_str(
+        "\n\
       Anchor edits and regression safety:\n\
       - `tweak_anchor` is for changing JOINT FRAMES / pivot placement in COMPONENT-LOCAL space.\n\
       - The engine automatically rebases affected attachment offsets when anchors move/rotate so the assembled REST POSE stays stable.\n\
@@ -759,7 +794,8 @@ pub(super) fn build_gen3d_review_delta_system_instructions() -> String {
        You may include additional fields (e.g. `missing_tools`, `enhancements`, `bugs`, `examples`, `details`).\n\
      - Use `replan` only if the component breakdown or attachment tree is fundamentally wrong.\n\
      - Use `regen_component` if the component geometry is structurally wrong (not for tiny details).\n"
-        .to_string()
+    );
+    out
 }
 
 pub(super) fn build_gen3d_review_delta_user_text(

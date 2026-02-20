@@ -223,19 +223,22 @@ Rules:\n\
 - Prioritize BASIC STRUCTURE over tiny details. This is a voxel/pixel-art game; do not chase micro-adjustments forever.\n\
 - STOP when the model is good enough:\n\
   - If the latest review delta accepts the model / has no actionable fixes (and QA has been run), output a \"done\" action.\n\
-  - If you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
+  - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
   - If budgets prevent further improvement (regen budgets, time, tokens), output a \"done\" action with a best-effort reason.\n\
-- Be AGGRESSIVE about visual QA: render previews and review them early, but prefer doing work in WAVES to reduce LLM wall time.\n\
-  - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\
+- Visual QA / appearance review:\n\
+  - The state summary includes `review_appearance` (bool).\n\
+  - If review_appearance=false (default): STRUCTURE-ONLY. Prefer validate_v1 + smoke_check_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
+  - If review_appearance=true: do visual QA in WAVES to reduce LLM wall time.\n\
+    - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\
   - IMPORTANT: planning must be its OWN step.\n\
     - If you call llm_generate_plan_v1, DO NOT include llm_generate_components_v1/llm_generate_component_v1 in the same step.\n\
     - End the step after planning so you can observe `reuse_groups`/state before deciding what to generate.\n\
     - The engine will end the step after a successful llm_generate_plan_v1 even if you requested more actions.\n\
   - Avoid calling llm_review_delta_v1 after every single component if you can generate a batch first.\n\
-  - After any render_preview_v1, immediately call llm_review_delta_v1 using the rendered images.\n\
+  - If review_appearance=true: after any render_preview_v1, immediately call llm_review_delta_v1 using the rendered images.\n\
   - Do NOT use placeholder paths like `$CALL_1.images[0]` in tool args; the engine does not substitute tool outputs into later tool calls.\n\
     To review the latest render, call llm_review_delta_v1 with no `preview_images` (it will use the latest render cache), or pass `{ \"rendered_images_from_cache\": true }`.\n\
-  - Do not finish a run without reviewing the latest renders.\n\
+  - If review_appearance=true: do not finish a run without reviewing the latest renders.\n\
   - For vehicles/wheeled objects, always include TOP and BOTTOM views (they reveal wheel/axle/undercarriage issues). A good default is: views=[\"front\",\"left_back\",\"right_back\",\"top\",\"bottom\"].\n\
   - For speed, prefer smaller preview renders during iteration (example: render_preview_v1 image_size=768). Only increase resolution if you truly need extra detail.\n\
   - Do NOT render/review before any geometry exists. If components_generated==0 or the draft has 0 primitive parts, generate components first; renders will be blank.\n\
@@ -252,8 +255,11 @@ Rules:\n\
     - If the plan declares `reuse_groups`, the engine will skip reuse targets in missing_only batches and auto-copy them after sources are generated.\n\
 - IMPORTANT: If the state summary contains `pending_regen_component_indices` (non-empty), APPLY THEM NEXT:\n\
   - Call llm_generate_components_v1 with component_indices set to that list and force=true (regen is expected).\n\
-  - Then call render_preview_v1 and llm_review_delta_v1 to confirm the fixes.\n\
-  - Do NOT call llm_review_delta_v1 repeatedly without applying the pending regen or making a new render.\n\
+  - Then run QA and confirm:\n\
+    - Always: smoke_check_v1\n\
+    - If review_appearance=true: render_preview_v1\n\
+    - Then: llm_review_delta_v1\n\
+  - Do NOT call llm_review_delta_v1 repeatedly without applying the pending regen or rerunning smoke_check/validate (and render_preview_v1 if review_appearance=true).\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
@@ -880,6 +886,7 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
         "pass": job.pass,
         "plan_hash": job.plan_hash,
         "assembly_rev": job.assembly_rev,
+        "review_appearance": job.review_appearance,
         "needs_review": job.agent.rendered_since_last_review,
         "no_progress_steps": job.agent.no_progress_steps,
         "pending_regen_component_indices": &job.agent.pending_regen_component_indices,
@@ -1131,6 +1138,7 @@ fn start_agent_llm_review_delta_call(
     draft: &Gen3dDraft,
     call: Gen3dToolCallJsonV1,
 ) -> Result<(), String> {
+    let review_appearance = job.review_appearance;
     let Some(openai) = job.openai.clone() else {
         return Err("Missing OpenAI config".into());
     };
@@ -1138,16 +1146,21 @@ fn start_agent_llm_review_delta_call(
         return Err("Missing pass dir".into());
     };
 
-    let mut preview_images = parse_review_preview_images_from_args(&call.args);
+    let mut preview_images = if review_appearance {
+        parse_review_preview_images_from_args(&call.args)
+    } else {
+        Vec::new()
+    };
     let preview_images_were_explicit = !preview_images.is_empty();
-    if preview_images.is_empty() {
+    if review_appearance && preview_images.is_empty() {
         preview_images = job.agent.last_render_images.clone();
     }
-    let include_original_images = call
-        .args
-        .get("include_original_images")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let include_original_images = review_appearance
+        && call
+            .args
+            .get("include_original_images")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
     let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
     let scene_graph_summary = super::build_gen3d_scene_graph_summary(
@@ -1167,21 +1180,25 @@ fn start_agent_llm_review_delta_call(
         draft,
     );
 
-    let (include_move_sheet, include_attack_sheet) =
-        motion_sheets_needed_from_smoke_results(&smoke_results);
-
-    if !preview_images_were_explicit {
-        preview_images =
-            select_review_preview_images(&preview_images, include_move_sheet, include_attack_sheet);
-    }
-
     let mut images_to_send: Vec<PathBuf> = Vec::new();
-    if include_original_images {
-        images_to_send.extend(job.user_images.clone());
-    }
-    images_to_send.extend(preview_images);
-    if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
-        images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
+    if review_appearance {
+        let (include_move_sheet, include_attack_sheet) =
+            motion_sheets_needed_from_smoke_results(&smoke_results);
+        if !preview_images_were_explicit {
+            preview_images = select_review_preview_images(
+                &preview_images,
+                include_move_sheet,
+                include_attack_sheet,
+            );
+        }
+
+        if include_original_images {
+            images_to_send.extend(job.user_images.clone());
+        }
+        images_to_send.extend(preview_images);
+        if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
+            images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
+        }
     }
 
     if let Some(dir) = job.pass_dir.as_deref() {
@@ -1189,14 +1206,14 @@ fn start_agent_llm_review_delta_call(
         write_gen3d_json_artifact(Some(dir), "smoke_results.json", &smoke_results);
     }
 
-    let system = super::prompts::build_gen3d_review_delta_system_instructions();
+    let system = super::prompts::build_gen3d_review_delta_system_instructions(review_appearance);
     let user_text = super::prompts::build_gen3d_review_delta_user_text(
         &run_id,
         job.attempt,
         &job.plan_hash,
         job.assembly_rev,
         &job.user_prompt_raw,
-        !job.user_images.is_empty(),
+        include_original_images && !job.user_images.is_empty(),
         &scene_graph_summary,
         &smoke_results,
     );
@@ -1792,7 +1809,14 @@ fn execute_agent_actions(
                     warn!("Gen3D agent requested done before primitives existed; continuing");
                     continue;
                 }
-                if job.agent.rendered_since_last_review {
+                let llm_available = job
+                    .openai
+                    .as_ref()
+                    .map(|openai| !openai.base_url.starts_with("mock://gen3d"))
+                    .unwrap_or(true);
+                let appearance_review_enabled = llm_available && job.review_appearance;
+
+                if appearance_review_enabled && job.agent.rendered_since_last_review {
                     let images: Vec<String> = job
                         .agent
                         .last_render_images
@@ -1821,18 +1845,11 @@ fn execute_agent_actions(
                 }
 
                 let mut missing: Vec<&str> = Vec::new();
-                let visual_qa_required = job
-                    .openai
-                    .as_ref()
-                    .map(|openai| !openai.base_url.starts_with("mock://gen3d"))
-                    .unwrap_or(true);
-                if visual_qa_required {
-                    if !job.agent.ever_rendered {
-                        missing.push(TOOL_ID_RENDER_PREVIEW);
-                    }
-                    if !job.agent.ever_reviewed {
-                        missing.push(TOOL_ID_LLM_REVIEW_DELTA);
-                    }
+                if appearance_review_enabled && !job.agent.ever_rendered {
+                    missing.push(TOOL_ID_RENDER_PREVIEW);
+                }
+                if llm_available && !job.agent.ever_reviewed {
+                    missing.push(TOOL_ID_LLM_REVIEW_DELTA);
                 }
                 if !job.agent.ever_validated {
                     missing.push(TOOL_ID_VALIDATE);
@@ -1842,9 +1859,13 @@ fn execute_agent_actions(
                 }
                 if !missing.is_empty() {
                     let missing_list = missing.join(", ");
-                    let qa_sequence = if visual_qa_required {
+                    let qa_sequence = if appearance_review_enabled {
                         format!(
                             "{TOOL_ID_RENDER_PREVIEW} -> {TOOL_ID_LLM_REVIEW_DELTA} -> {TOOL_ID_VALIDATE} -> {TOOL_ID_SMOKE_CHECK}"
+                        )
+                    } else if llm_available {
+                        format!(
+                            "{TOOL_ID_LLM_REVIEW_DELTA} -> {TOOL_ID_VALIDATE} -> {TOOL_ID_SMOKE_CHECK}"
                         )
                     } else {
                         format!("{TOOL_ID_VALIDATE} -> {TOOL_ID_SMOKE_CHECK}")
@@ -3776,7 +3797,11 @@ fn execute_tool_call(
                 && job.agent.last_render_assembly_rev == Some(job.assembly_rev);
             let can_render = draft.total_non_projectile_primitive_parts() > 0;
 
-            if !preview_images_were_explicit && !last_render_fresh && can_render {
+            if job.review_appearance
+                && !preview_images_were_explicit
+                && !last_render_fresh
+                && can_render
+            {
                 let smoke_results = super::build_gen3d_smoke_results(
                     &job.user_prompt_raw,
                     !job.user_images.is_empty(),
@@ -4904,7 +4929,14 @@ fn poll_agent_tool(
                                                 &job.planned_components,
                                                 draft,
                                             );
-                                            let system = super::prompts::build_gen3d_review_delta_system_instructions();
+                                            let review_appearance = job.review_appearance;
+                                            let system = super::prompts::build_gen3d_review_delta_system_instructions(review_appearance);
+                                            let include_original_images = review_appearance
+                                                && call
+                                                    .args
+                                                    .get("include_original_images")
+                                                    .and_then(|v| v.as_bool())
+                                                    .unwrap_or(true);
                                             let user_text =
                                                 super::prompts::build_gen3d_review_delta_user_text(
                                                     &run_id,
@@ -4912,43 +4944,48 @@ fn poll_agent_tool(
                                                     &job.plan_hash,
                                                     job.assembly_rev,
                                                     &job.user_prompt_raw,
-                                                    !job.user_images.is_empty(),
+                                                    include_original_images
+                                                        && !job.user_images.is_empty(),
                                                     &scene_graph_summary,
                                                 &smoke_results,
                                             );
 
-                                            let mut preview_images =
-                                                parse_review_preview_images_from_args(&call.args);
+                                            let mut preview_images = if review_appearance {
+                                                parse_review_preview_images_from_args(&call.args)
+                                            } else {
+                                                Vec::new()
+                                            };
                                             let preview_images_were_explicit =
                                                 !preview_images.is_empty();
-                                            if preview_images.is_empty() {
+                                            if review_appearance && preview_images.is_empty() {
                                                 preview_images =
                                                     job.agent.last_render_images.clone();
                                             }
 
-                                            let (include_move_sheet, include_attack_sheet) =
-                                                motion_sheets_needed_from_smoke_results(
-                                                    &smoke_results,
-                                                );
-                                            if !preview_images_were_explicit {
-                                                preview_images = select_review_preview_images(
-                                                    &preview_images,
-                                                    include_move_sheet,
-                                                    include_attack_sheet,
-                                                );
-                                            }
-                                            let include_original_images = call
-                                                .args
-                                                .get("include_original_images")
-                                                .and_then(|v| v.as_bool())
-                                                .unwrap_or(true);
                                             let mut images_to_send: Vec<PathBuf> = Vec::new();
-                                            if include_original_images {
-                                                images_to_send.extend(job.user_images.clone());
-                                            }
-                                            images_to_send.extend(preview_images);
-                                            if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
-                                                images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
+                                            if review_appearance {
+                                                let (include_move_sheet, include_attack_sheet) =
+                                                    motion_sheets_needed_from_smoke_results(
+                                                        &smoke_results,
+                                                    );
+                                                if !preview_images_were_explicit {
+                                                    preview_images = select_review_preview_images(
+                                                        &preview_images,
+                                                        include_move_sheet,
+                                                        include_attack_sheet,
+                                                    );
+                                                }
+                                                if include_original_images {
+                                                    images_to_send
+                                                        .extend(job.user_images.clone());
+                                                }
+                                                images_to_send.extend(preview_images);
+                                                if images_to_send.len()
+                                                    > GEN3D_MAX_REQUEST_IMAGES
+                                                {
+                                                    images_to_send
+                                                        .truncate(GEN3D_MAX_REQUEST_IMAGES);
+                                                }
                                             }
 
                                             if schedule_llm_tool_schema_repair(
@@ -5003,47 +5040,54 @@ fn poll_agent_tool(
                                     &job.planned_components,
                                     draft,
                                 );
-                                let system =
-                                    super::prompts::build_gen3d_review_delta_system_instructions();
+                                let review_appearance = job.review_appearance;
+                                let system = super::prompts::build_gen3d_review_delta_system_instructions(review_appearance);
+                                let include_original_images = review_appearance
+                                    && call
+                                        .args
+                                        .get("include_original_images")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(true);
                                 let user_text = super::prompts::build_gen3d_review_delta_user_text(
                                     &run_id,
                                     job.attempt,
                                     &job.plan_hash,
                                     job.assembly_rev,
                                     &job.user_prompt_raw,
-                                    !job.user_images.is_empty(),
+                                    include_original_images && !job.user_images.is_empty(),
                                     &scene_graph_summary,
                                     &smoke_results,
                                 );
 
-                                let mut preview_images =
-                                    parse_review_preview_images_from_args(&call.args);
+                                let mut preview_images = if review_appearance {
+                                    parse_review_preview_images_from_args(&call.args)
+                                } else {
+                                    Vec::new()
+                                };
                                 let preview_images_were_explicit = !preview_images.is_empty();
-                                if preview_images.is_empty() {
+                                if review_appearance && preview_images.is_empty() {
                                     preview_images = job.agent.last_render_images.clone();
                                 }
 
-                                let (include_move_sheet, include_attack_sheet) =
-                                    motion_sheets_needed_from_smoke_results(&smoke_results);
-                                if !preview_images_were_explicit {
-                                    preview_images = select_review_preview_images(
-                                        &preview_images,
-                                        include_move_sheet,
-                                        include_attack_sheet,
-                                    );
-                                }
-                                let include_original_images = call
-                                    .args
-                                    .get("include_original_images")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(true);
                                 let mut images_to_send: Vec<PathBuf> = Vec::new();
-                                if include_original_images {
-                                    images_to_send.extend(job.user_images.clone());
-                                }
-                                images_to_send.extend(preview_images);
-                                if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
-                                    images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
+                                if review_appearance {
+                                    let (include_move_sheet, include_attack_sheet) =
+                                        motion_sheets_needed_from_smoke_results(&smoke_results);
+                                    if !preview_images_were_explicit {
+                                        preview_images = select_review_preview_images(
+                                            &preview_images,
+                                            include_move_sheet,
+                                            include_attack_sheet,
+                                        );
+                                    }
+
+                                    if include_original_images {
+                                        images_to_send.extend(job.user_images.clone());
+                                    }
+                                    images_to_send.extend(preview_images);
+                                    if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
+                                        images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
+                                    }
                                 }
 
                                 if schedule_llm_tool_schema_repair(

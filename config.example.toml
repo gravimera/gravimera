@@ -45,6 +45,10 @@
 # Default: enabled in debug builds; disabled in release builds (and in `cargo test`).
 # save_pass_screenshots = true
 
+# Optional: enable AI appearance review (uses preview renders + reference images).
+# Default: false (structural-only review: fix validate/motion issues; avoid cosmetic regen/transform churn).
+# review_appearance = false
+
 # Max number of component generation requests to run in parallel (default: 10).
 # Note: higher values can hit provider rate limits.
 max_parallel_components = 10

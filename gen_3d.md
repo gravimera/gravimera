@@ -51,9 +51,9 @@ In practice, the agent usually gets good results by calling:
 
 - `llm_generate_plan_v1` (plan components + anchors + tree attachments)
 - `llm_generate_component_v1` (generate one component’s primitives + anchors)
-- `render_preview_v1` + `validate_v1` / `smoke_check_v1` (self-review inputs)
+- `render_preview_v1` (optional; appearance review) + `validate_v1` / `smoke_check_v1` (structural checks)
 - `llm_review_delta_v1` (apply machine-appliable tweaks / request replan / request regen)
-  - If `preview_images` is omitted, the engine uses the latest render outputs; if those are missing or stale for the current `assembly_rev`, it auto-captures a minimal set of review renders (and only captures motion sheets when motion validation reports errors) before calling the model.
+  - If `preview_images` is omitted and `[gen3d].review_appearance = true`, the engine uses the latest render outputs; if those are missing or stale for the current `assembly_rev`, it auto-captures a minimal set of review renders (and only captures motion sheets when motion validation reports errors) before calling the model.
 
 Plan-level reuse:
 
@@ -135,6 +135,7 @@ Optional logging:
 
 Gen3D budgets / guard:
 
+- `[gen3d].review_appearance` controls whether the AI reviews visual appearance from preview renders (default: `false` / structural-only).
 - `[gen3d].max_seconds` / `[gen3d].max_tokens` cap a Build run (set to `0` to disable a budget).
 - `[gen3d].no_progress_max_steps` stops best-effort if the agent produces no progress for N steps (set to `0` to disable).
 
