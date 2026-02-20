@@ -6,7 +6,7 @@ This repository contains `PLANS.md` at the repo root. This ExecPlan must be main
 
 ## Purpose / Big Picture
 
-Gen3D already has non-heuristic reuse primitives (`reuse_groups`, `copy_component_v1`, `copy_component_subtree_v1`) to avoid regenerating repeated parts (wheels, legs, arms). In practice, users still see:
+Gen3D already has non-heuristic reuse primitives (`reuse_groups`, `copy_component_v1`, `mirror_component_v1`, `copy_component_subtree_v1`, `mirror_component_subtree_v1`) to avoid regenerating repeated parts (wheels, legs, arms). In practice, users still see:
 
 - Copy failures when the planned subtrees are “mostly the same” but not identical in non-geometry fields (different per-leg attachment offsets, per-leg animations, etc.).
 - Repeated limbs that are geometrically consistent (copied) but motion-invalid (hinge limits exceeded, stance never plants, legs end up under ground after saving/spawning).

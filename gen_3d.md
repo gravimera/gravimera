@@ -57,7 +57,13 @@ In practice, the agent usually gets good results by calling:
 Plan-level reuse:
 
 - Plans may include `reuse_groups` to reuse already-generated geometry for symmetric/repeated parts.
-- Copy tools default to `anchors=preserve_interfaces`: preserve each target component’s mount interface (and external child-attachment anchors), but copy other anchors so internal anchors stay consistent with copied geometry.
+- Use explicit reuse tools (avoid regenerating repeated parts):
+  - `copy_component_v1`: copy an identical component into one or more targets (rotation-only mount alignment).
+  - `mirror_component_v1`: mirror a component into one or more targets (mount-local +X reflection; correct for L/R symmetry).
+  - `copy_component_subtree_v1`: copy an identical limb chain/subtree.
+  - `mirror_component_subtree_v1`: mirror a limb chain/subtree for L/R symmetry.
+- Rendering note: mirroring can introduce negative-scale transforms; the renderer detects mirrored transforms and uses mirrored-winding meshes for primitives so backface culling stays correct.
+- Reuse tools default to `anchors=preserve_interfaces`: preserve each target component’s mount interface (and external child-attachment anchors), but copy other anchors so internal anchors stay consistent with copied/mirrored geometry.
   - Use `preserve_target` only if you must keep *all* target anchors unchanged.
   - Use `copy_source` to overwrite target anchors to match the source exactly.
 

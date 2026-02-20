@@ -236,10 +236,11 @@ impl Gen3dCopyMetrics {
     fn note_tool_result(&mut self, result: &crate::gen3d::agent::Gen3dToolResultJsonV1) {
         use crate::gen3d::agent::tools::{
             TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_LLM_GENERATE_COMPONENTS,
+            TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
         };
 
         match result.tool_id.as_str() {
-            TOOL_ID_COPY_COMPONENT => {
+            TOOL_ID_COPY_COMPONENT | TOOL_ID_MIRROR_COMPONENT => {
                 self.manual_component_calls = self.manual_component_calls.saturating_add(1);
                 if !result.ok {
                     self.manual_failures = self.manual_failures.saturating_add(1);
@@ -264,7 +265,7 @@ impl Gen3dCopyMetrics {
                     }
                 }
             }
-            TOOL_ID_COPY_COMPONENT_SUBTREE => {
+            TOOL_ID_COPY_COMPONENT_SUBTREE | TOOL_ID_MIRROR_COMPONENT_SUBTREE => {
                 self.manual_subtree_calls = self.manual_subtree_calls.saturating_add(1);
                 if !result.ok {
                     self.manual_failures = self.manual_failures.saturating_add(1);
@@ -676,8 +677,9 @@ impl Gen3dAiJob {
                 TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DETACH_COMPONENT,
                 TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY,
                 TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-                TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW,
-                TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
+                TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
+                TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK,
+                TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
             };
 
             match tool_id {
@@ -690,7 +692,9 @@ impl Gen3dAiJob {
                 TOOL_ID_VALIDATE => "Validate".into(),
                 TOOL_ID_SMOKE_CHECK => "Smoke".into(),
                 TOOL_ID_COPY_COMPONENT
+                | TOOL_ID_MIRROR_COMPONENT
                 | TOOL_ID_COPY_COMPONENT_SUBTREE
+                | TOOL_ID_MIRROR_COMPONENT_SUBTREE
                 | TOOL_ID_DETACH_COMPONENT => "Copy".into(),
                 TOOL_ID_GET_STATE_SUMMARY | TOOL_ID_GET_SCENE_GRAPH_SUMMARY => "Inspect".into(),
                 TOOL_ID_SUBMIT_TOOLING_FEEDBACK => "Feedback".into(),

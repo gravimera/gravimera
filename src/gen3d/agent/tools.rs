@@ -9,7 +9,9 @@ pub(crate) const TOOL_ID_GET_SCENE_GRAPH_SUMMARY: &str = "get_scene_graph_summar
 pub(crate) const TOOL_ID_VALIDATE: &str = "validate_v1";
 pub(crate) const TOOL_ID_SMOKE_CHECK: &str = "smoke_check_v1";
 pub(crate) const TOOL_ID_COPY_COMPONENT: &str = "copy_component_v1";
+pub(crate) const TOOL_ID_MIRROR_COMPONENT: &str = "mirror_component_v1";
 pub(crate) const TOOL_ID_COPY_COMPONENT_SUBTREE: &str = "copy_component_subtree_v1";
+pub(crate) const TOOL_ID_MIRROR_COMPONENT_SUBTREE: &str = "mirror_component_subtree_v1";
 pub(crate) const TOOL_ID_DETACH_COMPONENT: &str = "detach_component_v1";
 
 pub(crate) const TOOL_ID_LLM_GENERATE_PLAN: &str = "llm_generate_plan_v1";
@@ -86,13 +88,25 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT,
                 title: "Copy component",
-                one_line_summary: "Copies a generated component into other planned components (mirrored/repeated parts; saves LLM calls).",
+                one_line_summary:
+                    "Copies a generated component into other planned components (repeated parts; saves LLM calls).",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_MIRROR_COMPONENT,
+                title: "Mirror component",
+                one_line_summary: "Mirrors a generated component into other planned components (L/R symmetry; avoids regen and keeps mirrored normals correct).",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT_SUBTREE,
                 title: "Copy component subtree",
                 one_line_summary:
                     "Copies a generated component subtree into other planned subtrees (symmetric limb chains; saves LLM calls).",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_MIRROR_COMPONENT_SUBTREE,
+                title: "Mirror component subtree",
+                one_line_summary:
+                    "Mirrors a generated component subtree into other planned subtrees (L/R symmetric limb chains; saves LLM calls).",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_DETACH_COMPONENT,
@@ -249,6 +263,7 @@ impl Gen3dToolRegistryV1 {
                 one_line_summary: "Copies an already-generated component into another planned component (detached or linked).",
                 description:
                     "Use this when multiple components should share the same geometry (wheels/legs/pairs).\n\
+                     For left/right mirrored variants, use `mirror_component_v1`.\n\
                      This avoids another `llm_generate_component_v1` call and keeps symmetric pieces consistent.\n\
                      Note: The target component may have a different parent attachment offset and different attachment animations than the source. Copying only affects the target's own geometry (and optionally its anchors), and preserves existing child attachment refs.\n\
                      Modes:\n\
@@ -274,6 +289,34 @@ impl Gen3dToolRegistryV1 {
                     ],
                 }),
             }),
+            TOOL_ID_MIRROR_COMPONENT => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_MIRROR_COMPONENT,
+                title: "Mirror component",
+                one_line_summary:
+                    "Mirrors an already-generated component into another planned component (detached or linked).",
+                description:
+                    "Use this when you need a left/right mirrored variant of the same component (handles, headlights, wheels with one-sided details).\n\
+                     This performs a mirror across the target mount interface (mirror mount-local +X) so forward/up join conventions stay stable while handedness flips.\n\
+                     It avoids calling `llm_generate_component_v1` again and keeps mirrored pieces consistent.\n\
+                     Modes:\n\
+                     - detached: duplicates the primitive parts into the target component.\n\
+                     - linked: target becomes a lightweight wrapper that references the source component (SOURCE must be a leaf component).\n\
+                     Anchors: same semantics as `copy_component_v1`.\n\
+                     Optional `transform` applies a local-space delta (pos/rot/scale) after mirroring.",
+                args_example: serde_json::json!({
+                    "source_component": "mirror_right",
+                    "targets": ["mirror_left"],
+                    "mode": "detached",
+                    "anchors": "preserve_interfaces",
+                    "transform": { "pos": [0.0, 0.0, 0.0] }
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "copies": [
+                        {"source":"mirror_right","target":"mirror_left","mode":"detached"}
+                    ],
+                }),
+            }),
             TOOL_ID_COPY_COMPONENT_SUBTREE => Some(Gen3dToolDescriptionV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT_SUBTREE,
                 title: "Copy component subtree",
@@ -281,6 +324,7 @@ impl Gen3dToolRegistryV1 {
                     "Copies a generated component subtree (root + descendants) into another planned subtree.",
                 description:
                      "Use this for symmetric limb chains (legs/arms) where a root component has attached descendants.\n\
+                      For left/right mirrored limb chains, use `mirror_component_subtree_v1`.\n\
                       It structurally matches the source and target subtrees by attachment edge keys (parent_anchor, child_anchor) and copies geometry for each matched pair.\n\
                       If the TARGET subtree is missing descendants, this tool expands the target subtree by cloning the missing branches from the source subtree into new planned components, then copies geometry.\n\
                       By default it preserves each TARGET component's mount interface and any external child-attachment anchors, but copies other anchors so internal anchors stay consistent with copied geometry.\n\
@@ -304,6 +348,30 @@ impl Gen3dToolRegistryV1 {
                     "copies": [
                         {"source":"leg_front_left","target":"leg_front_right","mode":"detached"},
                         {"source":"foot_front_left","target":"foot_front_right","mode":"detached"}
+                    ],
+                }),
+            }),
+            TOOL_ID_MIRROR_COMPONENT_SUBTREE => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_MIRROR_COMPONENT_SUBTREE,
+                title: "Mirror component subtree",
+                one_line_summary:
+                    "Mirrors a generated component subtree (root + descendants) into another planned subtree.",
+                description:
+                     "Use this for left/right symmetric limb chains (legs/arms) where a root component has attached descendants.\n\
+                      This is the mirrored variant of `copy_component_subtree_v1`: it mirrors across each target mount interface (mirror mount-local +X) while preserving join frames.\n\
+                      By default it preserves each TARGET component's mount interface and any external child-attachment anchors, but copies other anchors so internal anchors stay consistent.\n\
+                      Args are the same as `copy_component_subtree_v1`.\n\
+                      Note: mode=detached only (linked subtree mirroring is not supported).",
+                args_example: serde_json::json!({
+                    "source_root": "leg_left",
+                    "targets": ["leg_right"],
+                    "mode": "detached",
+                    "anchors": "preserve_interfaces"
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "copies": [
+                        {"source":"leg_left","target":"leg_right","mode":"detached"}
                     ],
                 }),
             }),

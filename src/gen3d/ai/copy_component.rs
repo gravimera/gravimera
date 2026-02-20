@@ -23,6 +23,13 @@ pub(super) enum Gen3dCopyAnchorsMode {
     PreserveInterfaceAnchors,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Gen3dCopyAlignmentMode {
+    Auto,
+    Rotation,
+    MirrorMountX,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Gen3dCopyComponentOutcome {
     pub(super) source_component_name: String,
@@ -255,6 +262,7 @@ pub(super) fn copy_component_into(
     target_idx: usize,
     mode: Gen3dCopyMode,
     anchors_mode: Gen3dCopyAnchorsMode,
+    alignment: Gen3dCopyAlignmentMode,
     delta: Transform,
     copied_target_indices: Option<&HashSet<usize>>,
 ) -> Result<Gen3dCopyComponentOutcome, String> {
@@ -334,24 +342,30 @@ pub(super) fn copy_component_into(
                 let score_mirror =
                     alignment_score(mirror_mat, &source_def.anchors, &target_def.anchors);
 
-                let chosen = if score_mirror + 1e-4 < score_rot {
-                    mirror_mat
-                } else if (score_rot - score_mirror).abs() <= 1e-4 {
-                    // Tie-break with the component-origin layout around the mount interface.
-                    // This fixes mirrored copies when the only shared anchor is the mount itself.
-                    let inv_target_anchor = target_mat.inverse();
-                    let (layout_rot, layout_mirror) = mount_origin_layout_score(
-                        inv_source_anchor,
-                        inv_target_anchor,
-                        mirror_local,
-                    );
-                    if layout_mirror + 1e-4 < layout_rot {
-                        mirror_mat
-                    } else {
-                        rot_mat
+                let chosen = match alignment {
+                    Gen3dCopyAlignmentMode::Rotation => rot_mat,
+                    Gen3dCopyAlignmentMode::MirrorMountX => mirror_mat,
+                    Gen3dCopyAlignmentMode::Auto => {
+                        if score_mirror + 1e-4 < score_rot {
+                            mirror_mat
+                        } else if (score_rot - score_mirror).abs() <= 1e-4 {
+                            // Tie-break with the component-origin layout around the mount interface.
+                            // This fixes mirrored copies when the only shared anchor is the mount itself.
+                            let inv_target_anchor = target_mat.inverse();
+                            let (layout_rot, layout_mirror) = mount_origin_layout_score(
+                                inv_source_anchor,
+                                inv_target_anchor,
+                                mirror_local,
+                            );
+                            if layout_mirror + 1e-4 < layout_rot {
+                                mirror_mat
+                            } else {
+                                rot_mat
+                            }
+                        } else {
+                            rot_mat
+                        }
                     }
-                } else {
-                    rot_mat
                 };
                 transform_from_mat4(chosen)
             }
@@ -479,12 +493,15 @@ pub(super) fn copy_component_into(
                     "copy_component_into: linked copies require the SOURCE component to be a leaf (no child attachments). `{source_name}` has children; use mode=detached."
                 ));
             }
-            let parts = vec![linked_copy_geometry_part(source_id, delta)];
+            let delta_parts = preserve_target_alignment_delta
+                .and_then(|align| compose_transform(delta, align))
+                .unwrap_or(delta);
+            let parts = vec![linked_copy_geometry_part(source_id, delta_parts)];
             // A linked copy shares geometry but keeps the target's interface anchors (often mirrored).
             // Overwriting anchors from the source breaks the attachment join frame rule and can flip
             // spins (e.g., vehicle wheels).
             let anchors = target_def.anchors.clone();
-            let size = transformed_size(source_def.size, delta);
+            let size = transformed_size(source_def.size, delta_parts);
             (parts, size, anchors, Gen3dCopyMode::Linked)
         }
     };
@@ -813,6 +830,7 @@ pub(super) fn copy_component_subtree_into(
     target_root_idx: usize,
     mode: Gen3dCopyMode,
     anchors_mode: Gen3dCopyAnchorsMode,
+    alignment: Gen3dCopyAlignmentMode,
     delta: Transform,
 ) -> Result<Vec<Gen3dCopyComponentOutcome>, String> {
     ensure_target_subtree_shape(components, draft, source_root_idx, target_root_idx)?;
@@ -839,6 +857,7 @@ pub(super) fn copy_component_subtree_into(
             target_idx,
             mode,
             anchors_mode,
+            alignment,
             delta,
             copied_target_indices.as_ref(),
         )?;
@@ -1198,6 +1217,7 @@ mod tests {
             1,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::CopySourceAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
             None,
         )
@@ -1266,6 +1286,7 @@ mod tests {
             1,
             Gen3dCopyMode::Linked,
             Gen3dCopyAnchorsMode::CopySourceAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
             None,
         )
@@ -1399,6 +1420,7 @@ mod tests {
             3,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
         )
         .expect("subtree copy ok");
@@ -1521,6 +1543,7 @@ mod tests {
             1,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
             None,
         )
@@ -1542,6 +1565,136 @@ mod tests {
         assert!(
             dp < 1e-3,
             "expected copied part transform relative to mount anchor to be preserved; delta={dp}"
+        );
+    }
+
+    #[test]
+    fn mirror_mount_x_alignment_flips_geometry_and_non_interface_anchors() {
+        let mut components = vec![stub_component("a"), stub_component("b")];
+        components[0].actual_size = Some(Vec3::ONE);
+        components[0].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "origin".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "origin".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        let a_id = component_object_id("a");
+        let b_id = component_object_id("b");
+
+        let source_def = ObjectDef {
+            object_id: a_id,
+            label: "a".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![
+                anchor_named_forward("mount", Vec3::Z),
+                anchor_named("tip", Vec3::X, Vec3::Z, Vec3::Y),
+            ],
+            parts: vec![ObjectPartDef::primitive(
+                crate::object::registry::PrimitiveVisualDef::Primitive {
+                    mesh: crate::object::registry::MeshKey::UnitCube,
+                    params: None,
+                    color: Color::WHITE,
+                    unlit: false,
+                },
+                Transform::from_translation(Vec3::new(0.25, 0.0, 0.0)),
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let target_mount_before = anchor_named_forward("mount", Vec3::Z).transform;
+        let target_def = ObjectDef {
+            object_id: b_id,
+            label: "b".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![
+                AnchorDef {
+                    name: "mount".into(),
+                    transform: target_mount_before,
+                },
+                anchor_named("tip", Vec3::ZERO, Vec3::Z, Vec3::Y),
+            ],
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![source_def, target_def];
+
+        copy_component_into(
+            &mut components,
+            &mut draft,
+            0,
+            1,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Gen3dCopyAlignmentMode::MirrorMountX,
+            Transform::IDENTITY,
+            None,
+        )
+        .expect("mirror copy ok");
+
+        let b_def_after = draft.defs.iter().find(|d| d.object_id == b_id).unwrap();
+
+        let mount_after = anchor_transform_from_defs(&b_def_after.anchors, "mount");
+        assert_eq!(
+            mount_after, target_mount_before,
+            "expected mount anchor to be preserved under preserve_interfaces"
+        );
+
+        let tip_after = anchor_transform_from_defs(&b_def_after.anchors, "tip");
+        let dp_tip = (tip_after.translation - Vec3::new(-1.0, 0.0, 0.0)).length();
+        assert!(
+            dp_tip < 1e-4,
+            "expected tip anchor to be mirrored across mount-local +X; delta={dp_tip} tip={:?}",
+            tip_after.translation
+        );
+
+        let part = b_def_after
+            .parts
+            .iter()
+            .find(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
+            .expect("copied primitive");
+        let det = part.transform.scale.x * part.transform.scale.y * part.transform.scale.z;
+        assert!(
+            det.is_finite() && det < 0.0,
+            "expected mirrored copy to have negative scale determinant, got scale={:?} det={det}",
+            part.transform.scale
+        );
+        assert!(
+            part.transform.translation.x < 0.0,
+            "expected mirrored part translation.x to flip sign, got {:?}",
+            part.transform.translation
         );
     }
 
@@ -1664,6 +1817,7 @@ mod tests {
             1,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Gen3dCopyAlignmentMode::Auto,
             Transform::IDENTITY,
             None,
         )
@@ -1831,6 +1985,7 @@ mod tests {
             5,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
         )
         .expect("subtree copy ok");
@@ -1984,6 +2139,7 @@ mod tests {
             3,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Gen3dCopyAlignmentMode::Auto,
             Transform::IDENTITY,
         )
         .expect("subtree copy ok");
@@ -2132,6 +2288,7 @@ mod tests {
             1,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Gen3dCopyAlignmentMode::Auto,
             Transform::IDENTITY,
             None,
         )
@@ -2224,6 +2381,7 @@ mod tests {
             1,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Gen3dCopyAlignmentMode::Auto,
             Transform::IDENTITY,
             None,
         )
@@ -2431,6 +2589,7 @@ mod tests {
             4,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
         )
         .expect("subtree copy ok");

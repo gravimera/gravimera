@@ -25,9 +25,9 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
     TOOL_ID_LIST, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
-    TOOL_ID_VALIDATE,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
+    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SET_ACTIVE_WORKSPACE,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
@@ -240,9 +240,10 @@ Rules:\n\
   - For speed, prefer smaller preview renders during iteration (example: render_preview_v1 image_size=768). Only increase resolution if you truly need extra detail.\n\
   - Do NOT render/review before any geometry exists. If components_generated==0 or the draft has 0 primitive parts, generate components first; renders will be blank.\n\
 - Avoid duplicated LLM work: reuse geometry for symmetric/repeated parts (major speed win):\n\
-  - If multiple planned components should be identical (wheels, legs, mirrored handles, numbered sets like leg_0..leg_7), generate ONE of them, then fill the others using copy_component_v1 instead of calling llm_generate_component_v1 repeatedly.\n\
-  - If the repeated part is a CHAIN (a component with attached descendants, like a leg/arm), use copy_component_subtree_v1 to copy the whole subtree in one call.\n\
-  - Anchors: prefer anchors=preserve_interfaces so TARGET mount interfaces stay stable while internal anchors stay consistent with copied geometry (recommended for mirrored parts and radial limbs). Use anchors=preserve_target only when you must keep ALL target anchors unchanged. Use anchors=copy_source only when you need to overwrite the TARGET's anchors to match the SOURCE exactly.\n\
+  - If multiple planned components should be IDENTICAL (wheels, repeated legs, numbered sets like leg_0..leg_7), generate ONE of them, then fill the others using copy_component_v1 instead of calling llm_generate_component_v1 repeatedly.\n\
+  - If multiple planned components should be LEFT/RIGHT MIRRORS of each other (mirrors, headlights, handles, wheels with one-sided details), generate ONE side, then use mirror_component_v1 for the other side(s).\n\
+  - If the repeated part is a CHAIN (a component with attached descendants, like a leg/arm), use copy_component_subtree_v1 for identical chains, or mirror_component_subtree_v1 for L/R mirrored chains.\n\
+  - Anchors: prefer anchors=preserve_interfaces so TARGET mount interfaces stay stable while internal anchors stay consistent with copied/mirrored geometry. Use anchors=preserve_target only when you must keep ALL target anchors unchanged. Use anchors=copy_source only when you need to overwrite the TARGET's anchors to match the SOURCE exactly.\n\
   - Prefer mode=linked when copying many LEAF components; call detach_component_v1 if any copy must diverge later.\n\
   - The state summary may include `reuse_suggestions` with ready-to-use tool args; use them when appropriate.\n\
 - When you DO need LLM generation, prefer batching UNIQUE components in parallel:\n\
@@ -479,7 +480,10 @@ fn build_agent_user_text(
                     out.push_str(&format!(" desc={}", truncate_for_prompt(description, 260)));
                 }
             }
-            TOOL_ID_COPY_COMPONENT | TOOL_ID_COPY_COMPONENT_SUBTREE => {
+            TOOL_ID_COPY_COMPONENT
+            | TOOL_ID_MIRROR_COMPONENT
+            | TOOL_ID_COPY_COMPONENT_SUBTREE
+            | TOOL_ID_MIRROR_COMPONENT_SUBTREE => {
                 let copies = value
                     .get("copies")
                     .and_then(|v| v.as_array())
@@ -694,15 +698,25 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
             });
 
             if group_has_children || source_has_children {
+                let kind = if is_side_group {
+                    "mirror_component_subtree"
+                } else {
+                    "copy_component_subtree"
+                };
+                let recommended_tool = if is_side_group {
+                    "mirror_component_subtree_v1"
+                } else {
+                    "copy_component_subtree_v1"
+                };
                 out.push(serde_json::json!({
-                    "kind": "copy_component_subtree",
+                    "kind": kind,
                     "group_key": key,
                     "source": source_name.clone(),
                     "source_generated": source_generated_now,
                     "targets": targets.clone(),
                     "targets_omitted": targets_omitted,
-                    "recommended_tool": "copy_component_subtree_v1",
-                    "note": "If source_generated=false, generate the source subtree first, then run the copy tool.",
+                    "recommended_tool": recommended_tool,
+                    "note": "If source_generated=false, generate the source subtree first, then run the reuse tool.",
                     "recommended_args": {
                         "source_root": source_name,
                         "targets": targets,
@@ -711,15 +725,25 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
                     }
                 }));
             } else {
+                let kind = if is_side_group {
+                    "mirror_component"
+                } else {
+                    "copy_component"
+                };
+                let recommended_tool = if is_side_group {
+                    "mirror_component_v1"
+                } else {
+                    "copy_component_v1"
+                };
                 out.push(serde_json::json!({
-                    "kind": "copy_component",
+                    "kind": kind,
                     "group_key": key,
                     "source": source_name.clone(),
                     "source_generated": source_generated_now,
                     "targets": targets.clone(),
                     "targets_omitted": targets_omitted,
-                    "recommended_tool": "copy_component_v1",
-                    "note": "If source_generated=false, generate the source component first, then run the copy tool.",
+                    "recommended_tool": recommended_tool,
+                    "note": "If source_generated=false, generate the source component first, then run the reuse tool.",
                     "recommended_args": {
                         "source_component": source_name,
                         "targets": targets,
@@ -2445,7 +2469,7 @@ fn execute_tool_call(
             job.agent.ever_smoke_checked = true;
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
-        TOOL_ID_COPY_COMPONENT => {
+        TOOL_ID_COPY_COMPONENT | TOOL_ID_MIRROR_COMPONENT => {
             fn parse_vec3(value: &serde_json::Value) -> Option<Vec3> {
                 let arr = value.as_array()?;
                 if arr.len() != 3 {
@@ -2617,6 +2641,11 @@ fn execute_tool_call(
                 }
             };
             let delta = parse_delta_transform(call.args.get("transform"));
+            let alignment = if call.tool_id.as_str() == TOOL_ID_MIRROR_COMPONENT {
+                super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX
+            } else {
+                super::copy_component::Gen3dCopyAlignmentMode::Rotation
+            };
 
             let mut targets: Vec<usize> = Vec::new();
             let target_list = call
@@ -2732,6 +2761,7 @@ fn execute_tool_call(
                     target_idx,
                     mode,
                     anchors_mode,
+                    alignment,
                     delta,
                     None,
                 ) {
@@ -2781,7 +2811,7 @@ fn execute_tool_call(
                 }),
             ))
         }
-        TOOL_ID_COPY_COMPONENT_SUBTREE => {
+        TOOL_ID_COPY_COMPONENT_SUBTREE | TOOL_ID_MIRROR_COMPONENT_SUBTREE => {
             let source_name = call
                 .args
                 .get("source_root")
@@ -2883,6 +2913,11 @@ fn execute_tool_call(
             };
 
             let delta = parse_delta_transform(call.args.get("transform"));
+            let alignment = if call.tool_id.as_str() == TOOL_ID_MIRROR_COMPONENT_SUBTREE {
+                super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX
+            } else {
+                super::copy_component::Gen3dCopyAlignmentMode::Rotation
+            };
 
             let Some(arr) = call.args.get("targets").and_then(|v| v.as_array()) else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -2957,6 +2992,7 @@ fn execute_tool_call(
                     target_root_idx,
                     mode,
                     anchors_mode,
+                    alignment,
                     delta,
                 );
                 let outcomes = match outcomes {

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-use super::copy_component::{Gen3dCopyAnchorsMode, Gen3dCopyMode};
+use super::copy_component::{Gen3dCopyAlignmentMode, Gen3dCopyAnchorsMode, Gen3dCopyMode};
 use super::schema::{AiReuseAnchorsJson, AiReuseGroupJson, AiReuseGroupKindJson, AiReuseModeJson};
 use super::Gen3dPlannedComponent;
 
@@ -426,6 +426,7 @@ pub(super) fn apply_auto_copy(
                         target_idx,
                         group.mode,
                         group.anchors_mode,
+                        Gen3dCopyAlignmentMode::Auto,
                         Transform::IDENTITY,
                         None,
                     ) {
@@ -489,6 +490,7 @@ pub(super) fn apply_auto_copy(
                         target_root_idx,
                         group.mode,
                         group.anchors_mode,
+                        Gen3dCopyAlignmentMode::Auto,
                         Transform::IDENTITY,
                     ) {
                         Ok(outcomes) => {
