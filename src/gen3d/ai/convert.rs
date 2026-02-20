@@ -2951,16 +2951,16 @@ mod tests {
                 forward: Some([0.0, 0.0, 1.0]),
                 up: Some([0.0, 1.0, 0.0]),
             }],
-	            parts: vec![AiPartJson {
-	                primitive: AiPrimitiveJson::Cuboid,
-	                params: None,
-	                color: Some([0.2, 0.3, 0.4, 1.0]),
-	                render_priority: None,
-	                pos: [1.0, 0.0, 0.0],
-	                forward: None,
-	                up: None,
-	                scale: [1.0, 1.0, 1.0],
-	            }],
+                parts: vec![AiPartJson {
+                    primitive: AiPrimitiveJson::Cuboid,
+                    params: None,
+                    color: Some([0.2, 0.3, 0.4, 1.0]),
+                    render_priority: None,
+                    pos: [1.0, 0.0, 0.0],
+                    forward: None,
+                    up: None,
+                    scale: [1.0, 1.0, 1.0],
+                }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");
@@ -3009,16 +3009,16 @@ mod tests {
                 forward: Some([0.0, 0.0, 1.0]),
                 up: Some([0.0, 1.0, 0.0]),
             }],
-	            parts: vec![AiPartJson {
-	                primitive: AiPrimitiveJson::Cuboid,
-	                params: None,
-	                color: Some([0.2, 0.3, 0.4, 1.0]),
-	                render_priority: None,
-	                pos: [0.0, 0.0, 0.0],
-	                forward: None,
-	                up: None,
-	                scale: [1.0, 0.38, 1.0],
-	            }],
+                parts: vec![AiPartJson {
+                    primitive: AiPrimitiveJson::Cuboid,
+                    params: None,
+                    color: Some([0.2, 0.3, 0.4, 1.0]),
+                    render_priority: None,
+                    pos: [0.0, 0.0, 0.0],
+                    forward: None,
+                    up: None,
+                    scale: [1.0, 0.38, 1.0],
+                }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");
@@ -3103,16 +3103,16 @@ mod tests {
                 forward: Some([1.0, 0.0, 0.0]),
                 up: Some([0.0, 1.0, 0.0]),
             }],
-	            parts: vec![AiPartJson {
-	                primitive: AiPrimitiveJson::Cuboid,
-	                params: None,
-	                color: Some([0.2, 0.3, 0.4, 1.0]),
-	                render_priority: None,
-	                pos: [0.0, 0.0, 0.0],
-	                forward: None,
-	                up: None,
-	                scale: [0.60, 0.60, 0.12],
-	            }],
+                parts: vec![AiPartJson {
+                    primitive: AiPrimitiveJson::Cuboid,
+                    params: None,
+                    color: Some([0.2, 0.3, 0.4, 1.0]),
+                    render_priority: None,
+                    pos: [0.0, 0.0, 0.0],
+                    forward: None,
+                    up: None,
+                    scale: [0.60, 0.60, 0.12],
+                }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");
@@ -3396,16 +3396,16 @@ mod tests {
                 forward: Some([0.0, -1.0, 0.0]),
                 up: Some([0.0, 0.0, 1.0]),
             }],
-	            parts: vec![AiPartJson {
-	                primitive: AiPrimitiveJson::Cuboid,
-	                params: None,
-	                color: Some([0.2, 0.3, 0.4, 1.0]),
-	                render_priority: None,
-	                pos: [0.0, 0.0, 0.0],
-	                forward: None,
-	                up: None,
-	                scale: [1.0, 1.0, 1.0],
-	            }],
+                parts: vec![AiPartJson {
+                    primitive: AiPrimitiveJson::Cuboid,
+                    params: None,
+                    color: Some([0.2, 0.3, 0.4, 1.0]),
+                    render_priority: None,
+                    pos: [0.0, 0.0, 0.0],
+                    forward: None,
+                    up: None,
+                    scale: [1.0, 1.0, 1.0],
+                }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");

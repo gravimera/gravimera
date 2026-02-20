@@ -319,27 +319,27 @@ pub(crate) fn spawn_object_visuals_with_settings(
     let root_entity = entity.id();
     let aim_object_ids = aim_object_ids_for_root(library, object_id);
     let mut stack = Vec::new();
-	    spawn_object_visuals_inner(
-	        entity,
-	        library,
-	        asset_server,
-	        assets,
-	        meshes,
-	        materials,
-	        material_cache,
-	        mesh_cache,
-	        object_id,
-	        tint,
-	        settings,
-	        &mut stack,
-	        root_entity,
-	        0,
-	        None,
-	        &aim_object_ids,
-	        false,
-	        false,
-	        0,
-	    );
+        spawn_object_visuals_inner(
+            entity,
+            library,
+            asset_server,
+            assets,
+            meshes,
+            materials,
+            material_cache,
+            mesh_cache,
+            object_id,
+            tint,
+            settings,
+            &mut stack,
+            root_entity,
+            0,
+            None,
+            &aim_object_ids,
+            false,
+            false,
+            0,
+        );
 }
 
 fn aim_object_ids_for_root(library: &ObjectLibrary, root_object_id: u128) -> HashSet<u128> {
@@ -414,18 +414,18 @@ fn spawn_object_visuals_inner(
         return;
     }
 
-	    entity.with_children(|parent| {
-	        let part_depth_biases = compute_primitive_part_depth_biases(&def.parts);
-	        for (part_index, part) in def.parts.iter().enumerate() {
-	            let part_part_id = active_part_id.or(part.part_id);
-	            let part_priority_bias = depth_bias_delta_from_render_priority(part.render_priority);
-	            let child_inherited_depth_bias =
-	                clamp_depth_bias(inherited_depth_bias.saturating_add(part_priority_bias));
-	            let mut child_transform = part.transform;
-	            if let Some(attachment) = part.attachment.as_ref() {
-	                child_transform = resolve_attachment_transform(library, def, part, attachment)
-	                    .unwrap_or_else(|| part.transform);
-	            }
+        entity.with_children(|parent| {
+            let part_depth_biases = compute_primitive_part_depth_biases(&def.parts);
+            for (part_index, part) in def.parts.iter().enumerate() {
+                let part_part_id = active_part_id.or(part.part_id);
+                let part_priority_bias = depth_bias_delta_from_render_priority(part.render_priority);
+                let child_inherited_depth_bias =
+                    clamp_depth_bias(inherited_depth_bias.saturating_add(part_priority_bias));
+                let mut child_transform = part.transform;
+                if let Some(attachment) = part.attachment.as_ref() {
+                    child_transform = resolve_attachment_transform(library, def, part, attachment)
+                        .unwrap_or_else(|| part.transform);
+                }
 
             let local_det =
                 child_transform.scale.x * child_transform.scale.y * child_transform.scale.z;
@@ -457,11 +457,11 @@ fn spawn_object_visuals_inner(
                 ObjectPartKind::ObjectRef {
                     object_id: child_id,
                 } => {
-	                    spawn_object_visuals_inner(
-	                        &mut child,
-	                        library,
-	                        asset_server,
-	                        assets,
+                        spawn_object_visuals_inner(
+                            &mut child,
+                            library,
+                            asset_server,
+                            assets,
                         meshes,
                         materials,
                         material_cache,
@@ -473,21 +473,21 @@ fn spawn_object_visuals_inner(
                         root_entity,
                         depth + 1,
                         part_part_id,
-	                        aim_object_ids,
-	                        ancestor_apply_aim_yaw || apply_aim_yaw,
-	                        child_mirrored,
-	                        child_inherited_depth_bias,
-	                    );
-	                }
-	                ObjectPartKind::Primitive { primitive } => {
-	                    let depth_bias = clamp_depth_bias(
-	                        child_inherited_depth_bias
-	                            .saturating_add(*part_depth_biases.get(part_index).unwrap_or(&0)),
-	                    );
-	                    if let Some((mesh, material)) = resolve_primitive_visual(
-	                        primitive,
-	                        tint,
-	                        depth_bias,
+                            aim_object_ids,
+                            ancestor_apply_aim_yaw || apply_aim_yaw,
+                            child_mirrored,
+                            child_inherited_depth_bias,
+                        );
+                    }
+                    ObjectPartKind::Primitive { primitive } => {
+                        let depth_bias = clamp_depth_bias(
+                            child_inherited_depth_bias
+                                .saturating_add(*part_depth_biases.get(part_index).unwrap_or(&0)),
+                        );
+                        if let Some((mesh, material)) = resolve_primitive_visual(
+                            primitive,
+                            tint,
+                            depth_bias,
                         assets,
                         meshes,
                         materials,

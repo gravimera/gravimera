@@ -183,13 +183,13 @@ pub(super) fn build_gen3d_component_user_text(
          Avoid 180° opposition (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation in the PLAN (not by reversing anchors).\n\
          Convention: the component center must be at local [0,0,0].\n\
          The engine will not auto-adjust placement.\n\
-	         Avoid z-fighting: do NOT place two primitives so any of their planar faces are coplanar AND overlap in area.\n\
-	          - If you layer a detail on a surface (trim/panel/hatch/window band), offset it slightly OUTWARD along the surface normal (a small epsilon, e.g. ~0.005m).\n\
-	          - For concentric capped cylinders/frustums, do not give multiple primitives the exact same cap plane; shorten/offset inner ones slightly.\n\
-	          - Output base solids first, then surface details later.\n\
-	          - Optional: set `render_priority` (small integer) to help the renderer break any remaining depth ties.\n\
-	            Use `0` for base solids, `1` for surface details, `2` for very thin decals; keep values small (|render_priority| <= 3).\n",
-	    );
+             Avoid z-fighting: do NOT place two primitives so any of their planar faces are coplanar AND overlap in area.\n\
+              - If you layer a detail on a surface (trim/panel/hatch/window band), offset it slightly OUTWARD along the surface normal (a small epsilon, e.g. ~0.005m).\n\
+              - For concentric capped cylinders/frustums, do not give multiple primitives the exact same cap plane; shorten/offset inner ones slightly.\n\
+              - Output base solids first, then surface details later.\n\
+              - Optional: set `render_priority` (small integer) to help the renderer break any remaining depth ties.\n\
+                Use `0` for base solids, `1` for surface details, `2` for very thin decals; keep values small (|render_priority| <= 3).\n",
+        );
     out.push_str(&format!(
         "Component parts budget: try to stay within ~{budget} primitives.\n"
     ));
@@ -517,14 +517,14 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
                   \"parent\": \"parent_component_name\",\n\
                   \"parent_anchor\": \"anchor_name_on_parent\",\n\
                   \"child_anchor\": \"anchor_name_on_this_component\",\n\
-	                  \"offset\": {{\n\
-	                    \"pos\": [x,y,z],\n\
-	                    \"forward\": [x,y,z] (optional),\n\
-	                    \"up\": [x,y,z] (optional),\n\
-	                    \"rot_frame\": \"join\" | \"parent\" (optional),\n\
-	                    \"rot_quat_xyzw\": [x,y,z,w] (optional),\n\
-	                    \"scale\": [x,y,z] (optional)\n\
-	                  }} (optional),\n\
+                      \"offset\": {{\n\
+                        \"pos\": [x,y,z],\n\
+                        \"forward\": [x,y,z] (optional),\n\
+                        \"up\": [x,y,z] (optional),\n\
+                        \"rot_frame\": \"join\" | \"parent\" (optional),\n\
+                        \"rot_quat_xyzw\": [x,y,z,w] (optional),\n\
+                        \"scale\": [x,y,z] (optional)\n\
+                      }} (optional),\n\
                   \"joint\": {{ \"kind\": \"hinge\" | \"fixed\" | \"ball\" | \"free\", \"axis_join\": [x,y,z] (optional), \"limits_degrees\": [min,max] (optional) }} (optional),\n\
                   \"animations\": {{\n\
                     \"ambient\" | \"idle\" | \"move\" | \"attack_primary\": {{\n\
