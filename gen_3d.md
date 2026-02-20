@@ -78,7 +78,8 @@ Gen3D uses the prefab-based object system:
 
 - Each component becomes an `ObjectDef` prefab containing only **primitive** parts.
 - The root `gen3d_draft` `ObjectDef` is a combined object with `ObjectRef` parts that reference the component prefabs via **anchor-based attachments** (tree-style).
-- Clicking **Save** clones the current draft into fresh UUID-based prefab ids (so multiple saved models can coexist) and spawns a Build instance referencing the new root prefab id.
+- Clicking **Save** clones the current draft into fresh UUID-based prefab ids (so multiple saved models can coexist) and spawns an instance in the world (unit if the prefab has mobility; otherwise a build object).
+- For saved units, the origin + collision circle are based on the root component (torso/body), not far-out attachments (e.g. weapons).
 
 “Atom vs Combined” is expressed purely through composition:
 

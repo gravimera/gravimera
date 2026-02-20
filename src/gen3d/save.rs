@@ -282,6 +282,36 @@ fn bounds_of_object(
     bounds
 }
 
+fn bounds_of_primitive_parts_only(def: &ObjectDef) -> Bounds {
+    let mut bounds = Bounds::empty();
+    for part in def.parts.iter() {
+        let ObjectPartKind::Primitive { primitive } = &part.kind else {
+            continue;
+        };
+        let (mesh, params) = match primitive {
+            PrimitiveVisualDef::Primitive { mesh, params, .. } => (*mesh, params.as_ref()),
+            PrimitiveVisualDef::Mesh { mesh, material } => {
+                let _ = material;
+                (*mesh, None)
+            }
+        };
+
+        let base = primitive_base_size(mesh, params);
+        let local_half = (base * part.transform.scale).abs() * 0.5;
+        let center = part.transform.translation;
+        let rot = part.transform.rotation;
+        if !center.is_finite() || !local_half.is_finite() || !rot.is_finite() {
+            continue;
+        }
+
+        let abs = Mat3::from_quat(rot).abs();
+        let ext = abs * local_half;
+        bounds.include_point(center - ext);
+        bounds.include_point(center + ext);
+    }
+    bounds
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,9 +495,10 @@ mod tests {
 
 pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<ObjectDef>), String> {
     let root_id = super::gen3d_draft_object_id();
-    let Some(_root) = draft.defs.iter().find(|d| d.object_id == root_id) else {
+    let Some(root_def) = draft.defs.iter().find(|d| d.object_id == root_id) else {
         return Err("Gen3D: missing root draft object def.".into());
     };
+    let root_is_unit = root_def.mobility.is_some();
 
     let defs_map: std::collections::HashMap<u128, ObjectDef> = draft
         .defs
@@ -477,12 +508,49 @@ pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<Objec
     let mut memo = std::collections::HashMap::<u128, Bounds>::new();
     let mut stack = Vec::new();
     let root_bounds = bounds_of_object(root_id, &defs_map, &mut stack, &mut memo);
+    let root_size_override = (!root_bounds.is_empty())
+        .then(|| root_bounds.size().abs().max(Vec3::splat(0.01)));
+
     let mut recenter = Vec3::ZERO;
-    let mut root_size_override = None;
-    if !root_bounds.is_empty() {
+    let mut root_ground_origin_y = None;
+    let mut root_unit_collider_radius = None;
+    if root_is_unit {
+        let root_ref = root_def.parts.iter().find_map(|part| match &part.kind {
+            ObjectPartKind::ObjectRef { object_id } => Some((part, *object_id)),
+            _ => None,
+        });
+
+        if let Some((root_ref, root_component_id)) = root_ref {
+            if let Some(root_component_def) = defs_map.get(&root_component_id) {
+                let bounds = bounds_of_primitive_parts_only(root_component_def);
+                if !bounds.is_empty() {
+                    let torso_center_local = bounds.center();
+                    recenter = root_ref
+                        .transform
+                        .to_matrix()
+                        .transform_point3(torso_center_local);
+
+                    let size = bounds.size().abs().max(Vec3::splat(0.01));
+                    let base_radius = (size.x.max(size.z) * 0.5).max(0.01);
+                    let scale_xz = root_ref
+                        .transform
+                        .scale
+                        .x
+                        .abs()
+                        .max(root_ref.transform.scale.z.abs())
+                        .max(1e-3);
+                    root_unit_collider_radius = Some(base_radius * scale_xz);
+                }
+            }
+        }
+
+        if !root_bounds.is_empty() {
+            // After applying `recenter`, the new bounds are `root_bounds - recenter`, so:
+            // `ground_origin_y = -min.y`.
+            root_ground_origin_y = Some((recenter.y - root_bounds.min.y).max(0.0));
+        }
+    } else if !root_bounds.is_empty() {
         recenter = root_bounds.center();
-        let size = root_bounds.size().abs().max(Vec3::splat(0.01));
-        root_size_override = Some(size);
     }
 
     let mut id_map = std::collections::HashMap::<u128, u128>::new();
@@ -508,6 +576,16 @@ pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<Objec
             new_def.label = format!("Gen3DModel_{:08x}", (saved_root_id >> 96) as u32).into();
             if let Some(size) = root_size_override {
                 new_def.size = size;
+            }
+
+            if root_is_unit {
+                if let Some(ground_origin_y) = root_ground_origin_y {
+                    new_def.ground_origin_y = Some(ground_origin_y);
+                }
+                if let Some(radius) = root_unit_collider_radius {
+                    new_def.collider = ColliderProfile::CircleXZ { radius };
+                }
+            } else if let Some(size) = root_size_override {
                 new_def.collider = match new_def.collider {
                     ColliderProfile::CircleXZ { .. } => ColliderProfile::CircleXZ {
                         radius: (size.x.max(size.z) * 0.5).max(0.01),
@@ -520,6 +598,7 @@ pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<Objec
                     },
                 };
             }
+
             new_def.interaction = if new_def.mobility.is_some() {
                 ObjectInteraction::none()
             } else {
