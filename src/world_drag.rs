@@ -47,6 +47,7 @@ impl WorldDragState {
 pub(crate) fn world_drag_start(
     mut state: ResMut<WorldDragState>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
     build: Res<BuildState>,
     model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     selection: Res<SelectionState>,
@@ -67,6 +68,11 @@ pub(crate) fn world_drag_start(
         return;
     }
     if model_library.is_drag_active() {
+        return;
+    }
+    // Box-select is the default behavior for LMB dragging. Hold Alt to drag-move a single selected
+    // instance in Build mode.
+    if !keys.pressed(KeyCode::AltLeft) && !keys.pressed(KeyCode::AltRight) {
         return;
     }
     if !mouse_buttons.just_pressed(MouseButton::Left) {

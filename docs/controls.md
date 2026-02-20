@@ -46,6 +46,7 @@ Place objects:
 Edit selected build objects (when not placing):
 
 - Delete: `Delete` / `Backspace`
+- Drag move (single selected unit/build object): `Alt + LMB drag`
 - Move: `W` / `A` / `S` / `D` (camera-relative; hold to repeat)
 - Move (grid nudge): arrow keys (`Shift` = bigger step)
 - Rotate: `,` / `.` (`Shift` = 45° steps)
