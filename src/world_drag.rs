@@ -176,13 +176,15 @@ pub(crate) fn world_drag_update(
         .and_then(|window| window.cursor_position());
 
     if mouse_buttons.just_released(MouseButton::Left) {
-        if state.active.take().is_some() {
-            scene_saves.write(SceneSaveRequest::new("dragged instance"));
+        if state.pending.is_some() || state.active.is_some() {
+            if state.active.take().is_some() {
+                scene_saves.write(SceneSaveRequest::new("dragged instance"));
+            }
+            state.pending = None;
+            selection.drag_start = None;
+            selection.drag_end = None;
+            return;
         }
-        state.pending = None;
-        selection.drag_start = None;
-        selection.drag_end = None;
-        return;
     }
 
     let Some(cursor) = cursor else {
