@@ -52,14 +52,14 @@ pub(crate) fn update_window_title(
             }
             if build.placing_active {
                 window.title = format!(
-                    "Gravimera — BUILD ({}) | score: {} | health: {} | B/F/T place | Esc select | F1 play | Tab forms",
+                    "Gravimera — BUILD ({}) | score: {} | health: {} | B/F/T place | Esc select | F1 play | Tab forms | hold C copy",
                     build.selected.label(),
                     game.score,
                     game.health
                 );
             } else {
                 window.title = format!(
-                    "Gravimera — BUILD | score: {} | health: {} | LMB select | B/F/T place | F1 play | Tab forms | C copy",
+                    "Gravimera — BUILD | score: {} | health: {} | LMB select | B/F/T place | F1 play | Tab forms | hold C copy",
                     game.score, game.health
                 );
             }
@@ -72,7 +72,7 @@ pub(crate) fn update_window_title(
                 );
             } else {
                 window.title = format!(
-                    "Gravimera — PLAY ({}) | score: {} | health: {} | LMB select | RMB move | Space fire (hold) | Ctrl/Cmd+1/2/3 switch | 1..9/0 motions | R restart | F1 build | Tab forms | C copy",
+                    "Gravimera — PLAY ({}) | score: {} | health: {} | LMB select | RMB move | Space fire (hold) | Ctrl/Cmd+1/2/3 switch | 1..9/0 motions | R restart | F1 build | Tab forms | hold C copy",
                     game.weapon.label(),
                     game.score,
                     game.health,

@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
+use bevy::window::{CursorOptions, PrimaryWindow};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -20,10 +20,20 @@ const FORM_BADGE_FONT_SIZE_PX: f32 = 12.0;
 const FORM_BADGE_Z_INDEX: i32 = 350;
 const FORM_BADGE_SCREEN_OFFSET_PX: Vec2 = Vec2::new(-18.0, -18.0);
 
+const COPY_CURSOR_BASE_RADIUS_PX: f32 = 15.0;
+const COPY_CURSOR_BORDER_PX: f32 = 2.0;
+const COPY_CURSOR_Z_INDEX: i32 = 980;
+const COPY_CURSOR_PULSE_RADS_PER_SEC: f32 = 12.0;
+const COPY_CURSOR_FLASH_ALPHA_MIN: f32 = 0.25;
+const COPY_CURSOR_FLASH_ALPHA_MAX: f32 = 0.85;
+const COPY_HOVER_FALLBACK_RADIUS_PX: f32 = 26.0;
+
 #[derive(Resource, Default, Debug)]
 pub(crate) struct FormCopyState {
-    pub(crate) awaiting_source: bool,
+    pub(crate) active: bool,
     pub(crate) destinations: Vec<Entity>,
+    pub(crate) hovered_source: Option<Entity>,
+    pub(crate) started_at_secs: f32,
 }
 
 #[derive(Component)]
@@ -51,6 +61,9 @@ pub(crate) struct FormBadgeUi {
 
 #[derive(Component)]
 pub(crate) struct FormBadgeText;
+
+#[derive(Component)]
+pub(crate) struct FormCopyCursorUi;
 
 pub(crate) fn ensure_object_forms_component(
     mut commands: Commands,
@@ -173,28 +186,321 @@ pub(crate) fn object_forms_tab_switch_selected(
     }
 }
 
-pub(crate) fn object_forms_copy_input_begin(
+pub(crate) fn object_forms_copy_mode_start_cancel(
     keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
     selection: Res<SelectionState>,
+    eligible: Query<(), (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>)>,
     mut copy: ResMut<FormCopyState>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) && copy.awaiting_source {
-        copy.awaiting_source = false;
+    if keys.just_pressed(KeyCode::Escape) && copy.active {
+        copy.active = false;
         copy.destinations.clear();
+        copy.hovered_source = None;
         return;
     }
 
-    if !keys.just_pressed(KeyCode::KeyC) {
+    if copy.active || !keys.just_pressed(KeyCode::KeyC) {
         return;
     }
 
-    copy.destinations = selection.selected.iter().copied().collect();
-    copy.awaiting_source = !copy.destinations.is_empty();
+    let destinations: Vec<Entity> = selection
+        .selected
+        .iter()
+        .copied()
+        .filter(|e| eligible.contains(*e))
+        .collect();
+    if destinations.is_empty() {
+        return;
+    }
+
+    copy.active = true;
+    copy.destinations = destinations;
+    copy.hovered_source = None;
+    copy.started_at_secs = time.elapsed_secs();
 }
 
-pub(crate) fn object_forms_copy_apply_on_source_selected(
+#[derive(Clone, Copy, Debug)]
+struct CopyHoverPick {
+    entity: Entity,
+    screen_center: Vec2,
+    pixel_radius: f32,
+    is_unit: bool,
+}
+
+fn pick_copy_source_under_cursor(
+    cursor: Vec2,
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    library: &ObjectLibrary,
+    units: &Query<
+        (Entity, &Transform, Option<&Collider>, &ObjectPrefabId),
+        (With<Commandable>, Without<Player>),
+    >,
+    builds: &Query<
+        (
+            Entity,
+            &Transform,
+            &AabbCollider,
+            &BuildDimensions,
+            &ObjectPrefabId,
+        ),
+        (With<BuildObject>, Without<Player>),
+    >,
+) -> Option<CopyHoverPick> {
+    let camera_right = camera_transform.rotation() * Vec3::X;
+
+    let mut best = None;
+    let mut best_d = f32::INFINITY;
+
+    for (entity, transform, collider, prefab_id) in units.iter() {
+        let scale_y = transform.scale.y.abs().max(1e-3);
+        let height = library
+            .size(prefab_id.0)
+            .map(|s| s.y * scale_y)
+            .unwrap_or(DEFAULT_OBJECT_SIZE_M * scale_y);
+        let world = transform.translation + Vec3::Y * (height * 0.5);
+        let Ok(screen) = camera.world_to_viewport(camera_transform, world) else {
+            continue;
+        };
+
+        let pixel_radius = collider
+            .and_then(|collider| {
+                let scale_xz = transform
+                    .scale
+                    .x
+                    .abs()
+                    .max(transform.scale.z.abs())
+                    .max(1e-3);
+                let world_r = (collider.radius * scale_xz).max(0.0);
+                if world_r <= 1e-6 {
+                    return None;
+                }
+                let edge_world = world + camera_right * world_r;
+                let edge_screen = camera
+                    .world_to_viewport(camera_transform, edge_world)
+                    .ok()?;
+                Some(screen.distance(edge_screen).max(1.0))
+            })
+            .unwrap_or(COPY_HOVER_FALLBACK_RADIUS_PX);
+
+        let d = screen.distance(cursor);
+        if d > pixel_radius {
+            continue;
+        }
+        if d < best_d {
+            best_d = d;
+            best = Some(CopyHoverPick {
+                entity,
+                screen_center: screen,
+                pixel_radius,
+                is_unit: true,
+            });
+        }
+    }
+
+    for (entity, transform, collider, dimensions, _prefab_id) in builds.iter() {
+        let world = transform.translation + Vec3::Y * (dimensions.size.y.max(0.01) * 0.5);
+        let Ok(screen) = camera.world_to_viewport(camera_transform, world) else {
+            continue;
+        };
+
+        let world_r = collider
+            .half_extents
+            .x
+            .max(collider.half_extents.y)
+            .max(0.01);
+        let edge_world = world + camera_right * world_r;
+        let pixel_radius = camera
+            .world_to_viewport(camera_transform, edge_world)
+            .ok()
+            .map(|edge| screen.distance(edge).max(1.0))
+            .unwrap_or(COPY_HOVER_FALLBACK_RADIUS_PX);
+
+        let d = screen.distance(cursor);
+        if d > pixel_radius {
+            continue;
+        }
+        if d < best_d {
+            best_d = d;
+            best = Some(CopyHoverPick {
+                entity,
+                screen_center: screen,
+                pixel_radius,
+                is_unit: false,
+            });
+        }
+    }
+
+    best
+}
+
+pub(crate) fn object_forms_copy_mode_update_cursor(
     mut commands: Commands,
-    selection: Res<SelectionState>,
+    time: Res<Time>,
+    mut copy: ResMut<FormCopyState>,
+    mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
+    library: Res<ObjectLibrary>,
+    units: Query<
+        (Entity, &Transform, Option<&Collider>, &ObjectPrefabId),
+        (With<Commandable>, Without<Player>),
+    >,
+    builds: Query<
+        (
+            Entity,
+            &Transform,
+            &AabbCollider,
+            &BuildDimensions,
+            &ObjectPrefabId,
+        ),
+        (With<BuildObject>, Without<Player>),
+    >,
+    dest_categories: Query<(Option<&Commandable>, Option<&BuildObject>), Without<Player>>,
+    mut rings: Query<
+        (
+            Entity,
+            &mut Node,
+            &mut Visibility,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<FormCopyCursorUi>,
+    >,
+) {
+    if !copy.active {
+        for (entity, ..) in rings.iter_mut() {
+            commands.entity(entity).try_despawn();
+        }
+        copy.hovered_source = None;
+        return;
+    }
+
+    let Ok((window, mut cursor_opts)) = windows.single_mut() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        copy.hovered_source = None;
+        for (_entity, _node, mut visibility, ..) in rings.iter_mut() {
+            *visibility = Visibility::Hidden;
+        }
+        cursor_opts.visible = true;
+        return;
+    };
+
+    let Ok((camera, camera_transform)) = camera_q.single() else {
+        return;
+    };
+    let camera_global = GlobalTransform::from(*camera_transform);
+
+    let hovered = pick_copy_source_under_cursor(
+        cursor_pos,
+        camera,
+        &camera_global,
+        &library,
+        &units,
+        &builds,
+    );
+    copy.hovered_source = hovered.map(|h| h.entity);
+
+    // Hide the OS cursor while copy mode is active; we render a custom cursor indicator instead.
+    cursor_opts.visible = false;
+
+    let t = (time.elapsed_secs() - copy.started_at_secs).max(0.0);
+    let wave = (t * COPY_CURSOR_PULSE_RADS_PER_SEC).sin() * 0.5 + 0.5;
+    let alpha = COPY_CURSOR_FLASH_ALPHA_MIN
+        + wave * (COPY_CURSOR_FLASH_ALPHA_MAX - COPY_CURSOR_FLASH_ALPHA_MIN);
+
+    let (center, base_radius, is_unit) = if let Some(hovered) = hovered {
+        (
+            hovered.screen_center,
+            (hovered.pixel_radius + 10.0).clamp(COPY_CURSOR_BASE_RADIUS_PX, 140.0),
+            Some(hovered.is_unit),
+        )
+    } else {
+        (cursor_pos, COPY_CURSOR_BASE_RADIUS_PX, None)
+    };
+    let radius = (base_radius * (0.88 + wave * 0.24)).max(1.0);
+
+    let mut any_compatible = false;
+    if let Some(source_is_unit) = is_unit {
+        for dest in copy.destinations.iter().copied() {
+            let Ok((cmd, build)) = dest_categories.get(dest) else {
+                continue;
+            };
+            let dest_is_unit = cmd.is_some() && build.is_none();
+            if dest_is_unit == source_is_unit {
+                any_compatible = true;
+                break;
+            }
+        }
+    }
+
+    let border_rgb = if is_unit.is_none() {
+        (0.95, 0.95, 0.98)
+    } else if any_compatible {
+        (0.35, 1.00, 0.45)
+    } else {
+        (1.00, 0.35, 0.35)
+    };
+
+    let left = center.x - radius;
+    let top = center.y - radius;
+    let diameter = radius * 2.0;
+
+    let mut updated_any = false;
+    for (_entity, mut node, mut visibility, mut bg, mut border) in rings.iter_mut() {
+        updated_any = true;
+        node.left = Val::Px(left);
+        node.top = Val::Px(top);
+        node.width = Val::Px(diameter);
+        node.height = Val::Px(diameter);
+        node.border_radius = BorderRadius::all(Val::Px(radius));
+        *visibility = Visibility::Inherited;
+
+        bg.0 = Color::srgba(border_rgb.0, border_rgb.1, border_rgb.2, alpha * 0.06);
+        *border = BorderColor::all(Color::srgba(
+            border_rgb.0,
+            border_rgb.1,
+            border_rgb.2,
+            alpha,
+        ));
+    }
+
+    if !updated_any {
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(left),
+                top: Val::Px(top),
+                width: Val::Px(diameter),
+                height: Val::Px(diameter),
+                border: UiRect::all(Val::Px(COPY_CURSOR_BORDER_PX)),
+                border_radius: BorderRadius::all(Val::Px(radius)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(
+                border_rgb.0,
+                border_rgb.1,
+                border_rgb.2,
+                alpha * 0.06,
+            )),
+            BorderColor::all(Color::srgba(
+                border_rgb.0,
+                border_rgb.1,
+                border_rgb.2,
+                alpha,
+            )),
+            ZIndex(COPY_CURSOR_Z_INDEX),
+            Visibility::Inherited,
+            FormCopyCursorUi,
+        ));
+    }
+}
+
+pub(crate) fn object_forms_copy_mode_confirm_on_release(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
     mut copy: ResMut<FormCopyState>,
     library: Res<ObjectLibrary>,
     asset_server: Res<AssetServer>,
@@ -221,27 +527,41 @@ pub(crate) fn object_forms_copy_apply_on_source_selected(
     >,
     children_q: Query<&Children>,
 ) {
-    if !copy.awaiting_source {
+    if !copy.active || !keys.just_released(KeyCode::KeyC) {
         return;
     }
 
-    if selection.selected.len() != 1 {
-        return;
-    }
-    let source = *selection.selected.iter().next().expect("len == 1");
+    let source = copy.hovered_source;
+    let destinations = std::mem::take(&mut copy.destinations);
+    copy.active = false;
+    copy.hovered_source = None;
 
-    let Ok((_, _t, _source_prefab_id, source_forms, _tint, src_commandable, src_build, _, _, _, _)) =
-        objects.get_mut(source)
-    else {
+    let Some(source) = source else {
         return;
     };
 
+    let Ok((
+        _,
+        _t,
+        _source_prefab_id,
+        source_forms,
+        _tint,
+        src_commandable,
+        src_build,
+        _,
+        _,
+        _,
+        source_anim,
+    )) = objects.get_mut(source)
+    else {
+        return;
+    };
+    if source_anim.is_some() {
+        return;
+    }
+
     let source_is_unit = src_commandable.is_some() && src_build.is_none();
     let source_active_prefab = source_forms.active_prefab_id();
-
-    let destinations: Vec<Entity> = copy.destinations.iter().copied().collect();
-    copy.awaiting_source = false;
-    copy.destinations.clear();
 
     for dest in destinations {
         if dest == source {

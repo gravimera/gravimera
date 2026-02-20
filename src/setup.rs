@@ -17,7 +17,7 @@ pub(crate) fn setup_rendered(
     info!(
         "Controls: LMB selects (click/drag), RMB issues move orders.\n\
          F1 toggles Build/Play (or top-left button).\n\
-         Forms: Tab cycles forms (selected), C then click copies source current form (Esc cancels).\n\
+         Forms: Tab cycles forms (selected), hold C to copy source current form (release to confirm; Esc cancels).\n\
          Build/Play: hold Space to fire toward the cursor (ground or an enemy).\n\
          Build: B/F/T place (Block/Fence/Tree), G fence axis / tree size, LMB place, Esc select, LMB drag select, Delete remove, M duplicate unit, Ctrl/Cmd+D duplicate build.\n\
          Edit: WASD move selected (camera-relative; CapsLock = 1/3 speed), ,/. rotate builds, -/= scale selected (Shift bigger).\n\

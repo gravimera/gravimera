@@ -6,7 +6,7 @@ This repository’s ExecPlan requirements live in `PLANS.md` at the repo root. M
 
 ## Purpose / Big Picture
 
-After this change, any eligible object instance can have multiple “forms” (each form is a prefab id). In both Build and Play, the player can press `Tab` to switch all currently selected objects to their next form. In Build and Play, the player can press `C` to enter “copy current form” mode: the current selection becomes the destination set, and the next clicked object becomes the source; the source object’s *current* form is appended (deduped) to each destination’s form list and each destination immediately switches to that new form.
+After this change, any eligible object instance can have multiple “forms” (each form is a prefab id). In both Build and Play, the player can press `Tab` to switch all currently selected objects to their next form. In Build and Play, the player can hold `C` to enter “copy current form” mode: the current selection becomes the destination set, the cursor shows an animated copy indicator, and the currently hovered object becomes the source; releasing `C` appends the source object’s *current* form (deduped) to each destination’s form list and each destination immediately switches to that new form.
 
 Switching forms is visualized with an automatic “mechanical transform” animation between the old prefab’s primitive parts and the new prefab’s primitive parts (no authoring panel). Any object with more than one form shows a circular badge with `i/n` (e.g. `2/3`) above its top-left in screen space.
 
@@ -22,7 +22,7 @@ Hard rule: units and buildings cannot transform between each other. A “unit”
 - [x] (2026-02-19) Write spec docs for ObjectForms, inputs, persistence, and badge UI.
 - [x] (2026-02-19) Add Build/Play UI toggle button and remove `Tab` binding from mode toggle.
 - [x] (2026-02-19) Add `ObjectForms` component (forms + active index) and systems for `Tab` switching (all selected).
-- [x] (2026-02-19) Add copy-flow state machine: `C` then click source; append+dedupe+switch.
+- [x] (2026-02-19) Add copy-flow state machine: hold `C`, hover source, release to copy; append+dedupe+switch.
 - [x] (2026-02-19) Add `scene.dat` persistence for forms (bump version; no compat) and scene-sources pinned instance persistence (optional JSON fields).
 - [x] (2026-02-19) Add world-anchored “i/n” badge UI for all multi-form objects.
 - [x] (2026-02-19) Add mechanical transform animation rig for primitive parts when switching forms.
@@ -96,7 +96,7 @@ Implement the feature in these layers:
 
 3) Selection-driven operations:
    - `Tab`: switch all selected entities that have `ObjectForms` (or default to `[ObjectPrefabId]` if missing).
-   - `C` then click: store destination set on `C`, then on next click compute source entity and apply append+dedupe+switch to destinations.
+   - Hold `C`: store destination set on press, hover a source entity, and apply append+dedupe+switch to destinations on release.
 
 4) Persistence:
    - `scene.dat`: bump version; extend instance schema with forms list + active index. Ensure defs include all referenced forms.
@@ -130,7 +130,7 @@ Manual acceptance run:
 Then:
 
 - Place/build a couple objects (or spawn from scene sources).
-- Use `C` then click to copy current form as a new form and observe:
+- Hold `C`, hover a source, and release to copy current form as a new form and observe:
   - destination switches immediately (badge updates),
   - mechanical transform animation plays,
   - badge appears for multi-form objects.
@@ -143,7 +143,7 @@ Acceptance criteria:
 
 - Build/Play mode is toggled via a UI button; `Tab` no longer toggles modes.
 - `Tab` cycles forms for all selected objects; cross-category forms are not allowed.
-- `C` then click source appends source current form (deduped) to all destination objects and switches immediately.
+- Holding `C` and releasing over a source appends source current form (deduped) to all destination objects and switches immediately.
 - A circular `i/n` badge appears for all multi-form objects and tracks them on screen.
 - Switching forms triggers an automatic mechanical transform animation (primitive parts move/scale/color; cross-shape uses shrink/fade + grow/fade).
 - Forms persist in `scene.dat` and in scene sources pinned instance JSON.
@@ -163,10 +163,10 @@ Acceptance criteria:
 Add/ensure the following internal interfaces exist:
 
 - `crate::types::ObjectForms` component.
-- `crate::types::SelectionClickEvent` (or similar) message emitted on click-selection to drive the copy flow.
-- `crate::forms` (or similar module) systems:
-  - `forms_handle_tab_switch`
-  - `forms_handle_copy_flow`
-  - `forms_apply_prefab_change_and_update_colliders`
-  - `forms_spawn_and_update_badges`
-  - `forms_spawn_and_update_transform_rig`
+- `crate::object_forms` systems:
+  - `object_forms_tab_switch_selected`
+  - `object_forms_copy_mode_start_cancel`
+  - `object_forms_copy_mode_update_cursor`
+  - `object_forms_copy_mode_confirm_on_release`
+  - `tick_form_transform_animations`
+  - `sync_form_badges` / `update_form_badges`

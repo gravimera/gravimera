@@ -913,10 +913,12 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         Update,
         (
             rts::selection_input.run_if(crate::automation::local_input_enabled),
-            crate::object_forms::object_forms_copy_input_begin.after(rts::selection_input),
-            crate::object_forms::object_forms_copy_apply_on_source_selected
-                .after(crate::object_forms::object_forms_copy_input_begin)
-                .after(rts::selection_input),
+            crate::object_forms::object_forms_copy_mode_start_cancel.after(rts::selection_input),
+            crate::object_forms::object_forms_copy_mode_update_cursor
+                .after(crate::object_forms::object_forms_copy_mode_start_cancel)
+                .after(player::update_edge_scroll_cursor_indicator),
+            crate::object_forms::object_forms_copy_mode_confirm_on_release
+                .after(crate::object_forms::object_forms_copy_mode_update_cursor),
             crate::object_forms::object_forms_tab_switch_selected.after(rts::selection_input),
             rts::toggle_slow_move_mode
                 .after(rts::selection_input)

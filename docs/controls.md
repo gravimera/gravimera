@@ -6,7 +6,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 
 - Toggle Build/Play: `F1` (or the top-left **Build/Play** button)
 - Cycle forms (selected multi-form objects): `Tab`
-- Copy current form: press `C` (captures current selection as destinations), then click-select a single source object (press `Esc` to cancel)
+- Copy current form: hold `C` (captures current selection as destinations), hover a single source object, then release `C` to confirm (press `Esc` to cancel)
 - Workspace selector: use the top-left dropdown (**Object Preview** / **Scene Build**) (Build mode only)
 - Gen3D workshop: in **Object Preview**, click **Gen3D** (top-left)
 - Scene Builder panel: in **Scene Build**, click **Scene Build** (top-left)
@@ -33,6 +33,7 @@ Selection is disabled while:
 
 - Placing build objects in Build mode
 - Holding `Space` (fire targeting)
+- Holding `C` (form copy)
 
 ## Build mode
 

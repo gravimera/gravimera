@@ -35,12 +35,13 @@ Default behavior when an instance does not explicitly store forms: treat it as `
   - If `forms.len() == 1`, do nothing.
   - If a form would cross unit/building category, it is skipped (or the switch is blocked).
 
-- `C` then click: copy current form from a source instance to a set of destination instances.
-  - Press `C`: snapshot current selection as the destination set.
-  - Next click-select: choose a single source instance.
-  - For each destination:
+- Hold `C`: copy current form from a hovered source instance to a set of destination instances.
+  - Press and hold `C`: snapshot current selection as the destination set and show a copy cursor indicator.
+  - While holding `C`: hover a single source instance; the cursor indicator surrounds the hovered source.
+  - Release `C`: for each destination:
     - Append the source’s **current** form prefab id to the destination’s form list (dedupe).
     - Immediately switch destination to the newly appended form.
+  - Press `Esc` to cancel.
   - Cross-category copy (unit→building or building→unit) is blocked/skipped.
 
 Build/Play mode toggling must not occupy the `Tab` key.
@@ -82,4 +83,3 @@ Pinned instance JSON documents may include optional fields:
 - `active_form`: integer index into `forms`
 
 `prefab_id` remains the active prefab id for minimal compatibility.
-

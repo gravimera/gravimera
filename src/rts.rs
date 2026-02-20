@@ -177,6 +177,13 @@ pub(crate) fn selection_input(
         return;
     }
 
+    // While holding C (form copy mode), selection is disabled to preserve the destination set.
+    if keys.pressed(KeyCode::KeyC) {
+        selection.drag_start = None;
+        selection.drag_end = None;
+        return;
+    }
+
     if model_library.is_drag_active() {
         selection.drag_start = None;
         selection.drag_end = None;
