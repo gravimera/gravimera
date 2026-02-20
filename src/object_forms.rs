@@ -1663,6 +1663,7 @@ impl LeafAnimSpawnSpec {
 
     fn fade_out(old: &LeafResolved) -> Self {
         let mut end = old.transform;
+        end.translation = Vec3::ZERO;
         end.scale = Vec3::ZERO;
         let (spawn, color) = spawn_and_color(&old.spawn, 1.0);
         Self {
@@ -1676,6 +1677,7 @@ impl LeafAnimSpawnSpec {
 
     fn fade_in(new: &LeafResolved) -> Self {
         let mut start = new.transform;
+        start.translation = Vec3::ZERO;
         start.scale = Vec3::ZERO;
         let (spawn, color) = spawn_and_color(&new.spawn, 1.0);
         Self {
