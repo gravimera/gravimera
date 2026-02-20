@@ -105,6 +105,7 @@ impl MaterialCache {
 #[derive(Resource, Default)]
 pub(crate) struct PrimitiveMeshCache {
     map: HashMap<PrimitiveMeshCacheKey, Handle<Mesh>>,
+    mirrored_winding: HashMap<AssetId<Mesh>, Handle<Mesh>>,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -188,6 +189,49 @@ impl PrimitiveMeshCache {
         };
 
         self.map.insert(key, handle.clone());
+        handle
+    }
+
+    fn get_or_create_mirrored_winding(
+        &mut self,
+        meshes: &mut Assets<Mesh>,
+        mesh: &Handle<Mesh>,
+    ) -> Handle<Mesh> {
+        let key = mesh.id();
+        if let Some(existing) = self.mirrored_winding.get(&key) {
+            return existing.clone();
+        }
+
+        let Some(base) = meshes.get(mesh).cloned() else {
+            return mesh.clone();
+        };
+        let mut mirrored = base;
+
+        match mirrored.try_indices_option() {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                if !matches!(
+                    mirrored.primitive_topology(),
+                    bevy::render::render_resource::PrimitiveTopology::TriangleList
+                ) {
+                    return mesh.clone();
+                }
+                let vertex_count = mirrored.count_vertices();
+                if !vertex_count.is_multiple_of(3) {
+                    return mesh.clone();
+                }
+                let indices = (0..vertex_count as u32).collect::<Vec<_>>();
+                mirrored.insert_indices(bevy::mesh::Indices::U32(indices));
+            }
+            Err(_) => return mesh.clone(),
+        }
+
+        if mirrored.invert_winding().is_err() {
+            return mesh.clone();
+        }
+
+        let handle = meshes.add(mirrored);
+        self.mirrored_winding.insert(key, handle.clone());
         handle
     }
 }
@@ -279,6 +323,7 @@ pub(crate) fn spawn_object_visuals_with_settings(
         None,
         &aim_object_ids,
         false,
+        false,
     );
 }
 
@@ -326,6 +371,7 @@ fn spawn_object_visuals_inner(
     active_part_id: Option<u128>,
     aim_object_ids: &HashSet<u128>,
     ancestor_apply_aim_yaw: bool,
+    ancestor_mirrored: bool,
 ) {
     if depth > MAX_VISUAL_DEPTH {
         warn!("Object visuals: max depth exceeded at object_id {object_id:#x}");
@@ -360,6 +406,11 @@ fn spawn_object_visuals_inner(
                 child_transform = resolve_attachment_transform(library, def, part, attachment)
                     .unwrap_or_else(|| part.transform);
             }
+
+            let local_det =
+                child_transform.scale.x * child_transform.scale.y * child_transform.scale.z;
+            let local_mirrored = local_det.is_finite() && local_det < 0.0;
+            let child_mirrored = ancestor_mirrored ^ local_mirrored;
 
             let mut child = parent.spawn((child_transform, Visibility::Inherited));
             let apply_aim_yaw = !ancestor_apply_aim_yaw
@@ -404,6 +455,7 @@ fn spawn_object_visuals_inner(
                         part_part_id,
                         aim_object_ids,
                         ancestor_apply_aim_yaw || apply_aim_yaw,
+                        child_mirrored,
                     );
                 }
                 ObjectPartKind::Primitive { primitive } => {
@@ -416,6 +468,11 @@ fn spawn_object_visuals_inner(
                         material_cache,
                         mesh_cache,
                     ) {
+                        let mesh = if child_mirrored {
+                            mesh_cache.get_or_create_mirrored_winding(meshes, &mesh)
+                        } else {
+                            mesh
+                        };
                         child.insert((Mesh3d(mesh), MeshMaterial3d(material)));
                         if let Some(layer) = settings.render_layer {
                             child.insert(bevy::camera::visibility::RenderLayers::layer(layer));
@@ -984,6 +1041,48 @@ fn mul_transform(a: &Transform, b: &Transform) -> Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mirrored_winding_cache_inverts_triangle_indices() {
+        use bevy::asset::RenderAssetUsages;
+        use bevy::mesh::Indices;
+        use bevy::render::render_resource::PrimitiveTopology;
+
+        let mut meshes: Assets<Mesh> = Assets::default();
+        let mut cache = PrimitiveMeshCache::default();
+
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        );
+        let handle = meshes.add(mesh);
+
+        let mirrored_handle = cache.get_or_create_mirrored_winding(&mut meshes, &handle);
+        assert_ne!(
+            handle.id(),
+            mirrored_handle.id(),
+            "expected mirrored winding mesh to be a distinct asset"
+        );
+
+        let mirrored = meshes
+            .get(&mirrored_handle)
+            .expect("mirrored mesh exists in assets");
+        let Some(Indices::U32(indices)) = mirrored.indices() else {
+            panic!("expected mirrored mesh to have U32 indices");
+        };
+        assert_eq!(indices.as_slice(), &[0, 2, 1]);
+
+        let mirrored_handle_2 = cache.get_or_create_mirrored_winding(&mut meshes, &handle);
+        assert_eq!(
+            mirrored_handle.id(),
+            mirrored_handle_2.id(),
+            "expected mirrored winding meshes to be cached per base mesh"
+        );
+    }
 
     #[test]
     fn mul_transform_keeps_base_translation_when_applying_rotation_delta() {

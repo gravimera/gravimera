@@ -34,3 +34,9 @@ Note: Some prompts (e.g. “A horse”) may still exhaust the Gen3D time budget 
 - `/responses` returned SSE output, but Gen3D treated it as non-JSON and failed with “`/responses returned no output text`”, then fell back to `/chat/completions` (often 504).
   - Symptom: Real tests intermittently fail early during plan/component calls even though HTTP status is 200.
   - Fix: parse SSE payloads and extract `response.output_text.delta` / `response.output_text.done` (and accept `"type":"text"` parts) in `src/gen3d/ai/openai.rs`.
+
+## 2026-02-20
+
+- Mirrored component copies could render with incorrect shading / culling (e.g. one side of wheels appears like a dark disc).
+  - Cause: mirror alignment is represented by a negative determinant transform (negative scale). This flips triangle winding, which interacts with default back-face culling.
+  - Fix: when spawning visuals, detect mirrored transforms (negative scale determinant) and swap to a cached mesh variant with inverted winding for primitive meshes (`src/object/visuals.rs`).
