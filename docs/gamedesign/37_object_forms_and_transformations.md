@@ -34,6 +34,7 @@ Default behavior when an instance does not explicitly store forms: treat it as `
 - `Tab`: switch *all selected* eligible instances to their next form (`active = (active + 1) % forms.len()`).
   - If `forms.len() == 1`, do nothing.
   - If a form would cross unit/building category, it is skipped (or the switch is blocked).
+  - `Shift+Tab` plays the transform animation at 1/10 speed (10x duration).
 
 - Hold `C`: copy current form from a hovered source instance to a set of destination instances.
   - Press and hold `C`: snapshot current selection as the destination set and show a copy cursor indicator.

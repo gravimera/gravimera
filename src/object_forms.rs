@@ -118,6 +118,10 @@ pub(crate) fn object_forms_tab_switch_selected(
         return;
     }
 
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    let animation_duration_secs =
+        (FORM_TRANSFORM_DURATION_SECS * if shift { 10.0 } else { 1.0 }).max(1e-3);
+
     let selected: Vec<Entity> = selection.selected.iter().copied().collect();
     for entity in selected {
         let Ok((
@@ -176,6 +180,7 @@ pub(crate) fn object_forms_tab_switch_selected(
             entity,
             old_prefab_id,
             new_prefab_id,
+            animation_duration_secs,
             &library,
             &asset_server,
             &assets,
@@ -629,6 +634,7 @@ pub(crate) fn object_forms_copy_mode_confirm_on_release(
             entity,
             old_prefab_id,
             new_prefab_id,
+            FORM_TRANSFORM_DURATION_SECS,
             &library,
             &asset_server,
             &assets,
@@ -873,6 +879,7 @@ fn apply_switch_and_start_animation(
     entity: Entity,
     old_prefab_id: u128,
     new_prefab_id: u128,
+    animation_duration_secs: f32,
     library: &ObjectLibrary,
     asset_server: &AssetServer,
     assets: &SceneAssets,
@@ -910,6 +917,7 @@ fn apply_switch_and_start_animation(
         entity,
         old_prefab_id,
         new_prefab_id,
+        animation_duration_secs,
         tint.map(|t| t.0),
         library,
         asset_server,
@@ -1008,6 +1016,7 @@ fn begin_form_transform_animation(
     root: Entity,
     from_prefab_id: u128,
     to_prefab_id: u128,
+    duration_secs: f32,
     tint: Option<Color>,
     library: &ObjectLibrary,
     asset_server: &AssetServer,
@@ -1137,7 +1146,7 @@ fn begin_form_transform_animation(
 
     commands.entity(root).insert(FormTransformAnimation {
         elapsed_secs: 0.0,
-        duration_secs: FORM_TRANSFORM_DURATION_SECS,
+        duration_secs: duration_secs.max(1e-3),
         spawned_entities,
         leaf_anims,
     });
