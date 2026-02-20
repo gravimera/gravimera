@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::assets::SceneAssets;
+use crate::object::depth_bias::compute_primitive_part_depth_biases;
 use crate::object::registry::{
     AttachmentDef, MaterialKey, MeshKey, ObjectLibrary, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, PartAnimationSlot, PartAnimationSpec, PrimitiveParams, PrimitiveVisualDef,
@@ -23,10 +24,12 @@ enum MaterialCacheKey {
     Color {
         rgba: [u8; 4],
         unlit: bool,
+        depth_bias: i32,
     },
     Tinted {
         base: AssetId<StandardMaterial>,
         tint_rgba: [u8; 4],
+        depth_bias: i32,
     },
 }
 
@@ -36,9 +39,14 @@ impl MaterialCache {
         materials: &mut Assets<StandardMaterial>,
         color: Color,
         unlit: bool,
+        depth_bias: i32,
     ) -> Handle<StandardMaterial> {
         let rgba = to_rgba8(color);
-        let key = MaterialCacheKey::Color { rgba, unlit };
+        let key = MaterialCacheKey::Color {
+            rgba,
+            unlit,
+            depth_bias,
+        };
         if let Some(existing) = self.map.get(&key) {
             return existing.clone();
         }
@@ -59,6 +67,7 @@ impl MaterialCache {
             base_color,
             unlit,
             alpha_mode,
+            depth_bias: depth_bias as f32,
             metallic: 0.0,
             perceptual_roughness: 0.92,
             ..default()
@@ -72,15 +81,17 @@ impl MaterialCache {
         materials: &mut Assets<StandardMaterial>,
         base: &Handle<StandardMaterial>,
         tint: Color,
+        depth_bias: i32,
     ) -> Handle<StandardMaterial> {
         let tint_rgba = to_rgba8(tint);
-        if tint_rgba == [255, 255, 255, 255] {
+        if tint_rgba == [255, 255, 255, 255] && depth_bias == 0 {
             return base.clone();
         }
 
         let key = MaterialCacheKey::Tinted {
             base: base.id(),
             tint_rgba,
+            depth_bias,
         };
         if let Some(existing) = self.map.get(&key) {
             return existing.clone();
@@ -95,6 +106,7 @@ impl MaterialCache {
         if matches!(material.alpha_mode, AlphaMode::Opaque) && tint_rgba[3] < 255 {
             material.alpha_mode = AlphaMode::Blend;
         }
+        material.depth_bias = depth_bias as f32;
 
         let handle = materials.add(material);
         self.map.insert(key, handle.clone());
@@ -399,7 +411,8 @@ fn spawn_object_visuals_inner(
     }
 
     entity.with_children(|parent| {
-        for part in def.parts.iter() {
+        let part_depth_biases = compute_primitive_part_depth_biases(&def.parts);
+        for (part_index, part) in def.parts.iter().enumerate() {
             let part_part_id = active_part_id.or(part.part_id);
             let mut child_transform = part.transform;
             if let Some(attachment) = part.attachment.as_ref() {
@@ -459,9 +472,11 @@ fn spawn_object_visuals_inner(
                     );
                 }
                 ObjectPartKind::Primitive { primitive } => {
+                    let depth_bias = *part_depth_biases.get(part_index).unwrap_or(&0);
                     if let Some((mesh, material)) = resolve_primitive_visual(
                         primitive,
                         tint,
+                        depth_bias,
                         assets,
                         meshes,
                         materials,
@@ -583,6 +598,7 @@ fn anchor_transform(def: &crate::object::registry::ObjectDef, name: &str) -> Opt
 fn resolve_primitive_visual(
     visual: &PrimitiveVisualDef,
     tint: Option<Color>,
+    depth_bias: i32,
     assets: &SceneAssets,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
@@ -595,7 +611,8 @@ fn resolve_primitive_visual(
         PrimitiveVisualDef::Mesh { mesh, material } => {
             let mesh = resolve_mesh(*mesh, assets)?;
             let material = resolve_material(*material, assets)?;
-            let material = material_cache.get_or_create_tinted(materials, &material, tint);
+            let material =
+                material_cache.get_or_create_tinted(materials, &material, tint, depth_bias);
             Some((mesh, material))
         }
         PrimitiveVisualDef::Primitive {
@@ -623,7 +640,7 @@ fn resolve_primitive_visual(
             };
 
             let color = multiply_color(*color, tint);
-            let material = material_cache.get_or_create_color(materials, color, *unlit);
+            let material = material_cache.get_or_create_color(materials, color, *unlit, depth_bias);
             Some((mesh, material))
         }
     }
@@ -1554,7 +1571,7 @@ pub(crate) fn apply_pending_scene_overrides(
                 any_mesh_found = true;
                 if let Some(tint) = overrides.tint {
                     let tinted =
-                        material_cache.get_or_create_tinted(&mut materials, &material.0, tint);
+                        material_cache.get_or_create_tinted(&mut materials, &material.0, tint, 0);
                     material.0 = tinted;
                 }
             }

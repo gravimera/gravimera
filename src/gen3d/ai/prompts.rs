@@ -182,7 +182,11 @@ pub(super) fn build_gen3d_component_user_text(
          Attachment frame rule: parent/child anchors describe the SAME join frame but in different component-local coordinates; do NOT force them to have identical numeric vectors.\n\
          Avoid 180° opposition (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation in the PLAN (not by reversing anchors).\n\
          Convention: the component center must be at local [0,0,0].\n\
-         The engine will not auto-adjust placement. If you add thin surface details, place them slightly proud of the supporting surface so they remain visible.\n",
+         The engine will not auto-adjust placement.\n\
+         Avoid z-fighting: do NOT place two primitives so any of their planar faces are coplanar AND overlap in area.\n\
+          - If you layer a detail on a surface (trim/panel/hatch/window band), offset it slightly OUTWARD along the surface normal (a small epsilon, e.g. ~0.005m).\n\
+          - For concentric capped cylinders/frustums, do not give multiple primitives the exact same cap plane; shorten/offset inner ones slightly.\n\
+          - Output base solids first, then surface details later.\n",
     );
     out.push_str(&format!(
         "Component parts budget: try to stay within ~{budget} primitives.\n"
