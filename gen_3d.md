@@ -216,6 +216,7 @@ Notes:
         - `"join"` (default / legacy): `delta.forward = [0,0,1]` and `delta.up = [0,1,0]` is the rest pose (no rotation).
         - `"parent"`: author `delta.forward`/`delta.up` in the **parent component frame** (same coordinates as anchors). The engine converts them into the join frame.
           - Rest pose should match the parent anchor frame: `delta.forward = parent_anchor.forward` and `delta.up = parent_anchor.up`.
+        - For `move` (locomotion) rotations, prefer `"parent"` by default so +Z means “forward” consistently even when a join frame’s +Z points along an attachment direction (e.g. side-mounted limbs).
       - If you don't need rotation, omit `delta.forward` / `delta.up` / `delta.rot_quat_xyzw` entirely.
     - For `spin`, the `axis` is authored in the **child component's local axes** (+X right, +Y up, +Z forward). The engine converts it into the attachment join frame.
 
@@ -230,7 +231,8 @@ Rig / motion contract (optional; used for locomotion validation and AI repair):
     Avoid large `delta.pos` translations on `hinge`/`ball` joints; prefer rotation deltas to prevent sliding/gap artifacts.
 - `components[].contacts[]` (optional): named ground contacts for this component.
   - Each contact references a component anchor by name.
-  - Optional `stance` schedule `{ "phase_01": 0..1, "duty_factor_01": 0..1 }` is used by motion validation to detect obvious slip/lift.
+  - For planted `kind: "ground"` contacts (feet/hooves), `stance` is required; motion validation errors if it is missing.
+  - For rolling parts using a `move` `spin` clip (wheels/rollers), omit `stance` (stance validation is skipped for spin).
 
 ### Component Draft JSON (version 2)
 

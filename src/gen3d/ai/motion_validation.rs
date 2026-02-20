@@ -989,12 +989,26 @@ fn validate_contacts(
             if contact.kind != AiContactKindJson::Ground {
                 continue;
             }
-            let Some(stance) = contact.stance.as_ref() else {
-                continue;
-            };
             if move_is_spin {
                 continue;
             }
+            let Some(stance) = contact.stance.as_ref() else {
+                issues.push(MotionIssue {
+                    severity: MotionSeverity::Error,
+                    kind: "contact_stance_missing",
+                    component_id: component_id_uuid_for_name(&comp.name),
+                    component_name: comp.name.clone(),
+                    channel: "move".to_string(),
+                    message: "Ground contact is missing `stance`; planted contacts must declare a stance schedule so locomotion slip/lift can be validated. (For wheels/rollers using a `move` `spin`, omit stance; stance validation is skipped.)"
+                        .into(),
+                    evidence: serde_json::json!({
+                        "contact_name": contact.name.trim(),
+                        "anchor": contact.anchor.trim(),
+                    }),
+                    score: 1.0,
+                });
+                continue;
+            };
 
             let phase_start = if stance.phase_01.is_finite() {
                 stance.phase_01.rem_euclid(1.0)
@@ -2199,6 +2213,69 @@ mod tests {
                 .iter()
                 .any(|i| i.get("kind").and_then(|v| v.as_str()) == Some("contact_slip")),
             "expected contact_slip issue, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn contact_stance_missing_reports_error() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        let move_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::MovePhase,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.0,
+                keyframes: vec![PartAnimationKeyframeDef {
+                    time_secs: 0.0,
+                    delta: Transform::IDENTITY,
+                }],
+            },
+        };
+
+        let mut foot = stub_component(
+            "foot",
+            vec![anchor("mount", Vec3::ZERO), anchor("contact", Vec3::ZERO)],
+        );
+        foot.contacts.push(super::super::AiContactJson {
+            name: "foot_contact".into(),
+            anchor: "contact".into(),
+            kind: AiContactKindJson::Ground,
+            stance: None,
+        });
+        foot.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
+            }],
+        });
+
+        let components = vec![root, foot];
+        let report = build_motion_validation_report(Some(1.0), &components);
+        let ok = report
+            .motion_validation
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        assert!(!ok, "expected motion validation to fail");
+
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("contact_stance_missing")
+                    && i.get("severity").and_then(|v| v.as_str()) == Some("error")
+            }),
+            "expected contact_stance_missing error, got {issues:?}"
         );
     }
 

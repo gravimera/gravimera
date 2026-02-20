@@ -415,6 +415,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
                Rest/identity delta with `rot_frame=\"join\"`: `delta.forward=[0,0,1]` and `delta.up=[0,1,0]`.\n\
              - Use `delta.rot_frame=\"parent\"` to author basis/quaternion in the PARENT COMPONENT frame (+Y up, +Z forward).\n\
                Rest/identity delta with `rot_frame=\"parent\"`: `delta.forward=parent_anchor.forward` and `delta.up=parent_anchor.up`.\n\
+             - For `move` (locomotion) rotations, prefer `delta.rot_frame=\"parent\"` by default.\n\
+               This keeps the meaning of \"forward\" (+Z) stable across different joint orientations and avoids accidental side-to-side limb swings when a join frame's +Z points along an attachment direction (e.g. side-mounted limbs).\n\
+               Use `rot_frame=\"join\"` only when you intentionally want to rotate in the join-frame axes (e.g. twisting around the mount axis).\n\
            - If you don't need rotation, omit `delta.forward`/`delta.up`/`delta.rot_quat_xyzw` entirely.\n\
          - For `spin`, `axis` is expressed in THIS COMPONENT's LOCAL axes (+X right, +Y up, +Z forward).\n\n\
          Units:\n\
@@ -453,9 +456,10 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
           - If `mobility.kind == \"ground\"` and you author any `move` animation:\n\
             - Prefer adding `attach_to.joint` on that attachment edge.\n\
             - Prefer adding one or more `contacts[]` on end-effector component(s) intended to be PLANTED during stance (feet/hooves).\n\
-            - Only declare `contacts[].stance` if your `move` animation is authored to keep that contact approximately planted in world space during stance.\n\
-              If you cannot satisfy planted-foot behavior, OMIT `stance` to avoid `contact_slip`/`contact_lift` validation errors.\n\
-            - For rolling wheels/tracks, contacts are optional; if you include them, omit `stance` (the physical ground contact point moves around the wheel).\n\
+            - If you declare a `contacts[]` entry with `kind=\"ground\"` for a planted end-effector (foot/hoof), you MUST also declare `contacts[].stance`.\n\
+              Author your `move` animation so that the contact stays approximately planted in world space during stance; otherwise motion validation will fail.\n\
+            - If you cannot satisfy planted-foot behavior, do NOT declare that ground contact (or use a wheel-style `move` with `clip.kind=\"spin\"` for rolling parts).\n\
+            - For rolling wheels/tracks, contacts are optional; if you include them, omit `stance` (or leave it null) because the physical ground contact point moves around the wheel and stance validation is skipped for `spin` move clips.\n\
             - Joint constraints:\n\
             - `attach_to.joint.kind`: `fixed` | `hinge` | `ball` | `free`.\n\
             - IMPORTANT: If `joint.kind == \"fixed\"`, do NOT author rotation in `attach_to.animations` for that attachment edge.\n\
@@ -578,7 +582,9 @@ pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
      - For `loop` keyframes:\n\
        - `delta.pos` is in the PARENT ANCHOR JOIN FRAME.\n\
        - Whenever you use rotation (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`), ALWAYS include `delta.rot_frame` explicitly.\n\
-         Prefer `delta.rot_frame=\"parent\"` when authoring in the PARENT COMPONENT axes (+Y up, +Z forward). Use `\"join\"` only if intentionally authoring in the joint/join frame axes.\n\
+         Prefer `delta.rot_frame=\"parent\"` when authoring in the PARENT COMPONENT axes (+Y up, +Z forward).\n\
+         For `move` (locomotion) rotations, default to `rot_frame=\"parent\"` to avoid join-frame axis surprises on side-mounted limbs.\n\
+         Use `\"join\"` only if intentionally authoring in the joint/join frame axes.\n\
      - For `spin`, `axis` is expressed in the COMPONENT's LOCAL axes.\n\n\
      Units:\n\
      - For drivers `always` and `attack_time`:\n\
@@ -778,7 +784,8 @@ Review mode:\n",
      - `tweak_contact` edits the component's declared contacts (most commonly `stance`).\n\
        - Set stance: `\"stance\": {\"phase_01\": number, \"duty_factor_01\": number}`\n\
        - Clear stance: `\"stance\": null`\n\
-       If motion validation reports `contact_slip`/`contact_lift` during stance and you cannot author truly planted foot motion, prefer clearing stance.\n\
+       If motion validation reports `contact_slip`/`contact_lift`, fix the `move` animation and/or adjust the stance schedule (do NOT clear stance just to silence errors).\n\
+       Only clear stance for rolling parts that should use a `move` `spin` clip (wheels/rollers), where stance validation is skipped.\n\
      - IMPORTANT: For `tweak_component_transform`, `set.pos` / `delta.pos` are expressed in the PARENT ANCHOR join frame (same frame as `attach_to.offset.pos`).\n\
        In that join frame, `pos = [x,y,z]` means:\n\
        - +X (`pos[0]`) is `join_right_world`\n\
