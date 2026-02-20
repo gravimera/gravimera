@@ -12,6 +12,8 @@ use crate::object::registry::{
 use crate::object::visuals;
 use crate::types::*;
 
+mod mapping;
+
 const FORM_TRANSFORM_DURATION_SECS: f32 = 0.55;
 const MAX_FLATTEN_DEPTH: usize = 32;
 
@@ -1540,6 +1542,15 @@ struct LeafMapping {
 }
 
 fn build_leaf_mapping(old: &[LeafResolved], new: &[LeafResolved]) -> LeafMapping {
+    // Prefer v2 (geometry-aware grouped assignment); keep v1 as a fallback.
+    let mapping = mapping::build_leaf_mapping_v2_grouped(old, new);
+    if mapping.pairs.is_empty() && !old.is_empty() && !new.is_empty() {
+        return build_leaf_mapping_v1(old, new);
+    }
+    mapping
+}
+
+fn build_leaf_mapping_v1(old: &[LeafResolved], new: &[LeafResolved]) -> LeafMapping {
     let mut old_by_key: BTreeMap<LeafKindKey, Vec<usize>> = BTreeMap::new();
     let mut new_by_key: BTreeMap<LeafKindKey, Vec<usize>> = BTreeMap::new();
     for (idx, leaf) in old.iter().enumerate() {

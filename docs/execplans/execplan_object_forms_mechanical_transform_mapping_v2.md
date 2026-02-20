@@ -21,26 +21,36 @@ This plan does not change the player inputs (`Tab` and hold-`C` copy) or persist
 
 ## Progress
 
-- [ ] (TBD) Read current mapping implementation and measure baseline mapping time for a 200+ leaf object.
-- [ ] (TBD) Add geometry feature extraction for leaf primitives and compute normalized coordinates per prefab.
-- [ ] (TBD) Add deterministic grouping (spatial clustering) to reduce assignment size.
-- [ ] (TBD) Add min-cost assignment (Hungarian) for cluster matching and per-cluster leaf matching.
-- [ ] (TBD) Integrate mapping v2 into form-switch animation (keep v1 as fallback/debug option).
-- [ ] (TBD) Add tests for determinism + “support/core/head” bias using synthetic prefabs.
-- [ ] (TBD) Run smoke test (`cargo run -- --headless --headless-seconds 1`).
-- [ ] (TBD) Commit.
+- [x] (2026-02-20) Implement geometry feature extraction (`pos01`, radial distance, size proxy).
+- [x] (2026-02-20) Implement deterministic grouping via median-split clustering.
+- [x] (2026-02-20) Implement min-cost assignment (Hungarian) and use it for both cluster matching and leaf matching.
+- [x] (2026-02-20) Integrate mapping v2 into form-switch animation and keep v1 as fallback.
+- [x] (2026-02-20) Add unit tests for Hungarian correctness + mapping determinism.
+- [x] (2026-02-20) Run smoke test (`cargo run -- --headless --headless-seconds 1`).
+- [x] (2026-02-20) Commit.
+
+Deferred (not required for correctness; revisit if perf issues appear):
+
+- [ ] Add baseline timing instrumentation for mapping.
+- [ ] Add runtime caching keyed by prefab ids (requires a safe invalidation strategy because `ObjectLibrary` can `upsert` defs).
 
 ## Surprises & Discoveries
 
-- None yet.
+- Treating “same primitive kind” as a hard first-pass priority can produce visibly wrong transforms when roles change across forms (e.g. wheels→legs): geometry-role coherence must be allowed to override primitive kind.
+  - Resolution: mapping uses a single min-cost assignment with a *finite* kind-mismatch penalty, so it prefers same-kind morphs when reasonable but can choose cross-kind pairs when geometry is a much better match.
 
 ## Decision Log
 
-- None yet.
+- Decision (2026-02-20): Use a single Hungarian assignment with `kind_mismatch_penalty` instead of a strict “same kind first” pass.
+  - Rationale: better supports “support/core/head” role coherence when primitive kinds differ between forms.
+- Decision (2026-02-20): Use global assignment for up to `~256` leaves; fall back to grouped assignment (clusters) above that.
+  - Rationale: improves quality for typical 200+ leaf objects while keeping a scalable path for very large objects.
+- Decision (2026-02-20): Keep the original v1 mapping as a fallback/debug option.
 
 ## Outcomes & Retrospective
 
-- (Fill in after implementation.)
+- Delivered a deterministic, geometry-aware mapping that reduces obvious structural mismatches for large (200+) primitive objects.
+- Added unit tests and kept the runtime behavior fully automatic (no authoring UI).
 
 ## Context and Orientation
 
@@ -74,11 +84,10 @@ Constraints:
 
 ## Proposed Algorithm (Design)
 
-The high-level approach is a 2-level mapping:
+The high-level approach is hybrid:
 
-1) Build small spatial clusters for each prefab’s leaves (deterministically) so we never run assignment on 200×200 directly.
-2) Match clusters (old clusters ↔ new clusters) with min-cost assignment.
-3) Within each matched cluster pair, match leaves with min-cost assignment, strongly preferring same primitive kind.
+1) If `max(old_leaves, new_leaves) <= GLOBAL_ASSIGN_MAX_LEAVES`, run one global min-cost assignment using geometry cost plus a finite kind-mismatch penalty.
+2) Otherwise, build deterministic clusters, match clusters (old clusters ↔ new clusters) with min-cost assignment, then match leaves within each matched cluster pair using the same leaf-level cost function.
 
 This produces the “support/core/head” priority as an emergent property because the cost function heavily weights vertical position and proximity, and clustering keeps mapping local.
 
@@ -152,17 +161,11 @@ Unmatched clusters on either side become sources of unmatched leaves (fade out /
 
 For each matched `(old_cluster, new_cluster)`:
 
-1) Same-kind pass:
-   - Partition leaves by `LeafKindKey` (primitive `MeshKey` and model path).
-   - For each key, run min-cost assignment between the old leaves with that key and the new leaves with that key.
-   - Cost uses only geometry/scale similarity (no kind penalty since kind is identical).
-
-2) Cross-kind pass (optional but recommended):
-   - For remaining unmatched leaves in the cluster pair, run min-cost assignment with a kind-mismatch penalty:
-     - `kind_mismatch_penalty = 0` if same kind, else `KIND_MISMATCH_COST` (large but finite).
-   - This produces “best possible” mapping when counts don’t line up (e.g. 3 wheels → 2 wheels + 1 leg).
-
-3) Remaining unmatched leaves:
+1) Build a padded square cost matrix for the leaf indices in these clusters and run Hungarian once:
+   - `cost = geometry_cost + (key_mismatch ? KIND_MISMATCH_COST : 0)`
+   - `geometry_cost` is a weighted sum of normalized position distance (Y weighted higher than X/Z), radial distance, size proxy, and an optional left/right/front/back sign flip penalty.
+2) Emit mapping pairs for assigned rows/cols, marking `same_key = (old.key == new.key)` so the animation can decide “morph” vs “shrink/grow”.
+3) Remaining unmatched leaves (due to count mismatch) still use the existing fade/shrink/grow behavior:
    - old unmatched → `fade_out` (already shrinks/fades and now also moves to center)
    - new unmatched → `fade_in`
 
@@ -180,7 +183,12 @@ Convert final `f32` cost to `i64` via `round(cost * 1_000_000.0)` and add a dete
 
 ## Performance Strategy (200+ leaves)
 
-The goal is to avoid an `O(n³)` assignment on 200×200 (which is workable once, but can become expensive when transforming many selected objects).
+For typical “large” objects in this repo (~200 leaves), a global `O(n³)` Hungarian assignment is workable and produces the highest quality mapping (no cluster-boundary artifacts). For very large objects, we need a scalable path.
+
+Strategy:
+
+- If `max(old_leaves, new_leaves) <= ~256`, run a single global Hungarian assignment.
+- Otherwise, use deterministic clustering + Hungarian cluster matching, then Hungarian leaf matching within each matched cluster pair.
 
 With clustering:
 
@@ -188,12 +196,7 @@ With clustering:
 - Cluster matching is `O(m³)` with `m ≈ 7` (tiny).
 - Leaf matching is `Σ O(k_i³)` with `k_i ≤ CLUSTER_LEAF_TARGET` (e.g. `7 * 32³ ≈ 230k` ops).
 
-Add caching to avoid repeated work:
-
-- Cache per-prefab computed leaf features and emitted clusters (keyed by prefab id).
-- Cache per-prefab-pair mapping results (keyed by `(from_prefab, to_prefab, CLUSTER_LEAF_TARGET, weight_constants_version)`).
-
-If the cache grows too large, use a small LRU (e.g. keep last 128 prefab-pair mappings).
+Optional: Add a runtime cache later, but `ObjectLibrary` supports `upsert`, so caching needs a safe invalidation strategy (prefab revision tracking or input hashing).
 
 ## Plan of Work
 
@@ -228,19 +231,16 @@ If the cache grows too large, use a small LRU (e.g. keep last 128 prefab-pair ma
 
 7) Implement leaf matching inside clusters
    - For each matched cluster pair:
-     - run same-kind matching (per `LeafKindKey`) using Hungarian on a small matrix
-     - run cross-kind matching for leftovers (optional, but target is “better than list order”)
-   - Produce final mapping pairs `(old_idx, new_idx, same_key_bool)`.
+     - run a single Hungarian assignment using `cost = geometry_cost + (key_mismatch ? KIND_MISMATCH_COST : 0)`.
+   - Produce final mapping pairs `(old_idx, new_idx, same_key_bool)` where `same_key` is `old.key == new.key`.
 
 8) Integrate into the existing animation pipeline
    - Replace `build_leaf_mapping` in `begin_form_transform_animation` with `build_leaf_mapping_v2_grouped`.
    - Keep v1 mapping as a fallback (e.g. if clustering produces empty clusters, or solver fails) and as a debug comparison.
 
 9) Cache results
-   - Add a resource cache in `src/object_forms.rs` (or a new module) that:
-     - caches `PrefabLeafFeatures` and clusters per prefab id,
-     - caches final mapping pairs per `(from_prefab, to_prefab)` pair.
-   - Ensure cache invalidation is not needed because prefabs are immutable at runtime in this repo.
+   - Optional: add a runtime cache if perf issues appear.
+   - Note: `ObjectLibrary` supports `upsert`, so caching requires a safe invalidation strategy.
 
 10) Tests and acceptance scenes
    - Add a focused unit test module for:
@@ -284,7 +284,7 @@ Acceptance criteria:
   - Multiple runs produce identical pairings for the same prefab pair.
 - Performance:
   - Transforming a 200+ leaf object does not cause noticeable frame hitching.
-  - Transforming multiple selected objects remains responsive (mapping uses caching; per-object work is mostly spawning/animating).
+  - Transforming multiple selected objects remains responsive.
 - Safety:
   - `cargo test` passes.
   - Smoke test passes (`cargo run -- --headless --headless-seconds 1`).
@@ -292,27 +292,17 @@ Acceptance criteria:
 ## Idempotence and Recovery
 
 - The change is runtime-only: if something goes wrong, keep a debug toggle to fall back to v1 mapping until v2 is stable.
-- If the Hungarian implementation is buggy, temporarily disable cross-kind matching and ship only:
-  - cluster matching, plus
-  - per-kind matching within clusters,
-  - and keep the existing list-order fallback for leftovers.
+- If the Hungarian implementation is buggy, temporarily fall back to v1 mapping.
 
 ## Artifacts and Notes
 
-Suggested initial constants (tune after baseline):
+Implemented constants live in `src/object_forms/mapping.rs`.
 
+Current values (2026-02-20):
+
+- `GLOBAL_ASSIGN_MAX_LEAVES = 256`
 - `CLUSTER_LEAF_TARGET = 32`
-- Cluster cost weights:
-  - `w_cluster_pos_y = 2.5`, `w_cluster_pos_xz = 1.0`
-  - `w_cluster_extent = 0.5`
-  - `w_cluster_kind = 0.25`
-- Leaf cost weights:
-  - `w_h = 3.0` (support/head bias)
-  - `w_pos = 1.0`
-  - `w_r = 1.0`
-  - `w_v = 0.5`
-  - `w_side = 0.2`
-  - `KIND_MISMATCH_COST` large enough to prefer same-kind when available (e.g. 1000.0 in the same cost units before integerization)
+- `KIND_MISMATCH_COST = 0.75` (finite, so geometry can override kind when mismatch is large)
 
 Do not overfit these constants to a single object; the algorithm must remain generic across arbitrary shapes.
 
@@ -352,4 +342,3 @@ Target end-state interfaces (names can be adjusted, but keep the structure):
 
     #[derive(Resource, Default)]
     struct FormTransformMappingCache { ... }
-
