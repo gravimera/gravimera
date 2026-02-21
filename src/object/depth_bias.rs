@@ -1,13 +1,15 @@
 use bevy::prelude::*;
 
 use crate::object::registry::{
-    MeshKey, ObjectPartDef, ObjectPartKind, PrimitiveParams, PrimitiveVisualDef,
+    MeshKey, ObjectLibrary, ObjectPartDef, ObjectPartKind, PrimitiveParams, PrimitiveVisualDef,
 };
 
 const NORMAL_DOT_THRESHOLD: f32 = 0.9995;
-const PLANE_DISTANCE_EPS: f32 = 1e-4;
+const PLANE_DISTANCE_EPS: f32 = 1e-3;
 const OVERLAP_EPS: f32 = 1e-5;
 const MAX_DEPTH_BIAS: i32 = 8;
+const AUTO_OBJECT_REF_DEPTH_BIAS_BASE: i32 = 1;
+const AUTO_OBJECT_REF_DEPTH_BIAS_MAX: i32 = 3;
 const MAX_RENDER_PRIORITY_ABS: i32 = 3;
 const RENDER_PRIORITY_DEPTH_BIAS_STEP: i32 = 2;
 const MAX_TOTAL_DEPTH_BIAS_ABS: i32 = 32;
@@ -23,6 +25,70 @@ pub(crate) fn depth_bias_delta_from_render_priority(render_priority: Option<i32>
 
 pub(crate) fn clamp_depth_bias(depth_bias: i32) -> i32 {
     depth_bias.clamp(-MAX_TOTAL_DEPTH_BIAS_ABS, MAX_TOTAL_DEPTH_BIAS_ABS)
+}
+
+pub(crate) fn compute_auto_object_ref_depth_biases(
+    library: &ObjectLibrary,
+    parts: &[ObjectPartDef],
+) -> Vec<i32> {
+    let mut out = vec![0i32; parts.len()];
+    if parts.len() < 2 {
+        return out;
+    }
+
+    let mut metrics = Vec::with_capacity(parts.len());
+    for part in parts {
+        metrics.push(part_ordering_metric(library, part));
+    }
+
+    let mut indices: Vec<usize> = (0..parts.len()).collect();
+    indices.sort_by(|&a, &b| metrics[b].total_cmp(&metrics[a]).then_with(|| a.cmp(&b)));
+
+    let mut rank = vec![0usize; parts.len()];
+    for (pos, idx) in indices.into_iter().enumerate() {
+        rank[idx] = pos;
+    }
+
+    let extra_max = (AUTO_OBJECT_REF_DEPTH_BIAS_MAX - AUTO_OBJECT_REF_DEPTH_BIAS_BASE).max(0);
+    for (idx, part) in parts.iter().enumerate() {
+        let ObjectPartKind::ObjectRef { .. } = &part.kind else {
+            continue;
+        };
+        if part.render_priority.is_some() {
+            continue;
+        }
+        let extra = (rank[idx] as i32).clamp(0, extra_max);
+        out[idx] = AUTO_OBJECT_REF_DEPTH_BIAS_BASE.saturating_add(extra);
+    }
+
+    out
+}
+
+fn part_ordering_metric(library: &ObjectLibrary, part: &ObjectPartDef) -> f32 {
+    let scale = part.transform.scale.abs();
+    if !scale.is_finite() {
+        return 0.0;
+    }
+
+    let size = match &part.kind {
+        ObjectPartKind::ObjectRef { object_id } => library
+            .get(*object_id)
+            .map(|def| def.size.abs() * scale)
+            .unwrap_or(scale),
+        ObjectPartKind::Primitive { .. } | ObjectPartKind::Model { .. } => scale,
+    };
+    aabb_surface_area(size)
+}
+
+fn aabb_surface_area(size: Vec3) -> f32 {
+    let s = size.abs();
+    if !s.is_finite() {
+        return 0.0;
+    }
+    let x = s.x.max(0.0);
+    let y = s.y.max(0.0);
+    let z = s.z.max(0.0);
+    2.0 * (x * y + y * z + x * z)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -81,7 +147,22 @@ impl UnionFind {
     }
 }
 
-pub(crate) fn compute_primitive_part_depth_biases(parts: &[ObjectPartDef]) -> Vec<i32> {
+pub(crate) fn compute_primitive_part_depth_biases_with_transforms(
+    parts: &[ObjectPartDef],
+    transforms: &[Transform],
+) -> Vec<i32> {
+    compute_primitive_part_depth_biases_impl(parts, |idx, part| {
+        transforms.get(idx).copied().unwrap_or(part.transform)
+    })
+}
+
+fn compute_primitive_part_depth_biases_impl<F>(
+    parts: &[ObjectPartDef],
+    mut transform_for: F,
+) -> Vec<i32>
+where
+    F: FnMut(usize, &ObjectPartDef) -> Transform,
+{
     let mut out = vec![0i32; parts.len()];
 
     let mut faces: Vec<PlanarFace> = Vec::new();
@@ -90,11 +171,9 @@ pub(crate) fn compute_primitive_part_depth_biases(parts: &[ObjectPartDef]) -> Ve
             continue;
         };
         let (mesh, params) = primitive_mesh_and_params(primitive);
+        let transform = transform_for(part_index, part);
         faces.extend(planar_faces_for_primitive(
-            part_index,
-            mesh,
-            params,
-            part.transform,
+            part_index, mesh, params, transform,
         ));
     }
 
@@ -200,9 +279,13 @@ fn planar_faces_for_primitive(
         return Vec::new();
     }
 
-    let right = rotation * Vec3::X;
-    let up = rotation * Vec3::Y;
-    let forward = rotation * Vec3::Z;
+    let sign_x = if scale.x < 0.0 { -1.0 } else { 1.0 };
+    let sign_y = if scale.y < 0.0 { -1.0 } else { 1.0 };
+    let sign_z = if scale.z < 0.0 { -1.0 } else { 1.0 };
+
+    let right = rotation * Vec3::X * sign_x;
+    let up = rotation * Vec3::Y * sign_y;
+    let forward = rotation * Vec3::Z * sign_z;
     if !right.is_finite() || !up.is_finite() || !forward.is_finite() {
         return Vec::new();
     }
@@ -536,7 +619,10 @@ fn normalize_or_zero(v: Vec3) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object::registry::{ObjectPartDef, PrimitiveVisualDef};
+    use crate::object::registry::{
+        ColliderProfile, ObjectDef, ObjectInteraction, ObjectLibrary, ObjectPartDef,
+        PrimitiveVisualDef,
+    };
 
     #[test]
     fn assigns_depth_bias_for_coplanar_cuboid_roof_layers() {
@@ -573,7 +659,8 @@ mod tests {
         );
 
         let parts = vec![roof, band, hatch];
-        let biases = compute_primitive_part_depth_biases(&parts);
+        let transforms: Vec<Transform> = parts.iter().map(|p| p.transform).collect();
+        let biases = compute_primitive_part_depth_biases_with_transforms(&parts, &transforms);
         assert_eq!(biases.len(), 3);
         assert_eq!(biases[0], 0, "roof should be the base layer");
         assert!(biases[1] > biases[0], "band should render in front of roof");
@@ -606,12 +693,63 @@ mod tests {
         );
 
         let parts = vec![outer, inner];
-        let biases = compute_primitive_part_depth_biases(&parts);
+        let transforms: Vec<Transform> = parts.iter().map(|p| p.transform).collect();
+        let biases = compute_primitive_part_depth_biases_with_transforms(&parts, &transforms);
         assert_eq!(biases.len(), 2);
         assert_eq!(biases[0], 0, "outer cylinder should be the back layer");
         assert!(
             biases[1] > biases[0],
             "inner cylinder should render in front"
         );
+    }
+
+    #[test]
+    fn assigns_auto_depth_bias_to_object_ref_parts_missing_render_priority() {
+        let mut library = ObjectLibrary::default();
+        let child_id = 0x1e2d_3c4b_5a69_7887_96a5_b4c3_d2e1_f0ffu128;
+        library.register(ObjectDef {
+            object_id: child_id,
+            label: "child".into(),
+            size: Vec3::new(0.2, 0.2, 0.2),
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let base = ObjectPartDef::primitive(
+            PrimitiveVisualDef::Primitive {
+                mesh: MeshKey::UnitCube,
+                params: None,
+                color: Color::WHITE,
+                unlit: false,
+            },
+            Transform::from_scale(Vec3::new(1.0, 1.0, 1.0)),
+        );
+        let child = ObjectPartDef::object_ref(child_id, Transform::IDENTITY);
+        let parts = vec![base, child];
+
+        let biases = compute_auto_object_ref_depth_biases(&library, &parts);
+        assert_eq!(biases.len(), 2);
+        assert_eq!(biases[0], 0);
+        assert!(
+            biases[1] > 0,
+            "object_ref should get a small auto bias for z-fighting mitigation"
+        );
+
+        let mut child_explicit = ObjectPartDef::object_ref(child_id, Transform::IDENTITY);
+        child_explicit.render_priority = Some(0);
+        let parts = vec![parts[0].clone(), child_explicit];
+        let biases = compute_auto_object_ref_depth_biases(&library, &parts);
+        assert_eq!(biases[1], 0, "explicit render_priority disables auto bias");
     }
 }

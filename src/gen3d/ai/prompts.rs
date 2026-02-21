@@ -59,6 +59,7 @@ pub(super) fn build_gen3d_plan_user_text(
          Also decide the object's `mobility` (static vs ground vs air).\n\
          If the object is movable and has articulated parts (legs/wheels/wings/weapon), add `attach_to.animations` for the relevant components using channels: ambient/idle/move/attack_primary.\n\
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
+         Avoid z-fighting at joins: do NOT make parent/child faces flush and coplanar; add a small epsilon offset along the attachment direction (e.g. `attach_to.offset.pos[2]` ~= 0.005m).\n\
          Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
           - Set `parent_anchor.forward` (+Z) to point from the parent toward the child (attachment direction) in the PARENT component's local axes.\n\
           - Set `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) in the CHILD component's local axes so the child can rotate into the parent's join frame.\n\
@@ -106,6 +107,7 @@ pub(super) fn build_gen3d_plan_user_text_with_hints(
          Also decide the object's `mobility` (static vs ground vs air).\n\
          If the object is movable and has articulated parts (legs/wheels/wings/weapon), add `attach_to.animations` for the relevant components using channels: ambient/idle/move/attack_primary.\n\
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
+         Avoid z-fighting at joins: do NOT make parent/child faces flush and coplanar; add a small epsilon offset along the attachment direction (e.g. `attach_to.offset.pos[2]` ~= 0.005m).\n\
          Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
           - Set `parent_anchor.forward` (+Z) to point from the parent toward the child (attachment direction) in the PARENT component's local axes.\n\
           - Set `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) in the CHILD component's local axes so the child can rotate into the parent's join frame.\n\

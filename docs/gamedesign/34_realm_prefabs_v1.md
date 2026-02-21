@@ -101,7 +101,7 @@ Each anchor:
 Each part:
 
 - `part_id`: optional UUID string (stable identity for part-level edits).
-- `render_priority`: optional integer. Hint for resolving coplanar overlaps: higher values are biased slightly closer to the camera during depth testing. Keep values small (suggested: -3..3).
+- `render_priority`: optional integer. Hint for resolving near-coplanar overlaps: higher values are biased slightly closer to the camera during depth testing. Keep values small (suggested: -3..3). When omitted, the renderer applies a small automatic bias for `object_ref` parts to reduce z-fighting at component seams.
 - `kind`: tagged union (`kind`):
   - `{ "kind": "object_ref", "object_id": <uuid> }` (references another prefab def by id)
   - `{ "kind": "primitive", "primitive": <primitive_visual_def> }`
