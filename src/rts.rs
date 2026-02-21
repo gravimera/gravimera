@@ -16,17 +16,17 @@ const SELECTION_DRAG_MIN_PX: f32 = 8.0;
 const SELECTION_RING_SEGMENTS: usize = 32;
 const MOVE_ENEMY_CLICK_RADIUS_PX: f32 = 30.0;
 
-const HOVER_RING_BORDER_PX: f32 = 2.0;
-const HOVER_RING_Z_INDEX: i32 = 960;
-
 #[derive(Resource, Default, Debug)]
 pub(crate) struct HoverSelectionState {
     pub(crate) hovered: Option<Entity>,
     pub(crate) started_at_secs: f32,
 }
 
-#[derive(Component)]
-pub(crate) struct HoverSelectionCircleUi;
+#[derive(Resource, Default, Debug)]
+pub(crate) struct BoxSelectionPreviewState {
+    pub(crate) active: bool,
+    pub(crate) started_at_secs: f32,
+}
 
 fn wrap_angle(angle: f32) -> f32 {
     (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
@@ -350,10 +350,12 @@ pub(crate) fn update_selection_box_ui(
     *visibility = Visibility::Inherited;
 }
 
-pub(crate) fn update_hover_selection_circle_ui(
-    mut commands: Commands,
+pub(crate) fn draw_hover_selection_circle_gizmos(
+    mut gizmos: Gizmos,
     time: Res<Time>,
     mut hover: ResMut<HoverSelectionState>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    selection: Res<SelectionState>,
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<GameMode>>,
     build: Res<BuildState>,
@@ -374,63 +376,52 @@ pub(crate) fn update_hover_selection_circle_ui(
         With<Commandable>,
     >,
     build_objects: Query<(Entity, &Transform, &AabbCollider, &ObjectPrefabId), With<BuildObject>>,
-    mut rings: Query<
-        (
-            Entity,
-            &mut Node,
-            &mut Visibility,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
-        With<HoverSelectionCircleUi>,
-    >,
 ) {
-    let hide = |hover: &mut ResMut<HoverSelectionState>,
-                rings: &mut Query<
-        (
-            Entity,
-            &mut Node,
-            &mut Visibility,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
-        With<HoverSelectionCircleUi>,
-    >| {
+    let hide = |hover: &mut ResMut<HoverSelectionState>| {
         hover.hovered = None;
-        for (_entity, _node, mut visibility, ..) in rings.iter_mut() {
-            *visibility = Visibility::Hidden;
-        }
     };
 
     if copy.active {
-        hide(&mut hover, &mut rings);
+        hide(&mut hover);
         return;
     }
 
     // Keep hover selection aligned with "selection enabled" rules.
     if keys.pressed(KeyCode::Space) || keys.pressed(KeyCode::KeyC) {
-        hide(&mut hover, &mut rings);
+        hide(&mut hover);
         return;
     }
     if model_library.is_drag_active() || world_drag.blocks_selection() {
-        hide(&mut hover, &mut rings);
+        hide(&mut hover);
         return;
     }
     if matches!(mode.get(), GameMode::Build) && build.placing_active {
-        hide(&mut hover, &mut rings);
+        hide(&mut hover);
         return;
     }
 
+    if mouse_buttons.pressed(MouseButton::Left) {
+        if let (Some(start), Some(end)) = (selection.drag_start, selection.drag_end) {
+            let min = Vec2::new(start.x.min(end.x), start.y.min(end.y));
+            let max = Vec2::new(start.x.max(end.x), start.y.max(end.y));
+            let drag = (max - min).length();
+            if drag >= SELECTION_DRAG_MIN_PX {
+                hide(&mut hover);
+                return;
+            }
+        }
+    }
+
     let Ok(window) = windows.single() else {
-        hide(&mut hover, &mut rings);
+        hide(&mut hover);
         return;
     };
     let Some(cursor) = window.cursor_position() else {
-        hide(&mut hover, &mut rings);
+        hide(&mut hover);
         return;
     };
     let Ok((camera, camera_transform)) = camera_q.single() else {
-        hide(&mut hover, &mut rings);
+        hide(&mut hover);
         return;
     };
     let camera_global = GlobalTransform::from(*camera_transform);
@@ -452,54 +443,17 @@ pub(crate) fn update_hover_selection_circle_ui(
     }
 
     let Some(picked) = picked else {
-        for (_entity, _node, mut visibility, ..) in rings.iter_mut() {
-            *visibility = Visibility::Hidden;
-        }
         return;
     };
 
     let (wave, alpha) = selection_circle::pulse_wave_alpha(&time, hover.started_at_secs);
-    let radius = selection_circle::pulse_radius(picked.pixel_radius, wave);
-
-    let left = picked.screen_center.x - radius;
-    let top = picked.screen_center.y - radius;
-    let diameter = radius * 2.0;
-
-    let (r, g, b) = (0.25, 0.95, 0.45);
-
-    let mut updated_any = false;
-    for (_entity, mut node, mut visibility, mut bg, mut border) in rings.iter_mut() {
-        updated_any = true;
-        node.left = Val::Px(left);
-        node.top = Val::Px(top);
-        node.width = Val::Px(diameter);
-        node.height = Val::Px(diameter);
-        node.border_radius = BorderRadius::all(Val::Px(radius));
-        *visibility = Visibility::Inherited;
-
-        bg.0 = Color::srgba(r, g, b, alpha * 0.06);
-        *border = BorderColor::all(Color::srgba(r, g, b, alpha));
-    }
-
-    if !updated_any {
-        commands.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(left),
-                top: Val::Px(top),
-                width: Val::Px(diameter),
-                height: Val::Px(diameter),
-                border: UiRect::all(Val::Px(HOVER_RING_BORDER_PX)),
-                border_radius: BorderRadius::all(Val::Px(radius)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(r, g, b, alpha * 0.06)),
-            BorderColor::all(Color::srgba(r, g, b, alpha)),
-            ZIndex(HOVER_RING_Z_INDEX),
-            Visibility::Inherited,
-            HoverSelectionCircleUi,
-        ));
-    }
+    let radius = selection_circle::pulse_radius(picked.world_radius, wave);
+    draw_circle_xz(
+        &mut gizmos,
+        picked.world_center,
+        radius,
+        Color::srgba(0.25, 0.95, 0.45, alpha),
+    );
 }
 
 fn draw_circle_xz(gizmos: &mut Gizmos, center: Vec3, radius: f32, color: Color) {
@@ -513,6 +467,80 @@ fn draw_circle_xz(gizmos: &mut Gizmos, center: Vec3, radius: f32, color: Color) 
             gizmos.line(prev, point, color);
         }
         prev = Some(point);
+    }
+}
+
+pub(crate) fn draw_box_selection_preview_gizmos(
+    mut gizmos: Gizmos,
+    time: Res<Time>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    selection: Res<SelectionState>,
+    mut preview: ResMut<BoxSelectionPreviewState>,
+    camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
+    library: Res<ObjectLibrary>,
+    commandables: Query<
+        (
+            Entity,
+            &Transform,
+            Option<&Collider>,
+            &ObjectPrefabId,
+            Option<&Player>,
+        ),
+        With<Commandable>,
+    >,
+    build_objects: Query<(Entity, &Transform, &AabbCollider, &ObjectPrefabId), With<BuildObject>>,
+) {
+    let (Some(start), Some(end)) = (selection.drag_start, selection.drag_end) else {
+        preview.active = false;
+        return;
+    };
+
+    if !mouse_buttons.pressed(MouseButton::Left) {
+        preview.active = false;
+        return;
+    }
+
+    let min = Vec2::new(start.x.min(end.x), start.y.min(end.y));
+    let max = Vec2::new(start.x.max(end.x), start.y.max(end.y));
+    let drag = (max - min).length();
+    if drag < SELECTION_DRAG_MIN_PX {
+        preview.active = false;
+        return;
+    }
+
+    if !preview.active {
+        preview.active = true;
+        preview.started_at_secs = time.elapsed_secs();
+    }
+
+    let Ok((camera, camera_transform)) = camera_q.single() else {
+        return;
+    };
+    let camera_global = GlobalTransform::from(*camera_transform);
+
+    let picked = selection_circle::collect_in_rect(
+        min,
+        max,
+        camera,
+        &camera_global,
+        &library,
+        &commandables,
+        &build_objects,
+        true,
+    );
+    if picked.is_empty() {
+        return;
+    }
+
+    let (wave, alpha) = selection_circle::pulse_wave_alpha(&time, preview.started_at_secs);
+    for picked in picked {
+        let radius = selection_circle::pulse_radius(picked.world_radius, wave);
+        draw_circle_xz(
+            &mut gizmos,
+            picked.world_center,
+            radius,
+            Color::srgba(0.25, 0.95, 0.45, alpha),
+        );
     }
 }
 

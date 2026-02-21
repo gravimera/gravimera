@@ -15,6 +15,8 @@ pub(crate) const CURSOR_CIRCLE_FALLBACK_RADIUS_PX: f32 = 26.0;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SelectionCirclePick {
     pub(crate) entity: Entity,
+    pub(crate) world_center: Vec3,
+    pub(crate) world_radius: f32,
     pub(crate) screen_center: Vec2,
     pub(crate) pixel_radius: f32,
     pub(crate) is_unit: bool,
@@ -35,7 +37,7 @@ pub(crate) fn pulse_wave_alpha(time: &Time, started_at_secs: f32) -> (f32, f32) 
 }
 
 pub(crate) fn pulse_radius(base_radius: f32, wave: f32) -> f32 {
-    (base_radius.max(1.0) * (0.88 + wave * 0.24)).max(1.0)
+    (base_radius.max(0.01) * (0.88 + wave * 0.24)).max(0.01)
 }
 
 pub(crate) fn circle_intersects_rect(center: Vec2, radius: f32, min: Vec2, max: Vec2) -> bool {
@@ -61,6 +63,22 @@ fn world_circle_to_screen_circle(
         .map(|edge| screen_center.distance(edge).max(1.0))
         .unwrap_or(CURSOR_CIRCLE_FALLBACK_RADIUS_PX);
     Some((screen_center, pixel_radius))
+}
+
+fn ray_plane_intersection_y(ray: Ray3d, y: f32) -> Option<Vec3> {
+    let origin = ray.origin;
+    let direction = ray.direction;
+    let denom = direction.y;
+    if denom.abs() < 1e-5 {
+        return None;
+    }
+
+    let t = (y - origin.y) / denom;
+    if t < 0.0 {
+        return None;
+    }
+
+    Some(origin + direction * t)
 }
 
 fn unit_world_center(
@@ -109,6 +127,19 @@ fn unit_world_radius(
     (radius * SELECTION_RING_RADIUS_MULT).max(0.01)
 }
 
+pub(crate) fn unit_world_circle(
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    transform: &Transform,
+    collider: Option<&Collider>,
+    is_player: bool,
+) -> (Vec3, f32) {
+    (
+        unit_world_center(library, prefab_id, transform, is_player),
+        unit_world_radius(library, prefab_id, transform, collider),
+    )
+}
+
 fn build_world_center(library: &ObjectLibrary, prefab_id: u128, transform: &Transform) -> Vec3 {
     let scale_y = safe_abs_scale_y(transform.scale);
     let origin_y = library.ground_origin_y_or_default(prefab_id) * scale_y;
@@ -128,6 +159,18 @@ fn build_world_radius(collider: &AabbCollider) -> f32 {
         .max(collider.half_extents.y.abs())
         .max(0.01);
     (radius * SELECTION_RING_RADIUS_MULT).max(0.01)
+}
+
+pub(crate) fn build_world_circle(
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    transform: &Transform,
+    collider: &AabbCollider,
+) -> (Vec3, f32) {
+    (
+        build_world_center(library, prefab_id, transform),
+        build_world_radius(collider),
+    )
 }
 
 pub(crate) fn unit_screen_circle(
@@ -180,6 +223,9 @@ where
     Uf: QueryFilter,
     Bf: QueryFilter,
 {
+    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) else {
+        return None;
+    };
     let mut best: Option<(SelectionCirclePick, f32, f32)> = None;
 
     let mut consider = |pick: SelectionCirclePick, d: f32, norm: f32| {
@@ -215,21 +261,28 @@ where
     };
 
     for (entity, transform, collider, prefab_id, player) in units.iter() {
-        let world_center = unit_world_center(library, prefab_id.0, transform, player.is_some());
-        let world_radius = unit_world_radius(library, prefab_id.0, transform, collider);
+        let (world_center, world_radius) =
+            unit_world_circle(library, prefab_id.0, transform, collider, player.is_some());
+        let Some(hit) = ray_plane_intersection_y(ray, world_center.y) else {
+            continue;
+        };
+        let dx = hit.x - world_center.x;
+        let dz = hit.z - world_center.z;
+        let d = (dx * dx + dz * dz).sqrt();
+        if d > world_radius {
+            continue;
+        }
         let Some((screen_center, pixel_radius)) =
             world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
         else {
             continue;
         };
-        let d = screen_center.distance(cursor);
-        if d > pixel_radius {
-            continue;
-        }
-        let norm = d / pixel_radius.max(1.0);
+        let norm = d / world_radius.max(0.01);
         consider(
             SelectionCirclePick {
                 entity,
+                world_center,
+                world_radius,
                 screen_center,
                 pixel_radius,
                 is_unit: true,
@@ -241,21 +294,28 @@ where
 
     if include_builds {
         for (entity, transform, collider, prefab_id) in builds.iter() {
-            let world_center = build_world_center(library, prefab_id.0, transform);
-            let world_radius = build_world_radius(collider);
+            let (world_center, world_radius) =
+                build_world_circle(library, prefab_id.0, transform, collider);
+            let Some(hit) = ray_plane_intersection_y(ray, world_center.y) else {
+                continue;
+            };
+            let dx = hit.x - world_center.x;
+            let dz = hit.z - world_center.z;
+            let d = (dx * dx + dz * dz).sqrt();
+            if d > world_radius {
+                continue;
+            }
             let Some((screen_center, pixel_radius)) =
                 world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
             else {
                 continue;
             };
-            let d = screen_center.distance(cursor);
-            if d > pixel_radius {
-                continue;
-            }
-            let norm = d / pixel_radius.max(1.0);
+            let norm = d / world_radius.max(0.01);
             consider(
                 SelectionCirclePick {
                     entity,
+                    world_center,
+                    world_radius,
                     screen_center,
                     pixel_radius,
                     is_unit: false,
@@ -295,8 +355,8 @@ where
     let mut picked = Vec::new();
 
     for (entity, transform, collider, prefab_id, player) in units.iter() {
-        let world_center = unit_world_center(library, prefab_id.0, transform, player.is_some());
-        let world_radius = unit_world_radius(library, prefab_id.0, transform, collider);
+        let (world_center, world_radius) =
+            unit_world_circle(library, prefab_id.0, transform, collider, player.is_some());
         let Some((screen_center, pixel_radius)) =
             world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
         else {
@@ -307,6 +367,8 @@ where
         }
         picked.push(SelectionCirclePick {
             entity,
+            world_center,
+            world_radius,
             screen_center,
             pixel_radius,
             is_unit: true,
@@ -315,8 +377,8 @@ where
 
     if include_builds {
         for (entity, transform, collider, prefab_id) in builds.iter() {
-            let world_center = build_world_center(library, prefab_id.0, transform);
-            let world_radius = build_world_radius(collider);
+            let (world_center, world_radius) =
+                build_world_circle(library, prefab_id.0, transform, collider);
             let Some((screen_center, pixel_radius)) =
                 world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
             else {
@@ -327,6 +389,8 @@ where
             }
             picked.push(SelectionCirclePick {
                 entity,
+                world_center,
+                world_radius,
                 screen_center,
                 pixel_radius,
                 is_unit: false,

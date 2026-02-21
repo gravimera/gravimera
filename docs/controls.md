@@ -35,6 +35,7 @@ Notes:
   - Selection circles are centered at the object’s ground ring (bottom).
   - Hovering an object (cursor enters its selection circle) shows an animated selection circle (same pulse style as form copy).
   - If multiple circles overlap, the most “relevant” object is chosen (deepest inside the circle, then closest to center).
+  - While box-selecting (dragging with `LMB` held), objects whose selection circles intersect the box show the same animated circle as a preview.
   - Box select selects all objects whose selection circles intersect the box.
 - Selected objects render a ground selection ring sized to `1.1x` their selection radius.
 

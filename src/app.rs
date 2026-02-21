@@ -493,6 +493,7 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.init_resource::<BuildState>();
     app.init_resource::<SelectionState>();
     app.init_resource::<crate::rts::HoverSelectionState>();
+    app.init_resource::<crate::rts::BoxSelectionPreviewState>();
     app.init_resource::<crate::object_forms::FormCopyState>();
     app.init_resource::<MoveCommandState>();
     app.init_resource::<SlowMoveMode>();
@@ -926,7 +927,8 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
         Update,
         (
             rts::selection_input.run_if(crate::automation::local_input_enabled),
-            rts::update_hover_selection_circle_ui.after(rts::selection_input),
+            rts::draw_box_selection_preview_gizmos.after(rts::selection_input),
+            rts::draw_hover_selection_circle_gizmos.after(rts::selection_input),
             crate::object_forms::object_forms_copy_mode_start_cancel.after(rts::selection_input),
             crate::object_forms::object_forms_copy_mode_update_cursor
                 .after(crate::object_forms::object_forms_copy_mode_start_cancel)
