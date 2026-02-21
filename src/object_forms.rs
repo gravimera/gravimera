@@ -275,17 +275,17 @@ pub(crate) fn object_forms_copy_mode_update_cursor(
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
     units: Query<
-        (Entity, &Transform, Option<&Collider>, &ObjectPrefabId),
-        (With<Commandable>, Without<Player>),
-    >,
-    builds: Query<
         (
             Entity,
             &Transform,
-            &AabbCollider,
-            &BuildDimensions,
+            Option<&Collider>,
             &ObjectPrefabId,
+            Option<&Player>,
         ),
+        (With<Commandable>, Without<Player>),
+    >,
+    builds: Query<
+        (Entity, &Transform, &AabbCollider, &ObjectPrefabId),
         (With<BuildObject>, Without<Player>),
     >,
     dest_categories: Query<(Option<&Commandable>, Option<&BuildObject>), Without<Player>>,

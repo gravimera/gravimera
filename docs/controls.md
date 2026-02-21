@@ -32,6 +32,7 @@ Notes:
   - Units: based on their collision radius.
   - Buildings: based on their footprint radius (max X/Z half-extent).
 - Cursor targeting uses selection circles:
+  - Selection circles are centered at the object’s ground ring (bottom).
   - Hovering an object (cursor enters its selection circle) shows an animated selection circle (same pulse style as form copy).
   - If multiple circles overlap, the most “relevant” object is chosen (deepest inside the circle, then closest to center).
   - Box select selects all objects whose selection circles intersect the box.

@@ -203,6 +203,7 @@ pub(crate) const DEFAULT_HEADLESS_SECONDS: f32 = 5.0;
 
 // Selection circles (cursor target + visuals).
 pub(crate) const SELECTION_RING_RADIUS_MULT: f32 = 1.10;
+pub(crate) const SELECTION_RING_Y_OFFSET: f32 = 0.06;
 pub(crate) const SELECTION_CIRCLE_PULSE_RADS_PER_SEC: f32 = 12.0;
 pub(crate) const SELECTION_CIRCLE_FLASH_ALPHA_MIN: f32 = 0.25;
 pub(crate) const SELECTION_CIRCLE_FLASH_ALPHA_MAX: f32 = 0.85;

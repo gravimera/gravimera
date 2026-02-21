@@ -2,13 +2,13 @@ use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 
 use crate::constants::{
-    DEFAULT_OBJECT_SIZE_M, HERO_HEIGHT_WORLD, SELECTION_CIRCLE_FLASH_ALPHA_MAX,
+    DEFAULT_OBJECT_SIZE_M, PLAYER_Y, SELECTION_CIRCLE_FLASH_ALPHA_MAX,
     SELECTION_CIRCLE_FLASH_ALPHA_MIN, SELECTION_CIRCLE_PULSE_RADS_PER_SEC,
-    SELECTION_RING_RADIUS_MULT,
+    SELECTION_RING_RADIUS_MULT, SELECTION_RING_Y_OFFSET,
 };
 use crate::geometry::safe_abs_scale_y;
 use crate::object::registry::ObjectLibrary;
-use crate::types::{AabbCollider, BuildDimensions, Collider, ObjectPrefabId};
+use crate::types::{AabbCollider, Collider, ObjectPrefabId, Player};
 
 pub(crate) const CURSOR_CIRCLE_FALLBACK_RADIUS_PX: f32 = 26.0;
 
@@ -63,13 +63,24 @@ fn world_circle_to_screen_circle(
     Some((screen_center, pixel_radius))
 }
 
-fn unit_world_center(library: &ObjectLibrary, prefab_id: u128, transform: &Transform) -> Vec3 {
+fn unit_world_center(
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    transform: &Transform,
+    is_player: bool,
+) -> Vec3 {
     let scale_y = safe_abs_scale_y(transform.scale);
-    let height = library
-        .size(prefab_id)
-        .map(|s| s.y * scale_y)
-        .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
-    transform.translation + Vec3::Y * (height * 0.5)
+    let origin_y = if is_player {
+        PLAYER_Y
+    } else {
+        library.ground_origin_y_or_default(prefab_id) * scale_y
+    };
+    let ground_y = (transform.translation.y - origin_y).max(0.0);
+    Vec3::new(
+        transform.translation.x,
+        ground_y + SELECTION_RING_Y_OFFSET,
+        transform.translation.z,
+    )
 }
 
 fn unit_world_radius(
@@ -98,9 +109,15 @@ fn unit_world_radius(
     (radius * SELECTION_RING_RADIUS_MULT).max(0.01)
 }
 
-fn build_world_center(transform: &Transform, dimensions: &BuildDimensions) -> Vec3 {
-    let height = dimensions.size.y.max(0.01);
-    transform.translation + Vec3::Y * (height * 0.5)
+fn build_world_center(library: &ObjectLibrary, prefab_id: u128, transform: &Transform) -> Vec3 {
+    let scale_y = safe_abs_scale_y(transform.scale);
+    let origin_y = library.ground_origin_y_or_default(prefab_id) * scale_y;
+    let ground_y = (transform.translation.y - origin_y).max(0.0);
+    Vec3::new(
+        transform.translation.x,
+        ground_y + SELECTION_RING_Y_OFFSET,
+        transform.translation.z,
+    )
 }
 
 fn build_world_radius(collider: &AabbCollider) -> f32 {
@@ -120,8 +137,9 @@ pub(crate) fn unit_screen_circle(
     prefab_id: u128,
     transform: &Transform,
     collider: Option<&Collider>,
+    is_player: bool,
 ) -> Option<(Vec2, f32)> {
-    let world_center = unit_world_center(library, prefab_id, transform);
+    let world_center = unit_world_center(library, prefab_id, transform, is_player);
     let world_radius = unit_world_radius(library, prefab_id, transform, collider);
     world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
 }
@@ -129,11 +147,12 @@ pub(crate) fn unit_screen_circle(
 pub(crate) fn build_screen_circle(
     camera: &Camera,
     camera_transform: &GlobalTransform,
+    library: &ObjectLibrary,
+    prefab_id: u128,
     transform: &Transform,
     collider: &AabbCollider,
-    dimensions: &BuildDimensions,
 ) -> Option<(Vec2, f32)> {
-    let world_center = build_world_center(transform, dimensions);
+    let world_center = build_world_center(library, prefab_id, transform);
     let world_radius = build_world_radius(collider);
     world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
 }
@@ -143,17 +162,17 @@ pub(crate) fn pick_under_cursor<Uf, Bf>(
     camera: &Camera,
     camera_transform: &GlobalTransform,
     library: &ObjectLibrary,
-    units: &Query<(Entity, &Transform, Option<&Collider>, &ObjectPrefabId), Uf>,
-    builds: &Query<
+    units: &Query<
         (
             Entity,
             &Transform,
-            &AabbCollider,
-            &BuildDimensions,
+            Option<&Collider>,
             &ObjectPrefabId,
+            Option<&Player>,
         ),
-        Bf,
+        Uf,
     >,
+    builds: &Query<(Entity, &Transform, &AabbCollider, &ObjectPrefabId), Bf>,
     include_builds: bool,
     preference: CursorPickPreference,
 ) -> Option<SelectionCirclePick>
@@ -195,8 +214,8 @@ where
         best = Some((pick, d, norm));
     };
 
-    for (entity, transform, collider, prefab_id) in units.iter() {
-        let world_center = unit_world_center(library, prefab_id.0, transform);
+    for (entity, transform, collider, prefab_id, player) in units.iter() {
+        let world_center = unit_world_center(library, prefab_id.0, transform, player.is_some());
         let world_radius = unit_world_radius(library, prefab_id.0, transform, collider);
         let Some((screen_center, pixel_radius)) =
             world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
@@ -221,8 +240,8 @@ where
     }
 
     if include_builds {
-        for (entity, transform, collider, dimensions, _prefab_id) in builds.iter() {
-            let world_center = build_world_center(transform, dimensions);
+        for (entity, transform, collider, prefab_id) in builds.iter() {
+            let world_center = build_world_center(library, prefab_id.0, transform);
             let world_radius = build_world_radius(collider);
             let Some((screen_center, pixel_radius)) =
                 world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
@@ -256,17 +275,17 @@ pub(crate) fn collect_in_rect<Uf, Bf>(
     camera: &Camera,
     camera_transform: &GlobalTransform,
     library: &ObjectLibrary,
-    units: &Query<(Entity, &Transform, Option<&Collider>, &ObjectPrefabId), Uf>,
-    builds: &Query<
+    units: &Query<
         (
             Entity,
             &Transform,
-            &AabbCollider,
-            &BuildDimensions,
+            Option<&Collider>,
             &ObjectPrefabId,
+            Option<&Player>,
         ),
-        Bf,
+        Uf,
     >,
+    builds: &Query<(Entity, &Transform, &AabbCollider, &ObjectPrefabId), Bf>,
     include_builds: bool,
 ) -> Vec<SelectionCirclePick>
 where
@@ -275,8 +294,8 @@ where
 {
     let mut picked = Vec::new();
 
-    for (entity, transform, collider, prefab_id) in units.iter() {
-        let world_center = unit_world_center(library, prefab_id.0, transform);
+    for (entity, transform, collider, prefab_id, player) in units.iter() {
+        let world_center = unit_world_center(library, prefab_id.0, transform, player.is_some());
         let world_radius = unit_world_radius(library, prefab_id.0, transform, collider);
         let Some((screen_center, pixel_radius)) =
             world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
@@ -295,8 +314,8 @@ where
     }
 
     if include_builds {
-        for (entity, transform, collider, dimensions, _prefab_id) in builds.iter() {
-            let world_center = build_world_center(transform, dimensions);
+        for (entity, transform, collider, prefab_id) in builds.iter() {
+            let world_center = build_world_center(library, prefab_id.0, transform);
             let world_radius = build_world_radius(collider);
             let Some((screen_center, pixel_radius)) =
                 world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)

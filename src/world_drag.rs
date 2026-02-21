@@ -130,15 +130,16 @@ pub(crate) fn world_drag_start(
         return;
     }
 
-    if let Ok((transform, collider, dimensions, prefab_id)) = build_objects.get(entity) {
+    if let Ok((transform, collider, _dimensions, prefab_id)) = build_objects.get(entity) {
         let mobility_mode = library.mobility(prefab_id.0).map(|m| m.mode);
         if cursor_hits_build_object(
             cursor,
             camera,
             &camera_global,
+            &library,
+            prefab_id.0,
             transform,
             collider,
-            dimensions,
         ) {
             if let Some(offset_xz) = cursor_offset_xz(
                 window,
@@ -361,16 +362,18 @@ fn cursor_hits_build_object(
     cursor: Vec2,
     camera: &Camera,
     camera_transform: &GlobalTransform,
+    library: &ObjectLibrary,
+    prefab_id: u128,
     transform: &Transform,
     collider: &AabbCollider,
-    dimensions: &BuildDimensions,
 ) -> bool {
     let Some((screen, pixel_radius)) = selection_circle::build_screen_circle(
         camera,
         camera_transform,
+        library,
+        prefab_id,
         transform,
         collider,
-        dimensions,
     ) else {
         return false;
     };
@@ -393,6 +396,7 @@ fn cursor_hits_unit(
         prefab_id,
         transform,
         Some(collider),
+        false,
     ) else {
         return false;
     };

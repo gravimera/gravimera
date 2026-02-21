@@ -13,7 +13,6 @@ use crate::selection_circle::{self, CursorPickPreference};
 use crate::types::*;
 
 const SELECTION_DRAG_MIN_PX: f32 = 8.0;
-const SELECTION_RING_Y_OFFSET: f32 = 0.06;
 const SELECTION_RING_SEGMENTS: usize = 32;
 const MOVE_ENEMY_CLICK_RADIUS_PX: f32 = 30.0;
 
@@ -177,19 +176,16 @@ pub(crate) fn selection_input(
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
     commandables: Query<
-        (Entity, &Transform, Option<&Collider>, &ObjectPrefabId),
-        With<Commandable>,
-    >,
-    build_objects: Query<
         (
             Entity,
             &Transform,
-            &AabbCollider,
-            &BuildDimensions,
+            Option<&Collider>,
             &ObjectPrefabId,
+            Option<&Player>,
         ),
-        With<BuildObject>,
+        With<Commandable>,
     >,
+    build_objects: Query<(Entity, &Transform, &AabbCollider, &ObjectPrefabId), With<BuildObject>>,
 ) {
     // While holding Space (fire), selection is disabled to avoid fighting the aim cursor.
     if keys.pressed(KeyCode::Space) {
@@ -368,19 +364,16 @@ pub(crate) fn update_hover_selection_circle_ui(
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
     commandables: Query<
-        (Entity, &Transform, Option<&Collider>, &ObjectPrefabId),
-        With<Commandable>,
-    >,
-    build_objects: Query<
         (
             Entity,
             &Transform,
-            &AabbCollider,
-            &BuildDimensions,
+            Option<&Collider>,
             &ObjectPrefabId,
+            Option<&Player>,
         ),
-        With<BuildObject>,
+        With<Commandable>,
     >,
+    build_objects: Query<(Entity, &Transform, &AabbCollider, &ObjectPrefabId), With<BuildObject>>,
     mut rings: Query<
         (
             Entity,
