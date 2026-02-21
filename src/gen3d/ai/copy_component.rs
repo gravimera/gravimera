@@ -25,7 +25,6 @@ pub(super) enum Gen3dCopyAnchorsMode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dCopyAlignmentMode {
-    Auto,
     Rotation,
     MirrorMountX,
 }
@@ -127,81 +126,6 @@ fn transform_from_mat4(mat: Mat4) -> Option<Transform> {
         rotation: rotation.normalize(),
         scale,
     })
-}
-
-fn alignment_score(
-    delta_mat: Mat4,
-    source_anchors: &[AnchorDef],
-    target_anchors: &[AnchorDef],
-) -> f32 {
-    let mut target_by_name: HashMap<&str, &AnchorDef> = HashMap::new();
-    for a in target_anchors.iter() {
-        target_by_name.insert(a.name.as_ref(), a);
-    }
-
-    // Prefer deltas that align as many shared anchors as possible (positions + basis vectors).
-    // This is used to pick between the proper-rotation alignment and a mirrored alignment.
-    let mut score = 0.0_f32;
-    let mut any = false;
-    for s in source_anchors.iter() {
-        let Some(t) = target_by_name.get(s.name.as_ref()) else {
-            continue;
-        };
-        any = true;
-
-        let sp = s.transform.translation;
-        let tp = t.transform.translation;
-        let dp = transform_point(delta_mat, sp) - tp;
-        score += dp.length_squared();
-
-        let sf = s.transform.rotation * Vec3::Z;
-        let su = s.transform.rotation * Vec3::Y;
-        let tf = t.transform.rotation * Vec3::Z;
-        let tu = t.transform.rotation * Vec3::Y;
-
-        let df = transform_dir(delta_mat, sf);
-        let du = transform_dir(delta_mat, su);
-
-        if df.is_finite()
-            && du.is_finite()
-            && df.length_squared() > 1e-6
-            && du.length_squared() > 1e-6
-        {
-            let dot_f = df.normalize().dot(tf.normalize());
-            let dot_u = du.normalize().dot(tu.normalize());
-            // Direction mismatch penalty in [0,2] per vector; keep it smaller than positional terms.
-            score += 0.25 * (1.0 - dot_f).abs();
-            score += 0.25 * (1.0 - dot_u).abs();
-        }
-    }
-
-    if any {
-        score
-    } else {
-        0.0
-    }
-}
-
-fn mount_origin_layout_score(
-    inv_source_mount: Mat4,
-    inv_target_mount: Mat4,
-    mirror_local: Mat4,
-) -> (f32, f32) {
-    // When only the mount anchor is shared (or shared anchors are symmetric), the proper-rotation
-    // and mirrored candidates can tie on anchor alignment. Break ties using the implied layout of
-    // the component origin relative to the mount frame:
-    // - rot candidate keeps mount-local coords the same
-    // - mirror candidate flips mount-local right (X)
-    let source_origin_in_source_mount = transform_point(inv_source_mount, Vec3::ZERO);
-    let target_origin_in_target_mount = transform_point(inv_target_mount, Vec3::ZERO);
-
-    let score_rot =
-        (source_origin_in_source_mount - target_origin_in_target_mount).length_squared();
-    let mirrored_origin_in_source_mount =
-        transform_point(mirror_local, source_origin_in_source_mount);
-    let score_mirror =
-        (mirrored_origin_in_source_mount - target_origin_in_target_mount).length_squared();
-    (score_rot, score_mirror)
 }
 
 fn apply_delta_to_anchors(anchors: &[AnchorDef], delta: Transform) -> Vec<AnchorDef> {
@@ -338,34 +262,9 @@ pub(super) fn copy_component_into(
                 let mirror_local = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
                 let mirror_mat = target_mat * mirror_local * inv_source_anchor;
 
-                let score_rot = alignment_score(rot_mat, &source_def.anchors, &target_def.anchors);
-                let score_mirror =
-                    alignment_score(mirror_mat, &source_def.anchors, &target_def.anchors);
-
                 let chosen = match alignment {
                     Gen3dCopyAlignmentMode::Rotation => rot_mat,
                     Gen3dCopyAlignmentMode::MirrorMountX => mirror_mat,
-                    Gen3dCopyAlignmentMode::Auto => {
-                        if score_mirror + 1e-4 < score_rot {
-                            mirror_mat
-                        } else if (score_rot - score_mirror).abs() <= 1e-4 {
-                            // Tie-break with the component-origin layout around the mount interface.
-                            // This fixes mirrored copies when the only shared anchor is the mount itself.
-                            let inv_target_anchor = target_mat.inverse();
-                            let (layout_rot, layout_mirror) = mount_origin_layout_score(
-                                inv_source_anchor,
-                                inv_target_anchor,
-                                mirror_local,
-                            );
-                            if layout_mirror + 1e-4 < layout_rot {
-                                mirror_mat
-                            } else {
-                                rot_mat
-                            }
-                        } else {
-                            rot_mat
-                        }
-                    }
                 };
                 transform_from_mat4(chosen)
             }
@@ -1441,13 +1340,27 @@ mod tests {
             stub_component("grip_socket"),
         ];
 
-        components[0].anchors.push(anchor_named_forward("mount", Vec3::Z));
-        components[0].anchors.push(anchor_named_forward("grip", Vec3::X));
-        components[1].anchors.push(anchor_named_forward("socket", Vec3::Z));
-        components[2].anchors.push(anchor_named_forward("mount", Vec3::Z));
-        components[2].anchors.push(anchor_named_forward("grip", Vec3::X));
-        components[3].anchors.push(anchor_named_forward("socket", Vec3::Z));
-        components[4].anchors.push(anchor_named_forward("grip_socket", Vec3::Z));
+        components[0]
+            .anchors
+            .push(anchor_named_forward("mount", Vec3::Z));
+        components[0]
+            .anchors
+            .push(anchor_named_forward("grip", Vec3::X));
+        components[1]
+            .anchors
+            .push(anchor_named_forward("socket", Vec3::Z));
+        components[2]
+            .anchors
+            .push(anchor_named_forward("mount", Vec3::Z));
+        components[2]
+            .anchors
+            .push(anchor_named_forward("grip", Vec3::X));
+        components[3]
+            .anchors
+            .push(anchor_named_forward("socket", Vec3::Z));
+        components[4]
+            .anchors
+            .push(anchor_named_forward("grip_socket", Vec3::Z));
 
         components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
             parent: "hand_l".into(),
@@ -1495,7 +1408,9 @@ mod tests {
         ];
 
         let mut finger_l_def = stub_def(finger_l_id, "finger_l");
-        finger_l_def.anchors.push(anchor_named_forward("socket", Vec3::Z));
+        finger_l_def
+            .anchors
+            .push(anchor_named_forward("socket", Vec3::Z));
 
         let mut hand_r_def = stub_def(hand_r_id, "hand_r");
         let grip_before = anchor_named_forward("grip", Vec3::X);
@@ -1517,20 +1432,24 @@ mod tests {
                 },
                 Transform::from_scale(Vec3::splat(1.0)),
             ),
-            ObjectPartDef::object_ref(finger_r_id, Transform::IDENTITY)
-                .with_attachment(crate::object::registry::AttachmentDef {
+            ObjectPartDef::object_ref(finger_r_id, Transform::IDENTITY).with_attachment(
+                crate::object::registry::AttachmentDef {
                     parent_anchor: "mount".into(),
                     child_anchor: "socket".into(),
-                }),
-            ObjectPartDef::object_ref(grip_socket_id, Transform::IDENTITY)
-                .with_attachment(crate::object::registry::AttachmentDef {
+                },
+            ),
+            ObjectPartDef::object_ref(grip_socket_id, Transform::IDENTITY).with_attachment(
+                crate::object::registry::AttachmentDef {
                     parent_anchor: "grip".into(),
                     child_anchor: "grip_socket".into(),
-                }),
+                },
+            ),
         ];
 
         let mut finger_r_def = stub_def(finger_r_id, "finger_r");
-        finger_r_def.anchors.push(anchor_named_forward("socket", Vec3::Z));
+        finger_r_def
+            .anchors
+            .push(anchor_named_forward("socket", Vec3::Z));
         let mut grip_socket_def = stub_def(grip_socket_id, "grip_socket");
         grip_socket_def
             .anchors
@@ -1557,7 +1476,11 @@ mod tests {
         )
         .expect("subtree copy ok");
 
-        let hand_r_after = draft.defs.iter().find(|d| d.object_id == hand_r_id).unwrap();
+        let hand_r_after = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == hand_r_id)
+            .unwrap();
         assert!(
             hand_r_after
                 .parts
@@ -1906,22 +1829,10 @@ mod tests {
             "expected mount to be invertible"
         );
 
-        let target_mat = target_mount_before.to_matrix();
-        let mirror_local = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
-        let rot_mat = target_mat * inv_source_mount;
-        let mirror_mat = target_mat * mirror_local * inv_source_mount;
-
-        let score_rot = super::alignment_score(rot_mat, &source_def.anchors, &target_def.anchors);
-        let score_mirror =
-            super::alignment_score(mirror_mat, &source_def.anchors, &target_def.anchors);
-        let chosen = if score_mirror + 1e-4 < score_rot {
-            mirror_mat
-        } else {
-            rot_mat
-        };
+        let rot_mat = target_mount_before.to_matrix() * inv_source_mount;
 
         let source_tip_mount = anchor_transform_from_defs(&source_def.anchors, "tip_mount");
-        let expected_tip_mount_translation = transform_point(chosen, source_tip_mount.translation);
+        let expected_tip_mount_translation = transform_point(rot_mat, source_tip_mount.translation);
 
         let mut draft = Gen3dDraft::default();
         draft.defs = vec![source_def, target_def];
@@ -1933,7 +1844,7 @@ mod tests {
             1,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
-            Gen3dCopyAlignmentMode::Auto,
+            Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
             None,
         )
@@ -2241,13 +2152,6 @@ mod tests {
                 .anchors,
             "shoulder",
         );
-        let target_root_anchors_before = draft
-            .defs
-            .iter()
-            .find(|d| d.object_id == wing_root_r_id)
-            .unwrap()
-            .anchors
-            .clone();
         copy_component_subtree_into(
             &mut components,
             &mut draft,
@@ -2255,7 +2159,7 @@ mod tests {
             3,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
-            Gen3dCopyAlignmentMode::Auto,
+            Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
         )
         .expect("subtree copy ok");
@@ -2283,51 +2187,10 @@ mod tests {
             "expected source mount to be invertible"
         );
 
-        let mirror_local = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
         let rot_mat = target_mount_before.to_matrix() * inv_source_mount;
-        let mirror_mat = target_mount_before.to_matrix() * mirror_local * inv_source_mount;
-
-        fn score(mat: Mat4, source_anchors: &[AnchorDef], target_anchors: &[AnchorDef]) -> f32 {
-            let mut target_by_name: HashMap<&str, &AnchorDef> = HashMap::new();
-            for a in target_anchors.iter() {
-                target_by_name.insert(a.name.as_ref(), a);
-            }
-
-            let mut out = 0.0_f32;
-            let mut any = false;
-            for s in source_anchors.iter() {
-                let Some(t) = target_by_name.get(s.name.as_ref()) else {
-                    continue;
-                };
-                any = true;
-                out += (transform_point(mat, s.transform.translation) - t.transform.translation)
-                    .length_squared();
-            }
-            if any {
-                out
-            } else {
-                0.0
-            }
-        }
-
-        let score_rot = score(
-            rot_mat,
-            &source_root_def.anchors,
-            &target_root_anchors_before,
-        );
-        let score_mirror = score(
-            mirror_mat,
-            &source_root_def.anchors,
-            &target_root_anchors_before,
-        );
-        let chosen = if score_mirror + 1e-4 < score_rot {
-            mirror_mat
-        } else {
-            rot_mat
-        };
 
         let source_tip_mount = anchor_transform_from_defs(&source_root_def.anchors, "tip_mount");
-        let expected_tip_mount_translation = transform_point(chosen, source_tip_mount.translation);
+        let expected_tip_mount_translation = transform_point(rot_mat, source_tip_mount.translation);
         let tip_after = anchor_transform_from_defs(&wing_root_r_after.anchors, "tip_mount");
         let dp = (tip_after.translation - expected_tip_mount_translation).length();
         assert!(
@@ -2404,7 +2267,7 @@ mod tests {
             1,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
-            Gen3dCopyAlignmentMode::Auto,
+            Gen3dCopyAlignmentMode::MirrorMountX,
             Transform::IDENTITY,
             None,
         )
@@ -2497,7 +2360,7 @@ mod tests {
             1,
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
-            Gen3dCopyAlignmentMode::Auto,
+            Gen3dCopyAlignmentMode::MirrorMountX,
             Transform::IDENTITY,
             None,
         )

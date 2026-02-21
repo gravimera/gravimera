@@ -348,13 +348,8 @@ mod tests {
     fn gen3d_plan_prompt_mentions_attachment_placement_sanity_check() {
         let prompt = build_gen3d_plan_user_text("test", false, Gen3dSpeedMode::Level3);
         assert!(prompt.contains("Placement sanity check"));
-        let prompt = build_gen3d_plan_user_text_with_hints(
-            "test",
-            false,
-            Gen3dSpeedMode::Level3,
-            None,
-            &[],
-        );
+        let prompt =
+            build_gen3d_plan_user_text_with_hints("test", false, Gen3dSpeedMode::Level3, None, &[]);
         assert!(prompt.contains("Placement sanity check"));
     }
 }
@@ -511,9 +506,13 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - The engine can then generate only the unique components + the declared reuse sources, and fill the remaining targets via deterministic copy.\n\
          - This does NOT change the attachment tree; it only affects how missing geometry gets produced.\n\
          - Reuse targets are allowed (and expected) to differ in per-target `attach_to.offset` (radial/mirrored placement) and per-target attachment animations (phase offsets).\n\
+         - IMPORTANT: The engine will NOT guess whether a reuse group should be mirrored. You MUST explicitly set `reuse_groups[].alignment`.\n\
          - `reuse_groups[].kind`:\n\
            - `component` (copy a single component's geometry)\n\
            - `subtree` (copy an entire limb-chain subtree rooted at `source`)\n\
+         - `reuse_groups[].alignment` (REQUIRED):\n\
+           - `rotation` (copy by mount alignment rotation only; use for identical repeated parts)\n\
+           - `mirror_mount_x` (mirror across the mount join frame's local +X axis; use for L/R symmetry)\n\
          - `reuse_groups[].mode` (optional; default `detached`): `detached` | `linked`.\n\
            - For `subtree`, prefer `detached`.\n\
          - `reuse_groups[].anchors` (optional; default `preserve_interfaces`):\n\
@@ -532,13 +531,13 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             \"aim\": {{\"max_yaw_delta_degrees\": number|null (optional), \"components\": [\"component_name\", ...]}} (optional),\n\
             \"collider\": {{\"kind\":\"aabb_xz\",\"half_extents\":[x,z]}} | {{\"kind\":\"circle_xz\",\"radius\":r}} | {{\"kind\":\"none\"}} (optional),\n\
             \"assembly_notes\": \"...\" (optional),\n\
-            \"root_component\": \"component_name\" (optional; otherwise inferred as the only component without attach_to),\n\
-            \"reuse_groups\": [\n\
-              {{ \"kind\": \"component\" | \"subtree\", \"source\": \"component_name\", \"targets\": [\"component_name\", ...], \"mode\": \"detached\" | \"linked\" (optional), \"anchors\": \"preserve_interfaces\" | \"preserve_target\" | \"copy_source\" (optional) }}\n\
-            ] (optional),\n\
-            \"components\": [\n\
-              {{\n\
-                \"name\": \"stable_unique_identifier\",\n\
+          \"root_component\": \"component_name\" (optional; otherwise inferred as the only component without attach_to),\n\
+          \"reuse_groups\": [\n\
+              {{ \"kind\": \"component\" | \"subtree\", \"source\": \"component_name\", \"targets\": [\"component_name\", ...], \"alignment\": \"rotation\" | \"mirror_mount_x\", \"mode\": \"detached\" | \"linked\" (optional), \"anchors\": \"preserve_interfaces\" | \"preserve_target\" | \"copy_source\" (optional) }}\n\
+          ] (optional),\n\
+          \"components\": [\n\
+            {{\n\
+              \"name\": \"stable_unique_identifier\",\n\
                 \"purpose\": \"...\" (optional),\n\
                 \"modeling_notes\": \"...\" (optional),\n\
                 \"size\": [x,y,z],\n\

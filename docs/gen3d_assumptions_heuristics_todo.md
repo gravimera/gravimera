@@ -10,11 +10,10 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
 
 ## 1) Heuristic decisions (engine “guesses intent”) — remove or replace with explicit plan/tool inputs
 
-- [ ] **Auto mirror-vs-rotate selection during reuse/copy**
-  - Problem: `Gen3dCopyAlignmentMode::Auto` scores “rotate” vs “mirror” based on anchor alignment + tie-breaks. In symmetric cases, either choice can look plausible, so the engine is guessing and can be wrong.
-  - Impact: Unexpected left/right flips when reusing parts; violates “no heuristics”.
-  - Code: `src/gen3d/ai/copy_component.rs` (alignment scoring + tie-break), call sites such as `src/gen3d/ai/reuse_groups.rs` (auto-copy uses `Auto`).
-  - Direction: Require explicit alignment intent (rotate vs mirror) in `reuse_groups` and/or tool args; no scoring-based choice.
+- [x] **Require explicit mirror-vs-rotate alignment during reuse/copy (remove Auto)**
+  - Fixed (2026-02-21): plan-level `reuse_groups[].alignment` is **required** (`rotation` | `mirror_mount_x`) and is used deterministically by auto-copy (no scoring-based selection).
+  - Missing/unknown alignment is now treated as a schema error (plan must be regenerated), rather than silently guessing.
+  - Code: `src/gen3d/ai/schema.rs` (adds `reuse_groups[].alignment`), `src/gen3d/ai/structured_outputs.rs` (requires it in the JSON schema), `src/gen3d/ai/reuse_groups.rs` (passes alignment through), `src/gen3d/ai/copy_component.rs` (removes `Gen3dCopyAlignmentMode::Auto` and heuristic scoring/tie-break).
 
 - [ ] **Spinner auto-alignment to spin axis**
   - Problem: The engine may rotate a component’s geometry if it looks “axially symmetric” so it lines up with a `Spin` axis.
@@ -113,4 +112,3 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
 
 - [ ] **Add regression tests for each item above (in `tests/gen3d/` and/or `test/`)**
   - Each fix should come with a minimal fixture that reproduces the failure and asserts the corrected behavior.
-

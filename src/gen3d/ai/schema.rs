@@ -243,7 +243,15 @@ pub(crate) enum AiReuseAnchorsJson {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiReuseAlignmentJson {
+    Rotation,
+    MirrorMountX,
+}
+
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AiReuseGroupJson {
     #[serde(default)]
     pub(crate) kind: AiReuseGroupKindJson,
@@ -256,6 +264,7 @@ pub(crate) struct AiReuseGroupJson {
         alias = "target_component_names"
     )]
     pub(crate) targets: Vec<String>,
+    pub(crate) alignment: AiReuseAlignmentJson,
     #[serde(default)]
     pub(crate) mode: Option<AiReuseModeJson>,
     #[serde(default)]

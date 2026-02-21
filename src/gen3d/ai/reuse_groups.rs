@@ -2,7 +2,10 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use super::copy_component::{Gen3dCopyAlignmentMode, Gen3dCopyAnchorsMode, Gen3dCopyMode};
-use super::schema::{AiReuseAnchorsJson, AiReuseGroupJson, AiReuseGroupKindJson, AiReuseModeJson};
+use super::schema::{
+    AiReuseAlignmentJson, AiReuseAnchorsJson, AiReuseGroupJson, AiReuseGroupKindJson,
+    AiReuseModeJson,
+};
 use super::Gen3dPlannedComponent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +19,7 @@ pub(super) struct Gen3dValidatedReuseGroup {
     pub(super) kind: Gen3dReuseGroupKind,
     pub(super) source_root_idx: usize,
     pub(super) target_root_indices: Vec<usize>,
+    pub(super) alignment: Gen3dCopyAlignmentMode,
     pub(super) mode: Gen3dCopyMode,
     pub(super) anchors_mode: Gen3dCopyAnchorsMode,
 }
@@ -114,6 +118,13 @@ fn parse_anchors_mode(anchors: Option<AiReuseAnchorsJson>) -> Gen3dCopyAnchorsMo
     }
 }
 
+fn parse_alignment(alignment: AiReuseAlignmentJson) -> Gen3dCopyAlignmentMode {
+    match alignment {
+        AiReuseAlignmentJson::Rotation => Gen3dCopyAlignmentMode::Rotation,
+        AiReuseAlignmentJson::MirrorMountX => Gen3dCopyAlignmentMode::MirrorMountX,
+    }
+}
+
 pub(super) fn validate_reuse_groups(
     plan_groups: &[AiReuseGroupJson],
     planned_components: &[Gen3dPlannedComponent],
@@ -133,6 +144,8 @@ pub(super) fn validate_reuse_groups(
             }
             continue;
         };
+
+        let alignment = parse_alignment(group.alignment);
 
         let source_name = group.source.trim();
         if source_name.is_empty() {
@@ -194,6 +207,7 @@ pub(super) fn validate_reuse_groups(
             kind,
             source_root_idx,
             target_root_indices,
+            alignment,
             mode,
             anchors_mode,
         });
@@ -426,7 +440,7 @@ pub(super) fn apply_auto_copy(
                         target_idx,
                         group.mode,
                         group.anchors_mode,
-                        Gen3dCopyAlignmentMode::Auto,
+                        group.alignment,
                         Transform::IDENTITY,
                         None,
                     ) {
@@ -495,7 +509,7 @@ pub(super) fn apply_auto_copy(
                         target_root_idx,
                         group.mode,
                         group.anchors_mode,
-                        Gen3dCopyAlignmentMode::Auto,
+                        group.alignment,
                         Transform::IDENTITY,
                     ) {
                         Ok(outcomes) => {
@@ -598,6 +612,7 @@ mod tests {
                 kind: AiReuseGroupKindJson::Component,
                 source: "leg_0".into(),
                 targets: vec!["leg_1".into(), "leg_2".into()],
+                alignment: AiReuseAlignmentJson::Rotation,
                 mode: None,
                 anchors: None,
             }],
@@ -632,6 +647,7 @@ mod tests {
                 kind: AiReuseGroupKindJson::Subtree,
                 source: "leg0_root".into(),
                 targets: vec!["leg1_root".into()],
+                alignment: AiReuseAlignmentJson::Rotation,
                 mode: None,
                 anchors: None,
             }],
@@ -669,6 +685,7 @@ mod tests {
                 kind: AiReuseGroupKindJson::Subtree,
                 source: "leg0_root".into(),
                 targets: vec!["leg1_root".into()],
+                alignment: AiReuseAlignmentJson::Rotation,
                 mode: None,
                 anchors: None,
             }],
@@ -702,6 +719,7 @@ mod tests {
                 kind: AiReuseGroupKindJson::Subtree,
                 source: "leg0_root".into(),
                 targets: vec!["leg1_root".into()],
+                alignment: AiReuseAlignmentJson::Rotation,
                 mode: None,
                 anchors: None,
             }],
@@ -752,6 +770,7 @@ mod tests {
                 kind: AiReuseGroupKindJson::Subtree,
                 source: "leg0_root".into(),
                 targets: vec!["leg1_root".into()],
+                alignment: AiReuseAlignmentJson::Rotation,
                 mode: None,
                 anchors: None,
             }],

@@ -824,6 +824,10 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
                     "preserve_interfaces"
                 }
             };
+            let alignment = match g.alignment {
+                super::copy_component::Gen3dCopyAlignmentMode::Rotation => "rotation",
+                super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX => "mirror_mount_x",
+            };
             let source = job
                 .planned_components
                 .get(g.source_root_idx)
@@ -839,6 +843,7 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
                 "kind": kind,
                 "source": source,
                 "targets": targets,
+                "alignment": alignment,
                 "mode": mode,
                 "anchors": anchors,
             })
