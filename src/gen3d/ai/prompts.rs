@@ -68,6 +68,11 @@ pub(super) fn build_gen3d_plan_user_text(
           - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
          Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
     );
+    out.push_str(
+        "Placement sanity check (ignore rotation): estimate `child_origin ~= parent_anchor.pos + attach_to.offset.pos - child_anchor.pos`.\n\
+Ensure this puts the component where it should visually sit.\n\
+If you intend a thin surface layer, keep its size small along the attachment direction; if you intend a wrap-around layer, anchor it near the parent's center (or split it into front/back layers).\n",
+    );
     out.push_str(&format!("Speed mode: {}.\n", speed.label()));
     out.push_str(&format!(
         "Hard cap: at most {} components.\n",
@@ -115,6 +120,11 @@ pub(super) fn build_gen3d_plan_user_text_with_hints(
             Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
           - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
          Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
+    );
+    out.push_str(
+        "Placement sanity check (ignore rotation): estimate `child_origin ~= parent_anchor.pos + attach_to.offset.pos - child_anchor.pos`.\n\
+Ensure this puts the component where it should visually sit.\n\
+If you intend a thin surface layer, keep its size small along the attachment direction; if you intend a wrap-around layer, anchor it near the parent's center (or split it into front/back layers).\n",
     );
     out.push_str(&format!("Speed mode: {}.\n", speed.label()));
     out.push_str(&format!(
@@ -328,6 +338,25 @@ pub(super) fn build_gen3d_component_user_text(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gen3d_plan_prompt_mentions_attachment_placement_sanity_check() {
+        let prompt = build_gen3d_plan_user_text("test", false, Gen3dSpeedMode::Level3);
+        assert!(prompt.contains("Placement sanity check"));
+        let prompt = build_gen3d_plan_user_text_with_hints(
+            "test",
+            false,
+            Gen3dSpeedMode::Level3,
+            None,
+            &[],
+        );
+        assert!(prompt.contains("Placement sanity check"));
+    }
 }
 
 pub(super) fn build_gen3d_plan_system_instructions() -> String {

@@ -196,6 +196,7 @@ Notes:
 - `attach_to.offset` is a tweak transform in the **parent-anchor join frame** (after alignment).
   - If you include `offset.forward`/`offset.up` or `offset.rot_quat_xyzw`, they are interpreted in the join frame by default. Optionally set `offset.rot_frame: "parent"` to author rotation in the parent component frame (matching anchors); the engine converts into the join frame.
 - The engine does **not** apply heuristic placement tweaks (no automatic overlap/surface nudges). If you need inset/outset/overlap at a join, encode it explicitly in `attach_to.offset.pos`.
+- Placement sanity check (ignore rotation): estimate `child_origin ~= parent_anchor.pos + attach_to.offset.pos - child_anchor.pos`. If that would place a component far away from where it should visually sit, adjust anchor positions and/or the component's size along the attachment direction.
 - Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):
   - `parent_anchor.forward` (+Z) points from the parent toward the child (attachment direction) in the parent component's local axes.
   - `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) are expressed in the child component's local axes; set them to match the child's modeling axes at that joint so the child can rotate into the parent's join frame.
