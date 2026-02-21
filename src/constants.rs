@@ -201,6 +201,12 @@ pub(crate) const CAMERA_ZOOM_FAR_SCALE: f32 = 8.0;
 
 pub(crate) const DEFAULT_HEADLESS_SECONDS: f32 = 5.0;
 
+// Selection circles (cursor target + visuals).
+pub(crate) const SELECTION_RING_RADIUS_MULT: f32 = 1.10;
+pub(crate) const SELECTION_CIRCLE_PULSE_RADS_PER_SEC: f32 = 12.0;
+pub(crate) const SELECTION_CIRCLE_FLASH_ALPHA_MIN: f32 = 0.25;
+pub(crate) const SELECTION_CIRCLE_FLASH_ALPHA_MAX: f32 = 0.85;
+
 // Click-to-move (A* grid) and marker.
 pub(crate) const NAV_GRID_SIZE: f32 = 0.50; // 50 cm navigation cells (decoupled from Build snap)
 pub(crate) const NAV_HEIGHT_QUANT_SIZE: f32 = 0.25; // 25 cm ground-height quantization for nav

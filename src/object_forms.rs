@@ -10,6 +10,7 @@ use crate::object::registry::{
     PrimitiveVisualDef,
 };
 use crate::object::visuals;
+use crate::selection_circle::{self, CursorPickPreference};
 use crate::types::*;
 
 mod mapping;
@@ -25,10 +26,6 @@ const FORM_BADGE_SCREEN_OFFSET_PX: Vec2 = Vec2::new(-18.0, -18.0);
 const COPY_CURSOR_BASE_RADIUS_PX: f32 = 15.0;
 const COPY_CURSOR_BORDER_PX: f32 = 2.0;
 const COPY_CURSOR_Z_INDEX: i32 = 980;
-const COPY_CURSOR_PULSE_RADS_PER_SEC: f32 = 12.0;
-const COPY_CURSOR_FLASH_ALPHA_MIN: f32 = 0.25;
-const COPY_CURSOR_FLASH_ALPHA_MAX: f32 = 0.85;
-const COPY_HOVER_FALLBACK_RADIUS_PX: f32 = 26.0;
 
 #[derive(Resource, Default, Debug)]
 pub(crate) struct FormCopyState {
@@ -236,119 +233,38 @@ pub(crate) fn object_forms_copy_mode_start_cancel(
     copy.started_at_secs = time.elapsed_secs();
 }
 
-#[derive(Clone, Copy, Debug)]
-struct CopyHoverPick {
-    entity: Entity,
-    screen_center: Vec2,
-    pixel_radius: f32,
-    is_unit: bool,
-}
-
-fn pick_copy_source_under_cursor(
-    cursor: Vec2,
-    camera: &Camera,
-    camera_transform: &GlobalTransform,
-    library: &ObjectLibrary,
-    units: &Query<
-        (Entity, &Transform, Option<&Collider>, &ObjectPrefabId),
-        (With<Commandable>, Without<Player>),
-    >,
-    builds: &Query<
-        (
-            Entity,
-            &Transform,
-            &AabbCollider,
-            &BuildDimensions,
-            &ObjectPrefabId,
-        ),
-        (With<BuildObject>, Without<Player>),
-    >,
-) -> Option<CopyHoverPick> {
-    let camera_right = camera_transform.rotation() * Vec3::X;
-
-    let mut best = None;
-    let mut best_d = f32::INFINITY;
-
-    for (entity, transform, collider, prefab_id) in units.iter() {
-        let scale_y = transform.scale.y.abs().max(1e-3);
-        let height = library
-            .size(prefab_id.0)
-            .map(|s| s.y * scale_y)
-            .unwrap_or(DEFAULT_OBJECT_SIZE_M * scale_y);
-        let world = transform.translation + Vec3::Y * (height * 0.5);
-        let Ok(screen) = camera.world_to_viewport(camera_transform, world) else {
+fn copy_source_pick_preference(
+    destinations: &[Entity],
+    categories: &Query<(Option<&Commandable>, Option<&BuildObject>), Without<Player>>,
+) -> CursorPickPreference {
+    let mut any_unit = false;
+    let mut any_build = false;
+    for dest in destinations.iter().copied() {
+        let Ok((cmd, build)) = categories.get(dest) else {
             continue;
         };
-
-        let pixel_radius = collider
-            .and_then(|collider| {
-                let scale_xz = transform
-                    .scale
-                    .x
-                    .abs()
-                    .max(transform.scale.z.abs())
-                    .max(1e-3);
-                let world_r = (collider.radius * scale_xz).max(0.0);
-                if world_r <= 1e-6 {
-                    return None;
-                }
-                let edge_world = world + camera_right * world_r;
-                let edge_screen = camera
-                    .world_to_viewport(camera_transform, edge_world)
-                    .ok()?;
-                Some(screen.distance(edge_screen).max(1.0))
-            })
-            .unwrap_or(COPY_HOVER_FALLBACK_RADIUS_PX);
-
-        let d = screen.distance(cursor);
-        if d > pixel_radius {
-            continue;
+        let is_unit = cmd.is_some() && build.is_none();
+        if is_unit {
+            any_unit = true;
+        } else {
+            any_build = true;
         }
-        if d < best_d {
-            best_d = d;
-            best = Some(CopyHoverPick {
-                entity,
-                screen_center: screen,
-                pixel_radius,
-                is_unit: true,
-            });
+        if any_unit && any_build {
+            break;
         }
     }
 
-    for (entity, transform, collider, dimensions, _prefab_id) in builds.iter() {
-        let world = transform.translation + Vec3::Y * (dimensions.size.y.max(0.01) * 0.5);
-        let Ok(screen) = camera.world_to_viewport(camera_transform, world) else {
-            continue;
-        };
-
-        let world_r = collider
-            .half_extents
-            .x
-            .max(collider.half_extents.y)
-            .max(0.01);
-        let edge_world = world + camera_right * world_r;
-        let pixel_radius = camera
-            .world_to_viewport(camera_transform, edge_world)
-            .ok()
-            .map(|edge| screen.distance(edge).max(1.0))
-            .unwrap_or(COPY_HOVER_FALLBACK_RADIUS_PX);
-
-        let d = screen.distance(cursor);
-        if d > pixel_radius {
-            continue;
+    if any_unit && !any_build {
+        CursorPickPreference {
+            prefer_units: Some(true),
         }
-        if d < best_d {
-            best_d = d;
-            best = Some(CopyHoverPick {
-                entity,
-                screen_center: screen,
-                pixel_radius,
-                is_unit: false,
-            });
+    } else if any_build && !any_unit {
+        CursorPickPreference {
+            prefer_units: Some(false),
         }
+    } else {
+        CursorPickPreference::default()
     }
-
-    best
 }
 
 pub(crate) fn object_forms_copy_mode_update_cursor(
@@ -409,23 +325,22 @@ pub(crate) fn object_forms_copy_mode_update_cursor(
     };
     let camera_global = GlobalTransform::from(*camera_transform);
 
-    let hovered = pick_copy_source_under_cursor(
+    let hovered = selection_circle::pick_under_cursor(
         cursor_pos,
         camera,
         &camera_global,
         &library,
         &units,
         &builds,
+        true,
+        copy_source_pick_preference(&copy.destinations, &dest_categories),
     );
     copy.hovered_source = hovered.map(|h| h.entity);
 
     // Hide the OS cursor while copy mode is active; we render a custom cursor indicator instead.
     cursor_opts.visible = false;
 
-    let t = (time.elapsed_secs() - copy.started_at_secs).max(0.0);
-    let wave = (t * COPY_CURSOR_PULSE_RADS_PER_SEC).sin() * 0.5 + 0.5;
-    let alpha = COPY_CURSOR_FLASH_ALPHA_MIN
-        + wave * (COPY_CURSOR_FLASH_ALPHA_MAX - COPY_CURSOR_FLASH_ALPHA_MIN);
+    let (wave, alpha) = selection_circle::pulse_wave_alpha(&time, copy.started_at_secs);
 
     let (center, base_radius, is_unit) = if let Some(hovered) = hovered {
         (
@@ -436,7 +351,7 @@ pub(crate) fn object_forms_copy_mode_update_cursor(
     } else {
         (cursor_pos, COPY_CURSOR_BASE_RADIUS_PX, None)
     };
-    let radius = (base_radius * (0.88 + wave * 0.24)).max(1.0);
+    let radius = selection_circle::pulse_radius(base_radius, wave);
 
     let mut any_compatible = false;
     if let Some(source_is_unit) = is_unit {

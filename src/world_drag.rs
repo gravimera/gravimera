@@ -5,9 +5,10 @@ use crate::constants::*;
 use crate::geometry::{safe_abs_scale_y, snap_to_grid};
 use crate::object::registry::{MobilityMode, ObjectLibrary};
 use crate::scene_store::SceneSaveRequest;
+use crate::selection_circle;
 use crate::types::{
-    AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, MainCamera, ObjectPrefabId,
-    BuildState, Player, SelectionState,
+    AabbCollider, BuildDimensions, BuildObject, BuildState, Collider, Commandable, MainCamera,
+    ObjectPrefabId, Player, SelectionState,
 };
 
 const DRAG_START_THRESHOLD_PX: f32 = 6.0;
@@ -108,9 +109,14 @@ pub(crate) fn world_drag_start(
             transform,
             collider,
         ) {
-            if let Some(offset_xz) =
-                cursor_offset_xz(window, camera, &camera_global, &library, &build_objects, transform)
-            {
+            if let Some(offset_xz) = cursor_offset_xz(
+                window,
+                camera,
+                &camera_global,
+                &library,
+                &build_objects,
+                transform,
+            ) {
                 state.pending = Some(PendingDrag {
                     entity,
                     prefab_id: prefab_id.0,
@@ -124,12 +130,24 @@ pub(crate) fn world_drag_start(
         return;
     }
 
-    if let Ok((transform, _collider, _dimensions, prefab_id)) = build_objects.get(entity) {
+    if let Ok((transform, collider, dimensions, prefab_id)) = build_objects.get(entity) {
         let mobility_mode = library.mobility(prefab_id.0).map(|m| m.mode);
-        if cursor_hits_build_object(cursor, camera, &camera_global, transform) {
-            if let Some(offset_xz) =
-                cursor_offset_xz(window, camera, &camera_global, &library, &build_objects, transform)
-            {
+        if cursor_hits_build_object(
+            cursor,
+            camera,
+            &camera_global,
+            transform,
+            collider,
+            dimensions,
+        ) {
+            if let Some(offset_xz) = cursor_offset_xz(
+                window,
+                camera,
+                &camera_global,
+                &library,
+                &build_objects,
+                transform,
+            ) {
                 state.pending = Some(PendingDrag {
                     entity,
                     prefab_id: prefab_id.0,
@@ -156,7 +174,13 @@ pub(crate) fn world_drag_update(
         (With<Commandable>, Without<Player>, Without<BuildObject>),
     >,
     mut build_objects: Query<
-        (Entity, &mut Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
+        (
+            Entity,
+            &mut Transform,
+            &AabbCollider,
+            &BuildDimensions,
+            &ObjectPrefabId,
+        ),
         (With<BuildObject>, Without<Commandable>),
     >,
     mut selection: ResMut<SelectionState>,
@@ -297,7 +321,9 @@ pub(crate) fn world_drag_update(
             transform.translation.y = surface_y + origin_y;
         }
     } else {
-        let Ok((_e, mut transform, collider, dimensions, prefab_id)) = build_objects.get_mut(active.entity) else {
+        let Ok((_e, mut transform, collider, dimensions, prefab_id)) =
+            build_objects.get_mut(active.entity)
+        else {
             state.active = None;
             return;
         };
@@ -307,8 +333,14 @@ pub(crate) fn world_drag_update(
         }
 
         desired = desired.clamp(
-            Vec2::new(-WORLD_HALF_SIZE + collider.half_extents.x, -WORLD_HALF_SIZE + collider.half_extents.y),
-            Vec2::new(WORLD_HALF_SIZE - collider.half_extents.x, WORLD_HALF_SIZE - collider.half_extents.y),
+            Vec2::new(
+                -WORLD_HALF_SIZE + collider.half_extents.x,
+                -WORLD_HALF_SIZE + collider.half_extents.y,
+            ),
+            Vec2::new(
+                WORLD_HALF_SIZE - collider.half_extents.x,
+                WORLD_HALF_SIZE - collider.half_extents.y,
+            ),
         );
         transform.translation.x = desired.x;
         transform.translation.z = desired.y;
@@ -330,14 +362,19 @@ fn cursor_hits_build_object(
     camera: &Camera,
     camera_transform: &GlobalTransform,
     transform: &Transform,
+    collider: &AabbCollider,
+    dimensions: &BuildDimensions,
 ) -> bool {
-    let Some(screen) = camera
-        .world_to_viewport(camera_transform, transform.translation)
-        .ok()
-    else {
+    let Some((screen, pixel_radius)) = selection_circle::build_screen_circle(
+        camera,
+        camera_transform,
+        transform,
+        collider,
+        dimensions,
+    ) else {
         return false;
     };
-    screen.distance(cursor) <= DRAG_PICK_RADIUS_PX
+    screen.distance(cursor) <= pixel_radius.max(DRAG_PICK_RADIUS_PX)
 }
 
 fn cursor_hits_unit(
@@ -349,34 +386,18 @@ fn cursor_hits_unit(
     transform: &Transform,
     collider: &Collider,
 ) -> bool {
-    let scale_y = safe_abs_scale_y(transform.scale);
-    let height = library
-        .size(prefab_id)
-        .map(|s| s.y * scale_y)
-        .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
-    let world_pos = transform.translation + Vec3::Y * (height * 0.5);
-    let Some(screen) = camera.world_to_viewport(camera_global, world_pos).ok() else {
+    let Some((screen, pixel_radius)) = selection_circle::unit_screen_circle(
+        camera,
+        camera_global,
+        library,
+        prefab_id,
+        transform,
+        Some(collider),
+    ) else {
         return false;
     };
 
-    let camera_right = camera_global.rotation() * Vec3::X;
-    let scale = transform
-        .scale
-        .x
-        .abs()
-        .max(transform.scale.z.abs())
-        .max(1e-3);
-    let world_r = (collider.radius * scale).max(0.0);
-    if world_r <= 1e-6 {
-        return screen.distance(cursor) <= DRAG_PICK_RADIUS_PX;
-    }
-    let edge_world = world_pos + camera_right * world_r;
-    let Some(edge_screen) = camera.world_to_viewport(camera_global, edge_world).ok() else {
-        return false;
-    };
-    let pixel_radius = screen.distance(edge_screen).max(1.0);
-
-    screen.distance(cursor) <= pixel_radius
+    screen.distance(cursor) <= pixel_radius.max(DRAG_PICK_RADIUS_PX)
 }
 
 fn cursor_offset_xz(
@@ -397,7 +418,10 @@ fn cursor_offset_xz(
         library,
         build_objects,
     )?;
-    let offset = Vec2::new(transform.translation.x - pick.hit.x, transform.translation.z - pick.hit.z);
+    let offset = Vec2::new(
+        transform.translation.x - pick.hit.x,
+        transform.translation.z - pick.hit.z,
+    );
     Some(offset)
 }
 

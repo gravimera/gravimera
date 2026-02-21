@@ -9,14 +9,25 @@ use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::object::types::effects as effect_types;
 use crate::object::visuals;
+use crate::selection_circle::{self, CursorPickPreference};
 use crate::types::*;
 
 const SELECTION_DRAG_MIN_PX: f32 = 8.0;
-const SELECTION_CLICK_RADIUS_PX: f32 = 26.0;
 const SELECTION_RING_Y_OFFSET: f32 = 0.06;
-const SELECTION_RING_RADIUS_MULT: f32 = 1.10;
 const SELECTION_RING_SEGMENTS: usize = 32;
 const MOVE_ENEMY_CLICK_RADIUS_PX: f32 = 30.0;
+
+const HOVER_RING_BORDER_PX: f32 = 2.0;
+const HOVER_RING_Z_INDEX: i32 = 960;
+
+#[derive(Resource, Default, Debug)]
+pub(crate) struct HoverSelectionState {
+    pub(crate) hovered: Option<Entity>,
+    pub(crate) started_at_secs: f32,
+}
+
+#[derive(Component)]
+pub(crate) struct HoverSelectionCircleUi;
 
 fn wrap_angle(angle: f32) -> f32 {
     (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
@@ -169,7 +180,16 @@ pub(crate) fn selection_input(
         (Entity, &Transform, Option<&Collider>, &ObjectPrefabId),
         With<Commandable>,
     >,
-    build_objects: Query<(Entity, &Transform), With<BuildObject>>,
+    build_objects: Query<
+        (
+            Entity,
+            &Transform,
+            &AabbCollider,
+            &BuildDimensions,
+            &ObjectPrefabId,
+        ),
+        With<BuildObject>,
+    >,
 ) {
     // While holding Space (fire), selection is disabled to avoid fighting the aim cursor.
     if keys.pressed(KeyCode::Space) {
@@ -241,80 +261,26 @@ pub(crate) fn selection_input(
     let max = Vec2::new(start.x.max(end.x), start.y.max(end.y));
     let drag = (max - min).length();
 
-    let mut candidates: Vec<(Entity, Vec3, bool)> = Vec::new();
-    for (entity, transform, _collider, prefab_id) in &commandables {
-        let height = library
-            .size(prefab_id.0)
-            .map(|s| s.y)
-            .unwrap_or(HERO_HEIGHT_WORLD);
-        candidates.push((
-            entity,
-            transform.translation + Vec3::Y * (height * 0.5),
-            true,
-        ));
-    }
-    if matches!(mode.get(), GameMode::Build) {
-        for (entity, transform) in &build_objects {
-            candidates.push((entity, transform.translation, false));
-        }
-    }
+    let include_builds = true;
 
     if drag < SELECTION_DRAG_MIN_PX {
-        let mut best_unit: Option<(Entity, f32)> = None;
-        let mut best_other: Option<(Entity, f32)> = None;
-        let camera_right = camera_transform.rotation * Vec3::X;
-
-        for (entity, world_pos, is_unit) in candidates {
-            let Some(screen) = world_to_screen(camera, &camera_global, world_pos) else {
-                continue;
-            };
-            let d = screen.distance(cursor);
-
-            if is_unit {
-                let pixel_radius = commandables
-                    .get(entity)
-                    .ok()
-                    .and_then(|(_e, transform, collider, _prefab_id)| {
-                        collider.map(|c| (transform, c))
-                    })
-                    .and_then(|(transform, collider)| {
-                        let scale = transform
-                            .scale
-                            .x
-                            .abs()
-                            .max(transform.scale.z.abs())
-                            .max(1e-3);
-                        let world_r = (collider.radius * scale).max(0.0);
-                        if world_r <= 1e-6 {
-                            return None;
-                        }
-                        let edge_world = world_pos + camera_right * world_r;
-                        let edge_screen = world_to_screen(camera, &camera_global, edge_world)?;
-                        Some(screen.distance(edge_screen).max(1.0))
-                    })
-                    .unwrap_or(SELECTION_CLICK_RADIUS_PX);
-
-                if d > pixel_radius {
-                    continue;
-                }
-                if best_unit.map(|(_, best_d)| d < best_d).unwrap_or(true) {
-                    best_unit = Some((entity, d));
-                }
+        let picked = selection_circle::pick_under_cursor(
+            cursor,
+            camera,
+            &camera_global,
+            &library,
+            &commandables,
+            &build_objects,
+            include_builds,
+            CursorPickPreference::default(),
+        );
+        if let Some(picked) = picked {
+            if picked.is_unit {
+                selection.selected.clear();
+                selection.selected.insert(picked.entity);
             } else {
-                if d > SELECTION_CLICK_RADIUS_PX {
-                    continue;
-                }
-                if best_other.map(|(_, best_d)| d < best_d).unwrap_or(true) {
-                    best_other = Some((entity, d));
-                }
+                selection.selected.insert(picked.entity);
             }
-        }
-
-        if let Some((entity, _)) = best_unit {
-            selection.selected.clear();
-            selection.selected.insert(entity);
-        } else if let Some((entity, _)) = best_other {
-            selection.selected.insert(entity);
         } else {
             selection.selected.clear();
         }
@@ -322,18 +288,23 @@ pub(crate) fn selection_input(
         return;
     }
 
+    let picked = selection_circle::collect_in_rect(
+        min,
+        max,
+        camera,
+        &camera_global,
+        &library,
+        &commandables,
+        &build_objects,
+        include_builds,
+    );
     let mut units: HashSet<Entity> = HashSet::new();
     let mut non_units: Vec<Entity> = Vec::new();
-    for (entity, world_pos, is_unit) in candidates {
-        let Some(screen) = world_to_screen(camera, &camera_global, world_pos) else {
-            continue;
-        };
-        if screen.x >= min.x && screen.x <= max.x && screen.y >= min.y && screen.y <= max.y {
-            if is_unit {
-                units.insert(entity);
-            } else {
-                non_units.push(entity);
-            }
+    for picked in picked {
+        if picked.is_unit {
+            units.insert(picked.entity);
+        } else {
+            non_units.push(picked.entity);
         }
     }
 
@@ -383,6 +354,161 @@ pub(crate) fn update_selection_box_ui(
     *visibility = Visibility::Inherited;
 }
 
+pub(crate) fn update_hover_selection_circle_ui(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut hover: ResMut<HoverSelectionState>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mode: Res<State<GameMode>>,
+    build: Res<BuildState>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    world_drag: Res<crate::world_drag::WorldDragState>,
+    copy: Res<crate::object_forms::FormCopyState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
+    library: Res<ObjectLibrary>,
+    commandables: Query<
+        (Entity, &Transform, Option<&Collider>, &ObjectPrefabId),
+        With<Commandable>,
+    >,
+    build_objects: Query<
+        (
+            Entity,
+            &Transform,
+            &AabbCollider,
+            &BuildDimensions,
+            &ObjectPrefabId,
+        ),
+        With<BuildObject>,
+    >,
+    mut rings: Query<
+        (
+            Entity,
+            &mut Node,
+            &mut Visibility,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<HoverSelectionCircleUi>,
+    >,
+) {
+    let hide = |hover: &mut ResMut<HoverSelectionState>,
+                rings: &mut Query<
+        (
+            Entity,
+            &mut Node,
+            &mut Visibility,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<HoverSelectionCircleUi>,
+    >| {
+        hover.hovered = None;
+        for (_entity, _node, mut visibility, ..) in rings.iter_mut() {
+            *visibility = Visibility::Hidden;
+        }
+    };
+
+    if copy.active {
+        hide(&mut hover, &mut rings);
+        return;
+    }
+
+    // Keep hover selection aligned with "selection enabled" rules.
+    if keys.pressed(KeyCode::Space) || keys.pressed(KeyCode::KeyC) {
+        hide(&mut hover, &mut rings);
+        return;
+    }
+    if model_library.is_drag_active() || world_drag.blocks_selection() {
+        hide(&mut hover, &mut rings);
+        return;
+    }
+    if matches!(mode.get(), GameMode::Build) && build.placing_active {
+        hide(&mut hover, &mut rings);
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        hide(&mut hover, &mut rings);
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        hide(&mut hover, &mut rings);
+        return;
+    };
+    let Ok((camera, camera_transform)) = camera_q.single() else {
+        hide(&mut hover, &mut rings);
+        return;
+    };
+    let camera_global = GlobalTransform::from(*camera_transform);
+
+    let picked = selection_circle::pick_under_cursor(
+        cursor,
+        camera,
+        &camera_global,
+        &library,
+        &commandables,
+        &build_objects,
+        true,
+        CursorPickPreference::default(),
+    );
+    let picked_entity = picked.map(|p| p.entity);
+    if picked_entity != hover.hovered {
+        hover.hovered = picked_entity;
+        hover.started_at_secs = time.elapsed_secs();
+    }
+
+    let Some(picked) = picked else {
+        for (_entity, _node, mut visibility, ..) in rings.iter_mut() {
+            *visibility = Visibility::Hidden;
+        }
+        return;
+    };
+
+    let (wave, alpha) = selection_circle::pulse_wave_alpha(&time, hover.started_at_secs);
+    let radius = selection_circle::pulse_radius(picked.pixel_radius, wave);
+
+    let left = picked.screen_center.x - radius;
+    let top = picked.screen_center.y - radius;
+    let diameter = radius * 2.0;
+
+    let (r, g, b) = (0.25, 0.95, 0.45);
+
+    let mut updated_any = false;
+    for (_entity, mut node, mut visibility, mut bg, mut border) in rings.iter_mut() {
+        updated_any = true;
+        node.left = Val::Px(left);
+        node.top = Val::Px(top);
+        node.width = Val::Px(diameter);
+        node.height = Val::Px(diameter);
+        node.border_radius = BorderRadius::all(Val::Px(radius));
+        *visibility = Visibility::Inherited;
+
+        bg.0 = Color::srgba(r, g, b, alpha * 0.06);
+        *border = BorderColor::all(Color::srgba(r, g, b, alpha));
+    }
+
+    if !updated_any {
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(left),
+                top: Val::Px(top),
+                width: Val::Px(diameter),
+                height: Val::Px(diameter),
+                border: UiRect::all(Val::Px(HOVER_RING_BORDER_PX)),
+                border_radius: BorderRadius::all(Val::Px(radius)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(r, g, b, alpha * 0.06)),
+            BorderColor::all(Color::srgba(r, g, b, alpha)),
+            ZIndex(HOVER_RING_Z_INDEX),
+            Visibility::Inherited,
+            HoverSelectionCircleUi,
+        ));
+    }
+}
+
 fn draw_circle_xz(gizmos: &mut Gizmos, center: Vec3, radius: f32, color: Color) {
     let radius = radius.max(0.01);
     let steps = SELECTION_RING_SEGMENTS.max(8);
@@ -411,6 +537,7 @@ pub(crate) fn draw_selected_player_gizmos(
         ),
         With<Commandable>,
     >,
+    builds: Query<(Entity, &Transform, &AabbCollider, &ObjectPrefabId), With<BuildObject>>,
 ) {
     for (entity, transform, collider, prefab_id, player) in &commandables {
         if !selection.selected.contains(&entity) {
@@ -433,6 +560,33 @@ pub(crate) fn draw_selected_player_gizmos(
             &mut gizmos,
             center,
             collider.radius * SELECTION_RING_RADIUS_MULT,
+            Color::srgb(0.25, 0.95, 0.45),
+        );
+    }
+
+    for (entity, transform, collider, prefab_id) in &builds {
+        if !selection.selected.contains(&entity) {
+            continue;
+        }
+
+        let scale_y = safe_abs_scale_y(transform.scale);
+        let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+        let ground_y = (transform.translation.y - origin_y).max(0.0);
+        let center = Vec3::new(
+            transform.translation.x,
+            ground_y + SELECTION_RING_Y_OFFSET,
+            transform.translation.z,
+        );
+        let radius = collider
+            .half_extents
+            .x
+            .abs()
+            .max(collider.half_extents.y.abs())
+            .max(0.01);
+        draw_circle_xz(
+            &mut gizmos,
+            center,
+            radius * SELECTION_RING_RADIUS_MULT,
             Color::srgb(0.25, 0.95, 0.45),
         );
     }

@@ -28,8 +28,14 @@ Notes:
 
 - Units and buildings cannot transform between each other.
 - Multi-form objects show a circular `i/n` badge above them.
-- Selected units render a ground selection ring sized to `1.1x` their collision radius.
-- Units have no extra spacing padding beyond their collision radii.
+- All selectable objects (units + buildings) have a selection circle.
+  - Units: based on their collision radius.
+  - Buildings: based on their footprint radius (max X/Z half-extent).
+- Cursor targeting uses selection circles:
+  - Hovering an object (cursor enters its selection circle) shows an animated selection circle (same pulse style as form copy).
+  - If multiple circles overlap, the most “relevant” object is chosen (deepest inside the circle, then closest to center).
+  - Box select selects all objects whose selection circles intersect the box.
+- Selected objects render a ground selection ring sized to `1.1x` their selection radius.
 
 Selection is disabled while:
 

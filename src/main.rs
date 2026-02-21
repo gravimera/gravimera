@@ -40,6 +40,7 @@ mod scene_sources_patch;
 mod scene_sources_runtime;
 mod scene_store;
 mod scene_validation;
+mod selection_circle;
 mod setup;
 mod types;
 mod ui;
