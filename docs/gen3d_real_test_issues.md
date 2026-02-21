@@ -40,3 +40,10 @@ Note: Some prompts (e.g. “A horse”) may still exhaust the Gen3D time budget 
 - Mirrored component copies could render with incorrect shading / culling (e.g. one side of wheels appears like a dark disc).
   - Cause: mirror alignment is represented by a negative determinant transform (negative scale). This flips triangle winding, which interacts with default back-face culling.
   - Fix: when spawning visuals, detect mirrored transforms (negative scale determinant) and swap to a cached mesh variant with inverted winding for primitive meshes (`src/object/visuals.rs`).
+
+## 2026-02-21
+
+- Staggered-limb move animations could still step in-phase even when `time_offset_units` is non-zero.
+  - Cause: AI-authored loop keyframes repeated with a period equal to the configured `time_offset_units`, making the offset a no-op (e.g. `A,B,A,B,A`).
+  - Repro: cache run `~/.gravimera/cache/gen3d/214755a0-e96e-499a-8e55-7710ec9ebd17`.
+  - Fix: add a motion validation error (`time_offset_no_effect`) so the repair loop (`llm_review_delta_v1`) adjusts keyframes/offset instead of accepting the broken gait.

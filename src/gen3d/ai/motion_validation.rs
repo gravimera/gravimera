@@ -111,6 +111,7 @@ pub(super) fn build_motion_validation_report(
     let mut issues: Vec<MotionIssue> = Vec::new();
 
     validate_chain_anchor_axes(components, &mut issues);
+    validate_time_offset_effectiveness(components, &mut issues);
     validate_joints(&samples_t_m, &samples_phase_01, components, &mut issues);
     validate_contacts(
         &samples_t_m,
@@ -321,6 +322,245 @@ fn infer_cycle_m(
     }
 
     (DEFAULT_CYCLE_M, "default")
+}
+
+fn validate_time_offset_effectiveness(
+    components: &[Gen3dPlannedComponent],
+    issues: &mut Vec<MotionIssue>,
+) {
+    const OFFSET_EPS: f32 = 1e-4;
+    const MIN_OFFSET_FRACTION: f32 = 0.10;
+    const MIN_OFFSET_ABS_UNITS: f32 = 0.01;
+
+    const MIN_MOTION_ROT_DEG: f32 = 5.0;
+    const MIN_MOTION_TRANSL_M: f32 = 0.005;
+    const MIN_MOTION_SCALE: f32 = 0.005;
+
+    const MAX_NO_EFFECT_ROT_DEG: f32 = 1.0;
+    const MAX_NO_EFFECT_TRANSL_M: f32 = 0.002;
+    const MAX_NO_EFFECT_SCALE: f32 = 0.002;
+
+    fn safe_transform(t: Transform) -> Transform {
+        let translation = if t.translation.is_finite() {
+            t.translation
+        } else {
+            Vec3::ZERO
+        };
+        let rotation = if t.rotation.is_finite() {
+            t.rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        let scale = if t.scale.is_finite() {
+            t.scale
+        } else {
+            Vec3::ONE
+        };
+        Transform {
+            translation,
+            rotation,
+            scale,
+        }
+    }
+
+    fn rotation_diff_deg(a: Quat, b: Quat) -> f32 {
+        let a = if a.is_finite() {
+            a.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        let b = if b.is_finite() {
+            b.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        quat_angle_deg((a.inverse() * b).normalize()).abs()
+    }
+
+    fn build_sample_times(
+        duration: f32,
+        keyframes: &[crate::object::registry::PartAnimationKeyframeDef],
+    ) -> Vec<f32> {
+        if !duration.is_finite() || duration <= 0.0 {
+            return Vec::new();
+        }
+        let mut times: Vec<f32> = Vec::new();
+        for i in 0..SAMPLE_COUNT {
+            times.push((i as f32 / SAMPLE_COUNT as f32) * duration);
+        }
+
+        let mut key_times: Vec<f32> = keyframes
+            .iter()
+            .filter_map(|k| {
+                k.time_secs
+                    .is_finite()
+                    .then_some(k.time_secs.rem_euclid(duration))
+            })
+            .collect();
+        key_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        key_times.dedup_by(|a, b| (*a - *b).abs() <= 1e-4);
+
+        times.extend(key_times.iter().copied());
+        for (idx, t0) in key_times.iter().copied().enumerate() {
+            let t1 = if idx + 1 < key_times.len() {
+                key_times[idx + 1]
+            } else {
+                key_times[0] + duration
+            };
+            times.push(((t0 + t1) * 0.5).rem_euclid(duration));
+        }
+
+        times.retain(|t| t.is_finite());
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        times.dedup_by(|a, b| (*a - *b).abs() <= 1e-4);
+        times
+    }
+
+    for comp in components.iter() {
+        let Some(att) = comp.attach_to.as_ref() else {
+            continue;
+        };
+        if att.animations.is_empty() {
+            continue;
+        }
+
+        let component_name = comp.name.clone();
+        let component_id = component_id_uuid_for_name(&component_name);
+
+        for slot in att.animations.iter() {
+            let channel = slot.channel.as_ref().trim();
+            if channel.is_empty() {
+                continue;
+            }
+
+            let time_offset = slot.spec.time_offset_units;
+            if !time_offset.is_finite() || time_offset.abs() <= OFFSET_EPS {
+                continue;
+            }
+
+            let PartAnimationDef::Loop {
+                duration_secs,
+                keyframes,
+            } = &slot.spec.clip
+            else {
+                continue;
+            };
+
+            if !duration_secs.is_finite() || *duration_secs <= 0.0 {
+                continue;
+            }
+            let duration = duration_secs.max(1e-6);
+            let offset_mod = time_offset.rem_euclid(duration);
+            let offset_dist = offset_mod.min(duration - offset_mod);
+            let min_offset = (duration * MIN_OFFSET_FRACTION).max(MIN_OFFSET_ABS_UNITS);
+            if !offset_dist.is_finite() || offset_dist < min_offset {
+                continue;
+            }
+
+            let sample_times = build_sample_times(duration, keyframes);
+            if sample_times.is_empty() {
+                continue;
+            }
+
+            let base = safe_transform(sample_part_animation(&slot.spec.clip, 0.0));
+            let mut max_motion_rot_deg: f32 = 0.0;
+            let mut max_motion_trans_m: f32 = 0.0;
+            let mut max_motion_scale: f32 = 0.0;
+
+            let mut max_effect_rot_deg: f32 = 0.0;
+            let mut max_effect_trans_m: f32 = 0.0;
+            let mut max_effect_scale: f32 = 0.0;
+
+            for &t in &sample_times {
+                let a = safe_transform(sample_part_animation(&slot.spec.clip, t));
+                let b = safe_transform(sample_part_animation(&slot.spec.clip, t + offset_mod));
+
+                let motion_rot = rotation_diff_deg(base.rotation, a.rotation);
+                let motion_trans = (base.translation - a.translation).length();
+                let motion_scale = (base.scale - a.scale).length();
+
+                if motion_rot.is_finite() && motion_rot > max_motion_rot_deg {
+                    max_motion_rot_deg = motion_rot;
+                }
+                if motion_trans.is_finite() && motion_trans > max_motion_trans_m {
+                    max_motion_trans_m = motion_trans;
+                }
+                if motion_scale.is_finite() && motion_scale > max_motion_scale {
+                    max_motion_scale = motion_scale;
+                }
+
+                let effect_rot = rotation_diff_deg(a.rotation, b.rotation);
+                let effect_trans = (a.translation - b.translation).length();
+                let effect_scale = (a.scale - b.scale).length();
+
+                if effect_rot.is_finite() && effect_rot > max_effect_rot_deg {
+                    max_effect_rot_deg = effect_rot;
+                }
+                if effect_trans.is_finite() && effect_trans > max_effect_trans_m {
+                    max_effect_trans_m = effect_trans;
+                }
+                if effect_scale.is_finite() && effect_scale > max_effect_scale {
+                    max_effect_scale = effect_scale;
+                }
+            }
+
+            // Skip near-static clips to avoid spamming repairs when time_offset is irrelevant.
+            if max_motion_rot_deg < MIN_MOTION_ROT_DEG
+                && max_motion_trans_m < MIN_MOTION_TRANSL_M
+                && max_motion_scale < MIN_MOTION_SCALE
+            {
+                continue;
+            }
+
+            if max_effect_rot_deg < MAX_NO_EFFECT_ROT_DEG
+                && max_effect_trans_m < MAX_NO_EFFECT_TRANSL_M
+                && max_effect_scale < MAX_NO_EFFECT_SCALE
+            {
+                let score = max_motion_rot_deg
+                    .max(max_motion_trans_m * 100.0)
+                    .max(max_motion_scale * 100.0);
+                issues.push(MotionIssue {
+                    severity: MotionSeverity::Error,
+                    kind: "time_offset_no_effect",
+                    component_id: component_id.clone(),
+                    component_name: component_name.clone(),
+                    channel: channel.to_string(),
+                    message: "Animation time_offset_units has no effect: shifting the loop by the configured offset produces (nearly) identical deltas. This can cause duplicated/in-phase limbs even when an offset is set."
+                        .into(),
+                    evidence: serde_json::json!({
+                        "clip_kind": "loop",
+                        "duration_units": duration,
+                        "time_offset_units": time_offset,
+                        "time_offset_mod_units": offset_mod,
+                        "offset_distance_units": offset_dist,
+                        "offset_fraction_of_duration": offset_dist / duration,
+                        "sample_count": sample_times.len(),
+                        "max_motion": {
+                            "rot_degrees": max_motion_rot_deg,
+                            "translation_m": max_motion_trans_m,
+                            "scale": max_motion_scale,
+                        },
+                        "max_effect": {
+                            "rot_degrees": max_effect_rot_deg,
+                            "translation_m": max_effect_trans_m,
+                            "scale": max_effect_scale,
+                        },
+                        "tolerances": {
+                            "min_offset_fraction_of_duration": MIN_OFFSET_FRACTION,
+                            "min_offset_abs_units": MIN_OFFSET_ABS_UNITS,
+                            "min_motion_rot_degrees": MIN_MOTION_ROT_DEG,
+                            "min_motion_translation_m": MIN_MOTION_TRANSL_M,
+                            "min_motion_scale": MIN_MOTION_SCALE,
+                            "max_no_effect_rot_degrees": MAX_NO_EFFECT_ROT_DEG,
+                            "max_no_effect_translation_m": MAX_NO_EFFECT_TRANSL_M,
+                            "max_no_effect_scale": MAX_NO_EFFECT_SCALE,
+                        },
+                    }),
+                    score,
+                });
+            }
+        }
+    }
 }
 
 fn component_id_uuid_for_name(name: &str) -> String {
@@ -1752,6 +1992,204 @@ mod tests {
             contacts: Vec::new(),
             attach_to: None,
         }
+    }
+
+    #[test]
+    fn time_offset_no_effect_reports_error_for_repeating_loop() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        // Loop repeats every 0.7 units (A,B,A,B,A), so time_offset_units=0.7 is a no-op.
+        let move_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::MovePhase,
+            speed_scale: 1.0,
+            time_offset_units: 0.7,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.4,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.35,
+                        delta: Transform {
+                            rotation: Quat::from_rotation_x(0.6),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.7,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.05,
+                        delta: Transform {
+                            rotation: Quat::from_rotation_x(0.6),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.4,
+                        delta: Transform::IDENTITY,
+                    },
+                ],
+            },
+        };
+
+        let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
+            }],
+        });
+
+        let components = vec![root, limb];
+        let report = build_motion_validation_report(Some(1.0), &components);
+        let ok = report
+            .motion_validation
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        assert!(!ok, "expected motion validation to fail");
+
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("time_offset_no_effect")
+                    && i.get("channel").and_then(|v| v.as_str()) == Some("move")
+            }),
+            "expected time_offset_no_effect issue on move channel, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn time_offset_no_effect_is_not_reported_when_offset_changes_pose() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        let move_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::MovePhase,
+            speed_scale: 1.0,
+            time_offset_units: 0.7,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.4,
+                keyframes: vec![
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.35,
+                        delta: Transform {
+                            rotation: Quat::from_rotation_x(0.6),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 0.7,
+                        delta: Transform {
+                            rotation: Quat::from_rotation_x(-0.4),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.05,
+                        delta: Transform {
+                            rotation: Quat::from_rotation_x(0.2),
+                            ..default()
+                        },
+                    },
+                    PartAnimationKeyframeDef {
+                        time_secs: 1.4,
+                        delta: Transform::IDENTITY,
+                    },
+                ],
+            },
+        };
+
+        let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
+            }],
+        });
+
+        let components = vec![root, limb];
+        let report = build_motion_validation_report(Some(1.0), &components);
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("time_offset_no_effect")
+            }),
+            "expected no time_offset_no_effect issues, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn time_offset_no_effect_is_not_reported_for_static_loop() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        let move_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::MovePhase,
+            speed_scale: 1.0,
+            time_offset_units: 0.7,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.4,
+                keyframes: vec![PartAnimationKeyframeDef {
+                    time_secs: 0.0,
+                    delta: Transform::IDENTITY,
+                }],
+            },
+        };
+
+        let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
+            }],
+        });
+
+        let components = vec![root, limb];
+        let report = build_motion_validation_report(Some(1.0), &components);
+        let issues = report
+            .motion_validation
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !issues.iter().any(|i| {
+                i.get("kind").and_then(|v| v.as_str()) == Some("time_offset_no_effect")
+            }),
+            "expected no time_offset_no_effect issues for static loop, got {issues:?}"
+        );
     }
 
     #[test]

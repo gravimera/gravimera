@@ -748,6 +748,7 @@ Review mode:\n",
         If `scene_graph_summary` shows `joint=fixed` for an attachment edge, the engine clamps any attachment rotation deltas to identity and ignores spin clips.\n\
         If you need visible motion, animate a non-fixed joint in the chain (hinge/ball/free), or change the joint kind/limits via `tweak_attachment`.\n\
       - `tweak_animation.spec.time_offset_units` is an additive offset in the clip's time domain. Use it to phase-stagger repeated limbs (instead of duplicating or rewriting keyframes).\n\
+      - If motion validation reports `time_offset_no_effect`, the configured `time_offset_units` does not change the sampled pose (the loop is effectively periodic at that offset). Fix by changing the keyframes and/or `time_offset_units` so that `delta(t)` differs from `delta(t + time_offset_units)`.\n\
       - If an animation channel is undesirable or too broken to repair, you may disable ANY channel\n\
         by replacing it with an identity loop (a `loop` whose keyframes' `delta` transforms are all identity).\n\
         IMPORTANT: include at least 1 keyframe (example: one keyframe at time_secs=0 with no delta / identity delta).\n\n\
