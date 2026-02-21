@@ -2452,12 +2452,6 @@ pub(super) fn ai_to_component_def(
         &mut anchors,
     );
     override_required_anchor_rotations_from_plan(component_name, &component.anchors, &mut anchors);
-    maybe_align_axially_symmetric_spinner_to_spin_axis(
-        component_name,
-        component,
-        &anchors,
-        &mut parts,
-    );
 
     let size = size_from_primitive_parts(&parts);
     let collider = collider_profile_from_ai(ai.collider.clone(), size)?;
@@ -2546,95 +2540,6 @@ fn cube_rotations_right_handed() -> Vec<Quat> {
         }
     }
     out
-}
-
-fn maybe_align_axially_symmetric_spinner_to_spin_axis(
-    component_name: &str,
-    component: &Gen3dPlannedComponent,
-    anchors: &[crate::object::registry::AnchorDef],
-    parts: &mut [ObjectPartDef],
-) {
-    const ORIGIN_EPS: f32 = 0.01;
-
-    let Some(att) = component.attach_to.as_ref() else {
-        return;
-    };
-
-    let Some(spin_axis_join) = att
-        .animations
-        .iter()
-        .find_map(|slot| match &slot.spec.clip {
-            crate::object::registry::PartAnimationDef::Spin { axis, .. } => Some(*axis),
-            _ => None,
-        })
-    else {
-        return;
-    };
-
-    // Only adjust geometry relative to anchors when this component has a single attachment anchor
-    // at the origin; otherwise we'd risk breaking other joints (child anchors) that depend on the
-    // component-local frame.
-    if anchors.len() != 1 {
-        return;
-    }
-    if att.child_anchor != "origin" && anchors[0].name.as_ref() != att.child_anchor {
-        return;
-    }
-    if anchors[0].transform.translation.length_squared() > ORIGIN_EPS * ORIGIN_EPS {
-        return;
-    }
-
-    let child_anchor_rot = if att.child_anchor == "origin" {
-        Quat::IDENTITY
-    } else {
-        anchors[0].transform.rotation
-    };
-    let desired_axis_component = (child_anchor_rot * spin_axis_join).normalize_or_zero();
-    if desired_axis_component.length_squared() <= 1e-6 {
-        return;
-    }
-
-    // If the component is axially symmetric in its local AABB (two axes have equal extents),
-    // we can safely align that symmetry axis with the spin axis. This avoids type/name-based
-    // heuristics and prevents "rotated 90 degrees" spinners that would otherwise tumble.
-    let size = size_from_primitive_parts(parts);
-    let sx = size.x.abs();
-    let sy = size.y.abs();
-    let sz = size.z.abs();
-
-    fn approx_eq(a: f32, b: f32) -> bool {
-        let diff = (a - b).abs();
-        let scale = a.abs().max(b.abs()).max(1.0);
-        diff <= 1e-4 * scale
-    }
-
-    let symmetry_axis = if approx_eq(sx, sy) && !approx_eq(sx, sz) {
-        Vec3::Z
-    } else if approx_eq(sx, sz) && !approx_eq(sx, sy) {
-        Vec3::Y
-    } else if approx_eq(sy, sz) && !approx_eq(sy, sx) {
-        Vec3::X
-    } else {
-        return;
-    };
-    if symmetry_axis.dot(desired_axis_component).abs() > 0.999 {
-        return;
-    }
-
-    let rot = Quat::from_rotation_arc(symmetry_axis, desired_axis_component).normalize();
-    if !rot.is_finite() {
-        return;
-    };
-
-    for part in parts.iter_mut() {
-        part.transform.translation = rot * part.transform.translation;
-        part.transform.rotation = (rot * part.transform.rotation).normalize();
-    }
-
-    debug!(
-        "Gen3D: aligned axially symmetric spinner `{}` with its spin axis",
-        component_name
-    );
 }
 
 fn maybe_fix_component_axis_permutation(
@@ -2951,16 +2856,16 @@ mod tests {
                 forward: Some([0.0, 0.0, 1.0]),
                 up: Some([0.0, 1.0, 0.0]),
             }],
-                parts: vec![AiPartJson {
-                    primitive: AiPrimitiveJson::Cuboid,
-                    params: None,
-                    color: Some([0.2, 0.3, 0.4, 1.0]),
-                    render_priority: None,
-                    pos: [1.0, 0.0, 0.0],
-                    forward: None,
-                    up: None,
-                    scale: [1.0, 1.0, 1.0],
-                }],
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cuboid,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 1.0]),
+                render_priority: None,
+                pos: [1.0, 0.0, 0.0],
+                forward: None,
+                up: None,
+                scale: [1.0, 1.0, 1.0],
+            }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");
@@ -3009,16 +2914,16 @@ mod tests {
                 forward: Some([0.0, 0.0, 1.0]),
                 up: Some([0.0, 1.0, 0.0]),
             }],
-                parts: vec![AiPartJson {
-                    primitive: AiPrimitiveJson::Cuboid,
-                    params: None,
-                    color: Some([0.2, 0.3, 0.4, 1.0]),
-                    render_priority: None,
-                    pos: [0.0, 0.0, 0.0],
-                    forward: None,
-                    up: None,
-                    scale: [1.0, 0.38, 1.0],
-                }],
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cuboid,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 1.0]),
+                render_priority: None,
+                pos: [0.0, 0.0, 0.0],
+                forward: None,
+                up: None,
+                scale: [1.0, 0.38, 1.0],
+            }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");
@@ -3049,14 +2954,9 @@ mod tests {
     }
 
     #[test]
-    fn aligns_axially_symmetric_spinner_with_spin_axis() {
-        // Regression: an axially symmetric spinner (tail rotor / wheel disc) can be generated with
-        // its symmetry axis not aligned to the attachment's spin axis, making it look rotated 90
-        // degrees (tumbling instead of spinning).
-        //
-        // For a component with a single attachment anchor at the origin and a spin animation, we
-        // rotate PARTS ONLY to align the geometry's symmetry axis with the spin axis while keeping
-        // anchors stable as the joint interface.
+    fn does_not_auto_align_axially_symmetric_spinner_with_spin_axis() {
+        // The engine must not rotate component geometry based on inferred symmetry/spin alignment.
+        // If a spinner tumbles, the AI should regenerate/rotate the primitives explicitly.
         let planned = Gen3dPlannedComponent {
             display_name: "1. tail_rotor".into(),
             name: "tail_rotor".into(),
@@ -3103,22 +3003,22 @@ mod tests {
                 forward: Some([1.0, 0.0, 0.0]),
                 up: Some([0.0, 1.0, 0.0]),
             }],
-                parts: vec![AiPartJson {
-                    primitive: AiPrimitiveJson::Cuboid,
-                    params: None,
-                    color: Some([0.2, 0.3, 0.4, 1.0]),
-                    render_priority: None,
-                    pos: [0.0, 0.0, 0.0],
-                    forward: None,
-                    up: None,
-                    scale: [0.60, 0.60, 0.12],
-                }],
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cuboid,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 1.0]),
+                render_priority: None,
+                pos: [0.0, 0.0, 0.0],
+                forward: None,
+                up: None,
+                scale: [0.60, 0.60, 0.12],
+            }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");
         assert!(
-            def.size.x < def.size.y && def.size.x < def.size.z,
-            "expected component to be thin along +X after correction; size={:?}",
+            def.size.z < def.size.x && def.size.z < def.size.y,
+            "expected component to remain thin along +Z (no auto-alignment); size={:?}",
             def.size
         );
         let anchor = def
@@ -3396,16 +3296,16 @@ mod tests {
                 forward: Some([0.0, -1.0, 0.0]),
                 up: Some([0.0, 0.0, 1.0]),
             }],
-                parts: vec![AiPartJson {
-                    primitive: AiPrimitiveJson::Cuboid,
-                    params: None,
-                    color: Some([0.2, 0.3, 0.4, 1.0]),
-                    render_priority: None,
-                    pos: [0.0, 0.0, 0.0],
-                    forward: None,
-                    up: None,
-                    scale: [1.0, 1.0, 1.0],
-                }],
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cuboid,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 1.0]),
+                render_priority: None,
+                pos: [0.0, 0.0, 0.0],
+                forward: None,
+                up: None,
+                scale: [1.0, 1.0, 1.0],
+            }],
         };
 
         let def = ai_to_component_def(&planned, ai).expect("component def should build");

@@ -15,11 +15,10 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
   - Missing/unknown alignment is now treated as a schema error (plan must be regenerated), rather than silently guessing.
   - Code: `src/gen3d/ai/schema.rs` (adds `reuse_groups[].alignment`), `src/gen3d/ai/structured_outputs.rs` (requires it in the JSON schema), `src/gen3d/ai/reuse_groups.rs` (passes alignment through), `src/gen3d/ai/copy_component.rs` (removes `Gen3dCopyAlignmentMode::Auto` and heuristic scoring/tie-break).
 
-- [ ] **Spinner auto-alignment to spin axis**
-  - Problem: The engine may rotate a component’s geometry if it looks “axially symmetric” so it lines up with a `Spin` axis.
-  - Impact: Geometry changes that were not requested; blocks intentionally off-axis spinning/tumbling; heuristic shape test.
-  - Code: `src/gen3d/ai/convert.rs` `maybe_align_axially_symmetric_spinner_to_spin_axis`.
-  - Direction: Remove, or make it an explicit opt-in (plan/tool flag) rather than auto.
+- [x] **Remove spinner auto-alignment to spin axis**
+  - Fixed (2026-02-21): the engine no longer rotates component geometry based on inferred axial symmetry to “help” spinners.
+  - Result: spinners can intentionally tumble/off-axis spin; if you want clean spinning, the AI must rotate primitives explicitly (the component prompt now includes a spin-axis hint).
+  - Code: `src/gen3d/ai/convert.rs` (removed `maybe_align_axially_symmetric_spinner_to_spin_axis`).
 
 - [ ] **Axis-permutation “fix” based on matching planned size**
   - Problem: If measured AABB size looks like the plan’s size with axes permuted, the engine may apply one of 24 axis-aligned rotations to “match”.

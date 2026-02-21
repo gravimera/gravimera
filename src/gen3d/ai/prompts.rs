@@ -285,6 +285,41 @@ pub(super) fn build_gen3d_component_user_text(
             up.y,
             up.z,
         ));
+
+        let child_anchor_rot = if att.child_anchor == "origin" {
+            Some(Quat::IDENTITY)
+        } else {
+            component
+                .anchors
+                .iter()
+                .find(|a| a.name.as_ref() == att.child_anchor)
+                .map(|a| a.transform.rotation)
+        };
+        if let Some(child_anchor_rot) = child_anchor_rot {
+            let mut spin_axes: Vec<(String, Vec3)> = Vec::new();
+            for slot in att.animations.iter() {
+                if let crate::object::registry::PartAnimationDef::Spin { axis, .. } =
+                    &slot.spec.clip
+                {
+                    let axis_component_local = (child_anchor_rot
+                        * (att.offset.rotation.inverse() * *axis))
+                        .normalize_or_zero();
+                    if axis_component_local.length_squared() > 1e-6 {
+                        spin_axes.push((slot.channel.as_ref().to_string(), axis_component_local));
+                    }
+                }
+            }
+            if !spin_axes.is_empty() {
+                out.push_str("- spin_axis_hint (component-local):\n");
+                for (channel, axis) in spin_axes {
+                    out.push_str(&format!(
+                        "  - channel={} axis≈[{:.2},{:.2},{:.2}]\n",
+                        channel, axis.x, axis.y, axis.z
+                    ));
+                }
+                out.push_str("  - Note: the engine will NOT auto-align spinner geometry to the spin axis; rotate your primitives explicitly if you want non-tumbling spin.\n");
+            }
+        }
     } else {
         out.push_str("- attach_to: (none; this is the root component)\n");
     }
