@@ -4,12 +4,15 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::assets::SceneAssets;
-use crate::constants::DEFAULT_OBJECT_SIZE_M;
+use crate::constants::{
+    DEFAULT_OBJECT_SIZE_M, SELECTION_RING_RADIUS_MULT, SELECTION_RING_Y_OFFSET,
+};
 use crate::object::registry::{
     AttachmentDef, MaterialKey, MeshKey, ObjectLibrary, ObjectPartKind, PrimitiveParams,
     PrimitiveVisualDef,
 };
 use crate::object::visuals;
+use crate::rts::draw_circle_xz;
 use crate::selection_circle::{self, CursorPickPreference};
 use crate::types::*;
 
@@ -23,9 +26,7 @@ const FORM_BADGE_FONT_SIZE_PX: f32 = 12.0;
 const FORM_BADGE_Z_INDEX: i32 = 350;
 const FORM_BADGE_SCREEN_OFFSET_PX: Vec2 = Vec2::new(-18.0, -18.0);
 
-const COPY_CURSOR_BASE_RADIUS_PX: f32 = 15.0;
-const COPY_CURSOR_BORDER_PX: f32 = 2.0;
-const COPY_CURSOR_Z_INDEX: i32 = 980;
+const COPY_CURSOR_BASE_RADIUS_WORLD: f32 = DEFAULT_OBJECT_SIZE_M * 0.5 * SELECTION_RING_RADIUS_MULT;
 
 #[derive(Resource, Default, Debug)]
 pub(crate) struct FormCopyState {
@@ -61,8 +62,21 @@ pub(crate) struct FormBadgeUi {
 #[derive(Component)]
 pub(crate) struct FormBadgeText;
 
-#[derive(Component)]
-pub(crate) struct FormCopyCursorUi;
+fn ray_plane_intersection_y(ray: Ray3d, y: f32) -> Option<Vec3> {
+    let origin = ray.origin;
+    let direction = ray.direction;
+    let denom = direction.y;
+    if denom.abs() < 1e-5 {
+        return None;
+    }
+
+    let t = (y - origin.y) / denom;
+    if t < 0.0 {
+        return None;
+    }
+
+    Some(origin + direction * t)
+}
 
 pub(crate) fn ensure_object_forms_component(
     mut commands: Commands,
@@ -268,7 +282,7 @@ fn copy_source_pick_preference(
 }
 
 pub(crate) fn object_forms_copy_mode_update_cursor(
-    mut commands: Commands,
+    mut gizmos: Gizmos,
     time: Res<Time>,
     mut copy: ResMut<FormCopyState>,
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
@@ -289,21 +303,8 @@ pub(crate) fn object_forms_copy_mode_update_cursor(
         (With<BuildObject>, Without<Player>),
     >,
     dest_categories: Query<(Option<&Commandable>, Option<&BuildObject>), Without<Player>>,
-    mut rings: Query<
-        (
-            Entity,
-            &mut Node,
-            &mut Visibility,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
-        With<FormCopyCursorUi>,
-    >,
 ) {
     if !copy.active {
-        for (entity, ..) in rings.iter_mut() {
-            commands.entity(entity).try_despawn();
-        }
         copy.hovered_source = None;
         return;
     }
@@ -313,9 +314,6 @@ pub(crate) fn object_forms_copy_mode_update_cursor(
     };
     let Some(cursor_pos) = window.cursor_position() else {
         copy.hovered_source = None;
-        for (_entity, _node, mut visibility, ..) in rings.iter_mut() {
-            *visibility = Visibility::Hidden;
-        }
         cursor_opts.visible = true;
         return;
     };
@@ -337,21 +335,9 @@ pub(crate) fn object_forms_copy_mode_update_cursor(
     );
     copy.hovered_source = hovered.map(|h| h.entity);
 
-    // Hide the OS cursor while copy mode is active; we render a custom cursor indicator instead.
-    cursor_opts.visible = false;
-
     let (wave, alpha) = selection_circle::pulse_wave_alpha(&time, copy.started_at_secs);
 
-    let (center, base_radius, is_unit) = if let Some(hovered) = hovered {
-        (
-            hovered.screen_center,
-            (hovered.pixel_radius + 10.0).clamp(COPY_CURSOR_BASE_RADIUS_PX, 140.0),
-            Some(hovered.is_unit),
-        )
-    } else {
-        (cursor_pos, COPY_CURSOR_BASE_RADIUS_PX, None)
-    };
-    let radius = selection_circle::pulse_radius(base_radius, wave);
+    let is_unit = hovered.map(|h| h.is_unit);
 
     let mut any_compatible = false;
     if let Some(source_is_unit) = is_unit {
@@ -375,58 +361,30 @@ pub(crate) fn object_forms_copy_mode_update_cursor(
         (1.00, 0.35, 0.35)
     };
 
-    let left = center.x - radius;
-    let top = center.y - radius;
-    let diameter = radius * 2.0;
+    let (world_center, base_radius) = if let Some(hovered) = hovered {
+        (hovered.world_center, hovered.world_radius)
+    } else {
+        let Ok(ray) = camera.viewport_to_world(&camera_global, cursor_pos) else {
+            cursor_opts.visible = true;
+            return;
+        };
+        let Some(hit) = ray_plane_intersection_y(ray, SELECTION_RING_Y_OFFSET) else {
+            cursor_opts.visible = true;
+            return;
+        };
+        (hit, COPY_CURSOR_BASE_RADIUS_WORLD)
+    };
 
-    let mut updated_any = false;
-    for (_entity, mut node, mut visibility, mut bg, mut border) in rings.iter_mut() {
-        updated_any = true;
-        node.left = Val::Px(left);
-        node.top = Val::Px(top);
-        node.width = Val::Px(diameter);
-        node.height = Val::Px(diameter);
-        node.border_radius = BorderRadius::all(Val::Px(radius));
-        *visibility = Visibility::Inherited;
+    // Hide the OS cursor while copy mode is active; we render a ground-parallel cursor indicator instead.
+    cursor_opts.visible = false;
 
-        bg.0 = Color::srgba(border_rgb.0, border_rgb.1, border_rgb.2, alpha * 0.06);
-        *border = BorderColor::all(Color::srgba(
-            border_rgb.0,
-            border_rgb.1,
-            border_rgb.2,
-            alpha,
-        ));
-    }
-
-    if !updated_any {
-        commands.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(left),
-                top: Val::Px(top),
-                width: Val::Px(diameter),
-                height: Val::Px(diameter),
-                border: UiRect::all(Val::Px(COPY_CURSOR_BORDER_PX)),
-                border_radius: BorderRadius::all(Val::Px(radius)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(
-                border_rgb.0,
-                border_rgb.1,
-                border_rgb.2,
-                alpha * 0.06,
-            )),
-            BorderColor::all(Color::srgba(
-                border_rgb.0,
-                border_rgb.1,
-                border_rgb.2,
-                alpha,
-            )),
-            ZIndex(COPY_CURSOR_Z_INDEX),
-            Visibility::Inherited,
-            FormCopyCursorUi,
-        ));
-    }
+    let radius = selection_circle::pulse_radius(base_radius, wave);
+    draw_circle_xz(
+        &mut gizmos,
+        world_center,
+        radius,
+        Color::srgba(border_rgb.0, border_rgb.1, border_rgb.2, alpha),
+    );
 }
 
 pub(crate) fn object_forms_copy_mode_confirm_on_release(

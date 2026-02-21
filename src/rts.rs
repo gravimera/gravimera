@@ -456,7 +456,7 @@ pub(crate) fn draw_hover_selection_circle_gizmos(
     );
 }
 
-fn draw_circle_xz(gizmos: &mut Gizmos, center: Vec3, radius: f32, color: Color) {
+pub(crate) fn draw_circle_xz(gizmos: &mut Gizmos, center: Vec3, radius: f32, color: Color) {
     let radius = radius.max(0.01);
     let steps = SELECTION_RING_SEGMENTS.max(8);
     let mut prev = None;

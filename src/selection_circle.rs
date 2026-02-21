@@ -17,7 +17,6 @@ pub(crate) struct SelectionCirclePick {
     pub(crate) entity: Entity,
     pub(crate) world_center: Vec3,
     pub(crate) world_radius: f32,
-    pub(crate) screen_center: Vec2,
     pub(crate) pixel_radius: f32,
     pub(crate) is_unit: bool,
 }
@@ -272,7 +271,7 @@ where
         if d > world_radius {
             continue;
         }
-        let Some((screen_center, pixel_radius)) =
+        let Some((_screen_center, pixel_radius)) =
             world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
         else {
             continue;
@@ -283,7 +282,6 @@ where
                 entity,
                 world_center,
                 world_radius,
-                screen_center,
                 pixel_radius,
                 is_unit: true,
             },
@@ -305,7 +303,7 @@ where
             if d > world_radius {
                 continue;
             }
-            let Some((screen_center, pixel_radius)) =
+            let Some((_screen_center, pixel_radius)) =
                 world_circle_to_screen_circle(camera, camera_transform, world_center, world_radius)
             else {
                 continue;
@@ -316,7 +314,6 @@ where
                     entity,
                     world_center,
                     world_radius,
-                    screen_center,
                     pixel_radius,
                     is_unit: false,
                 },
@@ -369,7 +366,6 @@ where
             entity,
             world_center,
             world_radius,
-            screen_center,
             pixel_radius,
             is_unit: true,
         });
@@ -391,7 +387,6 @@ where
                 entity,
                 world_center,
                 world_radius,
-                screen_center,
                 pixel_radius,
                 is_unit: false,
             });
