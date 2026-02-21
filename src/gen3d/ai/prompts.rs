@@ -191,6 +191,7 @@ pub(super) fn build_gen3d_component_user_text(
          Do NOT bake any assembly transforms into the component's parts.\n\
          Size contract: `target_size` is an axis-aligned AABB size in THIS component's local axes (+X right, +Y up, +Z forward).\n\
          Your generated primitive parts should produce a component whose local AABB size is close to `target_size` on each axis (do not swap/permutate axes).\n\
+         If the AABB axes appear permuted relative to `target_size`, the engine will reject the draft and request regeneration.\n\
          Attachment frame rule: parent/child anchors describe the SAME join frame but in different component-local coordinates; do NOT force them to have identical numeric vectors.\n\
          Avoid 180° opposition (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation in the PLAN (not by reversing anchors).\n\
          Convention: the component center must be at local [0,0,0].\n\

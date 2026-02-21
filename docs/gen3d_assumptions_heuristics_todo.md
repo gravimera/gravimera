@@ -20,11 +20,10 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
   - Result: spinners can intentionally tumble/off-axis spin; if you want clean spinning, the AI must rotate primitives explicitly (the component prompt now includes a spin-axis hint).
   - Code: `src/gen3d/ai/convert.rs` (removed `maybe_align_axially_symmetric_spinner_to_spin_axis`).
 
-- [ ] **Axis-permutation “fix” based on matching planned size**
-  - Problem: If measured AABB size looks like the plan’s size with axes permuted, the engine may apply one of 24 axis-aligned rotations to “match”.
-  - Impact: Can rotate a correct component into an incorrect one when plan sizes are wrong/ambiguous; heuristic correction.
-  - Code: `src/gen3d/ai/convert.rs` `maybe_fix_component_axis_permutation`.
-  - Direction: Replace with explicit authored orientation constraints (plan fields), or treat mismatch as a validation error and request regeneration.
+- [x] **Remove axis-permutation auto-fix (treat as error → regenerate)**
+  - Fixed (2026-02-21): removed the “try 24 rotations to match planned size” behavior.
+  - Result: if the component’s measured local AABB looks like a permuted version of `target_size`, conversion fails with an explicit error so the AI regenerates with correct local axes (no silent rotation).
+  - Code: `src/gen3d/ai/convert.rs` (axis-permutation detection + hard error).
 
 - [ ] **Runtime heuristic flip of wheel/roller spin direction**
   - Problem: Runtime may flip `move_distance` spin sign when the spin axis points toward `-X` in the parent frame (to make “left wheels” spin forward).

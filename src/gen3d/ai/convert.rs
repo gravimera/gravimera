@@ -2445,15 +2445,10 @@ pub(super) fn ai_to_component_def(
 
     sanitize_component_part_transforms(component_name, &mut parts);
     canonicalize_component_parts(component_name, &mut parts, &mut anchors);
-    maybe_fix_component_axis_permutation(
-        component_name,
-        component.planned_size,
-        &mut parts,
-        &mut anchors,
-    );
     override_required_anchor_rotations_from_plan(component_name, &component.anchors, &mut anchors);
 
     let size = size_from_primitive_parts(&parts);
+    error_if_component_axis_permutation(component_name, component.planned_size, size)?;
     let collider = collider_profile_from_ai(ai.collider.clone(), size)?;
 
     Ok(ObjectDef {
@@ -2484,143 +2479,84 @@ fn size_match_error(actual: Vec3, planned: Vec3) -> f32 {
         + ((actual - planned).abs() / planned).z
 }
 
-fn size_from_primitive_parts_with_extra_rotation(
-    parts: &[ObjectPartDef],
-    extra_rot: Quat,
-) -> Option<Vec3> {
-    use crate::object::registry::ObjectPartKind;
-
-    let mut min = Vec3::splat(f32::INFINITY);
-    let mut max = Vec3::splat(f32::NEG_INFINITY);
-    let mut any = false;
-
-    for part in parts.iter() {
-        let (mesh, params) = match &part.kind {
-            ObjectPartKind::Primitive { primitive } => match primitive {
-                PrimitiveVisualDef::Primitive { mesh, params, .. } => (*mesh, params.as_ref()),
-                PrimitiveVisualDef::Mesh { mesh, .. } => (*mesh, None),
-            },
-            _ => continue,
-        };
-
-        let base = primitive_base_size(mesh, params);
-        let scaled = base * part.transform.scale;
-        let half = scaled.abs() * 0.5;
-        let center = extra_rot * part.transform.translation;
-        let rot = (extra_rot * part.transform.rotation).normalize();
-        if !center.is_finite() || !half.is_finite() || !rot.is_finite() {
-            continue;
-        }
-        let ext = rotated_half_extents(half, rot);
-        min = min.min(center - ext);
-        max = max.max(center + ext);
-        any = true;
-    }
-
-    if !any {
-        return None;
-    }
-    let mut size = (max - min).abs();
-    if !size.is_finite() || size.length_squared() <= 1e-6 {
-        size = Vec3::ONE;
-    }
-    Some(size)
-}
-
-fn cube_rotations_right_handed() -> Vec<Quat> {
-    // Enumerate the 24 right-handed axis-aligned rotations (the cube rotation group).
-    let axes = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z];
-    let mut out = Vec::with_capacity(24);
-    for forward in axes {
-        for up in axes {
-            if forward.dot(up).abs() > 0.5 {
-                continue;
-            }
-            out.push(plan_rotation_from_forward_up(forward, Some(up)));
-        }
-    }
-    out
-}
-
-fn maybe_fix_component_axis_permutation(
+fn error_if_component_axis_permutation(
     component_name: &str,
     planned_size: Vec3,
-    parts: &mut [ObjectPartDef],
-    anchors: &mut [crate::object::registry::AnchorDef],
-) {
+    measured_size: Vec3,
+) -> Result<(), String> {
     // If a component comes back with its AABB dimensions effectively permuted relative to the
-    // plan's `size`, apply a right-handed axis-aligned rotation to realign the component-local
-    // axes. This is a strict plan-conformance correction (not name-based).
+    // plan's `size`, we should NOT silently rotate it. The plan is a contract; the AI must obey
+    // local axes conventions (+X right, +Y up, +Z forward).
+    //
+    // We still detect the "likely-permuted axes" case so we can fail fast and trigger regeneration
+    // with an explicit, actionable error message.
     const MAX_OK_ERROR: f32 = 0.20;
     const MIN_BAD_ERROR: f32 = 0.70;
     const MIN_IMPROVEMENT: f32 = 0.50;
 
-    let Some(current_size) = size_from_primitive_parts_with_extra_rotation(parts, Quat::IDENTITY)
-    else {
-        return;
-    };
     let planned = planned_size.abs().max(Vec3::splat(0.01));
-    let err_current = size_match_error(current_size, planned);
+    let measured = measured_size.abs().max(Vec3::splat(0.01));
+    let err_current = size_match_error(measured, planned);
     if err_current < MIN_BAD_ERROR {
-        return;
+        return Ok(());
     }
 
-    let mut best_rot = Quat::IDENTITY;
-    let mut best_size = current_size;
+    let mut best_perm = "xyz";
+    let mut best_size = measured;
     let mut best_err = err_current;
 
-    for rot in cube_rotations_right_handed() {
-        if rot == Quat::IDENTITY {
+    for (perm, perm_size) in [
+        ("xyz", Vec3::new(measured.x, measured.y, measured.z)),
+        ("xzy", Vec3::new(measured.x, measured.z, measured.y)),
+        ("yxz", Vec3::new(measured.y, measured.x, measured.z)),
+        ("yzx", Vec3::new(measured.y, measured.z, measured.x)),
+        ("zxy", Vec3::new(measured.z, measured.x, measured.y)),
+        ("zyx", Vec3::new(measured.z, measured.y, measured.x)),
+    ] {
+        if perm == "xyz" {
             continue;
         }
-        let Some(sz) = size_from_primitive_parts_with_extra_rotation(parts, rot) else {
-            continue;
-        };
-        let err = size_match_error(sz, planned);
+        let err = size_match_error(perm_size, planned);
         if err < best_err {
             best_err = err;
-            best_rot = rot;
-            best_size = sz;
+            best_perm = perm;
+            best_size = perm_size;
         }
     }
 
-    if best_rot == Quat::IDENTITY {
-        return;
+    if best_perm == "xyz" {
+        return Ok(());
     }
     if best_err > MAX_OK_ERROR {
-        return;
+        return Ok(());
     }
     if err_current - best_err < MIN_IMPROVEMENT {
-        return;
+        return Ok(());
     }
 
-    for part in parts.iter_mut() {
-        let mut t = part.transform;
-        t.translation = best_rot * t.translation;
-        t.rotation = (best_rot * t.rotation).normalize();
-        part.transform = t;
-    }
-    for anchor in anchors.iter_mut() {
-        let mut t = anchor.transform;
-        t.translation = best_rot * t.translation;
-        t.rotation = (best_rot * t.rotation).normalize();
-        anchor.transform = t;
-    }
+    let hint = match best_perm {
+        "xzy" => "swap Y and Z",
+        "yxz" => "swap X and Y",
+        "yzx" => "cycle axes (X<-Y<-Z)",
+        "zxy" => "cycle axes (X<-Z<-Y)",
+        "zyx" => "swap X and Z",
+        _ => "permute axes",
+    };
 
-    debug!(
-        "Gen3D: corrected axis permutation for component {component_name} (planned=[{:.3},{:.3},{:.3}] size_before=[{:.3},{:.3},{:.3}] err_before={:.3} size_after=[{:.3},{:.3},{:.3}] err_after={:.3})",
+    Err(format!(
+        "AI draft for component `{component_name}` appears to have permuted local axes ({hint}). Planned target_size=[{:.3},{:.3},{:.3}] but measured local AABB=[{:.3},{:.3},{:.3}] (err_before={:.3}). A permuted AABB `{best_perm}` would match much better: [{:.3},{:.3},{:.3}] (err_after={:.3}). The engine will not auto-rotate components; regenerate this component with correct local axes (+X right, +Y up, +Z forward) and ensure each part's `scale=[x,y,z]` corresponds to those axes (do not swap axes).",
         planned.x,
         planned.y,
         planned.z,
-        current_size.x,
-        current_size.y,
-        current_size.z,
+        measured.x,
+        measured.y,
+        measured.z,
         err_current,
         best_size.x,
         best_size.y,
         best_size.z,
         best_err,
-    );
+    ))
 }
 
 fn sanitize_component_part_transforms(component_name: &str, parts: &mut [ObjectPartDef]) {
@@ -2884,9 +2820,9 @@ mod tests {
     }
 
     #[test]
-    fn fixes_axis_permutation_against_planned_size() {
-        // Regression: if generated geometry comes back with its AABB axes effectively permuted
-        // relative to the plan's `size`, we correct it via an axis-aligned right-handed rotation.
+    fn rejects_axis_permutation_against_planned_size() {
+        // The engine must not silently rotate geometry to match the plan. If a component comes
+        // back with permuted AABB axes relative to `target_size`, reject it and trigger regen.
         let planned = Gen3dPlannedComponent {
             display_name: "1. permuted_component".into(),
             name: "permuted_component".into(),
@@ -2926,31 +2862,9 @@ mod tests {
             }],
         };
 
-        let def = ai_to_component_def(&planned, ai).expect("component def should build");
-        let err = size_match_error(def.size, planned.planned_size);
-        assert!(
-            err <= 0.20,
-            "expected corrected size to match planned axes; planned={:?} actual={:?} err={}",
-            planned.planned_size,
-            def.size,
-            err
-        );
-        assert!(
-            def.size.x < def.size.y,
-            "expected corrected X to be the smaller axis; size={:?}",
-            def.size
-        );
-        let anchor = def
-            .anchors
-            .iter()
-            .find(|a| a.name.as_ref() == "mount")
-            .expect("anchor");
-        let p = anchor.transform.translation;
-        assert!(
-            p.x.abs() > 0.9 && p.y.abs() < 0.1 && p.z.abs() < 0.1,
-            "expected mount anchor to rotate with the corrected axes; pos={:?}",
-            p
-        );
+        let err = ai_to_component_def(&planned, ai).expect_err("expected axis-permutation error");
+        assert!(err.contains("permuted local axes"));
+        assert!(err.contains("permuted AABB"));
     }
 
     #[test]
