@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AiDraftJsonV1 {
     #[serde(default)]
     pub(crate) version: u32,
@@ -41,6 +42,7 @@ pub(crate) enum AiColliderJson {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AiPartJson {
     pub(crate) primitive: AiPrimitiveJson,
     #[serde(default)]
@@ -79,8 +81,6 @@ pub(crate) enum AiMobilityJson {
 pub(crate) enum AiProjectileObstacleRuleJson {
     BulletsBlockers,
     LaserBlockers,
-    #[serde(other)]
-    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -90,14 +90,6 @@ pub(crate) enum AiProjectileShapeJson {
     Capsule,
     Cuboid,
     Cylinder,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
-pub(crate) enum AiColorInputJson {
-    Rgba([f32; 4]),
-    Rgb([f32; 3]),
-    Text(String),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -117,7 +109,7 @@ pub(crate) struct AiProjectileSpecJson {
     pub(crate) length: Option<f32>,
     #[serde(default)]
     pub(crate) size: Option<[f32; 3]>,
-    pub(crate) color: AiColorInputJson,
+    pub(crate) color: [f32; 4],
     #[serde(default)]
     pub(crate) unlit: bool,
     pub(crate) speed: f32,
@@ -400,16 +392,11 @@ pub(crate) struct AiAttachmentOffsetJson {
     pub(crate) up: Option<[f32; 3]>,
     /// Coordinate frame for `forward`/`up` (and `rot_quat_xyzw` when used as a rotation). When
     /// omitted, the engine assumes the attachment's JOIN FRAME (legacy behavior).
-    #[serde(
-        default,
-        alias = "rotation_frame",
-        alias = "basis_frame",
-        alias = "forward_up_frame"
-    )]
+    #[serde(default)]
     pub(crate) rot_frame: Option<AiRotationFrameJson>,
     // Optional quaternion rotation for convenience. When both basis vectors and a quaternion are
     // provided, the basis vectors take precedence.
-    #[serde(default, alias = "quat_xyzw")]
+    #[serde(default)]
     pub(crate) rot_quat_xyzw: Option<[f32; 4]>,
     #[serde(default)]
     pub(crate) scale: Option<[f32; 3]>,

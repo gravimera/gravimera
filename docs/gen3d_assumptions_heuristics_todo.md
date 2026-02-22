@@ -35,11 +35,10 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
   - Result: motion validation failures are now surfaced as errors and must be repaired (plan/regen/authoring). The engine does not mutate authored motion as a “make it usable” guess.
   - Code: `src/gen3d/ai/agent_loop.rs` (removed fallback policy), `src/gen3d/ai/convert.rs` (removed `disable_attachment_animation_channel_identity_loop` helper).
 
-- [ ] **Heuristic parsing that changes semantic meaning**
-  - Problem: Some fields accept “near miss” strings and are normalized (drivers, attack kind, clip kind, etc.); colors can be guessed from material-ish words.
-  - Impact: The engine can interpret ambiguous text differently than intended; “it worked but wrong”.
-  - Code: `src/gen3d/ai/parse.rs` (driver/clip/attack normalization, key alias rewrites), heuristic colors in `src/gen3d/ai/parse.rs` (material-name → RGBA).
-  - Direction: Restrict to strictly versioned enums in Gen3D outputs; treat unknown values as errors (or surface explicit warnings + structured “normalization applied” artifacts).
+- [x] **Make Gen3D JSON parsing strict (remove semantic-normalization heuristics)**
+  - Fixed (2026-02-22): removed “near miss” normalization for enums/fields (attack kinds, animation drivers/clips, key alias rewrites) and removed named/material color guessing.
+  - Result: Gen3D outputs must follow the exact schema (explicit `version`, canonical enums, explicit `projectile.color` RGBA array). Nonconforming outputs fail fast and are handled via regeneration / schema repair rather than engine-side guessing.
+  - Code: `src/gen3d/ai/parse.rs` (now strict; no normalization), `src/gen3d/ai/schema.rs` (stricter types; fewer aliases), `src/gen3d/ai/structured_outputs.rs` (projectile color requires RGBA), `src/gen3d/ai/convert.rs` (validates projectile color range).
 
 ## 2) Silent defaults / hidden assumptions — make explicit, validate hard, or error early
 

@@ -1021,7 +1021,7 @@ fn mock_generate_text_via_openai(
         }
     } else if artifact_prefix.starts_with("tool_plan_") {
         serde_json::json!({
-            "version": 6,
+            "version": 7,
             "mobility": { "kind": "ground", "max_speed": 6.0 },
             "attack": {
                 "kind": "ranged_projectile",

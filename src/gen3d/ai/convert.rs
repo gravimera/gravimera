@@ -222,14 +222,25 @@ fn gen3d_projectile_obstacle_rule_from_ai(
     match rule.unwrap_or(AiProjectileObstacleRuleJson::BulletsBlockers) {
         AiProjectileObstacleRuleJson::BulletsBlockers => ProjectileObstacleRule::BulletsBlockers,
         AiProjectileObstacleRuleJson::LaserBlockers => ProjectileObstacleRule::LaserBlockers,
-        AiProjectileObstacleRuleJson::Unknown => ProjectileObstacleRule::BulletsBlockers,
     }
 }
 
 fn gen3d_projectile_def_from_ai(spec: &AiProjectileSpecJson) -> Result<ObjectDef, String> {
     let id = gen3d_draft_projectile_object_id();
 
-    let rgba = spec.color.to_rgba().unwrap_or_else(|| [1.0, 0.2, 0.2, 1.0]);
+    let rgba = {
+        let rgba = spec.color;
+        let ok = rgba
+            .iter()
+            .copied()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(&v));
+        if !ok {
+            return Err(format!(
+                "projectile.color must be RGBA floats in the range 0..1, got {rgba:?}"
+            ));
+        }
+        rgba
+    };
     let color = Color::srgba(rgba[0], rgba[1], rgba[2], rgba[3]);
 
     let (part, size, collider_radius) = match spec.shape {
@@ -3210,9 +3221,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_plan_v6_with_partial_attack_without_failing() {
+    fn parses_plan_v7_with_partial_attack_without_failing() {
         let text = r##"{
-          "version": 6,
+          "version": 7,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
           "attack": {
             "kind": "ranged_projectile",
@@ -3364,9 +3375,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_plan_projectile_rgb_color_triplet_and_unknown_obstacle_rule() {
+    fn parses_plan_projectile_rgba_color_and_default_obstacle_rule() {
         let text = r##"{
-          "version": 6,
+          "version": 7,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
           "attack": {
             "kind": "ranged_projectile",
@@ -3375,12 +3386,11 @@ mod tests {
             "projectile": {
               "shape": "sphere",
               "radius": 0.1,
-              "color": [1.0, 0.15, 0.15],
+              "color": [1.0, 0.15, 0.15, 1.0],
               "unlit": true,
               "speed": 10.0,
               "ttl_secs": 1.0,
-              "damage": 3,
-              "obstacle_rule": "destroy_on_hit"
+              "damage": 3
             }
           },
           "components": [
@@ -3417,9 +3427,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_plan_projectile_hex_color_and_cylinder_shape() {
+    fn parses_plan_projectile_rgba_color_and_cylinder_shape() {
         let text = r##"{
-          "version": 6,
+          "version": 7,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
           "attack": {
             "kind": "ranged_projectile",
@@ -3429,7 +3439,7 @@ mod tests {
               "shape": "cylinder",
               "radius": 0.05,
               "length": 1.2,
-              "color": "#ff4040",
+              "color": [1.0, 0.25, 0.25, 1.0],
               "unlit": true,
               "speed": 10.0,
               "ttl_secs": 1.0,
@@ -3486,7 +3496,7 @@ mod tests {
         // The wheel anchor points +Z along -X (local). If the AI writes the axle axis as local +X,
         // we expect it to be converted into the join frame (child anchor frame), i.e. -Z.
         let text = r##"{
-          "version": 6,
+          "version": 7,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
           "components": [
             {

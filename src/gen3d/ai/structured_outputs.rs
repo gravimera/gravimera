@@ -127,11 +127,7 @@ fn schema_mobility() -> serde_json::Value {
 }
 
 fn schema_color_input() -> serde_json::Value {
-    schema_any_of(vec![
-        schema_fixed_num_array(4),
-        schema_fixed_num_array(3),
-        schema_string(),
-    ])
+    schema_fixed_num_array(4)
 }
 
 fn schema_anchor_ref() -> serde_json::Value {

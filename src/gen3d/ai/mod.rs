@@ -4335,33 +4335,6 @@ fn poll_gen3d_motion_capture(
     };
 }
 
-fn normalize_rgba(mut rgba: [f32; 4]) -> [f32; 4] {
-    let max = rgba
-        .iter()
-        .copied()
-        .fold(f32::NEG_INFINITY, |a, b| a.max(b));
-    if max > 1.0 && max <= 255.0 {
-        for v in &mut rgba {
-            *v /= 255.0;
-        }
-    }
-    for v in &mut rgba {
-        *v = v.clamp(0.0, 1.0);
-    }
-    rgba
-}
-
-impl AiColorInputJson {
-    fn to_rgba(&self) -> Option<[f32; 4]> {
-        let rgba = match self {
-            AiColorInputJson::Rgba(rgba) => *rgba,
-            AiColorInputJson::Rgb(rgb) => [rgb[0], rgb[1], rgb[2], 1.0],
-            AiColorInputJson::Text(s) => parse::parse_named_color(s)?,
-        };
-        Some(normalize_rgba(rgba))
-    }
-}
-
 fn compute_gen3d_plan_hash(
     assembly_notes: &str,
     rig_move_cycle_m: Option<f32>,

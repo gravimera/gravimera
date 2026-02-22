@@ -17,10 +17,10 @@ fn gen3d_pipeline_warcar_with_cannon_prompt_smoke() {
 
     let plan_text = r#"
     {
-      "version": 1,
+      "version": 7,
       "mobility": { "kind": "ground", "max_speed": 7.5 },
       "attack": {
-        "kind": "cannon",
+        "kind": "ranged_projectile",
         "cooldown_secs": 0.8,
         "muzzle": { "component": "cannon", "anchor": "muzzle" },
         "projectile": {
@@ -357,10 +357,11 @@ fn gen3d_pipeline_warcar_with_cannon_prompt_smoke() {
             "child_anchor": "mount",
             "offset": {
               "pos": [0.0, 0.0, 0.0],
-              "quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+              "rot_frame": "join",
+              "rot_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
             }
           },
-          "reason": "ensure cannon attachment offset supports quat alias"
+          "reason": "ensure cannon attachment offset supports explicit quaternion rotations"
         },
         {
           "kind": "tweak_animation",
@@ -546,7 +547,7 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
 fn gen3d_sanitizes_fixed_joint_rotation_in_plan_animations() {
     let plan_text = r#"
     {
-      "version": 1,
+      "version": 7,
       "assembly_notes": "test fixed joint animation sanitize",
       "root_component": "head",
       "components": [
@@ -624,7 +625,7 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_plan_animations() {
 fn gen3d_sanitizes_fixed_joint_rotation_in_review_delta_tweak_animation() {
     let plan_text = r#"
     {
-      "version": 1,
+      "version": 7,
       "assembly_notes": "test fixed joint review-delta sanitize",
       "root_component": "head",
       "components": [
@@ -719,7 +720,7 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_review_delta_tweak_animation() {
 fn gen3d_ignores_spin_tweak_animation_on_fixed_joint() {
     let plan_text = r#"
     {
-      "version": 1,
+      "version": 7,
       "assembly_notes": "test fixed joint ignores spin tweak",
       "root_component": "head",
       "components": [
