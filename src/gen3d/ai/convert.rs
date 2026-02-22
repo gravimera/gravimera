@@ -1596,42 +1596,6 @@ fn component_index_from_object_id(
         .position(|c| component_object_id_for_name(&c.name) == object_id)
 }
 
-pub(super) fn disable_attachment_animation_channel_identity_loop(
-    components: &mut [Gen3dPlannedComponent],
-    draft: &mut Gen3dDraft,
-    component_id: &str,
-    channel: &str,
-) -> Result<bool, String> {
-    let Some(object_id) = parse_component_id_u128(component_id) else {
-        return Ok(false);
-    };
-    let Some(idx) = component_index_from_object_id(components, object_id) else {
-        return Ok(false);
-    };
-    let Some(att) = components[idx].attach_to.as_mut() else {
-        return Ok(false);
-    };
-
-    let mut changed = false;
-    for slot in att.animations.iter_mut() {
-        if slot.channel.as_ref() != channel {
-            continue;
-        }
-        slot.spec.clip = PartAnimationDef::Loop {
-            duration_secs: 1.0,
-            keyframes: Vec::new(),
-        };
-        slot.spec.speed_scale = 1.0;
-        changed = true;
-    }
-    if !changed {
-        return Ok(false);
-    }
-
-    sync_attachment_tree_to_defs(components, draft)?;
-    Ok(true)
-}
-
 fn sync_attachment_tree_to_defs(
     components: &[Gen3dPlannedComponent],
     draft: &mut Gen3dDraft,

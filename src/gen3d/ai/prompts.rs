@@ -492,7 +492,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          Spin tip:\n\
          - For attached spinners (wheels/propellers/turrets), the safest convention is:\n\
            - set the spin axis to the attachment direction, i.e. `axis = child_anchor.forward` (in component-local coordinates).\n\
-           This guarantees the part spins around its attachment/joint axis.\n\n\
+           This guarantees the part spins around its attachment/joint axis.\n\
+         - IMPORTANT: The engine will NOT auto-flip spin direction for mirrored wheels/rollers.\n\
+           If a left/right pair spins opposite of what you intended, flip the sign yourself by negating `axis` (or `radians_per_unit`) on one side.\n\n\
          Anchor definition:\n\
          - An anchor is a named coordinate frame inside a component.\n\
          - `pos` is anchor origin in component-local coordinates.\n\

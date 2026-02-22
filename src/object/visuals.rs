@@ -737,65 +737,10 @@ fn to_rgba8(color: Color) -> [u8; 4] {
     ]
 }
 
-fn signed_move_distance_for_spin_axis(
-    library: &ObjectLibrary,
-    player: &PartAnimationPlayer,
-    axis: Vec3,
-    distance_m: f32,
-) -> f32 {
-    const EPS: f32 = 1e-6;
-    // Only flip when the axis is clearly pointing towards -X in the parent's local space.
-    // This fixes common vehicle cases where left wheels (axis ~ -X) otherwise spin backwards
-    // relative to right wheels (axis ~ +X).
-    const FLIP_DOT_THRESHOLD: f32 = -0.5;
-
-    if !distance_m.is_finite() {
-        return distance_m;
-    }
-
-    let axis = if axis.length_squared() > EPS {
-        axis.normalize()
-    } else {
-        Vec3::Y
-    };
-
-    // We only apply this heuristic for attached parts. Unattached spinners (internal geometry)
-    // can legitimately use arbitrary spin conventions, and flipping them can invert correct
-    // animations.
-    let Some(attachment) = player.attachment.as_ref() else {
-        return distance_m;
-    };
-
-    let base_rot = if player.base_transform.rotation.is_finite() {
-        player.base_transform.rotation.normalize()
-    } else {
-        Quat::IDENTITY
-    };
-    let mut axis_in_parent_root = base_rot * axis;
-
-    if let Some(parent_def) = library.get(player.parent_object_id) {
-        if let Some(parent_anchor) = anchor_transform(parent_def, attachment.parent_anchor.as_ref())
-        {
-            let parent_rot = if parent_anchor.rotation.is_finite() {
-                parent_anchor.rotation.normalize()
-            } else {
-                Quat::IDENTITY
-            };
-            axis_in_parent_root = parent_rot * axis_in_parent_root;
-        }
-    }
-
-    let axis_in_parent_root = if axis_in_parent_root.length_squared() > EPS {
-        axis_in_parent_root.normalize()
-    } else {
-        axis_in_parent_root
-    };
-
-    let dot_x = axis_in_parent_root.dot(Vec3::X);
-    if dot_x < FLIP_DOT_THRESHOLD {
-        -distance_m
-    } else {
-        distance_m
+fn move_distance_units_for_clip(clip: &PartAnimationDef, clock: &LocomotionClock) -> f32 {
+    match clip {
+        PartAnimationDef::Spin { .. } => clock.signed_distance_m,
+        _ => clock.distance_m,
     }
 }
 
@@ -940,15 +885,7 @@ pub(crate) fn update_part_animations(
                     .unwrap_or(0.0),
                 PartAnimationDriver::MoveDistance => locomotion
                     .get(player.root_entity)
-                    .map(|clock| match &spec.clip {
-                        PartAnimationDef::Spin { axis, .. } => signed_move_distance_for_spin_axis(
-                            &library,
-                            player,
-                            *axis,
-                            clock.signed_distance_m,
-                        ),
-                        _ => clock.distance_m,
-                    })
+                    .map(|clock| move_distance_units_for_clip(&spec.clip, clock))
                     .unwrap_or(0.0),
                 PartAnimationDriver::AttackTime => attacks
                     .get(player.root_entity)
@@ -1148,90 +1085,39 @@ mod tests {
     }
 
     #[test]
-    fn move_distance_spin_flips_when_axis_points_left() {
-        use crate::object::registry::{ColliderProfile, ObjectDef, ObjectInteraction};
-
-        fn anchor(name: &str, forward: Vec3) -> crate::object::registry::AnchorDef {
-            let rot = if forward.dot(Vec3::X) >= 0.0 {
-                Quat::from_rotation_y(core::f32::consts::FRAC_PI_2)
-            } else {
-                Quat::from_rotation_y(-core::f32::consts::FRAC_PI_2)
-            };
-            crate::object::registry::AnchorDef {
-                name: name.to_string().into(),
-                transform: Transform::from_rotation(rot),
-            }
-        }
-
-        let parent_id = 0xdead_beef_u128;
-        let mut library = ObjectLibrary::default();
-        library.upsert(ObjectDef {
-            object_id: parent_id,
-            label: "parent".into(),
-            size: Vec3::ONE,
-            ground_origin_y: None,
-            collider: ColliderProfile::None,
-            interaction: ObjectInteraction::none(),
-            aim: None,
-            mobility: None,
-            anchors: vec![
-                anchor("mount_left", Vec3::NEG_X),
-                anchor("mount_right", Vec3::X),
-            ],
-            parts: Vec::new(),
-            minimap_color: None,
-            health_bar_offset_y: None,
-            enemy: None,
-            muzzle: None,
-            projectile: None,
-            attack: None,
-        });
-
-        let player_left = PartAnimationPlayer {
-            root_entity: Entity::from_bits(1),
-            parent_object_id: parent_id,
-            child_object_id: None,
-            attachment: Some(AttachmentDef {
-                parent_anchor: "mount_left".into(),
-                child_anchor: "origin".into(),
-            }),
-            base_transform: Transform::IDENTITY,
-            animations: Vec::new(),
-            apply_aim_yaw: false,
+    fn move_distance_spin_uses_signed_distance_without_axis_flip() {
+        let clock = LocomotionClock {
+            t: 0.0,
+            distance_m: 10.0,
+            signed_distance_m: -10.0,
+            speed_mps: 0.0,
+            last_translation: Vec3::ZERO,
         };
 
-        let player_right = PartAnimationPlayer {
-            attachment: Some(AttachmentDef {
-                parent_anchor: "mount_right".into(),
-                child_anchor: "origin".into(),
-            }),
-            ..player_left.clone()
+        let spin_pos_x = PartAnimationDef::Spin {
+            axis: Vec3::X,
+            radians_per_unit: 1.0,
+        };
+        let spin_neg_x = PartAnimationDef::Spin {
+            axis: Vec3::NEG_X,
+            radians_per_unit: 1.0,
+        };
+        let loop_clip = PartAnimationDef::Loop {
+            duration_secs: 1.0,
+            keyframes: Vec::new(),
         };
 
-        // Stored spin axis is in the attachment-local frame; +Z maps to the mount's `forward`.
-        let axis_local = Vec3::Z;
-        let left = signed_move_distance_for_spin_axis(&library, &player_left, axis_local, 10.0);
-        let right = signed_move_distance_for_spin_axis(&library, &player_right, axis_local, 10.0);
-
-        assert!(
-            left < 0.0,
-            "expected left distance to flip negative, got {left}"
+        assert_eq!(
+            move_distance_units_for_clip(&spin_pos_x, &clock),
+            clock.signed_distance_m
         );
-        assert!(
-            right > 0.0,
-            "expected right distance to stay positive, got {right}"
+        assert_eq!(
+            move_distance_units_for_clip(&spin_neg_x, &clock),
+            clock.signed_distance_m
         );
-
-        let left = signed_move_distance_for_spin_axis(&library, &player_left, axis_local, -10.0);
-        let right = signed_move_distance_for_spin_axis(&library, &player_right, axis_local, -10.0);
-
-        assert!(
-            left > 0.0,
-            "expected left distance to flip positive, got {left}"
-        );
-        assert!(
-            right < 0.0,
-            "expected right distance to stay negative, got {right}"
+        assert_eq!(
+            move_distance_units_for_clip(&loop_clip, &clock),
+            clock.distance_m
         );
     }
 

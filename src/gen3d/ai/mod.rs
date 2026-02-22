@@ -133,9 +133,6 @@ struct Gen3dAgentState {
     pending_after_pass_snapshot: Option<Gen3dAgentAfterPassSnapshot>,
     last_smoke_ok: Option<bool>,
     last_motion_ok: Option<bool>,
-    motion_error_counts: std::collections::HashMap<String, u8>,
-    motion_fallbacks_applied: std::collections::HashSet<String>,
-    motion_fallback_actions: Vec<serde_json::Value>,
     pending_regen_component_indices: Vec<usize>,
     pending_regen_component_indices_skipped_due_to_budget: Vec<usize>,
 }
@@ -172,9 +169,6 @@ impl Default for Gen3dAgentState {
             pending_after_pass_snapshot: None,
             last_smoke_ok: None,
             last_motion_ok: None,
-            motion_error_counts: std::collections::HashMap::new(),
-            motion_fallbacks_applied: std::collections::HashSet::new(),
-            motion_fallback_actions: Vec::new(),
             pending_regen_component_indices: Vec::new(),
             pending_regen_component_indices_skipped_due_to_budget: Vec::new(),
         }

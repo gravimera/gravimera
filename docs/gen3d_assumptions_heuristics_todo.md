@@ -25,17 +25,15 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
   - Result: if the component’s measured local AABB looks like a permuted version of `target_size`, conversion fails with an explicit error so the AI regenerates with correct local axes (no silent rotation).
   - Code: `src/gen3d/ai/convert.rs` (axis-permutation detection + hard error).
 
-- [ ] **Runtime heuristic flip of wheel/roller spin direction**
-  - Problem: Runtime may flip `move_distance` spin sign when the spin axis points toward `-X` in the parent frame (to make “left wheels” spin forward).
-  - Impact: Engine changes motion semantics; breaks intentional reverse spins; not generic.
-  - Code: `src/object/visuals.rs` `signed_move_distance_for_spin_axis`.
-  - Direction: Make spin direction fully data-driven (author the desired sign/axis), or compute from explicit “ground travel direction” metadata instead of a heuristic.
+- [x] **Remove runtime wheel/roller spin sign flip (make spin direction data-driven)**
+  - Fixed (2026-02-22): the runtime no longer flips `move_distance` spin sign based on whether the spin axis points toward `-X` in the parent frame.
+  - Result: spin direction is now fully authored by data (`axis` direction and/or `radians_per_unit` sign). For mirrored wheels/rollers you may need to flip the axis (or the sign of `radians_per_unit`) on one side; the engine will not guess.
+  - Code: `src/object/visuals.rs` (removed `signed_move_distance_for_spin_axis`; `move_distance` spin uses `LocomotionClock.signed_distance_m` directly).
 
-- [ ] **Auto-disable animation channels after repeated motion validation errors**
-  - Problem: After repeated motion-validation errors, the engine replaces the failing channel with an identity loop (“disables” it) to keep the model usable.
-  - Impact: Silently removes motion; limits “any animation” and can hide the real issue.
-  - Code: `src/gen3d/ai/agent_loop.rs` (fallback policy) + `src/gen3d/ai/convert.rs` `disable_attachment_animation_channel_identity_loop`.
-  - Direction: Prefer explicit repair actions (LLM delta, user prompt) or mark channel as failed without mutating authored motion; if fallback exists, require an explicit opt-in policy.
+- [x] **Stop auto-disabling animation channels after motion validation errors**
+  - Fixed (2026-02-22): removed the Gen3D smoke-check fallback that silently replaced failing channels with an identity loop after repeated motion validation errors.
+  - Result: motion validation failures are now surfaced as errors and must be repaired (plan/regen/authoring). The engine does not mutate authored motion as a “make it usable” guess.
+  - Code: `src/gen3d/ai/agent_loop.rs` (removed fallback policy), `src/gen3d/ai/convert.rs` (removed `disable_attachment_animation_channel_identity_loop` helper).
 
 - [ ] **Heuristic parsing that changes semantic meaning**
   - Problem: Some fields accept “near miss” strings and are normalized (drivers, attack kind, clip kind, etc.); colors can be guessed from material-ish words.

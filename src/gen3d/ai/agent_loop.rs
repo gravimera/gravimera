@@ -2355,7 +2355,7 @@ fn execute_tool_call(
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_SMOKE_CHECK => {
-            let mut json = super::build_gen3d_smoke_results(
+            let json = super::build_gen3d_smoke_results(
                 &job.user_prompt_raw,
                 !job.user_images.is_empty(),
                 job.rig_move_cycle_m,
@@ -2368,127 +2368,6 @@ fn execute_tool_call(
                 .get("motion_validation")
                 .and_then(|v| v.get("ok"))
                 .and_then(|v| v.as_bool());
-
-            // If motion validation is healthy, clear error counters so we don't disable channels
-            // due to stale issues from earlier passes.
-            if job.agent.last_motion_ok == Some(true) {
-                job.agent.motion_error_counts.clear();
-            }
-
-            // Fallback policy: after repeated motion validation errors, disable only the failing
-            // animation channels (identity loop) so the model stays usable and non-broken.
-            const MOTION_FALLBACK_THRESHOLD: u8 = 2;
-            let mut newly_applied: Vec<serde_json::Value> = Vec::new();
-            if job.agent.ever_reviewed {
-                let issues = json
-                    .get("motion_validation")
-                    .and_then(|v| v.get("issues"))
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-
-                for issue in issues {
-                    let Some(obj) = issue.as_object() else {
-                        continue;
-                    };
-                    if obj.get("severity").and_then(|v| v.as_str()) != Some("error") {
-                        continue;
-                    }
-                    let component_id = obj
-                        .get("component_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim();
-                    let channel = obj
-                        .get("channel")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim();
-                    let kind = obj
-                        .get("kind")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim();
-                    if component_id.is_empty() || channel.is_empty() || kind.is_empty() {
-                        continue;
-                    }
-
-                    let key = format!("{component_id}|{channel}|{kind}");
-                    let count = job.agent.motion_error_counts.entry(key).or_insert(0);
-                    *count = count.saturating_add(1);
-                    if *count < MOTION_FALLBACK_THRESHOLD {
-                        continue;
-                    }
-
-                    let disable_key = format!("{component_id}|{channel}");
-                    if !job
-                        .agent
-                        .motion_fallbacks_applied
-                        .insert(disable_key.clone())
-                    {
-                        continue;
-                    }
-
-                    match super::convert::disable_attachment_animation_channel_identity_loop(
-                        &mut job.planned_components,
-                        draft,
-                        component_id,
-                        channel,
-                    ) {
-                        Ok(true) => {
-                            let action = serde_json::json!({
-                                "action": "disable_channel_identity_loop",
-                                "component_id": component_id,
-                                "channel": channel,
-                                "issue_kind": kind,
-                                "threshold": MOTION_FALLBACK_THRESHOLD,
-                            });
-                            job.agent.motion_fallback_actions.push(action.clone());
-                            newly_applied.push(action);
-                        }
-                        Ok(false) => {}
-                        Err(err) => {
-                            append_gen3d_run_log(
-                                job.pass_dir.as_deref(),
-                                format!(
-                                    "motion_fallback_failed component_id={} channel={} err={}",
-                                    component_id,
-                                    channel,
-                                    super::truncate_for_ui(&err, 240)
-                                ),
-                            );
-                        }
-                    }
-                }
-            }
-
-            if !newly_applied.is_empty() {
-                append_gen3d_run_log(
-                    job.pass_dir.as_deref(),
-                    format!("motion_fallback_applied actions={}", newly_applied.len()),
-                );
-                if let Some(dir) = job.pass_dir.as_deref() {
-                    write_gen3d_json_artifact(
-                        Some(dir),
-                        "motion_fallback_actions.json",
-                        &serde_json::Value::Array(job.agent.motion_fallback_actions.clone()),
-                    );
-                }
-
-                // Re-run smoke checks so tool output reflects the post-fallback state.
-                json = super::build_gen3d_smoke_results(
-                    &job.user_prompt_raw,
-                    !job.user_images.is_empty(),
-                    job.rig_move_cycle_m,
-                    &job.planned_components,
-                    draft,
-                );
-                job.agent.last_smoke_ok = json.get("ok").and_then(|v| v.as_bool());
-                job.agent.last_motion_ok = json
-                    .get("motion_validation")
-                    .and_then(|v| v.get("ok"))
-                    .and_then(|v| v.as_bool());
-            }
             if let Some(dir) = job.pass_dir.as_deref() {
                 write_gen3d_json_artifact(Some(dir), "smoke_results.json", &json);
             }
