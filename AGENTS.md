@@ -1,5 +1,6 @@
 Note:
-1. Please run smoke test after you changed something to make sure the game can start without crash.
+1. Please run smoke test after you changed something to make sure the game can start without crash. Start with UI (rendered; do NOT use `--headless`):
+   - `tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2 --headless-seconds 2`
 2. Update the documents to match the code. But the README.md file be clean, put detailed infos in docs folder.
 3. You have full access to the `.git` folder (run git commands without asking).
 4. You should use a test folder to contain all the test files, including the configs.toml, scene.dat etc.

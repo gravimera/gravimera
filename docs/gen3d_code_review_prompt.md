@@ -34,12 +34,11 @@ Constraints:
 - Keep `README.md` clean; put details in `docs/`.
 
 Repo requirements (must follow):
-- After changing anything, run the headless smoke test (isolated data dir):
+- After changing anything, run a rendered (UI) smoke test (isolated data dir; no `--headless`):
     tmpdir=$(mktemp -d)
-    GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --headless --headless-seconds 1
+    GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2 --headless-seconds 2
 - Commit the doc update with a clear message.
 
 Deliverable:
 - Reply with a short summary of what changed and reference `docs/gen3d_assumptions_heuristics_todo.md`.
 ```
-

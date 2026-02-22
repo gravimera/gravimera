@@ -1,6 +1,7 @@
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::asset::AssetPlugin;
 use bevy::ecs::system::NonSendMarker;
+use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
 #[cfg(target_os = "macos")]
 use bevy::render::settings::{Backends, WgpuSettings};
@@ -44,6 +45,22 @@ struct PrimaryWindowIconState {
     done: bool,
     icon: Option<winit::window::Icon>,
     icon_load_failed: bool,
+}
+
+#[derive(Resource)]
+struct RenderedExitAfter {
+    timer: Timer,
+}
+
+fn rendered_exit_after_timer(
+    time: Res<Time<bevy::time::Real>>,
+    mut exit: MessageWriter<AppExit>,
+    mut exit_after: ResMut<RenderedExitAfter>,
+) {
+    exit_after.timer.tick(time.delta());
+    if exit_after.timer.just_finished() {
+        exit.write(AppExit::Success);
+    }
 }
 
 fn load_primary_window_icon() -> Result<winit::window::Icon, String> {
@@ -112,6 +129,7 @@ pub(crate) fn run() {
         );
     }
     let headless_exit_after = args.headless_exit_after_seconds();
+    let rendered_exit_after = args.rendered_exit_after_seconds();
     let mut config = crate::config::load_config_with_override(args.config_path.as_deref());
     args.apply_automation_overrides(&mut config);
 
@@ -126,7 +144,7 @@ pub(crate) fn run() {
         return;
     }
 
-    if let Err(reason) = run_rendered_catching_panics(config.clone()) {
+    if let Err(reason) = run_rendered_catching_panics(rendered_exit_after, config.clone()) {
         eprintln!("{reason}");
         if let Err(err) = spawn_headless_fallback_process(&raw_args) {
             eprintln!("Failed to respawn headless fallback: {err}");
@@ -161,6 +179,7 @@ fn spawn_headless_fallback_process(raw_args: &[String]) -> Result<(), String> {
 struct CliArgs {
     headless: bool,
     headless_seconds: Option<f32>,
+    rendered_seconds: Option<f32>,
     config_path: Option<PathBuf>,
     automation: bool,
     automation_bind: Option<String>,
@@ -194,6 +213,24 @@ impl CliArgs {
                         }
                     };
                     parsed.headless_seconds = Some(seconds);
+                }
+                "--rendered-seconds" => {
+                    let Some(value) = args.next() else {
+                        eprintln!(
+                            "`--rendered-seconds` expects a number (example: `--rendered-seconds 3`)."
+                        );
+                        std::process::exit(2);
+                    };
+                    let seconds: f32 = match value.parse() {
+                        Ok(v) => v,
+                        Err(_) => {
+                            eprintln!(
+                                "`--rendered-seconds` expects a number (example: `--rendered-seconds 3`)."
+                            );
+                            std::process::exit(2);
+                        }
+                    };
+                    parsed.rendered_seconds = Some(seconds);
                 }
                 "--config" => {
                     let Some(value) = args.next() else {
@@ -232,10 +269,12 @@ impl CliArgs {
                            cargo run\n\
                            cargo run -- --headless\n\
                            cargo run -- --headless --headless-seconds 2\n\n\
+                           cargo run -- --rendered-seconds 2\n\n\
                            cargo run -- model-tool help\n\n\
                          Options:\n\
                            --headless                 Run without rendering (no GPU required)\n\
                            --headless-seconds <secs>  Auto-exit after N seconds; use 0 to run forever\n\
+                           --rendered-seconds <secs>  Auto-exit after N seconds (UI/rendered mode)\n\
                            --config <path>            Load a specific config TOML (overrides default search)\n\
                            --automation               Enable the local Automation HTTP API\n\
                            --automation-bind <addr>   Bind address (example: 127.0.0.1:8791)\n\
@@ -280,6 +319,14 @@ impl CliArgs {
             Some(secs) if secs <= 0.0 => None,
             Some(secs) => Some(secs),
             None => Some(DEFAULT_HEADLESS_SECONDS),
+        }
+    }
+
+    fn rendered_exit_after_seconds(&self) -> Option<f32> {
+        match self.rendered_seconds {
+            Some(secs) if secs <= 0.0 => None,
+            Some(secs) => Some(secs),
+            None => None,
         }
     }
 }
@@ -339,13 +386,16 @@ fn render_preflight() -> Result<(), String> {
         })
 }
 
-fn run_rendered_catching_panics(config: crate::config::AppConfig) -> Result<(), String> {
+fn run_rendered_catching_panics(
+    exit_after_seconds: Option<f32>,
+    config: crate::config::AppConfig,
+) -> Result<(), String> {
     let wants_backtrace = std::env::var("RUST_BACKTRACE")
         .map(|v| v != "0")
         .unwrap_or(false);
 
     if wants_backtrace {
-        return std::panic::catch_unwind(|| run_rendered(config))
+        return std::panic::catch_unwind(|| run_rendered(exit_after_seconds, config))
             .map_err(|_| {
                 "Rendered mode crashed. A backtrace was printed above.\n\
                  Falling back to headless mode.\n\
@@ -379,7 +429,7 @@ fn run_rendered_catching_panics(config: crate::config::AppConfig) -> Result<(), 
         eprintln!("Tip: run `RUST_BACKTRACE=1 cargo run` for a full backtrace.");
     }));
 
-    let result = std::panic::catch_unwind(|| run_rendered(config))
+    let result = std::panic::catch_unwind(|| run_rendered(exit_after_seconds, config))
         .map_err(|_| {
             "Rendered mode crashed. Falling back to headless mode.\n\
          Tip: run `RUST_BACKTRACE=1 cargo run` for a full backtrace."
@@ -472,7 +522,7 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.run();
 }
 
-fn run_rendered(config: crate::config::AppConfig) -> AppExit {
+fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) -> AppExit {
     // Shared AI request limiter (Scene Build + Gen3D).
     crate::ai_limiter::set_max_permits(config.gen3d_max_parallel_components.max(1) + 1);
 
@@ -574,6 +624,12 @@ fn run_rendered(config: crate::config::AppConfig) -> AppExit {
     app.add_systems(Update, try_set_primary_window_icon);
     app.add_systems(Startup, log_file_startup_banner);
     app.add_systems(Startup, crate::gen3d::gen3d_load_tool_feedback_history);
+    if let Some(secs) = exit_after_seconds {
+        app.insert_resource(RenderedExitAfter {
+            timer: Timer::from_seconds(secs, TimerMode::Once),
+        });
+        app.add_systems(Update, rendered_exit_after_timer);
+    }
 
     app.add_systems(Startup, setup::setup_rendered);
     app.add_systems(
