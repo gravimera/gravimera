@@ -66,6 +66,7 @@ pub(super) fn build_gen3d_plan_user_text(
             They do NOT need to numerically equal the parent's vectors.\n\
             Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
           - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
+            - Whenever you author an `attach_to.offset` rotation (`offset.forward`/`offset.up` or `offset.rot_quat_xyzw`), you MUST include `offset.rot_frame` explicitly (`\"join\"` or `\"parent\"`).\n\
          Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
     );
     out.push_str(
@@ -119,6 +120,7 @@ pub(super) fn build_gen3d_plan_user_text_with_hints(
             They do NOT need to numerically equal the parent's vectors.\n\
             Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
           - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
+            - Whenever you author an `attach_to.offset` rotation (`offset.forward`/`offset.up` or `offset.rot_quat_xyzw`), you MUST include `offset.rot_frame` explicitly (`\"join\"` or `\"parent\"`).\n\
          Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
     );
     out.push_str(
@@ -468,7 +470,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - Prefer `attack_time` for `attack_primary` so the animation runs once per attack event (instead of continuously while the player holds the attack key).\n\
          - `speed_scale`: number (optional; default 1)\n\
          - `clip`:\n\
-           - `{{ \"kind\": \"loop\", \"duration_secs\": number, \"keyframes\": [ {{\"time_secs\": number, \"delta\": {{\"pos\":[x,y,z], \"forward\":[x,y,z] (optional), \"up\":[x,y,z] (optional), \"rot_frame\":\"join\"|\"parent\" (optional), \"rot_quat_xyzw\":[x,y,z,w] (optional), \"scale\":[x,y,z] (optional)}} }} ] }}`\n\
+           - `{{ \"kind\": \"loop\", \"duration_secs\": number, \"keyframes\": [ {{\"time_secs\": number, \"delta\": {{\"pos\":[x,y,z], \"forward\":[x,y,z] (optional), \"up\":[x,y,z] (optional), \"rot_frame\":\"join\"|\"parent\", \"rot_quat_xyzw\":[x,y,z,w] (optional), \"scale\":[x,y,z] (optional)}} }} ] }}`\n\
            - `{{ \"kind\": \"spin\", \"axis\": [x,y,z], \"radians_per_unit\": number }}`\n\
          - For `loop` keyframes:\n\
            - `delta.pos` is a translation in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset.pos`).\n\
@@ -593,7 +595,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
                         \"pos\": [x,y,z],\n\
                         \"forward\": [x,y,z] (optional),\n\
                         \"up\": [x,y,z] (optional),\n\
-                        \"rot_frame\": \"join\" | \"parent\" (optional),\n\
+                        \"rot_frame\": \"join\" | \"parent\",\n\
                         \"rot_quat_xyzw\": [x,y,z,w] (optional),\n\
                         \"scale\": [x,y,z] (optional)\n\
                       }} (optional),\n\
@@ -645,7 +647,7 @@ pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
      - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
      - `speed_scale`: number (optional; default 1)\n\
      - `clip`:\n\
-       - {\"kind\":\"loop\",\"duration_secs\": number,\"keyframes\":[{\"time_secs\": number,\"delta\":{\"pos\":[x,y,z],\"forward\":[x,y,z] (optional),\"up\":[x,y,z] (optional),\"rot_frame\":\"join\"|\"parent\" (optional),\"rot_quat_xyzw\":[x,y,z,w] (optional),\"scale\":[x,y,z] (optional)}}]}\n\
+       - {\"kind\":\"loop\",\"duration_secs\": number,\"keyframes\":[{\"time_secs\": number,\"delta\":{\"pos\":[x,y,z],\"forward\":[x,y,z] (optional),\"up\":[x,y,z] (optional),\"rot_frame\":\"join\"|\"parent\",\"rot_quat_xyzw\":[x,y,z,w] (optional),\"scale\":[x,y,z] (optional)}}]}\n\
        - {\"kind\":\"spin\",\"axis\":[x,y,z],\"radians_per_unit\": number}\n\
      - For `loop` keyframes:\n\
        - `delta.pos` is in the PARENT ANCHOR JOIN FRAME.\n\

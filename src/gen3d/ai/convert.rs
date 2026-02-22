@@ -631,10 +631,17 @@ fn attachment_offset_from_ai(
     if !translation.is_finite() {
         translation = Vec3::ZERO;
     }
-    let rot_frame = offset.rot_frame.unwrap_or(AiRotationFrameJson::Join);
-    if matches!(rot_frame, AiRotationFrameJson::Unknown) {
+    if matches!(offset.rot_frame, Some(AiRotationFrameJson::Unknown)) {
         return Err("rot_frame must be \"join\" or \"parent\"".into());
     }
+    let rotation_requested =
+        offset.forward.is_some() || offset.up.is_some() || offset.rot_quat_xyzw.is_some();
+    if rotation_requested && offset.rot_frame.is_none() {
+        return Err(
+            "rot_frame is required when authoring a rotation (use \"join\" or \"parent\")".into(),
+        );
+    }
+    let rot_frame = offset.rot_frame.unwrap_or(AiRotationFrameJson::Join);
     let rotation = if offset.forward.is_some() || offset.up.is_some() {
         let Some(forward) = offset.forward else {
             return Err("offset rotation basis requires both `forward` and `up` (missing `forward`)".into());

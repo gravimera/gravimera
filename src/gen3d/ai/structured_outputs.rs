@@ -190,10 +190,7 @@ fn schema_attachment_offset() -> serde_json::Value {
         ("pos", schema_vec3()),
         ("forward", schema_nullable(schema_vec3())),
         ("up", schema_nullable(schema_vec3())),
-        (
-            "rot_frame",
-            schema_nullable(schema_enum(&["join", "parent"])),
-        ),
+        ("rot_frame", schema_enum(&["join", "parent"])),
         ("rot_quat_xyzw", schema_nullable(schema_quat_xyzw())),
         ("scale", schema_nullable(schema_vec3())),
     ])

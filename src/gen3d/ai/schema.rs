@@ -389,7 +389,9 @@ pub(crate) struct AiAttachmentOffsetJson {
     #[serde(default)]
     pub(crate) up: Option<[f32; 3]>,
     /// Coordinate frame for `forward`/`up` (and `rot_quat_xyzw` when used as a rotation). When
-    /// omitted, the engine assumes the attachment's JOIN FRAME (legacy behavior).
+    /// omitted, the engine assumes the attachment's JOIN FRAME for translation-only offsets. If
+    /// any rotation is authored (`forward`/`up` or `rot_quat_xyzw`), this must be provided
+    /// explicitly (`join` or `parent`) or conversion will fail.
     #[serde(default)]
     pub(crate) rot_frame: Option<AiRotationFrameJson>,
     // Optional quaternion rotation for convenience. When both basis vectors and a quaternion are

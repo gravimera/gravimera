@@ -51,10 +51,10 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
   - Result: if a part/offset basis is partial or degenerate (missing vectors or `up` nearly parallel to `forward`), conversion fails with an explicit error so the AI regenerates with a valid basis.
   - Code: `src/gen3d/ai/convert.rs` (`plan_rotation_from_forward_up_strict`, strict validation in `anchors_from_ai`, `quat_from_forward_up_or_identity`, `attachment_offset_from_ai`).
 
-- [ ] **`attach_to.offset` rotation frame defaults to JOIN frame**
-  - Problem: If rotation is provided but `rot_frame` is omitted, the engine assumes join-frame vectors/quats (legacy). Authors often think in the parent/component frame.
-  - Code: `src/gen3d/ai/schema.rs` (`AiAttachmentOffsetJson.rot_frame`) + `src/gen3d/ai/convert.rs` `attachment_offset_from_ai`.
-  - Direction: Require `rot_frame` whenever a rotation is present, or adopt a safer default (and warn loudly when converting).
+- [x] **`attach_to.offset` rotation frame defaults to JOIN frame**
+  - Fixed (2026-02-22): if `offset.forward`/`offset.up` or `offset.rot_quat_xyzw` are present and `offset.rot_frame` is missing, conversion fails with an explicit error so the AI regenerates (no silent join-frame default).
+  - Result: rotation frames are always explicit (`join` vs `parent`) and deterministic; no more “it rotated wrong because the engine assumed join-frame”.
+  - Code/docs: `src/gen3d/ai/convert.rs` (`attachment_offset_from_ai`), `src/gen3d/ai/structured_outputs.rs` (requires `rot_frame`), `src/gen3d/ai/prompts.rs` + `gen_3d.md` (updated contract text).
 
 - [ ] **Missing anchors sometimes silently become identity**
   - Problem: In several places, missing anchors resolve to `Transform::IDENTITY` and assembly proceeds.
