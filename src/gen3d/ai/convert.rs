@@ -73,7 +73,7 @@ fn normalize_motion_channel(raw: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-pub(super) fn plan_rotation_from_forward_up(forward: Vec3, up: Option<Vec3>) -> Quat {
+pub(super) fn plan_rotation_from_forward_up_lossy(forward: Vec3, up: Option<Vec3>) -> Quat {
     const EPS: f32 = 1e-5;
 
     let mut f = forward;
@@ -118,6 +118,42 @@ pub(super) fn plan_rotation_from_forward_up(forward: Vec3, up: Option<Vec3>) -> 
 
     let u2 = f.cross(r).normalize();
     Quat::from_mat3(&Mat3::from_cols(r, u2, f)).normalize()
+}
+
+pub(super) fn plan_rotation_from_forward_up_strict(forward: Vec3, up: Vec3) -> Result<Quat, String> {
+    const EPS: f32 = 1e-5;
+
+    if !forward.is_finite() || forward.length_squared() < EPS {
+        return Err("forward must be a finite, non-zero vec3".into());
+    }
+    if !up.is_finite() || up.length_squared() < EPS {
+        return Err("up must be a finite, non-zero vec3".into());
+    }
+
+    let f = forward.normalize();
+    let u = up.normalize();
+
+    if u.dot(f).abs() > 0.98 {
+        return Err("up must not be nearly parallel to forward (provide a distinct up vector)".into());
+    }
+
+    let r = u.cross(f);
+    if r.length_squared() < EPS {
+        return Err("forward/up produced a degenerate basis".into());
+    }
+    let r = r.normalize();
+
+    let u2 = f.cross(r);
+    if !u2.is_finite() || u2.length_squared() < EPS {
+        return Err("forward/up produced a degenerate basis".into());
+    }
+    let u2 = u2.normalize();
+
+    let q = Quat::from_mat3(&Mat3::from_cols(r, u2, f)).normalize();
+    if !q.is_finite() {
+        return Err("forward/up produced a non-finite rotation quaternion".into());
+    }
+    Ok(q)
 }
 
 fn collider_profile_from_ai(
@@ -399,15 +435,31 @@ fn ai_vec3_opt(value: Option<[f32; 3]>) -> Option<Vec3> {
     Some(v)
 }
 
-fn quat_from_forward_up_or_identity(forward: Option<[f32; 3]>, up: Option<[f32; 3]>) -> Quat {
-    let forward = ai_vec3_opt(forward);
-    let up = ai_vec3_opt(up);
-    if forward.is_none() && up.is_none() {
-        return Quat::IDENTITY;
+fn quat_from_forward_up_or_identity(
+    context: &str,
+    forward: Option<[f32; 3]>,
+    up: Option<[f32; 3]>,
+) -> Result<Quat, String> {
+    let forward_v = ai_vec3_opt(forward);
+    if forward.is_some() && forward_v.is_none() {
+        return Err(format!("{context}: forward must be a finite, non-zero vec3"));
     }
-    let forward = forward.unwrap_or(Vec3::Z);
-    let up = up.or(Some(Vec3::Y));
-    plan_rotation_from_forward_up(forward, up)
+    let up_v = ai_vec3_opt(up);
+    if up.is_some() && up_v.is_none() {
+        return Err(format!("{context}: up must be a finite, non-zero vec3"));
+    }
+
+    match (forward_v, up_v) {
+        (None, None) => Ok(Quat::IDENTITY),
+        (Some(_), None) | (None, Some(_)) => Err(format!(
+            "{context}: rotation basis must include BOTH `forward` and `up` (or omit both for identity). Expected component-local axes (+X right, +Y up, +Z forward)."
+        )),
+        (Some(f), Some(u)) => plan_rotation_from_forward_up_strict(f, u).map_err(|err| {
+            format!(
+                "{context}: invalid forward/up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+            )
+        }),
+    }
 }
 
 fn anchor_transform_from_defs(
@@ -425,6 +477,7 @@ fn anchor_transform_from_defs(
 }
 
 fn anchors_from_ai(
+    source: &str,
     component: &str,
     anchors: &[AiAnchorJson],
 ) -> Result<Vec<crate::object::registry::AnchorDef>, String> {
@@ -449,13 +502,17 @@ fn anchors_from_ai(
         let pos = ai_vec3(anchor.pos);
         if !pos.is_finite() {
             return Err(format!(
-                "AI plan: anchor `{name}` in component `{component}` has non-finite pos",
+                "AI {source}: anchor `{name}` in component `{component}` has non-finite pos",
             ));
         }
 
-        let forward = ai_vec3_opt(anchor.forward).unwrap_or(Vec3::Z);
-        let up = ai_vec3_opt(anchor.up);
-        let rot = plan_rotation_from_forward_up(forward, up);
+        let forward = ai_vec3(anchor.forward);
+        let up = ai_vec3(anchor.up);
+        let rot = plan_rotation_from_forward_up_strict(forward, up).map_err(|err| {
+            format!(
+                "AI {source}: anchor `{name}` in component `{component}` has invalid forward/up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+            )
+        })?;
 
         out.push(crate::object::registry::AnchorDef {
             name: name.to_string().into(),
@@ -566,45 +623,47 @@ fn override_required_anchor_rotations_from_plan(
 fn attachment_offset_from_ai(
     offset: Option<&AiAttachmentOffsetJson>,
     parent_anchor_rot: Option<Quat>,
-) -> Transform {
+) -> Result<Transform, String> {
     let Some(offset) = offset else {
-        return Transform::IDENTITY;
+        return Ok(Transform::IDENTITY);
     };
     let mut translation = ai_vec3(offset.pos);
     if !translation.is_finite() {
         translation = Vec3::ZERO;
     }
     let rot_frame = offset.rot_frame.unwrap_or(AiRotationFrameJson::Join);
+    if matches!(rot_frame, AiRotationFrameJson::Unknown) {
+        return Err("rot_frame must be \"join\" or \"parent\"".into());
+    }
     let rotation = if offset.forward.is_some() || offset.up.is_some() {
-        let mut forward = ai_vec3_opt(offset.forward).unwrap_or(Vec3::Z);
-        let mut up = ai_vec3_opt(offset.up);
+        let Some(forward) = offset.forward else {
+            return Err("offset rotation basis requires both `forward` and `up` (missing `forward`)".into());
+        };
+        let Some(up) = offset.up else {
+            return Err("offset rotation basis requires both `forward` and `up` (missing `up`)".into());
+        };
+        let mut forward =
+            ai_vec3_opt(Some(forward)).ok_or("offset.forward must be a finite, non-zero vec3")?;
+        let mut up = ai_vec3_opt(Some(up)).ok_or("offset.up must be a finite, non-zero vec3")?;
         if matches!(rot_frame, AiRotationFrameJson::Parent) {
-            if let Some(parent_anchor_rot) = parent_anchor_rot {
-                let inv = parent_anchor_rot.inverse();
-                forward = inv * forward;
-                up = up.map(|v| inv * v);
-            } else {
-                debug!(
-                    "Gen3D: offset rot_frame=parent but parent anchor rotation is unavailable; treating forward/up as join-frame vectors"
-                );
-            }
+            let parent_anchor_rot = parent_anchor_rot
+                .ok_or("rot_frame=\"parent\" requires a valid parent anchor rotation")?;
+            let inv = parent_anchor_rot.inverse();
+            forward = inv * forward;
+            up = inv * up;
         }
-        plan_rotation_from_forward_up(forward, up)
+        plan_rotation_from_forward_up_strict(forward, up)?
     } else if let Some(q) = offset.rot_quat_xyzw {
         let mut q = Quat::from_xyzw(q[0], q[1], q[2], q[3]).normalize();
         if matches!(rot_frame, AiRotationFrameJson::Parent) {
-            if let Some(parent_anchor_rot) = parent_anchor_rot {
-                let r = if parent_anchor_rot.is_finite() {
-                    parent_anchor_rot.normalize()
-                } else {
-                    Quat::IDENTITY
-                };
-                q = (r.inverse() * q * r).normalize();
+            let parent_anchor_rot = parent_anchor_rot
+                .ok_or("rot_frame=\"parent\" requires a valid parent anchor rotation")?;
+            let r = if parent_anchor_rot.is_finite() {
+                parent_anchor_rot.normalize()
             } else {
-                debug!(
-                    "Gen3D: offset rot_frame=parent but parent anchor rotation is unavailable; treating rot_quat_xyzw as join-frame quaternion"
-                );
-            }
+                Quat::IDENTITY
+            };
+            q = (r.inverse() * q * r).normalize();
         }
         if q.is_finite() {
             q
@@ -622,22 +681,22 @@ fn attachment_offset_from_ai(
     if scale.abs().max_element() <= 1e-4 {
         scale = Vec3::ONE;
     }
-    Transform::from_translation(translation)
+    Ok(Transform::from_translation(translation)
         .with_rotation(rotation)
-        .with_scale(scale)
+        .with_scale(scale))
 }
 
 fn animation_keyframe_delta_from_ai(
     delta: Option<&AiAttachmentOffsetJson>,
     parent_anchor_rot: Option<Quat>,
-) -> Transform {
+) -> Result<Transform, String> {
     attachment_offset_from_ai(delta, parent_anchor_rot)
 }
 
 fn part_animation_from_ai(
     animation: &AiPartAnimationJson,
     parent_anchor_rot: Option<Quat>,
-) -> Option<PartAnimationDef> {
+) -> Result<Option<PartAnimationDef>, String> {
     match animation {
         AiPartAnimationJson::Loop {
             duration_secs,
@@ -646,10 +705,10 @@ fn part_animation_from_ai(
             let duration_secs = if duration_secs.is_finite() && *duration_secs > 0.0 {
                 *duration_secs
             } else {
-                return None;
+                return Ok(None);
             };
             if keyframes.is_empty() {
-                return None;
+                return Ok(None);
             }
 
             let mut out: Vec<PartAnimationKeyframeDef> = Vec::with_capacity(keyframes.len());
@@ -657,24 +716,25 @@ fn part_animation_from_ai(
                 if !kf.time_secs.is_finite() {
                     continue;
                 }
-                let delta = animation_keyframe_delta_from_ai(kf.delta.as_ref(), parent_anchor_rot);
+                let delta =
+                    animation_keyframe_delta_from_ai(kf.delta.as_ref(), parent_anchor_rot)?;
                 out.push(PartAnimationKeyframeDef {
                     time_secs: kf.time_secs.clamp(0.0, duration_secs),
                     delta,
                 });
             }
             if out.is_empty() {
-                return None;
+                return Ok(None);
             }
             out.sort_by(|a, b| {
                 a.time_secs
                     .partial_cmp(&b.time_secs)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            Some(PartAnimationDef::Loop {
+            Ok(Some(PartAnimationDef::Loop {
                 duration_secs,
                 keyframes: out,
-            })
+            }))
         }
     }
 }
@@ -682,7 +742,7 @@ fn part_animation_from_ai(
 fn part_animation_spec_from_ai(
     spec: &AiAnimationSpecJson,
     parent_anchor_rot: Option<Quat>,
-) -> Option<PartAnimationSpec> {
+) -> Result<PartAnimationSpec, String> {
     let driver = match spec.driver {
         AiAnimationDriverJson::Always => PartAnimationDriver::Always,
         AiAnimationDriverJson::MovePhase => PartAnimationDriver::MovePhase,
@@ -710,25 +770,26 @@ fn part_animation_spec_from_ai(
             let duration_secs = if duration_secs.is_finite() && *duration_secs > 0.0 {
                 *duration_secs
             } else {
-                return None;
+                return Err("loop clip duration_secs must be a finite, positive number".into());
             };
             if keyframes.is_empty() {
-                return None;
+                return Err("loop clip must contain at least 1 keyframe".into());
             }
 
             let mut out: Vec<PartAnimationKeyframeDef> = Vec::with_capacity(keyframes.len());
             for kf in keyframes.iter() {
                 if !kf.time_secs.is_finite() {
-                    continue;
+                    return Err("loop clip keyframe time_secs must be finite".into());
                 }
-                let delta = animation_keyframe_delta_from_ai(kf.delta.as_ref(), parent_anchor_rot);
+                let delta =
+                    animation_keyframe_delta_from_ai(kf.delta.as_ref(), parent_anchor_rot)?;
                 out.push(PartAnimationKeyframeDef {
                     time_secs: kf.time_secs.clamp(0.0, duration_secs),
                     delta,
                 });
             }
             if out.is_empty() {
-                return None;
+                return Err("loop clip must contain at least 1 valid keyframe".into());
             }
             out.sort_by(|a, b| {
                 a.time_secs
@@ -746,11 +807,11 @@ fn part_animation_spec_from_ai(
         } => {
             let axis = Vec3::new(axis[0], axis[1], axis[2]);
             if !axis.is_finite() || axis.length_squared() <= 1e-6 {
-                return None;
+                return Err("spin axis must be a finite, non-zero vec3".into());
             }
             let r = *radians_per_unit;
             if !r.is_finite() || r.abs() <= 1e-6 {
-                return None;
+                return Err("spin radians_per_unit must be a finite, non-zero number".into());
             }
             PartAnimationDef::Spin {
                 axis,
@@ -759,7 +820,7 @@ fn part_animation_spec_from_ai(
         }
     };
 
-    Some(PartAnimationSpec {
+    Ok(PartAnimationSpec {
         driver,
         speed_scale,
         time_offset_units,
@@ -912,7 +973,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
             .abs()
             .max(Vec3::splat(0.01));
 
-        let anchors = anchors_from_ai(&comp.name, &comp.anchors)?;
+        let anchors = anchors_from_ai("plan", &comp.name, &comp.anchors)?;
         let contacts = {
             let mut out: Vec<AiContactJson> = Vec::new();
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -962,12 +1023,27 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                         .and_then(|idx| components.get(*idx))
                         .and_then(|pc| pc.anchors.iter().find(|a| a.name.trim() == parent_anchor))
                         .map(|a| {
-                            let forward = ai_vec3_opt(a.forward).unwrap_or(Vec3::Z);
-                            let up = ai_vec3_opt(a.up);
-                            plan_rotation_from_forward_up(forward, up)
+                            let forward = ai_vec3(a.forward);
+                            let up = ai_vec3(a.up);
+                            plan_rotation_from_forward_up_strict(forward, up)
                         })
+                        .transpose()
+                        .map_err(|err| {
+                            format!(
+                                "AI plan: component `{}` attach_to references invalid parent anchor basis on `{}`.`{}`: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward).",
+                                comp.name, parent, parent_anchor
+                            )
+                        })?
                 };
-                let offset = attachment_offset_from_ai(att.offset.as_ref(), parent_anchor_rot);
+                let offset =
+                    attachment_offset_from_ai(att.offset.as_ref(), parent_anchor_rot).map_err(
+                        |err| {
+                            format!(
+                                "AI plan: component `{}` attach_to.offset is invalid: {err}",
+                                comp.name
+                            )
+                        },
+                    )?;
                 let child_anchor_rot = if child_anchor == "origin" {
                     Quat::IDENTITY
                 } else {
@@ -998,38 +1074,52 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                         if !seen_channels.insert(channel.clone()) {
                             continue;
                         }
-                        if let Some(mut spec) = part_animation_spec_from_ai(spec, parent_anchor_rot)
-                        {
-                            // The AI authoring spec defines spin axes in component-local space. The runtime
-                            // animation playback applies deltas in the attachment join frame, so we convert
-                            // axes into that join frame here based on the child's anchor orientation.
-                            if let PartAnimationDef::Spin { axis, .. } = &mut spec.clip {
-                                *axis = offset.rotation * (child_anchor_rot.inverse() * *axis);
-                            }
-                            animations.push(PartAnimationSlot {
-                                channel: channel.into(),
-                                spec,
-                            });
+                        let mut spec =
+                            part_animation_spec_from_ai(spec, parent_anchor_rot).map_err(
+                                |err| {
+                                    format!(
+                                        "AI plan: component `{}` attach_to.animations.{channel} is invalid: {err}",
+                                        comp.name
+                                    )
+                                },
+                            )?;
+
+                        // The AI authoring spec defines spin axes in component-local space. The runtime
+                        // animation playback applies deltas in the attachment join frame, so we convert
+                        // axes into that join frame here based on the child's anchor orientation.
+                        if let PartAnimationDef::Spin { axis, .. } = &mut spec.clip {
+                            *axis = offset.rotation * (child_anchor_rot.inverse() * *axis);
                         }
+                        animations.push(PartAnimationSlot {
+                            channel: channel.into(),
+                            spec,
+                        });
                     }
                 }
 
                 // Legacy plan v4 field: treat as an ambient loop.
                 if animations.is_empty() {
-                    if let Some(animation) = att
-                        .animation
-                        .as_ref()
-                        .and_then(|anim| part_animation_from_ai(anim, parent_anchor_rot))
-                    {
-                        animations.push(PartAnimationSlot {
-                            channel: "ambient".into(),
-                            spec: PartAnimationSpec {
-                                driver: PartAnimationDriver::Always,
-                                speed_scale: 1.0,
-                                time_offset_units: 0.0,
-                                clip: animation,
-                            },
-                        });
+                    if let Some(animation) = att.animation.as_ref() {
+                        if let Some(animation) =
+                            part_animation_from_ai(animation, parent_anchor_rot).map_err(
+                                |err| {
+                                    format!(
+                                        "AI plan: component `{}` attach_to.animation is invalid: {err}",
+                                        comp.name
+                                    )
+                                },
+                            )?
+                        {
+                            animations.push(PartAnimationSlot {
+                                channel: "ambient".into(),
+                                spec: PartAnimationSpec {
+                                    driver: PartAnimationDriver::Always,
+                                    speed_scale: 1.0,
+                                    time_offset_units: 0.0,
+                                    clip: animation,
+                                },
+                            });
+                        }
                     }
                 }
                 Some(Gen3dPlannedAttachment {
@@ -1770,10 +1860,15 @@ pub(super) fn apply_ai_review_delta_actions(
                     if let Some(rot) = set.rot.as_ref() {
                         let q = match rot {
                             AiRotationJsonV1::Basis { forward, up } => {
-                                plan_rotation_from_forward_up(
+                                plan_rotation_from_forward_up_strict(
                                     Vec3::new(forward[0], forward[1], forward[2]),
-                                    Some(Vec3::new(up[0], up[1], up[2])),
+                                    Vec3::new(up[0], up[1], up[2]),
                                 )
+                                .map_err(|err| {
+                                    format!(
+                                        "review_delta_v1: tweak_component_transform set.rot basis is invalid: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+                                    )
+                                })?
                             }
                             AiRotationJsonV1::Quat { quat_xyzw } => Quat::from_xyzw(
                                 quat_xyzw[0],
@@ -1841,6 +1936,8 @@ pub(super) fn apply_ai_review_delta_actions(
                     continue;
                 };
 
+                let component_name = components[idx].name.clone();
+
                 let old_anchor_tf = components[idx].anchors[anchor_idx].transform;
                 {
                     let anchor = &mut components[idx].anchors[anchor_idx];
@@ -1852,13 +1949,28 @@ pub(super) fn apply_ai_review_delta_actions(
                                 anchor.transform.translation = v;
                             }
                         }
-                        if let Some(forward) = set.forward {
+                        if set.forward.is_some() || set.up.is_some() {
+                            let Some(forward) = set.forward else {
+                                return Err(format!(
+                                    "review_delta_v1: tweak_anchor {} ({}) anchor `{}`: `set.up` provided without `set.forward`; provide both `set.forward` and `set.up` (component-local axes +X right, +Y up, +Z forward).",
+                                    component_id, component_name, anchor_name
+                                ));
+                            };
+                            let Some(up) = set.up else {
+                                return Err(format!(
+                                    "review_delta_v1: tweak_anchor {} ({}) anchor `{}`: `set.forward` provided without `set.up`; provide both `set.forward` and `set.up` (component-local axes +X right, +Y up, +Z forward).",
+                                    component_id, component_name, anchor_name
+                                ));
+                            };
                             let f = Vec3::new(forward[0], forward[1], forward[2]);
-                            let u = set.up.map(|up| Vec3::new(up[0], up[1], up[2]));
-                            let q = plan_rotation_from_forward_up(f, u);
-                            if q.is_finite() {
-                                anchor.transform.rotation = q;
-                            }
+                            let u = Vec3::new(up[0], up[1], up[2]);
+                            let q = plan_rotation_from_forward_up_strict(f, u).map_err(|err| {
+                                format!(
+                                    "review_delta_v1: tweak_anchor {} ({}) anchor `{}` has invalid set.forward/set.up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward).",
+                                    component_id, component_name, anchor_name
+                                )
+                            })?;
+                            anchor.transform.rotation = q;
                         }
                     }
                     if let Some(delta) = delta.as_ref() {
@@ -1994,7 +2106,15 @@ pub(super) fn apply_ai_review_delta_actions(
                         .find(|a| a.name.as_ref() == parent_anchor)
                         .map(|a| a.transform.rotation)
                 };
-                let offset = attachment_offset_from_ai(set.offset.as_ref(), parent_anchor_rot);
+                let offset =
+                    attachment_offset_from_ai(set.offset.as_ref(), parent_anchor_rot).map_err(
+                        |err| {
+                            format!(
+                                "review_delta_v1: tweak_attachment {} ({}) has invalid offset: {err}",
+                                component_id, components[idx].name
+                            )
+                        },
+                    )?;
                 let animations = components[idx]
                     .attach_to
                     .as_ref()
@@ -2095,12 +2215,20 @@ pub(super) fn apply_ai_review_delta_actions(
                         .find(|c| c.name == parent)
                         .map(|c| anchor_transform_from_defs(&c.anchors, parent_anchor).rotation)
                 });
+
+                let component_name = components[idx].name.clone();
+
                 let Some(att) = components[idx].attach_to.as_mut() else {
                     continue;
                 };
-                let Some(mut spec) = part_animation_spec_from_ai(&spec, parent_anchor_rot) else {
-                    return Err(format!("Invalid animation spec for channel `{channel}`."));
-                };
+                let mut spec = part_animation_spec_from_ai(&spec, parent_anchor_rot).map_err(
+                    |err| {
+                        format!(
+                            "review_delta_v1: tweak_animation {} ({}) channel `{}` is invalid: {err}",
+                            component_id, component_name, channel
+                        )
+                    },
+                )?;
 
                 // Convert spin axis from component-local to the attachment join frame, matching the plan conversion.
                 if let PartAnimationDef::Spin { axis, .. } = &mut spec.clip {
@@ -2363,7 +2491,7 @@ pub(super) fn ai_to_component_def(
     let component_name = component.name.as_str();
     let object_id = builtin_object_id(&format!("gravimera/gen3d/component/{}", component_name));
 
-    let draft_anchors = anchors_from_ai(component_name, &ai.anchors)?;
+    let draft_anchors = anchors_from_ai("draft", component_name, &ai.anchors)?;
     let mut anchors = merge_component_anchors_from_plan_and_draft(
         component_name,
         &component.anchors,
@@ -2371,7 +2499,7 @@ pub(super) fn ai_to_component_def(
     )?;
 
     let mut parts: Vec<ObjectPartDef> = Vec::with_capacity(ai.parts.len());
-    for part in ai.parts.iter() {
+    for (part_idx, part) in ai.parts.iter().enumerate() {
         let mut mesh = match part.primitive {
             AiPrimitiveJson::Cuboid => MeshKey::UnitCube,
             AiPrimitiveJson::Cylinder => MeshKey::UnitCylinder,
@@ -2401,7 +2529,11 @@ pub(super) fn ai_to_component_def(
             )
         });
 
-        let rot = quat_from_forward_up_or_identity(part.forward, part.up);
+        let rot = quat_from_forward_up_or_identity(
+            &format!("AI draft: component `{component_name}` part[{part_idx}]"),
+            part.forward,
+            part.up,
+        )?;
 
         let mut part_def = ObjectPartDef::primitive(
             PrimitiveVisualDef::Primitive {
@@ -2764,8 +2896,8 @@ mod tests {
             anchors: vec![AiAnchorJson {
                 name: "mount".into(),
                 pos: [1.0, 0.0, 0.0],
-                forward: Some([0.0, 0.0, 1.0]),
-                up: Some([0.0, 1.0, 0.0]),
+                forward: [0.0, 0.0, 1.0],
+                up: [0.0, 1.0, 0.0],
             }],
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
@@ -2822,8 +2954,8 @@ mod tests {
             anchors: vec![AiAnchorJson {
                 name: "mount".into(),
                 pos: [0.0, 1.0, 0.0],
-                forward: Some([0.0, 0.0, 1.0]),
-                up: Some([0.0, 1.0, 0.0]),
+                forward: [0.0, 0.0, 1.0],
+                up: [0.0, 1.0, 0.0],
             }],
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
@@ -2858,7 +2990,7 @@ mod tests {
             anchors: vec![crate::object::registry::AnchorDef {
                 name: "root_attach".into(),
                 transform: Transform::from_translation(Vec3::ZERO)
-                    .with_rotation(plan_rotation_from_forward_up(Vec3::X, Some(Vec3::Y))),
+                    .with_rotation(plan_rotation_from_forward_up_lossy(Vec3::X, Some(Vec3::Y))),
             }],
             contacts: Vec::new(),
             attach_to: Some(Gen3dPlannedAttachment {
@@ -2889,8 +3021,8 @@ mod tests {
             anchors: vec![AiAnchorJson {
                 name: "root_attach".into(),
                 pos: [0.0, 0.0, 0.0],
-                forward: Some([1.0, 0.0, 0.0]),
-                up: Some([0.0, 1.0, 0.0]),
+                forward: [1.0, 0.0, 0.0],
+                up: [0.0, 1.0, 0.0],
             }],
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
@@ -3182,8 +3314,8 @@ mod tests {
             anchors: vec![AiAnchorJson {
                 name: "hand_grip".into(),
                 pos: [1.0, 2.0, 3.0],
-                forward: Some([0.0, -1.0, 0.0]),
-                up: Some([0.0, 0.0, 1.0]),
+                forward: [0.0, -1.0, 0.0],
+                up: [0.0, 0.0, 1.0],
             }],
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
@@ -3398,7 +3530,7 @@ mod tests {
               "name": "root",
               "size": [1.0, 1.0, 1.0],
               "anchors": [
-                { "name": "muzzle", "pos": [0.0, 0.0, 0.5] }
+                { "name": "muzzle", "pos": [0.0, 0.0, 0.5], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
               ]
             }
           ]
@@ -3452,7 +3584,7 @@ mod tests {
               "name": "root",
               "size": [1.0, 1.0, 1.0],
               "anchors": [
-                { "name": "muzzle", "pos": [0.0, 0.0, 0.5] }
+                { "name": "muzzle", "pos": [0.0, 0.0, 0.5], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
               ]
             }
           ]

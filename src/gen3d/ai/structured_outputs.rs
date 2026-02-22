@@ -93,8 +93,8 @@ fn schema_anchor() -> serde_json::Value {
     schema_object(vec![
         ("name", schema_string()),
         ("pos", schema_vec3()),
-        ("forward", schema_nullable(schema_vec3())),
-        ("up", schema_nullable(schema_vec3())),
+        ("forward", schema_vec3()),
+        ("up", schema_vec3()),
     ])
 }
 

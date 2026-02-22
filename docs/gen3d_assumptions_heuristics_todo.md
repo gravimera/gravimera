@@ -42,15 +42,14 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
 
 ## 2) Silent defaults / hidden assumptions — make explicit, validate hard, or error early
 
-- [ ] **Hard-coded coordinate conventions (forward = +Z, up = +Y)**
-  - Problem: The entire system assumes these conventions; if an AI uses a different convention (e.g., +X forward), rotations will be “wrong”.
-  - Code: `src/gen3d/ai/convert.rs` `plan_rotation_from_forward_up` and all callers.
-  - Direction: Make the convention a first-class contract in specs/prompts; consider stricter validation (require non-degenerate forward+up when rotation matters).
+- [x] **Hard-coded coordinate conventions (forward = +Z, up = +Y)**
+  - Fixed (2026-02-22): documented the coordinate system contract (+X right, +Y up, +Z forward) and tightened Gen3D conversion to require explicit anchor frames.
+  - Code/docs: `docs/gamedesign/34_realm_prefabs_v1.md` (coordinate system), `src/gen3d/ai/prompts.rs` (explicit conventions), `src/gen3d/ai/schema.rs` + `src/gen3d/ai/structured_outputs.rs` (anchors require `forward`+`up`).
 
-- [ ] **Forward/up degeneracy fallbacks can create arbitrary roll**
-  - Problem: If `up` is missing/parallel to `forward`, we pick a fallback `up`. That produces an arbitrary roll that might be inconsistent across parts.
-  - Code: `src/gen3d/ai/convert.rs` `plan_rotation_from_forward_up`.
-  - Direction: Require `up` whenever roll matters, or require a quaternion; treat degenerate bases as errors.
+- [x] **Forward/up degeneracy fallbacks can create arbitrary roll**
+  - Fixed (2026-02-22): added strict basis handling and removed “pick a fallback up” behavior from Gen3D conversion paths.
+  - Result: if a part/offset basis is partial or degenerate (missing vectors or `up` nearly parallel to `forward`), conversion fails with an explicit error so the AI regenerates with a valid basis.
+  - Code: `src/gen3d/ai/convert.rs` (`plan_rotation_from_forward_up_strict`, strict validation in `anchors_from_ai`, `quat_from_forward_up_or_identity`, `attachment_offset_from_ai`).
 
 - [ ] **`attach_to.offset` rotation frame defaults to JOIN frame**
   - Problem: If rotation is provided but `rot_frame` is omitted, the engine assumes join-frame vectors/quats (legacy). Authors often think in the parent/component frame.

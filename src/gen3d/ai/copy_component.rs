@@ -136,7 +136,7 @@ fn apply_delta_to_anchors(anchors: &[AnchorDef], delta: Transform) -> Vec<Anchor
             let pos = transform_point(delta_mat, a.transform.translation);
             let forward = transform_dir(delta_mat, a.transform.rotation * Vec3::Z);
             let up = transform_dir(delta_mat, a.transform.rotation * Vec3::Y);
-            let rot = super::convert::plan_rotation_from_forward_up(forward, Some(up));
+            let rot = super::convert::plan_rotation_from_forward_up_lossy(forward, Some(up));
             AnchorDef {
                 name: a.name.clone(),
                 transform: Transform {
@@ -981,7 +981,7 @@ mod tests {
     use crate::object::registry::{ColliderProfile, ObjectInteraction};
 
     fn anchor_named(name: &str, pos: Vec3, forward: Vec3, up: Vec3) -> AnchorDef {
-        let rot = super::super::convert::plan_rotation_from_forward_up(forward, Some(up));
+        let rot = super::super::convert::plan_rotation_from_forward_up_lossy(forward, Some(up));
         AnchorDef {
             name: name.to_string().into(),
             transform: Transform {
@@ -993,7 +993,8 @@ mod tests {
     }
 
     fn anchor_named_forward(name: &str, forward: Vec3) -> AnchorDef {
-        let rot = super::super::convert::plan_rotation_from_forward_up(forward, Some(Vec3::Y));
+        let rot =
+            super::super::convert::plan_rotation_from_forward_up_lossy(forward, Some(Vec3::Y));
         AnchorDef {
             name: name.to_string().into(),
             transform: Transform {

@@ -18,10 +18,8 @@ pub(crate) struct AiDraftJsonV1 {
 pub(crate) struct AiAnchorJson {
     pub(crate) name: String,
     pub(crate) pos: [f32; 3],
-    #[serde(default)]
-    pub(crate) forward: Option<[f32; 3]>,
-    #[serde(default)]
-    pub(crate) up: Option<[f32; 3]>,
+    pub(crate) forward: [f32; 3],
+    pub(crate) up: [f32; 3],
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -96,6 +96,16 @@ Each anchor:
 - `rotation`: quaternion `{x,y,z,w}` floats
 - `scale`: `{x,y,z}` floats
 
+### Coordinate System
+
+All vectors/transforms use a single right-handed coordinate system:
+
+- `+X` is right
+- `+Y` is up
+- `+Z` is forward
+
+This applies to anchor transforms and part transforms alike.
+
 ### `parts`
 
 Each part:

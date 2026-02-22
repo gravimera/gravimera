@@ -1445,7 +1445,7 @@ fn parse_delta_transform(value: Option<&serde_json::Value>) -> Transform {
             if rotation.is_none() {
                 if let Some(fwd) = rot.get("forward").and_then(parse_vec3) {
                     let up = rot.get("up").and_then(parse_vec3);
-                    rotation = Some(super::convert::plan_rotation_from_forward_up(fwd, up));
+                    rotation = Some(super::convert::plan_rotation_from_forward_up_lossy(fwd, up));
                 }
             }
         }
@@ -1453,7 +1453,7 @@ fn parse_delta_transform(value: Option<&serde_json::Value>) -> Transform {
     if rotation.is_none() {
         if let Some(fwd) = value.get("forward").and_then(parse_vec3) {
             let up = value.get("up").and_then(parse_vec3);
-            rotation = Some(super::convert::plan_rotation_from_forward_up(fwd, up));
+            rotation = Some(super::convert::plan_rotation_from_forward_up_lossy(fwd, up));
         }
     }
     if let Some(q) = rotation {
@@ -2436,7 +2436,9 @@ fn execute_tool_call(
                             if let Some(fwd) = rot.get("forward").and_then(parse_vec3) {
                                 let up = rot.get("up").and_then(parse_vec3);
                                 rotation =
-                                    Some(super::convert::plan_rotation_from_forward_up(fwd, up));
+                                    Some(super::convert::plan_rotation_from_forward_up_lossy(
+                                        fwd, up,
+                                    ));
                             }
                         }
                     }
@@ -2444,7 +2446,8 @@ fn execute_tool_call(
                 if rotation.is_none() {
                     if let Some(fwd) = value.get("forward").and_then(parse_vec3) {
                         let up = value.get("up").and_then(parse_vec3);
-                        rotation = Some(super::convert::plan_rotation_from_forward_up(fwd, up));
+                        rotation =
+                            Some(super::convert::plan_rotation_from_forward_up_lossy(fwd, up));
                     }
                 }
                 if let Some(q) = rotation {

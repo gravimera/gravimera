@@ -720,7 +720,7 @@ pub(super) fn build_gen3d_component_system_instructions() -> String {
            \"version\": 2,\n\
            \"collider\": {{\"kind\":\"aabb_xz\",\"half_extents\":[x,z]}} | {{\"kind\":\"circle_xz\",\"radius\":r}} | {{\"kind\":\"none\"}} (optional),\n\
            \"anchors\": [\n\
-             {{\"name\":\"anchor_name\",\"pos\":[x,y,z],\"forward\":[x,y,z] (optional),\"up\":[x,y,z] (optional)}}\n\
+             {{\"name\":\"anchor_name\",\"pos\":[x,y,z],\"forward\":[x,y,z],\"up\":[x,y,z]}}\n\
            ],\n\
            \"parts\": [\n\
              {{\n\
@@ -728,8 +728,8 @@ pub(super) fn build_gen3d_component_system_instructions() -> String {
                \"params\": {{...}} (optional; only for capsule/conical_frustum/torus etc if supported),\n\
                \"color\": [r,g,b,a],\n\
                \"pos\": [x,y,z],\n\
-               \"forward\": [x,y,z] (optional),\n\
-               \"up\": [x,y,z] (optional),\n\
+               \"forward\": [x,y,z] (optional; if present, you MUST also provide `up`),\n\
+               \"up\": [x,y,z] (optional; if present, you MUST also provide `forward`),\n\
                \"scale\": [x,y,z]\n\
              }}\n\
            ]\n\
