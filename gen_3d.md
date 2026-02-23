@@ -88,6 +88,33 @@ Gen3D uses the prefab-based object system:
 
 ---
 
+## Runtime Motion Algorithms (Rig Contracts)
+
+Gravimera supports **engine-injected motion algorithms** (walk/wheels) that can be applied to many
+different Gen3D models, as long as the model declares an explicit rig contract.
+
+How it works:
+
+- Gen3D models are saved as prefab defs (`*.json`) plus prefab descriptors (`*.desc.json`).
+- A descriptor may include `interfaces.extra.motion_rig_v1` (see `docs/gamedesign/35_prefab_descriptors_v1.md`).
+- When `motion_rig_v1` is present, the engine can inject a generic motion algorithm by generating
+  per-edge `move` channel slots at runtime (no heuristic “leg detection”).
+
+In-game UX (Realm):
+
+- Double-click a unit’s **selection circle** to open the **Motion** panel.
+- Pick a `move` algorithm:
+  - `None` (use prefab-authored clips)
+  - `Biped walk (v1)` / `Quadruped walk (v1)` / `Car wheels (v1)` (when the rig kind matches)
+- The selection updates the unit instance immediately (and applies to all selected units of the
+  same prefab).
+
+Notes:
+
+- This is designed to reduce “AI-authored per-model animations” and replace them with a small set
+  of reusable, deterministic motion generators.
+- Algorithms are applied only when the descriptor declares the required `motion_rig_v1` edges.
+
 ## Cache / Debugging Artifacts
 
 Each run creates a folder under `~/.gravimera/cache/gen3d/` by default (override via `[gen3d].cache_dir` / `gen3d_cache_dir` in `config.toml`):

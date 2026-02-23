@@ -166,12 +166,14 @@ pub(crate) fn toggle_slow_move_mode(
 
 pub(crate) fn selection_input(
     mut selection: ResMut<SelectionState>,
+    time: Res<Time>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<GameMode>>,
     build: Res<BuildState>,
     model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     world_drag: Res<crate::world_drag::WorldDragState>,
+    mut motion_ui: ResMut<crate::motion_ui::MotionAlgorithmUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
@@ -274,6 +276,10 @@ pub(crate) fn selection_input(
             if picked.is_unit {
                 selection.selected.clear();
                 selection.selected.insert(picked.entity);
+                let now = time.elapsed_secs();
+                if motion_ui.record_click_and_check_double(picked.entity, now) {
+                    motion_ui.open_for(picked.entity);
+                }
             } else {
                 selection.selected.insert(picked.entity);
             }

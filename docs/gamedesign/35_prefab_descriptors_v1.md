@@ -100,6 +100,75 @@ Fields:
 - `animation_channels`: optional array of strings (e.g. `"idle"`, `"move"`, `"attack"`).
 - `notes`: optional string (general contract notes).
 
+#### `interfaces.extra.motion_rig_v1` (runtime motion rig contract)
+
+`interfaces.extra` may include an optional `motion_rig_v1` object that declares an explicit,
+non-heuristic **motion rig contract** for applying **engine-provided, generic motion algorithms**
+at runtime.
+
+Key properties:
+
+- The engine **does not** infer “this model has two legs” from names/shape/geometry.
+- Motion algorithms are applied only when the prefab declares a compatible `motion_rig_v1`.
+- The contract targets **attachment edges** (parent component → child component) via
+  `(parent_object_id, child_object_id, parent_anchor, child_anchor)`.
+
+Top-level fields:
+
+- `version`: integer. Must be `1`.
+- `kind`: string. One of:
+  - `"biped_v1"`
+  - `"quadruped_v1"`
+  - `"car_v1"`
+- `default_move_algorithm`: optional string. If present, must be one of:
+  - `"none"` (use prefab-authored clips)
+  - `"biped_walk_v1"`
+  - `"quadruped_walk_v1"`
+  - `"car_wheels_v1"`
+- `move_cycle_m`: optional number (defaults to `1.0`). Used by walk rigs as the cycle length in
+  **meters traveled** (driven by `MovePhase`).
+- `walk_swing_degrees`: optional number (defaults vary by rig kind). Used by walk rigs as the
+  swing amplitude (degrees) around the join’s local +X axis.
+
+Edge reference object (`MotionEdgeRefV1`):
+
+- `parent_object_id`: UUID string (the parent component prefab id).
+- `child_object_id`: UUID string (the child component prefab id).
+- `parent_anchor`: string (anchor name on the parent; `"origin"` allowed).
+- `child_anchor`: string (anchor name on the child; `"origin"` allowed).
+
+##### `kind = "biped_v1"`
+
+Requires a `biped` object:
+
+- `left_leg`: `MotionEdgeRefV1`
+- `right_leg`: `MotionEdgeRefV1`
+
+##### `kind = "quadruped_v1"`
+
+Requires a `quadruped` object:
+
+- `front_left_leg`: `MotionEdgeRefV1`
+- `front_right_leg`: `MotionEdgeRefV1`
+- `back_left_leg`: `MotionEdgeRefV1`
+- `back_right_leg`: `MotionEdgeRefV1`
+
+##### `kind = "car_v1"`
+
+Requires a `car` object:
+
+- `wheels`: array of wheel objects:
+  - `edge`: `MotionEdgeRefV1`
+  - `spin_axis_local`: optional `[x, y, z]` array (defaults to `[1, 0, 0]`)
+- `wheel_radius_m`: optional number. If present, the engine uses `radians_per_meter = 1 / wheel_radius_m`.
+- `radians_per_meter`: optional number. If present, overrides wheel spin rate directly.
+
+Notes:
+
+- If neither `wheel_radius_m` nor `radians_per_meter` is present, the engine derives wheel radius
+  from the wheel component’s AABB size (including mount scale) and uses the rolling relation
+  `angle = distance / radius`.
+
 ### `provenance`
 
 `provenance` records where the prefab came from and how it evolved.
@@ -157,5 +226,6 @@ Gen3D writes descriptor files for saved models. In addition to filling standard 
 
 - Populate `text.long` with a compact summary including derived facts, an AI plan extract (when available), and a derived motion summary.
 - Populate `interfaces.extra.motion_summary` with a structured summary of available animation channels (drivers/clip kinds/counts).
+- Populate `interfaces.extra.motion_rig_v1` when the model declares explicit rig edges for runtime motion algorithms (walk/wheels, etc.).
 - Populate `extra.facts` with a structured set of derived facts (size, mobility/attack presence, grounding, etc.).
 - Populate `text.short` and `tags` via a best-effort AI call (when OpenAI config is available). Tools should treat these as suggestions and preserve human edits.

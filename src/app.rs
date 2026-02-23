@@ -1,7 +1,7 @@
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::asset::AssetPlugin;
-use bevy::ecs::system::NonSendMarker;
 use bevy::ecs::message::MessageWriter;
+use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
 #[cfg(target_os = "macos")]
 use bevy::render::settings::{Backends, WgpuSettings};
@@ -563,6 +563,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::gen3d::Gen3dToolFeedbackHistory>();
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
     app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();
+    app.init_resource::<crate::motion_ui::MotionAlgorithmUiState>();
     app.init_resource::<crate::workspace_ui::WorkspaceUiState>();
     app.init_resource::<crate::world_drag::WorldDragState>();
     app.init_resource::<crate::scene_build_ai::SceneBuildAiRuntime>();
@@ -650,6 +651,10 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     );
     app.add_systems(
         Startup,
+        crate::motion_ui::setup_motion_algorithm_ui.after(setup::setup_rendered),
+    );
+    app.add_systems(
+        Startup,
         crate::realm::realm_startup_init.after(setup::setup_rendered),
     );
     app.add_systems(
@@ -661,6 +666,19 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.add_systems(
         Update,
         crate::scene_instance_visuals::ensure_scene_instance_visuals_spawned,
+    );
+    app.add_systems(
+        Update,
+        (
+            crate::motion::ensure_default_motion_algorithm_controllers,
+            crate::motion::apply_motion_algorithms_on_controller_change
+                .after(crate::motion::ensure_default_motion_algorithm_controllers),
+            crate::motion::apply_motion_algorithms_on_new_bindings
+                .after(crate::motion::apply_motion_algorithms_on_controller_change),
+        )
+            .after(crate::scene_instance_visuals::ensure_scene_instance_visuals_spawned)
+            .before(crate::object::visuals::update_part_animations)
+            .run_if(in_state(BuildScene::Realm)),
     );
     app.add_systems(Update, crate::object_forms::ensure_object_forms_component);
     app.add_systems(
@@ -1024,6 +1042,24 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
                 .after(combat::tick_attack_cooldowns),
             rts::clear_forced_animation_channel_after_one_shot.after(combat::unit_attack_execute),
         )
+            .run_if(console::console_closed)
+            .run_if(crate::scene_authoring_ui::scene_ui_closed)
+            .run_if(in_state(BuildScene::Realm)),
+    );
+    app.add_systems(
+        Update,
+        (
+            crate::motion_ui::motion_algorithm_ui_keyboard
+                .run_if(crate::automation::local_input_enabled),
+            crate::motion_ui::motion_algorithm_ui_update
+                .after(crate::motion_ui::motion_algorithm_ui_keyboard),
+            crate::motion_ui::motion_algorithm_ui_button_clicks
+                .after(crate::motion_ui::motion_algorithm_ui_update)
+                .run_if(crate::automation::local_input_enabled),
+            crate::motion_ui::motion_algorithm_ui_button_styles
+                .after(crate::motion_ui::motion_algorithm_ui_button_clicks),
+        )
+            .after(rts::selection_input)
             .run_if(console::console_closed)
             .run_if(crate::scene_authoring_ui::scene_ui_closed)
             .run_if(in_state(BuildScene::Realm)),

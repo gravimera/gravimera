@@ -265,6 +265,21 @@ pub(crate) struct PartAnimationPlayer {
     pub(crate) apply_aim_yaw: bool,
 }
 
+/// Spawn-time binding metadata for an `ObjectRef` part edge (parent object → child object).
+///
+/// This enables runtime systems to deterministically inject/override animation slots for that edge
+/// without requiring the prefab author to provide any animation clips up front.
+#[derive(Component, Clone, Debug)]
+pub(crate) struct ObjectRefEdgeBinding {
+    pub(crate) root_entity: Entity,
+    pub(crate) parent_object_id: u128,
+    pub(crate) child_object_id: u128,
+    pub(crate) attachment: Option<AttachmentDef>,
+    pub(crate) base_transform: Transform,
+    pub(crate) base_slots: Vec<PartAnimationSlot>,
+    pub(crate) apply_aim_yaw: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct VisualSpawnSettings {
     pub(crate) mark_parts: bool,
@@ -452,6 +467,20 @@ fn spawn_object_visuals_inner(
                     ObjectPartKind::ObjectRef { object_id } => aim_object_ids.contains(object_id),
                     _ => false,
                 };
+            if let ObjectPartKind::ObjectRef {
+                object_id: child_id,
+            } = &part.kind
+            {
+                child.insert(ObjectRefEdgeBinding {
+                    root_entity,
+                    parent_object_id: def.object_id,
+                    child_object_id: *child_id,
+                    attachment: part.attachment.clone(),
+                    base_transform: part.transform,
+                    base_slots: part.animations.clone(),
+                    apply_aim_yaw,
+                });
+            }
             if !part.animations.is_empty() || apply_aim_yaw {
                 let child_object_id = match &part.kind {
                     ObjectPartKind::ObjectRef { object_id } => Some(*object_id),
@@ -929,7 +958,11 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
             keyframes,
         } => {
             let duration = (*duration_secs).max(1e-6);
-            let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+            let mut t = if time_secs.is_finite() {
+                time_secs
+            } else {
+                0.0
+            };
             let period = duration * 2.0;
             t = t.rem_euclid(period);
             if t > duration {
@@ -966,7 +999,11 @@ fn sample_keyframes_loop(
     time_secs: f32,
 ) -> Transform {
     let duration = duration_secs.max(1e-6);
-    let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+    let mut t = if time_secs.is_finite() {
+        time_secs
+    } else {
+        0.0
+    };
     t = t.rem_euclid(duration);
 
     if keyframes.is_empty() {
@@ -1002,7 +1039,11 @@ fn sample_keyframes_clamped(
     time_secs: f32,
 ) -> Transform {
     let duration = duration_secs.max(1e-6);
-    let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+    let mut t = if time_secs.is_finite() {
+        time_secs
+    } else {
+        0.0
+    };
     t = t.clamp(0.0, duration);
 
     if keyframes.is_empty() {
