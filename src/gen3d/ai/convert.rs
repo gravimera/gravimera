@@ -465,15 +465,14 @@ fn quat_from_forward_up_or_identity(
 fn anchor_transform_from_defs(
     anchors: &[crate::object::registry::AnchorDef],
     name: &str,
-) -> Transform {
+) -> Option<Transform> {
     if name == "origin" {
-        return Transform::IDENTITY;
+        return Some(Transform::IDENTITY);
     }
     anchors
         .iter()
         .find(|a| a.name.as_ref() == name)
         .map(|a| a.transform)
-        .unwrap_or(Transform::IDENTITY)
 }
 
 fn anchors_from_ai(
@@ -850,8 +849,17 @@ pub(super) fn resolve_planned_component_transforms(
             continue;
         };
         let Some(parent_idx) = name_to_idx.get(att.parent.as_str()).copied() else {
-            continue;
+            return Err(format!(
+                "AI plan: component `{}` attach_to parent `{}` not found.",
+                comp.name, att.parent
+            ));
         };
+        if parent_idx == idx {
+            return Err(format!(
+                "AI plan: component `{}` attach_to parent cannot be itself.",
+                comp.name
+            ));
+        }
         children[parent_idx].push(idx);
     }
 
@@ -883,14 +891,27 @@ pub(super) fn resolve_planned_component_transforms(
                 .attach_to
                 .as_ref()
                 .ok_or_else(|| "Internal error: missing attachment".to_string())?;
-            let Some(_parent_idx) = name_to_idx.get(att.parent.as_str()).copied() else {
-                continue;
-            };
 
-            let parent_anchor =
-                anchor_transform_from_defs(&planned[idx].anchors, att.parent_anchor.as_str());
-            let child_anchor =
-                anchor_transform_from_defs(&planned[child_idx].anchors, att.child_anchor.as_str());
+            let parent_anchor = anchor_transform_from_defs(
+                &planned[idx].anchors,
+                att.parent_anchor.as_str(),
+            )
+            .ok_or_else(|| {
+                format!(
+                    "AI plan: attachment `{}` -> `{}` references missing parent_anchor `{}` on component `{}`.",
+                    planned[idx].name, planned[child_idx].name, att.parent_anchor, planned[idx].name
+                )
+            })?;
+            let child_anchor = anchor_transform_from_defs(
+                &planned[child_idx].anchors,
+                att.child_anchor.as_str(),
+            )
+            .ok_or_else(|| {
+                format!(
+                    "AI plan: attachment `{}` -> `{}` references missing child_anchor `{}` on component `{}`.",
+                    planned[idx].name, planned[child_idx].name, att.child_anchor, planned[child_idx].name
+                )
+            })?;
             let composed = parent_world_mat
                 * parent_anchor.to_matrix()
                 * att.offset.to_matrix()
@@ -1058,13 +1079,12 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                         .iter()
                         .find(|a| a.name.as_ref() == child_anchor)
                         .map(|a| a.transform.rotation)
-                        .unwrap_or_else(|| {
-                            debug!(
-                                "Gen3D: plan component `{}` references missing child_anchor `{}`; assuming identity for animation axis conversion",
+                        .ok_or_else(|| {
+                            format!(
+                                "AI plan: component `{}` missing required child_anchor `{}` in its anchors.",
                                 comp.name, child_anchor
-                            );
-                            Quat::IDENTITY
-                        })
+                            )
+                        })?
                 };
 
                 let mut animations: Vec<PartAnimationSlot> = Vec::new();
@@ -1223,9 +1243,25 @@ pub(super) fn ai_plan_to_initial_draft_defs(
         let Some(parent_idx) = name_to_idx.get(att.parent.as_str()).copied() else {
             continue;
         };
-        let parent_anchor =
-            anchor_transform_from_defs(&planned[parent_idx].anchors, att.parent_anchor.as_str());
-        let child_anchor = anchor_transform_from_defs(&comp.anchors, att.child_anchor.as_str());
+        let parent_anchor = anchor_transform_from_defs(
+            &planned[parent_idx].anchors,
+            att.parent_anchor.as_str(),
+        )
+        .ok_or_else(|| {
+            format!(
+                "AI plan: parent component `{}` missing required parent_anchor `{}` in its anchors (child `{}`).",
+                planned[parent_idx].name, att.parent_anchor, comp.name
+            )
+        })?;
+        let child_anchor =
+            anchor_transform_from_defs(&comp.anchors, att.child_anchor.as_str()).ok_or_else(
+                || {
+                    format!(
+                        "AI plan: component `{}` missing required child_anchor `{}` in its anchors.",
+                        comp.name, att.child_anchor
+                    )
+                },
+            )?;
 
         let parent_forward = parent_anchor.rotation * Vec3::Z;
         let child_forward = child_anchor.rotation * Vec3::Z;
@@ -2104,15 +2140,47 @@ pub(super) fn apply_ai_review_delta_actions(
                 };
 
                 let parent_anchor = set.parent_anchor.trim();
+                let child_anchor = set.child_anchor.trim();
+                if parent_anchor.is_empty() || child_anchor.is_empty() {
+                    return Err(format!(
+                        "review_delta_v1: tweak_attachment {} ({}) has empty parent_anchor/child_anchor.",
+                        component_id, components[idx].name
+                    ));
+                }
+                if parent_idx == idx {
+                    return Err(format!(
+                        "review_delta_v1: tweak_attachment {} ({}) parent_component_id cannot be itself.",
+                        component_id, components[idx].name
+                    ));
+                }
                 let parent_anchor_rot = if parent_anchor == "origin" {
                     Some(Quat::IDENTITY)
                 } else {
-                    components[parent_idx]
+                    Some(
+                        components[parent_idx]
+                            .anchors
+                            .iter()
+                            .find(|a| a.name.as_ref() == parent_anchor)
+                            .map(|a| a.transform.rotation)
+                            .ok_or_else(|| {
+                                format!(
+                                    "review_delta_v1: tweak_attachment {} ({}) references missing parent_anchor `{}` on parent component `{}`.",
+                                    component_id, components[idx].name, parent_anchor, components[parent_idx].name
+                                )
+                            })?,
+                    )
+                };
+                if child_anchor != "origin"
+                    && !components[idx]
                         .anchors
                         .iter()
-                        .find(|a| a.name.as_ref() == parent_anchor)
-                        .map(|a| a.transform.rotation)
-                };
+                        .any(|a| a.name.as_ref() == child_anchor)
+                {
+                    return Err(format!(
+                        "review_delta_v1: tweak_attachment {} ({}) references missing child_anchor `{}` on component `{}`.",
+                        component_id, components[idx].name, child_anchor, components[idx].name
+                    ));
+                }
                 let offset =
                     attachment_offset_from_ai(set.offset.as_ref(), parent_anchor_rot).map_err(
                         |err| {
@@ -2128,7 +2196,6 @@ pub(super) fn apply_ai_review_delta_actions(
                     .map(|att| att.animations.clone())
                     .unwrap_or_default();
                 let joint = components[idx].attach_to.as_ref().and_then(|att| {
-                    let child_anchor = set.child_anchor.trim();
                     if att.parent == components[parent_idx].name
                         && att.parent_anchor == parent_anchor
                         && att.child_anchor == child_anchor
@@ -2142,7 +2209,7 @@ pub(super) fn apply_ai_review_delta_actions(
                 components[idx].attach_to = Some(Gen3dPlannedAttachment {
                     parent: components[parent_idx].name.clone(),
                     parent_anchor: set.parent_anchor.trim().to_string(),
-                    child_anchor: set.child_anchor.trim().to_string(),
+                    child_anchor: child_anchor.to_string(),
                     offset,
                     joint,
                     animations,
@@ -2220,7 +2287,8 @@ pub(super) fn apply_ai_review_delta_actions(
                     components
                         .iter()
                         .find(|c| c.name == parent)
-                        .map(|c| anchor_transform_from_defs(&c.anchors, parent_anchor).rotation)
+                        .and_then(|c| anchor_transform_from_defs(&c.anchors, parent_anchor))
+                        .map(|t| t.rotation)
                 });
 
                 let component_name = components[idx].name.clone();
@@ -2247,7 +2315,12 @@ pub(super) fn apply_ai_review_delta_actions(
                             .iter()
                             .find(|a| a.name.as_ref() == att.child_anchor)
                             .map(|a| a.transform.rotation)
-                            .unwrap_or(Quat::IDENTITY)
+                            .ok_or_else(|| {
+                                format!(
+                                    "review_delta_v1: tweak_animation {} ({}) references missing child_anchor `{}` on component `{}`.",
+                                    component_id, component_name, att.child_anchor, component_name
+                                )
+                            })?
                     };
                     *axis = att.offset.rotation * (child_anchor_rot.inverse() * *axis);
                 }
@@ -3742,6 +3815,112 @@ mod tests {
             .expect("apply should succeed");
         assert!(apply.had_actions);
         assert!(planned[0].contacts[0].stance.is_none());
+    }
+
+    #[test]
+    fn review_delta_tweak_attachment_errors_on_missing_anchors() {
+        let plan_text = r##"{
+          "version": 7,
+          "components": [
+            {
+              "name": "root",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "socket", "pos": [0.0, 1.0, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ]
+            },
+            {
+              "name": "child",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "mount", "pos": [0.0, 0.0, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ],
+              "attach_to": {
+                "parent": "root",
+                "parent_anchor": "socket",
+                "child_anchor": "mount",
+                "offset": { "pos": [0.0, 0.0, 0.0] }
+              }
+            }
+          ]
+        }"##;
+
+        let child_id =
+            Uuid::from_u128(builtin_object_id("gravimera/gen3d/component/child")).to_string();
+        let root_id =
+            Uuid::from_u128(builtin_object_id("gravimera/gen3d/component/root")).to_string();
+
+        // Missing parent anchor.
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let plan_collider = plan.collider.clone();
+        let (mut planned, _notes, defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+        let mut draft = Gen3dDraft { defs };
+
+        let delta = AiReviewDeltaJsonV1 {
+            version: 1,
+            applies_to: AiReviewDeltaAppliesToJsonV1 {
+                run_id: "test".into(),
+                attempt: 0,
+                plan_hash: "sha256:test".into(),
+                assembly_rev: 0,
+            },
+            actions: vec![AiReviewDeltaActionJsonV1::TweakAttachment {
+                component_id: child_id.clone(),
+                set: AiAttachmentSetJsonV1 {
+                    parent_component_id: root_id.clone(),
+                    parent_anchor: "missing_anchor".into(),
+                    child_anchor: "mount".into(),
+                    offset: None,
+                },
+                reason: String::new(),
+            }],
+            summary: None,
+            notes: None,
+        };
+
+        let err =
+            apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+                .unwrap_err();
+        assert!(
+            err.contains("missing parent_anchor"),
+            "unexpected error: {err}"
+        );
+
+        // Missing child anchor.
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let plan_collider = plan.collider.clone();
+        let (mut planned, _notes, defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+        let mut draft = Gen3dDraft { defs };
+
+        let delta = AiReviewDeltaJsonV1 {
+            version: 1,
+            applies_to: AiReviewDeltaAppliesToJsonV1 {
+                run_id: "test".into(),
+                attempt: 0,
+                plan_hash: "sha256:test".into(),
+                assembly_rev: 0,
+            },
+            actions: vec![AiReviewDeltaActionJsonV1::TweakAttachment {
+                component_id: child_id,
+                set: AiAttachmentSetJsonV1 {
+                    parent_component_id: root_id,
+                    parent_anchor: "socket".into(),
+                    child_anchor: "missing_anchor".into(),
+                    offset: None,
+                },
+                reason: String::new(),
+            }],
+            summary: None,
+            notes: None,
+        };
+
+        let err =
+            apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+                .unwrap_err();
+        assert!(
+            err.contains("missing child_anchor"),
+            "unexpected error: {err}"
+        );
     }
 
     fn assembled_child_transform(

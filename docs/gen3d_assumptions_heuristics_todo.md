@@ -56,11 +56,14 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
   - Result: rotation frames are always explicit (`join` vs `parent`) and deterministic; no more “it rotated wrong because the engine assumed join-frame”.
   - Code/docs: `src/gen3d/ai/convert.rs` (`attachment_offset_from_ai`), `src/gen3d/ai/structured_outputs.rs` (requires `rot_frame`), `src/gen3d/ai/prompts.rs` + `gen_3d.md` (updated contract text).
 
-- [ ] **Missing anchors sometimes silently become identity**
-  - Problem: In several places, missing anchors resolve to `Transform::IDENTITY` and assembly proceeds.
-  - Impact: Broken joins/axes show up as “weird rotation” rather than a clear error.
-  - Code: multiple `anchor_transform*_…unwrap_or(Transform::IDENTITY)` paths (Gen3D plan conversion and runtime visuals).
-  - Direction: For Gen3D-generated content, missing anchors should be a hard error (plan/draft validation) rather than a silent fallback.
+- [x] **Missing anchors sometimes silently become identity**
+  - Fixed (2026-02-23): Gen3D now treats missing referenced anchors as a hard error instead of silently using `Transform::IDENTITY`.
+  - Key fixes:
+    - `resolve_planned_component_transforms` errors if an attachment references a missing `parent_anchor` / `child_anchor` (no silent identity).
+    - Review-delta `tweak_attachment` validates that the specified parent/child anchors exist (errors early instead of producing a broken assembly).
+    - Copy/mirror helpers no longer treat missing anchors as identity (errors instead of guessing).
+  - Code: `src/gen3d/ai/convert.rs` (anchor lookup + review-delta validation), `src/gen3d/ai/copy_component.rs` (anchor lookup).
+  - Test: `src/gen3d/ai/convert.rs` `review_delta_tweak_attachment_errors_on_missing_anchors`.
 
 - [ ] **Join-frame alignment assumptions (forward must match; up opposition is only a warning)**
   - Problem: Plan validation errors on opposing forward but only warns on opposing up. Opposing up can still cause roll flips that look like “incorrect rotation”.

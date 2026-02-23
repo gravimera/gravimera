@@ -149,15 +149,14 @@ fn apply_delta_to_anchors(anchors: &[AnchorDef], delta: Transform) -> Vec<Anchor
         .collect()
 }
 
-fn anchor_transform_from_defs(anchors: &[AnchorDef], name: &str) -> Transform {
+fn anchor_transform_from_defs(anchors: &[AnchorDef], name: &str) -> Option<Transform> {
     if name == "origin" {
-        return Transform::IDENTITY;
+        return Some(Transform::IDENTITY);
     }
     anchors
         .iter()
         .find(|a| a.name.as_ref() == name)
         .map(|a| a.transform)
-        .unwrap_or(Transform::IDENTITY)
 }
 
 fn linked_copy_geometry_part(source_object_id: u128, delta: Transform) -> ObjectPartDef {
@@ -236,41 +235,52 @@ pub(super) fn copy_component_into(
         Gen3dCopyAnchorsMode::PreserveTargetAnchors
             | Gen3dCopyAnchorsMode::PreserveInterfaceAnchors
     ) {
-        let source_child_anchor = components[source_idx]
-            .attach_to
-            .as_ref()
-            .map(|att| att.child_anchor.as_str());
-        let target_child_anchor = components[target_idx]
-            .attach_to
-            .as_ref()
-            .map(|att| att.child_anchor.as_str());
-        if let (Some(source_child_anchor), Some(target_child_anchor)) =
-            (source_child_anchor, target_child_anchor)
-        {
-            let source_anchor =
-                anchor_transform_from_defs(&source_def.anchors, source_child_anchor);
-            let target_anchor =
-                anchor_transform_from_defs(&target_def.anchors, target_child_anchor);
+        (|| -> Result<Option<Transform>, String> {
+            let source_child_anchor = components[source_idx]
+                .attach_to
+                .as_ref()
+                .map(|att| att.child_anchor.as_str());
+            let target_child_anchor = components[target_idx]
+                .attach_to
+                .as_ref()
+                .map(|att| att.child_anchor.as_str());
+            let (Some(source_child_anchor), Some(target_child_anchor)) =
+                (source_child_anchor, target_child_anchor)
+            else {
+                return Ok(None);
+            };
+
+            let source_anchor = anchor_transform_from_defs(&source_def.anchors, source_child_anchor)
+                .ok_or_else(|| {
+                    format!(
+                        "copy_component_into: source component `{source_name}` is missing required anchor `{source_child_anchor}`"
+                    )
+                })?;
+            let target_anchor = anchor_transform_from_defs(&target_def.anchors, target_child_anchor)
+                .ok_or_else(|| {
+                    format!(
+                        "copy_component_into: target component `{target_name}` is missing required anchor `{target_child_anchor}`"
+                    )
+                })?;
+
             let inv_source_anchor = source_anchor.to_matrix().inverse();
             if !inv_source_anchor.is_finite() {
-                None
-            } else {
-                let target_mat = target_anchor.to_matrix();
-                let rot_mat = target_mat * inv_source_anchor;
-                // Optional mirrored alignment: flip the mount-local right axis (X) to preserve
-                // the forward/up join convention while mirroring handedness (common for L/R reuse).
-                let mirror_local = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
-                let mirror_mat = target_mat * mirror_local * inv_source_anchor;
-
-                let chosen = match alignment {
-                    Gen3dCopyAlignmentMode::Rotation => rot_mat,
-                    Gen3dCopyAlignmentMode::MirrorMountX => mirror_mat,
-                };
-                transform_from_mat4(chosen)
+                return Ok(None);
             }
-        } else {
-            None
-        }
+
+            let target_mat = target_anchor.to_matrix();
+            let rot_mat = target_mat * inv_source_anchor;
+            // Optional mirrored alignment: flip the mount-local right axis (X) to preserve
+            // the forward/up join convention while mirroring handedness (common for L/R reuse).
+            let mirror_local = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+            let mirror_mat = target_mat * mirror_local * inv_source_anchor;
+
+            let chosen = match alignment {
+                Gen3dCopyAlignmentMode::Rotation => rot_mat,
+                Gen3dCopyAlignmentMode::MirrorMountX => mirror_mat,
+            };
+            Ok(transform_from_mat4(chosen))
+        })()?
     } else {
         None
     };
@@ -1491,7 +1501,8 @@ mod tests {
             "expected subtree copy to preserve extra target attachment ref to grip_socket"
         );
 
-        let grip_after = anchor_transform_from_defs(&hand_r_after.anchors, "grip");
+        let grip_after =
+            anchor_transform_from_defs(&hand_r_after.anchors, "grip").expect("grip anchor");
         let forward = grip_after.rotation * Vec3::Z;
         assert!(
             forward.dot(Vec3::X) > 0.99,
@@ -1706,13 +1717,15 @@ mod tests {
 
         let b_def_after = draft.defs.iter().find(|d| d.object_id == b_id).unwrap();
 
-        let mount_after = anchor_transform_from_defs(&b_def_after.anchors, "mount");
+        let mount_after =
+            anchor_transform_from_defs(&b_def_after.anchors, "mount").expect("mount anchor");
         assert_eq!(
             mount_after, target_mount_before,
             "expected mount anchor to be preserved under preserve_interfaces"
         );
 
-        let tip_after = anchor_transform_from_defs(&b_def_after.anchors, "tip");
+        let tip_after =
+            anchor_transform_from_defs(&b_def_after.anchors, "tip").expect("tip anchor");
         let dp_tip = (tip_after.translation - Vec3::new(-1.0, 0.0, 0.0)).length();
         assert!(
             dp_tip < 1e-4,
@@ -1823,7 +1836,8 @@ mod tests {
             attack: None,
         };
 
-        let source_mount = anchor_transform_from_defs(&source_def.anchors, "mount");
+        let source_mount =
+            anchor_transform_from_defs(&source_def.anchors, "mount").expect("source mount");
         let inv_source_mount = source_mount.to_matrix().inverse();
         assert!(
             inv_source_mount.is_finite(),
@@ -1832,7 +1846,8 @@ mod tests {
 
         let rot_mat = target_mount_before.to_matrix() * inv_source_mount;
 
-        let source_tip_mount = anchor_transform_from_defs(&source_def.anchors, "tip_mount");
+        let source_tip_mount =
+            anchor_transform_from_defs(&source_def.anchors, "tip_mount").expect("source tip_mount");
         let expected_tip_mount_translation = transform_point(rot_mat, source_tip_mount.translation);
 
         let mut draft = Gen3dDraft::default();
@@ -1852,13 +1867,15 @@ mod tests {
         .expect("copy ok");
 
         let b_def_after = draft.defs.iter().find(|d| d.object_id == b_id).unwrap();
-        let mount_after = anchor_transform_from_defs(&b_def_after.anchors, "mount");
+        let mount_after =
+            anchor_transform_from_defs(&b_def_after.anchors, "mount").expect("mount anchor");
         assert_eq!(
             mount_after, target_mount_before,
             "expected mount anchor to be preserved under preserve_interfaces"
         );
 
-        let tip_after = anchor_transform_from_defs(&b_def_after.anchors, "tip_mount");
+        let tip_after =
+            anchor_transform_from_defs(&b_def_after.anchors, "tip_mount").expect("tip_mount anchor");
         let dp = (tip_after.translation - expected_tip_mount_translation).length();
         assert!(
             dp < 1e-4,
@@ -2152,7 +2169,8 @@ mod tests {
                 .unwrap()
                 .anchors,
             "shoulder",
-        );
+        )
+        .expect("target shoulder");
         copy_component_subtree_into(
             &mut components,
             &mut draft,
@@ -2170,7 +2188,8 @@ mod tests {
             .iter()
             .find(|d| d.object_id == wing_root_r_id)
             .unwrap();
-        let mount_after = anchor_transform_from_defs(&wing_root_r_after.anchors, "shoulder");
+        let mount_after =
+            anchor_transform_from_defs(&wing_root_r_after.anchors, "shoulder").expect("shoulder");
         assert_eq!(
             mount_after, target_mount_before,
             "expected subtree copy to preserve the target mount interface"
@@ -2181,7 +2200,8 @@ mod tests {
             .iter()
             .find(|d| d.object_id == wing_root_l_id)
             .unwrap();
-        let source_mount = anchor_transform_from_defs(&source_root_def.anchors, "shoulder");
+        let source_mount =
+            anchor_transform_from_defs(&source_root_def.anchors, "shoulder").expect("shoulder");
         let inv_source_mount = source_mount.to_matrix().inverse();
         assert!(
             inv_source_mount.is_finite(),
@@ -2190,9 +2210,11 @@ mod tests {
 
         let rot_mat = target_mount_before.to_matrix() * inv_source_mount;
 
-        let source_tip_mount = anchor_transform_from_defs(&source_root_def.anchors, "tip_mount");
+        let source_tip_mount =
+            anchor_transform_from_defs(&source_root_def.anchors, "tip_mount").expect("tip_mount");
         let expected_tip_mount_translation = transform_point(rot_mat, source_tip_mount.translation);
-        let tip_after = anchor_transform_from_defs(&wing_root_r_after.anchors, "tip_mount");
+        let tip_after =
+            anchor_transform_from_defs(&wing_root_r_after.anchors, "tip_mount").expect("tip_mount");
         let dp = (tip_after.translation - expected_tip_mount_translation).length();
         assert!(
             dp < 1e-4,
@@ -2279,7 +2301,9 @@ mod tests {
             .iter()
             .find(|d| d.object_id == wing_root_r_id)
             .unwrap();
-        let fingers_mount = anchor_transform_from_defs(&wing_root_r_after.anchors, "fingers_mount");
+        let fingers_mount =
+            anchor_transform_from_defs(&wing_root_r_after.anchors, "fingers_mount")
+                .expect("fingers_mount");
         let dp = (fingers_mount.translation - Vec3::new(0.2, 0.0, -0.55)).length();
         assert!(
             dp < 1e-4,
