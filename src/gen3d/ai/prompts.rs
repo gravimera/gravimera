@@ -775,18 +775,21 @@ Review mode:\n",
 - Ignore smoke severity=\"warn\" issues unless they imply a severity=\"error\".\n",
         );
     }
-    out.push_str(
-        "\nIMPORTANT:\n\
-     - Do NOT assume the engine will \"auto-fix\" placement. If something is wrong, request explicit edits.\n\
-     - Do NOT output Euler angles.\n\
-       - For `set.rot`, use either:\n\
-         - a basis: {\"forward\":[x,y,z],\"up\":[x,y,z]}\n\
-         - or a quaternion: {\"quat_xyzw\":[x,y,z,w]}\n\
-       - For deltas (`tweak_component_transform.delta` / `tweak_anchor.delta`), use `rot_quat_xyzw` (NOT `quat_xyzw`).\n\
-      - Target components by `component_id` (UUID), not by name.\n\
-      - Keep changes minimal: prefer adjusting attachment offsets / anchors over regenerating geometry.\n\
-      - Focus on HIGH-IMPACT structural issues. If only minor cosmetic tweaks remain, return ONLY {\"kind\":\"accept\"}.\n\
-      - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\
+	    out.push_str(
+	        "\nIMPORTANT:\n\
+	     - Do NOT assume the engine will \"auto-fix\" placement. If something is wrong, request explicit edits.\n\
+	     - Do NOT output Euler angles.\n\
+	       - Rotation fields (IMPORTANT):\n\
+	         - For `tweak_component_transform.set.rot`, use either:\n\
+	           - a basis: {\"forward\":[x,y,z],\"up\":[x,y,z]}\n\
+	           - or a quaternion: {\"quat_xyzw\":[x,y,z,w]}\n\
+	         - For `tweak_anchor.set`, DO NOT use `rot`. Set `forward` and `up` directly (and optionally `pos`).\n\
+	           Example: {\"set\":{\"forward\":[0,0,1],\"up\":[0,1,0]}}\n\
+	       - For deltas (`tweak_component_transform.delta` / `tweak_anchor.delta`), use `rot_quat_xyzw` (NOT `quat_xyzw`).\n\
+	      - Target components by `component_id` (UUID), not by name.\n\
+	      - Keep changes minimal: prefer adjusting attachment offsets / anchors over regenerating geometry.\n\
+	      - Focus on HIGH-IMPACT structural issues. If only minor cosmetic tweaks remain, return ONLY {\"kind\":\"accept\"}.\n\
+	      - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\
       - Preview images may include `move_sheet.png` and `attack_sheet.png` (2x2 sprite sheets, 4 frames each). Use them to debug animation issues (e.g. hair/legs moving in the wrong direction).\n\
       - If smoke results include `motion_validation.issues`, treat ONLY `severity=error` issues as authoritative and prioritize fixing them first.\n\
 ",
@@ -817,13 +820,15 @@ Review mode:\n",
         If you need visible motion, animate a non-fixed joint in the chain (hinge/ball/free), or change the joint kind/limits via `tweak_attachment`.\n\
       - `tweak_animation.spec.time_offset_units` is an additive offset in the clip's time domain. Use it to phase-stagger repeated limbs (instead of duplicating or rewriting keyframes).\n\
       - If motion validation reports `time_offset_no_effect`, the configured `time_offset_units` does not change the sampled pose (the loop is effectively periodic at that offset). Fix by changing the keyframes and/or `time_offset_units` so that `delta(t)` differs from `delta(t + time_offset_units)`.\n\
-      - If an animation channel is undesirable or too broken to repair, you may disable ANY channel\n\
-        by replacing it with an identity loop (a `loop` whose keyframes' `delta` transforms are all identity).\n\
-        IMPORTANT: include at least 1 keyframe (example: one keyframe at time_secs=0 with no delta / identity delta).\n\n\
-      If the scene graph shows no generated geometry yet (e.g. 0 primitive parts / components_generated=0), blank renders are expected.\n\
-      Do NOT report that as a renderer bug. Instead, request generating components first.\n\n\
-     Attack schema for `tweak_attack` (MUST follow exactly; do not invent custom fields):\n\
-     - `attack.kind` must be exactly one of: `none`, `melee`, `ranged_projectile`.\n\
+	      - If an animation channel is undesirable or too broken to repair, you may disable ANY channel\n\
+	        by replacing it with an identity loop (a `loop` whose keyframes' `delta` transforms are all identity).\n\
+	        IMPORTANT: include at least 1 keyframe (example: one keyframe at time_secs=0 with no delta / identity delta).\n\n\
+	        Identity loop example (use the existing channel driver; common defaults: idle/ambient -> \"always\", move -> \"move_distance\", attack_primary -> \"attack_time\"):\n\
+	        {\"driver\":\"move_distance\",\"speed_scale\":1.0,\"time_offset_units\":0.0,\"clip\":{\"kind\":\"loop\",\"duration_secs\":1.0,\"keyframes\":[{\"time_secs\":0.0,\"delta\":null}]}}\n\n\
+	      If the scene graph shows no generated geometry yet (e.g. 0 primitive parts / components_generated=0), blank renders are expected.\n\
+	      Do NOT report that as a renderer bug. Instead, request generating components first.\n\n\
+	     Attack schema for `tweak_attack` (MUST follow exactly; do not invent custom fields):\n\
+	     - `attack.kind` must be exactly one of: `none`, `melee`, `ranged_projectile`.\n\
      - Do NOT output synonyms like `cannon`, `gun`, `projectile`, `ranged`; always use the canonical kinds above.\n\
      - If the weapon is a cannon/gun, use `ranged_projectile` and describe it as a cannon in `reason`.\n\
      - `none`: {\"kind\":\"none\"}\n\

@@ -100,6 +100,13 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
 
 ## 4) Diagnostics / guardrails to prevent “wrong result but no clue why”
 
+- [x] **Review-delta prompt/schema drift prevents automatic repairs**
+  - Fixed (2026-02-23): updated the Gen3D review-delta system prompt to match the strict JSON schema so the agent can actually apply anchor/animation fixes.
+  - Key fixes:
+    - `tweak_anchor.set` uses `forward` + `up` directly (no `set.rot` field).
+    - Identity-loop example uses the canonical animation schema (`spec.clip.kind="loop"`, `duration_secs`, `keyframes[].time_secs`, `delta=null`).
+  - Code: `src/gen3d/ai/prompts.rs` (`build_gen3d_review_delta_system_instructions`).
+
 - [ ] **Add structured “heuristic/applied-default” artifacts**
   - Track when any heuristic/default/sanitization was applied (what changed, why, before/after summary) so bugs are debuggable.
   - Likely touchpoints: component conversion pipeline, reuse/copy pipeline, motion fallback pipeline.
