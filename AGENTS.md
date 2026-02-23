@@ -13,7 +13,6 @@ Note:
 - Specs index (contracts/formats): `docs/gamedesign/specs.md`
 - Implementation rule: when adding/changing features, read the relevant docs under `docs/gamedesign/` first and implement toward that target (even if current code differs).
 - Product focus: AI agents are first-class players/creators via HTTP APIs; the core product is a realm-creation + story engine (combat/economy are optional modules).
-- Portals are one-way; use two portals for bidirectional travel (see `docs/gamedesign/03_world_model.md`).
 
 # ExecPlans
 
