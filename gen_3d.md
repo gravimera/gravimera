@@ -99,6 +99,8 @@ How it works:
 - A descriptor may include `interfaces.extra.motion_rig_v1` (see `docs/gamedesign/35_prefab_descriptors_v1.md`).
 - When `motion_rig_v1` is present, the engine can inject a generic motion algorithm by generating
   per-edge `move` channel slots at runtime (no heuristic “leg detection”).
+- Gen3D may auto-populate `motion_rig_v1` on Save when component names match canonical rig parts
+  (example car wheels: `wheel_fl`, `wheel_fr`, `wheel_bl`, `wheel_br`).
 
 In-game UX (Realm):
 

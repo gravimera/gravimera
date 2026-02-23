@@ -1399,6 +1399,7 @@ fn handle_request_main_thread(
                 material_cache,
                 mesh_cache,
                 library,
+                None,
                 workshop,
                 job,
                 draft,

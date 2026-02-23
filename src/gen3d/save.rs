@@ -750,6 +750,7 @@ pub(crate) fn gen3d_save_button(
     mut commands: Commands,
     mut render: Gen3dSaveRenderWorld,
     mut library: ResMut<ObjectLibrary>,
+    mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
     mut job: ResMut<Gen3dAiJob>,
@@ -813,6 +814,7 @@ pub(crate) fn gen3d_save_button(
                 &mut *render.material_cache,
                 &mut *render.mesh_cache,
                 &mut library,
+                Some(&mut *prefab_descriptors),
                 &mut workshop,
                 &mut job,
                 &draft,
@@ -841,6 +843,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     material_cache: &mut visuals::MaterialCache,
     mesh_cache: &mut visuals::PrimitiveMeshCache,
     library: &mut ObjectLibrary,
+    prefab_descriptors: Option<&mut crate::prefab_descriptors::PrefabDescriptorLibrary>,
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
     draft: &Gen3dDraft,
@@ -867,13 +870,16 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         return Err("Cannot save: missing saved prefab def.".into());
     };
 
-    save_generated_prefab_descriptor_best_effort(
+    let descriptor = save_generated_prefab_descriptor_best_effort(
         &depot_prefabs_dir,
         root_def,
         library,
         job,
         workshop,
     );
+    if let Some(prefab_descriptors) = prefab_descriptors {
+        prefab_descriptors.upsert(saved_root_id, descriptor);
+    }
 
     let size = root_def.size;
     let half_xz = collider_half_xz(root_def.collider, size);
@@ -1015,7 +1021,7 @@ fn save_generated_prefab_descriptor_best_effort(
     library: &ObjectLibrary,
     job: &Gen3dAiJob,
     workshop: &Gen3dWorkshop,
-) {
+) -> crate::prefab_descriptors::PrefabDescriptorFileV1 {
     fn load_optional_json(path: &std::path::Path) -> Option<serde_json::Value> {
         let bytes = std::fs::read(path).ok()?;
         serde_json::from_slice(&bytes).ok()
@@ -1104,13 +1110,17 @@ fn save_generated_prefab_descriptor_best_effort(
                         PartAnimationDef::Loop { duration_secs, .. }
                         | PartAnimationDef::Once { duration_secs, .. }
                         | PartAnimationDef::PingPong { duration_secs, .. } => {
-                            entry.clip_kinds.insert(match &slot.spec.clip {
-                                PartAnimationDef::Loop { .. } => "loop",
-                                PartAnimationDef::Once { .. } => "once",
-                                PartAnimationDef::PingPong { .. } => "ping_pong",
-                                PartAnimationDef::Spin { .. } => unreachable!("spin handled below"),
-                            }
-                            .to_string());
+                            entry.clip_kinds.insert(
+                                match &slot.spec.clip {
+                                    PartAnimationDef::Loop { .. } => "loop",
+                                    PartAnimationDef::Once { .. } => "once",
+                                    PartAnimationDef::PingPong { .. } => "ping_pong",
+                                    PartAnimationDef::Spin { .. } => {
+                                        unreachable!("spin handled below")
+                                    }
+                                }
+                                .to_string(),
+                            );
                             if duration_secs.is_finite() && *duration_secs > 0.0 {
                                 entry.loop_duration_min = Some(
                                     entry
@@ -1168,6 +1178,141 @@ fn save_generated_prefab_descriptor_best_effort(
             "version": 1,
             "channels": channels,
         })
+    }
+
+    fn motion_rig_v1_json(library: &ObjectLibrary, root_id: u128) -> Option<serde_json::Value> {
+        use std::collections::{HashMap, HashSet};
+
+        #[derive(Clone, Debug)]
+        struct Edge {
+            parent_object_id: u128,
+            child_object_id: u128,
+            parent_anchor: String,
+            child_anchor: String,
+            child_component_name: Option<String>,
+        }
+
+        fn component_name_from_label(label: &str) -> Option<String> {
+            label
+                .trim()
+                .strip_prefix("gen3d_component_")
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        }
+
+        fn edge_json(edge: &Edge) -> serde_json::Value {
+            serde_json::json!({
+                "parent_object_id": uuid::Uuid::from_u128(edge.parent_object_id).to_string(),
+                "child_object_id": uuid::Uuid::from_u128(edge.child_object_id).to_string(),
+                "parent_anchor": edge.parent_anchor.clone(),
+                "child_anchor": edge.child_anchor.clone(),
+            })
+        }
+
+        let mut visited: HashSet<u128> = HashSet::new();
+        let mut stack: Vec<u128> = vec![root_id];
+        let mut edges: Vec<Edge> = Vec::new();
+
+        while let Some(object_id) = stack.pop() {
+            if !visited.insert(object_id) {
+                continue;
+            }
+            let Some(def) = library.get(object_id) else {
+                continue;
+            };
+
+            for part in def.parts.iter() {
+                let ObjectPartKind::ObjectRef { object_id: child } = &part.kind else {
+                    continue;
+                };
+                stack.push(*child);
+
+                let Some(attachment) = part.attachment.as_ref() else {
+                    continue;
+                };
+
+                let child_name = library
+                    .get(*child)
+                    .and_then(|child_def| component_name_from_label(child_def.label.as_ref()));
+
+                edges.push(Edge {
+                    parent_object_id: object_id,
+                    child_object_id: *child,
+                    parent_anchor: attachment.parent_anchor.to_string(),
+                    child_anchor: attachment.child_anchor.to_string(),
+                    child_component_name: child_name,
+                });
+            }
+        }
+
+        let mut by_child_name: HashMap<String, Edge> = HashMap::new();
+        for edge in edges {
+            let Some(name) = edge.child_component_name.as_ref() else {
+                continue;
+            };
+            by_child_name.entry(name.to_string()).or_insert(edge);
+        }
+
+        let wheel_names = ["wheel_fl", "wheel_fr", "wheel_bl", "wheel_br"];
+        if wheel_names
+            .iter()
+            .all(|name| by_child_name.contains_key(*name))
+        {
+            let wheels = wheel_names
+                .iter()
+                .filter_map(|name| by_child_name.get(*name))
+                .map(|edge| serde_json::json!({ "edge": edge_json(edge) }))
+                .collect::<Vec<_>>();
+            return Some(serde_json::json!({
+                "version": 1,
+                "kind": "car_v1",
+                "car": {
+                    "wheels": wheels,
+                }
+            }));
+        }
+
+        let quad_leg_names = [
+            "front_left_leg",
+            "front_right_leg",
+            "back_left_leg",
+            "back_right_leg",
+        ];
+        if quad_leg_names
+            .iter()
+            .all(|name| by_child_name.contains_key(*name))
+        {
+            let fl = by_child_name.get("front_left_leg")?;
+            let fr = by_child_name.get("front_right_leg")?;
+            let bl = by_child_name.get("back_left_leg")?;
+            let br = by_child_name.get("back_right_leg")?;
+            return Some(serde_json::json!({
+                "version": 1,
+                "kind": "quadruped_v1",
+                "quadruped": {
+                    "front_left_leg": edge_json(fl),
+                    "front_right_leg": edge_json(fr),
+                    "back_left_leg": edge_json(bl),
+                    "back_right_leg": edge_json(br),
+                }
+            }));
+        }
+
+        if let (Some(left), Some(right)) = (
+            by_child_name.get("left_leg"),
+            by_child_name.get("right_leg"),
+        ) {
+            return Some(serde_json::json!({
+                "version": 1,
+                "kind": "biped_v1",
+                "biped": {
+                    "left_leg": edge_json(left),
+                    "right_leg": edge_json(right),
+                }
+            }));
+        }
+
+        None
     }
 
     fn plan_extracted_to_long_text(plan: &serde_json::Value) -> String {
@@ -1397,6 +1542,9 @@ fn save_generated_prefab_descriptor_best_effort(
     let mut interfaces_extra: std::collections::BTreeMap<String, serde_json::Value> =
         Default::default();
     interfaces_extra.insert("motion_summary".to_string(), motion_summary.clone());
+    if let Some(motion_rig) = motion_rig_v1_json(library, root_def.object_id) {
+        interfaces_extra.insert("motion_rig_v1".to_string(), motion_rig);
+    }
 
     let mut top_extra: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
     top_extra.insert("facts".to_string(), facts);
@@ -1464,4 +1612,6 @@ fn save_generated_prefab_descriptor_best_effort(
         plan_extracted_text,
         Some(motion_summary),
     );
+
+    descriptor
 }
