@@ -17,6 +17,7 @@ pub(crate) const TOOL_ID_DETACH_COMPONENT: &str = "detach_component_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_PLAN: &str = "llm_generate_plan_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENT: &str = "llm_generate_component_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENTS: &str = "llm_generate_components_v1";
+pub(crate) const TOOL_ID_LLM_GENERATE_MOTION_ROLES: &str = "llm_generate_motion_roles_v1";
 pub(crate) const TOOL_ID_LLM_REVIEW_DELTA: &str = "llm_review_delta_v1";
 
 pub(crate) const TOOL_ID_RENDER_PREVIEW: &str = "render_preview_v1";
@@ -128,6 +129,12 @@ impl Gen3dToolRegistryV1 {
                 title: "LLM: generate components (batch)",
                 one_line_summary:
                     "Generates multiple components in parallel and applies them deterministically to the draft.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_LLM_GENERATE_MOTION_ROLES,
+                title: "LLM: generate motion roles",
+                one_line_summary:
+                    "Labels locomotion effectors (legs/wheels) so the engine can inject generic move algorithms at runtime.",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_LLM_REVIEW_DELTA,
@@ -437,6 +444,21 @@ impl Gen3dToolRegistryV1 {
                     "requested": 6,
                     "succeeded": 6,
                     "failed": [],
+                }),
+            }),
+            TOOL_ID_LLM_GENERATE_MOTION_ROLES => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_LLM_GENERATE_MOTION_ROLES,
+                title: "LLM: generate motion roles",
+                one_line_summary:
+                    "Labels locomotion effectors (legs/wheels) so the engine can inject generic move algorithms at runtime.",
+                description:
+                    "Analyzes the current component graph and returns a strict semantic mapping.\n\
+                     Output roles are intentionally small (e.g. `leg` / `wheel`), and do NOT pick a specific engine algorithm.\n\
+                     The engine uses this mapping to derive a compatible runtime motion rig contract when saving the prefab descriptor.",
+                args_example: serde_json::json!({}),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "move_effectors": 4,
                 }),
             }),
             TOOL_ID_LLM_REVIEW_DELTA => Some(Gen3dToolDescriptionV1 {

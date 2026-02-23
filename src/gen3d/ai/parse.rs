@@ -1,10 +1,11 @@
 use bevy::log::debug;
 
+use super::super::GEN3D_MAX_PARTS;
 use super::artifacts::write_gen3d_json_artifact;
 use super::schema::{
-    AiDescriptorMetaJsonV1, AiDraftJsonV1, AiPlanFillJsonV1, AiPlanJsonV1, AiReviewDeltaJsonV1,
+    AiDescriptorMetaJsonV1, AiDraftJsonV1, AiMotionRolesJsonV1, AiPlanFillJsonV1, AiPlanJsonV1,
+    AiReviewDeltaJsonV1,
 };
-use super::super::GEN3D_MAX_PARTS;
 
 fn normalize_snake_case_token(raw: &str) -> String {
     let mut normalized = raw.trim().to_ascii_lowercase();
@@ -264,6 +265,88 @@ pub(super) fn parse_ai_descriptor_meta_from_text(
     Ok(meta)
 }
 
+pub(super) fn parse_ai_motion_roles_from_text(text: &str) -> Result<AiMotionRolesJsonV1, String> {
+    debug!(
+        "Gen3D: extracted motion-roles output text (chars={})",
+        text.chars().count()
+    );
+    let json_text = extract_json_object(text).unwrap_or_else(|| text.to_string());
+    debug!(
+        "Gen3D: parsing motion-roles JSON (chars={})",
+        json_text.trim().chars().count()
+    );
+    if cfg!(debug_assertions) {
+        debug!(
+            "Gen3D: motion-roles output preview (start): {}",
+            super::truncate_for_ui(json_text.trim(), 800)
+        );
+    }
+
+    let json_text = json_text.trim();
+    let json_value: serde_json::Value =
+        serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
+    if json_value.get("version").is_none() {
+        return Err("AI motion-roles JSON missing required `version` (expected 1).".into());
+    }
+
+    let mut roles: AiMotionRolesJsonV1 =
+        serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
+    if roles.version != 1 {
+        return Err(format!(
+            "Unsupported AI motion-roles version {} (expected 1)",
+            roles.version
+        ));
+    }
+
+    if let Some(notes) = roles.notes.as_ref().map(|v| v.trim().to_string()) {
+        roles.notes = (!notes.is_empty()).then_some(notes);
+    }
+
+    if roles.move_effectors.len() > 32 {
+        debug!(
+            "Gen3D: truncating move_effectors from {} to 32",
+            roles.move_effectors.len()
+        );
+        roles.move_effectors.truncate(32);
+    }
+
+    // Normalize and validate effectors.
+    let mut deduped: Vec<super::schema::AiMoveEffectorJsonV1> = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+    for mut effector in roles.move_effectors {
+        effector.component = effector.component.trim().to_string();
+        if effector.component.is_empty() {
+            continue;
+        }
+        if !seen.insert(effector.component.clone()) {
+            continue;
+        }
+
+        if let Some(group) = effector.phase_group {
+            if group > 1 {
+                return Err(format!(
+                    "AI motion-roles invalid phase_group {} for component `{}` (expected 0 or 1, or null)",
+                    group, effector.component
+                ));
+            }
+        }
+
+        if let Some(axis) = effector.spin_axis_local.as_ref() {
+            if axis.iter().any(|v| !v.is_finite()) {
+                return Err(format!(
+                    "AI motion-roles invalid spin_axis_local (non-finite) for component `{}`",
+                    effector.component
+                ));
+            }
+        }
+
+        deduped.push(effector);
+    }
+    roles.move_effectors = deduped;
+
+    Ok(roles)
+}
+
 pub(super) fn extract_json_object(text: &str) -> Option<String> {
     let mut depth = 0i32;
     let mut start: Option<usize> = None;
@@ -296,7 +379,9 @@ pub(super) fn extract_json_object(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::schema::{AiAnimationClipJson, AiAnimationDriverJson, AiReviewDeltaActionJsonV1};
+    use super::super::schema::{
+        AiAnimationClipJson, AiAnimationDriverJson, AiReviewDeltaActionJsonV1,
+    };
     use super::*;
 
     #[test]
@@ -321,6 +406,25 @@ mod tests {
                 "voxel_art".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn parses_motion_roles_and_dedupes_effectors() {
+        let text = r#"ok {
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":2},
+          "move_effectors": [
+            {"component":" left_thigh ","role":"leg","phase_group":0,"spin_axis_local":null},
+            {"component":"left_thigh","role":"leg","phase_group":0,"spin_axis_local":null},
+            {"component":"wheel_fl","role":"wheel","phase_group":null,"spin_axis_local":[1,0,0]}
+          ],
+          "notes": "  test  "
+        }"#;
+        let roles = parse_ai_motion_roles_from_text(text).expect("motion roles should parse");
+        assert_eq!(roles.version, 1);
+        assert_eq!(roles.move_effectors.len(), 2);
+        assert_eq!(roles.move_effectors[0].component.as_str(), "left_thigh");
+        assert_eq!(roles.notes.as_deref(), Some("test"));
     }
 
     #[test]
@@ -402,4 +506,3 @@ mod tests {
         assert!(parse_ai_plan_from_text(text).is_err());
     }
 }
-

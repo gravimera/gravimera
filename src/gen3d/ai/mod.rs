@@ -44,6 +44,7 @@ use prompts::{
     build_gen3d_review_delta_system_instructions, build_gen3d_review_delta_user_text,
 };
 use schema::*;
+pub(crate) use schema::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1};
 use structured_outputs::Gen3dAiJsonSchemaKind;
 
 use super::state::{
@@ -66,6 +67,7 @@ enum Gen3dAgentLlmToolKind {
     GeneratePlan,
     GenerateComponent { component_idx: usize },
     GenerateComponentsBatch,
+    GenerateMotionRoles,
     ReviewDelta,
 }
 
@@ -229,8 +231,9 @@ impl Gen3dCopyMetrics {
 
     fn note_tool_result(&mut self, result: &crate::gen3d::agent::Gen3dToolResultJsonV1) {
         use crate::gen3d::agent::tools::{
-            TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_LLM_GENERATE_COMPONENTS,
-            TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
+            TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
+            TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_MIRROR_COMPONENT,
+            TOOL_ID_MIRROR_COMPONENT_SUBTREE,
         };
 
         match result.tool_id.as_str() {
@@ -485,6 +488,7 @@ pub(crate) struct Gen3dAiJob {
     assembly_notes: String,
     plan_collider: Option<AiColliderJson>,
     rig_move_cycle_m: Option<f32>,
+    motion_roles: Option<AiMotionRolesJsonV1>,
     reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     reuse_group_warnings: Vec<String>,
     pending_plan: Option<AiPlanJsonV1>,
@@ -564,6 +568,16 @@ impl Gen3dAiJob {
 
     pub(crate) fn assembly_rev(&self) -> u32 {
         self.assembly_rev
+    }
+
+    pub(crate) fn motion_roles_for_current_draft(&self) -> Option<&AiMotionRolesJsonV1> {
+        let roles = self.motion_roles.as_ref()?;
+        let run_id = self.run_id.map(|id| id.to_string()).unwrap_or_default();
+        (roles.applies_to.run_id.trim() == run_id.trim()
+            && roles.applies_to.attempt == self.attempt
+            && roles.applies_to.plan_hash.trim() == self.plan_hash.trim()
+            && roles.applies_to.assembly_rev == self.assembly_rev)
+            .then_some(roles)
     }
 
     pub(crate) fn active_workspace_id(&self) -> &str {
@@ -672,7 +686,8 @@ impl Gen3dAiJob {
                 TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DETACH_COMPONENT,
                 TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY,
                 TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-                TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
+                TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN,
+                TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
                 TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK,
                 TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
             };
@@ -682,6 +697,7 @@ impl Gen3dAiJob {
                 TOOL_ID_LLM_GENERATE_COMPONENT | TOOL_ID_LLM_GENERATE_COMPONENTS => {
                     "Generate".into()
                 }
+                TOOL_ID_LLM_GENERATE_MOTION_ROLES => "Rig".into(),
                 TOOL_ID_LLM_REVIEW_DELTA => "Review".into(),
                 TOOL_ID_RENDER_PREVIEW => "Render".into(),
                 TOOL_ID_VALIDATE => "Validate".into(),
@@ -1127,6 +1143,7 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.review_delta_repair_attempt = 0;
     job.agent = Gen3dAgentState::default();
     job.save_seq = 0;
+    job.motion_roles = None;
 
     workshop.error = None;
     workshop.status = "Build cancelled. Click Build to start a new run.".to_string();
@@ -1254,6 +1271,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
+    job.motion_roles = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
     job.pending_plan = None;
@@ -2247,19 +2265,18 @@ pub(crate) fn gen3d_poll_ai_job(
                         }
                     };
 
-                    let component_def =
-                        match convert::ai_to_component_def(
-                            &job.planned_components[idx],
-                            ai,
-                            job.artifact_dir(),
-                        ) {
-                            Ok(def) => def,
-                            Err(err) => {
-                                debug!("Gen3D: failed to convert component draft: {err}");
-                                fail_job(&mut workshop, &mut job, err);
-                                return;
-                            }
-                        };
+                    let component_def = match convert::ai_to_component_def(
+                        &job.planned_components[idx],
+                        ai,
+                        job.artifact_dir(),
+                    ) {
+                        Ok(def) => def,
+                        Err(err) => {
+                            debug!("Gen3D: failed to convert component draft: {err}");
+                            fail_job(&mut workshop, &mut job, err);
+                            return;
+                        }
+                    };
 
                     job.planned_components[idx].actual_size = Some(component_def.size);
                     job.planned_components[idx].anchors = component_def.anchors.clone();
@@ -3019,6 +3036,7 @@ fn retry_gen3d_plan(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
+    job.motion_roles = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
     job.pending_plan = None;
@@ -3165,8 +3183,9 @@ fn poll_gen3d_parallel_components(
                     .ok_or_else(|| {
                         format!("Internal error: missing planned component for idx={idx}")
                     })
-                    .and_then(|planned| convert::ai_to_component_def(planned, ai, job.artifact_dir()))
-                {
+                    .and_then(|planned| {
+                        convert::ai_to_component_def(planned, ai, job.artifact_dir())
+                    }) {
                     Ok(def) => def,
                     Err(err) => {
                         if task.attempt < GEN3D_MAX_COMPONENT_RETRIES {
@@ -3645,6 +3664,7 @@ fn try_start_gen3d_replan(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
+    job.motion_roles = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
     job.pending_plan = None;

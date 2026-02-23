@@ -7,6 +7,7 @@ pub(super) enum Gen3dAiJsonSchemaKind {
     ComponentDraftV1,
     ReviewDeltaV1,
     DescriptorMetaV1,
+    MotionRolesV1,
 }
 
 pub(super) struct Gen3dAiJsonSchemaSpec {
@@ -571,6 +572,29 @@ fn schema_descriptor_meta() -> serde_json::Value {
     ])
 }
 
+fn schema_motion_roles() -> serde_json::Value {
+    let applies_to = schema_object(vec![
+        ("run_id", schema_string()),
+        ("attempt", schema_integer()),
+        ("plan_hash", schema_string()),
+        ("assembly_rev", schema_integer()),
+    ]);
+
+    let effector = schema_object(vec![
+        ("component", schema_string()),
+        ("role", schema_enum(&["leg", "wheel"])),
+        ("phase_group", schema_nullable(schema_integer())),
+        ("spin_axis_local", schema_nullable(schema_vec3())),
+    ]);
+
+    schema_object(vec![
+        ("version", schema_integer()),
+        ("applies_to", applies_to),
+        ("move_effectors", schema_array_of(effector)),
+        ("notes", schema_nullable(schema_string())),
+    ])
+}
+
 pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchemaSpec {
     match kind {
         Gen3dAiJsonSchemaKind::PlanV1 => Gen3dAiJsonSchemaSpec {
@@ -592,6 +616,10 @@ pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchema
         Gen3dAiJsonSchemaKind::DescriptorMetaV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_descriptor_meta_v1",
             schema: schema_descriptor_meta(),
+        },
+        Gen3dAiJsonSchemaKind::MotionRolesV1 => Gen3dAiJsonSchemaSpec {
+            name: "gen3d_motion_roles_v1",
+            schema: schema_motion_roles(),
         },
     }
 }

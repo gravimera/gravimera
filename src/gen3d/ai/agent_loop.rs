@@ -25,9 +25,10 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
     TOOL_ID_LIST, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
-    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SET_ACTIVE_WORKSPACE,
-    TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
+    TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
+    TOOL_ID_VALIDATE,
 };
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
@@ -225,6 +226,9 @@ Rules:\n\
   - If the latest review delta accepts the model / has no actionable fixes (and QA has been run), output a \"done\" action.\n\
   - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
   - If budgets prevent further improvement (regen budgets, time, tokens), output a \"done\" action with a best-effort reason.\n\
+- Runtime motion roles (recommended for movable units):\n\
+  - If the draft is a movable unit (mobility is ground/air) and `state_summary.motion_roles.applies_to_current` is false, call `llm_generate_motion_roles_v1` before finishing.\n\
+  - This produces an explicit, non-heuristic mapping of locomotion effectors (legs/wheels) so the engine can inject generic `move` algorithms at runtime.\n\
 - Visual QA / appearance review:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer validate_v1 + smoke_check_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
@@ -379,6 +383,13 @@ fn build_agent_user_text(
                     if total > 0 {
                         out.push_str(&format!(" reuse_skipped={total}"));
                     }
+                }
+            }
+            TOOL_ID_LLM_GENERATE_MOTION_ROLES => {
+                let move_effectors = value.get("move_effectors").and_then(|v| v.as_u64());
+                out.push_str("ok");
+                if let Some(move_effectors) = move_effectors {
+                    out.push_str(&format!(" move_effectors={move_effectors}"));
                 }
             }
             TOOL_ID_LLM_REVIEW_DELTA => {
@@ -885,12 +896,32 @@ fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json::Value {
         )
     };
 
+    let motion_roles_status = {
+        let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
+        match job.motion_roles.as_ref() {
+            Some(roles) => serde_json::json!({
+                "present": true,
+                "applies_to_current": roles.applies_to.run_id.trim() == run_id.trim()
+                    && roles.applies_to.attempt == job.attempt
+                    && roles.applies_to.plan_hash.trim() == job.plan_hash.trim()
+                    && roles.applies_to.assembly_rev == job.assembly_rev,
+                "move_effectors": roles.move_effectors.len(),
+            }),
+            None => serde_json::json!({
+                "present": false,
+                "applies_to_current": false,
+                "move_effectors": 0,
+            }),
+        }
+    };
+
     serde_json::json!({
         "run_id": job.run_id.map(|id| id.to_string()),
         "attempt": job.attempt,
         "pass": job.pass,
         "plan_hash": job.plan_hash,
         "assembly_rev": job.assembly_rev,
+        "motion_roles": motion_roles_status,
         "review_appearance": job.review_appearance,
         "needs_review": job.agent.rendered_since_last_review,
         "no_progress_steps": job.agent.no_progress_steps,
@@ -3414,6 +3445,71 @@ fn execute_tool_call(
             workshop.status = "Generating components (batch)…".into();
             ToolCallOutcome::StartedAsync
         }
+        TOOL_ID_LLM_GENERATE_MOTION_ROLES => {
+            if job.planned_components.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "No planned components yet. Generate a plan first.".into(),
+                ));
+            }
+            let Some(openai) = job.openai.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing OpenAI config".into(),
+                ));
+            };
+            let Some(pass_dir) = job.pass_dir.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing pass dir".into(),
+                ));
+            };
+            let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
+
+            let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
+                Arc::new(Mutex::new(None));
+            job.shared_result = Some(shared.clone());
+            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+                message: "Mapping motion roles…".into(),
+            }));
+            job.shared_progress = Some(progress.clone());
+            set_progress(&progress, "Calling model for motion roles…");
+            job.agent.pending_llm_repair_attempt = 0;
+
+            let system = super::prompts::build_gen3d_motion_roles_system_instructions();
+            let user_text = super::prompts::build_gen3d_motion_roles_user_text(
+                &job.user_prompt_raw,
+                !job.user_images.is_empty(),
+                &run_id,
+                job.attempt,
+                &job.plan_hash,
+                job.assembly_rev,
+                &job.planned_components,
+            );
+            let reasoning_effort =
+                super::openai::cap_reasoning_effort(&openai.model_reasoning_effort, "low");
+            spawn_gen3d_ai_text_thread(
+                shared,
+                progress,
+                job.session.clone(),
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionRolesV1),
+                openai,
+                reasoning_effort,
+                system,
+                user_text,
+                Vec::new(),
+                pass_dir,
+                sanitize_prefix(&format!("tool_motion_roles_{}", &call.call_id)),
+            );
+            job.agent.pending_tool_call = Some(call);
+            job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::GenerateMotionRoles);
+            job.phase = Gen3dAiPhase::AgentWaitingTool;
+            workshop.status = "Mapping motion roles…".into();
+            ToolCallOutcome::StartedAsync
+        }
         TOOL_ID_RENDER_PREVIEW => {
             if draft.total_non_projectile_primitive_parts() == 0 {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -4107,6 +4203,9 @@ fn poll_agent_tool(
             | super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1)
             }
+            super::Gen3dAgentLlmToolKind::GenerateMotionRoles => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionRolesV1)
+            }
             super::Gen3dAgentLlmToolKind::ReviewDelta => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1)
             }
@@ -4540,6 +4639,156 @@ fn poll_agent_tool(
                                         component_idx.saturating_add(1),
                                         call.call_id
                                     ),
+                                ) {
+                                    return;
+                                }
+                                Gen3dToolResultJsonV1::err(
+                                    call.call_id.clone(),
+                                    call.tool_id.clone(),
+                                    err,
+                                )
+                            }
+                            _ => Gen3dToolResultJsonV1::err(
+                                call.call_id.clone(),
+                                call.tool_id.clone(),
+                                err,
+                            ),
+                        },
+                    }
+                }
+                super::Gen3dAgentLlmToolKind::GenerateMotionRoles => {
+                    let text = resp.text;
+                    if let Some(dir) = job.pass_dir.as_deref() {
+                        write_gen3d_text_artifact(Some(dir), "motion_roles_raw.txt", text.trim());
+                    }
+
+                    match super::parse::parse_ai_motion_roles_from_text(&text) {
+                        Ok(mut roles) => {
+                            let expected_run_id =
+                                job.run_id.map(|id| id.to_string()).unwrap_or_default();
+                            let mut issues: Vec<String> = Vec::new();
+                            if !expected_run_id.trim().is_empty()
+                                && roles.applies_to.run_id.trim() != expected_run_id.trim()
+                            {
+                                issues.push(format!(
+                                    "applies_to.run_id mismatch (got {}, expected {})",
+                                    roles.applies_to.run_id.trim(),
+                                    expected_run_id.trim()
+                                ));
+                            }
+                            if roles.applies_to.attempt != job.attempt
+                                || roles.applies_to.plan_hash.trim() != job.plan_hash.trim()
+                                || roles.applies_to.assembly_rev != job.assembly_rev
+                            {
+                                issues.push(format!(
+                                    "applies_to mismatch (got attempt={} plan_hash={} assembly_rev={}, expected attempt={} plan_hash={} assembly_rev={})",
+                                    roles.applies_to.attempt,
+                                    roles.applies_to.plan_hash.trim(),
+                                    roles.applies_to.assembly_rev,
+                                    job.attempt,
+                                    job.plan_hash.trim(),
+                                    job.assembly_rev,
+                                ));
+                            }
+                            for effector in roles.move_effectors.iter() {
+                                let name = effector.component.trim();
+                                let Some(component) = job
+                                    .planned_components
+                                    .iter()
+                                    .find(|c| c.name == name)
+                                else {
+                                    issues.push(format!("Unknown component: {name}"));
+                                    continue;
+                                };
+                                if component.attach_to.is_none() {
+                                    issues.push(format!(
+                                        "Component {name} is the root (no attach_to); cannot be a move effector"
+                                    ));
+                                }
+                                match effector.role {
+                                    super::schema::AiMoveEffectorRoleJsonV1::Leg => {
+                                        if effector.spin_axis_local.is_some() {
+                                            issues.push(format!(
+                                                "Component {name} role=leg must have spin_axis_local=null"
+                                            ));
+                                        }
+                                    }
+                                    super::schema::AiMoveEffectorRoleJsonV1::Wheel => {
+                                        if effector.phase_group.is_some() {
+                                            issues.push(format!(
+                                                "Component {name} role=wheel must have phase_group=null"
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            if !issues.is_empty() {
+                                issues.sort();
+                                issues.dedup();
+                                Gen3dToolResultJsonV1::err(
+                                    call.call_id,
+                                    call.tool_id,
+                                    format!(
+                                        "motion-roles validation failed:\n- {}",
+                                        issues.join("\n- ")
+                                    ),
+                                )
+                            } else {
+                                roles.move_effectors.retain(|e| {
+                                    job.planned_components
+                                        .iter()
+                                        .any(|c| c.name == e.component.trim())
+                                });
+
+                                if let Some(dir) = job.pass_dir.as_deref() {
+                                    write_gen3d_json_artifact(
+                                        Some(dir),
+                                        "motion_roles.json",
+                                        &serde_json::to_value(&roles)
+                                            .unwrap_or(serde_json::Value::Null),
+                                    );
+                                }
+
+                                job.motion_roles = Some(roles.clone());
+                                job.agent.pending_llm_repair_attempt = 0;
+
+                                Gen3dToolResultJsonV1::ok(
+                                    call.call_id,
+                                    call.tool_id,
+                                    serde_json::json!({
+                                        "ok": true,
+                                        "move_effectors": roles.move_effectors.len(),
+                                    }),
+                                )
+                            }
+                        }
+                        Err(err) => match (job.openai.clone(), job.pass_dir.clone()) {
+                            (Some(openai), Some(pass_dir)) => {
+                                let system = super::prompts::build_gen3d_motion_roles_system_instructions();
+                                let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
+                                let user_text = super::prompts::build_gen3d_motion_roles_user_text(
+                                    &job.user_prompt_raw,
+                                    !job.user_images.is_empty(),
+                                    &run_id,
+                                    job.attempt,
+                                    &job.plan_hash,
+                                    job.assembly_rev,
+                                    &job.planned_components,
+                                );
+                                if schedule_llm_tool_schema_repair(
+                                    job,
+                                    workshop,
+                                    &call,
+                                    kind,
+                                    openai,
+                                    &config.gen3d_reasoning_effort_repair,
+                                    pass_dir,
+                                    system,
+                                    user_text,
+                                    Vec::new(),
+                                    &err,
+                                    &text,
+                                    &format!("tool_motion_roles_{}", call.call_id),
                                 ) {
                                     return;
                                 }
@@ -5185,8 +5434,7 @@ fn poll_agent_component_batch(
                     })
                     .and_then(|planned| {
                         super::convert::ai_to_component_def(planned, ai, job.pass_dir.as_deref())
-                    })
-                {
+                    }) {
                     Ok(def) => def,
                     Err(err) => {
                         if task.attempt < MAX_COMPONENT_RETRIES {

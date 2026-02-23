@@ -100,6 +100,42 @@ Fields:
 - `animation_channels`: optional array of strings (e.g. `"idle"`, `"move"`, `"attack"`).
 - `notes`: optional string (general contract notes).
 
+#### `interfaces.extra.motion_roles_v1` (semantic locomotion mapping; Gen3D)
+
+`interfaces.extra` may include an optional `motion_roles_v1` object that captures a **small,
+stable vocabulary** of locomotion roles (e.g. legs/wheels) for a generated Gen3D model.
+
+This is intended to keep LLM outputs stable over time: the model labels **what parts do**
+(`leg`, `wheel`) rather than picking from an ever-growing list of engine algorithms.
+
+Notes:
+
+- This mapping is typically produced by the Gen3D tool `llm_generate_motion_roles_v1`.
+- The engine may use `motion_roles_v1` to **derive** a compatible `motion_rig_v1` at save time.
+- Effectors are identified by **child component name**; the engine resolves the actual attachment
+  edge via the saved prefab graph.
+- Runtime motion injection still relies on an explicit, non-heuristic rig contract
+  (see `motion_rig_v1` below).
+
+Top-level fields:
+
+- `version`: integer. Must be `1`.
+- `applies_to`: object (provenance / freshness guard for the Gen3D draft):
+  - `run_id`: string (Gen3D run UUID)
+  - `attempt`: integer
+  - `plan_hash`: string
+  - `assembly_rev`: integer
+- `move_effectors`: array of effector entries:
+  - `component`: string (Gen3D component name; matches labels like `gen3d_component_<name>`)
+  - `role`: string. One of:
+    - `"leg"`
+    - `"wheel"`
+  - `phase_group`: optional integer or null. When `role="leg"`, use `0` or `1` for a simple
+    two-phase gait (group 0 swings opposite group 1).
+  - `spin_axis_local`: optional `[x, y, z]` array or null. When `role="wheel"`, this may specify
+    the wheel spin axis in the wheel component’s local frame (defaults to `[1, 0, 0]` when null).
+- `notes`: optional string or null.
+
 #### `interfaces.extra.motion_rig_v1` (runtime motion rig contract)
 
 `interfaces.extra` may include an optional `motion_rig_v1` object that declares an explicit,
@@ -226,6 +262,7 @@ Gen3D writes descriptor files for saved models. In addition to filling standard 
 
 - Populate `text.long` with a compact summary including derived facts, an AI plan extract (when available), and a derived motion summary.
 - Populate `interfaces.extra.motion_summary` with a structured summary of available animation channels (drivers/clip kinds/counts).
+- Populate `interfaces.extra.motion_roles_v1` with a semantic mapping of locomotion effectors (legs/wheels) when available (typically via `llm_generate_motion_roles_v1`).
 - Populate `interfaces.extra.motion_rig_v1` when the model declares explicit rig edges for runtime motion algorithms (walk/wheels, etc.).
 - Populate `extra.facts` with a structured set of derived facts (size, mobility/attack presence, grounding, etc.).
 - Populate `text.short` and `tags` via a best-effort AI call (when OpenAI config is available). Tools should treat these as suggestions and preserve human edits.

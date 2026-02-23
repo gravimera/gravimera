@@ -19,19 +19,17 @@ After this change, Gen3D’s “default strategy” becomes:
 You can see it working by:
 
 - Saving a Gen3D unit that declares a `biped_v1` rig contract (two legs).
-- Selecting that unit and pressing a hotkey to switch its `move` motion algorithm between `none` and `biped_walk_v1`.
+- Double-clicking that unit’s selection circle to open the Motion panel and switching its `move` motion algorithm between `none` and `biped_walk_v1`.
 - Observing that the unit’s visual motion changes immediately while the game’s channel activation logic stays the same (movement still drives the `move` channel; attacks still drive `attack_primary`).
 
 ## Progress
 
-- [x] (2026-02-23) Write this ExecPlan and keep it current.
-- [ ] Define and document the `MotionRigV1` contract format (stored in prefab descriptors).
-- [ ] Add a runtime “motion algorithm” framework (registry + per-instance controller component).
-- [ ] Implement `biped_walk_v1` as a first generic algorithm (no heuristics; explicit rig only).
-- [ ] Add realtime switching UX (hotkey) and a minimal on-screen/console indicator.
-- [ ] Add validation/tests and run the required rendered smoke test.
-- [ ] Update docs (`gen_3d.md`, `docs/gamedesign/35_prefab_descriptors_v1.md`) to reflect the new contract and workflow.
-- [ ] Commit implementation.
+- [x] (2026-02-23 11:14Z) Write this ExecPlan and keep it current.
+- [x] (2026-02-23 13:01Z) Add runtime motion algorithm framework + UI switching.
+- [x] (2026-02-23 13:42Z) Auto-populate `motion_rig_v1` on Save (name-based when canonical component names match).
+- [x] (2026-02-23 18:45Z) Add `llm_generate_motion_roles_v1` + `motion_roles_v1` so Gen3D can label legs/wheels and Save can derive `motion_rig_v1` without brittle naming.
+- [ ] Run unit tests and the required rendered smoke test.
+- [ ] Commit the changes.
 
 ## Surprises & Discoveries
 
@@ -51,9 +49,15 @@ You can see it working by:
   Rationale: Prefab descriptors explicitly allow arbitrary extra JSON, are already loaded at runtime, and are the right place for semantic contracts that complement structural prefab data.
   Date/Author: 2026-02-23 / Codex + user
 
+- Decision: Keep the plan generator unchanged; generate a small `motion_roles_v1` mapping as a separate tool (`llm_generate_motion_roles_v1`) and derive `motion_rig_v1` at Save time.
+  Rationale: Prevent “rig archetype explosion” in prompts by having the LLM label a stable vocabulary (`leg`/`wheel`) instead of choosing from engine algorithm ids; keep object generation unconstrained and add motion mapping after geometry exists.
+  Date/Author: 2026-02-23 / Codex + user
+
 ## Outcomes & Retrospective
 
-- Not started. Update after implementation milestones land.
+- Outcome: The engine can inject deterministic `move` motion at runtime for prefabs that declare `motion_rig_v1` (`biped_walk_v1`, `quadruped_walk_v1`, `car_wheels_v1`).
+- Outcome: Gen3D can optionally produce `motion_roles_v1` (legs/wheels) via a dedicated tool call, and Save can derive a compatible `motion_rig_v1` from it.
+- Remaining: Consider a Gen3D strategy flag to reduce AI-authored per-edge `move` animations by default (keep authored `attack_primary`).
 
 ## Context and Orientation
 
@@ -198,11 +202,9 @@ Add a simple in-game control for switching the move algorithm on selected object
 
 Prescriptive UX (keep minimal):
 
-- Add a hotkey in `src/rts.rs`:
-  - `F6`: cycle `move` algorithm for selected entities: `none -> biped_walk_v1 -> none`
-  - `Shift+F6`: cycle in reverse (optional)
-- When the hotkey applies, print an `info!` log line showing the chosen algorithm and how many entities were updated.
-- Add a minimal on-screen indicator (optional but recommended): a small HUD line that shows the selected unit’s current move algorithm.
+- Double-click a unit’s selection circle to open the Motion panel.
+- Pick a `move` algorithm from the list (the list is derived from the prefab’s `motion_rig_v1` kind).
+- Selecting an algorithm updates all currently-selected units of the same prefab.
 
 ### Milestone E — Gen3D strategy shift (optional, but the intended default)
 
@@ -235,10 +237,10 @@ During implementation, after any code change:
 
 Acceptance behaviors after implementation:
 
-1) Manual rig test:
-   - Generate and Save a simple Gen3D biped-like model (or use an existing saved model).
-   - Edit its descriptor file (`*.desc.json`) to include a valid `motion_rig_v1` biped contract.
-   - Start the game, select the unit, press `F6`.
+1) Rig + switching test:
+   - Generate and Save a simple Gen3D biped-like unit.
+   - Start the game, select the unit, and double-click its selection circle to open the Motion panel.
+   - Switch `Move: none` ↔ `Move: biped_walk_v1`.
    - Observe the unit’s motion changes immediately while moving (no crash).
 
 2) Switching does not affect gameplay state:
@@ -246,7 +248,7 @@ Acceptance behaviors after implementation:
    - Only the animation content changes.
 
 3) Non-rigged models are safe:
-   - Selecting a model without `motion_rig_v1` and pressing `F6` does not crash; it prints a clear message that the rig is missing/incompatible.
+   - Selecting a model without `motion_rig_v1` does not crash; the Motion panel shows only `None (prefab-authored)`.
 
 ## Idempotence and Recovery
 
@@ -267,6 +269,6 @@ Acceptance behaviors after implementation:
 The implementation should introduce at minimum:
 
 - A JSON shape `MotionRigV1` stored under `PrefabDescriptorInterfacesV1.extra["motion_rig_v1"]`.
-- A per-instance component that selects the move algorithm (exact type name is up to implementation, but it must be persisted in the ECS and be easy to edit via hotkey).
+- A `motion_roles_v1` shape (legs/wheels) stored under `PrefabDescriptorInterfacesV1.extra["motion_roles_v1"]` for Gen3D outputs.
+- A per-instance component that selects the move algorithm (persisted in ECS and editable at runtime via UI).
 - A spawn-time visual binding component for attachment edges that enables deterministic injection without heuristics and without requiring part-index lookups.
-

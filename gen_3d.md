@@ -96,11 +96,14 @@ different Gen3D models, as long as the model declares an explicit rig contract.
 How it works:
 
 - Gen3D models are saved as prefab defs (`*.json`) plus prefab descriptors (`*.desc.json`).
-- A descriptor may include `interfaces.extra.motion_rig_v1` (see `docs/gamedesign/35_prefab_descriptors_v1.md`).
+- A descriptor may include:
+  - `interfaces.extra.motion_roles_v1` (semantic locomotion mapping; see `docs/gamedesign/35_prefab_descriptors_v1.md`)
+  - `interfaces.extra.motion_rig_v1` (explicit runtime rig contract; see `docs/gamedesign/35_prefab_descriptors_v1.md`)
 - When `motion_rig_v1` is present, the engine can inject a generic motion algorithm by generating
   per-edge `move` channel slots at runtime (no heuristic “leg detection”).
-- Gen3D may auto-populate `motion_rig_v1` on Save when component names match canonical rig parts
-  (example car wheels: `wheel_fl`, `wheel_fr`, `wheel_bl`, `wheel_br`).
+- Gen3D can derive `motion_rig_v1` from `motion_roles_v1` (preferred; avoids brittle naming), or
+  fall back to name-based auto-rigging when canonical component names match (example wheels:
+  `wheel_fl`, `wheel_fr`, `wheel_bl`, `wheel_br`).
 
 In-game UX (Realm):
 
@@ -115,6 +118,7 @@ Notes:
 
 - This is designed to reduce “AI-authored per-model animations” and replace them with a small set
   of reusable, deterministic motion generators.
+- The Gen3D agent may call `llm_generate_motion_roles_v1` to label locomotion effectors (legs/wheels).
 - Algorithms are applied only when the descriptor declares the required `motion_rig_v1` edges.
 
 ## Cache / Debugging Artifacts

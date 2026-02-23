@@ -775,7 +775,7 @@ Review mode:\n",
 - Ignore smoke severity=\"warn\" issues unless they imply a severity=\"error\".\n",
         );
     }
-	    out.push_str(
+    out.push_str(
 	        "\nIMPORTANT:\n\
 	     - Do NOT assume the engine will \"auto-fix\" placement. If something is wrong, request explicit edits.\n\
 	     - Do NOT output Euler angles.\n\
@@ -1170,6 +1170,90 @@ Rules:\n\
 - Include tags that help scene building search (style/species/category/theme/material/function).\n\
 - Keep tags stable and generic (open vocabulary); avoid internal ids/UUIDs.\n"
         .to_string()
+}
+
+pub(super) fn build_gen3d_motion_roles_system_instructions() -> String {
+    "You are the Gravimera Gen3D motion roles mapper.\n\
+You will be given a generated component graph (names + attachments + transforms) and must label the locomotion effectors.\n\
+Return ONLY a single JSON object for gen3d_motion_roles_v1 (no markdown, no prose).\n\n\
+Schema:\n\
+{\n\
+  \"version\": 1,\n\
+  \"applies_to\": {\"run_id\":\"uuid\",\"attempt\":0,\"plan_hash\":\"sha256:...\",\"assembly_rev\":0},\n\
+  \"move_effectors\": [\n\
+    {\"component\":\"left_thigh\",\"role\":\"leg\",\"phase_group\":0,\"spin_axis_local\":null},\n\
+    {\"component\":\"wheel_fl\",\"role\":\"wheel\",\"phase_group\":null,\"spin_axis_local\":[1,0,0]}\n\
+  ],\n\
+  \"notes\": \"...\" | null\n\
+}\n\n\
+Rules:\n\
+- You MUST copy the provided applies_to values exactly.\n\
+- `move_effectors` targets attachment edges by naming the CHILD component (`component`).\n\
+  - Only output component names that appear in the provided component list.\n\
+  - Do NOT output the root component (it has no parent edge).\n\
+- Allowed `role` values: `leg`, `wheel`.\n\
+- `phase_group`:\n\
+  - For `leg`, set to 0 or 1 (two-phase gait: group 0 swings opposite group 1).\n\
+  - For `wheel`, MUST be null.\n\
+- `spin_axis_local`:\n\
+  - For `wheel`, may be null or a unit-ish axis like [1,0,0].\n\
+  - For `leg`, MUST be null.\n\
+- If you cannot confidently identify locomotion effectors, return an EMPTY `move_effectors` list.\n"
+        .to_string()
+}
+
+pub(super) fn build_gen3d_motion_roles_user_text(
+    raw_prompt: &str,
+    has_images: bool,
+    run_id: &str,
+    attempt: u32,
+    plan_hash: &str,
+    assembly_rev: u32,
+    components: &[Gen3dPlannedComponent],
+) -> String {
+    fn fmt_vec3(v: Vec3) -> String {
+        format!("[{:.3},{:.3},{:.3}]", v.x, v.y, v.z)
+    }
+
+    let mut out = String::new();
+    out.push_str(
+        "Goal: label locomotion effectors so the engine can inject generic move algorithms.\n",
+    );
+    if !has_images {
+        out.push_str("No photos are provided for this run.\n");
+    }
+    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push('\n');
+
+    out.push_str("You MUST copy these values into `applies_to` exactly:\n");
+    out.push_str(&format!("- run_id: {run_id}\n"));
+    out.push_str(&format!("- attempt: {attempt}\n"));
+    out.push_str(&format!("- plan_hash: {plan_hash}\n"));
+    out.push_str(&format!("- assembly_rev: {assembly_rev}\n\n"));
+
+    out.push_str("Components (resolved transforms in root frame):\n");
+    for c in components {
+        let forward = c.rot * Vec3::Z;
+        let up = c.rot * Vec3::Y;
+        let parent = c
+            .attach_to
+            .as_ref()
+            .map(|att| att.parent.as_str())
+            .unwrap_or("<root>");
+        let size = c.actual_size.unwrap_or(c.planned_size);
+        out.push_str(&format!(
+            "- name={} parent={} pos={} forward={} up={} size={} contacts={}\n",
+            c.name.trim(),
+            parent.trim(),
+            fmt_vec3(c.pos),
+            fmt_vec3(forward),
+            fmt_vec3(up),
+            fmt_vec3(size),
+            c.contacts.len()
+        ));
+    }
+
+    out
 }
 
 pub(super) fn build_gen3d_descriptor_meta_user_text(
