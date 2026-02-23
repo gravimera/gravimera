@@ -8,8 +8,8 @@ use crate::object::depth_bias::{
 };
 use crate::object::registry::{
     AttachmentDef, MaterialKey, MeshKey, ObjectLibrary, ObjectPartKind, PartAnimationDef,
-    PartAnimationDriver, PartAnimationSlot, PartAnimationSpec, PrimitiveParams, PrimitiveVisualDef,
-    UnitAttackKind,
+    PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
+    PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
 };
 use crate::types::{
     AnimationChannelsActive, AttackClock, ForcedAnimationChannel, LocomotionClock, ObjectPrefabId,
@@ -570,15 +570,7 @@ fn resolve_attachment_transform(
     let child_inv = child_mat.inverse();
 
     let composed = parent_mat * offset_mat * child_inv;
-    let (scale, rotation, translation) = composed.to_scale_rotation_translation();
-    if !translation.is_finite() || !rotation.is_finite() || !scale.is_finite() {
-        return None;
-    }
-    Some(Transform {
-        translation,
-        rotation,
-        scale,
-    })
+    crate::geometry::mat4_to_transform_allow_degenerate_scale(composed)
 }
 
 fn resolve_attachment_transform_with_offset(
@@ -599,15 +591,7 @@ fn resolve_attachment_transform_with_offset(
 
     let composed =
         parent_anchor.to_matrix() * offset.to_matrix() * child_anchor.to_matrix().inverse();
-    let (scale, rotation, translation) = composed.to_scale_rotation_translation();
-    if !translation.is_finite() || !rotation.is_finite() || !scale.is_finite() {
-        return None;
-    }
-    Some(Transform {
-        translation,
-        rotation,
-        scale,
-    })
+    crate::geometry::mat4_to_transform_allow_degenerate_scale(composed)
 }
 
 fn anchor_transform(def: &crate::object::registry::ObjectDef, name: &str) -> Option<Transform> {
@@ -935,40 +919,23 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
         PartAnimationDef::Loop {
             duration_secs,
             keyframes,
+        } => sample_keyframes_loop(*duration_secs, keyframes, time_secs),
+        PartAnimationDef::Once {
+            duration_secs,
+            keyframes,
+        } => sample_keyframes_clamped(*duration_secs, keyframes, time_secs),
+        PartAnimationDef::PingPong {
+            duration_secs,
+            keyframes,
         } => {
             let duration = (*duration_secs).max(1e-6);
-            let mut t = if time_secs.is_finite() {
-                time_secs
-            } else {
-                0.0
-            };
-            t = t.rem_euclid(duration);
-
-            if keyframes.is_empty() {
-                return Transform::IDENTITY;
+            let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+            let period = duration * 2.0;
+            t = t.rem_euclid(period);
+            if t > duration {
+                t = period - t;
             }
-            if keyframes.len() == 1 {
-                return keyframes[0].delta;
-            }
-
-            let mut prev = &keyframes[0];
-            for next in &keyframes[1..] {
-                if t < next.time_secs {
-                    let dt = (next.time_secs - prev.time_secs).max(1e-6);
-                    let alpha = ((t - prev.time_secs) / dt).clamp(0.0, 1.0);
-                    return lerp_transform(&prev.delta, &next.delta, alpha);
-                }
-                prev = next;
-            }
-
-            // Wrap around (last -> first).
-            let first = &keyframes[0];
-            let last = prev;
-            let t0 = last.time_secs;
-            let t1 = duration + first.time_secs;
-            let dt = (t1 - t0).max(1e-6);
-            let alpha = ((t - t0) / dt).clamp(0.0, 1.0);
-            lerp_transform(&last.delta, &first.delta, alpha)
+            sample_keyframes_clamped(duration, keyframes, t)
         }
         PartAnimationDef::Spin {
             axis,
@@ -993,6 +960,75 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
     }
 }
 
+fn sample_keyframes_loop(
+    duration_secs: f32,
+    keyframes: &[PartAnimationKeyframeDef],
+    time_secs: f32,
+) -> Transform {
+    let duration = duration_secs.max(1e-6);
+    let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+    t = t.rem_euclid(duration);
+
+    if keyframes.is_empty() {
+        return Transform::IDENTITY;
+    }
+    if keyframes.len() == 1 {
+        return keyframes[0].delta;
+    }
+
+    let mut prev = &keyframes[0];
+    for next in &keyframes[1..] {
+        if t < next.time_secs {
+            let dt = (next.time_secs - prev.time_secs).max(1e-6);
+            let alpha = ((t - prev.time_secs) / dt).clamp(0.0, 1.0);
+            return lerp_transform(&prev.delta, &next.delta, alpha);
+        }
+        prev = next;
+    }
+
+    // Wrap around (last -> first).
+    let first = &keyframes[0];
+    let last = prev;
+    let t0 = last.time_secs;
+    let t1 = duration + first.time_secs;
+    let dt = (t1 - t0).max(1e-6);
+    let alpha = ((t - t0) / dt).clamp(0.0, 1.0);
+    lerp_transform(&last.delta, &first.delta, alpha)
+}
+
+fn sample_keyframes_clamped(
+    duration_secs: f32,
+    keyframes: &[PartAnimationKeyframeDef],
+    time_secs: f32,
+) -> Transform {
+    let duration = duration_secs.max(1e-6);
+    let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+    t = t.clamp(0.0, duration);
+
+    if keyframes.is_empty() {
+        return Transform::IDENTITY;
+    }
+    if keyframes.len() == 1 {
+        return keyframes[0].delta;
+    }
+
+    if t <= keyframes[0].time_secs {
+        return keyframes[0].delta;
+    }
+
+    let mut prev = &keyframes[0];
+    for next in &keyframes[1..] {
+        if t < next.time_secs {
+            let dt = (next.time_secs - prev.time_secs).max(1e-6);
+            let alpha = ((t - prev.time_secs) / dt).clamp(0.0, 1.0);
+            return lerp_transform(&prev.delta, &next.delta, alpha);
+        }
+        prev = next;
+    }
+
+    prev.delta
+}
+
 fn lerp_transform(a: &Transform, b: &Transform, alpha: f32) -> Transform {
     let translation = a.translation.lerp(b.translation, alpha);
     let rotation = a.rotation.slerp(b.rotation, alpha).normalize();
@@ -1006,15 +1042,7 @@ fn lerp_transform(a: &Transform, b: &Transform, alpha: f32) -> Transform {
 
 fn mul_transform(a: &Transform, b: &Transform) -> Transform {
     let composed = a.to_matrix() * b.to_matrix();
-    let (scale, rotation, translation) = composed.to_scale_rotation_translation();
-    if !translation.is_finite() || !rotation.is_finite() || !scale.is_finite() {
-        return *b;
-    }
-    Transform {
-        translation,
-        rotation,
-        scale,
-    }
+    crate::geometry::mat4_to_transform_allow_degenerate_scale(composed).unwrap_or(*b)
 }
 
 #[cfg(test)]

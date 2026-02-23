@@ -1183,15 +1183,7 @@ fn resolve_attachment_transform(
     let child_inv = child_mat.inverse();
 
     let composed = parent_mat * offset_mat * child_inv;
-    let (scale, rotation, translation) = composed.to_scale_rotation_translation();
-    if !translation.is_finite() || !rotation.is_finite() || !scale.is_finite() {
-        return None;
-    }
-    Some(Transform {
-        translation,
-        rotation,
-        scale,
-    })
+    crate::geometry::mat4_to_transform_allow_degenerate_scale(composed)
 }
 
 fn anchor_transform(def: &crate::object::registry::ObjectDef, name: &str) -> Option<Transform> {
@@ -1206,15 +1198,7 @@ fn anchor_transform(def: &crate::object::registry::ObjectDef, name: &str) -> Opt
 
 fn mul_transform(a: &Transform, b: &Transform) -> Transform {
     let composed = a.to_matrix() * b.to_matrix();
-    let (scale, rotation, translation) = composed.to_scale_rotation_translation();
-    if !translation.is_finite() || !rotation.is_finite() || !scale.is_finite() {
-        return *b;
-    }
-    Transform {
-        translation,
-        rotation,
-        scale,
-    }
+    crate::geometry::mat4_to_transform_allow_degenerate_scale(composed).unwrap_or(*b)
 }
 
 fn lerp_transform(a: &Transform, b: &Transform, alpha: f32) -> Transform {

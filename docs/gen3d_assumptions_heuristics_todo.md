@@ -65,41 +65,42 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
   - Code: `src/gen3d/ai/convert.rs` (anchor lookup + review-delta validation), `src/gen3d/ai/copy_component.rs` (anchor lookup).
   - Test: `src/gen3d/ai/convert.rs` `review_delta_tweak_attachment_errors_on_missing_anchors`.
 
-- [ ] **Join-frame alignment assumptions (forward must match; up opposition is only a warning)**
-  - Problem: Plan validation errors on opposing forward but only warns on opposing up. Opposing up can still cause roll flips that look like “incorrect rotation”.
+- [x] **Join-frame alignment assumptions (forward opposition errors; up opposition must error too)**
+  - Fixed (2026-02-23): plan validation now errors on **opposing up** as well as opposing forward so 180° join-frame roll flips never happen silently.
+  - Result: if you want a 180° flip/roll at a join, it must be authored explicitly via `attach_to.offset` rotation (with `rot_frame` set), not by opposing anchors.
   - Code: `src/gen3d/ai/convert.rs` (attachment join-frame validation).
-  - Direction: Decide strictness: either require up alignment too (error), or require explicit `offset` roll when up differs (and document it).
 
 ## 3) “Any animation” constraints — where current behavior limits what can be expressed
 
-- [ ] **Channel model is state-based (limited automatic playback)**
-  - Problem: Runtime prioritizes a fixed set of channels (`attack_primary`, `move`, `idle`, `ambient`) unless forcibly overridden.
-  - Impact: Nonstandard channels may exist but won’t play automatically (limits “any animation” without extra control plumbing).
-  - Code: `src/object/visuals.rs` `update_part_animations`.
-  - Direction: Make channel selection data-driven (priorities/conditions in plan) or expose explicit per-instance channel control.
+- [x] **Channel model: add explicit per-instance control for “any channel” playback**
+  - Fixed (2026-02-23): runtime still auto-selects canonical channels for gameplay (`idle`/`move`/`attack_primary`/`ambient`), but **any channel** can be played via explicit overrides.
+  - Key capabilities:
+    - Gen3D plan supports open-vocabulary `attach_to.animations` keys (up to 10).
+    - Gen3D preview UI lists available channels and can force-play any of them.
+    - Gameplay hotkeys `1..9/0` force-play the selected unit’s channels (ordered; up to 10).
+    - Automation HTTP API: `POST /v1/animation/force_channel` sets/clears `ForcedAnimationChannel`.
+  - Code: `src/object/visuals.rs` (`update_part_animations` forced override), `src/types.rs` (`ForcedAnimationChannel`), `src/rts.rs` (digit hotkeys), `src/automation/mod.rs` (`/v1/animation/force_channel`), `src/gen3d/ui.rs` + `src/gen3d/preview.rs` (data-driven dropdown), `src/gen3d/ai/structured_outputs.rs` (open-vocabulary channel map).
 
-- [ ] **Only two clip kinds for attachments: `loop` and `spin`**
-  - Problem: No higher-level motion constructs (curves/easing/events/noise constraints); “any animation” must be approximated via many keyframes or a single axis spin.
-  - Code: `src/object/registry.rs` `PartAnimationDef` + Gen3D schema/conversion.
-  - Direction: If “any animation” is a goal, extend the animation schema with more generic primitives (without engine guesses).
+- [x] **Support more generic clip kinds (keyframed `once` / `ping_pong` in addition to `loop` / `spin`)**
+  - Fixed (2026-02-23): Gen3D and runtime support `once` and `ping_pong` keyframed clips (generic, non-heuristic building blocks).
+  - Code: `src/object/registry.rs` (`PartAnimationDef`), `src/object/visuals.rs` (`sample_part_animation`), `src/gen3d/ai/schema.rs` + `src/gen3d/ai/structured_outputs.rs` (schema), `src/gen3d/ai/convert.rs` (conversion).
 
-- [ ] **Fixed joints sanitize away rotation**
-  - Problem: Declaring a joint `fixed` removes `spin` and forces loop rotation deltas to identity.
-  - Impact: Prevents “visual-only” motion on attachments that are logically fixed.
-  - Code: `src/gen3d/ai/convert.rs` `sanitize_fixed_joint_attachment_animations`.
-  - Direction: Separate “physics constraint” from “visual animation allowed”, or require explicit opt-in for rotation on fixed joints.
+- [x] **Fixed joints no longer sanitize away rotation (allow visual-only motion)**
+  - Fixed (2026-02-23): fixed joints may still have rotating animations; the engine does not rewrite rotation deltas to identity.
+  - Motion validation reports `fixed_joint_rotates` as a warning (diagnostic) rather than silently mutating motion.
+  - Code: `src/gen3d/ai/motion_validation.rs` (`fixed_joint_rotates` warn); tests in `src/gen3d/ai/regression_tests.rs` verify fixed-joint rotations persist through plan conversion and review-delta tweaks.
 
-- [ ] **Scale sanitization blocks negative/zero scale effects**
-  - Problem: Gen3D sanitizes scales to positive minimums and treats primitive scale as a size vector.
-  - Impact: Limits mirroring, squash-to-zero, and other stylized effects.
-  - Code: `src/gen3d/ai/convert.rs` `sanitize_component_part_transforms` and `attachment_offset_from_ai`.
-  - Direction: Introduce explicit support for mirroring/visibility/fade rather than relying on negative/zero scale.
+- [x] **Allow negative/zero scale effects (no engine-side “positive minimum” sanitization for tool transforms)**
+  - Fixed (2026-02-23): Gen3D tool-call transform parsing preserves negative and zero scale (enables mirroring, squash-to-zero, stylized effects).
+  - Runtime transform math uses safe decomposition that supports degenerate and mirrored transforms.
+  - Code: `src/gen3d/ai/agent_loop.rs` (`parse_delta_transform`), `src/geometry.rs` (`mat4_to_transform_allow_degenerate_scale`).
+  - Test: `src/gen3d/ai/agent_loop.rs` `gen3d_tool_transform_parsing_preserves_negative_and_zero_scale`.
 
-- [ ] **Motion validation assumes specific rig geometry semantics**
-  - Problem: Validation like `chain_axis_mismatch` assumes intermediate chain segments are oriented along join +Z between joints.
-  - Impact: Unusual but valid rigs/animations can be flagged as “errors” and (today) can trigger channel-disable fallback.
-  - Code: `src/gen3d/ai/motion_validation.rs` (e.g. `chain_axis_mismatch`).
-  - Direction: Make validation profiles configurable/optional per rig style, and avoid mutating authored motion as a fallback.
+- [x] **Motion validation: keep semantics-based checks non-blocking; remove channel-mutation fallback**
+  - Fixed (2026-02-23):
+    - `chain_axis_mismatch` is **warn-only** and is scoped to a narrow “limb link” shape to reduce false positives.
+    - The engine does not disable/mutate authored motion channels as a fallback when validation finds issues.
+  - Code: `src/gen3d/ai/motion_validation.rs` (`chain_axis_mismatch` severity), `src/gen3d/ai/agent_loop.rs` (no channel-disable fallback policy).
 
 ## 4) Diagnostics / guardrails to prevent “wrong result but no clue why”
 
@@ -110,9 +111,10 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
     - Identity-loop example uses the canonical animation schema (`spec.clip.kind="loop"`, `duration_secs`, `keyframes[].time_secs`, `delta=null`).
   - Code: `src/gen3d/ai/prompts.rs` (`build_gen3d_review_delta_system_instructions`).
 
-- [ ] **Add structured “heuristic/applied-default” artifacts**
-  - Track when any heuristic/default/sanitization was applied (what changed, why, before/after summary) so bugs are debuggable.
-  - Likely touchpoints: component conversion pipeline, reuse/copy pipeline, motion fallback pipeline.
+- [x] **Add structured “applied-default” artifacts**
+  - Fixed (2026-02-23): whenever the engine applies a deterministic non-authoring adjustment (recentering geometry, overriding anchor rotation to plan, rebasing offsets when anchors change), it appends a structured record to `applied_defaults.jsonl` in the run cache directory.
+  - Code: `src/gen3d/ai/convert.rs` (uses `append_gen3d_jsonl_artifact` → `applied_defaults.jsonl`), `src/gen3d/ai/artifacts.rs`.
 
-- [ ] **Add regression tests for each item above (in `tests/gen3d/` and/or `test/`)**
-  - Each fix should come with a minimal fixture that reproduces the failure and asserts the corrected behavior.
+- [x] **Add regression tests for the items above**
+  - Fixed (2026-02-23): Gen3D has a growing set of offline regression tests across the Gen3D pipeline and helpers (plan conversion, copy/mirror, parsing strictness, motion validation).
+  - Key locations: `src/gen3d/ai/convert.rs`, `src/gen3d/ai/copy_component.rs`, `src/gen3d/ai/reuse_groups.rs`, `src/gen3d/ai/motion_validation.rs`, `src/gen3d/ai/parse.rs`, `src/gen3d/ai/regression_tests.rs`.

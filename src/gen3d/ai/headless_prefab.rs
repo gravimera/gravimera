@@ -99,7 +99,7 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
             run_dir,
         )?;
 
-        let mut def = convert::ai_to_component_def(planned, ai)?;
+        let mut def = convert::ai_to_component_def(planned, ai, Some(run_dir))?;
         if let Some(mut refs) = child_ref_parts.remove(&def.object_id) {
             def.parts.append(&mut refs);
         }

@@ -209,12 +209,22 @@ fn schema_animation_clip() -> serde_json::Value {
         ("duration_secs", schema_number()),
         ("keyframes", schema_array_of(schema_animation_keyframe())),
     ]);
+    let once_clip = schema_object(vec![
+        ("kind", schema_enum(&["once"])),
+        ("duration_secs", schema_number()),
+        ("keyframes", schema_array_of(schema_animation_keyframe())),
+    ]);
+    let ping_pong_clip = schema_object(vec![
+        ("kind", schema_enum(&["ping_pong"])),
+        ("duration_secs", schema_number()),
+        ("keyframes", schema_array_of(schema_animation_keyframe())),
+    ]);
     let spin = schema_object(vec![
         ("kind", schema_enum(&["spin"])),
         ("axis", schema_vec3()),
         ("radians_per_unit", schema_number()),
     ]);
-    schema_any_of(vec![loop_clip, spin])
+    schema_any_of(vec![loop_clip, once_clip, ping_pong_clip, spin])
 }
 
 fn schema_animation_spec() -> serde_json::Value {

@@ -46,15 +46,7 @@ fn component_object_id(name: &str) -> u128 {
 
 fn compose_transform(parent: Transform, child: Transform) -> Option<Transform> {
     let composed = parent.to_matrix() * child.to_matrix();
-    let (scale, rotation, translation) = composed.to_scale_rotation_translation();
-    if !scale.is_finite() || !rotation.is_finite() || !translation.is_finite() {
-        return None;
-    }
-    Some(Transform {
-        translation,
-        rotation,
-        scale,
-    })
+    crate::geometry::mat4_to_transform_allow_degenerate_scale(composed)
 }
 
 fn rotated_half_extents(half: Vec3, rotation: Quat) -> Vec3 {
@@ -117,15 +109,7 @@ fn transform_dir(mat: Mat4, dir: Vec3) -> Vec3 {
 }
 
 fn transform_from_mat4(mat: Mat4) -> Option<Transform> {
-    let (scale, rotation, translation) = mat.to_scale_rotation_translation();
-    if !scale.is_finite() || !rotation.is_finite() || !translation.is_finite() {
-        return None;
-    }
-    Some(Transform {
-        translation,
-        rotation: rotation.normalize(),
-        scale,
-    })
+    crate::geometry::mat4_to_transform_allow_degenerate_scale(mat)
 }
 
 fn apply_delta_to_anchors(anchors: &[AnchorDef], delta: Transform) -> Vec<AnchorDef> {

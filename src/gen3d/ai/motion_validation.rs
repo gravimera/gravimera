@@ -2,7 +2,8 @@ use bevy::prelude::*;
 use uuid::Uuid;
 
 use crate::object::registry::{
-    builtin_object_id, PartAnimationDef, PartAnimationDriver, PartAnimationSlot,
+    builtin_object_id, PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
+    PartAnimationSlot,
 };
 
 use super::schema::{AiContactKindJson, AiJointKindJson};
@@ -260,7 +261,7 @@ fn validate_chain_anchor_axes(components: &[Gen3dPlannedComponent], issues: &mut
         }
 
         issues.push(MotionIssue {
-            severity: MotionSeverity::Error,
+            severity: MotionSeverity::Warn,
             kind: "chain_axis_mismatch",
             component_id: component_id_uuid_for_name(&comp.name),
             component_name: comp.name.clone(),
@@ -308,14 +309,17 @@ fn infer_cycle_m(
         ) {
             continue;
         }
-        let PartAnimationDef::Loop { duration_secs, .. } = &slot.spec.clip else {
-            continue;
+        let (duration_secs, repeats) = match &slot.spec.clip {
+            PartAnimationDef::Loop { duration_secs, .. }
+            | PartAnimationDef::Once { duration_secs, .. } => (*duration_secs, 1.0),
+            PartAnimationDef::PingPong { duration_secs, .. } => (*duration_secs, 2.0),
+            PartAnimationDef::Spin { .. } => continue,
         };
-        if !duration_secs.is_finite() || *duration_secs <= 0.0 {
+        if !duration_secs.is_finite() || duration_secs <= 0.0 {
             continue;
         }
         let speed_scale = slot.spec.speed_scale.max(1e-6);
-        let effective = (*duration_secs / speed_scale).abs();
+        let effective = (repeats * duration_secs / speed_scale).abs();
         if effective.is_finite() && effective > 1e-3 {
             return (effective, "move.loop.duration_secs");
         }
@@ -594,9 +598,15 @@ fn sample_animation_slot_delta(
     let driver_t = match slot.spec.driver {
         PartAnimationDriver::Always => match &slot.spec.clip {
             PartAnimationDef::Loop { duration_secs, .. }
+            | PartAnimationDef::Once { duration_secs, .. }
                 if duration_secs.is_finite() && *duration_secs > 0.0 =>
             {
                 sample_phase_01 * *duration_secs
+            }
+            PartAnimationDef::PingPong { duration_secs, .. }
+                if duration_secs.is_finite() && *duration_secs > 0.0 =>
+            {
+                sample_phase_01 * (*duration_secs * 2.0)
             }
             _ => sample_t_m,
         },
@@ -617,40 +627,23 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
         PartAnimationDef::Loop {
             duration_secs,
             keyframes,
+        } => sample_keyframes_loop(*duration_secs, keyframes, time_secs),
+        PartAnimationDef::Once {
+            duration_secs,
+            keyframes,
+        } => sample_keyframes_clamped(*duration_secs, keyframes, time_secs),
+        PartAnimationDef::PingPong {
+            duration_secs,
+            keyframes,
         } => {
             let duration = (*duration_secs).max(1e-6);
-            let mut t = if time_secs.is_finite() {
-                time_secs
-            } else {
-                0.0
-            };
-            t = t.rem_euclid(duration);
-
-            if keyframes.is_empty() {
-                return Transform::IDENTITY;
+            let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+            let period = duration * 2.0;
+            t = t.rem_euclid(period);
+            if t > duration {
+                t = period - t;
             }
-            if keyframes.len() == 1 {
-                return keyframes[0].delta;
-            }
-
-            let mut prev = &keyframes[0];
-            for next in &keyframes[1..] {
-                if t < next.time_secs {
-                    let dt = (next.time_secs - prev.time_secs).max(1e-6);
-                    let alpha = ((t - prev.time_secs) / dt).clamp(0.0, 1.0);
-                    return lerp_transform(&prev.delta, &next.delta, alpha);
-                }
-                prev = next;
-            }
-
-            // Wrap around (last -> first).
-            let first = &keyframes[0];
-            let last = prev;
-            let t0 = last.time_secs;
-            let t1 = duration + first.time_secs;
-            let dt = (t1 - t0).max(1e-6);
-            let alpha = ((t - t0) / dt).clamp(0.0, 1.0);
-            lerp_transform(&last.delta, &first.delta, alpha)
+            sample_keyframes_clamped(duration, keyframes, t)
         }
         PartAnimationDef::Spin {
             axis,
@@ -675,6 +668,75 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
     }
 }
 
+fn sample_keyframes_loop(
+    duration_secs: f32,
+    keyframes: &[PartAnimationKeyframeDef],
+    time_secs: f32,
+) -> Transform {
+    let duration = duration_secs.max(1e-6);
+    let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+    t = t.rem_euclid(duration);
+
+    if keyframes.is_empty() {
+        return Transform::IDENTITY;
+    }
+    if keyframes.len() == 1 {
+        return keyframes[0].delta;
+    }
+
+    let mut prev = &keyframes[0];
+    for next in &keyframes[1..] {
+        if t < next.time_secs {
+            let dt = (next.time_secs - prev.time_secs).max(1e-6);
+            let alpha = ((t - prev.time_secs) / dt).clamp(0.0, 1.0);
+            return lerp_transform(&prev.delta, &next.delta, alpha);
+        }
+        prev = next;
+    }
+
+    // Wrap around (last -> first).
+    let first = &keyframes[0];
+    let last = prev;
+    let t0 = last.time_secs;
+    let t1 = duration + first.time_secs;
+    let dt = (t1 - t0).max(1e-6);
+    let alpha = ((t - t0) / dt).clamp(0.0, 1.0);
+    lerp_transform(&last.delta, &first.delta, alpha)
+}
+
+fn sample_keyframes_clamped(
+    duration_secs: f32,
+    keyframes: &[PartAnimationKeyframeDef],
+    time_secs: f32,
+) -> Transform {
+    let duration = duration_secs.max(1e-6);
+    let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+    t = t.clamp(0.0, duration);
+
+    if keyframes.is_empty() {
+        return Transform::IDENTITY;
+    }
+    if keyframes.len() == 1 {
+        return keyframes[0].delta;
+    }
+
+    if t <= keyframes[0].time_secs {
+        return keyframes[0].delta;
+    }
+
+    let mut prev = &keyframes[0];
+    for next in &keyframes[1..] {
+        if t < next.time_secs {
+            let dt = (next.time_secs - prev.time_secs).max(1e-6);
+            let alpha = ((t - prev.time_secs) / dt).clamp(0.0, 1.0);
+            return lerp_transform(&prev.delta, &next.delta, alpha);
+        }
+        prev = next;
+    }
+
+    prev.delta
+}
+
 fn lerp_transform(a: &Transform, b: &Transform, alpha: f32) -> Transform {
     let translation = a.translation.lerp(b.translation, alpha);
     let rotation = a.rotation.slerp(b.rotation, alpha).normalize();
@@ -688,15 +750,7 @@ fn lerp_transform(a: &Transform, b: &Transform, alpha: f32) -> Transform {
 
 fn mul_transform(a: &Transform, b: &Transform) -> Transform {
     let composed = a.to_matrix() * b.to_matrix();
-    let (scale, rotation, translation) = composed.to_scale_rotation_translation();
-    if !translation.is_finite() || !rotation.is_finite() || !scale.is_finite() {
-        return *b;
-    }
-    Transform {
-        translation,
-        rotation,
-        scale,
-    }
+    crate::geometry::mat4_to_transform_allow_degenerate_scale(composed).unwrap_or(*b)
 }
 
 fn anchor_transform_from_component(comp: &Gen3dPlannedComponent, name: &str) -> Transform {
@@ -761,16 +815,8 @@ fn compute_world_transforms_at_t(
                 * parent_anchor.to_matrix()
                 * animated_offset.to_matrix()
                 * inv_child;
-            let (scale, rot, translation) = composed.to_scale_rotation_translation();
-            if translation.is_finite() && rot.is_finite() && scale.is_finite() {
-                world[child_idx] = Transform {
-                    translation,
-                    rotation: rot.normalize(),
-                    scale,
-                };
-            } else {
-                world[child_idx] = Transform::IDENTITY;
-            }
+            world[child_idx] = crate::geometry::mat4_to_transform_allow_degenerate_scale(composed)
+                .unwrap_or(Transform::IDENTITY);
 
             dfs(
                 child_idx, components, children, t_m, world, visiting, visited,
@@ -1101,15 +1147,9 @@ fn validate_joints(
                 }
                 AiJointKindJson::Fixed => {
                     let warn_deg = 2.0;
-                    let error_deg = 6.0;
                     if max_angle_deg.is_finite() && max_angle_deg > warn_deg {
-                        let severity = if max_angle_deg >= error_deg {
-                            MotionSeverity::Error
-                        } else {
-                            MotionSeverity::Warn
-                        };
                         issues.push(MotionIssue {
-                            severity,
+                            severity: MotionSeverity::Warn,
                             kind: "fixed_joint_rotates",
                             component_id: component_id.clone(),
                             component_name: component_name.clone(),
@@ -1119,7 +1159,7 @@ fn validate_joints(
                             evidence: serde_json::json!({
                                 "max_angle_degrees": max_angle_deg,
                                 "at_phase_01": max_angle_phase,
-                                "tolerances": { "warn_degrees": warn_deg, "error_degrees": error_deg },
+                                "tolerances": { "warn_degrees": warn_deg },
                             }),
                             score: max_angle_deg,
                         });
@@ -1798,16 +1838,8 @@ fn compute_world_transforms_for_channels(
                 * parent_anchor.to_matrix()
                 * animated_offset.to_matrix()
                 * inv_child;
-            let (scale, rot, translation) = composed.to_scale_rotation_translation();
-            if translation.is_finite() && rot.is_finite() && scale.is_finite() {
-                world[child_idx] = Transform {
-                    translation,
-                    rotation: rot.normalize(),
-                    scale,
-                };
-            } else {
-                world[child_idx] = Transform::IDENTITY;
-            }
+            world[child_idx] = crate::geometry::mat4_to_transform_allow_degenerate_scale(composed)
+                .unwrap_or(Transform::IDENTITY);
 
             dfs(
                 child_idx,
@@ -2193,7 +2225,7 @@ mod tests {
     }
 
     #[test]
-    fn chain_axis_mismatch_reports_error() {
+    fn chain_axis_mismatch_reports_warn() {
         let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
 
         // Forward axis at the proximal anchor points along +Y, but the chain axis points along +Z.
@@ -2236,8 +2268,8 @@ mod tests {
             .motion_validation
             .get("ok")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        assert!(!ok, "expected motion validation to fail");
+            .unwrap_or(false);
+        assert!(ok, "expected motion validation to pass (warn only)");
 
         let issues = report
             .motion_validation
@@ -2245,11 +2277,14 @@ mod tests {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.get("kind").and_then(|v| v.as_str()) == Some("chain_axis_mismatch")),
-            "expected chain_axis_mismatch issue, got {issues:?}"
+        let issue = issues.iter().find(|i| {
+            i.get("kind").and_then(|v| v.as_str()) == Some("chain_axis_mismatch")
+        });
+        let issue = issue.unwrap_or_else(|| panic!("expected chain_axis_mismatch issue, got {issues:?}"));
+        assert_eq!(
+            issue.get("severity").and_then(|v| v.as_str()),
+            Some("warn"),
+            "expected chain_axis_mismatch severity=warn, got {issue:?}"
         );
     }
 

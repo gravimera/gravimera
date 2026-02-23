@@ -171,6 +171,16 @@ pub(crate) enum AiAnimationClipJson {
         #[serde(default)]
         keyframes: Vec<AiAnimationKeyframeJson>,
     },
+    Once {
+        duration_secs: f32,
+        #[serde(default)]
+        keyframes: Vec<AiAnimationKeyframeJson>,
+    },
+    PingPong {
+        duration_secs: f32,
+        #[serde(default)]
+        keyframes: Vec<AiAnimationKeyframeJson>,
+    },
     Spin {
         axis: [f32; 3],
         radians_per_unit: f32,

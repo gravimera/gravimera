@@ -147,15 +147,7 @@ fn bounds_of_object(
 ) -> Bounds {
     fn compose_transform(a: Transform, b: Transform) -> Option<Transform> {
         let composed = a.to_matrix() * b.to_matrix();
-        let (scale, rotation, translation) = composed.to_scale_rotation_translation();
-        if !scale.is_finite() || !rotation.is_finite() || !translation.is_finite() {
-            return None;
-        }
-        Some(Transform {
-            translation,
-            rotation,
-            scale,
-        })
+        crate::geometry::mat4_to_transform_allow_degenerate_scale(composed)
     }
 
     fn part_transform_samples(part: &crate::object::registry::ObjectPartDef) -> Vec<Transform> {
@@ -164,7 +156,9 @@ fn bounds_of_object(
 
         for slot in part.animations.iter() {
             match &slot.spec.clip {
-                PartAnimationDef::Loop { keyframes, .. } => {
+                PartAnimationDef::Loop { keyframes, .. }
+                | PartAnimationDef::Once { keyframes, .. }
+                | PartAnimationDef::PingPong { keyframes, .. } => {
                     for keyframe in keyframes {
                         if let Some(t) = compose_transform(part.transform, keyframe.delta) {
                             out.push(t);
@@ -1107,8 +1101,16 @@ fn save_generated_prefab_descriptor_best_effort(
                         entry.has_time_offsets = true;
                     }
                     match &slot.spec.clip {
-                        PartAnimationDef::Loop { duration_secs, .. } => {
-                            entry.clip_kinds.insert("loop".to_string());
+                        PartAnimationDef::Loop { duration_secs, .. }
+                        | PartAnimationDef::Once { duration_secs, .. }
+                        | PartAnimationDef::PingPong { duration_secs, .. } => {
+                            entry.clip_kinds.insert(match &slot.spec.clip {
+                                PartAnimationDef::Loop { .. } => "loop",
+                                PartAnimationDef::Once { .. } => "once",
+                                PartAnimationDef::PingPong { .. } => "ping_pong",
+                                PartAnimationDef::Spin { .. } => unreachable!("spin handled below"),
+                            }
+                            .to_string());
                             if duration_secs.is_finite() && *duration_secs > 0.0 {
                                 entry.loop_duration_min = Some(
                                     entry

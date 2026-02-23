@@ -352,7 +352,8 @@ struct SceneDatPartAnimationSlot {
 
 #[derive(Clone, PartialEq, Message)]
 struct SceneDatPartAnimation {
-    #[prost(oneof = "scene_dat_part_animation::Kind", tags = "1, 2")]
+    // NOTE: keep tags disjoint from the non-oneof fields below (driver/speed/time_offset).
+    #[prost(oneof = "scene_dat_part_animation::Kind", tags = "1, 2, 6, 7")]
     kind: Option<scene_dat_part_animation::Kind>,
     #[prost(enumeration = "SceneDatPartAnimationDriver", tag = "3")]
     driver: i32,
@@ -379,6 +380,10 @@ mod scene_dat_part_animation {
         Loop(SceneDatPartAnimationLoop),
         #[prost(message, tag = "2")]
         Spin(SceneDatPartAnimationSpin),
+        #[prost(message, tag = "6")]
+        Once(SceneDatPartAnimationLoop),
+        #[prost(message, tag = "7")]
+        PingPong(SceneDatPartAnimationLoop),
     }
 }
 
@@ -1003,6 +1008,32 @@ fn part_animation_spec_to_dat(spec: &PartAnimationSpec) -> SceneDatPartAnimation
                 })
                 .collect(),
         }),
+        PartAnimationDef::Once {
+            duration_secs,
+            keyframes,
+        } => scene_dat_part_animation::Kind::Once(SceneDatPartAnimationLoop {
+            duration_secs: *duration_secs,
+            keyframes: keyframes
+                .iter()
+                .map(|kf| SceneDatPartAnimationKeyframe {
+                    time_secs: kf.time_secs,
+                    delta: Some(transform_to_dat(&kf.delta)),
+                })
+                .collect(),
+        }),
+        PartAnimationDef::PingPong {
+            duration_secs,
+            keyframes,
+        } => scene_dat_part_animation::Kind::PingPong(SceneDatPartAnimationLoop {
+            duration_secs: *duration_secs,
+            keyframes: keyframes
+                .iter()
+                .map(|kf| SceneDatPartAnimationKeyframe {
+                    time_secs: kf.time_secs,
+                    delta: Some(transform_to_dat(&kf.delta)),
+                })
+                .collect(),
+        }),
         PartAnimationDef::Spin {
             axis,
             radians_per_unit,
@@ -1061,7 +1092,9 @@ fn part_animation_spec_from_dat(animation: &SceneDatPartAnimation) -> Option<Par
     };
 
     let clip = match kind {
-        scene_dat_part_animation::Kind::Loop(loop_) => {
+        scene_dat_part_animation::Kind::Loop(loop_)
+        | scene_dat_part_animation::Kind::Once(loop_)
+        | scene_dat_part_animation::Kind::PingPong(loop_) => {
             let duration_secs = loop_.duration_secs;
             if !duration_secs.is_finite() || duration_secs <= 0.0 {
                 return None;
@@ -1090,9 +1123,20 @@ fn part_animation_spec_from_dat(animation: &SceneDatPartAnimation) -> Option<Par
                     .partial_cmp(&b.time_secs)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            PartAnimationDef::Loop {
-                duration_secs,
-                keyframes,
+            match kind {
+                scene_dat_part_animation::Kind::Loop(_) => PartAnimationDef::Loop {
+                    duration_secs,
+                    keyframes,
+                },
+                scene_dat_part_animation::Kind::Once(_) => PartAnimationDef::Once {
+                    duration_secs,
+                    keyframes,
+                },
+                scene_dat_part_animation::Kind::PingPong(_) => PartAnimationDef::PingPong {
+                    duration_secs,
+                    keyframes,
+                },
+                scene_dat_part_animation::Kind::Spin(_) => unreachable!("spin handled below"),
             }
         }
         scene_dat_part_animation::Kind::Spin(spin) => {

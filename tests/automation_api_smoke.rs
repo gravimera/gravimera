@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use serde_json::Value;
+
 fn http_request(
     addr: SocketAddr,
     method: &str,
@@ -112,6 +114,41 @@ fn automation_api_health_and_shutdown() {
     let (status, body) = http_request(addr, "GET", "/v1/state", None).expect("state");
     assert_eq!(status, 200);
     assert!(body.contains("\"ok\":true"), "unexpected body: {body}");
+
+    if let Ok(json) = serde_json::from_str::<Value>(&body) {
+        let first = json
+            .get("objects")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|obj| obj.get("instance_id_uuid"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        if let Some(instance_id) = first {
+            let req = format!(
+                "{{\"instance_ids\":[\"{instance_id}\"],\"channel\":\"ambient\"}}"
+            );
+            let (status, body) = http_request(
+                addr,
+                "POST",
+                "/v1/animation/force_channel",
+                Some(req.as_str()),
+            )
+            .expect("force animation channel");
+            assert_eq!(status, 200);
+            assert!(body.contains("\"ok\":true"), "unexpected body: {body}");
+
+            let req = format!("{{\"instance_ids\":[\"{instance_id}\"],\"channel\":\"\"}}");
+            let (status, body) = http_request(
+                addr,
+                "POST",
+                "/v1/animation/force_channel",
+                Some(req.as_str()),
+            )
+            .expect("clear forced animation channel");
+            assert_eq!(status, 200);
+            assert!(body.contains("\"ok\":true"), "unexpected body: {body}");
+        }
+    }
 
     // Low-level input injection endpoints are intentionally unavailable.
     for (method, path) in [

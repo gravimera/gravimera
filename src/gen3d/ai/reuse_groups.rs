@@ -747,8 +747,10 @@ mod tests {
         ];
         components[0].anchors.push(anchor("mount0"));
         components[0].anchors.push(anchor("mount1"));
+        components[1].anchors.push(anchor("hip"));
         components[1].anchors.push(anchor("knee"));
         components[2].anchors.push(anchor("hip"));
+        components[3].anchors.push(anchor("hip"));
         components[3].anchors.push(anchor("knee"));
         components[3].anchors.push(anchor("spur"));
         components[4].anchors.push(anchor("hip"));

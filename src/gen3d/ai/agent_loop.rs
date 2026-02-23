@@ -1428,7 +1428,7 @@ fn parse_delta_transform(value: Option<&serde_json::Value>) -> Transform {
         .and_then(parse_vec3)
         .or_else(|| value.get("size").and_then(parse_vec3))
     {
-        out.scale = scale.abs().max(Vec3::splat(0.01));
+        out.scale = scale;
     }
 
     // Rotation: accept rot_quat_xyzw / quat_xyzw, or basis forward+up.
@@ -2375,87 +2375,6 @@ fn execute_tool_call(
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_COPY_COMPONENT | TOOL_ID_MIRROR_COMPONENT => {
-            fn parse_vec3(value: &serde_json::Value) -> Option<Vec3> {
-                let arr = value.as_array()?;
-                if arr.len() != 3 {
-                    return None;
-                }
-                let x = arr.get(0)?.as_f64()? as f32;
-                let y = arr.get(1)?.as_f64()? as f32;
-                let z = arr.get(2)?.as_f64()? as f32;
-                let v = Vec3::new(x, y, z);
-                v.is_finite().then_some(v)
-            }
-
-            fn parse_quat_xyzw(value: &serde_json::Value) -> Option<Quat> {
-                let arr = value.as_array()?;
-                if arr.len() != 4 {
-                    return None;
-                }
-                let x = arr.get(0)?.as_f64()? as f32;
-                let y = arr.get(1)?.as_f64()? as f32;
-                let z = arr.get(2)?.as_f64()? as f32;
-                let w = arr.get(3)?.as_f64()? as f32;
-                let q = Quat::from_xyzw(x, y, z, w).normalize();
-                q.is_finite().then_some(q)
-            }
-
-            fn parse_delta_transform(value: Option<&serde_json::Value>) -> Transform {
-                let mut out = Transform::IDENTITY;
-                let Some(value) = value else {
-                    return out;
-                };
-                if let Some(pos) = value
-                    .get("pos")
-                    .and_then(parse_vec3)
-                    .or_else(|| value.get("position").and_then(parse_vec3))
-                    .or_else(|| value.get("translation").and_then(parse_vec3))
-                {
-                    out.translation = pos;
-                }
-                if let Some(scale) = value
-                    .get("scale")
-                    .and_then(parse_vec3)
-                    .or_else(|| value.get("size").and_then(parse_vec3))
-                {
-                    out.scale = scale.abs().max(Vec3::splat(0.01));
-                }
-
-                // Rotation: accept rot_quat_xyzw / quat_xyzw, or basis forward+up.
-                let mut rotation: Option<Quat> = value
-                    .get("rot_quat_xyzw")
-                    .and_then(parse_quat_xyzw)
-                    .or_else(|| value.get("quat_xyzw").and_then(parse_quat_xyzw));
-                if rotation.is_none() {
-                    if let Some(rot) = value.get("rot").and_then(|v| v.as_object()) {
-                        rotation = rot
-                            .get("quat_xyzw")
-                            .and_then(parse_quat_xyzw)
-                            .or_else(|| rot.get("rot_quat_xyzw").and_then(parse_quat_xyzw));
-                        if rotation.is_none() {
-                            if let Some(fwd) = rot.get("forward").and_then(parse_vec3) {
-                                let up = rot.get("up").and_then(parse_vec3);
-                                rotation =
-                                    Some(super::convert::plan_rotation_from_forward_up_lossy(
-                                        fwd, up,
-                                    ));
-                            }
-                        }
-                    }
-                }
-                if rotation.is_none() {
-                    if let Some(fwd) = value.get("forward").and_then(parse_vec3) {
-                        let up = value.get("up").and_then(parse_vec3);
-                        rotation =
-                            Some(super::convert::plan_rotation_from_forward_up_lossy(fwd, up));
-                    }
-                }
-                if let Some(q) = rotation {
-                    out.rotation = q;
-                }
-                out
-            }
-
             let source_name = call
                 .args
                 .get("source_component")
@@ -4479,6 +4398,7 @@ fn poll_agent_tool(
                         Ok(ai) => match super::convert::ai_to_component_def(
                             &job.planned_components[component_idx],
                             ai,
+                            job.pass_dir.as_deref(),
                         ) {
                             Ok(def) => {
                                 let object_id = def.object_id;
@@ -4682,6 +4602,7 @@ fn poll_agent_tool(
                                 &mut job.planned_components,
                                 &plan_collider,
                                 draft,
+                                job.pass_dir.as_deref(),
                             ) {
                                 Ok(apply) => {
                                     if !apply.tooling_feedback.is_empty() {
@@ -5262,7 +5183,9 @@ fn poll_agent_component_batch(
                     .ok_or_else(|| {
                         format!("Internal error: missing planned component for idx={idx}")
                     })
-                    .and_then(|planned| super::convert::ai_to_component_def(planned, ai))
+                    .and_then(|planned| {
+                        super::convert::ai_to_component_def(planned, ai, job.pass_dir.as_deref())
+                    })
                 {
                     Ok(def) => def,
                     Err(err) => {
@@ -6150,6 +6073,17 @@ mod tests {
     use crate::gen3d::state::{Gen3dDraft, Gen3dPreview, Gen3dSpeedMode, Gen3dWorkshop};
     use crate::gen3d::tool_feedback::Gen3dToolFeedbackHistory;
     use uuid::Uuid;
+
+    #[test]
+    fn gen3d_tool_transform_parsing_preserves_negative_and_zero_scale() {
+        let value = serde_json::json!({
+            "pos": [1.0, 2.0, 3.0],
+            "scale": [-1.0, 0.0, 2.0],
+        });
+        let t = parse_delta_transform(Some(&value));
+        assert_eq!(t.translation, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(t.scale, Vec3::new(-1.0, 0.0, 2.0));
+    }
 
     #[test]
     fn select_review_preview_images_prefers_five_static_views() {

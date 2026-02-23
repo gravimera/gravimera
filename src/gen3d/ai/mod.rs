@@ -2248,7 +2248,11 @@ pub(crate) fn gen3d_poll_ai_job(
                     };
 
                     let component_def =
-                        match convert::ai_to_component_def(&job.planned_components[idx], ai) {
+                        match convert::ai_to_component_def(
+                            &job.planned_components[idx],
+                            ai,
+                            job.artifact_dir(),
+                        ) {
                             Ok(def) => def,
                             Err(err) => {
                                 debug!("Gen3D: failed to convert component draft: {err}");
@@ -2590,11 +2594,13 @@ pub(crate) fn gen3d_poll_ai_job(
                     }
 
                     let plan_collider = job.plan_collider.clone();
+                    let artifact_dir = job.pass_dir.clone();
                     let apply = match convert::apply_ai_review_delta_actions(
                         delta,
                         &mut job.planned_components,
                         &plan_collider,
                         &mut draft,
+                        artifact_dir.as_deref(),
                     ) {
                         Ok(apply) => apply,
                         Err(err) => {
@@ -3159,7 +3165,7 @@ fn poll_gen3d_parallel_components(
                     .ok_or_else(|| {
                         format!("Internal error: missing planned component for idx={idx}")
                     })
-                    .and_then(|planned| convert::ai_to_component_def(planned, ai))
+                    .and_then(|planned| convert::ai_to_component_def(planned, ai, job.artifact_dir()))
                 {
                     Ok(def) => def,
                     Err(err) => {
@@ -4163,14 +4169,17 @@ fn poll_gen3d_motion_capture(
             ) {
                 continue;
             }
-            let PartAnimationDef::Loop { duration_secs, .. } = &slot.spec.clip else {
-                continue;
+            let (duration_secs, repeats) = match &slot.spec.clip {
+                PartAnimationDef::Loop { duration_secs, .. }
+                | PartAnimationDef::Once { duration_secs, .. } => (*duration_secs, 1.0),
+                PartAnimationDef::PingPong { duration_secs, .. } => (*duration_secs, 2.0),
+                PartAnimationDef::Spin { .. } => continue,
             };
-            if !duration_secs.is_finite() || *duration_secs <= 0.0 {
+            if !duration_secs.is_finite() || duration_secs <= 0.0 {
                 continue;
             }
             let speed_scale = slot.spec.speed_scale.max(1e-6);
-            let effective = (*duration_secs / speed_scale).abs();
+            let effective = (repeats * duration_secs / speed_scale).abs();
             if !effective.is_finite() || effective <= 1e-3 {
                 continue;
             }
@@ -4201,14 +4210,17 @@ fn poll_gen3d_motion_capture(
                 if slot.channel.as_ref() != "attack_primary" {
                     continue;
                 }
-                let PartAnimationDef::Loop { duration_secs, .. } = &slot.spec.clip else {
-                    continue;
+                let (duration_secs, repeats) = match &slot.spec.clip {
+                    PartAnimationDef::Loop { duration_secs, .. }
+                    | PartAnimationDef::Once { duration_secs, .. } => (*duration_secs, 1.0),
+                    PartAnimationDef::PingPong { duration_secs, .. } => (*duration_secs, 2.0),
+                    PartAnimationDef::Spin { .. } => continue,
                 };
-                if !duration_secs.is_finite() || *duration_secs <= 0.0 {
+                if !duration_secs.is_finite() || duration_secs <= 0.0 {
                     continue;
                 }
                 let speed = slot.spec.speed_scale.max(1e-3);
-                let wall_duration = (*duration_secs / speed).abs();
+                let wall_duration = (repeats * duration_secs / speed).abs();
                 if !wall_duration.is_finite() || wall_duration <= 1e-3 {
                     continue;
                 }
@@ -4634,6 +4646,24 @@ fn build_gen3d_scene_graph_summary(
                                 keyframes,
                             } => serde_json::json!({
                                 "kind":"loop",
+                                "duration_secs": duration_secs,
+                                "keyframes_count": keyframes.len(),
+                                "keyframe_times": keyframes.iter().map(|k| k.time_secs).collect::<Vec<f32>>(),
+                            }),
+                            crate::object::registry::PartAnimationDef::Once {
+                                duration_secs,
+                                keyframes,
+                            } => serde_json::json!({
+                                "kind":"once",
+                                "duration_secs": duration_secs,
+                                "keyframes_count": keyframes.len(),
+                                "keyframe_times": keyframes.iter().map(|k| k.time_secs).collect::<Vec<f32>>(),
+                            }),
+                            crate::object::registry::PartAnimationDef::PingPong {
+                                duration_secs,
+                                keyframes,
+                            } => serde_json::json!({
+                                "kind":"ping_pong",
                                 "duration_secs": duration_secs,
                                 "keyframes_count": keyframes.len(),
                                 "keyframe_times": keyframes.iter().map(|k| k.time_secs).collect::<Vec<f32>>(),

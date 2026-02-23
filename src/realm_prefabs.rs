@@ -594,6 +594,14 @@ enum PartAnimationDefJson {
         duration_secs: f32,
         keyframes: Vec<PartAnimationKeyframeDefJson>,
     },
+    Once {
+        duration_secs: f32,
+        keyframes: Vec<PartAnimationKeyframeDefJson>,
+    },
+    PingPong {
+        duration_secs: f32,
+        keyframes: Vec<PartAnimationKeyframeDefJson>,
+    },
     Spin {
         axis: Vec3Json,
         radians_per_unit: f32,
@@ -607,6 +615,26 @@ impl PartAnimationDefJson {
                 duration_secs,
                 keyframes,
             } => Self::Loop {
+                duration_secs: *duration_secs,
+                keyframes: keyframes
+                    .iter()
+                    .map(PartAnimationKeyframeDefJson::from_keyframe)
+                    .collect(),
+            },
+            PartAnimationDef::Once {
+                duration_secs,
+                keyframes,
+            } => Self::Once {
+                duration_secs: *duration_secs,
+                keyframes: keyframes
+                    .iter()
+                    .map(PartAnimationKeyframeDefJson::from_keyframe)
+                    .collect(),
+            },
+            PartAnimationDef::PingPong {
+                duration_secs,
+                keyframes,
+            } => Self::PingPong {
                 duration_secs: *duration_secs,
                 keyframes: keyframes
                     .iter()
@@ -629,6 +657,26 @@ impl PartAnimationDefJson {
                 duration_secs,
                 keyframes,
             } => PartAnimationDef::Loop {
+                duration_secs: *duration_secs,
+                keyframes: keyframes
+                    .iter()
+                    .map(PartAnimationKeyframeDefJson::to_keyframe)
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+            Self::Once {
+                duration_secs,
+                keyframes,
+            } => PartAnimationDef::Once {
+                duration_secs: *duration_secs,
+                keyframes: keyframes
+                    .iter()
+                    .map(PartAnimationKeyframeDefJson::to_keyframe)
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+            Self::PingPong {
+                duration_secs,
+                keyframes,
+            } => PartAnimationDef::PingPong {
                 duration_secs: *duration_secs,
                 keyframes: keyframes
                     .iter()

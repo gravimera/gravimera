@@ -98,6 +98,18 @@ pub(crate) enum PartAnimationDef {
         duration_secs: f32,
         keyframes: Vec<PartAnimationKeyframeDef>,
     },
+    /// A one-shot keyframe animation. Playback clamps to the first/last keyframe instead of
+    /// wrapping.
+    Once {
+        duration_secs: f32,
+        keyframes: Vec<PartAnimationKeyframeDef>,
+    },
+    /// A ping-pong keyframe animation: plays forward for `duration_secs`, then backward for
+    /// `duration_secs`, repeating.
+    PingPong {
+        duration_secs: f32,
+        keyframes: Vec<PartAnimationKeyframeDef>,
+    },
     /// A procedural spin around a local-space axis.
     ///
     /// The driving value is provided by the selected `PartAnimationDriver`:
@@ -645,7 +657,9 @@ impl ObjectLibrary {
                     }
 
                     let candidate = match &slot.spec.clip {
-                        PartAnimationDef::Loop { duration_secs, .. } => {
+                        PartAnimationDef::Loop { duration_secs, .. }
+                        | PartAnimationDef::Once { duration_secs, .. }
+                        | PartAnimationDef::PingPong { duration_secs, .. } => {
                             let speed = slot.spec.speed_scale.max(1e-3);
                             (duration_secs / speed).abs()
                         }

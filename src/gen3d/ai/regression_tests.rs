@@ -297,7 +297,7 @@ fn gen3d_pipeline_warcar_with_cannon_prompt_smoke() {
         );
 
         let ai = parse::parse_ai_draft_from_text(draft_text).expect("draft should parse");
-        let def = convert::ai_to_component_def(&planned[component_idx], ai)
+        let def = convert::ai_to_component_def(&planned[component_idx], ai, None)
             .expect("draft should convert");
 
         let object_id = def.object_id;
@@ -379,7 +379,7 @@ fn gen3d_pipeline_warcar_with_cannon_prompt_smoke() {
         serde_json::to_string_pretty(&delta_value).expect("delta JSON should serialize");
     let delta = parse::parse_ai_review_delta_from_text(&delta_text).expect("delta should parse");
     let apply =
-        convert::apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+        convert::apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft, None)
             .expect("delta should apply");
     assert!(
         apply.had_actions,
@@ -544,7 +544,7 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
 }
 
 #[test]
-fn gen3d_sanitizes_fixed_joint_rotation_in_plan_animations() {
+fn gen3d_allows_fixed_joint_rotation_in_plan_animations() {
     let plan_text = r#"
     {
       "version": 7,
@@ -583,7 +583,7 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_plan_animations() {
                   "keyframes": [
                     {
                       "time_secs": 0.0,
-                      "delta": { "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0], "rot_frame": "join" }
+                      "delta": { "forward": [1.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "rot_frame": "join" }
                     }
                   ]
                 }
@@ -614,7 +614,11 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_plan_animations() {
         PartAnimationDef::Loop { keyframes, .. } => {
             assert!(!keyframes.is_empty());
             for kf in keyframes {
-                assert_eq!(kf.delta.rotation, Quat::IDENTITY);
+                assert!(kf.delta.rotation.is_finite());
+                assert!(
+                    kf.delta.rotation.angle_between(Quat::IDENTITY) > 0.1,
+                    "expected non-identity rotation delta"
+                );
             }
         }
         other => panic!("expected loop clip, got {other:?}"),
@@ -622,7 +626,7 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_plan_animations() {
 }
 
 #[test]
-fn gen3d_sanitizes_fixed_joint_rotation_in_review_delta_tweak_animation() {
+fn gen3d_allows_fixed_joint_rotation_in_review_delta_tweak_animation() {
     let plan_text = r#"
     {
       "version": 7,
@@ -682,7 +686,7 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_review_delta_tweak_animation() {
                   "keyframes": [
                     {{
                       "time_secs": 0.0,
-                      "delta": {{ "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0], "rot_frame": "join" }}
+                      "delta": {{ "forward": [1.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "rot_frame": "join" }}
                     }}
                   ]
                 }}
@@ -692,7 +696,7 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_review_delta_tweak_animation() {
         }}"#
     );
     let delta = parse::parse_ai_review_delta_from_text(delta_text.as_str()).expect("delta parse");
-    convert::apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+    convert::apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft, None)
         .expect("apply delta");
 
     let hair = planned
@@ -709,7 +713,11 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_review_delta_tweak_animation() {
         PartAnimationDef::Loop { keyframes, .. } => {
             assert!(!keyframes.is_empty());
             for kf in keyframes {
-                assert_eq!(kf.delta.rotation, Quat::IDENTITY);
+                assert!(kf.delta.rotation.is_finite());
+                assert!(
+                    kf.delta.rotation.angle_between(Quat::IDENTITY) > 0.1,
+                    "expected non-identity rotation delta"
+                );
             }
         }
         other => panic!("expected loop clip, got {other:?}"),
@@ -717,7 +725,7 @@ fn gen3d_sanitizes_fixed_joint_rotation_in_review_delta_tweak_animation() {
 }
 
 #[test]
-fn gen3d_ignores_spin_tweak_animation_on_fixed_joint() {
+fn gen3d_allows_spin_tweak_animation_on_fixed_joint() {
     let plan_text = r#"
     {
       "version": 7,
@@ -778,7 +786,7 @@ fn gen3d_ignores_spin_tweak_animation_on_fixed_joint() {
         }}"#
     );
     let delta = parse::parse_ai_review_delta_from_text(delta_text.as_str()).expect("delta parse");
-    convert::apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft)
+    convert::apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft, None)
         .expect("apply delta");
 
     let hair = planned
@@ -786,8 +794,13 @@ fn gen3d_ignores_spin_tweak_animation_on_fixed_joint() {
         .find(|c| c.name == "hair")
         .expect("hair component");
     let att = hair.attach_to.as_ref().expect("hair attach");
+    let slot = att
+        .animations
+        .iter()
+        .find(|s| s.channel.as_ref() == "idle")
+        .expect("expected idle animation slot to be applied");
     assert!(
-        att.animations.is_empty(),
-        "expected no animation slots to be added for fixed joint"
+        matches!(slot.spec.clip, PartAnimationDef::Spin { .. }),
+        "expected spin clip"
     );
 }

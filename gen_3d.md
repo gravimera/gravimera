@@ -23,7 +23,7 @@ The AI is instructed to prioritize **basic structure and proportions** over smal
    - You can switch back to **Realm** while building; Gen3D keeps working in the background. Return to Preview any time to inspect progress.
 5. Review in the preview panel:
    - Orbit/zoom (LMB drag / mouse wheel).
-   - Select preview animation state via the **Anim** dropdown (Idle / Move / Attack).
+   - Select preview motion channel via the **Anim** dropdown (lists available channels; canonical: Idle / Move / Attack).
    - Toggle collider overlay via **Collision: On/Off**.
    - Open the **Status / Tool Feedback** overlay via the top-right `≡` button (collapsed by default).
    - The preview shows run time and AI token counters (run + total) at top-left.
@@ -208,12 +208,12 @@ Notes:
   - For intermediate chain links with exactly 2 joint anchors (one parent, one child), the vector from the proximal joint anchor to the distal joint anchor should be aligned with the proximal anchor's +Z (forward) axis in component-local space; otherwise motion validation may report `chain_axis_mismatch`.
   Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.
 - Component-level animation lives on attachments via `attach_to.animations` (preferred). `attach_to.animation` is a legacy field.
-- Attachment animations (`attach_to.animations`) are keyed by channel (`ambient`, `idle`, `move`, `attack_primary`) and each animation spec contains:
+- Attachment animations (`attach_to.animations`) are keyed by channel (open vocabulary; canonical channels include `ambient`, `idle`, `move`, `attack_primary`) and each animation spec contains:
   - `driver`: `always` (seconds), `attack_time` (seconds), `move_phase` (meters traveled while moving), `move_distance` (meters traveled; can be signed for spins).
   - `speed_scale` (optional): multiplies the driver time.
   - `time_offset_units` (optional): additive offset in the clip time domain (same units as loop `duration_secs` / keyframe `time_secs`). Use this to phase-stagger repeated limbs without duplicating keyframes.
-  - `clip`: either `loop` (keyframed deltas) or `spin` (procedural rotation).
-    - For `loop` keyframes, `delta.pos` is in the **parent-anchor join frame** (the same frame as `attach_to.offset.pos`).
+  - `clip`: keyframed `loop` / `once` / `ping_pong`, or procedural `spin`.
+    - For keyframed clips, `delta.pos` is in the **parent-anchor join frame** (the same frame as `attach_to.offset.pos`).
     - Rotation deltas (`delta.forward`/`delta.up` basis vectors or `delta.rot_quat_xyzw`) require `delta.rot_frame`:
       - `"join"`: author the rotation in the join frame. Rest pose (no rotation): `delta.forward = [0,0,1]`, `delta.up = [0,1,0]`.
       - `"parent"`: author `delta.forward`/`delta.up` in the **parent component frame** (same coordinates as anchors). Rest pose should match the parent anchor frame: `delta.forward = parent_anchor.forward`, `delta.up = parent_anchor.up`.

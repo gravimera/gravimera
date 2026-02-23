@@ -583,6 +583,12 @@ struct ScreenshotRequest {
 }
 
 #[derive(Deserialize)]
+struct ForceAnimationChannelRequest {
+    instance_ids: Vec<String>,
+    channel: String,
+}
+
+#[derive(Deserialize)]
 struct Gen3dPromptRequest {
     prompt: String,
 }
@@ -1592,6 +1598,68 @@ fn handle_request_main_thread(
 
             let body =
                 serde_json::json!({ "ok": true, "path": path.display().to_string() }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/animation/force_channel") => {
+            let req: ForceAnimationChannelRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            if req.instance_ids.is_empty() {
+                return Some(json_error(400, "instance_ids must be non-empty."));
+            }
+
+            let channel = req.channel.trim().to_string();
+
+            let mut id_to_entity: std::collections::HashMap<u128, Entity> =
+                std::collections::HashMap::with_capacity(selectable_entities.iter().len());
+            for (entity, object_id) in selectable_entities.iter() {
+                id_to_entity.insert(object_id.0, entity);
+            }
+
+            let mut missing: Vec<String> = Vec::new();
+            let mut targets: Vec<Entity> = Vec::with_capacity(req.instance_ids.len());
+            for id_str in req.instance_ids {
+                match uuid::Uuid::parse_str(id_str.trim()) {
+                    Ok(uuid) => {
+                        let id = uuid.as_u128();
+                        if let Some(entity) = id_to_entity.get(&id).copied() {
+                            targets.push(entity);
+                        } else {
+                            missing.push(uuid.to_string());
+                        }
+                    }
+                    Err(_) => missing.push(id_str),
+                }
+            }
+            if !missing.is_empty() {
+                return Some(json_error(
+                    404,
+                    format!("Instances not found: {}", missing.join(", ")),
+                ));
+            }
+
+            for entity in targets.iter().copied() {
+                let mut cmd = commands.entity(entity);
+                if channel.is_empty() {
+                    cmd.remove::<ForcedAnimationChannel>();
+                } else {
+                    cmd.insert(ForcedAnimationChannel {
+                        channel: channel.clone(),
+                    });
+                }
+            }
+
+            let body = serde_json::json!({
+                "ok": true,
+                "updated": targets.len(),
+                "channel": channel,
+            })
+            .to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),
