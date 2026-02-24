@@ -101,16 +101,15 @@ pub(crate) fn enter_gen3d_mode(
             &mut preview_state,
         )
     } else {
-        preview_state
-            .target
-            .clone()
-            .unwrap_or_else(|| preview::setup_preview_scene(
+        preview_state.target.clone().unwrap_or_else(|| {
+            preview::setup_preview_scene(
                 &mut commands,
                 &mut images,
                 &assets,
                 &mut materials,
                 &mut preview_state,
-            ))
+            )
+        })
     };
 
     commands

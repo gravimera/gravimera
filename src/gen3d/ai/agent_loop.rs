@@ -4707,9 +4707,28 @@ fn poll_agent_tool(
                                 }
                                 match effector.role {
                                     super::schema::AiMoveEffectorRoleJsonV1::Leg => {
+                                        if !matches!(effector.phase_group, Some(0) | Some(1)) {
+                                            issues.push(format!(
+                                                "Component {name} role=leg must have phase_group=0 or 1"
+                                            ));
+                                        }
                                         if effector.spin_axis_local.is_some() {
                                             issues.push(format!(
                                                 "Component {name} role=leg must have spin_axis_local=null"
+                                            ));
+                                        }
+                                    }
+                                    super::schema::AiMoveEffectorRoleJsonV1::Arm => {
+                                        if effector.phase_group.is_some()
+                                            && !matches!(effector.phase_group, Some(0) | Some(1))
+                                        {
+                                            issues.push(format!(
+                                                "Component {name} role=arm phase_group must be 0 or 1 (or null)"
+                                            ));
+                                        }
+                                        if effector.spin_axis_local.is_some() {
+                                            issues.push(format!(
+                                                "Component {name} role=arm must have spin_axis_local=null"
                                             ));
                                         }
                                     }
@@ -4717,6 +4736,32 @@ fn poll_agent_tool(
                                         if effector.phase_group.is_some() {
                                             issues.push(format!(
                                                 "Component {name} role=wheel must have phase_group=null"
+                                            ));
+                                        }
+                                    }
+                                    super::schema::AiMoveEffectorRoleJsonV1::Propeller
+                                    | super::schema::AiMoveEffectorRoleJsonV1::Rotor => {
+                                        if effector.phase_group.is_some() {
+                                            issues.push(format!(
+                                                "Component {name} role={:?} must have phase_group=null",
+                                                effector.role
+                                            ));
+                                        }
+                                    }
+                                    super::schema::AiMoveEffectorRoleJsonV1::Head
+                                    | super::schema::AiMoveEffectorRoleJsonV1::Ear
+                                    | super::schema::AiMoveEffectorRoleJsonV1::Tail
+                                    | super::schema::AiMoveEffectorRoleJsonV1::Wing => {
+                                        if effector.phase_group.is_some() {
+                                            issues.push(format!(
+                                                "Component {name} role={:?} must have phase_group=null",
+                                                effector.role
+                                            ));
+                                        }
+                                        if effector.spin_axis_local.is_some() {
+                                            issues.push(format!(
+                                                "Component {name} role={:?} must have spin_axis_local=null",
+                                                effector.role
                                             ));
                                         }
                                     }

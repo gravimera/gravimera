@@ -26,8 +26,10 @@ You can see it working by:
 
 - [x] (2026-02-23 11:14Z) Write this ExecPlan and keep it current.
 - [x] (2026-02-23 13:01Z) Add runtime motion algorithm framework + UI switching.
-- [x] (2026-02-23 13:42Z) Auto-populate `motion_rig_v1` on Save (name-based when canonical component names match).
-- [x] (2026-02-23 18:45Z) Add `llm_generate_motion_roles_v1` + `motion_roles_v1` so Gen3D can label legs/wheels and Save can derive `motion_rig_v1` without brittle naming.
+- [x] (2026-02-24) Derive `motion_rig_v1` on Save from explicit `motion_roles_v1` only (no heuristic name-based auto-rigging).
+- [x] (2026-02-23 18:45Z) Add `llm_generate_motion_roles_v1` + `motion_roles_v1` so Gen3D can label locomotion effectors and Save can derive `motion_rig_v1` without brittle naming.
+- [x] (2026-02-24) Make Gen3D plans static-only (plan v8; remove `attach_to.animations` and review-delta `tweak_animation`).
+- [x] (2026-02-24) Persist per-instance `move` algorithm selection in `scene.dat`.
 - [ ] Run unit tests and the required rendered smoke test.
 - [ ] Commit the changes.
 
@@ -55,9 +57,10 @@ You can see it working by:
 
 ## Outcomes & Retrospective
 
-- Outcome: The engine can inject deterministic `move` motion at runtime for prefabs that declare `motion_rig_v1` (`biped_walk_v1`, `quadruped_walk_v1`, `car_wheels_v1`).
-- Outcome: Gen3D can optionally produce `motion_roles_v1` (legs/wheels) via a dedicated tool call, and Save can derive a compatible `motion_rig_v1` from it.
-- Remaining: Consider a Gen3D strategy flag to reduce AI-authored per-edge `move` animations by default (keep authored `attack_primary`).
+- Outcome: The engine can inject deterministic `move` motion at runtime for prefabs that declare `motion_rig_v1` (`biped_walk_v1`, `quadruped_walk_v1`, `car_wheels_v1`, `airplane_prop_v1`).
+- Outcome: Gen3D can optionally produce `motion_roles_v1` (legs/wheels/arms/head/ears/tail/wings/props/rotors) via a dedicated tool call, and Save can derive a compatible `motion_rig_v1` from it.
+- Outcome: Gen3D no longer generates AI-authored animation clips in the plan; locomotion is driven by runtime algorithms, and attack/idle channels fall back to static unless authored externally.
+- Outcome: Motion algorithm selection persists per instance in `scene.dat` so runtime switching survives reloads.
 
 ## Context and Orientation
 
@@ -76,7 +79,7 @@ Gravimera’s animations are data-driven and per-part:
   - priority: `attack_primary > move > idle > ambient`,
   and applies `animated = base * delta(t)` before composing attachment alignment transforms.
 
-Gen3D currently often asks the AI to author `attach_to.animations` per component attachment edge and the engine converts them into `PartAnimationSlot`s (`src/gen3d/ai/schema.rs`, `src/gen3d/ai/convert.rs`).
+Historically, Gen3D asked the AI to author `attach_to.animations` per component attachment edge and the engine converted them into `PartAnimationSlot`s. That path is now removed; Gen3D plans are static-only and motion comes from runtime algorithms.
 
 ### What “switching a motion algorithm” means in this repo
 
@@ -206,18 +209,17 @@ Prescriptive UX (keep minimal):
 - Pick a `move` algorithm from the list (the list is derived from the prefab’s `motion_rig_v1` kind).
 - Selecting an algorithm updates all currently-selected units of the same prefab.
 
-### Milestone E — Gen3D strategy shift (optional, but the intended default)
+### Milestone E — Gen3D strategy shift (delivered)
 
-Once runtime injection works, update Gen3D so that the AI stops authoring per-edge animations by default and instead emits rig contracts when appropriate.
+Gen3D now generates **static-only** plans (plan v8) and does not author per-edge animation clips.
 
-Plan:
+Instead:
 
-- Extend the Gen3D plan schema to allow an optional rig contract declaration (for example, `rig.kind` plus a biped section that references component names).
-- During `Save`, translate the plan-level rig declaration (component names) into saved-prefab ids and write `interfaces.extra.motion_rig_v1` into the saved model’s descriptor.
-- Keep a compatibility flag in config:
-  - `gen3d.ai_authored_animations = true|false` (default can remain `true` until the new workflow is proven).
+- The agent can call `llm_generate_motion_roles_v1` to label locomotion effectors (legs/wheels/props/rotors, etc).
+- On `Save`, Gen3D derives `interfaces.extra.motion_rig_v1` from `motion_roles_v1` (no heuristic fallback) and the engine injects deterministic `move` clips at runtime.
+- Per-instance algorithm selection persists in `scene.dat`.
 
-The key requirement is that Gen3D remains functional even when the AI does not output any `attach_to.animations`.
+Key requirement (met): Gen3D remains functional without any AI-authored animation clips.
 
 ## Concrete Steps
 

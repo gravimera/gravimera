@@ -130,10 +130,21 @@ Top-level fields:
   - `role`: string. One of:
     - `"leg"`
     - `"wheel"`
+    - `"arm"`
+    - `"head"`
+    - `"ear"`
+    - `"tail"`
+    - `"wing"`
+    - `"propeller"`
+    - `"rotor"`
   - `phase_group`: optional integer or null. When `role="leg"`, use `0` or `1` for a simple
-    two-phase gait (group 0 swings opposite group 1).
+    two-phase gait (group 0 swings opposite group 1). When `role="arm"`, `phase_group` may be
+    `0` or `1` (or null if unknown). For `wheel`/`propeller`/`rotor`, `phase_group` must be null.
+    For `head`/`ear`/`tail`/`wing`, `phase_group` must be null.
   - `spin_axis_local`: optional `[x, y, z]` array or null. When `role="wheel"`, this may specify
-    the wheel spin axis in the wheel component’s local frame (defaults to `[1, 0, 0]` when null).
+    the spin axis in the component’s local frame (defaults vary by rig/algorithm when null).
+    This may also be used for `propeller` / `rotor`. For all other roles, `spin_axis_local` must
+    be null.
 - `notes`: optional string or null.
 
 #### `interfaces.extra.motion_rig_v1` (runtime motion rig contract)
@@ -156,15 +167,19 @@ Top-level fields:
   - `"biped_v1"`
   - `"quadruped_v1"`
   - `"car_v1"`
+  - `"airplane_v1"`
 - `default_move_algorithm`: optional string. If present, must be one of:
   - `"none"` (use prefab-authored clips)
   - `"biped_walk_v1"`
   - `"quadruped_walk_v1"`
   - `"car_wheels_v1"`
+  - `"airplane_prop_v1"`
 - `move_cycle_m`: optional number (defaults to `1.0`). Used by walk rigs as the cycle length in
   **meters traveled** (driven by `MovePhase`).
 - `walk_swing_degrees`: optional number (defaults vary by rig kind). Used by walk rigs as the
   swing amplitude (degrees) around the join’s local +X axis.
+- `body`: optional `MotionEdgeRefV1` identifying the “main body” edge. When present, motion
+  algorithms may use it for whole-body bob/lean.
 
 Edge reference object (`MotionEdgeRefV1`):
 
@@ -179,6 +194,12 @@ Requires a `biped` object:
 
 - `left_leg`: `MotionEdgeRefV1`
 - `right_leg`: `MotionEdgeRefV1`
+- Optional additional edges (used by some algorithms when present):
+  - `left_arm`: `MotionEdgeRefV1`
+  - `right_arm`: `MotionEdgeRefV1`
+  - `head`: `MotionEdgeRefV1`
+  - `tail`: `MotionEdgeRefV1`
+  - `ears`: array of `MotionEdgeRefV1`
 
 ##### `kind = "quadruped_v1"`
 
@@ -188,6 +209,10 @@ Requires a `quadruped` object:
 - `front_right_leg`: `MotionEdgeRefV1`
 - `back_left_leg`: `MotionEdgeRefV1`
 - `back_right_leg`: `MotionEdgeRefV1`
+- Optional additional edges (used by some algorithms when present):
+  - `head`: `MotionEdgeRefV1`
+  - `tail`: `MotionEdgeRefV1`
+  - `ears`: array of `MotionEdgeRefV1`
 
 ##### `kind = "car_v1"`
 
@@ -204,6 +229,22 @@ Notes:
 - If neither `wheel_radius_m` nor `radians_per_meter` is present, the engine derives wheel radius
   from the wheel component’s AABB size (including mount scale) and uses the rolling relation
   `angle = distance / radius`.
+
+##### `kind = "airplane_v1"`
+
+Requires an `airplane` object:
+
+- `propellers`: array of spinner objects:
+  - `edge`: `MotionEdgeRefV1`
+  - `spin_axis_local`: optional `[x, y, z]` array
+- `rotors`: array of spinner objects:
+  - `edge`: `MotionEdgeRefV1`
+  - `spin_axis_local`: optional `[x, y, z]` array
+- `wings`: optional array of `MotionEdgeRefV1` (used by some algorithms when present)
+
+Notes:
+
+- The engine may estimate spin rate from the component’s AABB size if no explicit rate is present.
 
 ### `provenance`
 

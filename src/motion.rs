@@ -16,6 +16,7 @@ pub(crate) enum MoveMotionAlgorithm {
     BipedWalkV1,
     QuadrupedWalkV1,
     CarWheelsV1,
+    AirplanePropV1,
 }
 
 impl Default for MoveMotionAlgorithm {
@@ -31,6 +32,7 @@ impl MoveMotionAlgorithm {
             Self::BipedWalkV1 => "biped_walk_v1",
             Self::QuadrupedWalkV1 => "quadruped_walk_v1",
             Self::CarWheelsV1 => "car_wheels_v1",
+            Self::AirplanePropV1 => "airplane_prop_v1",
         }
     }
 
@@ -40,6 +42,7 @@ impl MoveMotionAlgorithm {
             Self::BipedWalkV1 => "Biped walk (v1)",
             Self::QuadrupedWalkV1 => "Quadruped walk (v1)",
             Self::CarWheelsV1 => "Car wheels (v1)",
+            Self::AirplanePropV1 => "Airplane props/rotors (v1)",
         }
     }
 
@@ -50,6 +53,7 @@ impl MoveMotionAlgorithm {
             "biped_walk_v1" => Some(Self::BipedWalkV1),
             "quadruped_walk_v1" => Some(Self::QuadrupedWalkV1),
             "car_wheels_v1" => Some(Self::CarWheelsV1),
+            "airplane_prop_v1" => Some(Self::AirplanePropV1),
             _ => None,
         }
     }
@@ -97,8 +101,14 @@ pub(crate) struct BipedRigV1 {
     pub(crate) move_cycle_m: f32,
     pub(crate) walk_swing_degrees: f32,
     pub(crate) default_move_algorithm: Option<MoveMotionAlgorithm>,
+    pub(crate) body: Option<MotionEdgeRefV1>,
     pub(crate) left_leg: MotionEdgeRefV1,
     pub(crate) right_leg: MotionEdgeRefV1,
+    pub(crate) left_arm: Option<MotionEdgeRefV1>,
+    pub(crate) right_arm: Option<MotionEdgeRefV1>,
+    pub(crate) head: Option<MotionEdgeRefV1>,
+    pub(crate) tail: Option<MotionEdgeRefV1>,
+    pub(crate) ears: Vec<MotionEdgeRefV1>,
 }
 
 #[derive(Clone, Debug)]
@@ -106,14 +116,18 @@ pub(crate) struct QuadrupedRigV1 {
     pub(crate) move_cycle_m: f32,
     pub(crate) walk_swing_degrees: f32,
     pub(crate) default_move_algorithm: Option<MoveMotionAlgorithm>,
+    pub(crate) body: Option<MotionEdgeRefV1>,
     pub(crate) front_left_leg: MotionEdgeRefV1,
     pub(crate) front_right_leg: MotionEdgeRefV1,
     pub(crate) back_left_leg: MotionEdgeRefV1,
     pub(crate) back_right_leg: MotionEdgeRefV1,
+    pub(crate) head: Option<MotionEdgeRefV1>,
+    pub(crate) tail: Option<MotionEdgeRefV1>,
+    pub(crate) ears: Vec<MotionEdgeRefV1>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CarWheelV1 {
+pub(crate) struct SpinEffectorV1 {
     pub(crate) edge: MotionEdgeRefV1,
     pub(crate) spin_axis_local: Vec3,
 }
@@ -121,9 +135,20 @@ pub(crate) struct CarWheelV1 {
 #[derive(Clone, Debug)]
 pub(crate) struct CarRigV1 {
     pub(crate) default_move_algorithm: Option<MoveMotionAlgorithm>,
-    pub(crate) wheels: Vec<CarWheelV1>,
+    pub(crate) body: Option<MotionEdgeRefV1>,
+    pub(crate) wheels: Vec<SpinEffectorV1>,
     pub(crate) wheel_radius_m: Option<f32>,
     pub(crate) radians_per_meter: Option<f32>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AirplaneRigV1 {
+    pub(crate) move_cycle_m: f32,
+    pub(crate) default_move_algorithm: Option<MoveMotionAlgorithm>,
+    pub(crate) body: Option<MotionEdgeRefV1>,
+    pub(crate) propellers: Vec<SpinEffectorV1>,
+    pub(crate) rotors: Vec<SpinEffectorV1>,
+    pub(crate) wings: Vec<MotionEdgeRefV1>,
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +156,7 @@ pub(crate) enum MotionRigV1 {
     Biped(BipedRigV1),
     Quadruped(QuadrupedRigV1),
     Car(CarRigV1),
+    Airplane(AirplaneRigV1),
 }
 
 impl MotionRigV1 {
@@ -139,6 +165,7 @@ impl MotionRigV1 {
             Self::Biped(_) => "biped_v1",
             Self::Quadruped(_) => "quadruped_v1",
             Self::Car(_) => "car_v1",
+            Self::Airplane(_) => "airplane_v1",
         }
     }
 
@@ -153,6 +180,9 @@ impl MotionRigV1 {
             Self::Car(rig) => rig
                 .default_move_algorithm
                 .unwrap_or(MoveMotionAlgorithm::CarWheelsV1),
+            Self::Airplane(rig) => rig
+                .default_move_algorithm
+                .unwrap_or(MoveMotionAlgorithm::AirplanePropV1),
         }
     }
 
@@ -162,6 +192,7 @@ impl MotionRigV1 {
             Self::Biped(_) => out.push(MoveMotionAlgorithm::BipedWalkV1),
             Self::Quadruped(_) => out.push(MoveMotionAlgorithm::QuadrupedWalkV1),
             Self::Car(_) => out.push(MoveMotionAlgorithm::CarWheelsV1),
+            Self::Airplane(_) => out.push(MoveMotionAlgorithm::AirplanePropV1),
         }
         out
     }
@@ -208,11 +239,15 @@ struct MotionRigV1Raw {
     #[serde(default)]
     default_move_algorithm: Option<String>,
     #[serde(default)]
+    body: Option<MotionEdgeRefV1Raw>,
+    #[serde(default)]
     biped: Option<BipedRigV1Raw>,
     #[serde(default)]
     quadruped: Option<QuadrupedRigV1Raw>,
     #[serde(default)]
     car: Option<CarRigV1Raw>,
+    #[serde(default)]
+    airplane: Option<AirplaneRigV1Raw>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -227,6 +262,16 @@ struct MotionEdgeRefV1Raw {
 struct BipedRigV1Raw {
     left_leg: MotionEdgeRefV1Raw,
     right_leg: MotionEdgeRefV1Raw,
+    #[serde(default)]
+    left_arm: Option<MotionEdgeRefV1Raw>,
+    #[serde(default)]
+    right_arm: Option<MotionEdgeRefV1Raw>,
+    #[serde(default)]
+    head: Option<MotionEdgeRefV1Raw>,
+    #[serde(default)]
+    tail: Option<MotionEdgeRefV1Raw>,
+    #[serde(default)]
+    ears: Vec<MotionEdgeRefV1Raw>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -235,10 +280,16 @@ struct QuadrupedRigV1Raw {
     front_right_leg: MotionEdgeRefV1Raw,
     back_left_leg: MotionEdgeRefV1Raw,
     back_right_leg: MotionEdgeRefV1Raw,
+    #[serde(default)]
+    head: Option<MotionEdgeRefV1Raw>,
+    #[serde(default)]
+    tail: Option<MotionEdgeRefV1Raw>,
+    #[serde(default)]
+    ears: Vec<MotionEdgeRefV1Raw>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct CarWheelV1Raw {
+struct SpinEffectorV1Raw {
     edge: MotionEdgeRefV1Raw,
     #[serde(default)]
     spin_axis_local: Option<[f32; 3]>,
@@ -246,11 +297,21 @@ struct CarWheelV1Raw {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CarRigV1Raw {
-    wheels: Vec<CarWheelV1Raw>,
+    wheels: Vec<SpinEffectorV1Raw>,
     #[serde(default)]
     wheel_radius_m: Option<f32>,
     #[serde(default)]
     radians_per_meter: Option<f32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct AirplaneRigV1Raw {
+    #[serde(default)]
+    propellers: Vec<SpinEffectorV1Raw>,
+    #[serde(default)]
+    rotors: Vec<SpinEffectorV1Raw>,
+    #[serde(default)]
+    wings: Vec<MotionEdgeRefV1Raw>,
 }
 
 impl MotionEdgeRefV1 {
@@ -297,6 +358,7 @@ impl MotionRigV1 {
         };
 
         let kind = raw.kind.trim();
+        let body = raw.body.map(MotionEdgeRefV1::try_from_raw).transpose()?;
         match kind {
             "biped_v1" => {
                 let biped = raw
@@ -308,8 +370,24 @@ impl MotionRigV1 {
                     move_cycle_m,
                     walk_swing_degrees: swing,
                     default_move_algorithm,
+                    body: body.clone(),
                     left_leg: MotionEdgeRefV1::try_from_raw(biped.left_leg)?,
                     right_leg: MotionEdgeRefV1::try_from_raw(biped.right_leg)?,
+                    left_arm: biped
+                        .left_arm
+                        .map(MotionEdgeRefV1::try_from_raw)
+                        .transpose()?,
+                    right_arm: biped
+                        .right_arm
+                        .map(MotionEdgeRefV1::try_from_raw)
+                        .transpose()?,
+                    head: biped.head.map(MotionEdgeRefV1::try_from_raw).transpose()?,
+                    tail: biped.tail.map(MotionEdgeRefV1::try_from_raw).transpose()?,
+                    ears: biped
+                        .ears
+                        .into_iter()
+                        .map(MotionEdgeRefV1::try_from_raw)
+                        .collect::<Result<Vec<_>, String>>()?,
                 }))
             }
             "quadruped_v1" => {
@@ -322,10 +400,18 @@ impl MotionRigV1 {
                     move_cycle_m,
                     walk_swing_degrees: swing,
                     default_move_algorithm,
+                    body: body.clone(),
                     front_left_leg: MotionEdgeRefV1::try_from_raw(q.front_left_leg)?,
                     front_right_leg: MotionEdgeRefV1::try_from_raw(q.front_right_leg)?,
                     back_left_leg: MotionEdgeRefV1::try_from_raw(q.back_left_leg)?,
                     back_right_leg: MotionEdgeRefV1::try_from_raw(q.back_right_leg)?,
+                    head: q.head.map(MotionEdgeRefV1::try_from_raw).transpose()?,
+                    tail: q.tail.map(MotionEdgeRefV1::try_from_raw).transpose()?,
+                    ears: q
+                        .ears
+                        .into_iter()
+                        .map(MotionEdgeRefV1::try_from_raw)
+                        .collect::<Result<Vec<_>, String>>()?,
                 }))
             }
             "car_v1" => {
@@ -348,7 +434,7 @@ impl MotionRigV1 {
                         } else {
                             Vec3::X
                         };
-                        Ok(CarWheelV1 {
+                        Ok(SpinEffectorV1 {
                             edge: MotionEdgeRefV1::try_from_raw(wheel.edge)?,
                             spin_axis_local: axis,
                         })
@@ -356,11 +442,72 @@ impl MotionRigV1 {
                     .collect::<Result<Vec<_>, String>>()?;
                 Ok(Self::Car(CarRigV1 {
                     default_move_algorithm,
+                    body: body.clone(),
                     wheels,
                     wheel_radius_m: car.wheel_radius_m.filter(|v| v.is_finite() && *v > 0.0),
                     radians_per_meter: car
                         .radians_per_meter
                         .filter(|v| v.is_finite() && v.abs() > 1e-6),
+                }))
+            }
+            "airplane_v1" => {
+                let airplane = raw.airplane.ok_or_else(|| {
+                    "motion_rig_v1 kind=airplane_v1 requires `airplane`".to_string()
+                })?;
+                if airplane.propellers.is_empty() && airplane.rotors.is_empty() {
+                    return Err("motion_rig_v1 airplane must declare propellers or rotors".into());
+                }
+                let move_cycle_m = raw.move_cycle_m.unwrap_or(1.0).max(0.01);
+                let propellers = airplane
+                    .propellers
+                    .into_iter()
+                    .map(|spinner| {
+                        let axis = spinner
+                            .spin_axis_local
+                            .map(|v| Vec3::new(v[0], v[1], v[2]))
+                            .unwrap_or(Vec3::Z);
+                        let axis = if axis.length_squared() > 1e-6 && axis.is_finite() {
+                            axis.normalize()
+                        } else {
+                            Vec3::Z
+                        };
+                        Ok(SpinEffectorV1 {
+                            edge: MotionEdgeRefV1::try_from_raw(spinner.edge)?,
+                            spin_axis_local: axis,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                let rotors = airplane
+                    .rotors
+                    .into_iter()
+                    .map(|spinner| {
+                        let axis = spinner
+                            .spin_axis_local
+                            .map(|v| Vec3::new(v[0], v[1], v[2]))
+                            .unwrap_or(Vec3::Y);
+                        let axis = if axis.length_squared() > 1e-6 && axis.is_finite() {
+                            axis.normalize()
+                        } else {
+                            Vec3::Y
+                        };
+                        Ok(SpinEffectorV1 {
+                            edge: MotionEdgeRefV1::try_from_raw(spinner.edge)?,
+                            spin_axis_local: axis,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                let wings = airplane
+                    .wings
+                    .into_iter()
+                    .map(MotionEdgeRefV1::try_from_raw)
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(Self::Airplane(AirplaneRigV1 {
+                    move_cycle_m,
+                    default_move_algorithm,
+                    body: body.clone(),
+                    propellers,
+                    rotors,
+                    wings,
                 }))
             }
             other => Err(format!("motion_rig_v1 unknown kind `{other}`")),
@@ -373,8 +520,22 @@ pub(crate) fn walk_swing_move_slot(
     walk_swing_degrees: f32,
     time_offset_units: f32,
 ) -> PartAnimationSlot {
+    swing_move_slot(Vec3::X, move_cycle_m, walk_swing_degrees, time_offset_units)
+}
+
+fn swing_move_slot(
+    axis_local: Vec3,
+    move_cycle_m: f32,
+    swing_degrees: f32,
+    time_offset_units: f32,
+) -> PartAnimationSlot {
     let duration = move_cycle_m.max(0.01);
-    let swing = walk_swing_degrees.to_radians();
+    let swing = swing_degrees.to_radians();
+    let axis = if axis_local.is_finite() && axis_local.length_squared() > 1e-6 {
+        axis_local.normalize()
+    } else {
+        Vec3::X
+    };
 
     let keyframes = vec![
         PartAnimationKeyframeDef {
@@ -384,7 +545,7 @@ pub(crate) fn walk_swing_move_slot(
         PartAnimationKeyframeDef {
             time_secs: duration * 0.25,
             delta: Transform {
-                rotation: Quat::from_rotation_x(swing),
+                rotation: Quat::from_axis_angle(axis, swing),
                 ..default()
             },
         },
@@ -395,7 +556,49 @@ pub(crate) fn walk_swing_move_slot(
         PartAnimationKeyframeDef {
             time_secs: duration * 0.75,
             delta: Transform {
-                rotation: Quat::from_rotation_x(-swing),
+                rotation: Quat::from_axis_angle(axis, -swing),
+                ..default()
+            },
+        },
+    ];
+
+    PartAnimationSlot {
+        channel: "move".into(),
+        spec: PartAnimationSpec {
+            driver: PartAnimationDriver::MovePhase,
+            speed_scale: 1.0,
+            time_offset_units,
+            clip: PartAnimationDef::Loop {
+                duration_secs: duration,
+                keyframes,
+            },
+        },
+    }
+}
+
+fn bob_move_slot(move_cycle_m: f32, amplitude_m: f32, time_offset_units: f32) -> PartAnimationSlot {
+    let duration = move_cycle_m.max(0.01);
+    let amp = amplitude_m.max(0.0);
+    let keyframes = vec![
+        PartAnimationKeyframeDef {
+            time_secs: 0.0,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.25,
+            delta: Transform {
+                translation: Vec3::Y * amp,
+                ..default()
+            },
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.50,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.75,
+            delta: Transform {
+                translation: Vec3::Y * amp,
                 ..default()
             },
         },
@@ -561,6 +764,9 @@ fn apply_move_motion_algorithm_for_root(
         (MoveMotionAlgorithm::CarWheelsV1, Some(MotionRigV1::Car(_))) => {
             MoveMotionAlgorithm::CarWheelsV1
         }
+        (MoveMotionAlgorithm::AirplanePropV1, Some(MotionRigV1::Airplane(_))) => {
+            MoveMotionAlgorithm::AirplanePropV1
+        }
         (alg, Some(rig)) => {
             warn!(
                 "Motion: ignoring move algorithm {} for rig kind {} (prefab {})",
@@ -611,13 +817,16 @@ fn apply_move_motion_algorithm_for_edge(
     let override_slot = match (algorithm, rig.as_ref()) {
         (MoveMotionAlgorithm::None, _) => None,
         (MoveMotionAlgorithm::BipedWalkV1, Some(MotionRigV1::Biped(rig))) => {
-            biped_walk_override_for_binding(rig, binding)
+            biped_walk_override_for_binding(rig, binding, library)
         }
         (MoveMotionAlgorithm::QuadrupedWalkV1, Some(MotionRigV1::Quadruped(rig))) => {
-            quadruped_walk_override_for_binding(rig, binding)
+            quadruped_walk_override_for_binding(rig, binding, library)
         }
         (MoveMotionAlgorithm::CarWheelsV1, Some(MotionRigV1::Car(rig))) => {
             car_wheels_override_for_binding(rig, binding, library)
+        }
+        (MoveMotionAlgorithm::AirplanePropV1, Some(MotionRigV1::Airplane(rig))) => {
+            airplane_prop_override_for_binding(rig, binding, library)
         }
         (_, _) => None,
     };
@@ -657,20 +866,58 @@ fn apply_move_motion_algorithm_for_edge(
 fn biped_walk_override_for_binding(
     rig: &BipedRigV1,
     binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
 ) -> Option<PartAnimationSlot> {
+    let cycle = rig.move_cycle_m;
+    let swing = rig.walk_swing_degrees;
+
     if rig.left_leg.matches_binding(binding) {
-        return Some(walk_swing_move_slot(
-            rig.move_cycle_m,
-            rig.walk_swing_degrees,
-            0.0,
-        ));
+        return Some(walk_swing_move_slot(cycle, swing, 0.0));
     }
     if rig.right_leg.matches_binding(binding) {
-        return Some(walk_swing_move_slot(
-            rig.move_cycle_m,
-            rig.walk_swing_degrees,
-            rig.move_cycle_m * 0.5,
-        ));
+        return Some(walk_swing_move_slot(cycle, swing, cycle * 0.5));
+    }
+
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let amp = (effective.y * 0.02).clamp(0.0025, 0.06);
+            return Some(bob_move_slot(cycle, amp, 0.0));
+        }
+    }
+
+    if let Some(left_arm) = rig.left_arm.as_ref() {
+        if left_arm.matches_binding(binding) {
+            return Some(walk_swing_move_slot(cycle, swing * 0.7, cycle * 0.5));
+        }
+    }
+    if let Some(right_arm) = rig.right_arm.as_ref() {
+        if right_arm.matches_binding(binding) {
+            return Some(walk_swing_move_slot(cycle, swing * 0.7, 0.0));
+        }
+    }
+
+    if let Some(head) = rig.head.as_ref() {
+        if head.matches_binding(binding) {
+            return Some(swing_move_slot(Vec3::X, cycle, swing * 0.25, cycle * 0.25));
+        }
+    }
+
+    if let Some(tail) = rig.tail.as_ref() {
+        if tail.matches_binding(binding) {
+            return Some(swing_move_slot(Vec3::Y, cycle, swing * 0.35, cycle * 0.25));
+        }
+    }
+
+    if !rig.ears.is_empty() {
+        for (idx, ear) in rig.ears.iter().enumerate() {
+            if ear.matches_binding(binding) {
+                let phase = if idx % 2 == 0 { 0.0 } else { cycle * 0.5 };
+                return Some(swing_move_slot(Vec3::X, cycle, swing * 0.20, phase));
+            }
+        }
     }
     None
 }
@@ -678,6 +925,7 @@ fn biped_walk_override_for_binding(
 fn quadruped_walk_override_for_binding(
     rig: &QuadrupedRigV1,
     binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
 ) -> Option<PartAnimationSlot> {
     let cycle = rig.move_cycle_m;
     let swing = rig.walk_swing_degrees;
@@ -688,6 +936,37 @@ fn quadruped_walk_override_for_binding(
     if rig.front_right_leg.matches_binding(binding) || rig.back_left_leg.matches_binding(binding) {
         return Some(walk_swing_move_slot(cycle, swing, cycle * 0.5));
     }
+
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let amp = (effective.y * 0.02).clamp(0.0025, 0.06);
+            return Some(bob_move_slot(cycle, amp, 0.0));
+        }
+    }
+
+    if let Some(head) = rig.head.as_ref() {
+        if head.matches_binding(binding) {
+            return Some(swing_move_slot(Vec3::X, cycle, swing * 0.22, cycle * 0.25));
+        }
+    }
+
+    if let Some(tail) = rig.tail.as_ref() {
+        if tail.matches_binding(binding) {
+            return Some(swing_move_slot(Vec3::Y, cycle, swing * 0.30, cycle * 0.25));
+        }
+    }
+
+    if !rig.ears.is_empty() {
+        for (idx, ear) in rig.ears.iter().enumerate() {
+            if ear.matches_binding(binding) {
+                let phase = if idx % 2 == 0 { 0.0 } else { cycle * 0.5 };
+                return Some(swing_move_slot(Vec3::X, cycle, swing * 0.18, phase));
+            }
+        }
+    }
     None
 }
 
@@ -696,6 +975,16 @@ fn car_wheels_override_for_binding(
     binding: &ObjectRefEdgeBinding,
     library: &ObjectLibrary,
 ) -> Option<PartAnimationSlot> {
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let amp = (effective.y * 0.01).clamp(0.0015, 0.04);
+            return Some(bob_move_slot(1.0, amp, 0.0));
+        }
+    }
+
     let wheel = rig
         .wheels
         .iter()
@@ -717,6 +1006,77 @@ fn car_wheels_override_for_binding(
         wheel.spin_axis_local,
         radians_per_meter,
     ))
+}
+
+fn airplane_prop_override_for_binding(
+    rig: &AirplaneRigV1,
+    binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
+) -> Option<PartAnimationSlot> {
+    const PROPELLER_MULTIPLIER: f32 = 20.0;
+    const ROTOR_MULTIPLIER: f32 = 12.0;
+
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let amp = (effective.y * 0.015).clamp(0.0025, 0.05);
+            return Some(bob_move_slot(rig.move_cycle_m, amp, 0.0));
+        }
+    }
+
+    if !rig.wings.is_empty() {
+        for (idx, wing) in rig.wings.iter().enumerate() {
+            if wing.matches_binding(binding) {
+                let phase = if idx % 2 == 0 {
+                    0.0
+                } else {
+                    rig.move_cycle_m * 0.5
+                };
+                return Some(swing_move_slot(Vec3::X, rig.move_cycle_m, 15.0, phase));
+            }
+        }
+    }
+
+    fn radius_from_effective_size_and_axis(effective: Vec3, axis: Vec3) -> f32 {
+        let axis = axis.abs();
+        if axis.x >= axis.y && axis.x >= axis.z {
+            0.5 * effective.y.max(effective.z).max(0.01)
+        } else if axis.y >= axis.x && axis.y >= axis.z {
+            0.5 * effective.x.max(effective.z).max(0.01)
+        } else {
+            0.5 * effective.x.max(effective.y).max(0.01)
+        }
+    }
+
+    let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+    let scale = binding.base_transform.scale.abs();
+    let effective = (size * scale).abs().max(Vec3::splat(0.01));
+
+    if let Some(spinner) = rig
+        .propellers
+        .iter()
+        .find(|p| p.edge.matches_binding(binding))
+    {
+        let radius = radius_from_effective_size_and_axis(effective, spinner.spin_axis_local);
+        let radians_per_meter = (PROPELLER_MULTIPLIER / radius).clamp(-1200.0, 1200.0);
+        return Some(wheel_spin_move_slot(
+            spinner.spin_axis_local,
+            radians_per_meter,
+        ));
+    }
+
+    if let Some(spinner) = rig.rotors.iter().find(|p| p.edge.matches_binding(binding)) {
+        let radius = radius_from_effective_size_and_axis(effective, spinner.spin_axis_local);
+        let radians_per_meter = (ROTOR_MULTIPLIER / radius).clamp(-1200.0, 1200.0);
+        return Some(wheel_spin_move_slot(
+            spinner.spin_axis_local,
+            radians_per_meter,
+        ));
+    }
+
+    None
 }
 
 fn anchor_transform(library: &ObjectLibrary, object_id: u128, name: &str) -> Option<Transform> {

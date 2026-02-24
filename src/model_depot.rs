@@ -40,7 +40,9 @@ pub(crate) fn save_model_prefab_defs_to_depot(
     Ok(dir)
 }
 
-pub(crate) fn load_depot_prefabs_into_library(library: &mut ObjectLibrary) -> Result<usize, String> {
+pub(crate) fn load_depot_prefabs_into_library(
+    library: &mut ObjectLibrary,
+) -> Result<usize, String> {
     let models = list_depot_models()?;
     let mut loaded = 0usize;
     for model_id in models {
@@ -120,4 +122,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_root);
     }
 }
-

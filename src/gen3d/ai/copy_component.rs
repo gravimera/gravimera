@@ -1858,8 +1858,8 @@ mod tests {
             "expected mount anchor to be preserved under preserve_interfaces"
         );
 
-        let tip_after =
-            anchor_transform_from_defs(&b_def_after.anchors, "tip_mount").expect("tip_mount anchor");
+        let tip_after = anchor_transform_from_defs(&b_def_after.anchors, "tip_mount")
+            .expect("tip_mount anchor");
         let dp = (tip_after.translation - expected_tip_mount_translation).length();
         assert!(
             dp < 1e-4,
@@ -2285,9 +2285,8 @@ mod tests {
             .iter()
             .find(|d| d.object_id == wing_root_r_id)
             .unwrap();
-        let fingers_mount =
-            anchor_transform_from_defs(&wing_root_r_after.anchors, "fingers_mount")
-                .expect("fingers_mount");
+        let fingers_mount = anchor_transform_from_defs(&wing_root_r_after.anchors, "fingers_mount")
+            .expect("fingers_mount");
         let dp = (fingers_mount.translation - Vec3::new(0.2, 0.0, -0.55)).length();
         assert!(
             dp < 1e-4,

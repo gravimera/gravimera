@@ -101,16 +101,16 @@ How it works:
   - `interfaces.extra.motion_rig_v1` (explicit runtime rig contract; see `docs/gamedesign/35_prefab_descriptors_v1.md`)
 - When `motion_rig_v1` is present, the engine can inject a generic motion algorithm by generating
   per-edge `move` channel slots at runtime (no heuristic “leg detection”).
-- Gen3D can derive `motion_rig_v1` from `motion_roles_v1` (preferred; avoids brittle naming), or
-  fall back to name-based auto-rigging when canonical component names match (example wheels:
-  `wheel_fl`, `wheel_fr`, `wheel_bl`, `wheel_br`).
+- Gen3D derives `motion_rig_v1` from `motion_roles_v1` (preferred; avoids brittle naming).
+  There is no name-based auto-rigging fallback: motion algorithms are applied only when the model
+  explicitly declares the required rig contract.
 
 In-game UX (Realm):
 
 - Double-click a unit’s **selection circle** to open the **Motion** panel.
 - Pick a `move` algorithm:
   - `None` (use prefab-authored clips)
-  - `Biped walk (v1)` / `Quadruped walk (v1)` / `Car wheels (v1)` (when the rig kind matches)
+  - `Biped walk (v1)` / `Quadruped walk (v1)` / `Car wheels (v1)` / `Airplane props/rotors (v1)` (when the rig kind matches)
 - The selection updates the unit instance immediately (and applies to all selected units of the
   same prefab).
 
@@ -118,7 +118,8 @@ Notes:
 
 - This is designed to reduce “AI-authored per-model animations” and replace them with a small set
   of reusable, deterministic motion generators.
-- The Gen3D agent may call `llm_generate_motion_roles_v1` to label locomotion effectors (legs/wheels).
+- The Gen3D agent may call `llm_generate_motion_roles_v1` to label locomotion effectors
+  (legs/wheels/propellers/rotors, etc).
 - Algorithms are applied only when the descriptor declares the required `motion_rig_v1` edges.
 
 ## Cache / Debugging Artifacts
@@ -177,11 +178,11 @@ Gen3D budgets / guard:
 
 ## AI JSON Schemas (Strict)
 
-### Plan JSON (version 7)
+### Plan JSON (version 8)
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "mobility": { "kind": "static" },
   "collider": { "kind": "aabb_xz", "half_extents": [2.0, 2.0] },
   "assembly_notes": "Short notes about shared dimensions / alignment / style.",
@@ -240,33 +241,18 @@ Notes:
   - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.
   - For intermediate chain links with exactly 2 joint anchors (one parent, one child), the vector from the proximal joint anchor to the distal joint anchor should be aligned with the proximal anchor's +Z (forward) axis in component-local space; otherwise motion validation may report `chain_axis_mismatch`.
   Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.
-- Component-level animation lives on attachments via `attach_to.animations` (preferred). `attach_to.animation` is a legacy field.
-- Attachment animations (`attach_to.animations`) are keyed by channel (open vocabulary; canonical channels include `ambient`, `idle`, `move`, `attack_primary`) and each animation spec contains:
-  - `driver`: `always` (seconds), `attack_time` (seconds), `move_phase` (meters traveled while moving), `move_distance` (meters traveled; can be signed for spins).
-  - `speed_scale` (optional): multiplies the driver time.
-  - `time_offset_units` (optional): additive offset in the clip time domain (same units as loop `duration_secs` / keyframe `time_secs`). Use this to phase-stagger repeated limbs without duplicating keyframes.
-  - `clip`: keyframed `loop` / `once` / `ping_pong`, or procedural `spin`.
-    - For keyframed clips, `delta.pos` is in the **parent-anchor join frame** (the same frame as `attach_to.offset.pos`).
-    - Rotation deltas (`delta.forward`/`delta.up` basis vectors or `delta.rot_quat_xyzw`) require `delta.rot_frame`:
-      - `"join"`: author the rotation in the join frame. Rest pose (no rotation): `delta.forward = [0,0,1]`, `delta.up = [0,1,0]`.
-      - `"parent"`: author `delta.forward`/`delta.up` in the **parent component frame** (same coordinates as anchors). Rest pose should match the parent anchor frame: `delta.forward = parent_anchor.forward`, `delta.up = parent_anchor.up`.
-      - For `move` (locomotion) rotations, prefer `"parent"` by default so +Z means “forward” consistently even when a join frame’s +Z points along an attachment direction (e.g. side-mounted limbs).
-      - If you don't need rotation, omit `delta.forward` / `delta.up` / `delta.rot_quat_xyzw` entirely.
-    - For `spin`, the `axis` is authored in the **child component's local axes** (+X right, +Y up, +Z forward). The engine converts it into the attachment join frame.
+- Animation policy: Gen3D plans do **not** include animation clips (`attach_to.animations` is not part of the plan schema).
+  - For locomotion, prefer runtime injected motion algorithms via `motion_roles_v1` → `motion_rig_v1` (see “Runtime Motion Algorithms” above).
 
-Rig / motion contract (optional; used for locomotion validation and AI repair):
+Motion metadata (optional):
 
 - `rig.move_cycle_m` (optional): meters per `move` cycle when using the `move_phase` driver.
 - `components[].attach_to.joint` (optional): joint constraint for this attachment edge, expressed in the **parent-anchor join frame**
   (the same frame as `attach_to.offset` and attachment animation deltas).
   - `hinge` joints should include `axis_join` and (optionally) `limits_degrees`.
-  - Motion validation applies to all authored animation channels on constrained joints (not only `move`).
-    Keep keyframe deltas joint-local and near-neutral unless you intend a large full-time bias.
-    Avoid large `delta.pos` translations on `hinge`/`ball` joints; prefer rotation deltas to prevent sliding/gap artifacts.
 - `components[].contacts[]` (optional): named ground contacts for this component.
   - Each contact references a component anchor by name.
-  - For planted `kind: "ground"` contacts (feet/hooves), `stance` is required; motion validation errors if it is missing.
-  - For rolling parts using a `move` `spin` clip (wheels/rollers), omit `stance` (stance validation is skipped for spin).
+  - For planted `kind: "ground"` contacts (feet/hooves), include `stance` so locomotion can coordinate gait phasing.
 
 ### Component Draft JSON (version 2)
 

@@ -278,8 +278,7 @@ pub(crate) struct AiPlanJsonV1 {
     pub(crate) version: u32,
     #[serde(default)]
     pub(crate) rig: Option<AiRigJson>,
-    #[serde(default)]
-    pub(crate) mobility: Option<AiMobilityJson>,
+    pub(crate) mobility: AiMobilityJson,
     #[serde(default)]
     pub(crate) attack: Option<AiAttackJson>,
     #[serde(default)]
@@ -373,11 +372,6 @@ pub(crate) struct AiPlanAttachmentJson {
     pub(crate) offset: Option<AiAttachmentOffsetJson>,
     #[serde(default)]
     pub(crate) joint: Option<AiJointJson>,
-    #[serde(default)]
-    pub(crate) animations: Option<BTreeMap<String, Option<AiAnimationSpecJson>>>,
-    // Legacy field (plan v4) – treated as an ambient loop when present.
-    #[serde(default)]
-    pub(crate) animation: Option<AiPartAnimationJson>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -582,13 +576,6 @@ pub(crate) enum AiReviewDeltaActionJsonV1 {
         #[serde(default)]
         reason: String,
     },
-    TweakAnimation {
-        component_id: String,
-        channel: String,
-        spec: AiAnimationSpecJson,
-        #[serde(default)]
-        reason: String,
-    },
     TweakMobility {
         mobility: AiMobilityJson,
         #[serde(default)]
@@ -606,18 +593,7 @@ pub(crate) enum AiReviewDeltaActionJsonV1 {
 pub(crate) struct AiPlanFillJsonV1 {
     #[serde(default)]
     pub(crate) version: u32,
-    #[serde(default)]
-    pub(crate) mobility: Option<AiMobilityJson>,
-    #[serde(default)]
-    pub(crate) components: Vec<AiPlanFillComponentJson>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AiPlanFillComponentJson {
-    pub(crate) name: String,
-    #[serde(default)]
-    pub(crate) animations: BTreeMap<String, Option<AiAnimationSpecJson>>,
+    pub(crate) mobility: AiMobilityJson,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -636,6 +612,13 @@ pub(crate) struct AiDescriptorMetaJsonV1 {
 pub(crate) enum AiMoveEffectorRoleJsonV1 {
     Leg,
     Wheel,
+    Arm,
+    Head,
+    Ear,
+    Tail,
+    Wing,
+    Propeller,
+    Rotor,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

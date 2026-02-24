@@ -4,9 +4,9 @@ use bevy::window::PrimaryWindow;
 use crate::assets::SceneAssets;
 use crate::constants::*;
 use crate::geometry::{normalize_flat_direction, snap_to_grid};
+use crate::object::registry::ObjectLibrary;
 use crate::object::registry::{ColliderProfile, MobilityMode};
 use crate::object::visuals;
-use crate::object::registry::ObjectLibrary;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::scene_store::SceneSaveRequest;
 use crate::types::{
@@ -137,7 +137,10 @@ pub(crate) fn model_library_update_visibility(
     mut roots: Query<&mut Visibility, With<ModelLibraryRoot>>,
 ) {
     let visible = matches!(mode.get(), GameMode::Build)
-        && matches!(workspace.tab, crate::workspace_ui::WorkspaceTab::ObjectPreview)
+        && matches!(
+            workspace.tab,
+            crate::workspace_ui::WorkspaceTab::ObjectPreview
+        )
         && matches!(build_scene.get(), crate::types::BuildScene::Realm);
     for mut visibility in &mut roots {
         *visibility = if visible {
@@ -229,7 +232,10 @@ pub(crate) fn model_library_item_button_interactions(
         Changed<Interaction>,
     >,
 ) {
-    let cursor = windows.single().ok().and_then(|window| window.cursor_position());
+    let cursor = windows
+        .single()
+        .ok()
+        .and_then(|window| window.cursor_position());
     for (interaction, button, mut bg, mut border) in &mut buttons {
         match *interaction {
             Interaction::None => {
@@ -326,7 +332,10 @@ pub(crate) fn model_library_drag_update(
         return;
     }
 
-    let cursor = windows.single().ok().and_then(|window| window.cursor_position());
+    let cursor = windows
+        .single()
+        .ok()
+        .and_then(|window| window.cursor_position());
     if let Some(cursor) = cursor {
         if !drag.is_dragging && cursor.distance(drag.start_cursor) > DRAG_START_THRESHOLD_PX {
             drag.is_dragging = true;
@@ -340,9 +349,13 @@ pub(crate) fn model_library_drag_update(
             };
             let camera_global = GlobalTransform::from(*camera_transform);
             if let Ok(window) = windows.single() {
-                if let Some(pick) =
-                    crate::cursor_pick::cursor_surface_pick(window, camera, &camera_global, &library, &objects)
-                {
+                if let Some(pick) = crate::cursor_pick::cursor_surface_pick(
+                    window,
+                    camera,
+                    &camera_global,
+                    &library,
+                    &objects,
+                ) {
                     drag.preview_translation = Some(spawn_at_pick(
                         drag.model_id,
                         pick.hit,
@@ -387,11 +400,7 @@ pub(crate) fn model_library_draw_drag_preview_gizmos(
         bottom_y,
         translation.z - half_xz.y,
     );
-    let max = Vec3::new(
-        translation.x + half_xz.x,
-        top_y,
-        translation.z + half_xz.y,
-    );
+    let max = Vec3::new(translation.x + half_xz.x, top_y, translation.z + half_xz.y);
 
     draw_dashed_box(&mut gizmos, min, max, Color::srgb(0.25, 0.95, 0.85));
 }
@@ -402,7 +411,12 @@ fn model_label(
     descriptors: &PrefabDescriptorLibrary,
 ) -> String {
     if let Some(desc) = descriptors.get(model_id) {
-        if let Some(label) = desc.label.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        if let Some(label) = desc
+            .label
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
             return label.to_string();
         }
         if let Some(text) = desc
@@ -431,9 +445,21 @@ fn prefab_bounds(library: &ObjectLibrary, prefab_id: u128, scale: Vec3) -> (Vec3
         .size(prefab_id)
         .unwrap_or_else(|| Vec3::splat(DEFAULT_OBJECT_SIZE_M));
     let scale = Vec3::new(
-        if scale.x.is_finite() { scale.x.abs().max(1e-4) } else { 1.0 },
-        if scale.y.is_finite() { scale.y.abs().max(1e-4) } else { 1.0 },
-        if scale.z.is_finite() { scale.z.abs().max(1e-4) } else { 1.0 },
+        if scale.x.is_finite() {
+            scale.x.abs().max(1e-4)
+        } else {
+            1.0
+        },
+        if scale.y.is_finite() {
+            scale.y.abs().max(1e-4)
+        } else {
+            1.0
+        },
+        if scale.z.is_finite() {
+            scale.z.abs().max(1e-4)
+        } else {
+            1.0
+        },
     );
 
     let half_unscaled = match library.collider(prefab_id) {
@@ -449,7 +475,11 @@ fn prefab_bounds(library: &ObjectLibrary, prefab_id: u128, scale: Vec3) -> (Vec3
     };
 
     let half_xz = Vec2::new(half_unscaled.x * scale.x, half_unscaled.y * scale.z);
-    let size = Vec3::new(half_xz.x * 2.0, base_size.y.abs() * scale.y, half_xz.y * 2.0);
+    let size = Vec3::new(
+        half_xz.x * 2.0,
+        base_size.y.abs() * scale.y,
+        half_xz.y * 2.0,
+    );
     let origin_y = library.ground_origin_y_or_default(prefab_id) * scale.y;
 
     (size, half_xz, origin_y)

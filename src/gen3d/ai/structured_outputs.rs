@@ -286,10 +286,6 @@ fn schema_plan_attachment() -> serde_json::Value {
         ("child_anchor", schema_string()),
         ("offset", schema_nullable(schema_attachment_offset())),
         ("joint", schema_nullable(schema_joint())),
-        (
-            "animations",
-            schema_nullable(schema_animations_by_channel()),
-        ),
     ])
 }
 
@@ -342,7 +338,7 @@ fn schema_plan() -> serde_json::Value {
     schema_object(vec![
         ("version", schema_integer()),
         ("rig", schema_nullable(schema_rig())),
-        ("mobility", schema_nullable(schema_mobility())),
+        ("mobility", schema_mobility()),
         ("attack", schema_nullable(schema_attack())),
         ("aim", schema_nullable(schema_aim())),
         ("collider", schema_nullable(schema_collider())),
@@ -353,18 +349,10 @@ fn schema_plan() -> serde_json::Value {
     ])
 }
 
-fn schema_plan_fill_component() -> serde_json::Value {
-    schema_object(vec![
-        ("name", schema_string()),
-        ("animations", schema_animations_by_channel()),
-    ])
-}
-
 fn schema_plan_fill() -> serde_json::Value {
     schema_object(vec![
         ("version", schema_integer()),
-        ("mobility", schema_nullable(schema_mobility())),
-        ("components", schema_array_of(schema_plan_fill_component())),
+        ("mobility", schema_mobility()),
     ])
 }
 
@@ -513,13 +501,6 @@ fn schema_review_delta_action() -> serde_json::Value {
         ("stance", schema_nullable(schema_contact_stance())),
         ("reason", schema_string()),
     ]);
-    let tweak_animation = schema_object(vec![
-        ("kind", schema_enum(&["tweak_animation"])),
-        ("component_id", schema_string()),
-        ("channel", schema_string()),
-        ("spec", schema_animation_spec()),
-        ("reason", schema_string()),
-    ]);
     let tweak_mobility = schema_object(vec![
         ("kind", schema_enum(&["tweak_mobility"])),
         ("mobility", schema_mobility()),
@@ -540,7 +521,6 @@ fn schema_review_delta_action() -> serde_json::Value {
         tweak_anchor,
         tweak_attachment,
         tweak_contact,
-        tweak_animation,
         tweak_mobility,
         tweak_attack,
     ])
@@ -582,7 +562,20 @@ fn schema_motion_roles() -> serde_json::Value {
 
     let effector = schema_object(vec![
         ("component", schema_string()),
-        ("role", schema_enum(&["leg", "wheel"])),
+        (
+            "role",
+            schema_enum(&[
+                "leg",
+                "wheel",
+                "arm",
+                "head",
+                "ear",
+                "tail",
+                "wing",
+                "propeller",
+                "rotor",
+            ]),
+        ),
         ("phase_group", schema_nullable(schema_integer())),
         ("spin_axis_local", schema_nullable(schema_vec3())),
     ]);

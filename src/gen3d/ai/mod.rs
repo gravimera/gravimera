@@ -39,7 +39,6 @@ use artifacts::{
 pub(crate) use headless_prefab::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 use prompts::{
     build_gen3d_component_system_instructions, build_gen3d_component_user_text,
-    build_gen3d_plan_fill_system_instructions, build_gen3d_plan_fill_user_text,
     build_gen3d_plan_system_instructions, build_gen3d_plan_user_text,
     build_gen3d_review_delta_system_instructions, build_gen3d_review_delta_user_text,
 };
@@ -928,7 +927,6 @@ enum Gen3dAiPhase {
     AgentCapturingRender,
     AgentCapturingPassSnapshot,
     WaitingPlan,
-    WaitingPlanFill,
     WaitingComponent,
     CapturingReview,
     WaitingReview,
@@ -1887,75 +1885,6 @@ pub(crate) fn gen3d_poll_ai_job(
                         plan.components.truncate(max_components);
                     }
 
-                    let needs_fill = plan.mobility.is_none()
-                        || plan
-                            .components
-                            .iter()
-                            .filter_map(|c| c.attach_to.as_ref())
-                            .any(|att| att.animations.is_none() && att.animation.is_some());
-
-                    if needs_fill {
-                        debug!("Gen3D: plan missing mobility/animations; requesting plan-fill.");
-                        job.pending_plan = Some(plan);
-                        job.phase = Gen3dAiPhase::WaitingPlanFill;
-
-                        workshop.status = format!(
-                            "Planning mobility/animations…\nModel: {}\nImages: {}",
-                            job.openai.as_ref().map(|c| c.model.as_str()).unwrap_or(""),
-                            job.user_images.len()
-                        );
-
-                        let Some(openai) = job.openai.clone() else {
-                            fail_job(
-                                &mut workshop,
-                                &mut job,
-                                "Internal error: missing OpenAI config.",
-                            );
-                            return;
-                        };
-                        let Some(run_dir) = job.pass_dir.clone() else {
-                            fail_job(
-                                &mut workshop,
-                                &mut job,
-                                "Internal error: missing Gen3D pass dir.",
-                            );
-                            return;
-                        };
-
-                        let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-                            Arc::new(Mutex::new(None));
-                        job.shared_result = Some(shared.clone());
-                        let progress = job
-                            .shared_progress
-                            .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
-                            .clone();
-                        set_progress(&progress, "Requesting mobility/animations…");
-
-                        let system = build_gen3d_plan_fill_system_instructions();
-                        let user_text = build_gen3d_plan_fill_user_text(
-                            &job.user_prompt_raw,
-                            !job.user_images.is_empty(),
-                            job.pending_plan
-                                .as_ref()
-                                .expect("pending_plan is set above"),
-                        );
-                        let reasoning_effort = openai.model_reasoning_effort.clone();
-                        spawn_gen3d_ai_text_thread(
-                            shared,
-                            progress,
-                            job.session.clone(),
-                            Some(Gen3dAiJsonSchemaKind::PlanFillV1),
-                            openai,
-                            reasoning_effort,
-                            system,
-                            user_text,
-                            job.user_images.clone(),
-                            run_dir,
-                            "plan_fill".into(),
-                        );
-                        return;
-                    }
-
                     job.plan_collider = plan.collider.clone();
                     job.rig_move_cycle_m = plan
                         .rig
@@ -2052,170 +1981,6 @@ pub(crate) fn gen3d_poll_ai_job(
                         }
                         Err(err) => {
                             debug!("Gen3D: failed to build draft from plan: {err}");
-                            if retry_gen3d_plan(
-                                &mut workshop,
-                                &mut job,
-                                &mut draft,
-                                speed_mode,
-                                &err,
-                            ) {
-                                return;
-                            }
-                            fail_job(&mut workshop, &mut job, err);
-                        }
-                    }
-                }
-                Gen3dAiPhase::WaitingPlanFill => {
-                    debug!("Gen3D: plan-fill request finished.");
-                    let fill = match parse::parse_ai_plan_fill_from_text(&text) {
-                        Ok(fill) => fill,
-                        Err(err) => {
-                            debug!("Gen3D: failed to parse AI plan-fill: {err}");
-                            if retry_gen3d_plan(
-                                &mut workshop,
-                                &mut job,
-                                &mut draft,
-                                speed_mode,
-                                &err,
-                            ) {
-                                return;
-                            }
-                            fail_job(&mut workshop, &mut job, err);
-                            return;
-                        }
-                    };
-
-                    let Some(mut plan) = job.pending_plan.take() else {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: missing pending plan for plan-fill merge.",
-                        );
-                        return;
-                    };
-
-                    if let Some(mobility) = fill.mobility.clone() {
-                        plan.mobility = Some(mobility);
-                    }
-
-                    for component in fill.components.iter() {
-                        let name = component.name.trim();
-                        if name.is_empty() {
-                            continue;
-                        }
-                        let Some(target) = plan.components.iter_mut().find(|c| c.name == name)
-                        else {
-                            continue;
-                        };
-                        let Some(att) = target.attach_to.as_mut() else {
-                            continue;
-                        };
-                        let has_any_animation = component.animations.values().any(|v| v.is_some());
-                        if !has_any_animation {
-                            continue;
-                        }
-                        att.animations = Some(component.animations.clone());
-                        att.animation = None;
-                    }
-
-                    job.plan_collider = plan.collider.clone();
-                    job.rig_move_cycle_m = plan
-                        .rig
-                        .as_ref()
-                        .and_then(|r| r.move_cycle_m)
-                        .filter(|v| v.is_finite())
-                        .map(|v| v.abs())
-                        .filter(|v| *v > 1e-3);
-                    let plan_reuse_groups = plan.reuse_groups.clone();
-                    match convert::ai_plan_to_initial_draft_defs(plan) {
-                        Ok((planned, assembly_notes, defs)) => {
-                            job.planned_components = planned;
-                            job.assembly_notes = assembly_notes;
-                            let (validated, warnings) = reuse_groups::validate_reuse_groups(
-                                &plan_reuse_groups,
-                                &job.planned_components,
-                            );
-                            job.reuse_groups = validated;
-                            job.reuse_group_warnings = warnings;
-                            job.component_queue = (0..job.planned_components.len()).collect();
-                            job.component_queue_pos = 0;
-                            job.generation_kind = Gen3dComponentGenerationKind::Initial;
-                            job.regen_per_component = vec![0; job.planned_components.len()];
-                            draft.defs = defs;
-                            workshop.error = None;
-
-                            if let Some(run_dir) = job.artifact_dir() {
-                                let components: Vec<serde_json::Value> = job
-                                    .planned_components
-                                    .iter()
-                                    .map(|c| {
-                                        let forward = c.rot * Vec3::Z;
-                                        let up = c.rot * Vec3::Y;
-                                        serde_json::json!({
-                                            "name": c.name.as_str(),
-                                            "purpose": c.purpose.as_str(),
-                                            "modeling_notes": c.modeling_notes.as_str(),
-                                            "pos": [c.pos.x, c.pos.y, c.pos.z],
-                                            "forward": [forward.x, forward.y, forward.z],
-                                            "up": [up.x, up.y, up.z],
-                                            "size": [c.planned_size.x, c.planned_size.y, c.planned_size.z],
-                                        })
-                                    })
-                                    .collect();
-                                let extracted = serde_json::json!({
-                                    "version": 2,
-                                    "assembly_notes": job.assembly_notes.as_str(),
-                                    "components": components,
-                                });
-                                write_gen3d_json_artifact(
-                                    Some(run_dir),
-                                    "plan_extracted.json",
-                                    &extracted,
-                                );
-                            }
-                            write_gen3d_assembly_snapshot(
-                                job.artifact_dir(),
-                                &job.planned_components,
-                            );
-
-                            if let Some(def) = draft.root_def() {
-                                let max_dim = def.size.x.max(def.size.y).max(def.size.z).max(0.5);
-                                preview.distance = (max_dim * 2.8 + 0.8).clamp(2.0, 250.0);
-                                preview.pitch = GEN3D_PREVIEW_DEFAULT_PITCH;
-                                preview.yaw = GEN3D_PREVIEW_DEFAULT_YAW;
-                                preview.last_cursor = None;
-                            }
-
-                            if job.component_queue.is_empty() {
-                                let err = "AI plan did not include any components.".to_string();
-                                if retry_gen3d_plan(
-                                    &mut workshop,
-                                    &mut job,
-                                    &mut draft,
-                                    speed_mode,
-                                    &err,
-                                ) {
-                                    return;
-                                }
-                                fail_job(&mut workshop, &mut job, err);
-                                return;
-                            }
-
-                            job.phase = Gen3dAiPhase::WaitingComponent;
-                            job.component_attempts = vec![0; job.planned_components.len()];
-                            job.component_in_flight.clear();
-                            job.shared_progress = None;
-
-                            workshop.status = format!(
-                                "Building components… (0/{})\nParallel: {}",
-                                job.planned_components.len(),
-                                job.max_parallel_components.max(1),
-                            );
-                        }
-                        Err(err) => {
-                            debug!(
-                                "Gen3D: failed to build draft from plan-fill merged plan: {err}"
-                            );
                             if retry_gen3d_plan(
                                 &mut workshop,
                                 &mut job,

@@ -96,7 +96,7 @@ Update `src/gen3d/ai/schema.rs`:
   - `regen_component` (by `component_id`)
   - `tweak_component_transform` (set/delta pos/rot/scale; rotation basis or quat only)
   - `tweak_anchor`, `tweak_attachment`
-  - `tweak_animation`, `tweak_mobility`, `tweak_attack`
+  - `tweak_mobility`, `tweak_attack`
 
 Update `src/gen3d/ai/parse.rs`:
 

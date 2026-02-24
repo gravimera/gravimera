@@ -57,7 +57,6 @@ pub(super) fn build_gen3d_plan_user_text(
          Anchor NAMES must be stable: the next step will ask you to output the same anchor names again with precise frames.\n\
          Every non-root component must define `attach_to` (parent component + anchor names).\n\
          Also decide the object's `mobility` (static vs ground vs air).\n\
-         If the object is movable and has articulated parts (legs/wheels/wings/weapon), add `attach_to.animations` for the relevant components using channels: ambient/idle/move/attack_primary.\n\
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
          Avoid z-fighting at joins: do NOT make parent/child faces flush and coplanar; add a small epsilon offset along the attachment direction (e.g. `attach_to.offset.pos[2]` ~= 0.005m).\n\
          Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
@@ -111,7 +110,6 @@ pub(super) fn build_gen3d_plan_user_text_with_hints(
          Anchor NAMES must be stable: the next step will ask you to output the same anchor names again with precise frames.\n\
          Every non-root component must define `attach_to` (parent component + anchor names).\n\
          Also decide the object's `mobility` (static vs ground vs air).\n\
-         If the object is movable and has articulated parts (legs/wheels/wings/weapon), add `attach_to.animations` for the relevant components using channels: ambient/idle/move/attack_primary.\n\
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
          Avoid z-fighting at joins: do NOT make parent/child faces flush and coplanar; add a small epsilon offset along the attachment direction (e.g. `attach_to.offset.pos[2]` ~= 0.005m).\n\
          Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
@@ -446,57 +444,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            - smaller values (e.g. 45..120) limit how far the weapon/head can turn away from the body.\n\
          - `aim.components`: list of component NAMES that should yaw with the attention direction (e.g. `head`, `turret`, `weapon`, `cannon`).\n\
          - If `aim` is omitted for a ranged unit, the engine will aim the muzzle component by default (or its parent component when the muzzle is a nested helper).\n\n\
-         Animation channels (optional, up to 10 total meaningful channels per unit):\n\
-         - Attachments may include `animations` as a map from `channel_name` -> animation spec.\n\
-         - Channel names are open vocabulary, non-empty strings (recommended: lower_snake_case).\n\
-         - Canonical channels (engine-driven activation) and per-part priority:\n\
-           `attack_primary` > `move` > `idle` > `ambient`.\n\
-           - `move`: locomotion motion (legs swing, wheels spin).\n\
-           - `attack_primary`: weapon/attack motion if the object has a weapon/tool.\n\
-           - `idle`: subtle idle motions when not moving/attacking.\n\
-           - `ambient`: fallback motion for parts that should always run when no higher-priority slot exists (fans/propellers).\n\
-         - Custom channels (e.g. `dance`, `wave`, `emote_happy`) are allowed, but are NOT auto-activated by the engine.\n\
-           They are intended for user-triggered playback (gameplay hotkeys: 1..9/0 plays the first 10 channels for the selected unit).\n\
-         - If `mobility.kind` is `ground` or `air`, you MUST ensure the unit has at least `idle` and `move` channels on at least one visible attachment edge.\n\
-           If you cannot identify a good sub-part to animate, attach subtle `idle`/`move` motion to the root component's attachment.\n\
-         - Expressiveness guideline (for better-looking locomotion):\n\
-           - Avoid keeping the MAIN BODY (torso/chest/hips/chassis) completely rigid in `move`.\n\
-             Distribute some subtle motion across major visible components (body/torso/head/arms/weapon/tail) using small rotations and/or small `delta.pos` offsets.\n\
-           - IMPORTANT: The root component itself has no parent attachment edge.\n\
-             If you want the torso/chest to bob/sway and it would otherwise be the root, introduce a small root/base component (e.g. `pelvis`, `body_root`, `chassis_root`) and attach the torso to it so the torso can have `attach_to.animations`.\n\
-         - If the user explicitly asks for extra motions/emotes/animations, add additional custom channels up to 10 total meaningful channels.\n\n\
-         Animation spec (inside `attach_to.animations[channel]`):\n\
-         - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
-         - Prefer `attack_time` for `attack_primary` so the animation runs once per attack event (instead of continuously while the player holds the attack key).\n\
-         - `speed_scale`: number (optional; default 1)\n\
-         - `clip`:\n\
-           - `{{ \"kind\": \"loop\", \"duration_secs\": number, \"keyframes\": [ {{\"time_secs\": number, \"delta\": {{\"pos\":[x,y,z], \"forward\":[x,y,z] (optional), \"up\":[x,y,z] (optional), \"rot_frame\":\"join\"|\"parent\", \"rot_quat_xyzw\":[x,y,z,w] (optional), \"scale\":[x,y,z] (optional)}} }} ] }}`\n\
-           - `{{ \"kind\": \"spin\", \"axis\": [x,y,z], \"radians_per_unit\": number }}`\n\
-         - For `loop` keyframes:\n\
-           - `delta.pos` is a translation in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset.pos`).\n\
-           - Whenever you use rotation (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`), ALWAYS include `delta.rot_frame` explicitly.\n\
-             - Use `delta.rot_frame=\"join\"` to author basis/quaternion directly in the join frame.\n\
-               Rest/identity delta with `rot_frame=\"join\"`: `delta.forward=[0,0,1]` and `delta.up=[0,1,0]`.\n\
-             - Use `delta.rot_frame=\"parent\"` to author basis/quaternion in the PARENT COMPONENT frame (+Y up, +Z forward).\n\
-               Rest/identity delta with `rot_frame=\"parent\"`: `delta.forward=parent_anchor.forward` and `delta.up=parent_anchor.up`.\n\
-             - For `move` (locomotion) rotations, prefer `delta.rot_frame=\"parent\"` by default.\n\
-               This keeps the meaning of \"forward\" (+Z) stable across different joint orientations and avoids accidental side-to-side limb swings when a join frame's +Z points along an attachment direction (e.g. side-mounted limbs).\n\
-               Use `rot_frame=\"join\"` only when you intentionally want to rotate in the join-frame axes (e.g. twisting around the mount axis).\n\
-           - If you don't need rotation, omit `delta.forward`/`delta.up`/`delta.rot_quat_xyzw` entirely.\n\
-         - For `spin`, `axis` is expressed in THIS COMPONENT's LOCAL axes (+X right, +Y up, +Z forward).\n\n\
-         Units:\n\
-         - For drivers `always` and `attack_time`:\n\
-           - `loop.duration_secs` and `loop.keyframes[].time_secs` are in seconds.\n\
-           - `spin.radians_per_unit` is radians per second.\n\
-         - For drivers `move_phase` and `move_distance`:\n\
-           - `loop.duration_secs` and `loop.keyframes[].time_secs` are in meters traveled (XZ).\n\
-           - `spin.radians_per_unit` is radians per meter traveled.\n\n\
-         Spin tip:\n\
-         - For attached spinners (wheels/propellers/turrets), the safest convention is:\n\
-           - set the spin axis to the attachment direction, i.e. `axis = child_anchor.forward` (in component-local coordinates).\n\
-           This guarantees the part spins around its attachment/joint axis.\n\
-         - IMPORTANT: The engine will NOT auto-flip spin direction for mirrored wheels/rollers.\n\
-           If a left/right pair spins opposite of what you intended, flip the sign yourself by negating `axis` (or `radians_per_unit`) on one side.\n\n\
+         Animation policy:\n\
+         - Gen3D currently generates STATIC models only.\n\
+         - Do NOT author any per-edge animation clips in the plan (there is no `attach_to.animations`).\n\n\
          Anchor definition:\n\
          - An anchor is a named coordinate frame inside a component.\n\
          - `pos` is anchor origin in component-local coordinates.\n\
@@ -516,36 +466,19 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
           - Then `offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n\
           - For flush joins, use a small NEGATIVE `offset.pos[2]` (slight inset/overlap). For surface overlays, use a small POSITIVE `offset.pos[2]` (slight outset) so thin details are not buried.\n\
-          - IMPORTANT: Do not use `attach_to.animation` (legacy). Use `attach_to.animations`.\n\n\
-          Rig contract (optional; strongly recommended for ground locomotion):\n\
-          - The engine validates locomotion by sampling the `move` cycle and checking declared joints/contacts.\n\
-          - If `mobility.kind == \"ground\"` and you author any `move` animation:\n\
-            - Prefer adding `attach_to.joint` on that attachment edge.\n\
-            - Prefer adding one or more `contacts[]` on end-effector component(s) intended to be PLANTED during stance (feet/hooves).\n\
-            - If you declare a `contacts[]` entry with `kind=\"ground\"` for a planted end-effector (foot/hoof), you MUST also declare `contacts[].stance`.\n\
-              Author your `move` animation so that the contact stays approximately planted in world space during stance; otherwise motion validation will fail.\n\
-            - If you cannot satisfy planted-foot behavior, do NOT declare that ground contact (or use a wheel-style `move` with `clip.kind=\"spin\"` for rolling parts).\n\
-            - For rolling wheels/tracks, contacts are optional; if you include them, omit `stance` (or leave it null) because the physical ground contact point moves around the wheel and stance validation is skipped for `spin` move clips.\n\
-            - Joint constraints:\n\
-            - `attach_to.joint.kind`: `fixed` | `hinge` | `ball` | `free`.\n\
-            - IMPORTANT: If `joint.kind == \"fixed\"`, do NOT author rotation in `attach_to.animations` for that attachment edge.\n\
-              The engine clamps fixed-joint rotation deterministically to avoid motion validation regressions.\n\
-              If you need rotational motion, choose `hinge`/`ball`/`free` (and provide axes/limits where appropriate).\n\
+          Motion metadata (optional; recommended for movable objects):\n\
+          - Use `attach_to.joint` to declare articulation (`fixed`/`hinge`/`ball`/`free`).\n\
             - Joint axes/limits are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
-            - For `hinge`, provide `axis_join` and optional `limits_degrees` [min,max].\n\
-            - For `hinge`/`ball` joints, prefer ROTATION deltas in animations; avoid large `delta.pos` translations (motion validation warns `constrained_joint_translates`).\n\
-          - Contacts:\n\
-            - `contacts[]` lives on a component and references one of its `anchors[]` by name.\n\
-            - `contacts[].stance` defines when that contact should be on the ground during the `move` cycle:\n\
+          - Use `contacts[]` to declare ground contacts (feet/hooves) by referencing one of the component's anchors.\n\
+            - For planted contacts, include `contacts[].stance`:\n\
               - `phase_01`: start phase in [0,1).\n\
               - `duty_factor_01`: fraction of cycle in (0,1].\n\
-              - Only use `stance` for planted contacts (feet/hooves), not for spinning wheels.\n\
-          - Optional: top-level `rig.move_cycle_m` defines meters-per-cycle for `move` (helps validation for stance schedules).\n\n\
+          - Optional: top-level `rig.move_cycle_m` defines meters-per-cycle for locomotion.\n\n\
          Reuse groups (IMPORTANT for speed + consistency):\n\
          - If multiple components should share the SAME geometry (wheels, repeated legs, mirrored parts, numbered sets like `leg_0..leg_7`), declare `reuse_groups`.\n\
          - The engine can then generate only the unique components + the declared reuse sources, and fill the remaining targets via deterministic copy.\n\
          - This does NOT change the attachment tree; it only affects how missing geometry gets produced.\n\
-         - Reuse targets are allowed (and expected) to differ in per-target `attach_to.offset` (radial/mirrored placement) and per-target attachment animations (phase offsets).\n\
+         - Reuse targets are allowed (and expected) to differ in per-target `attach_to.offset` (radial/mirrored placement).\n\
          - IMPORTANT: The engine will NOT guess whether a reuse group should be mirrored. You MUST explicitly set `reuse_groups[].alignment`.\n\
          - `reuse_groups[].kind`:\n\
            - `component` (copy a single component's geometry)\n\
@@ -564,7 +497,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            - `targets` may be `target_roots` / `target_components`.\n\n\
           Schema:\n\
           {{\n\
-            \"version\": 7,\n\
+            \"version\": 8,\n\
             \"rig\": {{ \"move_cycle_m\": number }} (optional),\n\
             \"mobility\": {{\"kind\":\"static\"}} | {{\"kind\":\"ground\",\"max_speed\": number}} | {{\"kind\":\"air\",\"max_speed\": number}},\n\
             \"attack\": {{ ... }} (optional; omit if not attack-capable),\n\
@@ -599,15 +532,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
                         \"rot_quat_xyzw\": [x,y,z,w] (optional),\n\
                         \"scale\": [x,y,z] (optional)\n\
                       }} (optional),\n\
-                  \"joint\": {{ \"kind\": \"hinge\" | \"fixed\" | \"ball\" | \"free\", \"axis_join\": [x,y,z] (optional), \"limits_degrees\": [min,max] (optional) }} (optional),\n\
-                  \"animations\": {{\n\
-                    \"ambient\" | \"idle\" | \"move\" | \"attack_primary\": {{\n\
-                      \"driver\": \"always\" | \"move_phase\" | \"move_distance\" | \"attack_time\",\n\
-                      \"speed_scale\": number (optional),\n\
-                      \"time_offset_units\": number (optional; additive offset in the clip's time domain),\n\
-                      \"clip\": {{\"kind\":\"loop\",...}} | {{\"kind\":\"spin\",...}}\n\
-                   }}\n\
-                 }} (optional)\n\
+                  \"joint\": {{ \"kind\": \"hinge\" | \"fixed\" | \"ball\" | \"free\", \"axis_join\": [x,y,z] (optional), \"limits_degrees\": [min,max] (optional) }} (optional)\n\
                }} (omit ONLY for the root component)\n\
              }}\n\
            ]\n\
@@ -626,53 +551,16 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
 
 pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
     "You are a 3D modeling assistant.\n\
-     Return STRICT JSON that fills missing mobility and per-component attachment animations for an already-created component plan.\n\
+     Return STRICT JSON that fills missing mobility for an already-created component plan.\n\
      Do NOT change component names, the attachment tree, or geometry.\n\
      You MUST output only the JSON object; no markdown.\n\n\
      Mobility:\n\
      - Output `mobility` with `kind`: `static` | `ground` | `air`.\n\
      - For `ground` and `air`, provide `max_speed`.\n\n\
-     Animation channels:\n\
-     - Provide `animations` per component (these are for that component's attachment to its parent).\n\
-     - Channel names are open vocabulary strings (recommended: lower_snake_case) and should be kept to <= 10 meaningful channels.\n\
-     - Canonical channels and priority: `attack_primary` > `move` > `idle` > `ambient`.\n\
-     - Custom channels (e.g. `dance`) are allowed, but are user-triggered (not auto-activated).\n\
-       The game can play them via 1..9/0 (first 10 channels).\n\
-     - If mobility is `ground` or `air`, ensure `idle` and `move` exist.\n\n\
-     Expressiveness guideline:\n\
-     - For `move`, avoid keeping the main body completely rigid.\n\
-       Add subtle bob/sway to a core body component if appropriate (torso/chest/hips/chassis), in addition to limb motion.\n\
-\n\
-     Animation spec (inside `animations[channel]`):\n\
-     - `driver`: `always` | `move_phase` | `move_distance` | `attack_time`\n\
-     - `speed_scale`: number (optional; default 1)\n\
-     - `clip`:\n\
-       - {\"kind\":\"loop\",\"duration_secs\": number,\"keyframes\":[{\"time_secs\": number,\"delta\":{\"pos\":[x,y,z],\"forward\":[x,y,z] (optional),\"up\":[x,y,z] (optional),\"rot_frame\":\"join\"|\"parent\",\"rot_quat_xyzw\":[x,y,z,w] (optional),\"scale\":[x,y,z] (optional)}}]}\n\
-       - {\"kind\":\"spin\",\"axis\":[x,y,z],\"radians_per_unit\": number}\n\
-     - For `loop` keyframes:\n\
-       - `delta.pos` is in the PARENT ANCHOR JOIN FRAME.\n\
-       - Whenever you use rotation (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`), ALWAYS include `delta.rot_frame` explicitly.\n\
-         Prefer `delta.rot_frame=\"parent\"` when authoring in the PARENT COMPONENT axes (+Y up, +Z forward).\n\
-         For `move` (locomotion) rotations, default to `rot_frame=\"parent\"` to avoid join-frame axis surprises on side-mounted limbs.\n\
-         Use `\"join\"` only if intentionally authoring in the joint/join frame axes.\n\
-     - For `spin`, `axis` is expressed in the COMPONENT's LOCAL axes.\n\n\
-     Units:\n\
-     - For drivers `always` and `attack_time`:\n\
-       - `loop.duration_secs` and `loop.keyframes[].time_secs` are in seconds.\n\
-       - `spin.radians_per_unit` is radians per second.\n\
-     - For drivers `move_phase` and `move_distance`:\n\
-       - `loop.duration_secs` and `loop.keyframes[].time_secs` are in meters traveled (XZ).\n\
-       - `spin.radians_per_unit` is radians per meter traveled.\n\n\
      Schema:\n\
      {\n\
        \"version\": 1,\n\
-       \"mobility\": {\"kind\":\"static\"} | {\"kind\":\"ground\",\"max_speed\": number} | {\"kind\":\"air\",\"max_speed\": number},\n\
-       \"components\": [\n\
-         {\n\
-           \"name\": \"component_name\",\n\
-           \"animations\": { \"<channel_name>\": { ...spec... }, ... }\n\
-         }\n\
-       ]\n\
+       \"mobility\": {\"kind\":\"static\"} | {\"kind\":\"ground\",\"max_speed\": number} | {\"kind\":\"air\",\"max_speed\": number}\n\
      }\n"
         .to_string()
 }
@@ -684,7 +572,7 @@ pub(super) fn build_gen3d_plan_fill_user_text(
 ) -> String {
     let mut out = String::new();
     out.push_str(
-        "Step 1b (plan fill): Provide mobility + per-component attachment animations for an existing plan.\n\
+        "Step 1b (plan fill): Provide mobility for an existing plan.\n\
          Do NOT change component names or the attachment structure.\n",
     );
     if !has_images {
@@ -790,7 +678,6 @@ Review mode:\n",
 	      - Keep changes minimal: prefer adjusting attachment offsets / anchors over regenerating geometry.\n\
 	      - Focus on HIGH-IMPACT structural issues. If only minor cosmetic tweaks remain, return ONLY {\"kind\":\"accept\"}.\n\
 	      - Avoid endless micro-tweaks: if you are satisfied with structure/proportions, accept.\n\
-      - Preview images may include `move_sheet.png` and `attack_sheet.png` (2x2 sprite sheets, 4 frames each). Use them to debug animation issues (e.g. hair/legs moving in the wrong direction).\n\
       - If smoke results include `motion_validation.issues`, treat ONLY `severity=error` issues as authoritative and prioritize fixing them first.\n\
 ",
     );
@@ -808,27 +695,10 @@ Review mode:\n",
       - The engine automatically rebases affected attachment offsets when anchors move/rotate so the assembled REST POSE stays stable.\n\
         If you WANT to move/rotate a component in the assembly, use `tweak_component_transform` instead (flat `set`/`delta`; do NOT nest under `offset`).\n\n\
       - If motion validation reports `chain_axis_mismatch`, fix the COMPONENT ANCHORS (not offsets): reorient the child component's joint anchors so the vector from its parent joint anchor to its child joint anchor aligns with the proximal anchor's +Z (forward) in component-local space.\n\n\
-      - If motion validation reports `constrained_joint_translates`, fix the ANIMATION (not the mesh): hinge/ball joints should not translate. Set keyframe `delta.pos` near [0,0,0] and drive motion via rotation deltas instead.\n\n\
-      Animation notes:\n\
-      - `tweak_animation.spec.clip.spin.axis` is expressed in the COMPONENT's LOCAL axes.\n\
-      - If smoke results include `suggested_component_local_axis`, prefer using that value for the spin axis.\n\
-        (It is computed from the component's child anchor forward vector so the part spins around the attachment axis.)\n\
-      - Whenever you use a keyframe `delta` rotation (`delta.forward`/`delta.up` or `delta.rot_quat_xyzw`), ALWAYS include `delta.rot_frame` explicitly.\n\
-        Prefer `delta.rot_frame=\"parent\"` when you are thinking in the PARENT COMPONENT axes (+Y up, +Z forward). Use `\"join\"` only if you are intentionally authoring in the joint/join frame axes.\n\
-      - IMPORTANT: Do NOT try to rotate fixed joints.\n\
-        If `scene_graph_summary` shows `joint=fixed` for an attachment edge, the engine clamps any attachment rotation deltas to identity and ignores spin clips.\n\
-        If you need visible motion, animate a non-fixed joint in the chain (hinge/ball/free), or change the joint kind/limits via `tweak_attachment`.\n\
-      - `tweak_animation.spec.time_offset_units` is an additive offset in the clip's time domain. Use it to phase-stagger repeated limbs (instead of duplicating or rewriting keyframes).\n\
-      - If motion validation reports `time_offset_no_effect`, the configured `time_offset_units` does not change the sampled pose (the loop is effectively periodic at that offset). Fix by changing the keyframes and/or `time_offset_units` so that `delta(t)` differs from `delta(t + time_offset_units)`.\n\
-	      - If an animation channel is undesirable or too broken to repair, you may disable ANY channel\n\
-	        by replacing it with an identity loop (a `loop` whose keyframes' `delta` transforms are all identity).\n\
-	        IMPORTANT: include at least 1 keyframe (example: one keyframe at time_secs=0 with no delta / identity delta).\n\n\
-	        Identity loop example (use the existing channel driver; common defaults: idle/ambient -> \"always\", move -> \"move_distance\", attack_primary -> \"attack_time\"):\n\
-	        {\"driver\":\"move_distance\",\"speed_scale\":1.0,\"time_offset_units\":0.0,\"clip\":{\"kind\":\"loop\",\"duration_secs\":1.0,\"keyframes\":[{\"time_secs\":0.0,\"delta\":null}]}}\n\n\
-	      If the scene graph shows no generated geometry yet (e.g. 0 primitive parts / components_generated=0), blank renders are expected.\n\
-	      Do NOT report that as a renderer bug. Instead, request generating components first.\n\n\
-	     Attack schema for `tweak_attack` (MUST follow exactly; do not invent custom fields):\n\
-	     - `attack.kind` must be exactly one of: `none`, `melee`, `ranged_projectile`.\n\
+      If the scene graph shows no generated geometry yet (e.g. 0 primitive parts / components_generated=0), blank renders are expected.\n\
+      Do NOT report that as a renderer bug. Instead, request generating components first.\n\n\
+     Attack schema for `tweak_attack` (MUST follow exactly; do not invent custom fields):\n\
+     - `attack.kind` must be exactly one of: `none`, `melee`, `ranged_projectile`.\n\
      - Do NOT output synonyms like `cannon`, `gun`, `projectile`, `ranged`; always use the canonical kinds above.\n\
      - If the weapon is a cannon/gun, use `ranged_projectile` and describe it as a cannon in `reason`.\n\
      - `none`: {\"kind\":\"none\"}\n\
@@ -850,7 +720,6 @@ Review mode:\n",
          {\"kind\":\"tweak_anchor\",\"component_id\":\"<uuid>\",\"anchor_name\":\"name\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_attachment\",\"component_id\":\"<uuid>\",\"set\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_contact\",\"component_id\":\"<uuid>\",\"contact_name\":\"name\",\"stance\": null (optional),\"reason\":\"...\" (optional)},\n\
-         {\"kind\":\"tweak_animation\",\"component_id\":\"<uuid>\",\"channel\":\"<channel_name>\",\"spec\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_mobility\",\"mobility\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_attack\",\"attack\":{...},\"reason\":\"...\" (optional)}\n\
        ]\n\
@@ -860,8 +729,7 @@ Review mode:\n",
      - `tweak_contact` edits the component's declared contacts (most commonly `stance`).\n\
        - Set stance: `\"stance\": {\"phase_01\": number, \"duty_factor_01\": number}`\n\
        - Clear stance: `\"stance\": null`\n\
-       If motion validation reports `contact_slip`/`contact_lift`, fix the `move` animation and/or adjust the stance schedule (do NOT clear stance just to silence errors).\n\
-       Only clear stance for rolling parts that should use a `move` `spin` clip (wheels/rollers), where stance validation is skipped.\n\
+       If a stance schedule is wrong, fix it; do NOT clear stance just to silence errors.\n\
      - IMPORTANT: For `tweak_component_transform`, `set.pos` / `delta.pos` are expressed in the PARENT ANCHOR join frame (same frame as `attach_to.offset.pos`).\n\
        In that join frame, `pos = [x,y,z]` means:\n\
        - +X (`pos[0]`) is `join_right_world`\n\
@@ -1182,7 +1050,11 @@ Schema:\n\
   \"applies_to\": {\"run_id\":\"uuid\",\"attempt\":0,\"plan_hash\":\"sha256:...\",\"assembly_rev\":0},\n\
   \"move_effectors\": [\n\
     {\"component\":\"left_thigh\",\"role\":\"leg\",\"phase_group\":0,\"spin_axis_local\":null},\n\
-    {\"component\":\"wheel_fl\",\"role\":\"wheel\",\"phase_group\":null,\"spin_axis_local\":[1,0,0]}\n\
+    {\"component\":\"wheel_fl\",\"role\":\"wheel\",\"phase_group\":null,\"spin_axis_local\":[1,0,0]},\n\
+    {\"component\":\"left_arm\",\"role\":\"arm\",\"phase_group\":0,\"spin_axis_local\":null},\n\
+    {\"component\":\"head\",\"role\":\"head\",\"phase_group\":null,\"spin_axis_local\":null},\n\
+    {\"component\":\"ear_l\",\"role\":\"ear\",\"phase_group\":null,\"spin_axis_local\":null},\n\
+    {\"component\":\"propeller\",\"role\":\"propeller\",\"phase_group\":null,\"spin_axis_local\":[0,0,1]}\n\
   ],\n\
   \"notes\": \"...\" | null\n\
 }\n\n\
@@ -1191,13 +1063,15 @@ Rules:\n\
 - `move_effectors` targets attachment edges by naming the CHILD component (`component`).\n\
   - Only output component names that appear in the provided component list.\n\
   - Do NOT output the root component (it has no parent edge).\n\
-- Allowed `role` values: `leg`, `wheel`.\n\
+- Allowed `role` values:\n\
+  - `leg`, `wheel`, `arm`, `head`, `ear`, `tail`, `wing`, `propeller`, `rotor`.\n\
 - `phase_group`:\n\
   - For `leg`, set to 0 or 1 (two-phase gait: group 0 swings opposite group 1).\n\
-  - For `wheel`, MUST be null.\n\
+  - For `arm`, set to 0 or 1 when possible (recommended: match the same-side leg group so arms swing opposite).\n\
+  - For `wheel`/`propeller`/`rotor`, MUST be null.\n\
 - `spin_axis_local`:\n\
-  - For `wheel`, may be null or a unit-ish axis like [1,0,0].\n\
-  - For `leg`, MUST be null.\n\
+  - For `wheel`/`propeller`/`rotor`, may be null or a unit-ish axis like [1,0,0].\n\
+  - For other roles, MUST be null.\n\
 - If you cannot confidently identify locomotion effectors, return an EMPTY `move_effectors` list.\n"
         .to_string()
 }
@@ -1216,9 +1090,7 @@ pub(super) fn build_gen3d_motion_roles_user_text(
     }
 
     let mut out = String::new();
-    out.push_str(
-        "Goal: label locomotion effectors so the engine can inject generic move algorithms.\n",
-    );
+    out.push_str("Goal: label motion roles so the engine can inject generic move algorithms.\n");
     if !has_images {
         out.push_str("No photos are provided for this run.\n");
     }

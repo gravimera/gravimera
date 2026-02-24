@@ -122,14 +122,14 @@ pub(super) fn parse_ai_plan_from_text(text: &str) -> Result<AiPlanJsonV1, String
     let json_value: serde_json::Value =
         serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
     if json_value.get("version").is_none() {
-        return Err("AI plan JSON missing required `version` (expected 7).".into());
+        return Err("AI plan JSON missing required `version` (expected 8).".into());
     }
 
     let plan: AiPlanJsonV1 =
         serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
-    if plan.version != 7 {
+    if plan.version != 8 {
         return Err(format!(
-            "Unsupported AI plan version {} (expected 7)",
+            "Unsupported AI plan version {} (expected 8)",
             plan.version
         ));
     }
@@ -379,9 +379,6 @@ pub(super) fn extract_json_object(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::schema::{
-        AiAnimationClipJson, AiAnimationDriverJson, AiReviewDeltaActionJsonV1,
-    };
     use super::*;
 
     #[test]
@@ -443,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_review_delta_missing_driver() {
+    fn rejects_review_delta_tweak_animation_action() {
         let text = r#"{
           "version": 1,
           "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
@@ -452,52 +449,14 @@ mod tests {
               "kind":"tweak_animation",
               "component_id":"deadbeef",
               "channel":"move",
-              "spec": {
-                "clip": {
-                  "kind":"loop",
-                  "duration_secs": 1.0,
-                  "keyframes": [ { "time_secs": 0.0 } ]
-                }
-              }
+              "spec": { "driver":"always", "clip": { "kind":"spin", "axis":[1,0,0], "radians_per_unit": 2.0 } }
             }
           ]
         }"#;
         assert!(
             parse_ai_review_delta_from_text(text).is_err(),
-            "expected missing spec.driver to error"
+            "expected tweak_animation to be rejected"
         );
-    }
-
-    #[test]
-    fn parses_review_delta_with_explicit_driver_and_clip() {
-        let text = r#"{
-          "version": 1,
-          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
-          "actions": [
-            {
-              "kind":"tweak_animation",
-              "component_id":"deadbeef",
-              "channel":"move",
-              "spec": {
-                "driver":"move_phase",
-                "clip": {
-                  "kind":"loop",
-                  "duration_secs": 1.0,
-                  "keyframes": [ { "time_secs": 0.0 } ]
-                }
-              }
-            }
-          ]
-        }"#;
-        let delta = parse_ai_review_delta_from_text(text).expect("delta should parse");
-        assert_eq!(delta.actions.len(), 1);
-        match &delta.actions[0] {
-            AiReviewDeltaActionJsonV1::TweakAnimation { spec, .. } => {
-                assert!(matches!(spec.driver, AiAnimationDriverJson::MovePhase));
-                assert!(matches!(spec.clip, AiAnimationClipJson::Loop { .. }));
-            }
-            other => panic!("expected tweak_animation, got {other:?}"),
-        }
     }
 
     #[test]

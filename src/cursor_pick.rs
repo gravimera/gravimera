@@ -16,7 +16,10 @@ pub(crate) fn cursor_surface_pick(
     camera: &Camera,
     camera_transform: &GlobalTransform,
     library: &ObjectLibrary,
-    objects: &Query<(&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId), With<BuildObject>>,
+    objects: &Query<
+        (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
+        With<BuildObject>,
+    >,
 ) -> Option<SurfacePick> {
     let cursor_pos = window.cursor_position()?;
     let ray = camera
@@ -73,4 +76,3 @@ pub(crate) fn cursor_surface_pick(
 
     pick
 }
-

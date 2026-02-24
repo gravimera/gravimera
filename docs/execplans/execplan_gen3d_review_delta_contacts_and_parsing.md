@@ -8,17 +8,21 @@ This repository contains `PLANS.md` at the repo root. This document must be main
 
 Gen3D builds often fail to converge when motion validation reports `contact_slip` / `contact_lift` for “stance” contacts (usually feet). In theory, `llm_review_delta_v1` should repair these by tweaking animations, but in practice the review-delta output is frequently “almost correct JSON” that fails strict parsing (missing required fields like `spec.driver` or `loop.duration_secs`, or using slightly wrong enum spellings). When parsing fails, the engine cannot apply any repairs and the run wastes multiple review passes.
 
-After this change:
+After this change (original scope):
 
 1) `llm_review_delta_v1` has an explicit, machine-appliable way to fix stance-related motion failures without regenerating geometry: it can **clear or adjust `contacts[].stance`** via a new `tweak_contact` action.
 
-2) Review-delta parsing becomes more robust by running a **deterministic normalization pass** over the JSON value before strict schema deserialization. This accepts common near-miss outputs (missing `driver`, missing `duration_secs`, driver synonyms like `move_cycle`) without making the schema “loose” or adding heuristics to Gen3D geometry generation.
+2) (Historical) Review-delta parsing was made more robust via deterministic normalization for near-miss animation edits.
 
 User-visible outcomes:
 
 - Fewer “auto-review failed (parse error)” build endings.
-- Motion-validation failures caused by incorrect stance declarations can be repaired generically (either by fixing the animation or by clearing stance).
+- Motion-validation failures caused by incorrect stance declarations can be repaired generically by adjusting or clearing stance.
 - Reduced token/time waste from repeated re-asks when the model output is structurally correct but slightly incomplete.
+
+Status (2026-02-24):
+
+- Gen3D plans are static-only and review-delta no longer supports `tweak_animation`, so the `tweak_animation`-specific parsing/normalization parts of this ExecPlan are retained for historical context only.
 
 ## Progress
 
@@ -29,6 +33,7 @@ User-visible outcomes:
 - [x] (2026-02-10) Add unit tests for parsing normalization + contact tweak application.
 - [x] (2026-02-10) Run `cargo test` and a headless smoke start.
 - [x] (2026-02-20) Normalize transform-delta near-misses (`delta.offset.*`, `delta.quat_xyzw`) and clarify review-delta prompt field names (`delta.pos`, `delta.rot_quat_xyzw`).
+- [x] (2026-02-24) Gen3D strategy shift: static-only plans; remove review-delta `tweak_animation` and AI-authored clips. (This makes the `tweak_animation`-specific parts of this ExecPlan historical.)
 - [ ] Run a real rendered Gen3D regression and record the run id + results.
 
 ## Surprises & Discoveries
@@ -37,7 +42,7 @@ User-visible outcomes:
   Evidence: Contact slip validation simulates forward root motion; for a planted foot, the limb animation must counteract root translation during stance. Therefore, if the stance contract cannot be satisfied, **clearing stance** is the minimal generic repair.
 
 - Observation: Review-delta outputs frequently omit required fields even when the intent is clear.
-  Evidence: Common failures include missing `spec.driver` in `tweak_animation` and missing `loop.duration_secs` in `clip.kind=="loop"`, which causes strict schema parsing failures.
+  Evidence (historical): Common failures included missing `spec.driver` in `tweak_animation` and missing `loop.duration_secs` in `clip.kind=="loop"`, which caused strict schema parsing failures.
 
 ## Decision Log
 
@@ -53,15 +58,10 @@ User-visible outcomes:
 
 - Implemented `review_delta_v1` improvements:
   - New `tweak_contact` action can clear or set `contacts[].stance` (enables fixing `contact_slip`/`contact_lift` without regenerating geometry).
-  - Review-delta parser now normalizes common near-misses for `tweak_animation`:
-    - fills missing `spec.driver` based on `channel`
-    - fills or fixes missing/invalid `loop.duration_secs`
-    - infers/normalizes `clip.kind`
   - Review-delta parser now also normalizes common near-misses for transform actions:
     - accepts nested `delta.offset.{pos,scale,quat_xyzw}` for `tweak_component_transform` and rewrites to the strict schema
     - accepts `delta.quat_xyzw` and rewrites to `delta.rot_quat_xyzw` (and similarly for `tweak_anchor.delta`)
 - Added unit tests:
-  - `gen3d::ai::parse::tests::normalizes_review_delta_missing_driver_and_duration`
   - `gen3d::ai::convert::tests::applies_review_delta_tweak_contact_clears_stance`
 
 Remaining work:
@@ -85,7 +85,7 @@ Definitions (as used in this repo):
 - `contacts[]`: plan-level declaration of named contact points (usually ground contacts) by anchor name.
 - `stance`: optional schedule (`phase_01`, `duty_factor_01`) declaring when a contact is intended to be planted during the move cycle.
 - `contact_slip`: motion-validation issue indicating the declared contact moves too much in world XZ during stance.
-- `tweak_animation`: review-delta action that edits attachment animation specs for one component’s attachment to its parent.
+- `tweak_animation`: (historical; removed 2026-02-24) review-delta action that edited attachment animation specs for one component’s attachment to its parent.
 
 ## Plan of Work
 

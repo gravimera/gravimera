@@ -124,9 +124,7 @@ fn automation_api_health_and_shutdown() {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         if let Some(instance_id) = first {
-            let req = format!(
-                "{{\"instance_ids\":[\"{instance_id}\"],\"channel\":\"ambient\"}}"
-            );
+            let req = format!("{{\"instance_ids\":[\"{instance_id}\"],\"channel\":\"ambient\"}}");
             let (status, body) = http_request(
                 addr,
                 "POST",

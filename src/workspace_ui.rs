@@ -271,7 +271,11 @@ pub(crate) fn workspace_ui_dropdown_option_buttons(
     mut next_build_scene: ResMut<NextState<BuildScene>>,
     mut scene_ui: ResMut<SceneAuthoringUiState>,
     mut buttons: Query<
-        (&Interaction, &WorkspaceDropdownOptionButton, &mut BackgroundColor),
+        (
+            &Interaction,
+            &WorkspaceDropdownOptionButton,
+            &mut BackgroundColor,
+        ),
         Changed<Interaction>,
     >,
 ) {

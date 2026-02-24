@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
+use crate::motion::{MotionAlgorithmController, MoveMotionAlgorithm};
 use crate::object::registry::{
     AnchorDef, AnchorRef, AttachmentDef, ColliderProfile, MaterialKey, MeleeAttackProfile, MeshKey,
     MobilityDef, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction, ObjectLibrary,
@@ -19,7 +20,7 @@ use crate::object::registry::{
 use crate::object::visuals;
 use crate::types::*;
 
-const SCENE_DAT_VERSION: u32 = 7;
+const SCENE_DAT_VERSION: u32 = 8;
 // Persist positions in centimeters (stable and easy to reason about for AI-authored worlds).
 const DEFAULT_UNITS_PER_METER: u32 = 100;
 const SCENE_AUTOSAVE_INTERVAL_SECS: f32 = 60.0;
@@ -116,6 +117,18 @@ struct SceneDatObjectInstance {
     forms: Vec<Uuid128Dat>,
     #[prost(uint32, tag = "15")]
     active_form: u32,
+    #[prost(enumeration = "SceneDatMoveMotionAlgorithm", tag = "16")]
+    move_motion_algorithm: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
+enum SceneDatMoveMotionAlgorithm {
+    Unspecified = 0,
+    None = 1,
+    BipedWalkV1 = 2,
+    QuadrupedWalkV1 = 3,
+    CarWheelsV1 = 4,
+    AirplanePropV1 = 5,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1532,6 +1545,7 @@ fn save_scene_dat_internal(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
+            Option<&MotionAlgorithmController>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
@@ -1543,7 +1557,24 @@ fn save_scene_dat_internal(
     let mut instances: Vec<SceneDatObjectInstance> = Vec::with_capacity(objects.iter().len());
     let mut root_defs: Vec<u128> = Vec::with_capacity(objects.iter().len());
 
-    for (transform, instance_id, prefab_id, tint, forms) in objects {
+    fn move_motion_algorithm_to_dat(value: Option<&MotionAlgorithmController>) -> i32 {
+        let Some(value) = value else {
+            return SceneDatMoveMotionAlgorithm::Unspecified as i32;
+        };
+        match value.move_algorithm {
+            MoveMotionAlgorithm::None => SceneDatMoveMotionAlgorithm::None as i32,
+            MoveMotionAlgorithm::BipedWalkV1 => SceneDatMoveMotionAlgorithm::BipedWalkV1 as i32,
+            MoveMotionAlgorithm::QuadrupedWalkV1 => {
+                SceneDatMoveMotionAlgorithm::QuadrupedWalkV1 as i32
+            }
+            MoveMotionAlgorithm::CarWheelsV1 => SceneDatMoveMotionAlgorithm::CarWheelsV1 as i32,
+            MoveMotionAlgorithm::AirplanePropV1 => {
+                SceneDatMoveMotionAlgorithm::AirplanePropV1 as i32
+            }
+        }
+    }
+
+    for (transform, instance_id, prefab_id, tint, forms, motion_controller) in objects {
         let pos = transform.translation;
         let scale = transform.scale;
 
@@ -1585,6 +1616,7 @@ fn save_scene_dat_internal(
             scale_z: pack_non_default_scale(scale.z),
             forms: forms.into_iter().map(u128_to_uuid).collect(),
             active_form: active as u32,
+            move_motion_algorithm: move_motion_algorithm_to_dat(motion_controller),
         });
     }
 
@@ -2079,14 +2111,34 @@ fn load_scene_dat_from_path(
     let scene = SceneDat::decode(bytes.as_slice())
         .map_err(|err| format!("Failed to decode {}: {err}", path.display()))?;
 
-    if scene.version != SCENE_DAT_VERSION {
+    if scene.version != 7 && scene.version != SCENE_DAT_VERSION {
         warn!(
-            "Ignoring {}: unsupported scene.dat version {} (expected {}).",
+            "Ignoring {}: unsupported scene.dat version {} (expected 7 or {}).",
             path.display(),
             scene.version,
             SCENE_DAT_VERSION
         );
         return Ok(0);
+    }
+
+    fn move_motion_algorithm_from_dat(value: i32) -> Option<MoveMotionAlgorithm> {
+        match value {
+            x if x == SceneDatMoveMotionAlgorithm::Unspecified as i32 => None,
+            x if x == SceneDatMoveMotionAlgorithm::None as i32 => Some(MoveMotionAlgorithm::None),
+            x if x == SceneDatMoveMotionAlgorithm::BipedWalkV1 as i32 => {
+                Some(MoveMotionAlgorithm::BipedWalkV1)
+            }
+            x if x == SceneDatMoveMotionAlgorithm::QuadrupedWalkV1 as i32 => {
+                Some(MoveMotionAlgorithm::QuadrupedWalkV1)
+            }
+            x if x == SceneDatMoveMotionAlgorithm::CarWheelsV1 as i32 => {
+                Some(MoveMotionAlgorithm::CarWheelsV1)
+            }
+            x if x == SceneDatMoveMotionAlgorithm::AirplanePropV1 as i32 => {
+                Some(MoveMotionAlgorithm::AirplanePropV1)
+            }
+            _ => None,
+        }
     }
 
     for def in &scene.defs {
@@ -2165,6 +2217,12 @@ fn load_scene_dat_from_path(
         commands
             .entity(entity)
             .insert(ObjectForms { forms, active });
+        if let Some(move_algorithm) = move_motion_algorithm_from_dat(instance.move_motion_algorithm)
+        {
+            commands
+                .entity(entity)
+                .insert(MotionAlgorithmController { move_algorithm });
+        }
         spawned += 1;
     }
 
@@ -2193,6 +2251,14 @@ pub(crate) fn scene_autosave_detect_changes(
     changed_unit_forms: Query<Entity, (With<Commandable>, Without<Player>, Changed<ObjectForms>)>,
     changed_building_tints: Query<Entity, (With<BuildObject>, Changed<ObjectTint>)>,
     changed_unit_tints: Query<Entity, (With<Commandable>, Without<Player>, Changed<ObjectTint>)>,
+    changed_unit_motion_algorithms: Query<
+        Entity,
+        (
+            With<Commandable>,
+            Without<Player>,
+            Changed<MotionAlgorithmController>,
+        ),
+    >,
     mut removed: RemovedComponents<BuildObject>,
     mut removed_units: RemovedComponents<Commandable>,
 ) {
@@ -2207,6 +2273,7 @@ pub(crate) fn scene_autosave_detect_changes(
         || changed_unit_forms.iter().next().is_some();
     let tint_any = changed_building_tints.iter().next().is_some()
         || changed_unit_tints.iter().next().is_some();
+    let motion_any = changed_unit_motion_algorithms.iter().next().is_some();
 
     if !autosave.primed {
         autosave.primed = true;
@@ -2221,6 +2288,7 @@ pub(crate) fn scene_autosave_detect_changes(
         || prefab_any
         || forms_any
         || tint_any
+        || motion_any
     {
         autosave.dirty = true;
     }
@@ -2235,6 +2303,7 @@ pub(crate) fn scene_save_requests(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
+            Option<&MotionAlgorithmController>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
@@ -2277,6 +2346,7 @@ pub(crate) fn scene_autosave_tick(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
+            Option<&MotionAlgorithmController>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,

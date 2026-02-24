@@ -1249,6 +1249,11 @@ fn save_generated_prefab_descriptor_best_effort(
             }
         }
 
+        let body_edge = edges
+            .iter()
+            .find(|edge| edge.parent_object_id == root_id && edge.child_component_name.is_some())
+            .cloned();
+
         let mut by_child_name: HashMap<String, Edge> = HashMap::new();
         for edge in edges {
             let Some(name) = edge.child_component_name.as_ref() else {
@@ -1259,22 +1264,43 @@ fn save_generated_prefab_descriptor_best_effort(
 
         fn motion_rig_v1_from_roles(
             by_child_name: &HashMap<String, Edge>,
+            body_edge: Option<&Edge>,
             roles: &AiMotionRolesJsonV1,
         ) -> Option<serde_json::Value> {
             #[derive(Clone, Copy)]
-            struct Leg<'a> {
+            struct Limb<'a> {
                 edge: &'a Edge,
                 name: &'a str,
                 group: Option<u32>,
             }
             #[derive(Clone, Copy)]
-            struct Wheel<'a> {
+            struct Spinner<'a> {
                 edge: &'a Edge,
                 axis: Option<[f32; 3]>,
             }
 
-            let mut legs: Vec<Leg<'_>> = Vec::new();
-            let mut wheels: Vec<Wheel<'_>> = Vec::new();
+            fn spinner_json(spinner: Spinner<'_>) -> serde_json::Value {
+                let mut obj = serde_json::Map::new();
+                obj.insert("edge".into(), edge_json(spinner.edge));
+                if let Some(axis) = spinner.axis {
+                    obj.insert(
+                        "spin_axis_local".into(),
+                        serde_json::json!([axis[0], axis[1], axis[2]]),
+                    );
+                }
+                serde_json::Value::Object(obj)
+            }
+
+            let mut legs: Vec<Limb<'_>> = Vec::new();
+            let mut arms: Vec<Limb<'_>> = Vec::new();
+            let mut wheels: Vec<Spinner<'_>> = Vec::new();
+            let mut propellers: Vec<Spinner<'_>> = Vec::new();
+            let mut rotors: Vec<Spinner<'_>> = Vec::new();
+            let mut heads: Vec<&Edge> = Vec::new();
+            let mut ears: Vec<&Edge> = Vec::new();
+            let mut tails: Vec<&Edge> = Vec::new();
+            let mut wings: Vec<&Edge> = Vec::new();
+
             for effector in roles.move_effectors.iter() {
                 let name = effector.component.trim();
                 if name.is_empty() {
@@ -1285,14 +1311,37 @@ fn save_generated_prefab_descriptor_best_effort(
                 };
                 match effector.role {
                     AiMoveEffectorRoleJsonV1::Leg => {
-                        legs.push(Leg {
+                        legs.push(Limb {
                             edge,
                             name,
                             group: effector.phase_group,
                         });
                     }
                     AiMoveEffectorRoleJsonV1::Wheel => {
-                        wheels.push(Wheel {
+                        wheels.push(Spinner {
+                            edge,
+                            axis: effector.spin_axis_local,
+                        });
+                    }
+                    AiMoveEffectorRoleJsonV1::Arm => {
+                        arms.push(Limb {
+                            edge,
+                            name,
+                            group: effector.phase_group,
+                        });
+                    }
+                    AiMoveEffectorRoleJsonV1::Head => heads.push(edge),
+                    AiMoveEffectorRoleJsonV1::Ear => ears.push(edge),
+                    AiMoveEffectorRoleJsonV1::Tail => tails.push(edge),
+                    AiMoveEffectorRoleJsonV1::Wing => wings.push(edge),
+                    AiMoveEffectorRoleJsonV1::Propeller => {
+                        propellers.push(Spinner {
+                            edge,
+                            axis: effector.spin_axis_local,
+                        });
+                    }
+                    AiMoveEffectorRoleJsonV1::Rotor => {
+                        rotors.push(Spinner {
                             edge,
                             axis: effector.spin_axis_local,
                         });
@@ -1300,29 +1349,48 @@ fn save_generated_prefab_descriptor_best_effort(
                 }
             }
 
+            let head = heads.first().copied();
+            let tail = tails.first().copied();
+            let ears = ears.into_iter().take(4).collect::<Vec<_>>();
+            let wings = wings.into_iter().take(4).collect::<Vec<_>>();
+
+            if !propellers.is_empty() || !rotors.is_empty() {
+                let propellers = propellers.into_iter().map(spinner_json).collect::<Vec<_>>();
+                let rotors = rotors.into_iter().map(spinner_json).collect::<Vec<_>>();
+                let mut out = serde_json::json!({
+                    "version": 1,
+                    "kind": "airplane_v1",
+                    "default_move_algorithm": "airplane_prop_v1",
+                    "airplane": {
+                        "propellers": propellers,
+                        "rotors": rotors,
+                    }
+                });
+                if let Some(body_edge) = body_edge {
+                    out["body"] = edge_json(body_edge);
+                }
+                if !wings.is_empty() {
+                    out["airplane"]["wings"] = serde_json::Value::Array(
+                        wings.into_iter().map(edge_json).collect::<Vec<_>>(),
+                    );
+                }
+                return Some(out);
+            }
+
             if !wheels.is_empty() {
-                let wheels = wheels
-                    .into_iter()
-                    .map(|wheel| {
-                        let mut obj = serde_json::Map::new();
-                        obj.insert("edge".into(), edge_json(wheel.edge));
-                        if let Some(axis) = wheel.axis {
-                            obj.insert(
-                                "spin_axis_local".into(),
-                                serde_json::json!([axis[0], axis[1], axis[2]]),
-                            );
-                        }
-                        serde_json::Value::Object(obj)
-                    })
-                    .collect::<Vec<_>>();
-                return Some(serde_json::json!({
+                let wheels = wheels.into_iter().map(spinner_json).collect::<Vec<_>>();
+                let mut out = serde_json::json!({
                     "version": 1,
                     "kind": "car_v1",
                     "default_move_algorithm": "car_wheels_v1",
                     "car": {
                         "wheels": wheels,
                     }
-                }));
+                });
+                if let Some(body_edge) = body_edge {
+                    out["body"] = edge_json(body_edge);
+                }
+                return Some(out);
             }
 
             if legs.len() == 2 {
@@ -1334,7 +1402,29 @@ fn save_generated_prefab_descriptor_best_effort(
                 if left.name == right.name {
                     return None;
                 }
-                return Some(serde_json::json!({
+
+                let mut arm0: Option<Limb<'_>> = None;
+                let mut arm1: Option<Limb<'_>> = None;
+                if arms.len() == 1 {
+                    arm0 = Some(arms[0]);
+                } else if arms.len() >= 2 {
+                    arms.sort_by(|a, b| a.name.cmp(b.name));
+                    arm0 = arms
+                        .iter()
+                        .find(|l| l.group == Some(0))
+                        .copied()
+                        .or(Some(arms[0]));
+                    arm1 = arms
+                        .iter()
+                        .find(|l| l.group == Some(1))
+                        .copied()
+                        .or(Some(arms[1]));
+                    if arm0.is_some_and(|a| arm1.is_some_and(|b| a.name == b.name)) {
+                        arm1 = None;
+                    }
+                }
+
+                let mut out = serde_json::json!({
                     "version": 1,
                     "kind": "biped_v1",
                     "default_move_algorithm": "biped_walk_v1",
@@ -1342,14 +1432,34 @@ fn save_generated_prefab_descriptor_best_effort(
                         "left_leg": edge_json(left.edge),
                         "right_leg": edge_json(right.edge),
                     }
-                }));
+                });
+                if let Some(body_edge) = body_edge {
+                    out["body"] = edge_json(body_edge);
+                }
+                if let Some(arm0) = arm0 {
+                    out["biped"]["left_arm"] = edge_json(arm0.edge);
+                }
+                if let Some(arm1) = arm1 {
+                    out["biped"]["right_arm"] = edge_json(arm1.edge);
+                }
+                if let Some(head) = head {
+                    out["biped"]["head"] = edge_json(head);
+                }
+                if let Some(tail) = tail {
+                    out["biped"]["tail"] = edge_json(tail);
+                }
+                if !ears.is_empty() {
+                    out["biped"]["ears"] =
+                        serde_json::Value::Array(ears.into_iter().map(edge_json).collect());
+                }
+                return Some(out);
             }
 
             if legs.len() == 4 {
                 legs.sort_by(|a, b| a.name.cmp(b.name));
                 let group0 = legs.iter().filter(|l| l.group == Some(0)).count();
                 let group1 = legs.iter().filter(|l| l.group == Some(1)).count();
-                let mut groups: [Vec<Leg<'_>>; 2] = [Vec::new(), Vec::new()];
+                let mut groups: [Vec<Limb<'_>>; 2] = [Vec::new(), Vec::new()];
                 if group0 == 2 && group1 == 2 {
                     for leg in legs {
                         match leg.group {
@@ -1370,7 +1480,7 @@ fn save_generated_prefab_descriptor_best_effort(
                 groups[0].sort_by(|a, b| a.name.cmp(b.name));
                 groups[1].sort_by(|a, b| a.name.cmp(b.name));
 
-                return Some(serde_json::json!({
+                let mut out = serde_json::json!({
                     "version": 1,
                     "kind": "quadruped_v1",
                     "default_move_algorithm": "quadruped_walk_v1",
@@ -1380,75 +1490,30 @@ fn save_generated_prefab_descriptor_best_effort(
                         "back_left_leg": edge_json(groups[1][1].edge),
                         "back_right_leg": edge_json(groups[0][1].edge),
                     }
-                }));
+                });
+                if let Some(body_edge) = body_edge {
+                    out["body"] = edge_json(body_edge);
+                }
+                if let Some(head) = head {
+                    out["quadruped"]["head"] = edge_json(head);
+                }
+                if let Some(tail) = tail {
+                    out["quadruped"]["tail"] = edge_json(tail);
+                }
+                if !ears.is_empty() {
+                    out["quadruped"]["ears"] =
+                        serde_json::Value::Array(ears.into_iter().map(edge_json).collect());
+                }
+                return Some(out);
             }
 
             None
         }
 
         if let Some(roles) = motion_roles {
-            if let Some(rig) = motion_rig_v1_from_roles(&by_child_name, roles) {
+            if let Some(rig) = motion_rig_v1_from_roles(&by_child_name, body_edge.as_ref(), roles) {
                 return Some(rig);
             }
-        }
-
-        let wheel_names = ["wheel_fl", "wheel_fr", "wheel_bl", "wheel_br"];
-        if wheel_names
-            .iter()
-            .all(|name| by_child_name.contains_key(*name))
-        {
-            let wheels = wheel_names
-                .iter()
-                .filter_map(|name| by_child_name.get(*name))
-                .map(|edge| serde_json::json!({ "edge": edge_json(edge) }))
-                .collect::<Vec<_>>();
-            return Some(serde_json::json!({
-                "version": 1,
-                "kind": "car_v1",
-                "car": {
-                    "wheels": wheels,
-                }
-            }));
-        }
-
-        let quad_leg_names = [
-            "front_left_leg",
-            "front_right_leg",
-            "back_left_leg",
-            "back_right_leg",
-        ];
-        if quad_leg_names
-            .iter()
-            .all(|name| by_child_name.contains_key(*name))
-        {
-            let fl = by_child_name.get("front_left_leg")?;
-            let fr = by_child_name.get("front_right_leg")?;
-            let bl = by_child_name.get("back_left_leg")?;
-            let br = by_child_name.get("back_right_leg")?;
-            return Some(serde_json::json!({
-                "version": 1,
-                "kind": "quadruped_v1",
-                "quadruped": {
-                    "front_left_leg": edge_json(fl),
-                    "front_right_leg": edge_json(fr),
-                    "back_left_leg": edge_json(bl),
-                    "back_right_leg": edge_json(br),
-                }
-            }));
-        }
-
-        if let (Some(left), Some(right)) = (
-            by_child_name.get("left_leg"),
-            by_child_name.get("right_leg"),
-        ) {
-            return Some(serde_json::json!({
-                "version": 1,
-                "kind": "biped_v1",
-                "biped": {
-                    "left_leg": edge_json(left),
-                    "right_leg": edge_json(right),
-                }
-            }));
         }
 
         None

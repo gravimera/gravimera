@@ -7,8 +7,7 @@ use uuid::Uuid;
 use crate::object::registry::{
     builtin_object_id, AimProfile, AnchorRef, ColliderProfile, MeleeAttackProfile, MeshKey,
     MobilityDef, MobilityMode, ObjectDef, ObjectInteraction, ObjectPartDef, ObjectPartKind,
-    PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot,
-    PartAnimationSpec, PrimitiveParams, PrimitiveVisualDef, ProjectileObstacleRule,
+    PartAnimationDef, PrimitiveParams, PrimitiveVisualDef, ProjectileObstacleRule,
     ProjectileProfile, RangedAttackProfile, UnitAttackKind, UnitAttackProfile,
 };
 
@@ -21,36 +20,6 @@ use super::{Gen3dPlannedAttachment, Gen3dPlannedComponent};
 fn rotated_half_extents(half: Vec3, rotation: Quat) -> Vec3 {
     let abs = Mat3::from_quat(rotation).abs();
     abs * half
-}
-
-fn normalize_motion_channel(raw: &str) -> Option<String> {
-    let mut channel = raw.trim().to_ascii_lowercase();
-    if channel.is_empty() {
-        return None;
-    }
-
-    channel = channel.replace([' ', '-'], "_");
-    let mut out = String::with_capacity(channel.len());
-    let mut prev_underscore = false;
-    for ch in channel.chars() {
-        let keep = ch.is_ascii_alphanumeric() || ch == '_';
-        let next = if keep { ch } else { '_' };
-        if next == '_' {
-            if prev_underscore {
-                continue;
-            }
-            prev_underscore = true;
-            out.push('_');
-        } else {
-            prev_underscore = false;
-            out.push(next);
-        }
-    }
-    let trimmed = out.trim_matches('_');
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(trimmed.to_string())
 }
 
 pub(super) fn plan_rotation_from_forward_up_lossy(forward: Vec3, up: Option<Vec3>) -> Quat {
@@ -100,7 +69,10 @@ pub(super) fn plan_rotation_from_forward_up_lossy(forward: Vec3, up: Option<Vec3
     Quat::from_mat3(&Mat3::from_cols(r, u2, f)).normalize()
 }
 
-pub(super) fn plan_rotation_from_forward_up_strict(forward: Vec3, up: Vec3) -> Result<Quat, String> {
+pub(super) fn plan_rotation_from_forward_up_strict(
+    forward: Vec3,
+    up: Vec3,
+) -> Result<Quat, String> {
     const EPS: f32 = 1e-5;
 
     if !forward.is_finite() || forward.length_squared() < EPS {
@@ -114,7 +86,9 @@ pub(super) fn plan_rotation_from_forward_up_strict(forward: Vec3, up: Vec3) -> R
     let u = up.normalize();
 
     if u.dot(f).abs() > 0.98 {
-        return Err("up must not be nearly parallel to forward (provide a distinct up vector)".into());
+        return Err(
+            "up must not be nearly parallel to forward (provide a distinct up vector)".into(),
+        );
     }
 
     let r = u.cross(f);
@@ -172,8 +146,7 @@ fn collider_profile_from_ai(
     })
 }
 
-fn mobility_from_ai(mobility: Option<&AiMobilityJson>) -> Option<MobilityDef> {
-    let mobility = mobility?;
+fn mobility_from_ai(mobility: &AiMobilityJson) -> Option<MobilityDef> {
     match mobility {
         AiMobilityJson::Static => None,
         AiMobilityJson::Ground { max_speed } => {
@@ -425,7 +398,9 @@ fn quat_from_forward_up_or_identity(
 ) -> Result<Quat, String> {
     let forward_v = ai_vec3_opt(forward);
     if forward.is_some() && forward_v.is_none() {
-        return Err(format!("{context}: forward must be a finite, non-zero vec3"));
+        return Err(format!(
+            "{context}: forward must be a finite, non-zero vec3"
+        ));
     }
     let up_v = ai_vec3_opt(up);
     if up.is_some() && up_v.is_none() {
@@ -636,10 +611,14 @@ fn attachment_offset_from_ai(
     let rot_frame = offset.rot_frame.unwrap_or(AiRotationFrameJson::Join);
     let rotation = if offset.forward.is_some() || offset.up.is_some() {
         let Some(forward) = offset.forward else {
-            return Err("offset rotation basis requires both `forward` and `up` (missing `forward`)".into());
+            return Err(
+                "offset rotation basis requires both `forward` and `up` (missing `forward`)".into(),
+            );
         };
         let Some(up) = offset.up else {
-            return Err("offset rotation basis requires both `forward` and `up` (missing `up`)".into());
+            return Err(
+                "offset rotation basis requires both `forward` and `up` (missing `up`)".into(),
+            );
         };
         let mut forward =
             ai_vec3_opt(Some(forward)).ok_or("offset.forward must be a finite, non-zero vec3")?;
@@ -691,167 +670,6 @@ fn attachment_offset_from_ai(
     Ok(Transform::from_translation(translation)
         .with_rotation(rotation)
         .with_scale(scale))
-}
-
-fn animation_keyframe_delta_from_ai(
-    delta: Option<&AiAttachmentOffsetJson>,
-    parent_anchor_rot: Option<Quat>,
-) -> Result<Transform, String> {
-    attachment_offset_from_ai(delta, parent_anchor_rot)
-}
-
-fn part_animation_from_ai(
-    animation: &AiPartAnimationJson,
-    parent_anchor_rot: Option<Quat>,
-) -> Result<Option<PartAnimationDef>, String> {
-    match animation {
-        AiPartAnimationJson::Loop {
-            duration_secs,
-            keyframes,
-        } => {
-            let duration_secs = if duration_secs.is_finite() && *duration_secs > 0.0 {
-                *duration_secs
-            } else {
-                return Ok(None);
-            };
-            if keyframes.is_empty() {
-                return Ok(None);
-            }
-
-            let mut out: Vec<PartAnimationKeyframeDef> = Vec::with_capacity(keyframes.len());
-            for kf in keyframes.iter() {
-                if !kf.time_secs.is_finite() {
-                    continue;
-                }
-                let delta =
-                    animation_keyframe_delta_from_ai(kf.delta.as_ref(), parent_anchor_rot)?;
-                out.push(PartAnimationKeyframeDef {
-                    time_secs: kf.time_secs.clamp(0.0, duration_secs),
-                    delta,
-                });
-            }
-            if out.is_empty() {
-                return Ok(None);
-            }
-            out.sort_by(|a, b| {
-                a.time_secs
-                    .partial_cmp(&b.time_secs)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            Ok(Some(PartAnimationDef::Loop {
-                duration_secs,
-                keyframes: out,
-            }))
-        }
-    }
-}
-
-fn part_animation_spec_from_ai(
-    spec: &AiAnimationSpecJson,
-    parent_anchor_rot: Option<Quat>,
-) -> Result<PartAnimationSpec, String> {
-    let driver = match spec.driver {
-        AiAnimationDriverJson::Always => PartAnimationDriver::Always,
-        AiAnimationDriverJson::MovePhase => PartAnimationDriver::MovePhase,
-        AiAnimationDriverJson::MoveDistance => PartAnimationDriver::MoveDistance,
-        AiAnimationDriverJson::AttackTime => PartAnimationDriver::AttackTime,
-    };
-    let speed_scale = spec.speed_scale.unwrap_or(1.0).clamp(0.0, 1000.0).max(0.0);
-    let speed_scale = if speed_scale.is_finite() && speed_scale > 0.0 {
-        speed_scale
-    } else {
-        1.0
-    };
-    let time_offset_units = spec.time_offset_units.unwrap_or(0.0).clamp(-1.0e9, 1.0e9);
-    let time_offset_units = if time_offset_units.is_finite() {
-        time_offset_units
-    } else {
-        0.0
-    };
-
-    let clip = match &spec.clip {
-        AiAnimationClipJson::Loop {
-            duration_secs,
-            keyframes,
-        }
-        | AiAnimationClipJson::Once {
-            duration_secs,
-            keyframes,
-        }
-        | AiAnimationClipJson::PingPong {
-            duration_secs,
-            keyframes,
-        } => {
-            let duration_secs = if duration_secs.is_finite() && *duration_secs > 0.0 {
-                *duration_secs
-            } else {
-                return Err("keyframed clip duration_secs must be a finite, positive number".into());
-            };
-            if keyframes.is_empty() {
-                return Err("keyframed clip must contain at least 1 keyframe".into());
-            }
-
-            let mut out: Vec<PartAnimationKeyframeDef> = Vec::with_capacity(keyframes.len());
-            for kf in keyframes.iter() {
-                if !kf.time_secs.is_finite() {
-                    return Err("keyframed clip keyframe time_secs must be finite".into());
-                }
-                let delta =
-                    animation_keyframe_delta_from_ai(kf.delta.as_ref(), parent_anchor_rot)?;
-                out.push(PartAnimationKeyframeDef {
-                    time_secs: kf.time_secs.clamp(0.0, duration_secs),
-                    delta,
-                });
-            }
-            if out.is_empty() {
-                return Err("keyframed clip must contain at least 1 valid keyframe".into());
-            }
-            out.sort_by(|a, b| {
-                a.time_secs
-                    .partial_cmp(&b.time_secs)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            match &spec.clip {
-                AiAnimationClipJson::Loop { .. } => PartAnimationDef::Loop {
-                    duration_secs,
-                    keyframes: out,
-                },
-                AiAnimationClipJson::Once { .. } => PartAnimationDef::Once {
-                    duration_secs,
-                    keyframes: out,
-                },
-                AiAnimationClipJson::PingPong { .. } => PartAnimationDef::PingPong {
-                    duration_secs,
-                    keyframes: out,
-                },
-                AiAnimationClipJson::Spin { .. } => unreachable!("spin handled below"),
-            }
-        }
-        AiAnimationClipJson::Spin {
-            axis,
-            radians_per_unit,
-        } => {
-            let axis = Vec3::new(axis[0], axis[1], axis[2]);
-            if !axis.is_finite() || axis.length_squared() <= 1e-6 {
-                return Err("spin axis must be a finite, non-zero vec3".into());
-            }
-            let r = *radians_per_unit;
-            if !r.is_finite() || r.abs() <= 1e-6 {
-                return Err("spin radians_per_unit must be a finite, non-zero number".into());
-            }
-            PartAnimationDef::Spin {
-                axis,
-                radians_per_unit: r,
-            }
-        }
-    };
-
-    Ok(PartAnimationSpec {
-        driver,
-        speed_scale,
-        time_offset_units,
-        clip,
-    })
 }
 
 pub(super) fn resolve_planned_component_transforms(
@@ -1089,102 +907,20 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                             )
                         })?
                 };
-                let offset =
-                    attachment_offset_from_ai(att.offset.as_ref(), parent_anchor_rot).map_err(
-                        |err| {
-                            format!(
-                                "AI plan: component `{}` attach_to.offset is invalid: {err}",
-                                comp.name
-                            )
-                        },
-                    )?;
-                let child_anchor_rot = if child_anchor == "origin" {
-                    Quat::IDENTITY
-                } else {
-                    anchors
-                        .iter()
-                        .find(|a| a.name.as_ref() == child_anchor)
-                        .map(|a| a.transform.rotation)
-                        .ok_or_else(|| {
-                            format!(
-                                "AI plan: component `{}` missing required child_anchor `{}` in its anchors.",
-                                comp.name, child_anchor
-                            )
-                        })?
-                };
-
-                let mut animations: Vec<PartAnimationSlot> = Vec::new();
-                if let Some(map) = att.animations.as_ref() {
-                    let mut seen_channels: std::collections::HashSet<String> =
-                        std::collections::HashSet::new();
-                    for (channel, spec) in map.iter() {
-                        let Some(spec) = spec.as_ref() else {
-                            continue;
-                        };
-                        let Some(channel) = normalize_motion_channel(channel) else {
-                            continue;
-                        };
-                        if !seen_channels.insert(channel.clone()) {
-                            continue;
-                        }
-                        let mut spec =
-                            part_animation_spec_from_ai(spec, parent_anchor_rot).map_err(
-                                |err| {
-                                    format!(
-                                        "AI plan: component `{}` attach_to.animations.{channel} is invalid: {err}",
-                                        comp.name
-                                    )
-                                },
-                            )?;
-
-                        // The AI authoring spec defines spin axes in component-local space. The runtime
-                        // animation playback applies deltas in the attachment join frame, so we convert
-                        // axes into that join frame here based on the child's anchor orientation.
-                        if let PartAnimationDef::Spin { axis, .. } = &mut spec.clip {
-                            *axis = offset.rotation * (child_anchor_rot.inverse() * *axis);
-                        }
-                        animations.push(PartAnimationSlot {
-                            channel: channel.into(),
-                            spec,
-                        });
-                    }
-                }
-
-                // Legacy plan v4 field: treat as an ambient loop.
-                if animations.is_empty() {
-                    if let Some(animation) = att.animation.as_ref() {
-                        if let Some(animation) =
-                            part_animation_from_ai(animation, parent_anchor_rot).map_err(
-                                |err| {
-                                    format!(
-                                        "AI plan: component `{}` attach_to.animation is invalid: {err}",
-                                        comp.name
-                                    )
-                                },
-                            )?
-                        {
-                            animations.push(PartAnimationSlot {
-                                channel: "ambient".into(),
-                                spec: PartAnimationSpec {
-                                    driver: PartAnimationDriver::Always,
-                                    speed_scale: 1.0,
-                                    time_offset_units: 0.0,
-                                    clip: animation,
-                                },
-                            });
-                        }
-                    }
-                }
+                let offset = attachment_offset_from_ai(att.offset.as_ref(), parent_anchor_rot)
+                    .map_err(|err| {
+                        format!(
+                            "AI plan: component `{}` attach_to.offset is invalid: {err}",
+                            comp.name
+                        )
+                    })?;
                 Some(Gen3dPlannedAttachment {
                     parent: parent.to_string(),
                     parent_anchor: parent_anchor.to_string(),
                     child_anchor: child_anchor.to_string(),
                     offset,
-                    joint: {
-                        let joint = att.joint.clone();
-                        joint
-                    },
-                    animations,
+                    joint: att.joint.clone(),
+                    animations: Vec::new(),
                 })
             }
         };
@@ -1283,15 +1019,13 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                 planned[parent_idx].name, att.parent_anchor, comp.name
             )
         })?;
-        let child_anchor =
-            anchor_transform_from_defs(&comp.anchors, att.child_anchor.as_str()).ok_or_else(
-                || {
-                    format!(
-                        "AI plan: component `{}` missing required child_anchor `{}` in its anchors.",
-                        comp.name, att.child_anchor
-                    )
-                },
-            )?;
+        let child_anchor = anchor_transform_from_defs(&comp.anchors, att.child_anchor.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "AI plan: component `{}` missing required child_anchor `{}` in its anchors.",
+                    comp.name, att.child_anchor
+                )
+            })?;
 
         let parent_forward = parent_anchor.rotation * Vec3::Z;
         let child_forward = child_anchor.rotation * Vec3::Z;
@@ -1374,7 +1108,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
         defs[parent_idx].parts.push(part);
     }
 
-    let mobility = mobility_from_ai(plan.mobility.as_ref());
+    let mobility = mobility_from_ai(&plan.mobility);
     let anim_window_secs =
         attack_anim_window_secs_from_planned_components(&planned).unwrap_or(0.35);
     let mut attack_profile: Option<UnitAttackProfile> = None;
@@ -1536,118 +1270,13 @@ pub(super) fn ai_plan_to_initial_draft_defs(
     }
 
     let root_component_id = component_ids[root_idx];
-    let mut root_part = ObjectPartDef::object_ref(root_component_id, Transform::IDENTITY)
+    let root_part = ObjectPartDef::object_ref(root_component_id, Transform::IDENTITY)
         .with_attachment(crate::object::registry::AttachmentDef {
             parent_anchor: "origin".into(),
             child_anchor: "origin".into(),
         });
 
-    if mobility.is_some() {
-        let mut has_idle = false;
-        let mut has_move = false;
-        for def in defs.iter() {
-            for part in def.parts.iter() {
-                for slot in part.animations.iter() {
-                    match slot.channel.as_ref() {
-                        "idle" => has_idle = true,
-                        "move" => has_move = true,
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        let default_idle = || PartAnimationSpec {
-            driver: PartAnimationDriver::Always,
-            speed_scale: 1.0,
-            time_offset_units: 0.0,
-            clip: PartAnimationDef::Loop {
-                duration_secs: 2.0,
-                keyframes: vec![
-                    PartAnimationKeyframeDef {
-                        time_secs: 0.0,
-                        delta: Transform::IDENTITY,
-                    },
-                    PartAnimationKeyframeDef {
-                        time_secs: 0.5,
-                        delta: Transform {
-                            rotation: Quat::from_rotation_x(0.05),
-                            ..default()
-                        },
-                    },
-                    PartAnimationKeyframeDef {
-                        time_secs: 1.0,
-                        delta: Transform::IDENTITY,
-                    },
-                    PartAnimationKeyframeDef {
-                        time_secs: 1.5,
-                        delta: Transform {
-                            rotation: Quat::from_rotation_x(-0.05),
-                            ..default()
-                        },
-                    },
-                    PartAnimationKeyframeDef {
-                        time_secs: 2.0,
-                        delta: Transform::IDENTITY,
-                    },
-                ],
-            },
-        };
-
-        let default_move = || {
-            let amp = (root_size.y.abs() * 0.02).clamp(0.0025, 0.06);
-            PartAnimationSpec {
-                driver: PartAnimationDriver::MovePhase,
-                speed_scale: 1.0,
-                time_offset_units: 0.0,
-                clip: PartAnimationDef::Loop {
-                    // Units are meters traveled (XZ) for move-driven channels.
-                    duration_secs: 2.0,
-                    keyframes: vec![
-                        PartAnimationKeyframeDef {
-                            time_secs: 0.0,
-                            delta: Transform::IDENTITY,
-                        },
-                        PartAnimationKeyframeDef {
-                            time_secs: 0.5,
-                            delta: Transform {
-                                translation: Vec3::Y * amp,
-                                ..default()
-                            },
-                        },
-                        PartAnimationKeyframeDef {
-                            time_secs: 1.0,
-                            delta: Transform::IDENTITY,
-                        },
-                        PartAnimationKeyframeDef {
-                            time_secs: 1.5,
-                            delta: Transform {
-                                translation: Vec3::Y * amp,
-                                ..default()
-                            },
-                        },
-                        PartAnimationKeyframeDef {
-                            time_secs: 2.0,
-                            delta: Transform::IDENTITY,
-                        },
-                    ],
-                },
-            }
-        };
-
-        if !has_idle {
-            root_part.animations.push(PartAnimationSlot {
-                channel: "idle".into(),
-                spec: default_idle(),
-            });
-        }
-        if !has_move {
-            root_part.animations.push(PartAnimationSlot {
-                channel: "move".into(),
-                spec: default_move(),
-            });
-        }
-    }
+    // Gen3D outputs are static-only: no prefab-authored animation clips by default.
 
     defs.push(ObjectDef {
         object_id: gen3d_draft_object_id(),
@@ -2247,15 +1876,13 @@ pub(super) fn apply_ai_review_delta_actions(
                         component_id, components[idx].name, child_anchor, components[idx].name
                     ));
                 }
-                let offset =
-                    attachment_offset_from_ai(set.offset.as_ref(), parent_anchor_rot).map_err(
-                        |err| {
-                            format!(
-                                "review_delta_v1: tweak_attachment {} ({}) has invalid offset: {err}",
-                                component_id, components[idx].name
-                            )
-                        },
-                    )?;
+                let offset = attachment_offset_from_ai(set.offset.as_ref(), parent_anchor_rot)
+                    .map_err(|err| {
+                        format!(
+                            "review_delta_v1: tweak_attachment {} ({}) has invalid offset: {err}",
+                            component_id, components[idx].name
+                        )
+                    })?;
                 let animations = components[idx]
                     .attach_to
                     .as_ref()
@@ -2330,95 +1957,8 @@ pub(super) fn apply_ai_review_delta_actions(
                 }
                 result.had_actions = true;
             }
-            AiReviewDeltaActionJsonV1::TweakAnimation {
-                component_id,
-                channel,
-                spec,
-                reason,
-            } => {
-                let Some(object_id) = parse_component_id_u128(&component_id) else {
-                    continue;
-                };
-                let Some(idx) = component_index_from_object_id(components, object_id) else {
-                    continue;
-                };
-
-                let channel = channel.trim();
-                if channel.is_empty() {
-                    continue;
-                }
-                let parent_anchor_rot = components[idx].attach_to.as_ref().and_then(|att| {
-                    let parent = att.parent.as_str();
-                    let parent_anchor = att.parent_anchor.as_str();
-                    components
-                        .iter()
-                        .find(|c| c.name == parent)
-                        .and_then(|c| anchor_transform_from_defs(&c.anchors, parent_anchor))
-                        .map(|t| t.rotation)
-                });
-
-                let component_name = components[idx].name.clone();
-
-                let Some(att) = components[idx].attach_to.as_mut() else {
-                    continue;
-                };
-                let mut spec = part_animation_spec_from_ai(&spec, parent_anchor_rot).map_err(
-                    |err| {
-                        format!(
-                            "review_delta_v1: tweak_animation {} ({}) channel `{}` is invalid: {err}",
-                            component_id, component_name, channel
-                        )
-                    },
-                )?;
-
-                // Convert spin axis from component-local to the attachment join frame, matching the plan conversion.
-                if let PartAnimationDef::Spin { axis, .. } = &mut spec.clip {
-                    let child_anchor_rot = if att.child_anchor == "origin" {
-                        Quat::IDENTITY
-                    } else {
-                        components[idx]
-                            .anchors
-                            .iter()
-                            .find(|a| a.name.as_ref() == att.child_anchor)
-                            .map(|a| a.transform.rotation)
-                            .ok_or_else(|| {
-                                format!(
-                                    "review_delta_v1: tweak_animation {} ({}) references missing child_anchor `{}` on component `{}`.",
-                                    component_id, component_name, att.child_anchor, component_name
-                                )
-                            })?
-                    };
-                    *axis = att.offset.rotation * (child_anchor_rot.inverse() * *axis);
-                }
-
-                let slot = PartAnimationSlot {
-                    channel: channel.to_string().into(),
-                    spec,
-                };
-
-                if let Some(existing) = att
-                    .animations
-                    .iter_mut()
-                    .find(|s| s.channel.as_ref() == channel)
-                {
-                    *existing = slot;
-                } else {
-                    att.animations.push(slot);
-                }
-
-                if !reason.trim().is_empty() {
-                    debug!(
-                        "Gen3D: review-delta tweak_animation {} ({}) channel={} reason={}",
-                        component_id,
-                        components[idx].name,
-                        channel,
-                        reason.trim()
-                    );
-                }
-                result.had_actions = true;
-            }
             AiReviewDeltaActionJsonV1::TweakMobility { mobility, reason } => {
-                let mobility = mobility_from_ai(Some(&mobility));
+                let mobility = mobility_from_ai(&mobility);
                 let root_def = draft
                     .defs
                     .iter_mut()
@@ -2998,6 +2538,7 @@ fn size_from_primitive_parts(parts: &[ObjectPartDef]) -> Vec3 {
 mod tests {
     use super::super::parse;
     use super::*;
+    use crate::object::registry::{PartAnimationDriver, PartAnimationSlot, PartAnimationSpec};
 
     #[test]
     fn recenters_component_parts_and_anchors_together() {
@@ -3097,7 +2638,8 @@ mod tests {
             }],
         };
 
-        let err = ai_to_component_def(&planned, ai, None).expect_err("expected axis-permutation error");
+        let err =
+            ai_to_component_def(&planned, ai, None).expect_err("expected axis-permutation error");
         assert!(err.contains("permuted local axes"));
         assert!(err.contains("permuted AABB"));
     }
@@ -3184,238 +2726,6 @@ mod tests {
     }
 
     #[test]
-    fn animation_keyframe_basis_vectors_are_converted_into_join_frame() {
-        // Regression: plan animations sometimes author keyframe basis vectors in the PARENT
-        // COMPONENT frame (matching anchors). When the join frame is intentionally rotated (e.g.
-        // neck join +Z points up), treating those vectors as join-frame coordinates rotates the
-        // part by ~90 degrees.
-        //
-        // When `rot_frame=parent`, we convert `delta.forward/up` into the attachment join frame
-        // using the parent anchor orientation so that rest poses match the declared join frame.
-        let plan_text = r##"{
-          "version": 7,
-          "components": [
-            {
-              "name": "body",
-              "size": [1.0, 1.0, 1.0],
-              "anchors": [
-                { "name": "neck", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
-              ]
-            },
-            {
-              "name": "head",
-              "size": [1.0, 1.0, 1.0],
-              "anchors": [
-                { "name": "neck_mount", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
-              ],
-              "attach_to": {
-                "parent": "body",
-                "parent_anchor": "neck",
-                "child_anchor": "neck_mount",
-                "offset": { "pos": [0,0,0] },
-                "animations": {
-                  "idle": {
-                    "driver": "always",
-                    "clip": {
-                      "kind": "loop",
-                      "duration_secs": 1.0,
-                      "keyframes": [
-                        { "time_secs": 0.0, "delta": { "rot_frame": "parent", "forward": [0,1,0], "up": [0,0,1] } }
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }"##;
-
-        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
-        let (_planned, _notes, defs) =
-            ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
-
-        let body_id = builtin_object_id("gravimera/gen3d/component/body");
-        let head_id = builtin_object_id("gravimera/gen3d/component/head");
-        let body_def = defs
-            .iter()
-            .find(|def| def.object_id == body_id)
-            .expect("body def");
-        let head_part = body_def
-            .parts
-            .iter()
-            .find(|p| matches!(p.kind, ObjectPartKind::ObjectRef { object_id } if object_id == head_id))
-            .expect("head part ref");
-        let idle = head_part
-            .animations
-            .iter()
-            .find(|s| s.channel.as_ref() == "idle")
-            .expect("idle slot");
-
-        let PartAnimationDef::Loop { keyframes, .. } = &idle.spec.clip else {
-            panic!("expected loop clip");
-        };
-        assert_eq!(keyframes.len(), 1, "expected one keyframe");
-        let rot = keyframes[0].delta.rotation.normalize();
-        assert!(rot.is_finite(), "rotation should be finite");
-        // Rest pose should be identity in the join frame.
-        assert!(
-            rot.dot(Quat::IDENTITY).abs() > 0.9999,
-            "expected identity delta rotation in join frame; rot={:?}",
-            rot
-        );
-    }
-
-    #[test]
-    fn animation_keyframe_quaternion_is_converted_into_join_frame() {
-        let plan_text = r##"{
-          "version": 7,
-          "components": [
-            {
-              "name": "body",
-              "size": [1.0, 1.0, 1.0],
-              "anchors": [
-                { "name": "neck", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
-              ]
-            },
-            {
-              "name": "head",
-              "size": [1.0, 1.0, 1.0],
-              "anchors": [
-                { "name": "neck_mount", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
-              ],
-              "attach_to": {
-                "parent": "body",
-                "parent_anchor": "neck",
-                "child_anchor": "neck_mount",
-                "offset": { "pos": [0,0,0] },
-                "animations": {
-                  "idle": {
-                    "driver": "always",
-                    "clip": {
-                      "kind": "loop",
-                      "duration_secs": 1.0,
-                      "keyframes": [
-                        { "time_secs": 0.0, "delta": { "rot_frame": "parent", "rot_quat_xyzw": [0.0, 0.0, 0.0, 1.0] } }
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }"##;
-
-        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
-        let (_planned, _notes, defs) =
-            ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
-
-        let body_id = builtin_object_id("gravimera/gen3d/component/body");
-        let head_id = builtin_object_id("gravimera/gen3d/component/head");
-        let body_def = defs
-            .iter()
-            .find(|def| def.object_id == body_id)
-            .expect("body def");
-        let head_part = body_def
-            .parts
-            .iter()
-            .find(|p| matches!(p.kind, ObjectPartKind::ObjectRef { object_id } if object_id == head_id))
-            .expect("head part ref");
-        let idle = head_part
-            .animations
-            .iter()
-            .find(|s| s.channel.as_ref() == "idle")
-            .expect("idle slot");
-
-        let PartAnimationDef::Loop { keyframes, .. } = &idle.spec.clip else {
-            panic!("expected loop clip");
-        };
-        assert_eq!(keyframes.len(), 1, "expected one keyframe");
-        let rot = keyframes[0].delta.rotation.normalize();
-        assert!(rot.is_finite(), "rotation should be finite");
-        assert!(
-            rot.dot(Quat::IDENTITY).abs() > 0.9999,
-            "expected identity delta rotation in join frame; rot={:?}",
-            rot
-        );
-    }
-
-    #[test]
-    fn animation_keyframe_basis_vectors_in_join_frame_stay_identity() {
-        // If the keyframe basis vectors are authored directly in the JOIN FRAME, they should
-        // remain identity deltas even when the join frame is rotated relative to the parent.
-        let plan_text = r##"{
-          "version": 7,
-          "components": [
-            {
-              "name": "body",
-              "size": [1.0, 1.0, 1.0],
-              "anchors": [
-                { "name": "neck", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
-              ]
-            },
-            {
-              "name": "head",
-              "size": [1.0, 1.0, 1.0],
-              "anchors": [
-                { "name": "neck_mount", "pos": [0,0,0], "forward": [0,1,0], "up": [0,0,1] }
-              ],
-              "attach_to": {
-                "parent": "body",
-                "parent_anchor": "neck",
-                "child_anchor": "neck_mount",
-                "offset": { "pos": [0,0,0] },
-                "animations": {
-                  "idle": {
-                    "driver": "always",
-                    "clip": {
-                      "kind": "loop",
-                      "duration_secs": 1.0,
-                      "keyframes": [
-                        { "time_secs": 0.0, "delta": { "rot_frame": "join", "forward": [0,0,1], "up": [0,1,0] } }
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }"##;
-
-        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
-        let (_planned, _notes, defs) =
-            ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
-
-        let body_id = builtin_object_id("gravimera/gen3d/component/body");
-        let head_id = builtin_object_id("gravimera/gen3d/component/head");
-        let body_def = defs
-            .iter()
-            .find(|def| def.object_id == body_id)
-            .expect("body def");
-        let head_part = body_def
-            .parts
-            .iter()
-            .find(|p| matches!(p.kind, ObjectPartKind::ObjectRef { object_id } if object_id == head_id))
-            .expect("head part ref");
-        let idle = head_part
-            .animations
-            .iter()
-            .find(|s| s.channel.as_ref() == "idle")
-            .expect("idle slot");
-
-        let PartAnimationDef::Loop { keyframes, .. } = &idle.spec.clip else {
-            panic!("expected loop clip");
-        };
-        assert_eq!(keyframes.len(), 1, "expected one keyframe");
-        let rot = keyframes[0].delta.rotation.normalize();
-        assert!(rot.is_finite(), "rotation should be finite");
-        assert!(
-            rot.dot(Quat::IDENTITY).abs() > 0.9999,
-            "expected identity delta rotation in join frame; rot={:?}",
-            rot
-        );
-    }
-
-    #[test]
     fn component_def_uses_plan_anchor_rotations_over_draft() {
         // Regression: letting the draft override required anchor orientation breaks join-frame
         // axes used by attachments and animations (e.g. melee swing yaw turns into a twist).
@@ -3481,9 +2791,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_plan_v7_with_partial_attack_without_failing() {
+    fn parses_plan_v8_with_partial_attack_without_failing() {
         let text = r##"{
-          "version": 7,
+          "version": 8,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
           "attack": {
             "kind": "ranged_projectile",
@@ -3518,7 +2828,7 @@ mod tests {
         // (e.g. a VFX mouth emitter), only that helper yaws and the visible head/weapon stays
         // fixed. Default to aiming the parent component when the muzzle is nested.
         let text = r##"{
-          "version": 7,
+          "version": 8,
           "mobility": { "kind": "ground", "max_speed": 6.0 },
           "attack": {
             "kind": "ranged_projectile",
@@ -3582,7 +2892,7 @@ mod tests {
     #[test]
     fn defaults_ranged_aim_to_muzzle_when_muzzle_is_direct_child_of_root() {
         let text = r##"{
-          "version": 7,
+          "version": 8,
           "mobility": { "kind": "ground", "max_speed": 6.0 },
           "attack": {
             "kind": "ranged_projectile",
@@ -3637,7 +2947,7 @@ mod tests {
     #[test]
     fn parses_plan_projectile_rgba_color_and_default_obstacle_rule() {
         let text = r##"{
-          "version": 7,
+          "version": 8,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
           "attack": {
             "kind": "ranged_projectile",
@@ -3689,7 +2999,7 @@ mod tests {
     #[test]
     fn parses_plan_projectile_rgba_color_and_cylinder_shape() {
         let text = r##"{
-          "version": 7,
+          "version": 8,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
           "attack": {
             "kind": "ranged_projectile",
@@ -3752,65 +3062,10 @@ mod tests {
     }
 
     #[test]
-    fn converts_plan_spin_axis_from_component_local_to_join_frame() {
-        // The wheel anchor points +Z along -X (local). If the AI writes the axle axis as local +X,
-        // we expect it to be converted into the join frame (child anchor frame), i.e. -Z.
-        let text = r##"{
-          "version": 7,
-          "mobility": { "kind": "ground", "max_speed": 5.0 },
-          "components": [
-            {
-              "name": "root",
-              "size": [1.0, 1.0, 1.0],
-              "anchors": [
-                { "name": "wheel_mount", "pos": [0.0, 0.0, 0.0], "forward": [-1.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0] }
-              ]
-            },
-            {
-              "name": "wheel",
-              "size": [1.0, 1.0, 1.0],
-              "anchors": [
-                { "name": "axle_mount", "pos": [0.0, 0.0, 0.0], "forward": [-1.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0] }
-              ],
-              "attach_to": {
-                "parent": "root",
-                "parent_anchor": "wheel_mount",
-                "child_anchor": "axle_mount",
-                "offset": { "pos": [0.0, 0.0, 0.0] },
-                "animations": {
-                  "move": {
-                    "driver": "move_distance",
-                    "clip": { "kind": "spin", "axis": [1.0, 0.0, 0.0], "radians_per_unit": 1.0 }
-                  }
-                }
-              }
-            }
-          ]
-        }"##;
-
-        let plan = parse::parse_ai_plan_from_text(text).expect("plan should parse");
-        let (planned, _notes, _defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
-
-        let wheel = planned.iter().find(|c| c.name == "wheel").expect("wheel");
-        let att = wheel.attach_to.as_ref().expect("wheel attach_to");
-        let slot = att
-            .animations
-            .iter()
-            .find(|s| s.channel.as_ref() == "move")
-            .expect("move animation slot");
-        let PartAnimationDef::Spin { axis, .. } = &slot.spec.clip else {
-            panic!("expected spin clip");
-        };
-
-        assert!(axis.x.abs() < 1e-3);
-        assert!(axis.y.abs() < 1e-3);
-        assert!((axis.z + 1.0).abs() < 1e-3);
-    }
-
-    #[test]
     fn applies_review_delta_tweak_contact_clears_stance() {
         let plan_text = r##"{
-          "version": 7,
+          "version": 8,
+          "mobility": { "kind": "static" },
           "components": [
             {
               "name": "body",
@@ -3861,7 +3116,7 @@ mod tests {
 
         let apply =
             apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft, None)
-            .expect("apply should succeed");
+                .expect("apply should succeed");
         assert!(apply.had_actions);
         assert!(planned[0].contacts[0].stance.is_none());
     }
@@ -3869,7 +3124,8 @@ mod tests {
     #[test]
     fn review_delta_tweak_attachment_errors_on_missing_anchors() {
         let plan_text = r##"{
-          "version": 7,
+          "version": 8,
+          "mobility": { "kind": "static" },
           "components": [
             {
               "name": "root",
@@ -3975,7 +3231,8 @@ mod tests {
     #[test]
     fn plan_attachment_errors_on_opposing_anchor_up_vectors() {
         let plan_text = r##"{
-          "version": 7,
+          "version": 8,
+          "mobility": { "kind": "static" },
           "components": [
             {
               "name": "root",
@@ -4064,7 +3321,8 @@ mod tests {
     #[test]
     fn tweak_anchor_rebases_component_offset_when_child_anchor_changes() {
         let plan_text = r##"{
-          "version": 7,
+          "version": 8,
+          "mobility": { "kind": "static" },
           "components": [
             {
               "name": "root",
@@ -4123,7 +3381,7 @@ mod tests {
 
         let apply =
             apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft, None)
-            .expect("apply should succeed");
+                .expect("apply should succeed");
         assert!(apply.had_actions);
 
         let after = assembled_child_transform(&planned, "root", "socket", "child", "mount");
@@ -4133,7 +3391,8 @@ mod tests {
     #[test]
     fn tweak_anchor_rebases_child_offsets_when_parent_anchor_changes() {
         let plan_text = r##"{
-          "version": 7,
+          "version": 8,
+          "mobility": { "kind": "static" },
           "components": [
             {
               "name": "root",
@@ -4192,7 +3451,7 @@ mod tests {
 
         let apply =
             apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft, None)
-            .expect("apply should succeed");
+                .expect("apply should succeed");
         assert!(apply.had_actions);
 
         let after = assembled_child_transform(&planned, "root", "socket", "child", "mount");

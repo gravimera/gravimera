@@ -72,23 +72,27 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
 
 ## 3) “Any animation” constraints — where current behavior limits what can be expressed
 
+Status (2026-02-24):
+
+- Gen3D plans are now **static-only** and do not include AI-authored `attach_to.animations` clips.
+- The items below apply primarily to runtime/prefab-authored animation channels and forced playback, not Gen3D plan generation.
+
 - [x] **Channel model: add explicit per-instance control for “any channel” playback**
   - Fixed (2026-02-23): runtime still auto-selects canonical channels for gameplay (`idle`/`move`/`attack_primary`/`ambient`), but **any channel** can be played via explicit overrides.
   - Key capabilities:
-    - Gen3D plan supports open-vocabulary `attach_to.animations` keys (up to 10).
     - Gen3D preview UI lists available channels and can force-play any of them.
     - Gameplay hotkeys `1..9/0` force-play the selected unit’s channels (ordered; up to 10).
     - Automation HTTP API: `POST /v1/animation/force_channel` sets/clears `ForcedAnimationChannel`.
-  - Code: `src/object/visuals.rs` (`update_part_animations` forced override), `src/types.rs` (`ForcedAnimationChannel`), `src/rts.rs` (digit hotkeys), `src/automation/mod.rs` (`/v1/animation/force_channel`), `src/gen3d/ui.rs` + `src/gen3d/preview.rs` (data-driven dropdown), `src/gen3d/ai/structured_outputs.rs` (open-vocabulary channel map).
+  - Code: `src/object/visuals.rs` (`update_part_animations` forced override), `src/types.rs` (`ForcedAnimationChannel`), `src/rts.rs` (digit hotkeys), `src/automation/mod.rs` (`/v1/animation/force_channel`), `src/gen3d/ui.rs` + `src/gen3d/preview.rs` (data-driven dropdown).
 
 - [x] **Support more generic clip kinds (keyframed `once` / `ping_pong` in addition to `loop` / `spin`)**
-  - Fixed (2026-02-23): Gen3D and runtime support `once` and `ping_pong` keyframed clips (generic, non-heuristic building blocks).
-  - Code: `src/object/registry.rs` (`PartAnimationDef`), `src/object/visuals.rs` (`sample_part_animation`), `src/gen3d/ai/schema.rs` + `src/gen3d/ai/structured_outputs.rs` (schema), `src/gen3d/ai/convert.rs` (conversion).
+  - Fixed (2026-02-23): runtime supports `once` and `ping_pong` keyframed clips (generic, non-heuristic building blocks).
+  - Code: `src/object/registry.rs` (`PartAnimationDef`), `src/object/visuals.rs` (`sample_part_animation`).
 
 - [x] **Fixed joints no longer sanitize away rotation (allow visual-only motion)**
   - Fixed (2026-02-23): fixed joints may still have rotating animations; the engine does not rewrite rotation deltas to identity.
   - Motion validation reports `fixed_joint_rotates` as a warning (diagnostic) rather than silently mutating motion.
-  - Code: `src/gen3d/ai/motion_validation.rs` (`fixed_joint_rotates` warn); tests in `src/gen3d/ai/regression_tests.rs` verify fixed-joint rotations persist through plan conversion and review-delta tweaks.
+  - Code: `src/gen3d/ai/motion_validation.rs` (`fixed_joint_rotates` warn).
 
 - [x] **Allow negative/zero scale effects (no engine-side “positive minimum” sanitization for tool transforms)**
   - Fixed (2026-02-23): Gen3D tool-call transform parsing preserves negative and zero scale (enables mirroring, squash-to-zero, stylized effects).

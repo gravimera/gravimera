@@ -637,7 +637,11 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
             keyframes,
         } => {
             let duration = (*duration_secs).max(1e-6);
-            let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+            let mut t = if time_secs.is_finite() {
+                time_secs
+            } else {
+                0.0
+            };
             let period = duration * 2.0;
             t = t.rem_euclid(period);
             if t > duration {
@@ -674,7 +678,11 @@ fn sample_keyframes_loop(
     time_secs: f32,
 ) -> Transform {
     let duration = duration_secs.max(1e-6);
-    let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+    let mut t = if time_secs.is_finite() {
+        time_secs
+    } else {
+        0.0
+    };
     t = t.rem_euclid(duration);
 
     if keyframes.is_empty() {
@@ -710,7 +718,11 @@ fn sample_keyframes_clamped(
     time_secs: f32,
 ) -> Transform {
     let duration = duration_secs.max(1e-6);
-    let mut t = if time_secs.is_finite() { time_secs } else { 0.0 };
+    let mut t = if time_secs.is_finite() {
+        time_secs
+    } else {
+        0.0
+    };
     t = t.clamp(0.0, duration);
 
     if keyframes.is_empty() {
@@ -2277,10 +2289,11 @@ mod tests {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        let issue = issues.iter().find(|i| {
-            i.get("kind").and_then(|v| v.as_str()) == Some("chain_axis_mismatch")
-        });
-        let issue = issue.unwrap_or_else(|| panic!("expected chain_axis_mismatch issue, got {issues:?}"));
+        let issue = issues
+            .iter()
+            .find(|i| i.get("kind").and_then(|v| v.as_str()) == Some("chain_axis_mismatch"));
+        let issue =
+            issue.unwrap_or_else(|| panic!("expected chain_axis_mismatch issue, got {issues:?}"));
         assert_eq!(
             issue.get("severity").and_then(|v| v.as_str()),
             Some("warn"),

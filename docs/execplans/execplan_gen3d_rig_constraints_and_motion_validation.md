@@ -138,7 +138,7 @@ In `src/gen3d/ai/schema.rs`:
 Example (plan excerpt; exact field names can differ, but semantics must match):
 
     {
-      "version": 7,
+      "version": 8,
       "rig": { "move_cycle_m": 1.2 },
       "mobility": { "kind": "ground", "max_speed": 6.0 },
       "components": [
@@ -168,13 +168,8 @@ Example (plan excerpt; exact field names can differ, but semantics must match):
             "parent": "torso",
             "parent_anchor": "leg_fl_mount",
             "child_anchor": "torso_mount",
-            "joint": { "kind": "hinge", "axis_join": [1,0,0], "limits_degrees": [-35, 35] },
-            "animations": {
-              "move": {
-                "driver": "move_phase",
-                "clip": { "kind": "loop", "duration_secs": 1.2, "keyframes": [ ... ] }
-              }
-            }
+            "offset": { "pos": [0.0, 0.0, 0.0] },
+            "joint": { "kind": "hinge", "axis_join": [1,0,0], "limits_degrees": [-35, 35] }
           }
         }
       ]
@@ -205,7 +200,7 @@ Add a “rig/motion validation” routine that samples the move cycle and return
 Key requirements:
 
 - Validation must be deterministic and based on declared contract data (joints/contacts), not on component-name heuristics.
-- Output must include `component_id` (UUID string) and channel names so the AI can target `tweak_animation` precisely.
+- Output must include `component_id` (UUID string) (and optionally channel names) so `review_delta_v1` can target `tweak_anchor` / `tweak_attachment` / `tweak_contact` precisely.
 - Issues should include numeric evidence (angle, slip, lift) and tolerances.
 - Validation output must be prompt-budget-friendly: cap issue count (e.g. keep the top 8–16 issues) and order by severity and magnitude (worst offenders first).
 
@@ -275,7 +270,7 @@ Extend `build_gen3d_smoke_results()` in `src/gen3d/ai/mod.rs` to include:
 - `rig_summary`: extracted joints/contacts counts and cycle length used.
 - `motion_validation`: `{ ok, issues: [...] }`
 
-Include `component_id` in each issue to match `review_delta_v1` / `tweak_animation` targeting rules.
+Include `component_id` in each issue to match `review_delta_v1` targeting rules.
 
 ### Milestone 3 — AI repair loop + channel-scoped fallback
 

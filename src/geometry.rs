@@ -59,9 +59,21 @@ pub(crate) fn mat4_to_transform_allow_degenerate_scale(mat: Mat4) -> Option<Tran
         return None;
     }
 
-    let mut r0 = if scale_x > EPS { col_x / scale_x } else { Vec3::ZERO };
-    let mut r1 = if scale_y > EPS { col_y / scale_y } else { Vec3::ZERO };
-    let mut r2 = if scale_z > EPS { col_z / scale_z } else { Vec3::ZERO };
+    let mut r0 = if scale_x > EPS {
+        col_x / scale_x
+    } else {
+        Vec3::ZERO
+    };
+    let mut r1 = if scale_y > EPS {
+        col_y / scale_y
+    } else {
+        Vec3::ZERO
+    };
+    let mut r2 = if scale_z > EPS {
+        col_z / scale_z
+    } else {
+        Vec3::ZERO
+    };
 
     if r0.length_squared() <= EPS && r1.length_squared() > EPS && r2.length_squared() > EPS {
         r0 = r1.cross(r2);
@@ -74,7 +86,11 @@ pub(crate) fn mat4_to_transform_allow_degenerate_scale(mat: Mat4) -> Option<Tran
     }
 
     fn any_perpendicular(v: Vec3) -> Vec3 {
-        let a = if v.dot(Vec3::Y).abs() < 0.9 { Vec3::Y } else { Vec3::X };
+        let a = if v.dot(Vec3::Y).abs() < 0.9 {
+            Vec3::Y
+        } else {
+            Vec3::X
+        };
         let p = a.cross(v);
         if p.length_squared() > 1e-8 {
             p.normalize()
@@ -83,9 +99,21 @@ pub(crate) fn mat4_to_transform_allow_degenerate_scale(mat: Mat4) -> Option<Tran
         }
     }
 
-    let mut r0 = if r0.length_squared() > EPS { r0.normalize() } else { Vec3::ZERO };
-    let mut r1 = if r1.length_squared() > EPS { r1.normalize() } else { Vec3::ZERO };
-    let mut r2 = if r2.length_squared() > EPS { r2.normalize() } else { Vec3::ZERO };
+    let mut r0 = if r0.length_squared() > EPS {
+        r0.normalize()
+    } else {
+        Vec3::ZERO
+    };
+    let mut r1 = if r1.length_squared() > EPS {
+        r1.normalize()
+    } else {
+        Vec3::ZERO
+    };
+    let mut r2 = if r2.length_squared() > EPS {
+        r2.normalize()
+    } else {
+        Vec3::ZERO
+    };
 
     // If we only have one reliable axis, construct an orthonormal basis around it.
     if r0.length_squared() <= EPS && r1.length_squared() <= EPS && r2.length_squared() <= EPS {
@@ -110,7 +138,11 @@ pub(crate) fn mat4_to_transform_allow_degenerate_scale(mat: Mat4) -> Option<Tran
     }
 
     // Orthonormalize (best effort) while keeping the handedness stable.
-    r0 = if r0.length_squared() > EPS { r0.normalize() } else { Vec3::X };
+    r0 = if r0.length_squared() > EPS {
+        r0.normalize()
+    } else {
+        Vec3::X
+    };
     r1 = r1 - r0 * r1.dot(r0);
     if r1.length_squared() <= EPS {
         r1 = any_perpendicular(r0);

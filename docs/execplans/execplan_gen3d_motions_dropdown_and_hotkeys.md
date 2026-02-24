@@ -6,6 +6,11 @@ This repository includes `PLANS.md` at the repo root. This document must be main
 
 ## Purpose / Big Picture
 
+Status (2026-02-24):
+
+- Gen3D plans are now **static-only** and do not include `attach_to.animations`.
+- This ExecPlan is superseded by `execplan_gen3d_runtime_motion_algorithms.md` (runtime injected motion algorithms + realtime switching).
+
 Gen3D already supports attachment animations via `ObjectPartDef.animations` and the runtime can play the canonical channels (`idle`, `move`, `attack_primary`, `ambient`) based on generic gameplay signals (moving/attacking). However:
 
 - Gen3D AI structured outputs currently restrict animation channels to only those 4 names, so it cannot author “extra motions” like `dance` or `wave`.
@@ -13,7 +18,7 @@ Gen3D already supports attachment animations via `ObjectPartDef.animations` and 
 - Gen3D preview UI hardcodes the motion dropdown to Idle/Move/Attack and cannot list all channels present in the draft.
 - There is no gameplay input to force a unit to play a specific channel.
 
-After this change:
+Original intent (superseded):
 
 1. Gen3D can **author custom motion channels** (open vocabulary channel strings) in `attach_to.animations` and persist them into prefabs. The engine will **consider up to 10 channels** per unit for UI/hotkeys.
 2. Gen3D **always produces** `idle` and `move` channels for mobile units (mobility `ground`/`air`), even if the AI forgets them.
