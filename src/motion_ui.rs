@@ -508,7 +508,12 @@ pub(crate) fn motion_algorithm_ui_button_clicks(
         };
 
         let mut updated = 0usize;
-        for entity in selection.selected.iter().copied() {
+        let mut targets: Vec<Entity> = selection.selected.iter().copied().collect();
+        if !selection.selected.contains(&target) {
+            targets.push(target);
+        }
+
+        for entity in targets {
             let Ok((prefab_id, controller)) = roots.get(entity) else {
                 continue;
             };
@@ -544,7 +549,7 @@ pub(crate) fn motion_algorithm_ui_button_clicks(
         }
 
         info!(
-            "Motion: set {:?}={} for {} selected unit(s) of prefab {}",
+            "Motion: set {:?}={} for {} unit(s) of prefab {}",
             channel,
             alg_label,
             updated,

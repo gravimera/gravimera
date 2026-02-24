@@ -174,6 +174,7 @@ pub(crate) fn selection_input(
     model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     world_drag: Res<crate::world_drag::WorldDragState>,
     mut motion_ui: ResMut<crate::motion_ui::MotionAlgorithmUiState>,
+    ui_buttons: Query<&Interaction, With<Button>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
@@ -212,6 +213,13 @@ pub(crate) fn selection_input(
     if world_drag.blocks_selection() {
         selection.drag_start = None;
         selection.drag_end = None;
+        return;
+    }
+
+    let ui_captured = ui_buttons
+        .iter()
+        .any(|interaction| matches!(*interaction, Interaction::Pressed | Interaction::Hovered));
+    if ui_captured && selection.drag_start.is_none() {
         return;
     }
 
