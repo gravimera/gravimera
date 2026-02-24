@@ -90,8 +90,8 @@ Gen3D uses the prefab-based object system:
 
 ## Runtime Motion Algorithms (Rig Contracts)
 
-Gravimera supports **engine-injected motion algorithms** (walk/wheels) that can be applied to many
-different Gen3D models, as long as the model declares an explicit rig contract.
+Gravimera supports **engine-injected motion algorithms** (idle/walk/wheels/attacks) that can be
+applied to many different Gen3D models, as long as the model declares an explicit rig contract.
 
 How it works:
 
@@ -99,8 +99,9 @@ How it works:
 - A descriptor may include:
   - `interfaces.extra.motion_roles_v1` (semantic locomotion mapping; see `docs/gamedesign/35_prefab_descriptors_v1.md`)
   - `interfaces.extra.motion_rig_v1` (explicit runtime rig contract; see `docs/gamedesign/35_prefab_descriptors_v1.md`)
-- When `motion_rig_v1` is present, the engine can inject a generic motion algorithm by generating
-  per-edge `move` channel slots at runtime (no heuristic “leg detection”).
+- When `motion_rig_v1` is present, the engine can inject generic motion algorithms by generating
+  per-edge animation slots at runtime for canonical channels (`idle`, `move`, `attack_primary`)
+  with no heuristic “leg detection”.
 - Gen3D derives `motion_rig_v1` from `motion_roles_v1` (preferred; avoids brittle naming).
   There is no name-based auto-rigging fallback: motion algorithms are applied only when the model
   explicitly declares the required rig contract.
@@ -108,9 +109,18 @@ How it works:
 In-game UX (Realm):
 
 - Double-click a unit’s **selection circle** to open the **Motion** panel.
-- Pick a `move` algorithm:
-  - `None` (use prefab-authored clips)
-  - `Biped walk (v1)` / `Quadruped walk (v1)` / `Car wheels (v1)` / `Airplane props/rotors (v1)` (when the rig kind matches)
+- Pick algorithms per channel (selection persists in `scene.dat`):
+  - `Idle`:
+    - `None` (use prefab-authored clips)
+    - `Biped idle (v1)` / `Quadruped idle (v1)` / `Car idle (v1)` / `Airplane idle (v1)` (when the rig kind matches)
+  - `Move`:
+    - `None` (use prefab-authored clips)
+    - `Biped walk (v1)` / `Quadruped walk (v1)` / `Car wheels (v1)` / `Airplane props/rotors (v1)` (when the rig kind matches)
+  - `Attack`:
+    - `None` (use prefab-authored clips)
+    - `Biped melee swing (v1)` (melee bipeds)
+    - `Quadruped bite (v1)` (melee quadrupeds)
+    - `Ranged recoil (v1)` (ranged units; uses the rig `body` edge when available)
 - The selection updates the unit instance immediately (and applies to all selected units of the
   same prefab).
 

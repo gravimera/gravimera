@@ -157,6 +157,8 @@ Key properties:
 
 - The engine **does not** infer “this model has two legs” from names/shape/geometry.
 - Motion algorithms are applied only when the prefab declares a compatible `motion_rig_v1`.
+- Algorithms may inject runtime slots for canonical channels (`idle`, `move`, `attack_primary`) by
+  overriding prefab-authored slots for those channels on the declared attachment edges.
 - The contract targets **attachment edges** (parent component → child component) via
   `(parent_object_id, child_object_id, parent_anchor, child_anchor)`.
 

@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
-use crate::motion::{MotionAlgorithmController, MoveMotionAlgorithm};
+use crate::motion::{
+    AttackPrimaryMotionAlgorithm, IdleMotionAlgorithm, MotionAlgorithmController,
+    MoveMotionAlgorithm,
+};
 use crate::object::registry::{
     AnchorDef, AnchorRef, AttachmentDef, ColliderProfile, MaterialKey, MeleeAttackProfile, MeshKey,
     MobilityDef, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction, ObjectLibrary,
@@ -119,6 +122,10 @@ struct SceneDatObjectInstance {
     active_form: u32,
     #[prost(enumeration = "SceneDatMoveMotionAlgorithm", tag = "16")]
     move_motion_algorithm: i32,
+    #[prost(enumeration = "SceneDatIdleMotionAlgorithm", tag = "17")]
+    idle_motion_algorithm: i32,
+    #[prost(enumeration = "SceneDatAttackPrimaryMotionAlgorithm", tag = "18")]
+    attack_primary_motion_algorithm: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
@@ -129,6 +136,25 @@ enum SceneDatMoveMotionAlgorithm {
     QuadrupedWalkV1 = 3,
     CarWheelsV1 = 4,
     AirplanePropV1 = 5,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
+enum SceneDatIdleMotionAlgorithm {
+    Unspecified = 0,
+    None = 1,
+    BipedIdleV1 = 2,
+    QuadrupedIdleV1 = 3,
+    CarIdleV1 = 4,
+    AirplaneIdleV1 = 5,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
+enum SceneDatAttackPrimaryMotionAlgorithm {
+    Unspecified = 0,
+    None = 1,
+    BipedMeleeSwingV1 = 2,
+    QuadrupedBiteV1 = 3,
+    RangedRecoilV1 = 4,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1574,6 +1600,41 @@ fn save_scene_dat_internal(
         }
     }
 
+    fn idle_motion_algorithm_to_dat(value: Option<&MotionAlgorithmController>) -> i32 {
+        let Some(value) = value else {
+            return SceneDatIdleMotionAlgorithm::Unspecified as i32;
+        };
+        match value.idle_algorithm {
+            IdleMotionAlgorithm::None => SceneDatIdleMotionAlgorithm::None as i32,
+            IdleMotionAlgorithm::BipedIdleV1 => SceneDatIdleMotionAlgorithm::BipedIdleV1 as i32,
+            IdleMotionAlgorithm::QuadrupedIdleV1 => {
+                SceneDatIdleMotionAlgorithm::QuadrupedIdleV1 as i32
+            }
+            IdleMotionAlgorithm::CarIdleV1 => SceneDatIdleMotionAlgorithm::CarIdleV1 as i32,
+            IdleMotionAlgorithm::AirplaneIdleV1 => {
+                SceneDatIdleMotionAlgorithm::AirplaneIdleV1 as i32
+            }
+        }
+    }
+
+    fn attack_primary_motion_algorithm_to_dat(value: Option<&MotionAlgorithmController>) -> i32 {
+        let Some(value) = value else {
+            return SceneDatAttackPrimaryMotionAlgorithm::Unspecified as i32;
+        };
+        match value.attack_primary_algorithm {
+            AttackPrimaryMotionAlgorithm::None => SceneDatAttackPrimaryMotionAlgorithm::None as i32,
+            AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1 => {
+                SceneDatAttackPrimaryMotionAlgorithm::BipedMeleeSwingV1 as i32
+            }
+            AttackPrimaryMotionAlgorithm::QuadrupedBiteV1 => {
+                SceneDatAttackPrimaryMotionAlgorithm::QuadrupedBiteV1 as i32
+            }
+            AttackPrimaryMotionAlgorithm::RangedRecoilV1 => {
+                SceneDatAttackPrimaryMotionAlgorithm::RangedRecoilV1 as i32
+            }
+        }
+    }
+
     for (transform, instance_id, prefab_id, tint, forms, motion_controller) in objects {
         let pos = transform.translation;
         let scale = transform.scale;
@@ -1617,6 +1678,10 @@ fn save_scene_dat_internal(
             forms: forms.into_iter().map(u128_to_uuid).collect(),
             active_form: active as u32,
             move_motion_algorithm: move_motion_algorithm_to_dat(motion_controller),
+            idle_motion_algorithm: idle_motion_algorithm_to_dat(motion_controller),
+            attack_primary_motion_algorithm: attack_primary_motion_algorithm_to_dat(
+                motion_controller,
+            ),
         });
     }
 
@@ -2141,6 +2206,47 @@ fn load_scene_dat_from_path(
         }
     }
 
+    fn idle_motion_algorithm_from_dat(value: i32) -> Option<IdleMotionAlgorithm> {
+        match value {
+            x if x == SceneDatIdleMotionAlgorithm::Unspecified as i32 => None,
+            x if x == SceneDatIdleMotionAlgorithm::None as i32 => Some(IdleMotionAlgorithm::None),
+            x if x == SceneDatIdleMotionAlgorithm::BipedIdleV1 as i32 => {
+                Some(IdleMotionAlgorithm::BipedIdleV1)
+            }
+            x if x == SceneDatIdleMotionAlgorithm::QuadrupedIdleV1 as i32 => {
+                Some(IdleMotionAlgorithm::QuadrupedIdleV1)
+            }
+            x if x == SceneDatIdleMotionAlgorithm::CarIdleV1 as i32 => {
+                Some(IdleMotionAlgorithm::CarIdleV1)
+            }
+            x if x == SceneDatIdleMotionAlgorithm::AirplaneIdleV1 as i32 => {
+                Some(IdleMotionAlgorithm::AirplaneIdleV1)
+            }
+            _ => None,
+        }
+    }
+
+    fn attack_primary_motion_algorithm_from_dat(
+        value: i32,
+    ) -> Option<AttackPrimaryMotionAlgorithm> {
+        match value {
+            x if x == SceneDatAttackPrimaryMotionAlgorithm::Unspecified as i32 => None,
+            x if x == SceneDatAttackPrimaryMotionAlgorithm::None as i32 => {
+                Some(AttackPrimaryMotionAlgorithm::None)
+            }
+            x if x == SceneDatAttackPrimaryMotionAlgorithm::BipedMeleeSwingV1 as i32 => {
+                Some(AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1)
+            }
+            x if x == SceneDatAttackPrimaryMotionAlgorithm::QuadrupedBiteV1 as i32 => {
+                Some(AttackPrimaryMotionAlgorithm::QuadrupedBiteV1)
+            }
+            x if x == SceneDatAttackPrimaryMotionAlgorithm::RangedRecoilV1 as i32 => {
+                Some(AttackPrimaryMotionAlgorithm::RangedRecoilV1)
+            }
+            _ => None,
+        }
+    }
+
     for def in &scene.defs {
         match def_from_dat(def) {
             Ok(def) => library.upsert(def),
@@ -2217,11 +2323,20 @@ fn load_scene_dat_from_path(
         commands
             .entity(entity)
             .insert(ObjectForms { forms, active });
-        if let Some(move_algorithm) = move_motion_algorithm_from_dat(instance.move_motion_algorithm)
+        let idle_algorithm = idle_motion_algorithm_from_dat(instance.idle_motion_algorithm);
+        let move_algorithm = move_motion_algorithm_from_dat(instance.move_motion_algorithm);
+        let attack_primary_algorithm =
+            attack_primary_motion_algorithm_from_dat(instance.attack_primary_motion_algorithm);
+        if idle_algorithm.is_some()
+            || move_algorithm.is_some()
+            || attack_primary_algorithm.is_some()
         {
-            commands
-                .entity(entity)
-                .insert(MotionAlgorithmController { move_algorithm });
+            commands.entity(entity).insert(MotionAlgorithmController {
+                idle_algorithm: idle_algorithm.unwrap_or(IdleMotionAlgorithm::None),
+                move_algorithm: move_algorithm.unwrap_or(MoveMotionAlgorithm::None),
+                attack_primary_algorithm: attack_primary_algorithm
+                    .unwrap_or(AttackPrimaryMotionAlgorithm::None),
+            });
         }
         spawned += 1;
     }

@@ -30,8 +30,12 @@ You can see it working by:
 - [x] (2026-02-23 18:45Z) Add `llm_generate_motion_roles_v1` + `motion_roles_v1` so Gen3D can label locomotion effectors and Save can derive `motion_rig_v1` without brittle naming.
 - [x] (2026-02-24) Make Gen3D plans static-only (plan v8; remove `attach_to.animations` and review-delta `tweak_animation`).
 - [x] (2026-02-24) Persist per-instance `move` algorithm selection in `scene.dat`.
-- [ ] Run unit tests and the required rendered smoke test.
-- [ ] Commit the changes.
+- [x] (2026-02-24) Add per-channel motion algorithms for `idle`/`move`/`attack_primary`.
+- [x] (2026-02-24) Persist per-instance `idle` + `attack_primary` algorithm selection in `scene.dat`.
+- [x] (2026-02-24) Update Motion panel to switch `idle`/`move`/`attack_primary` per instance.
+- [x] (2026-02-24) Run unit tests (`cargo test`).
+- [x] (2026-02-24) Run the required rendered smoke test.
+- [x] (2026-02-24) Commit the changes.
 
 ## Surprises & Discoveries
 
@@ -57,10 +61,13 @@ You can see it working by:
 
 ## Outcomes & Retrospective
 
-- Outcome: The engine can inject deterministic `move` motion at runtime for prefabs that declare `motion_rig_v1` (`biped_walk_v1`, `quadruped_walk_v1`, `car_wheels_v1`, `airplane_prop_v1`).
+- Outcome: The engine can inject deterministic motion at runtime for prefabs that declare `motion_rig_v1`:
+  - `idle`: `biped_idle_v1`, `quadruped_idle_v1`, `car_idle_v1`, `airplane_idle_v1`
+  - `move`: `biped_walk_v1`, `quadruped_walk_v1`, `car_wheels_v1`, `airplane_prop_v1`
+  - `attack_primary`: `biped_melee_swing_v1`, `quadruped_bite_v1`, `ranged_recoil_v1`
 - Outcome: Gen3D can optionally produce `motion_roles_v1` (legs/wheels/arms/head/ears/tail/wings/props/rotors) via a dedicated tool call, and Save can derive a compatible `motion_rig_v1` from it.
-- Outcome: Gen3D no longer generates AI-authored animation clips in the plan; locomotion is driven by runtime algorithms, and attack/idle channels fall back to static unless authored externally.
-- Outcome: Motion algorithm selection persists per instance in `scene.dat` so runtime switching survives reloads.
+- Outcome: Gen3D no longer generates AI-authored animation clips in the plan; motion is driven by runtime algorithms.
+- Outcome: Per-channel motion algorithm selection persists per instance in `scene.dat` so runtime switching survives reloads.
 
 ## Context and Orientation
 

@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::object::registry::ObjectLibrary;
 use crate::object::registry::{
-    PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot,
-    PartAnimationSpec,
+    ObjectPartKind, PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
+    PartAnimationSlot, PartAnimationSpec, UnitAttackKind,
 };
 use crate::object::visuals::{ObjectRefEdgeBinding, PartAnimationPlayer};
 use crate::prefab_descriptors::{PrefabDescriptorFileV1, PrefabDescriptorLibrary};
@@ -59,15 +59,113 @@ impl MoveMotionAlgorithm {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum IdleMotionAlgorithm {
+    None,
+    BipedIdleV1,
+    QuadrupedIdleV1,
+    CarIdleV1,
+    AirplaneIdleV1,
+}
+
+impl Default for IdleMotionAlgorithm {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl IdleMotionAlgorithm {
+    pub(crate) fn id_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::BipedIdleV1 => "biped_idle_v1",
+            Self::QuadrupedIdleV1 => "quadruped_idle_v1",
+            Self::CarIdleV1 => "car_idle_v1",
+            Self::AirplaneIdleV1 => "airplane_idle_v1",
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::None => "None (prefab-authored)",
+            Self::BipedIdleV1 => "Biped idle (v1)",
+            Self::QuadrupedIdleV1 => "Quadruped idle (v1)",
+            Self::CarIdleV1 => "Car idle (v1)",
+            Self::AirplaneIdleV1 => "Airplane idle (v1)",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "" => None,
+            "none" => Some(Self::None),
+            "biped_idle_v1" => Some(Self::BipedIdleV1),
+            "quadruped_idle_v1" => Some(Self::QuadrupedIdleV1),
+            "car_idle_v1" => Some(Self::CarIdleV1),
+            "airplane_idle_v1" => Some(Self::AirplaneIdleV1),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum AttackPrimaryMotionAlgorithm {
+    None,
+    BipedMeleeSwingV1,
+    QuadrupedBiteV1,
+    RangedRecoilV1,
+}
+
+impl Default for AttackPrimaryMotionAlgorithm {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl AttackPrimaryMotionAlgorithm {
+    pub(crate) fn id_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::BipedMeleeSwingV1 => "biped_melee_swing_v1",
+            Self::QuadrupedBiteV1 => "quadruped_bite_v1",
+            Self::RangedRecoilV1 => "ranged_recoil_v1",
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::None => "None (prefab-authored)",
+            Self::BipedMeleeSwingV1 => "Biped melee swing (v1)",
+            Self::QuadrupedBiteV1 => "Quadruped bite (v1)",
+            Self::RangedRecoilV1 => "Ranged recoil (v1)",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "" => None,
+            "none" => Some(Self::None),
+            "biped_melee_swing_v1" => Some(Self::BipedMeleeSwingV1),
+            "quadruped_bite_v1" => Some(Self::QuadrupedBiteV1),
+            "ranged_recoil_v1" => Some(Self::RangedRecoilV1),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MotionAlgorithmController {
+    pub(crate) idle_algorithm: IdleMotionAlgorithm,
     pub(crate) move_algorithm: MoveMotionAlgorithm,
+    pub(crate) attack_primary_algorithm: AttackPrimaryMotionAlgorithm,
 }
 
 impl Default for MotionAlgorithmController {
     fn default() -> Self {
         Self {
+            idle_algorithm: IdleMotionAlgorithm::None,
             move_algorithm: MoveMotionAlgorithm::None,
+            attack_primary_algorithm: AttackPrimaryMotionAlgorithm::None,
         }
     }
 }
@@ -169,6 +267,15 @@ impl MotionRigV1 {
         }
     }
 
+    pub(crate) fn default_idle_algorithm(&self) -> IdleMotionAlgorithm {
+        match self {
+            Self::Biped(_) => IdleMotionAlgorithm::BipedIdleV1,
+            Self::Quadruped(_) => IdleMotionAlgorithm::QuadrupedIdleV1,
+            Self::Car(_) => IdleMotionAlgorithm::CarIdleV1,
+            Self::Airplane(_) => IdleMotionAlgorithm::AirplaneIdleV1,
+        }
+    }
+
     pub(crate) fn default_move_algorithm(&self) -> MoveMotionAlgorithm {
         match self {
             Self::Biped(rig) => rig
@@ -186,6 +293,17 @@ impl MotionRigV1 {
         }
     }
 
+    pub(crate) fn applicable_idle_algorithms(&self) -> Vec<IdleMotionAlgorithm> {
+        let mut out = vec![IdleMotionAlgorithm::None];
+        match self {
+            Self::Biped(_) => out.push(IdleMotionAlgorithm::BipedIdleV1),
+            Self::Quadruped(_) => out.push(IdleMotionAlgorithm::QuadrupedIdleV1),
+            Self::Car(_) => out.push(IdleMotionAlgorithm::CarIdleV1),
+            Self::Airplane(_) => out.push(IdleMotionAlgorithm::AirplaneIdleV1),
+        }
+        out
+    }
+
     pub(crate) fn applicable_move_algorithms(&self) -> Vec<MoveMotionAlgorithm> {
         let mut out = vec![MoveMotionAlgorithm::None];
         match self {
@@ -193,6 +311,27 @@ impl MotionRigV1 {
             Self::Quadruped(_) => out.push(MoveMotionAlgorithm::QuadrupedWalkV1),
             Self::Car(_) => out.push(MoveMotionAlgorithm::CarWheelsV1),
             Self::Airplane(_) => out.push(MoveMotionAlgorithm::AirplanePropV1),
+        }
+        out
+    }
+
+    pub(crate) fn applicable_attack_primary_algorithms(
+        &self,
+        attack_kind: Option<UnitAttackKind>,
+    ) -> Vec<AttackPrimaryMotionAlgorithm> {
+        let mut out = vec![AttackPrimaryMotionAlgorithm::None];
+        let Some(attack_kind) = attack_kind else {
+            return out;
+        };
+        match attack_kind {
+            UnitAttackKind::RangedProjectile => {
+                out.push(AttackPrimaryMotionAlgorithm::RangedRecoilV1);
+            }
+            UnitAttackKind::Melee => match self {
+                Self::Biped(_) => out.push(AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1),
+                Self::Quadruped(_) => out.push(AttackPrimaryMotionAlgorithm::QuadrupedBiteV1),
+                Self::Car(_) | Self::Airplane(_) => {}
+            },
         }
         out
     }
@@ -633,8 +772,297 @@ pub(crate) fn wheel_spin_move_slot(axis_local: Vec3, radians_per_meter: f32) -> 
     }
 }
 
+fn swing_idle_slot(
+    axis_local: Vec3,
+    duration_secs: f32,
+    swing_degrees: f32,
+    time_offset_secs: f32,
+) -> PartAnimationSlot {
+    let duration = duration_secs.max(0.01);
+    let swing = swing_degrees.to_radians();
+    let axis = if axis_local.is_finite() && axis_local.length_squared() > 1e-6 {
+        axis_local.normalize()
+    } else {
+        Vec3::X
+    };
+
+    let keyframes = vec![
+        PartAnimationKeyframeDef {
+            time_secs: 0.0,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.25,
+            delta: Transform {
+                rotation: Quat::from_axis_angle(axis, swing),
+                ..default()
+            },
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.50,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.75,
+            delta: Transform {
+                rotation: Quat::from_axis_angle(axis, -swing),
+                ..default()
+            },
+        },
+    ];
+
+    PartAnimationSlot {
+        channel: "idle".into(),
+        spec: PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: time_offset_secs,
+            clip: PartAnimationDef::Loop {
+                duration_secs: duration,
+                keyframes,
+            },
+        },
+    }
+}
+
+fn bob_idle_slot(duration_secs: f32, amplitude_m: f32, time_offset_secs: f32) -> PartAnimationSlot {
+    let duration = duration_secs.max(0.01);
+    let amp = amplitude_m.max(0.0);
+    let keyframes = vec![
+        PartAnimationKeyframeDef {
+            time_secs: 0.0,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.25,
+            delta: Transform {
+                translation: Vec3::Y * amp,
+                ..default()
+            },
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.50,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.75,
+            delta: Transform {
+                translation: Vec3::Y * amp,
+                ..default()
+            },
+        },
+    ];
+
+    PartAnimationSlot {
+        channel: "idle".into(),
+        spec: PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: time_offset_secs,
+            clip: PartAnimationDef::Loop {
+                duration_secs: duration,
+                keyframes,
+            },
+        },
+    }
+}
+
+fn spin_idle_slot(axis_local: Vec3, radians_per_sec: f32) -> PartAnimationSlot {
+    PartAnimationSlot {
+        channel: "idle".into(),
+        spec: PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Spin {
+                axis: axis_local,
+                radians_per_unit: radians_per_sec,
+            },
+        },
+    }
+}
+
+fn swing_attack_slot(
+    axis_local: Vec3,
+    duration_secs: f32,
+    swing_degrees: f32,
+) -> PartAnimationSlot {
+    let duration = duration_secs.max(0.05);
+    let swing = swing_degrees.to_radians();
+    let axis = if axis_local.is_finite() && axis_local.length_squared() > 1e-6 {
+        axis_local.normalize()
+    } else {
+        Vec3::X
+    };
+
+    let keyframes = vec![
+        PartAnimationKeyframeDef {
+            time_secs: 0.0,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.20,
+            delta: Transform {
+                rotation: Quat::from_axis_angle(axis, -swing * 0.25),
+                ..default()
+            },
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.55,
+            delta: Transform {
+                rotation: Quat::from_axis_angle(axis, swing),
+                ..default()
+            },
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration,
+            delta: Transform::IDENTITY,
+        },
+    ];
+
+    PartAnimationSlot {
+        channel: "attack_primary".into(),
+        spec: PartAnimationSpec {
+            driver: PartAnimationDriver::AttackTime,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Once {
+                duration_secs: duration,
+                keyframes,
+            },
+        },
+    }
+}
+
+fn recoil_attack_slot(
+    direction_local: Vec3,
+    duration_secs: f32,
+    distance_m: f32,
+) -> PartAnimationSlot {
+    let duration = duration_secs.max(0.05);
+    let distance = distance_m.max(0.0);
+    let dir = if direction_local.is_finite() && direction_local.length_squared() > 1e-6 {
+        direction_local.normalize()
+    } else {
+        -Vec3::Z
+    };
+
+    let keyframes = vec![
+        PartAnimationKeyframeDef {
+            time_secs: 0.0,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.12,
+            delta: Transform {
+                translation: dir * distance,
+                ..default()
+            },
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.35,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration,
+            delta: Transform::IDENTITY,
+        },
+    ];
+
+    PartAnimationSlot {
+        channel: "attack_primary".into(),
+        spec: PartAnimationSpec {
+            driver: PartAnimationDriver::AttackTime,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Once {
+                duration_secs: duration,
+                keyframes,
+            },
+        },
+    }
+}
+
+fn bite_attack_slot(duration_secs: f32, lunge_m: f32, pitch_degrees: f32) -> PartAnimationSlot {
+    let duration = duration_secs.max(0.05);
+    let lunge = lunge_m.max(0.0);
+    let pitch = pitch_degrees.to_radians();
+
+    let keyframes = vec![
+        PartAnimationKeyframeDef {
+            time_secs: 0.0,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.30,
+            delta: Transform {
+                translation: Vec3::Z * lunge,
+                rotation: Quat::from_rotation_x(-pitch),
+                ..default()
+            },
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration * 0.65,
+            delta: Transform::IDENTITY,
+        },
+        PartAnimationKeyframeDef {
+            time_secs: duration,
+            delta: Transform::IDENTITY,
+        },
+    ];
+
+    PartAnimationSlot {
+        channel: "attack_primary".into(),
+        spec: PartAnimationSpec {
+            driver: PartAnimationDriver::AttackTime,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Once {
+                duration_secs: duration,
+                keyframes,
+            },
+        },
+    }
+}
+
+fn prefab_has_channel_slots(library: &ObjectLibrary, root_id: u128, channel: &str) -> bool {
+    use std::collections::HashSet;
+    let channel = channel.trim();
+    if channel.is_empty() {
+        return false;
+    }
+
+    let mut visited: HashSet<u128> = HashSet::new();
+    let mut stack: Vec<u128> = vec![root_id];
+
+    while let Some(object_id) = stack.pop() {
+        if !visited.insert(object_id) {
+            continue;
+        }
+        let Some(def) = library.get(object_id) else {
+            continue;
+        };
+
+        for part in def.parts.iter() {
+            if part
+                .animations
+                .iter()
+                .any(|slot| slot.channel.as_ref() == channel)
+            {
+                return true;
+            }
+            if let ObjectPartKind::ObjectRef { object_id: child } = &part.kind {
+                stack.push(*child);
+            }
+        }
+    }
+
+    false
+}
+
 pub(crate) fn ensure_default_motion_algorithm_controllers(
     mut commands: Commands,
+    library: Res<ObjectLibrary>,
     descriptors: Res<PrefabDescriptorLibrary>,
     q: Query<(Entity, &ObjectPrefabId), (With<Commandable>, Without<MotionAlgorithmController>)>,
 ) {
@@ -651,14 +1079,40 @@ pub(crate) fn ensure_default_motion_algorithm_controllers(
             }
         };
 
-        let default_algorithm = rig.default_move_algorithm();
-        if default_algorithm == MoveMotionAlgorithm::None {
+        let has_channel = |channel: &str| prefab_has_channel_slots(&library, prefab_id.0, channel);
+
+        let mut controller = MotionAlgorithmController::default();
+        if !has_channel("idle") {
+            controller.idle_algorithm = rig.default_idle_algorithm();
+        }
+        if !has_channel("move") {
+            controller.move_algorithm = rig.default_move_algorithm();
+        }
+        if !has_channel("attack_primary") {
+            let attack_kind = library
+                .get(prefab_id.0)
+                .and_then(|def| def.attack.as_ref())
+                .map(|a| a.kind);
+            controller.attack_primary_algorithm = match attack_kind {
+                Some(UnitAttackKind::RangedProjectile) => {
+                    AttackPrimaryMotionAlgorithm::RangedRecoilV1
+                }
+                Some(UnitAttackKind::Melee) => match rig {
+                    MotionRigV1::Biped(_) => AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1,
+                    MotionRigV1::Quadruped(_) => AttackPrimaryMotionAlgorithm::QuadrupedBiteV1,
+                    MotionRigV1::Car(_) | MotionRigV1::Airplane(_) => {
+                        AttackPrimaryMotionAlgorithm::None
+                    }
+                },
+                None => AttackPrimaryMotionAlgorithm::None,
+            };
+        }
+
+        if controller == MotionAlgorithmController::default() {
             continue;
         }
 
-        commands.entity(entity).insert(MotionAlgorithmController {
-            move_algorithm: default_algorithm,
-        });
+        commands.entity(entity).insert(controller);
     }
 }
 
@@ -685,12 +1139,12 @@ pub(crate) fn apply_motion_algorithms_on_controller_change(
                 None
             }
         };
-        apply_move_motion_algorithm_for_root(
+        apply_motion_algorithms_for_root(
             &mut commands,
             &library,
             root_entity,
             prefab_id.0,
-            controller.move_algorithm,
+            controller,
             rig.as_ref(),
             &edges,
             &mut players,
@@ -714,10 +1168,6 @@ pub(crate) fn apply_motion_algorithms_on_new_bindings(
             continue;
         };
 
-        if controller.move_algorithm == MoveMotionAlgorithm::None {
-            continue;
-        }
-
         let rig = match motion_rig_v1_for_prefab(prefab_id.0, &descriptors) {
             Ok(Some(rig)) => Some(rig),
             Ok(None) => None,
@@ -730,12 +1180,32 @@ pub(crate) fn apply_motion_algorithms_on_new_bindings(
             }
         };
 
-        apply_move_motion_algorithm_for_edge(
+        let rig_ref = rig.as_ref();
+        let effective = MotionAlgorithmController {
+            idle_algorithm: validate_idle_algorithm(
+                controller.idle_algorithm,
+                rig_ref,
+                prefab_id.0,
+            ),
+            move_algorithm: validate_move_algorithm(
+                controller.move_algorithm,
+                rig_ref,
+                prefab_id.0,
+            ),
+            attack_primary_algorithm: validate_attack_primary_algorithm(
+                controller.attack_primary_algorithm,
+                rig_ref,
+                prefab_id.0,
+            ),
+        };
+
+        apply_motion_algorithms_for_edge(
             &mut commands,
             &library,
             binding.root_entity,
-            controller.move_algorithm,
-            rig.as_ref(),
+            &effective,
+            rig_ref,
+            attack_window_secs(&library, prefab_id.0),
             edge_entity,
             binding,
             &mut players,
@@ -743,30 +1213,48 @@ pub(crate) fn apply_motion_algorithms_on_new_bindings(
     }
 }
 
-fn apply_move_motion_algorithm_for_root(
-    commands: &mut Commands,
-    library: &ObjectLibrary,
-    root_entity: Entity,
+fn validate_idle_algorithm(
+    algorithm: IdleMotionAlgorithm,
+    rig: Option<&MotionRigV1>,
     prefab_id: u128,
+) -> IdleMotionAlgorithm {
+    match (algorithm, rig) {
+        (IdleMotionAlgorithm::None, _) => IdleMotionAlgorithm::None,
+        (IdleMotionAlgorithm::BipedIdleV1, Some(MotionRigV1::Biped(_))) => algorithm,
+        (IdleMotionAlgorithm::QuadrupedIdleV1, Some(MotionRigV1::Quadruped(_))) => algorithm,
+        (IdleMotionAlgorithm::CarIdleV1, Some(MotionRigV1::Car(_))) => algorithm,
+        (IdleMotionAlgorithm::AirplaneIdleV1, Some(MotionRigV1::Airplane(_))) => algorithm,
+        (alg, Some(rig)) => {
+            warn!(
+                "Motion: ignoring idle algorithm {} for rig kind {} (prefab {})",
+                alg.id_str(),
+                rig.kind_str(),
+                uuid::Uuid::from_u128(prefab_id)
+            );
+            IdleMotionAlgorithm::None
+        }
+        (alg, None) => {
+            warn!(
+                "Motion: ignoring idle algorithm {} because prefab {} has no motion_rig_v1",
+                alg.id_str(),
+                uuid::Uuid::from_u128(prefab_id)
+            );
+            IdleMotionAlgorithm::None
+        }
+    }
+}
+
+fn validate_move_algorithm(
     algorithm: MoveMotionAlgorithm,
     rig: Option<&MotionRigV1>,
-    edges: &Query<(Entity, &ObjectRefEdgeBinding)>,
-    players: &mut Query<&mut PartAnimationPlayer>,
-) {
-    let algorithm = match (algorithm, rig) {
+    prefab_id: u128,
+) -> MoveMotionAlgorithm {
+    match (algorithm, rig) {
         (MoveMotionAlgorithm::None, _) => MoveMotionAlgorithm::None,
-        (MoveMotionAlgorithm::BipedWalkV1, Some(MotionRigV1::Biped(_))) => {
-            MoveMotionAlgorithm::BipedWalkV1
-        }
-        (MoveMotionAlgorithm::QuadrupedWalkV1, Some(MotionRigV1::Quadruped(_))) => {
-            MoveMotionAlgorithm::QuadrupedWalkV1
-        }
-        (MoveMotionAlgorithm::CarWheelsV1, Some(MotionRigV1::Car(_))) => {
-            MoveMotionAlgorithm::CarWheelsV1
-        }
-        (MoveMotionAlgorithm::AirplanePropV1, Some(MotionRigV1::Airplane(_))) => {
-            MoveMotionAlgorithm::AirplanePropV1
-        }
+        (MoveMotionAlgorithm::BipedWalkV1, Some(MotionRigV1::Biped(_))) => algorithm,
+        (MoveMotionAlgorithm::QuadrupedWalkV1, Some(MotionRigV1::Quadruped(_))) => algorithm,
+        (MoveMotionAlgorithm::CarWheelsV1, Some(MotionRigV1::Car(_))) => algorithm,
+        (MoveMotionAlgorithm::AirplanePropV1, Some(MotionRigV1::Airplane(_))) => algorithm,
         (alg, Some(rig)) => {
             warn!(
                 "Motion: ignoring move algorithm {} for rig kind {} (prefab {})",
@@ -784,19 +1272,82 @@ fn apply_move_motion_algorithm_for_root(
             );
             MoveMotionAlgorithm::None
         }
-    };
+    }
+}
+
+fn validate_attack_primary_algorithm(
+    algorithm: AttackPrimaryMotionAlgorithm,
+    rig: Option<&MotionRigV1>,
+    prefab_id: u128,
+) -> AttackPrimaryMotionAlgorithm {
+    match (algorithm, rig) {
+        (AttackPrimaryMotionAlgorithm::None, _) => AttackPrimaryMotionAlgorithm::None,
+        (AttackPrimaryMotionAlgorithm::RangedRecoilV1, Some(_)) => algorithm,
+        (AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1, Some(MotionRigV1::Biped(_))) => algorithm,
+        (AttackPrimaryMotionAlgorithm::QuadrupedBiteV1, Some(MotionRigV1::Quadruped(_))) => {
+            algorithm
+        }
+        (alg, Some(rig)) => {
+            warn!(
+                "Motion: ignoring attack algorithm {} for rig kind {} (prefab {})",
+                alg.id_str(),
+                rig.kind_str(),
+                uuid::Uuid::from_u128(prefab_id)
+            );
+            AttackPrimaryMotionAlgorithm::None
+        }
+        (alg, None) => {
+            warn!(
+                "Motion: ignoring attack algorithm {} because prefab {} has no motion_rig_v1",
+                alg.id_str(),
+                uuid::Uuid::from_u128(prefab_id)
+            );
+            AttackPrimaryMotionAlgorithm::None
+        }
+    }
+}
+
+fn attack_window_secs(library: &ObjectLibrary, prefab_id: u128) -> f32 {
+    library
+        .get(prefab_id)
+        .and_then(|def| def.attack.as_ref())
+        .map(|attack| attack.anim_window_secs)
+        .unwrap_or(0.35)
+        .max(0.05)
+}
+
+fn apply_motion_algorithms_for_root(
+    commands: &mut Commands,
+    library: &ObjectLibrary,
+    root_entity: Entity,
+    prefab_id: u128,
+    controller: &MotionAlgorithmController,
+    rig: Option<&MotionRigV1>,
+    edges: &Query<(Entity, &ObjectRefEdgeBinding)>,
+    players: &mut Query<&mut PartAnimationPlayer>,
+) {
+    let idle_algorithm = validate_idle_algorithm(controller.idle_algorithm, rig, prefab_id);
+    let move_algorithm = validate_move_algorithm(controller.move_algorithm, rig, prefab_id);
+    let attack_algorithm =
+        validate_attack_primary_algorithm(controller.attack_primary_algorithm, rig, prefab_id);
+    let attack_window_secs = attack_window_secs(library, prefab_id);
 
     for (edge_entity, binding) in edges.iter() {
         if binding.root_entity != root_entity {
             continue;
         }
 
-        apply_move_motion_algorithm_for_edge(
+        apply_motion_algorithms_for_edge(
             commands,
             library,
             root_entity,
-            algorithm,
+            &MotionAlgorithmController {
+                idle_algorithm,
+                move_algorithm,
+                attack_primary_algorithm: attack_algorithm,
+            },
             rig,
+            attack_window_secs,
             edge_entity,
             binding,
             players,
@@ -804,17 +1355,35 @@ fn apply_move_motion_algorithm_for_root(
     }
 }
 
-fn apply_move_motion_algorithm_for_edge(
+fn apply_motion_algorithms_for_edge(
     commands: &mut Commands,
     library: &ObjectLibrary,
     root_entity: Entity,
-    algorithm: MoveMotionAlgorithm,
+    controller: &MotionAlgorithmController,
     rig: Option<&MotionRigV1>,
+    attack_window_secs: f32,
     edge_entity: Entity,
     binding: &ObjectRefEdgeBinding,
     players: &mut Query<&mut PartAnimationPlayer>,
 ) {
-    let override_slot = match (algorithm, rig.as_ref()) {
+    let idle_override_slot = match (controller.idle_algorithm, rig.as_ref()) {
+        (IdleMotionAlgorithm::None, _) => None,
+        (IdleMotionAlgorithm::BipedIdleV1, Some(MotionRigV1::Biped(rig))) => {
+            biped_idle_override_for_binding(rig, binding, library)
+        }
+        (IdleMotionAlgorithm::QuadrupedIdleV1, Some(MotionRigV1::Quadruped(rig))) => {
+            quadruped_idle_override_for_binding(rig, binding, library)
+        }
+        (IdleMotionAlgorithm::CarIdleV1, Some(MotionRigV1::Car(rig))) => {
+            car_idle_override_for_binding(rig, binding, library)
+        }
+        (IdleMotionAlgorithm::AirplaneIdleV1, Some(MotionRigV1::Airplane(rig))) => {
+            airplane_idle_override_for_binding(rig, binding, library)
+        }
+        (_, _) => None,
+    };
+
+    let move_override_slot = match (controller.move_algorithm, rig.as_ref()) {
         (MoveMotionAlgorithm::None, _) => None,
         (MoveMotionAlgorithm::BipedWalkV1, Some(MotionRigV1::Biped(rig))) => {
             biped_walk_override_for_binding(rig, binding, library)
@@ -831,9 +1400,31 @@ fn apply_move_motion_algorithm_for_edge(
         (_, _) => None,
     };
 
+    let attack_override_slot = match (controller.attack_primary_algorithm, rig.as_ref()) {
+        (AttackPrimaryMotionAlgorithm::None, _) => None,
+        (AttackPrimaryMotionAlgorithm::RangedRecoilV1, Some(rig)) => {
+            ranged_recoil_override_for_binding(rig, binding, library, attack_window_secs)
+        }
+        (AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1, Some(MotionRigV1::Biped(rig))) => {
+            biped_melee_swing_override_for_binding(rig, binding, library, attack_window_secs)
+        }
+        (AttackPrimaryMotionAlgorithm::QuadrupedBiteV1, Some(MotionRigV1::Quadruped(rig))) => {
+            quadruped_bite_override_for_binding(rig, binding, library, attack_window_secs)
+        }
+        (_, _) => None,
+    };
+
     let mut effective_slots = binding.base_slots.clone();
-    if let Some(slot) = override_slot {
+    if let Some(slot) = idle_override_slot {
+        effective_slots.retain(|s| s.channel.as_ref() != "idle");
+        effective_slots.push(slot);
+    }
+    if let Some(slot) = move_override_slot {
         effective_slots.retain(|s| s.channel.as_ref() != "move");
+        effective_slots.push(slot);
+    }
+    if let Some(slot) = attack_override_slot {
+        effective_slots.retain(|s| s.channel.as_ref() != "attack_primary");
         effective_slots.push(slot);
     }
 
@@ -1077,6 +1668,347 @@ fn airplane_prop_override_for_binding(
     }
 
     None
+}
+
+fn biped_idle_override_for_binding(
+    rig: &BipedRigV1,
+    binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
+) -> Option<PartAnimationSlot> {
+    const BODY_PERIOD_SECS: f32 = 2.4;
+    const LIMB_PERIOD_SECS: f32 = 3.2;
+
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let amp = (effective.y * 0.01).clamp(0.0020, 0.04);
+            return Some(bob_idle_slot(BODY_PERIOD_SECS, amp, 0.0));
+        }
+    }
+
+    if let Some(head) = rig.head.as_ref() {
+        if head.matches_binding(binding) {
+            return Some(swing_idle_slot(
+                Vec3::X,
+                LIMB_PERIOD_SECS,
+                8.0,
+                LIMB_PERIOD_SECS * 0.15,
+            ));
+        }
+    }
+
+    if let Some(tail) = rig.tail.as_ref() {
+        if tail.matches_binding(binding) {
+            return Some(swing_idle_slot(
+                Vec3::Y,
+                LIMB_PERIOD_SECS,
+                12.0,
+                LIMB_PERIOD_SECS * 0.35,
+            ));
+        }
+    }
+
+    if let Some(left_arm) = rig.left_arm.as_ref() {
+        if left_arm.matches_binding(binding) {
+            return Some(swing_idle_slot(
+                Vec3::X,
+                LIMB_PERIOD_SECS,
+                6.0,
+                LIMB_PERIOD_SECS * 0.50,
+            ));
+        }
+    }
+    if let Some(right_arm) = rig.right_arm.as_ref() {
+        if right_arm.matches_binding(binding) {
+            return Some(swing_idle_slot(Vec3::X, LIMB_PERIOD_SECS, 6.0, 0.0));
+        }
+    }
+
+    if !rig.ears.is_empty() {
+        for (idx, ear) in rig.ears.iter().enumerate() {
+            if ear.matches_binding(binding) {
+                let phase = (idx as f32) * 0.37;
+                return Some(swing_idle_slot(Vec3::X, 1.8, 10.0, phase));
+            }
+        }
+    }
+
+    None
+}
+
+fn quadruped_idle_override_for_binding(
+    rig: &QuadrupedRigV1,
+    binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
+) -> Option<PartAnimationSlot> {
+    const BODY_PERIOD_SECS: f32 = 2.2;
+    const LIMB_PERIOD_SECS: f32 = 3.0;
+
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let amp = (effective.y * 0.012).clamp(0.0020, 0.04);
+            return Some(bob_idle_slot(BODY_PERIOD_SECS, amp, 0.0));
+        }
+    }
+
+    if let Some(head) = rig.head.as_ref() {
+        if head.matches_binding(binding) {
+            return Some(swing_idle_slot(
+                Vec3::X,
+                LIMB_PERIOD_SECS,
+                10.0,
+                LIMB_PERIOD_SECS * 0.10,
+            ));
+        }
+    }
+
+    if let Some(tail) = rig.tail.as_ref() {
+        if tail.matches_binding(binding) {
+            return Some(swing_idle_slot(
+                Vec3::Y,
+                LIMB_PERIOD_SECS,
+                14.0,
+                LIMB_PERIOD_SECS * 0.25,
+            ));
+        }
+    }
+
+    if !rig.ears.is_empty() {
+        for (idx, ear) in rig.ears.iter().enumerate() {
+            if ear.matches_binding(binding) {
+                let phase = (idx as f32) * 0.41;
+                return Some(swing_idle_slot(Vec3::X, 1.7, 12.0, phase));
+            }
+        }
+    }
+
+    None
+}
+
+fn car_idle_override_for_binding(
+    rig: &CarRigV1,
+    binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
+) -> Option<PartAnimationSlot> {
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let amp = (effective.y * 0.006).clamp(0.0015, 0.03);
+            return Some(bob_idle_slot(1.4, amp, 0.0));
+        }
+    }
+    None
+}
+
+fn airplane_idle_override_for_binding(
+    rig: &AirplaneRigV1,
+    binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
+) -> Option<PartAnimationSlot> {
+    const PROPELLER_RAD_PER_SEC: f32 = 18.0;
+    const ROTOR_RAD_PER_SEC: f32 = 12.0;
+
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let amp = (effective.y * 0.008).clamp(0.0020, 0.04);
+            return Some(bob_idle_slot(1.9, amp, 0.0));
+        }
+    }
+
+    if !rig.wings.is_empty() {
+        for (idx, wing) in rig.wings.iter().enumerate() {
+            if wing.matches_binding(binding) {
+                let phase = if idx % 2 == 0 { 0.0 } else { 0.6 };
+                return Some(swing_idle_slot(Vec3::X, 2.6, 6.0, phase));
+            }
+        }
+    }
+
+    let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+    let scale = binding.base_transform.scale.abs();
+    let effective = (size * scale).abs().max(Vec3::splat(0.01));
+
+    fn radius_from_effective_size_and_axis(effective: Vec3, axis: Vec3) -> f32 {
+        let axis = axis.abs();
+        if axis.x >= axis.y && axis.x >= axis.z {
+            0.5 * effective.y.max(effective.z).max(0.01)
+        } else if axis.y >= axis.x && axis.y >= axis.z {
+            0.5 * effective.x.max(effective.z).max(0.01)
+        } else {
+            0.5 * effective.x.max(effective.y).max(0.01)
+        }
+    }
+
+    if let Some(spinner) = rig
+        .propellers
+        .iter()
+        .find(|p| p.edge.matches_binding(binding))
+    {
+        let radius = radius_from_effective_size_and_axis(effective, spinner.spin_axis_local);
+        let rad_per_sec = (PROPELLER_RAD_PER_SEC / radius).clamp(-800.0, 800.0);
+        return Some(spin_idle_slot(spinner.spin_axis_local, rad_per_sec));
+    }
+
+    if let Some(spinner) = rig.rotors.iter().find(|p| p.edge.matches_binding(binding)) {
+        let radius = radius_from_effective_size_and_axis(effective, spinner.spin_axis_local);
+        let rad_per_sec = (ROTOR_RAD_PER_SEC / radius).clamp(-800.0, 800.0);
+        return Some(spin_idle_slot(spinner.spin_axis_local, rad_per_sec));
+    }
+
+    None
+}
+
+fn biped_melee_swing_override_for_binding(
+    rig: &BipedRigV1,
+    binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
+    attack_window_secs: f32,
+) -> Option<PartAnimationSlot> {
+    if let Some(right_arm) = rig.right_arm.as_ref() {
+        if right_arm.matches_binding(binding) {
+            return Some(swing_attack_slot(Vec3::X, attack_window_secs, 85.0));
+        }
+    }
+    if let Some(left_arm) = rig.left_arm.as_ref() {
+        if left_arm.matches_binding(binding) {
+            return Some(swing_attack_slot(Vec3::X, attack_window_secs, 55.0));
+        }
+    }
+
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let recoil = (effective.z * 0.02).clamp(0.0025, 0.08);
+            return Some(recoil_attack_slot(-Vec3::Z, attack_window_secs, recoil));
+        }
+    }
+
+    if let Some(head) = rig.head.as_ref() {
+        if head.matches_binding(binding) {
+            return Some(swing_attack_slot(Vec3::X, attack_window_secs, 18.0));
+        }
+    }
+
+    None
+}
+
+fn quadruped_bite_override_for_binding(
+    rig: &QuadrupedRigV1,
+    binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
+    attack_window_secs: f32,
+) -> Option<PartAnimationSlot> {
+    if let Some(head) = rig.head.as_ref() {
+        if head.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let lunge = (effective.z * 0.22).clamp(0.01, 0.40);
+            return Some(bite_attack_slot(attack_window_secs, lunge, 25.0));
+        }
+    }
+
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+            let scale = binding.base_transform.scale.abs();
+            let effective = (size * scale).abs().max(Vec3::splat(0.01));
+            let recoil = (effective.z * 0.015).clamp(0.0025, 0.06);
+            return Some(recoil_attack_slot(-Vec3::Z, attack_window_secs, recoil));
+        }
+    }
+
+    None
+}
+
+fn ranged_recoil_override_for_binding(
+    rig: &MotionRigV1,
+    binding: &ObjectRefEdgeBinding,
+    library: &ObjectLibrary,
+    attack_window_secs: f32,
+) -> Option<PartAnimationSlot> {
+    match rig {
+        MotionRigV1::Biped(rig) => {
+            if let Some(body) = rig.body.as_ref() {
+                if body.matches_binding(binding) {
+                    let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+                    let scale = binding.base_transform.scale.abs();
+                    let effective = (size * scale).abs().max(Vec3::splat(0.01));
+                    let recoil = (effective.z * 0.015).clamp(0.0025, 0.06);
+                    return Some(recoil_attack_slot(-Vec3::Z, attack_window_secs, recoil));
+                }
+            }
+            if let Some(right_arm) = rig.right_arm.as_ref() {
+                if right_arm.matches_binding(binding) {
+                    return Some(recoil_attack_slot(-Vec3::Z, attack_window_secs, 0.02));
+                }
+            }
+            if let Some(left_arm) = rig.left_arm.as_ref() {
+                if left_arm.matches_binding(binding) {
+                    return Some(recoil_attack_slot(-Vec3::Z, attack_window_secs, 0.02));
+                }
+            }
+            if let Some(head) = rig.head.as_ref() {
+                if head.matches_binding(binding) {
+                    return Some(swing_attack_slot(Vec3::X, attack_window_secs, 10.0));
+                }
+            }
+            None
+        }
+        MotionRigV1::Quadruped(rig) => {
+            if let Some(body) = rig.body.as_ref() {
+                if body.matches_binding(binding) {
+                    let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+                    let scale = binding.base_transform.scale.abs();
+                    let effective = (size * scale).abs().max(Vec3::splat(0.01));
+                    let recoil = (effective.z * 0.012).clamp(0.0025, 0.05);
+                    return Some(recoil_attack_slot(-Vec3::Z, attack_window_secs, recoil));
+                }
+            }
+            if let Some(head) = rig.head.as_ref() {
+                if head.matches_binding(binding) {
+                    return Some(swing_attack_slot(Vec3::X, attack_window_secs, 12.0));
+                }
+            }
+            None
+        }
+        MotionRigV1::Car(rig) => {
+            if let Some(body) = rig.body.as_ref() {
+                if body.matches_binding(binding) {
+                    let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+                    let scale = binding.base_transform.scale.abs();
+                    let effective = (size * scale).abs().max(Vec3::splat(0.01));
+                    let recoil = (effective.z * 0.01).clamp(0.0025, 0.05);
+                    return Some(recoil_attack_slot(-Vec3::Z, attack_window_secs, recoil));
+                }
+            }
+            None
+        }
+        MotionRigV1::Airplane(rig) => {
+            if let Some(body) = rig.body.as_ref() {
+                if body.matches_binding(binding) {
+                    let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+                    let scale = binding.base_transform.scale.abs();
+                    let effective = (size * scale).abs().max(Vec3::splat(0.01));
+                    let recoil = (effective.z * 0.01).clamp(0.0025, 0.05);
+                    return Some(recoil_attack_slot(-Vec3::Z, attack_window_secs, recoil));
+                }
+            }
+            None
+        }
+    }
 }
 
 fn anchor_transform(library: &ObjectLibrary, object_id: u128, name: &str) -> Option<Transform> {
@@ -1339,9 +2271,7 @@ mod tests {
         // Now apply a controller state that removes motion overrides.
         app.world_mut()
             .entity_mut(root)
-            .insert(MotionAlgorithmController {
-                move_algorithm: MoveMotionAlgorithm::None,
-            });
+            .insert(MotionAlgorithmController::default());
         app.update();
 
         assert!(app.world().get::<PartAnimationPlayer>(edge).is_none());
@@ -1427,6 +2357,7 @@ mod tests {
             .entity_mut(root)
             .insert(MotionAlgorithmController {
                 move_algorithm: MoveMotionAlgorithm::BipedWalkV1,
+                ..default()
             });
         app.update();
 

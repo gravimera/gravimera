@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 
-use crate::motion::{motion_rig_v1_for_prefab, MotionAlgorithmController, MoveMotionAlgorithm};
+use crate::motion::{
+    motion_rig_v1_for_prefab, AttackPrimaryMotionAlgorithm, IdleMotionAlgorithm,
+    MotionAlgorithmController, MoveMotionAlgorithm,
+};
 use crate::object::registry::ObjectLibrary;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::types::{Commandable, ObjectPrefabId, SelectionState};
@@ -73,9 +76,17 @@ pub(crate) struct MotionAlgorithmUiList;
 #[derive(Component)]
 pub(crate) struct MotionAlgorithmUiListItem;
 
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MotionAlgorithmUiChannel {
+    Idle,
+    Move,
+    AttackPrimary,
+}
+
 #[derive(Component, Clone, Copy, Debug)]
-pub(crate) struct MotionAlgorithmUiMoveButton {
-    pub(crate) algorithm: MoveMotionAlgorithm,
+pub(crate) struct MotionAlgorithmUiButton {
+    pub(crate) channel: MotionAlgorithmUiChannel,
+    pub(crate) algorithm_id: &'static str,
 }
 
 pub(crate) fn setup_motion_algorithm_ui(mut commands: Commands) {
@@ -200,12 +211,22 @@ pub(crate) fn motion_algorithm_ui_update(
         state.needs_rebuild = true;
     }
 
-    let current_alg = controller
+    let current_idle = controller
+        .map(|c| c.idle_algorithm)
+        .unwrap_or(IdleMotionAlgorithm::None);
+    let current_move = controller
         .map(|c| c.move_algorithm)
         .unwrap_or(MoveMotionAlgorithm::None);
+    let current_attack = controller
+        .map(|c| c.attack_primary_algorithm)
+        .unwrap_or(AttackPrimaryMotionAlgorithm::None);
     let rig = motion_rig_v1_for_prefab(prefab_id.0, &descriptors)
         .ok()
         .flatten();
+    let attack_kind = library
+        .get(prefab_id.0)
+        .and_then(|def| def.attack.as_ref())
+        .map(|a| a.kind);
 
     if let Ok(mut subtitle) = subtitle.single_mut() {
         let label = descriptors
@@ -215,8 +236,10 @@ pub(crate) fn motion_algorithm_ui_update(
             .unwrap_or("<unknown>");
         let rig_kind = rig.as_ref().map(|r| r.kind_str()).unwrap_or("<none>");
         *subtitle = Text::new(format!(
-            "Target: {label}\nRig: {rig_kind}\nMove: {}",
-            current_alg.id_str()
+            "Target: {label}\nRig: {rig_kind}\nIdle: {}\nMove: {}\nAttack: {}",
+            current_idle.id_str(),
+            current_move.id_str(),
+            current_attack.id_str(),
         ));
     }
 
@@ -233,13 +256,40 @@ pub(crate) fn motion_algorithm_ui_update(
         commands.entity(entity).try_despawn();
     }
 
-    let algorithms = rig
+    let idle_algorithms = rig
+        .as_ref()
+        .map(|r| r.applicable_idle_algorithms())
+        .unwrap_or_else(|| vec![IdleMotionAlgorithm::None]);
+    let move_algorithms = rig
         .as_ref()
         .map(|r| r.applicable_move_algorithms())
         .unwrap_or_else(|| vec![MoveMotionAlgorithm::None]);
+    let attack_algorithms = rig
+        .as_ref()
+        .map(|r| r.applicable_attack_primary_algorithms(attack_kind))
+        .unwrap_or_else(|| vec![AttackPrimaryMotionAlgorithm::None]);
 
     commands.entity(list_entity).with_children(|list| {
-        for algorithm in algorithms {
+        let section_font = TextFont {
+            font_size: 12.0,
+            ..default()
+        };
+        let section_color = TextColor(Color::srgb(0.75, 0.75, 0.82));
+        let button_font = TextFont {
+            font_size: 14.0,
+            ..default()
+        };
+        let button_color = TextColor(Color::srgb(0.92, 0.92, 0.96));
+        let button_bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+        let button_border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+
+        list.spawn((
+            Text::new("Idle"),
+            section_font.clone(),
+            section_color,
+            MotionAlgorithmUiListItem,
+        ));
+        for algorithm in idle_algorithms {
             list.spawn((
                 Button,
                 Node {
@@ -248,19 +298,83 @@ pub(crate) fn motion_algorithm_ui_update(
                     border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
-                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                button_bg,
+                button_border,
                 MotionAlgorithmUiListItem,
-                MotionAlgorithmUiMoveButton { algorithm },
+                MotionAlgorithmUiButton {
+                    channel: MotionAlgorithmUiChannel::Idle,
+                    algorithm_id: algorithm.id_str(),
+                },
             ))
             .with_children(|b| {
                 b.spawn((
                     Text::new(algorithm.label()),
-                    TextFont {
-                        font_size: 14.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    button_font.clone(),
+                    button_color,
+                ));
+            });
+        }
+
+        list.spawn((
+            Text::new("Move"),
+            section_font.clone(),
+            section_color,
+            MotionAlgorithmUiListItem,
+        ));
+        for algorithm in move_algorithms {
+            list.spawn((
+                Button,
+                Node {
+                    width: Val::Percent(100.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                button_bg,
+                button_border,
+                MotionAlgorithmUiListItem,
+                MotionAlgorithmUiButton {
+                    channel: MotionAlgorithmUiChannel::Move,
+                    algorithm_id: algorithm.id_str(),
+                },
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new(algorithm.label()),
+                    button_font.clone(),
+                    button_color,
+                ));
+            });
+        }
+
+        list.spawn((
+            Text::new("Attack"),
+            section_font,
+            section_color,
+            MotionAlgorithmUiListItem,
+        ));
+        for algorithm in attack_algorithms {
+            list.spawn((
+                Button,
+                Node {
+                    width: Val::Percent(100.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                button_bg,
+                button_border,
+                MotionAlgorithmUiListItem,
+                MotionAlgorithmUiButton {
+                    channel: MotionAlgorithmUiChannel::AttackPrimary,
+                    algorithm_id: algorithm.id_str(),
+                },
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new(algorithm.label()),
+                    button_font.clone(),
+                    button_color,
                 ));
             });
         }
@@ -273,7 +387,7 @@ pub(crate) fn motion_algorithm_ui_button_styles(
     mut buttons: Query<
         (
             &Interaction,
-            &MotionAlgorithmUiMoveButton,
+            &MotionAlgorithmUiButton,
             &mut BackgroundColor,
             &mut BorderColor,
         ),
@@ -287,15 +401,35 @@ pub(crate) fn motion_algorithm_ui_button_styles(
         return;
     }
 
-    let selected = roots
+    let selected_idle = roots
+        .get(target)
+        .ok()
+        .flatten()
+        .map(|c| c.idle_algorithm)
+        .unwrap_or(IdleMotionAlgorithm::None)
+        .id_str();
+    let selected_move = roots
         .get(target)
         .ok()
         .flatten()
         .map(|c| c.move_algorithm)
-        .unwrap_or(MoveMotionAlgorithm::None);
+        .unwrap_or(MoveMotionAlgorithm::None)
+        .id_str();
+    let selected_attack = roots
+        .get(target)
+        .ok()
+        .flatten()
+        .map(|c| c.attack_primary_algorithm)
+        .unwrap_or(AttackPrimaryMotionAlgorithm::None)
+        .id_str();
 
     for (interaction, button, mut bg, mut border) in &mut buttons {
-        let is_selected = button.algorithm == selected;
+        let selected_id = match button.channel {
+            MotionAlgorithmUiChannel::Idle => selected_idle,
+            MotionAlgorithmUiChannel::Move => selected_move,
+            MotionAlgorithmUiChannel::AttackPrimary => selected_attack,
+        };
+        let is_selected = button.algorithm_id == selected_id;
         let (base_bg, base_border) = if is_selected {
             (
                 Color::srgba(0.10, 0.10, 0.14, 0.88),
@@ -348,8 +482,8 @@ pub(crate) fn motion_algorithm_ui_button_clicks(
     mut commands: Commands,
     mut state: ResMut<MotionAlgorithmUiState>,
     selection: Res<SelectionState>,
-    roots: Query<&ObjectPrefabId, With<Commandable>>,
-    mut buttons: Query<(&Interaction, &MotionAlgorithmUiMoveButton), Changed<Interaction>>,
+    roots: Query<(&ObjectPrefabId, Option<&MotionAlgorithmController>), With<Commandable>>,
+    mut buttons: Query<(&Interaction, &MotionAlgorithmUiButton), Changed<Interaction>>,
 ) {
     if !state.open {
         return;
@@ -357,7 +491,7 @@ pub(crate) fn motion_algorithm_ui_button_clicks(
     let Some(target) = state.target else {
         return;
     };
-    let Ok(target_prefab) = roots.get(target) else {
+    let Ok((target_prefab, _)) = roots.get(target) else {
         return;
     };
 
@@ -366,23 +500,53 @@ pub(crate) fn motion_algorithm_ui_button_clicks(
             continue;
         }
 
+        let channel = button.channel;
+        let alg_label = match channel {
+            MotionAlgorithmUiChannel::Idle => button.algorithm_id,
+            MotionAlgorithmUiChannel::Move => button.algorithm_id,
+            MotionAlgorithmUiChannel::AttackPrimary => button.algorithm_id,
+        };
+
         let mut updated = 0usize;
         for entity in selection.selected.iter().copied() {
-            let Ok(prefab_id) = roots.get(entity) else {
+            let Ok((prefab_id, controller)) = roots.get(entity) else {
                 continue;
             };
             if prefab_id.0 != target_prefab.0 {
                 continue;
             }
-            commands.entity(entity).insert(MotionAlgorithmController {
-                move_algorithm: button.algorithm,
-            });
+
+            let mut next = controller.copied().unwrap_or_default();
+            match channel {
+                MotionAlgorithmUiChannel::Idle => {
+                    let Some(parsed) = IdleMotionAlgorithm::parse(button.algorithm_id) else {
+                        continue;
+                    };
+                    next.idle_algorithm = parsed;
+                }
+                MotionAlgorithmUiChannel::Move => {
+                    let Some(parsed) = MoveMotionAlgorithm::parse(button.algorithm_id) else {
+                        continue;
+                    };
+                    next.move_algorithm = parsed;
+                }
+                MotionAlgorithmUiChannel::AttackPrimary => {
+                    let Some(parsed) = AttackPrimaryMotionAlgorithm::parse(button.algorithm_id)
+                    else {
+                        continue;
+                    };
+                    next.attack_primary_algorithm = parsed;
+                }
+            }
+
+            commands.entity(entity).insert(next);
             updated += 1;
         }
 
         info!(
-            "Motion: set move_algorithm={} for {} selected unit(s) of prefab {}",
-            button.algorithm.id_str(),
+            "Motion: set {:?}={} for {} selected unit(s) of prefab {}",
+            channel,
+            alg_label,
             updated,
             uuid::Uuid::from_u128(target_prefab.0)
         );
