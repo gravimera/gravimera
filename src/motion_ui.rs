@@ -229,14 +229,21 @@ pub(crate) fn motion_algorithm_ui_update(
         .map(|a| a.kind);
 
     if let Ok(mut subtitle) = subtitle.single_mut() {
-        let label = descriptors
-            .get(prefab_id.0)
+        let descriptor = descriptors.get(prefab_id.0);
+        let label = descriptor
             .and_then(|d| d.label.as_deref())
             .or_else(|| library.get(prefab_id.0).map(|d| d.label.as_ref()))
             .unwrap_or("<unknown>");
+        let gen3d_run_id = descriptor
+            .and_then(|d| d.provenance.as_ref())
+            .and_then(|p| p.gen3d.as_ref())
+            .and_then(|g| g.run_id.as_deref());
         let rig_kind = rig.as_ref().map(|r| r.kind_str()).unwrap_or("<none>");
+        let gen3d_line = gen3d_run_id
+            .map(|run_id| format!("\nGen3D run: {run_id}"))
+            .unwrap_or_default();
         *subtitle = Text::new(format!(
-            "Target: {label}\nRig: {rig_kind}\nIdle: {}\nMove: {}\nAttack: {}",
+            "Target: {label}{gen3d_line}\nRig: {rig_kind}\nIdle: {}\nMove: {}\nAttack: {}",
             current_idle.id_str(),
             current_move.id_str(),
             current_attack.id_str(),
