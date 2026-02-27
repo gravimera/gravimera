@@ -1354,6 +1354,57 @@ fn save_generated_prefab_descriptor_best_effort(
             let ears = ears.into_iter().take(4).collect::<Vec<_>>();
             let wings = wings.into_iter().take(4).collect::<Vec<_>>();
 
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            enum Side {
+                Left,
+                Right,
+            }
+
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            enum FrontBack {
+                Front,
+                Back,
+            }
+
+            fn token_flags(name: &str) -> (bool, bool, bool, bool) {
+                let lower = name.to_ascii_lowercase();
+                let mut left = false;
+                let mut right = false;
+                let mut front = false;
+                let mut back = false;
+                for token in lower.split(|c: char| !c.is_ascii_alphanumeric()) {
+                    if token.is_empty() {
+                        continue;
+                    }
+                    match token {
+                        "left" | "l" => left = true,
+                        "right" | "r" => right = true,
+                        "front" | "fore" => front = true,
+                        "back" | "rear" | "hind" => back = true,
+                        _ => {}
+                    }
+                }
+                (left, right, front, back)
+            }
+
+            fn side_from_name(name: &str) -> Option<Side> {
+                let (left, right, _front, _back) = token_flags(name);
+                match (left, right) {
+                    (true, false) => Some(Side::Left),
+                    (false, true) => Some(Side::Right),
+                    _ => None,
+                }
+            }
+
+            fn front_back_from_name(name: &str) -> Option<FrontBack> {
+                let (_left, _right, front, back) = token_flags(name);
+                match (front, back) {
+                    (true, false) => Some(FrontBack::Front),
+                    (false, true) => Some(FrontBack::Back),
+                    _ => None,
+                }
+            }
+
             if !propellers.is_empty() || !rotors.is_empty() {
                 let propellers = propellers.into_iter().map(spinner_json).collect::<Vec<_>>();
                 let rotors = rotors.into_iter().map(spinner_json).collect::<Vec<_>>();
@@ -1395,10 +1446,26 @@ fn save_generated_prefab_descriptor_best_effort(
 
             if legs.len() == 2 {
                 legs.sort_by(|a, b| a.name.cmp(b.name));
-                let group0 = legs.iter().find(|l| l.group == Some(0)).copied();
-                let group1 = legs.iter().find(|l| l.group == Some(1)).copied();
-                let left = group0.unwrap_or(legs[0]);
-                let right = group1.unwrap_or(legs[1]);
+                let mut left = legs
+                    .iter()
+                    .find(|l| side_from_name(l.name) == Some(Side::Left))
+                    .copied();
+                let mut right = legs
+                    .iter()
+                    .find(|l| side_from_name(l.name) == Some(Side::Right))
+                    .copied();
+                if left.is_none()
+                    || right.is_none()
+                    || left.is_some_and(|a| right.is_some_and(|b| a.name == b.name))
+                {
+                    // Fall back to phase-group ordering when side can't be inferred from names.
+                    let group0 = legs.iter().find(|l| l.group == Some(0)).copied();
+                    let group1 = legs.iter().find(|l| l.group == Some(1)).copied();
+                    left = Some(group0.unwrap_or(legs[0]));
+                    right = Some(group1.unwrap_or(legs[1]));
+                }
+                let left = left.unwrap_or(legs[0]);
+                let right = right.unwrap_or(legs[1]);
                 if left.name == right.name {
                     return None;
                 }
@@ -1411,14 +1478,40 @@ fn save_generated_prefab_descriptor_best_effort(
                     arms.sort_by(|a, b| a.name.cmp(b.name));
                     arm0 = arms
                         .iter()
-                        .find(|l| l.group == Some(0))
-                        .copied()
-                        .or(Some(arms[0]));
+                        .find(|l| side_from_name(l.name) == Some(Side::Left))
+                        .copied();
                     arm1 = arms
                         .iter()
-                        .find(|l| l.group == Some(1))
-                        .copied()
-                        .or(Some(arms[1]));
+                        .find(|l| side_from_name(l.name) == Some(Side::Right))
+                        .copied();
+                    if arm0.is_some() != arm1.is_some() {
+                        let used = arm0
+                            .as_ref()
+                            .or(arm1.as_ref())
+                            .map(|limb| limb.name)
+                            .unwrap_or("");
+                        let other = arms.iter().find(|l| l.name != used).copied();
+                        if arm0.is_none() {
+                            arm0 = other;
+                        } else if arm1.is_none() {
+                            arm1 = other;
+                        }
+                    }
+
+                    if arm0.is_none() || arm1.is_none() {
+                        // As a last resort, use phase-group ordering (keeps old behavior for
+                        // legacy/odd naming).
+                        arm0 = arms
+                            .iter()
+                            .find(|l| l.group == Some(0))
+                            .copied()
+                            .or(Some(arms[0]));
+                        arm1 = arms
+                            .iter()
+                            .find(|l| l.group == Some(1))
+                            .copied()
+                            .or(Some(arms[1]));
+                    }
                     if arm0.is_some_and(|a| arm1.is_some_and(|b| a.name == b.name)) {
                         arm1 = None;
                     }
@@ -1457,6 +1550,59 @@ fn save_generated_prefab_descriptor_best_effort(
 
             if legs.len() == 4 {
                 legs.sort_by(|a, b| a.name.cmp(b.name));
+                let mut front_left: Option<Limb<'_>> = None;
+                let mut front_right: Option<Limb<'_>> = None;
+                let mut back_left: Option<Limb<'_>> = None;
+                let mut back_right: Option<Limb<'_>> = None;
+                for leg in legs.iter().copied() {
+                    let lr = side_from_name(leg.name);
+                    let fb = front_back_from_name(leg.name);
+                    match (fb, lr) {
+                        (Some(FrontBack::Front), Some(Side::Left)) => front_left = Some(leg),
+                        (Some(FrontBack::Front), Some(Side::Right)) => front_right = Some(leg),
+                        (Some(FrontBack::Back), Some(Side::Left)) => back_left = Some(leg),
+                        (Some(FrontBack::Back), Some(Side::Right)) => back_right = Some(leg),
+                        _ => {}
+                    }
+                }
+                if let (Some(front_left), Some(front_right), Some(back_left), Some(back_right)) =
+                    (front_left, front_right, back_left, back_right)
+                {
+                    if front_left.name != front_right.name
+                        && front_left.name != back_left.name
+                        && front_left.name != back_right.name
+                        && front_right.name != back_left.name
+                        && front_right.name != back_right.name
+                        && back_left.name != back_right.name
+                    {
+                        let mut out = serde_json::json!({
+                            "version": 1,
+                            "kind": "quadruped_v1",
+                            "default_move_algorithm": "quadruped_walk_v1",
+                            "quadruped": {
+                                "front_left_leg": edge_json(front_left.edge),
+                                "front_right_leg": edge_json(front_right.edge),
+                                "back_left_leg": edge_json(back_left.edge),
+                                "back_right_leg": edge_json(back_right.edge),
+                            }
+                        });
+                        if let Some(body_edge) = body_edge {
+                            out["body"] = edge_json(body_edge);
+                        }
+                        if let Some(head) = head {
+                            out["quadruped"]["head"] = edge_json(head);
+                        }
+                        if let Some(tail) = tail {
+                            out["quadruped"]["tail"] = edge_json(tail);
+                        }
+                        if !ears.is_empty() {
+                            out["quadruped"]["ears"] =
+                                serde_json::Value::Array(ears.into_iter().map(edge_json).collect());
+                        }
+                        return Some(out);
+                    }
+                }
+
                 let group0 = legs.iter().filter(|l| l.group == Some(0)).count();
                 let group1 = legs.iter().filter(|l| l.group == Some(1)).count();
                 let mut groups: [Vec<Limb<'_>>; 2] = [Vec::new(), Vec::new()];

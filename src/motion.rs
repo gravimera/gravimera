@@ -209,6 +209,65 @@ pub(crate) struct BipedRigV1 {
     pub(crate) ears: Vec<MotionEdgeRefV1>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RigSideHint {
+    Left,
+    Right,
+}
+
+fn rig_side_hint_from_name(name: &str) -> Option<RigSideHint> {
+    let lower = name.to_ascii_lowercase();
+    let mut left = false;
+    let mut right = false;
+    for token in lower.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if token.is_empty() {
+            continue;
+        }
+        match token {
+            "left" | "l" => left = true,
+            "right" | "r" => right = true,
+            _ => {}
+        }
+    }
+    match (left, right) {
+        (true, false) => Some(RigSideHint::Left),
+        (false, true) => Some(RigSideHint::Right),
+        _ => None,
+    }
+}
+
+impl BipedRigV1 {
+    fn normalize_left_right_hints(&mut self) {
+        let left_leg_hint = rig_side_hint_from_name(self.left_leg.parent_anchor.as_ref());
+        let right_leg_hint = rig_side_hint_from_name(self.right_leg.parent_anchor.as_ref());
+        if left_leg_hint == Some(RigSideHint::Right) && right_leg_hint == Some(RigSideHint::Left) {
+            std::mem::swap(&mut self.left_leg, &mut self.right_leg);
+        }
+
+        let left_arm_hint = self
+            .left_arm
+            .as_ref()
+            .and_then(|edge| rig_side_hint_from_name(edge.parent_anchor.as_ref()));
+        let right_arm_hint = self
+            .right_arm
+            .as_ref()
+            .and_then(|edge| rig_side_hint_from_name(edge.parent_anchor.as_ref()));
+
+        match (left_arm_hint, right_arm_hint) {
+            (Some(RigSideHint::Right), Some(RigSideHint::Left)) => {
+                std::mem::swap(&mut self.left_arm, &mut self.right_arm);
+            }
+            (Some(RigSideHint::Right), None) => {
+                self.right_arm = self.left_arm.take();
+            }
+            (None, Some(RigSideHint::Left)) => {
+                self.left_arm = self.right_arm.take();
+            }
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct QuadrupedRigV1 {
     pub(crate) move_cycle_m: f32,
@@ -505,7 +564,7 @@ impl MotionRigV1 {
                     .ok_or_else(|| "motion_rig_v1 kind=biped_v1 requires `biped`".to_string())?;
                 let move_cycle_m = raw.move_cycle_m.unwrap_or(1.0).max(0.01);
                 let swing = raw.walk_swing_degrees.unwrap_or(28.0).clamp(0.0, 80.0);
-                Ok(Self::Biped(BipedRigV1 {
+                let mut rig = BipedRigV1 {
                     move_cycle_m,
                     walk_swing_degrees: swing,
                     default_move_algorithm,
@@ -527,7 +586,9 @@ impl MotionRigV1 {
                         .into_iter()
                         .map(MotionEdgeRefV1::try_from_raw)
                         .collect::<Result<Vec<_>, String>>()?,
-                }))
+                };
+                rig.normalize_left_right_hints();
+                Ok(Self::Biped(rig))
             }
             "quadruped_v1" => {
                 let q = raw.quadruped.ok_or_else(|| {
@@ -1930,21 +1991,21 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_hold,
                 delta: Transform {
-                    rotation: q_yxz_deg(20.0, -40.0, -90.0),
+                    rotation: q_yxz_deg(-10.0, -40.0, -90.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_wind,
                 delta: Transform {
-                    rotation: q_yxz_deg(35.0, -65.0, -110.0),
+                    rotation: q_yxz_deg(-35.0, -65.0, -110.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    rotation: q_yxz_deg(-20.0, 25.0, -35.0),
+                    rotation: q_yxz_deg(20.0, 25.0, -35.0),
                     ..default()
                 },
             },
@@ -2688,6 +2749,61 @@ mod tests {
             }
             other => panic!("expected biped rig, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn motion_rig_v1_normalizes_left_right_from_anchor_names() {
+        let prefab_id = 0xB1E1D_u128;
+        let leg_l = 0x10_u128;
+        let leg_r = 0x11_u128;
+        let arm_l = 0x20_u128;
+        let arm_r = 0x21_u128;
+
+        let rig = json!({
+            "version": 1,
+            "kind": "biped_v1",
+            "biped": {
+                // Intentionally swapped: left points at *_R_* and right points at *_L_*.
+                "left_leg": {
+                    "parent_object_id": uuid::Uuid::from_u128(prefab_id).to_string(),
+                    "child_object_id": uuid::Uuid::from_u128(leg_l).to_string(),
+                    "parent_anchor": "hip_R_joint",
+                    "child_anchor": "root",
+                },
+                "right_leg": {
+                    "parent_object_id": uuid::Uuid::from_u128(prefab_id).to_string(),
+                    "child_object_id": uuid::Uuid::from_u128(leg_r).to_string(),
+                    "parent_anchor": "hip_L_joint",
+                    "child_anchor": "root",
+                },
+                "left_arm": {
+                    "parent_object_id": uuid::Uuid::from_u128(prefab_id).to_string(),
+                    "child_object_id": uuid::Uuid::from_u128(arm_l).to_string(),
+                    "parent_anchor": "shoulder_R_joint",
+                    "child_anchor": "root",
+                },
+                "right_arm": {
+                    "parent_object_id": uuid::Uuid::from_u128(prefab_id).to_string(),
+                    "child_object_id": uuid::Uuid::from_u128(arm_r).to_string(),
+                    "parent_anchor": "shoulder_L_joint",
+                    "child_anchor": "root",
+                },
+            }
+        });
+
+        let doc = make_descriptor(prefab_id, rig);
+        let parsed = motion_rig_v1_from_descriptor(&doc)
+            .expect("parse ok")
+            .expect("rig present");
+
+        let MotionRigV1::Biped(parsed) = parsed else {
+            panic!("expected biped rig");
+        };
+
+        assert_eq!(parsed.left_leg.parent_anchor, "hip_L_joint");
+        assert_eq!(parsed.right_leg.parent_anchor, "hip_R_joint");
+        assert_eq!(parsed.left_arm.unwrap().parent_anchor, "shoulder_L_joint");
+        assert_eq!(parsed.right_arm.unwrap().parent_anchor, "shoulder_R_joint");
     }
 
     #[test]
