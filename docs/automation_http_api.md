@@ -504,6 +504,38 @@ Response:
 
 Note: mode switching applies on the next frame; step a few frames after switching.
 
+### `POST /v1/spawn`
+
+Spawn a prefab instance into the world (unit or build object depending on whether the prefab has
+mobility).
+
+If `x`/`z` are omitted, the object spawns in front of the hero.
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/spawn \
+  -H 'Content-Type: application/json' \
+  -d '{"prefab_id_uuid":"6573e745-043f-4036-8b7d-020354cbe730"}'
+```
+
+Optionally place it explicitly:
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/spawn \
+  -H 'Content-Type: application/json' \
+  -d '{"prefab_id_uuid":"6573e745-043f-4036-8b7d-020354cbe730","x":2.0,"z":-1.0,"yaw":1.57}'
+```
+
+Response:
+
+```json
+{"ok":true,"instance_id_uuid":"...","prefab_id_uuid":"...","mobility":true,"pos":[...]}
+```
+
+Notes:
+
+- Spawning uses deferred ECS commands; step 1–2 frames after spawning before attempting to
+  `/v1/select` the new instance.
+
 ### `POST /v1/select`
 
 Replace the current selection with a list of `instance_id_uuid`s.

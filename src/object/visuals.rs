@@ -768,6 +768,62 @@ pub(crate) fn update_part_animations(
     aim_deltas: Query<&crate::types::AimYawDelta>,
     mut q: Query<(&PartAnimationPlayer, &mut Transform)>,
 ) {
+    fn attack_variant_index(
+        root_entity: Entity,
+        clock: Option<&AttackClock>,
+        count: usize,
+    ) -> usize {
+        if count <= 1 {
+            return 0;
+        }
+        let Some(clock) = clock else {
+            return 0;
+        };
+        let mut x = (clock.started_at_secs.to_bits() as u64) ^ root_entity.to_bits();
+        // splitmix64
+        x = x.wrapping_add(0x9E3779B97F4A7C15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
+        x ^= x >> 31;
+        (x as usize) % count
+    }
+
+    fn choose_spec_for_channel<'a>(
+        animations: &'a [PartAnimationSlot],
+        channel: &str,
+        root_entity: Entity,
+        clock: Option<&AttackClock>,
+    ) -> Option<&'a PartAnimationSpec> {
+        let channel = channel.trim();
+        if channel.is_empty() {
+            return None;
+        }
+
+        if channel != "attack_primary" {
+            return animations
+                .iter()
+                .find(|slot| slot.channel.as_ref() == channel)
+                .map(|slot| &slot.spec);
+        }
+
+        let mut matches = animations
+            .iter()
+            .filter(|slot| slot.channel.as_ref() == "attack_primary");
+        let first = matches.next()?;
+        let Some(second) = matches.next() else {
+            return Some(&first.spec);
+        };
+
+        let mut all: Vec<&PartAnimationSlot> = Vec::new();
+        all.push(first);
+        all.push(second);
+        for slot in matches {
+            all.push(slot);
+        }
+        let idx = attack_variant_index(root_entity, clock, all.len());
+        all.get(idx).map(|slot| &slot.spec)
+    }
+
     let wall_time = time.elapsed_secs();
     for (player, mut transform) in q.iter_mut() {
         let active = channels
@@ -781,6 +837,7 @@ pub(crate) fn update_part_animations(
         let idle_active = !attack_active && !move_active;
 
         let mut chosen: Option<&PartAnimationSpec> = None;
+        let attack_clock = attacks.get(player.root_entity).ok();
 
         // If the root entity has a forced channel override, prefer it when this part has a
         // matching slot.
@@ -790,13 +847,12 @@ pub(crate) fn update_part_animations(
             .map(|c| c.channel.trim())
             .filter(|c| !c.is_empty());
         if let Some(channel) = forced_channel {
-            if let Some(slot) = player
-                .animations
-                .iter()
-                .find(|slot| slot.channel.as_ref() == channel)
-            {
-                chosen = Some(&slot.spec);
-            }
+            chosen = choose_spec_for_channel(
+                &player.animations,
+                channel,
+                player.root_entity,
+                attack_clock,
+            );
         }
 
         if chosen.is_none() {
@@ -812,12 +868,13 @@ pub(crate) fn update_part_animations(
                 if !channel_active {
                     continue;
                 }
-                if let Some(slot) = player
-                    .animations
-                    .iter()
-                    .find(|slot| slot.channel.as_ref() == channel)
-                {
-                    chosen = Some(&slot.spec);
+                if let Some(spec) = choose_spec_for_channel(
+                    &player.animations,
+                    channel,
+                    player.root_entity,
+                    attack_clock,
+                ) {
+                    chosen = Some(spec);
                     break;
                 }
             }

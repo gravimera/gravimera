@@ -548,6 +548,19 @@ struct MoveRequest {
 }
 
 #[derive(Deserialize)]
+struct SpawnRequest {
+    prefab_id_uuid: String,
+    #[serde(default)]
+    x: Option<f32>,
+    #[serde(default)]
+    y: Option<f32>,
+    #[serde(default)]
+    z: Option<f32>,
+    #[serde(default)]
+    yaw: Option<f32>,
+}
+
+#[derive(Deserialize)]
 struct ModeRequest {
     mode: String,
 }
@@ -1659,6 +1672,162 @@ fn handle_request_main_thread(
                 "ok": true,
                 "updated": targets.len(),
                 "channel": channel,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/spawn") => {
+            let Some(asset_server) = asset_server else {
+                return Some(json_error(
+                    501,
+                    "Spawning requires AssetServer (rendered mode).",
+                ));
+            };
+            let Some(assets) = assets else {
+                return Some(json_error(
+                    501,
+                    "Spawning requires SceneAssets (rendered mode).",
+                ));
+            };
+            let Some(meshes) = meshes else {
+                return Some(json_error(501, "Spawning requires meshes (rendered mode)."));
+            };
+            let Some(materials) = materials else {
+                return Some(json_error(
+                    501,
+                    "Spawning requires materials (rendered mode).",
+                ));
+            };
+            let Some(material_cache) = material_cache else {
+                return Some(json_error(
+                    501,
+                    "Spawning requires material cache (rendered mode).",
+                ));
+            };
+            let Some(mesh_cache) = mesh_cache else {
+                return Some(json_error(
+                    501,
+                    "Spawning requires mesh cache (rendered mode).",
+                ));
+            };
+
+            let req: SpawnRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            let Ok(prefab_uuid) = uuid::Uuid::parse_str(req.prefab_id_uuid.trim()) else {
+                return Some(json_error(400, "Invalid prefab_id_uuid UUID."));
+            };
+            let prefab_id = prefab_uuid.as_u128();
+            let Some(def) = library.get(prefab_id) else {
+                return Some(json_error(404, "Prefab not found."));
+            };
+
+            let size = def.size.abs();
+            let collider_half_xz = match def.collider {
+                crate::object::registry::ColliderProfile::CircleXZ { radius } => {
+                    Vec2::splat(radius.abs())
+                }
+                crate::object::registry::ColliderProfile::AabbXZ { half_extents } => Vec2::new(
+                    half_extents.x.abs().max(0.01),
+                    half_extents.y.abs().max(0.01),
+                ),
+                crate::object::registry::ColliderProfile::None => {
+                    Vec2::new((size.x * 0.5).max(0.01), (size.z * 0.5).max(0.01))
+                }
+            };
+
+            let Ok((player_transform, player_collider)) = player_q.single() else {
+                return Some(json_error(500, "Cannot spawn: missing hero entity."));
+            };
+
+            let mut pos = if let (Some(x), Some(z)) = (req.x, req.z) {
+                Vec3::new(x, req.y.unwrap_or(0.0), z)
+            } else {
+                let forward = player_transform.rotation * Vec3::Z;
+                let mut dir = Vec3::new(forward.x, 0.0, forward.z);
+                if dir.length_squared() <= 1e-6 {
+                    dir = Vec3::Z;
+                } else {
+                    dir = dir.normalize();
+                }
+                let radius = collider_half_xz.x.max(collider_half_xz.y).max(0.1);
+                let distance = player_collider.radius + radius + BUILD_UNIT_SIZE * 2.0;
+                let base = player_transform.translation + dir * distance;
+                Vec3::new(base.x, req.y.unwrap_or(0.0), base.z)
+            };
+
+            if req.x.is_none() || req.z.is_none() {
+                pos.y = req
+                    .y
+                    .unwrap_or_else(|| library.ground_origin_y_or_default(prefab_id));
+            }
+
+            pos.x = pos.x.clamp(
+                -WORLD_HALF_SIZE + collider_half_xz.x,
+                WORLD_HALF_SIZE - collider_half_xz.x,
+            );
+            pos.z = pos.z.clamp(
+                -WORLD_HALF_SIZE + collider_half_xz.y,
+                WORLD_HALF_SIZE - collider_half_xz.y,
+            );
+
+            let yaw = req.yaw.unwrap_or(0.0);
+            let mut transform = Transform::from_translation(pos);
+            if yaw.is_finite() {
+                transform.rotation = Quat::from_rotation_y(yaw);
+            }
+
+            let instance_id = ObjectId::new_v4();
+            let mobility = def.mobility.is_some();
+
+            let mut entity_commands = if mobility {
+                let radius = collider_half_xz.x.max(collider_half_xz.y).max(0.1);
+                commands.spawn((
+                    instance_id,
+                    ObjectPrefabId(prefab_id),
+                    Commandable,
+                    Collider { radius },
+                    transform,
+                    Visibility::Inherited,
+                ))
+            } else {
+                commands.spawn((
+                    instance_id,
+                    ObjectPrefabId(prefab_id),
+                    BuildObject,
+                    BuildDimensions { size },
+                    AabbCollider {
+                        half_extents: collider_half_xz,
+                    },
+                    transform,
+                    Visibility::Inherited,
+                ))
+            };
+
+            crate::object::visuals::spawn_object_visuals(
+                &mut entity_commands,
+                library,
+                asset_server,
+                assets,
+                meshes,
+                materials,
+                material_cache,
+                mesh_cache,
+                prefab_id,
+                None,
+            );
+
+            let body = serde_json::json!({
+                "ok": true,
+                "instance_id_uuid": uuid::Uuid::from_u128(instance_id.0).to_string(),
+                "prefab_id_uuid": uuid::Uuid::from_u128(prefab_id).to_string(),
+                "mobility": mobility,
+                "pos": [pos.x, pos.y, pos.z],
             })
             .to_string();
             Some(AutomationReply {

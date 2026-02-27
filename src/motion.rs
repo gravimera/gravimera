@@ -1400,19 +1400,24 @@ fn apply_motion_algorithms_for_edge(
         (_, _) => None,
     };
 
-    let attack_override_slot = match (controller.attack_primary_algorithm, rig.as_ref()) {
-        (AttackPrimaryMotionAlgorithm::None, _) => None,
-        (AttackPrimaryMotionAlgorithm::RangedRecoilV1, Some(rig)) => {
-            ranged_recoil_override_for_binding(rig, binding, library, attack_window_secs)
-        }
-        (AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1, Some(MotionRigV1::Biped(rig))) => {
-            biped_melee_swing_override_for_binding(rig, binding, library, attack_window_secs)
-        }
-        (AttackPrimaryMotionAlgorithm::QuadrupedBiteV1, Some(MotionRigV1::Quadruped(rig))) => {
-            quadruped_bite_override_for_binding(rig, binding, library, attack_window_secs)
-        }
-        (_, _) => None,
-    };
+    let attack_override_slots: Vec<PartAnimationSlot> =
+        match (controller.attack_primary_algorithm, rig.as_ref()) {
+            (AttackPrimaryMotionAlgorithm::None, _) => Vec::new(),
+            (AttackPrimaryMotionAlgorithm::RangedRecoilV1, Some(rig)) => {
+                ranged_recoil_override_for_binding(rig, binding, library, attack_window_secs)
+                    .into_iter()
+                    .collect()
+            }
+            (AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1, Some(MotionRigV1::Biped(rig))) => {
+                biped_melee_swing_override_for_binding(rig, binding, library, attack_window_secs)
+            }
+            (AttackPrimaryMotionAlgorithm::QuadrupedBiteV1, Some(MotionRigV1::Quadruped(rig))) => {
+                quadruped_bite_override_for_binding(rig, binding, library, attack_window_secs)
+                    .into_iter()
+                    .collect()
+            }
+            (_, _) => Vec::new(),
+        };
 
     let mut effective_slots = binding.base_slots.clone();
     if let Some(slot) = idle_override_slot {
@@ -1423,9 +1428,9 @@ fn apply_motion_algorithms_for_edge(
         effective_slots.retain(|s| s.channel.as_ref() != "move");
         effective_slots.push(slot);
     }
-    if let Some(slot) = attack_override_slot {
+    if !attack_override_slots.is_empty() {
         effective_slots.retain(|s| s.channel.as_ref() != "attack_primary");
-        effective_slots.push(slot);
+        effective_slots.extend(attack_override_slots);
     }
 
     let should_have_player = binding.apply_aim_yaw || !effective_slots.is_empty();
@@ -1873,35 +1878,528 @@ fn biped_melee_swing_override_for_binding(
     binding: &ObjectRefEdgeBinding,
     library: &ObjectLibrary,
     attack_window_secs: f32,
-) -> Option<PartAnimationSlot> {
+) -> Vec<PartAnimationSlot> {
+    fn q_yxz_deg(yaw_deg: f32, pitch_deg: f32, roll_deg: f32) -> Quat {
+        let (yaw, pitch, roll) = (
+            yaw_deg.to_radians(),
+            pitch_deg.to_radians(),
+            roll_deg.to_radians(),
+        );
+        let q =
+            Quat::from_rotation_z(roll) * Quat::from_rotation_x(pitch) * Quat::from_rotation_y(yaw);
+        if q.is_finite() {
+            q.normalize()
+        } else {
+            Quat::IDENTITY
+        }
+    }
+
+    fn attack_slot(
+        duration_secs: f32,
+        keyframes: Vec<PartAnimationKeyframeDef>,
+    ) -> PartAnimationSlot {
+        let duration = duration_secs.max(0.05);
+        PartAnimationSlot {
+            channel: "attack_primary".into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::AttackTime,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Once {
+                    duration_secs: duration,
+                    keyframes,
+                },
+            },
+        }
+    }
+
+    fn keyframes_arm_variants_right(
+        duration: f32,
+        reach: f32,
+    ) -> [Vec<PartAnimationKeyframeDef>; 3] {
+        let t_hold = duration * 0.10;
+        let t_wind = duration * 0.28;
+        let t_strike = duration * 0.55;
+
+        // Variant 0: outside-top -> inside-bottom (diagonal).
+        let v0 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: q_yxz_deg(20.0, -40.0, -90.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: q_yxz_deg(35.0, -65.0, -110.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: q_yxz_deg(-20.0, 25.0, -35.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        // Variant 1: inside -> outside (horizontal).
+        let v1 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: q_yxz_deg(-20.0, -12.0, -90.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: q_yxz_deg(-35.0, -18.0, -95.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: q_yxz_deg(35.0, -4.0, -85.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        // Variant 2: thrust forward.
+        let pull = (reach * 0.35).clamp(0.0, reach);
+        let v2 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    translation: -Vec3::Z * (pull * 0.35),
+                    rotation: q_yxz_deg(0.0, -15.0, -90.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    translation: -Vec3::Z * pull,
+                    rotation: q_yxz_deg(0.0, -25.0, -90.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    translation: Vec3::Z * reach,
+                    rotation: q_yxz_deg(0.0, 5.0, -90.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        [v0, v1, v2]
+    }
+
+    fn keyframes_arm_variants_left(
+        duration: f32,
+        reach: f32,
+    ) -> [Vec<PartAnimationKeyframeDef>; 3] {
+        let t_hold = duration * 0.10;
+        let t_wind = duration * 0.28;
+        let t_strike = duration * 0.55;
+
+        let v0 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: q_yxz_deg(10.0, -22.0, 20.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: q_yxz_deg(14.0, -35.0, 30.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: q_yxz_deg(-5.0, 12.0, -5.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        let v1 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: q_yxz_deg(-8.0, -10.0, 12.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: q_yxz_deg(-12.0, -14.0, 15.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: q_yxz_deg(12.0, -2.0, 8.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        let pull = (reach * 0.25).clamp(0.0, reach);
+        let v2 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    translation: -Vec3::Z * (pull * 0.25),
+                    rotation: q_yxz_deg(0.0, -12.0, 8.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    translation: -Vec3::Z * pull,
+                    rotation: q_yxz_deg(0.0, -18.0, 10.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    translation: Vec3::Z * (reach * 0.65),
+                    rotation: q_yxz_deg(0.0, 2.0, 6.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        [v0, v1, v2]
+    }
+
+    fn keyframes_body_variants(duration: f32, recoil: f32) -> [Vec<PartAnimationKeyframeDef>; 3] {
+        let t_hold = duration * 0.10;
+        let t_wind = duration * 0.28;
+        let t_strike = duration * 0.55;
+
+        let v0 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: q_yxz_deg(8.0, 0.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    translation: -Vec3::Z * (recoil * 0.25),
+                    rotation: q_yxz_deg(15.0, -5.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    translation: -Vec3::Z * recoil,
+                    rotation: q_yxz_deg(-10.0, 6.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        let v1 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: q_yxz_deg(-6.0, 0.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    translation: -Vec3::Z * (recoil * 0.20),
+                    rotation: q_yxz_deg(-14.0, -3.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    translation: -Vec3::Z * recoil,
+                    rotation: q_yxz_deg(12.0, 4.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        let v2 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    translation: -Vec3::Z * (recoil * 0.10),
+                    rotation: q_yxz_deg(0.0, -2.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    translation: -Vec3::Z * (recoil * 0.15),
+                    rotation: q_yxz_deg(0.0, -6.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    translation: Vec3::Z * (recoil * 0.35),
+                    rotation: q_yxz_deg(0.0, 8.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        [v0, v1, v2]
+    }
+
+    fn keyframes_head_variants(duration: f32) -> [Vec<PartAnimationKeyframeDef>; 3] {
+        let t_hold = duration * 0.10;
+        let t_wind = duration * 0.28;
+        let t_strike = duration * 0.55;
+
+        let v0 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: q_yxz_deg(4.0, -6.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: q_yxz_deg(8.0, -10.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: q_yxz_deg(-6.0, 10.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        let v1 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: q_yxz_deg(-6.0, -4.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: q_yxz_deg(-10.0, -6.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: q_yxz_deg(10.0, 6.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        let v2 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: q_yxz_deg(0.0, -4.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: q_yxz_deg(0.0, -8.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: q_yxz_deg(0.0, 10.0, 0.0),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        [v0, v1, v2]
+    }
+
+    let duration = attack_window_secs.max(0.05);
+    let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+    let scale = binding.base_transform.scale.abs();
+    let effective = (size * scale).abs().max(Vec3::splat(0.01));
+    let reach = (effective.y.max(effective.z) * 0.18).clamp(0.01, 0.25);
+
     if let Some(right_arm) = rig.right_arm.as_ref() {
         if right_arm.matches_binding(binding) {
-            return Some(swing_attack_slot(Vec3::X, attack_window_secs, 85.0));
+            let variants = keyframes_arm_variants_right(duration, reach);
+            return variants
+                .into_iter()
+                .map(|kfs| attack_slot(duration, kfs))
+                .collect();
         }
     }
     if let Some(left_arm) = rig.left_arm.as_ref() {
         if left_arm.matches_binding(binding) {
-            return Some(swing_attack_slot(Vec3::X, attack_window_secs, 55.0));
+            let variants = keyframes_arm_variants_left(duration, reach);
+            return variants
+                .into_iter()
+                .map(|kfs| attack_slot(duration, kfs))
+                .collect();
         }
     }
 
     if let Some(body) = rig.body.as_ref() {
         if body.matches_binding(binding) {
-            let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
-            let scale = binding.base_transform.scale.abs();
-            let effective = (size * scale).abs().max(Vec3::splat(0.01));
             let recoil = (effective.z * 0.02).clamp(0.0025, 0.08);
-            return Some(recoil_attack_slot(-Vec3::Z, attack_window_secs, recoil));
+            let variants = keyframes_body_variants(duration, recoil);
+            return variants
+                .into_iter()
+                .map(|kfs| attack_slot(duration, kfs))
+                .collect();
         }
     }
 
     if let Some(head) = rig.head.as_ref() {
         if head.matches_binding(binding) {
-            return Some(swing_attack_slot(Vec3::X, attack_window_secs, 18.0));
+            let variants = keyframes_head_variants(duration);
+            return variants
+                .into_iter()
+                .map(|kfs| attack_slot(duration, kfs))
+                .collect();
         }
     }
 
-    None
+    Vec::new()
 }
 
 fn quadruped_bite_override_for_binding(
