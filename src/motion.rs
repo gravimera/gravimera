@@ -389,22 +389,29 @@ impl MotionRigV1 {
         attack_kind: Option<UnitAttackKind>,
     ) -> Vec<AttackPrimaryMotionAlgorithm> {
         let mut out = vec![AttackPrimaryMotionAlgorithm::None];
-        let Some(attack_kind) = attack_kind else {
-            return out;
-        };
         match attack_kind {
-            UnitAttackKind::RangedProjectile => {
-                out.push(AttackPrimaryMotionAlgorithm::RangedRecoilV1);
-            }
-            UnitAttackKind::Melee => match self {
-                Self::Biped(_) => out.push(AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1),
-                Self::Quadruped(_) => out.push(AttackPrimaryMotionAlgorithm::QuadrupedBiteV1),
-                Self::Car(rig) => {
+            None => {
+                if let Self::Car(rig) = self {
                     if !rig.tool_arms.is_empty() {
                         out.push(AttackPrimaryMotionAlgorithm::ToolArmDigV1);
                     }
                 }
-                Self::Airplane(_) => {}
+                return out;
+            }
+            Some(attack_kind) => match attack_kind {
+                UnitAttackKind::RangedProjectile => {
+                    out.push(AttackPrimaryMotionAlgorithm::RangedRecoilV1);
+                }
+                UnitAttackKind::Melee => match self {
+                    Self::Biped(_) => out.push(AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1),
+                    Self::Quadruped(_) => out.push(AttackPrimaryMotionAlgorithm::QuadrupedBiteV1),
+                    Self::Car(rig) => {
+                        if !rig.tool_arms.is_empty() {
+                            out.push(AttackPrimaryMotionAlgorithm::ToolArmDigV1);
+                        }
+                    }
+                    Self::Airplane(_) => {}
+                },
             },
         }
         out
@@ -3426,6 +3433,8 @@ mod tests {
         assert_eq!(parsed.tool_arms[0].joints[1].child_object_id, bucket);
 
         let parsed = MotionRigV1::Car(parsed);
+        let applicable = parsed.applicable_attack_primary_algorithms(None);
+        assert!(applicable.contains(&AttackPrimaryMotionAlgorithm::ToolArmDigV1));
         let applicable = parsed.applicable_attack_primary_algorithms(Some(UnitAttackKind::Melee));
         assert!(applicable.contains(&AttackPrimaryMotionAlgorithm::ToolArmDigV1));
     }

@@ -1183,6 +1183,7 @@ fn save_generated_prefab_descriptor_best_effort(
     fn motion_rig_v1_json(
         library: &ObjectLibrary,
         root_id: u128,
+        mobility_mode: Option<MobilityMode>,
         motion_roles: Option<&AiMotionRolesJsonV1>,
     ) -> Option<serde_json::Value> {
         use std::collections::{HashMap, HashSet};
@@ -1265,6 +1266,7 @@ fn save_generated_prefab_descriptor_best_effort(
         fn motion_rig_v1_from_roles(
             by_child_name: &HashMap<String, Edge>,
             body_edge: Option<&Edge>,
+            mobility_mode: Option<MobilityMode>,
             roles: &AiMotionRolesJsonV1,
         ) -> Option<serde_json::Value> {
             #[derive(Clone, Copy)]
@@ -1492,12 +1494,14 @@ fn save_generated_prefab_descriptor_best_effort(
                 }
             }
 
-            if !propellers.is_empty() || !rotors.is_empty() {
+            let wants_airplane = mobility_mode == Some(MobilityMode::Air)
+                && (!propellers.is_empty() || !rotors.is_empty() || !wings.is_empty());
+            if wants_airplane {
                 let propellers = propellers.into_iter().map(spinner_json).collect::<Vec<_>>();
                 let rotors = rotors.into_iter().map(spinner_json).collect::<Vec<_>>();
                 let mut out = serde_json::json!({
-                    "version": 1,
-                    "kind": "airplane_v1",
+                        "version": 1,
+                        "kind": "airplane_v1",
                     "default_move_algorithm": "airplane_prop_v1",
                     "airplane": {
                         "propellers": propellers,
@@ -1754,7 +1758,9 @@ fn save_generated_prefab_descriptor_best_effort(
         }
 
         if let Some(roles) = motion_roles {
-            if let Some(rig) = motion_rig_v1_from_roles(&by_child_name, body_edge.as_ref(), roles) {
+            if let Some(rig) =
+                motion_rig_v1_from_roles(&by_child_name, body_edge.as_ref(), mobility_mode, roles)
+            {
                 return Some(rig);
             }
         }
@@ -1996,7 +2002,12 @@ fn save_generated_prefab_descriptor_best_effort(
             serde_json::to_value(motion_roles).unwrap_or(serde_json::Value::Null),
         );
     }
-    if let Some(motion_rig) = motion_rig_v1_json(library, root_def.object_id, motion_roles) {
+    if let Some(motion_rig) = motion_rig_v1_json(
+        library,
+        root_def.object_id,
+        root_def.mobility.map(|m| m.mode),
+        motion_roles,
+    ) {
         interfaces_extra.insert("motion_rig_v1".to_string(), motion_rig);
     }
 
