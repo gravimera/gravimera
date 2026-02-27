@@ -1940,6 +1940,39 @@ fn biped_melee_swing_override_for_binding(
     library: &ObjectLibrary,
     attack_window_secs: f32,
 ) -> Vec<PartAnimationSlot> {
+    fn attachment_matches(
+        binding: &ObjectRefEdgeBinding,
+        parent_anchor: &str,
+        child_anchor: &str,
+    ) -> bool {
+        binding.attachment.as_ref().is_some_and(|a| {
+            a.parent_anchor.as_ref() == parent_anchor && a.child_anchor.as_ref() == child_anchor
+        })
+    }
+
+    fn child_object_ref_for_attachment(
+        library: &ObjectLibrary,
+        parent_object_id: u128,
+        parent_anchor: &str,
+        child_anchor: &str,
+    ) -> Option<u128> {
+        let def = library.get(parent_object_id)?;
+        for part in def.parts.iter() {
+            let ObjectPartKind::ObjectRef { object_id } = &part.kind else {
+                continue;
+            };
+            let Some(attachment) = part.attachment.as_ref() else {
+                continue;
+            };
+            if attachment.parent_anchor.as_ref() == parent_anchor
+                && attachment.child_anchor.as_ref() == child_anchor
+            {
+                return Some(*object_id);
+            }
+        }
+        None
+    }
+
     fn q_yxz_deg(yaw_deg: f32, pitch_deg: f32, roll_deg: f32) -> Quat {
         let (yaw, pitch, roll) = (
             yaw_deg.to_radians(),
@@ -1974,10 +2007,7 @@ fn biped_melee_swing_override_for_binding(
         }
     }
 
-    fn keyframes_arm_variants_right(
-        duration: f32,
-        reach: f32,
-    ) -> [Vec<PartAnimationKeyframeDef>; 3] {
+    fn keyframes_arm_variants_right(duration: f32) -> [Vec<PartAnimationKeyframeDef>; 3] {
         let t_hold = duration * 0.10;
         let t_wind = duration * 0.28;
         let t_strike = duration * 0.55;
@@ -2049,7 +2079,6 @@ fn biped_melee_swing_override_for_binding(
         ];
 
         // Variant 2: thrust forward.
-        let pull = (reach * 0.35).clamp(0.0, reach);
         let v2 = vec![
             PartAnimationKeyframeDef {
                 time_secs: 0.0,
@@ -2058,7 +2087,6 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_hold,
                 delta: Transform {
-                    translation: -Vec3::Z * (pull * 0.35),
                     rotation: q_yxz_deg(0.0, -15.0, -90.0),
                     ..default()
                 },
@@ -2066,7 +2094,6 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_wind,
                 delta: Transform {
-                    translation: -Vec3::Z * pull,
                     rotation: q_yxz_deg(0.0, -25.0, -90.0),
                     ..default()
                 },
@@ -2074,7 +2101,6 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    translation: Vec3::Z * reach,
                     rotation: q_yxz_deg(0.0, 5.0, -90.0),
                     ..default()
                 },
@@ -2088,10 +2114,7 @@ fn biped_melee_swing_override_for_binding(
         [v0, v1, v2]
     }
 
-    fn keyframes_arm_variants_left(
-        duration: f32,
-        reach: f32,
-    ) -> [Vec<PartAnimationKeyframeDef>; 3] {
+    fn keyframes_arm_variants_left(duration: f32) -> [Vec<PartAnimationKeyframeDef>; 3] {
         let t_hold = duration * 0.10;
         let t_wind = duration * 0.28;
         let t_strike = duration * 0.55;
@@ -2160,7 +2183,6 @@ fn biped_melee_swing_override_for_binding(
             },
         ];
 
-        let pull = (reach * 0.25).clamp(0.0, reach);
         let v2 = vec![
             PartAnimationKeyframeDef {
                 time_secs: 0.0,
@@ -2169,7 +2191,6 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_hold,
                 delta: Transform {
-                    translation: -Vec3::Z * (pull * 0.25),
                     rotation: q_yxz_deg(0.0, -12.0, 8.0),
                     ..default()
                 },
@@ -2177,7 +2198,6 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_wind,
                 delta: Transform {
-                    translation: -Vec3::Z * pull,
                     rotation: q_yxz_deg(0.0, -18.0, 10.0),
                     ..default()
                 },
@@ -2185,7 +2205,6 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    translation: Vec3::Z * (reach * 0.65),
                     rotation: q_yxz_deg(0.0, 2.0, 6.0),
                     ..default()
                 },
@@ -2296,7 +2315,7 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    translation: Vec3::Z * (recoil * 0.35),
+                    translation: Vec3::Z * recoil,
                     rotation: q_yxz_deg(0.0, 8.0, 0.0),
                     ..default()
                 },
@@ -2418,11 +2437,310 @@ fn biped_melee_swing_override_for_binding(
     let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
     let scale = binding.base_transform.scale.abs();
     let effective = (size * scale).abs().max(Vec3::splat(0.01));
-    let reach = (effective.y.max(effective.z) * 0.18).clamp(0.01, 0.25);
+    // Drive additional joints when present in the composition chain (Gen3D convention):
+    // shoulder -> upper_arm (rig edge), upper_arm --elbow_mount--> forearm, forearm --wrist_mount--> hand.
+    let right_upper = rig.right_arm.as_ref().map(|e| e.child_object_id);
+    let left_upper = rig.left_arm.as_ref().map(|e| e.child_object_id);
+
+    let right_lower = right_upper.and_then(|id| {
+        child_object_ref_for_attachment(library, id, "elbow_mount", "elbow_mount")
+            .or_else(|| child_object_ref_for_attachment(library, id, "elbow_joint", "elbow_mount"))
+    });
+    let left_lower = left_upper.and_then(|id| {
+        child_object_ref_for_attachment(library, id, "elbow_mount", "elbow_mount")
+            .or_else(|| child_object_ref_for_attachment(library, id, "elbow_joint", "elbow_mount"))
+    });
+
+    let right_hand = right_lower.and_then(|id| {
+        child_object_ref_for_attachment(library, id, "wrist_mount", "wrist_mount")
+            .or_else(|| child_object_ref_for_attachment(library, id, "wrist_joint", "wrist_mount"))
+    });
+    let left_hand = left_lower.and_then(|id| {
+        child_object_ref_for_attachment(library, id, "wrist_mount", "wrist_mount")
+            .or_else(|| child_object_ref_for_attachment(library, id, "wrist_joint", "wrist_mount"))
+    });
+
+    fn keyframes_elbow_variants(
+        duration: f32,
+        is_weapon_arm: bool,
+    ) -> [Vec<PartAnimationKeyframeDef>; 3] {
+        let t_hold = duration * 0.10;
+        let t_wind = duration * 0.28;
+        let t_strike = duration * 0.55;
+
+        let (hold, wind, strike): (f32, f32, f32) = if is_weapon_arm {
+            // Keep a strong bend so the weapon reads as "held" rather than a rigid straight arm.
+            (75.0, 95.0, 18.0)
+        } else {
+            (35.0, 45.0, 10.0)
+        };
+
+        // Variant 0: diagonal swing (bend stays fairly constant).
+        let v0 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x(hold.to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x(wind.to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x(strike.to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        // Variant 1: horizontal swing (slightly less wind).
+        let v1 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x((hold * 0.85).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x((wind * 0.80).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x((strike * 1.05).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        // Variant 2: thrust (bend more in wind, extend on strike).
+        let v2 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x((hold * 0.95).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x((wind * 1.10).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x((strike * 0.70).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        [v0, v1, v2]
+    }
+
+    fn keyframes_wrist_variants(
+        duration: f32,
+        is_weapon_arm: bool,
+    ) -> [Vec<PartAnimationKeyframeDef>; 3] {
+        let t_hold = duration * 0.10;
+        let t_wind = duration * 0.28;
+        let t_strike = duration * 0.55;
+
+        let (hold_roll, wind_roll, strike_roll): (f32, f32, f32) = if is_weapon_arm {
+            (-35.0, -55.0, -10.0)
+        } else {
+            (10.0, 15.0, 6.0)
+        };
+
+        let v0 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z(hold_roll.to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z(wind_roll.to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z(strike_roll.to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        let v1 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z((hold_roll * 0.7).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z((wind_roll * 0.6).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z((strike_roll * 0.8).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        let v2 = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_hold,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z((hold_roll * 0.9).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_wind,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z((wind_roll * 0.9).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: t_strike,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z((strike_roll * 0.6).to_radians()),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        [v0, v1, v2]
+    }
+
+    // Elbows.
+    if right_upper.is_some_and(|id| binding.parent_object_id == id)
+        && right_lower.is_some_and(|id| binding.child_object_id == id)
+        && (attachment_matches(binding, "elbow_mount", "elbow_mount")
+            || attachment_matches(binding, "elbow_joint", "elbow_mount"))
+    {
+        let variants = keyframes_elbow_variants(duration, true);
+        return variants
+            .into_iter()
+            .map(|kfs| attack_slot(duration, kfs))
+            .collect();
+    }
+    if left_upper.is_some_and(|id| binding.parent_object_id == id)
+        && left_lower.is_some_and(|id| binding.child_object_id == id)
+        && (attachment_matches(binding, "elbow_mount", "elbow_mount")
+            || attachment_matches(binding, "elbow_joint", "elbow_mount"))
+    {
+        let variants = keyframes_elbow_variants(duration, false);
+        return variants
+            .into_iter()
+            .map(|kfs| attack_slot(duration, kfs))
+            .collect();
+    }
+
+    // Wrists / hands.
+    if right_lower.is_some_and(|id| binding.parent_object_id == id)
+        && right_hand.is_some_and(|id| binding.child_object_id == id)
+        && (attachment_matches(binding, "wrist_mount", "wrist_mount")
+            || attachment_matches(binding, "wrist_joint", "wrist_mount"))
+    {
+        let variants = keyframes_wrist_variants(duration, true);
+        return variants
+            .into_iter()
+            .map(|kfs| attack_slot(duration, kfs))
+            .collect();
+    }
+    if left_lower.is_some_and(|id| binding.parent_object_id == id)
+        && left_hand.is_some_and(|id| binding.child_object_id == id)
+        && (attachment_matches(binding, "wrist_mount", "wrist_mount")
+            || attachment_matches(binding, "wrist_joint", "wrist_mount"))
+    {
+        let variants = keyframes_wrist_variants(duration, false);
+        return variants
+            .into_iter()
+            .map(|kfs| attack_slot(duration, kfs))
+            .collect();
+    }
 
     if let Some(right_arm) = rig.right_arm.as_ref() {
         if right_arm.matches_binding(binding) {
-            let variants = keyframes_arm_variants_right(duration, reach);
+            let variants = keyframes_arm_variants_right(duration);
             return variants
                 .into_iter()
                 .map(|kfs| attack_slot(duration, kfs))
@@ -2431,7 +2749,7 @@ fn biped_melee_swing_override_for_binding(
     }
     if let Some(left_arm) = rig.left_arm.as_ref() {
         if left_arm.matches_binding(binding) {
-            let variants = keyframes_arm_variants_left(duration, reach);
+            let variants = keyframes_arm_variants_left(duration);
             return variants
                 .into_iter()
                 .map(|kfs| attack_slot(duration, kfs))
