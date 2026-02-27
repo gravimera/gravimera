@@ -460,6 +460,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_review_delta_tweak_contact_stance_null_as_some_none() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "actions": [
+            {"kind":"tweak_contact","component_id":"deadbeef","contact_name":"ground","stance":null,"reason":"test"}
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("review-delta should parse");
+        assert_eq!(delta.actions.len(), 1);
+        match &delta.actions[0] {
+            super::super::schema::AiReviewDeltaActionJsonV1::TweakContact { stance, .. } => {
+                assert!(matches!(stance, Some(None)));
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
+    }
+
+    #[test]
     fn rejects_plan_with_wrong_version() {
         let text = r#"{"version":6,"components":[{"name":"root","size":[1,1,1]}]}"#;
         assert!(parse_ai_plan_from_text(text).is_err());

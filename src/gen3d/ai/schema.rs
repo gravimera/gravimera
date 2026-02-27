@@ -1,6 +1,49 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+fn deserialize_optional_nullable<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    struct Visitor<T>(std::marker::PhantomData<T>);
+
+    impl<'de, T> serde::de::Visitor<'de> for Visitor<T>
+    where
+        T: serde::Deserialize<'de>,
+    {
+        type Value = Option<Option<T>>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("null or a value")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Some(None))
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Some(None))
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let value = T::deserialize(deserializer)?;
+            Ok(Some(Some(value)))
+        }
+    }
+
+    deserializer.deserialize_option(Visitor(std::marker::PhantomData))
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiDraftJsonV1 {
@@ -571,7 +614,7 @@ pub(crate) enum AiReviewDeltaActionJsonV1 {
     TweakContact {
         component_id: String,
         contact_name: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_optional_nullable")]
         stance: Option<Option<AiContactStanceJson>>,
         #[serde(default)]
         reason: String,
