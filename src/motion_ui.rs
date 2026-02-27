@@ -238,6 +238,14 @@ pub(crate) fn motion_algorithm_ui_update(
             .and_then(|d| d.provenance.as_ref())
             .and_then(|p| p.gen3d.as_ref())
             .and_then(|g| g.run_id.as_deref());
+        let gen3d_run_id = gen3d_run_id.or_else(|| {
+            descriptor
+                .and_then(|d| d.interfaces.as_ref())
+                .and_then(|i| i.extra.get("motion_roles_v1"))
+                .and_then(|v| v.get("applies_to"))
+                .and_then(|v| v.get("run_id"))
+                .and_then(|v| v.as_str())
+        });
         let rig_kind = rig.as_ref().map(|r| r.kind_str()).unwrap_or("<none>");
         let gen3d_line = gen3d_run_id
             .map(|run_id| format!("\nGen3D run: {run_id}"))

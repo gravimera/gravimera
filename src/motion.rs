@@ -2007,7 +2007,20 @@ fn biped_melee_swing_override_for_binding(
         }
     }
 
-    fn keyframes_arm_variants_right(duration: f32) -> [Vec<PartAnimationKeyframeDef>; 3] {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum BipedSide {
+        Left,
+        Right,
+    }
+
+    fn keyframes_weapon_arm_variants(
+        duration: f32,
+        side: BipedSide,
+    ) -> [Vec<PartAnimationKeyframeDef>; 3] {
+        let sign = if side == BipedSide::Left { -1.0 } else { 1.0 };
+        let rot = |yaw_deg: f32, pitch_deg: f32, roll_deg: f32| {
+            q_yxz_deg(yaw_deg * sign, pitch_deg, roll_deg * sign)
+        };
         let t_hold = duration * 0.10;
         let t_wind = duration * 0.28;
         let t_strike = duration * 0.55;
@@ -2021,21 +2034,21 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_hold,
                 delta: Transform {
-                    rotation: q_yxz_deg(-10.0, -40.0, -90.0),
+                    rotation: rot(-10.0, -40.0, -90.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_wind,
                 delta: Transform {
-                    rotation: q_yxz_deg(-35.0, -65.0, -110.0),
+                    rotation: rot(-35.0, -65.0, -110.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    rotation: q_yxz_deg(20.0, 25.0, -35.0),
+                    rotation: rot(20.0, 25.0, -35.0),
                     ..default()
                 },
             },
@@ -2054,21 +2067,21 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_hold,
                 delta: Transform {
-                    rotation: q_yxz_deg(-20.0, -12.0, -90.0),
+                    rotation: rot(-20.0, -12.0, -90.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_wind,
                 delta: Transform {
-                    rotation: q_yxz_deg(-35.0, -18.0, -95.0),
+                    rotation: rot(-35.0, -18.0, -95.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    rotation: q_yxz_deg(35.0, -4.0, -85.0),
+                    rotation: rot(35.0, -4.0, -85.0),
                     ..default()
                 },
             },
@@ -2087,21 +2100,21 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_hold,
                 delta: Transform {
-                    rotation: q_yxz_deg(0.0, -15.0, -90.0),
+                    rotation: rot(0.0, -15.0, -90.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_wind,
                 delta: Transform {
-                    rotation: q_yxz_deg(0.0, -25.0, -90.0),
+                    rotation: rot(0.0, -25.0, -90.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    rotation: q_yxz_deg(0.0, 5.0, -90.0),
+                    rotation: rot(0.0, 5.0, -90.0),
                     ..default()
                 },
             },
@@ -2114,7 +2127,14 @@ fn biped_melee_swing_override_for_binding(
         [v0, v1, v2]
     }
 
-    fn keyframes_arm_variants_left(duration: f32) -> [Vec<PartAnimationKeyframeDef>; 3] {
+    fn keyframes_offhand_arm_variants(
+        duration: f32,
+        side: BipedSide,
+    ) -> [Vec<PartAnimationKeyframeDef>; 3] {
+        let sign = if side == BipedSide::Right { -1.0 } else { 1.0 };
+        let rot = |yaw_deg: f32, pitch_deg: f32, roll_deg: f32| {
+            q_yxz_deg(yaw_deg * sign, pitch_deg, roll_deg * sign)
+        };
         let t_hold = duration * 0.10;
         let t_wind = duration * 0.28;
         let t_strike = duration * 0.55;
@@ -2127,21 +2147,21 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_hold,
                 delta: Transform {
-                    rotation: q_yxz_deg(10.0, -22.0, 20.0),
+                    rotation: rot(10.0, -22.0, 20.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_wind,
                 delta: Transform {
-                    rotation: q_yxz_deg(14.0, -35.0, 30.0),
+                    rotation: rot(14.0, -35.0, 30.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    rotation: q_yxz_deg(-5.0, 12.0, -5.0),
+                    rotation: rot(-5.0, 12.0, -5.0),
                     ..default()
                 },
             },
@@ -2159,21 +2179,21 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_hold,
                 delta: Transform {
-                    rotation: q_yxz_deg(-8.0, -10.0, 12.0),
+                    rotation: rot(-8.0, -10.0, 12.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_wind,
                 delta: Transform {
-                    rotation: q_yxz_deg(-12.0, -14.0, 15.0),
+                    rotation: rot(-12.0, -14.0, 15.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    rotation: q_yxz_deg(12.0, -2.0, 8.0),
+                    rotation: rot(12.0, -2.0, 8.0),
                     ..default()
                 },
             },
@@ -2191,21 +2211,21 @@ fn biped_melee_swing_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: t_hold,
                 delta: Transform {
-                    rotation: q_yxz_deg(0.0, -12.0, 8.0),
+                    rotation: rot(0.0, -12.0, 8.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_wind,
                 delta: Transform {
-                    rotation: q_yxz_deg(0.0, -18.0, 10.0),
+                    rotation: rot(0.0, -18.0, 10.0),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: t_strike,
                 delta: Transform {
-                    rotation: q_yxz_deg(0.0, 2.0, 6.0),
+                    rotation: rot(0.0, 2.0, 6.0),
                     ..default()
                 },
             },
@@ -2438,27 +2458,79 @@ fn biped_melee_swing_override_for_binding(
     let scale = binding.base_transform.scale.abs();
     let effective = (size * scale).abs().max(Vec3::splat(0.01));
     // Drive additional joints when present in the composition chain (Gen3D convention):
-    // shoulder -> upper_arm (rig edge), upper_arm --elbow_mount--> forearm, forearm --wrist_mount--> hand.
+    // shoulder -> upper_arm (rig edge), upper_arm --elbow_mount/joint--> forearm,
+    // forearm --wrist_mount/joint--> hand.
     let right_upper = rig.right_arm.as_ref().map(|e| e.child_object_id);
     let left_upper = rig.left_arm.as_ref().map(|e| e.child_object_id);
 
     let right_lower = right_upper.and_then(|id| {
-        child_object_ref_for_attachment(library, id, "elbow_mount", "elbow_mount")
+        child_object_ref_for_attachment(library, id, "elbow_mount", "elbow_joint")
+            .or_else(|| child_object_ref_for_attachment(library, id, "elbow_mount", "elbow_mount"))
             .or_else(|| child_object_ref_for_attachment(library, id, "elbow_joint", "elbow_mount"))
+            .or_else(|| child_object_ref_for_attachment(library, id, "elbow_joint", "elbow_joint"))
     });
     let left_lower = left_upper.and_then(|id| {
-        child_object_ref_for_attachment(library, id, "elbow_mount", "elbow_mount")
+        child_object_ref_for_attachment(library, id, "elbow_mount", "elbow_joint")
+            .or_else(|| child_object_ref_for_attachment(library, id, "elbow_mount", "elbow_mount"))
             .or_else(|| child_object_ref_for_attachment(library, id, "elbow_joint", "elbow_mount"))
+            .or_else(|| child_object_ref_for_attachment(library, id, "elbow_joint", "elbow_joint"))
     });
 
     let right_hand = right_lower.and_then(|id| {
-        child_object_ref_for_attachment(library, id, "wrist_mount", "wrist_mount")
+        child_object_ref_for_attachment(library, id, "wrist_mount", "wrist_joint")
+            .or_else(|| child_object_ref_for_attachment(library, id, "wrist_mount", "wrist_mount"))
             .or_else(|| child_object_ref_for_attachment(library, id, "wrist_joint", "wrist_mount"))
+            .or_else(|| child_object_ref_for_attachment(library, id, "wrist_joint", "wrist_joint"))
     });
     let left_hand = left_lower.and_then(|id| {
-        child_object_ref_for_attachment(library, id, "wrist_mount", "wrist_mount")
+        child_object_ref_for_attachment(library, id, "wrist_mount", "wrist_joint")
+            .or_else(|| child_object_ref_for_attachment(library, id, "wrist_mount", "wrist_mount"))
             .or_else(|| child_object_ref_for_attachment(library, id, "wrist_joint", "wrist_mount"))
+            .or_else(|| child_object_ref_for_attachment(library, id, "wrist_joint", "wrist_joint"))
     });
+
+    fn object_has_grip_object_ref(library: &ObjectLibrary, object_id: u128) -> bool {
+        let Some(def) = library.get(object_id) else {
+            return false;
+        };
+        def.parts.iter().any(|part| {
+            let ObjectPartKind::ObjectRef { .. } = part.kind else {
+                return false;
+            };
+            let Some(att) = part.attachment.as_ref() else {
+                return false;
+            };
+            let parent = att.parent_anchor.as_ref().to_ascii_lowercase();
+            let child = att.child_anchor.as_ref().to_ascii_lowercase();
+            parent.contains("grip") || child.contains("grip")
+        })
+    }
+
+    fn object_has_any_object_ref(library: &ObjectLibrary, object_id: u128) -> bool {
+        let Some(def) = library.get(object_id) else {
+            return false;
+        };
+        def.parts
+            .iter()
+            .any(|part| matches!(part.kind, ObjectPartKind::ObjectRef { .. }))
+    }
+
+    let left_has_grip = left_hand.is_some_and(|id| object_has_grip_object_ref(library, id));
+    let right_has_grip = right_hand.is_some_and(|id| object_has_grip_object_ref(library, id));
+    let left_has_any = left_hand.is_some_and(|id| object_has_any_object_ref(library, id));
+    let right_has_any = right_hand.is_some_and(|id| object_has_any_object_ref(library, id));
+
+    let weapon_side = match (left_has_grip, right_has_grip) {
+        (true, false) => BipedSide::Left,
+        (false, true) => BipedSide::Right,
+        _ => match (left_has_any, right_has_any) {
+            (true, false) => BipedSide::Left,
+            (false, true) => BipedSide::Right,
+            _ => BipedSide::Right,
+        },
+    };
+    let right_is_weapon_arm = weapon_side == BipedSide::Right;
+    let left_is_weapon_arm = weapon_side == BipedSide::Left;
 
     fn keyframes_elbow_variants(
         duration: f32,
@@ -2693,10 +2765,12 @@ fn biped_melee_swing_override_for_binding(
     // Elbows.
     if right_upper.is_some_and(|id| binding.parent_object_id == id)
         && right_lower.is_some_and(|id| binding.child_object_id == id)
-        && (attachment_matches(binding, "elbow_mount", "elbow_mount")
-            || attachment_matches(binding, "elbow_joint", "elbow_mount"))
+        && (attachment_matches(binding, "elbow_mount", "elbow_joint")
+            || attachment_matches(binding, "elbow_mount", "elbow_mount")
+            || attachment_matches(binding, "elbow_joint", "elbow_mount")
+            || attachment_matches(binding, "elbow_joint", "elbow_joint"))
     {
-        let variants = keyframes_elbow_variants(duration, true);
+        let variants = keyframes_elbow_variants(duration, right_is_weapon_arm);
         return variants
             .into_iter()
             .map(|kfs| attack_slot(duration, kfs))
@@ -2704,10 +2778,12 @@ fn biped_melee_swing_override_for_binding(
     }
     if left_upper.is_some_and(|id| binding.parent_object_id == id)
         && left_lower.is_some_and(|id| binding.child_object_id == id)
-        && (attachment_matches(binding, "elbow_mount", "elbow_mount")
-            || attachment_matches(binding, "elbow_joint", "elbow_mount"))
+        && (attachment_matches(binding, "elbow_mount", "elbow_joint")
+            || attachment_matches(binding, "elbow_mount", "elbow_mount")
+            || attachment_matches(binding, "elbow_joint", "elbow_mount")
+            || attachment_matches(binding, "elbow_joint", "elbow_joint"))
     {
-        let variants = keyframes_elbow_variants(duration, false);
+        let variants = keyframes_elbow_variants(duration, left_is_weapon_arm);
         return variants
             .into_iter()
             .map(|kfs| attack_slot(duration, kfs))
@@ -2717,10 +2793,12 @@ fn biped_melee_swing_override_for_binding(
     // Wrists / hands.
     if right_lower.is_some_and(|id| binding.parent_object_id == id)
         && right_hand.is_some_and(|id| binding.child_object_id == id)
-        && (attachment_matches(binding, "wrist_mount", "wrist_mount")
-            || attachment_matches(binding, "wrist_joint", "wrist_mount"))
+        && (attachment_matches(binding, "wrist_mount", "wrist_joint")
+            || attachment_matches(binding, "wrist_mount", "wrist_mount")
+            || attachment_matches(binding, "wrist_joint", "wrist_mount")
+            || attachment_matches(binding, "wrist_joint", "wrist_joint"))
     {
-        let variants = keyframes_wrist_variants(duration, true);
+        let variants = keyframes_wrist_variants(duration, right_is_weapon_arm);
         return variants
             .into_iter()
             .map(|kfs| attack_slot(duration, kfs))
@@ -2728,10 +2806,12 @@ fn biped_melee_swing_override_for_binding(
     }
     if left_lower.is_some_and(|id| binding.parent_object_id == id)
         && left_hand.is_some_and(|id| binding.child_object_id == id)
-        && (attachment_matches(binding, "wrist_mount", "wrist_mount")
-            || attachment_matches(binding, "wrist_joint", "wrist_mount"))
+        && (attachment_matches(binding, "wrist_mount", "wrist_joint")
+            || attachment_matches(binding, "wrist_mount", "wrist_mount")
+            || attachment_matches(binding, "wrist_joint", "wrist_mount")
+            || attachment_matches(binding, "wrist_joint", "wrist_joint"))
     {
-        let variants = keyframes_wrist_variants(duration, false);
+        let variants = keyframes_wrist_variants(duration, left_is_weapon_arm);
         return variants
             .into_iter()
             .map(|kfs| attack_slot(duration, kfs))
@@ -2740,7 +2820,11 @@ fn biped_melee_swing_override_for_binding(
 
     if let Some(right_arm) = rig.right_arm.as_ref() {
         if right_arm.matches_binding(binding) {
-            let variants = keyframes_arm_variants_right(duration);
+            let variants = if right_is_weapon_arm {
+                keyframes_weapon_arm_variants(duration, BipedSide::Right)
+            } else {
+                keyframes_offhand_arm_variants(duration, BipedSide::Right)
+            };
             return variants
                 .into_iter()
                 .map(|kfs| attack_slot(duration, kfs))
@@ -2749,7 +2833,11 @@ fn biped_melee_swing_override_for_binding(
     }
     if let Some(left_arm) = rig.left_arm.as_ref() {
         if left_arm.matches_binding(binding) {
-            let variants = keyframes_arm_variants_left(duration);
+            let variants = if left_is_weapon_arm {
+                keyframes_weapon_arm_variants(duration, BipedSide::Left)
+            } else {
+                keyframes_offhand_arm_variants(duration, BipedSide::Left)
+            };
             return variants
                 .into_iter()
                 .map(|kfs| attack_slot(duration, kfs))
@@ -3122,6 +3210,188 @@ mod tests {
         assert_eq!(parsed.right_leg.parent_anchor, "hip_R_joint");
         assert_eq!(parsed.left_arm.unwrap().parent_anchor, "shoulder_L_joint");
         assert_eq!(parsed.right_arm.unwrap().parent_anchor, "shoulder_R_joint");
+    }
+
+    #[test]
+    fn melee_swing_picks_weapon_arm_from_hand_grip_attachment() {
+        let upper_l = 0x200_u128;
+        let lower_l = 0x201_u128;
+        let hand_l = 0x202_u128;
+        let upper_r = 0x210_u128;
+        let lower_r = 0x211_u128;
+        let hand_r = 0x212_u128;
+        let weapon = 0x300_u128;
+
+        fn stub_def(object_id: u128, label: &str, parts: Vec<ObjectPartDef>) -> ObjectDef {
+            ObjectDef {
+                object_id,
+                label: label.to_string().into(),
+                size: Vec3::ONE,
+                ground_origin_y: None,
+                collider: ColliderProfile::None,
+                interaction: ObjectInteraction::none(),
+                aim: None,
+                mobility: None,
+                anchors: Vec::new(),
+                parts,
+                minimap_color: None,
+                health_bar_offset_y: None,
+                enemy: None,
+                muzzle: None,
+                projectile: None,
+                attack: None,
+            }
+        }
+
+        let mut library = ObjectLibrary::default();
+        library.upsert(stub_def(
+            upper_l,
+            "upper_l",
+            vec![
+                ObjectPartDef::object_ref(lower_l, Transform::IDENTITY).with_attachment(
+                    AttachmentDef {
+                        parent_anchor: "elbow_mount".into(),
+                        child_anchor: "elbow_joint".into(),
+                    },
+                ),
+            ],
+        ));
+        library.upsert(stub_def(
+            lower_l,
+            "lower_l",
+            vec![
+                ObjectPartDef::object_ref(hand_l, Transform::IDENTITY).with_attachment(
+                    AttachmentDef {
+                        parent_anchor: "wrist_mount".into(),
+                        child_anchor: "wrist_joint".into(),
+                    },
+                ),
+            ],
+        ));
+        library.upsert(stub_def(
+            hand_l,
+            "hand_l",
+            vec![
+                ObjectPartDef::object_ref(weapon, Transform::IDENTITY).with_attachment(
+                    AttachmentDef {
+                        parent_anchor: "hand_grip".into(),
+                        child_anchor: "grip_joint".into(),
+                    },
+                ),
+            ],
+        ));
+
+        library.upsert(stub_def(
+            upper_r,
+            "upper_r",
+            vec![
+                ObjectPartDef::object_ref(lower_r, Transform::IDENTITY).with_attachment(
+                    AttachmentDef {
+                        parent_anchor: "elbow_mount".into(),
+                        child_anchor: "elbow_joint".into(),
+                    },
+                ),
+            ],
+        ));
+        library.upsert(stub_def(
+            lower_r,
+            "lower_r",
+            vec![
+                ObjectPartDef::object_ref(hand_r, Transform::IDENTITY).with_attachment(
+                    AttachmentDef {
+                        parent_anchor: "wrist_mount".into(),
+                        child_anchor: "wrist_joint".into(),
+                    },
+                ),
+            ],
+        ));
+        library.upsert(stub_def(hand_r, "hand_r", Vec::new()));
+        library.upsert(stub_def(weapon, "weapon", Vec::new()));
+
+        let mut rig = BipedRigV1 {
+            move_cycle_m: 1.0,
+            walk_swing_degrees: 25.0,
+            default_move_algorithm: None,
+            body: None,
+            left_leg: MotionEdgeRefV1 {
+                parent_object_id: 0x1,
+                child_object_id: 0x2,
+                parent_anchor: "hip_l".into(),
+                child_anchor: "root".into(),
+            },
+            right_leg: MotionEdgeRefV1 {
+                parent_object_id: 0x1,
+                child_object_id: 0x3,
+                parent_anchor: "hip_r".into(),
+                child_anchor: "root".into(),
+            },
+            left_arm: Some(MotionEdgeRefV1 {
+                parent_object_id: 0x10,
+                child_object_id: upper_l,
+                parent_anchor: "shoulder_mount_L".into(),
+                child_anchor: "shoulder_joint".into(),
+            }),
+            right_arm: Some(MotionEdgeRefV1 {
+                parent_object_id: 0x10,
+                child_object_id: upper_r,
+                parent_anchor: "shoulder_mount_R".into(),
+                child_anchor: "shoulder_joint".into(),
+            }),
+            head: None,
+            tail: None,
+            ears: Vec::new(),
+        };
+        rig.normalize_left_right_hints();
+
+        let root = Entity::from_bits(1);
+        let left_elbow_binding = ObjectRefEdgeBinding {
+            root_entity: root,
+            parent_object_id: upper_l,
+            child_object_id: lower_l,
+            attachment: Some(AttachmentDef {
+                parent_anchor: "elbow_mount".into(),
+                child_anchor: "elbow_joint".into(),
+            }),
+            base_transform: Transform::IDENTITY,
+            base_slots: Vec::new(),
+            apply_aim_yaw: false,
+        };
+        let right_elbow_binding = ObjectRefEdgeBinding {
+            root_entity: root,
+            parent_object_id: upper_r,
+            child_object_id: lower_r,
+            attachment: Some(AttachmentDef {
+                parent_anchor: "elbow_mount".into(),
+                child_anchor: "elbow_joint".into(),
+            }),
+            base_transform: Transform::IDENTITY,
+            base_slots: Vec::new(),
+            apply_aim_yaw: false,
+        };
+
+        let left_slots =
+            biped_melee_swing_override_for_binding(&rig, &left_elbow_binding, &library, 1.0);
+        assert_eq!(left_slots.len(), 3);
+        let PartAnimationDef::Once { keyframes, .. } = &left_slots[0].spec.clip else {
+            panic!("expected once clip");
+        };
+        let expected = Quat::from_rotation_x(75.0_f32.to_radians());
+        assert!(
+            keyframes[1].delta.rotation.angle_between(expected) < 1e-5,
+            "expected left elbow to be treated as weapon arm"
+        );
+
+        let right_slots =
+            biped_melee_swing_override_for_binding(&rig, &right_elbow_binding, &library, 1.0);
+        assert_eq!(right_slots.len(), 3);
+        let PartAnimationDef::Once { keyframes, .. } = &right_slots[0].spec.clip else {
+            panic!("expected once clip");
+        };
+        let expected = Quat::from_rotation_x(35.0_f32.to_radians());
+        assert!(
+            keyframes[1].delta.rotation.angle_between(expected) < 1e-5,
+            "expected right elbow to be treated as offhand"
+        );
     }
 
     #[test]
