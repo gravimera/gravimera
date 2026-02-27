@@ -380,6 +380,34 @@ struct CurlByteTimeouts {
     hard: std::time::Duration,
 }
 
+fn is_cancelled(cancel: Option<&AtomicBool>) -> bool {
+    match cancel {
+        Some(flag) => flag.load(Ordering::Relaxed),
+        None => false,
+    }
+}
+
+fn sleep_with_cancel(duration: std::time::Duration, cancel: Option<&AtomicBool>) -> bool {
+    if duration.is_zero() {
+        return is_cancelled(cancel);
+    }
+
+    let start = std::time::Instant::now();
+    let step = std::time::Duration::from_millis(50);
+    loop {
+        if is_cancelled(cancel) {
+            return true;
+        }
+
+        let elapsed = start.elapsed();
+        if elapsed >= duration {
+            return false;
+        }
+        let remaining = duration.saturating_sub(elapsed);
+        std::thread::sleep(step.min(remaining));
+    }
+}
+
 fn read_stream_to_end(
     mut reader: impl std::io::Read,
     start: std::time::Instant,
@@ -409,6 +437,7 @@ fn wait_curl_with_byte_timeouts(
     mut child: std::process::Child,
     stdin_body: Option<&[u8]>,
     timeouts: CurlByteTimeouts,
+    cancel: Option<&AtomicBool>,
     url: &str,
 ) -> Result<std::process::Output, OpenAiError> {
     if let Some(body) = stdin_body {
@@ -419,6 +448,7 @@ fn wait_curl_with_byte_timeouts(
                 url: url.to_string(),
                 status: None,
                 body_preview: None,
+                cancelled: false,
             })?;
         }
     }
@@ -436,12 +466,14 @@ fn wait_curl_with_byte_timeouts(
         url: url.to_string(),
         status: None,
         body_preview: None,
+        cancelled: false,
     })?;
     let stderr = child.stderr.take().ok_or_else(|| OpenAiError {
         summary: "Internal error: missing curl stderr pipe".into(),
         url: url.to_string(),
         status: None,
         body_preview: None,
+        cancelled: false,
     })?;
 
     let stdout_handle = {
@@ -463,6 +495,7 @@ fn wait_curl_with_byte_timeouts(
     let sleep_step = std::time::Duration::from_millis(50);
     let mut status: Option<std::process::ExitStatus> = None;
     let mut timed_out_summary: Option<String> = None;
+    let mut cancelled = false;
 
     loop {
         match child.try_wait() {
@@ -478,7 +511,15 @@ fn wait_curl_with_byte_timeouts(
                     url: url.to_string(),
                     status: None,
                     body_preview: None,
+                    cancelled: false,
                 });
+            }
+        }
+
+        if let Some(cancel) = cancel {
+            if cancel.load(Ordering::Relaxed) {
+                cancelled = true;
+                break;
             }
         }
 
@@ -515,6 +556,20 @@ fn wait_curl_with_byte_timeouts(
         std::thread::sleep(sleep_step);
     }
 
+    if cancelled {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _stdout = stdout_handle.join().unwrap_or_default();
+        let _stderr = stderr_handle.join().unwrap_or_default();
+        return Err(OpenAiError {
+            summary: "Cancelled".into(),
+            url: url.to_string(),
+            status: None,
+            body_preview: None,
+            cancelled: true,
+        });
+    }
+
     if let Some(summary) = timed_out_summary {
         let _ = child.kill();
         let _ = child.wait();
@@ -536,6 +591,7 @@ fn wait_curl_with_byte_timeouts(
             url: url.to_string(),
             status: None,
             body_preview: None,
+            cancelled: false,
         });
     }
 
@@ -544,6 +600,7 @@ fn wait_curl_with_byte_timeouts(
         url: url.to_string(),
         status: None,
         body_preview: None,
+        cancelled: false,
     })?;
 
     let stdout = stdout_handle.join().unwrap_or_default();
@@ -596,6 +653,7 @@ pub(super) fn cap_reasoning_effort(config_effort: &str, cap: &str) -> String {
 pub(super) fn generate_text_via_openai(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     mut session: Gen3dAiSessionState,
+    cancel: Option<Arc<AtomicBool>>,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     base_url: &str,
     api_key: &str,
@@ -612,6 +670,13 @@ pub(super) fn generate_text_via_openai(
             "Too many images: {} (max {GEN3D_MAX_REQUEST_IMAGES})",
             image_paths.len(),
         ));
+    }
+
+    let cancel = cancel.as_deref();
+    if let Some(cancel) = cancel {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Cancelled".into());
+        }
     }
 
     let run_root_dir = run_dir.and_then(|dir| run_root_dir_from_pass_dir(dir));
@@ -655,6 +720,11 @@ pub(super) fn generate_text_via_openai(
     if !image_paths.is_empty() {
         set_progress(progress, "Reading images…");
         for (idx, path) in image_paths.iter().enumerate() {
+            if let Some(cancel) = cancel {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err("Cancelled".into());
+                }
+            }
             let name = path
                 .file_name()
                 .and_then(|s| s.to_str())
@@ -747,6 +817,7 @@ pub(super) fn generate_text_via_openai(
     let responses_summary = match openai_responses_flow(
         progress,
         &mut session,
+        cancel,
         expected_schema,
         base_url,
         api_key,
@@ -785,6 +856,27 @@ pub(super) fn generate_text_via_openai(
             return Ok(resp);
         }
         Err(err) => {
+            if err.cancelled {
+                append_agent_trace_event_v1(
+                    run_root_dir,
+                    &AgentTraceEventV1::LlmResponse {
+                        artifact_prefix: artifact_prefix.to_string(),
+                        artifact_dir: run_dir
+                            .map(|d| d.display().to_string())
+                            .unwrap_or_else(|| "<none>".into()),
+                        api: "responses".into(),
+                        ok: false,
+                        total_tokens: None,
+                        error: Some("cancelled".into()),
+                    },
+                );
+                append_gen3d_run_log(
+                    run_dir,
+                    format!("request_cancelled prefix={}", artifact_prefix),
+                );
+                persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
+                return Err("Cancelled".into());
+            }
             warn!(
                 "Gen3D: /responses attempt failed; falling back to /chat/completions: {}",
                 err.short()
@@ -818,6 +910,7 @@ pub(super) fn generate_text_via_openai(
     let chat_summary = match openai_chat_completions_flow(
         progress,
         &mut session,
+        cancel,
         expected_schema,
         base_url,
         api_key,
@@ -856,6 +949,27 @@ pub(super) fn generate_text_via_openai(
             return Ok(resp);
         }
         Err(err) => {
+            if err.cancelled {
+                append_agent_trace_event_v1(
+                    run_root_dir,
+                    &AgentTraceEventV1::LlmResponse {
+                        artifact_prefix: artifact_prefix.to_string(),
+                        artifact_dir: run_dir
+                            .map(|d| d.display().to_string())
+                            .unwrap_or_else(|| "<none>".into()),
+                        api: "chat_completions".into(),
+                        ok: false,
+                        total_tokens: None,
+                        error: Some("cancelled".into()),
+                    },
+                );
+                append_gen3d_run_log(
+                    run_dir,
+                    format!("request_cancelled prefix={}", artifact_prefix),
+                );
+                persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
+                return Err("Cancelled".into());
+            }
             warn!(
                 "Gen3D: /chat/completions attempt failed after /responses fallback: {}",
                 err.short()
@@ -1353,6 +1467,7 @@ fn is_structured_outputs_rejected(err: &OpenAiError) -> bool {
 fn openai_responses_flow(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
+    cancel: Option<&AtomicBool>,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     base_url: &str,
     api_key: &str,
@@ -1367,6 +1482,13 @@ fn openai_responses_flow(
 ) -> Result<Gen3dAiTextResponse, OpenAiError> {
     if session.responses_supported == Some(false) {
         return Err(OpenAiError::new("Responses API not supported".into()));
+    }
+
+    let url = crate::config::join_base_url(base_url, "responses");
+    if let Some(cancel) = cancel {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(OpenAiError::cancelled(url));
+        }
     }
 
     // Retries for transient provider/network failures. This is intentionally higher than you might
@@ -1460,6 +1582,7 @@ fn openai_responses_flow(
 
         match openai_responses_curl(
             progress,
+            cancel,
             base_url,
             api_key,
             model,
@@ -1486,6 +1609,9 @@ fn openai_responses_flow(
                 break body;
             }
             Err(err) => {
+                if err.cancelled {
+                    return Err(err);
+                }
                 if background_for_request && is_responses_background_unsupported(&err) {
                     warn!("Gen3D: /responses background unsupported; retrying without it.");
                     append_gen3d_run_log(
@@ -1557,7 +1683,9 @@ fn openai_responses_flow(
                             err.short()
                         ),
                     );
-                    std::thread::sleep(retry_delay);
+                    if sleep_with_cancel(retry_delay, cancel) {
+                        return Err(OpenAiError::cancelled(url.clone()));
+                    }
                     retry_delay = (retry_delay * 2).min(std::time::Duration::from_secs(4));
                     continue;
                 }
@@ -1609,7 +1737,9 @@ fn openai_responses_flow(
                         retry_delay.as_millis(),
                     ),
                 );
-                std::thread::sleep(retry_delay);
+                if sleep_with_cancel(retry_delay, cancel) {
+                    return Err(OpenAiError::cancelled(url.clone()));
+                }
                 let schema_for_request = if expected_schema.is_some()
                     && session.responses_structured_outputs_supported != Some(false)
                 {
@@ -1621,6 +1751,7 @@ fn openai_responses_flow(
                     && session.responses_background_supported != Some(false);
                 body = openai_responses_curl(
                     progress,
+                    cancel,
                     base_url,
                     api_key,
                     model,
@@ -1691,13 +1822,25 @@ fn openai_responses_flow(
                     GEN3D_RESPONSES_POLL_MAX_SECS
                 )));
             }
-            std::thread::sleep(delay);
+            let url = crate::config::join_base_url(base_url, &format!("responses/{id}"));
+            if sleep_with_cancel(delay, cancel) {
+                return Err(OpenAiError::cancelled(url));
+            }
             delay = (delay * 2).min(std::time::Duration::from_millis(
                 GEN3D_RESPONSES_POLL_MAX_DELAY_MS,
             ));
-
-            let url = crate::config::join_base_url(base_url, &format!("responses/{id}"));
-            let _permit = crate::ai_limiter::acquire_permit();
+            if is_cancelled(cancel) {
+                return Err(OpenAiError::cancelled(url));
+            }
+            let _permit = crate::ai_limiter::acquire_permit_cancellable(cancel).map_err(|()| {
+                OpenAiError {
+                    summary: "Cancelled".into(),
+                    url: url.clone(),
+                    status: None,
+                    body_preview: None,
+                    cancelled: true,
+                }
+            })?;
             let mut cmd = std::process::Command::new("curl");
             cmd.arg("-sS")
                 .arg("--no-buffer")
@@ -1722,6 +1865,7 @@ fn openai_responses_flow(
                     idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
                     hard: std::time::Duration::from_secs(CURL_HARD_TIMEOUT_SECS_DEFAULT.into()),
                 },
+                cancel,
                 &url,
             )?;
             if !poll.status.success() {
@@ -1765,6 +1909,7 @@ fn openai_responses_flow(
 fn openai_chat_completions_flow(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
+    cancel: Option<&AtomicBool>,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     base_url: &str,
     api_key: &str,
@@ -1778,6 +1923,13 @@ fn openai_chat_completions_flow(
     artifact_prefix: &str,
 ) -> Result<Gen3dAiTextResponse, OpenAiError> {
     set_progress(progress, "Calling /chat/completions…");
+
+    let url = crate::config::join_base_url(base_url, "chat/completions");
+    if let Some(cancel) = cancel {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(OpenAiError::cancelled(url));
+        }
+    }
 
     const MAX_CHAT_RETRIES: usize = 2;
     fn is_transient_chat_error(err: &OpenAiError) -> bool {
@@ -1818,6 +1970,7 @@ fn openai_chat_completions_flow(
         match openai_chat_completions_curl(
             progress,
             session,
+            cancel,
             base_url,
             api_key,
             model,
@@ -1837,6 +1990,9 @@ fn openai_chat_completions_flow(
                 break json;
             }
             Err(err) => {
+                if err.cancelled {
+                    return Err(err);
+                }
                 if schema_for_request.is_some() && is_structured_outputs_rejected(&err) {
                     warn!("Gen3D: /chat/completions structured outputs rejected; retrying without structured outputs for this session.");
                     session.chat_structured_outputs_supported = Some(false);
@@ -1851,7 +2007,9 @@ fn openai_chat_completions_flow(
                         max_attempts,
                         err.short()
                     );
-                    std::thread::sleep(retry_delay);
+                    if sleep_with_cancel(retry_delay, cancel) {
+                        return Err(OpenAiError::cancelled(url.clone()));
+                    }
                     retry_delay = (retry_delay * 2).min(std::time::Duration::from_secs(4));
                     continue;
                 }
@@ -1886,6 +2044,7 @@ struct OpenAiError {
     url: String,
     status: Option<u16>,
     body_preview: Option<String>,
+    cancelled: bool,
 }
 
 impl OpenAiError {
@@ -1895,6 +2054,17 @@ impl OpenAiError {
             url: String::new(),
             status: None,
             body_preview: None,
+            cancelled: false,
+        }
+    }
+
+    fn cancelled(url: String) -> Self {
+        Self {
+            summary: "Cancelled".into(),
+            url,
+            status: None,
+            body_preview: None,
+            cancelled: true,
         }
     }
 
@@ -2076,6 +2246,7 @@ fn build_openai_chat_completions_request_json(
 
 fn openai_responses_curl(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
+    cancel: Option<&AtomicBool>,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -2092,6 +2263,11 @@ fn openai_responses_curl(
     probe_only: bool,
 ) -> Result<String, OpenAiError> {
     let url = crate::config::join_base_url(base_url, "responses");
+    if let Some(cancel) = cancel {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(OpenAiError::cancelled(url));
+        }
+    }
     let input = build_openai_responses_request_json(
         model,
         reasoning_effort,
@@ -2131,13 +2307,26 @@ fn openai_responses_curl(
         ),
     );
     set_progress(progress, "Waiting for AI slot…");
-    let _permit = crate::ai_limiter::acquire_permit();
+    let _permit =
+        crate::ai_limiter::acquire_permit_cancellable(cancel).map_err(|()| OpenAiError {
+            summary: "Cancelled".into(),
+            url: url.clone(),
+            status: None,
+            body_preview: None,
+            cancelled: true,
+        })?;
+    if let Some(cancel) = cancel {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(OpenAiError::cancelled(url));
+        }
+    }
     set_progress(progress, "Sending request…");
     let auth_headers = curl_auth_header_file(api_key).map_err(|err| OpenAiError {
         summary: format!("Failed to create curl auth header file: {err}"),
         url: url.clone(),
         status: None,
         body_preview: None,
+        cancelled: false,
     })?;
 
     let hard_timeout_secs = if expected_schema.is_some() && !background {
@@ -2172,6 +2361,7 @@ fn openai_responses_curl(
         url: url.clone(),
         status: None,
         body_preview: None,
+        cancelled: false,
     })?;
 
     let output = wait_curl_with_byte_timeouts(
@@ -2182,6 +2372,7 @@ fn openai_responses_curl(
             idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
             hard: std::time::Duration::from_secs(hard_timeout_secs.into()),
         },
+        cancel,
         &url,
     )?;
 
@@ -2192,6 +2383,7 @@ fn openai_responses_curl(
             url: url.clone(),
             status: None,
             body_preview: None,
+            cancelled: false,
         });
     }
 
@@ -2209,6 +2401,7 @@ fn openai_responses_curl(
             url: url.clone(),
             status: None,
             body_preview: None,
+            cancelled: false,
         });
     }
     debug!(
@@ -2242,6 +2435,7 @@ fn openai_responses_curl(
                 url: url.clone(),
                 status: Some(code),
                 body_preview: Some(truncate_for_ui(body.trim(), 1200)),
+                cancelled: false,
             });
         }
     }
@@ -2256,6 +2450,7 @@ fn openai_responses_curl(
 fn openai_chat_completions_curl(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
+    cancel: Option<&AtomicBool>,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -2269,6 +2464,11 @@ fn openai_chat_completions_curl(
     artifact_prefix: &str,
 ) -> Result<serde_json::Value, OpenAiError> {
     let url = crate::config::join_base_url(base_url, "chat/completions");
+    if let Some(cancel) = cancel {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(OpenAiError::cancelled(url));
+        }
+    }
     let body_json = build_openai_chat_completions_request_json(
         session,
         model,
@@ -2304,13 +2504,26 @@ fn openai_chat_completions_curl(
         ),
     );
     set_progress(progress, "Waiting for AI slot…");
-    let _permit = crate::ai_limiter::acquire_permit();
+    let _permit =
+        crate::ai_limiter::acquire_permit_cancellable(cancel).map_err(|()| OpenAiError {
+            summary: "Cancelled".into(),
+            url: url.clone(),
+            status: None,
+            body_preview: None,
+            cancelled: true,
+        })?;
+    if let Some(cancel) = cancel {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(OpenAiError::cancelled(url));
+        }
+    }
     set_progress(progress, "Sending request…");
     let auth_headers = curl_auth_header_file(api_key).map_err(|err| OpenAiError {
         summary: format!("Failed to create curl auth header file: {err}"),
         url: url.clone(),
         status: None,
         body_preview: None,
+        cancelled: false,
     })?;
 
     let hard_timeout_secs = if expected_schema.is_some() {
@@ -2346,6 +2559,7 @@ fn openai_chat_completions_curl(
         url: url.clone(),
         status: None,
         body_preview: None,
+        cancelled: false,
     })?;
 
     let output = wait_curl_with_byte_timeouts(
@@ -2356,6 +2570,7 @@ fn openai_chat_completions_curl(
             idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
             hard: std::time::Duration::from_secs(hard_timeout_secs.into()),
         },
+        cancel,
         &url,
     )?;
 
@@ -2366,6 +2581,7 @@ fn openai_chat_completions_curl(
             url: url.clone(),
             status: None,
             body_preview: None,
+            cancelled: false,
         });
     }
 
@@ -2382,6 +2598,7 @@ fn openai_chat_completions_curl(
             url: url.clone(),
             status: None,
             body_preview: None,
+            cancelled: false,
         });
     }
     append_gen3d_run_log(
@@ -2410,6 +2627,7 @@ fn openai_chat_completions_curl(
                 url: url.clone(),
                 status: Some(code),
                 body_preview: Some(truncate_for_ui(body.trim(), 1200)),
+                cancelled: false,
             });
         }
     }
@@ -2419,6 +2637,7 @@ fn openai_chat_completions_curl(
         url: url.clone(),
         status: status_code,
         body_preview: Some(truncate_for_ui(body.trim(), 1200)),
+        cancelled: false,
     })?;
 
     // Keep a short chat history to give the model some context between runs.
@@ -2621,6 +2840,7 @@ mod tests {
             url: "https://example.invalid".into(),
             status: Some(400),
             body_preview: Some("Unknown field `response_format`".into()),
+            cancelled: false,
         };
         assert!(is_structured_outputs_rejected(&err));
 
@@ -2629,6 +2849,7 @@ mod tests {
             url: "https://example.invalid".into(),
             status: Some(400),
             body_preview: Some("unknown field `previous_response_id`".into()),
+            cancelled: false,
         };
         assert!(!is_structured_outputs_rejected(&other));
     }
@@ -2749,5 +2970,42 @@ mod tests {
         assert_eq!(entry2.responses_supported, Some(true));
         assert_eq!(entry2.responses_background_supported, Some(false));
         assert_eq!(entry2.responses_structured_outputs_supported, Some(false));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cancels_wait_curl_when_flag_set() {
+        use std::process::Stdio;
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_thread = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            cancel_for_thread.store(true, Ordering::Relaxed);
+        });
+
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg("sleep 10")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = cmd.spawn().expect("spawn sleep");
+
+        let start = std::time::Instant::now();
+        let err = wait_curl_with_byte_timeouts(
+            child,
+            None,
+            CurlByteTimeouts {
+                first_byte: std::time::Duration::from_secs(5),
+                idle: std::time::Duration::from_secs(5),
+                hard: std::time::Duration::from_secs(5),
+            },
+            Some(cancel.as_ref()),
+            "test://cancel",
+        )
+        .expect_err("expected cancellation error");
+        assert!(err.cancelled);
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
     }
 }

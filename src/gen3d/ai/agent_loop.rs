@@ -190,6 +190,7 @@ pub(super) fn spawn_agent_step_request(
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
+        job.cancel_flag.clone(),
         job.session.clone(),
         None,
         openai,
@@ -1271,6 +1272,7 @@ fn start_agent_llm_review_delta_call(
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
+        job.cancel_flag.clone(),
         job.session.clone(),
         Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1),
         openai,
@@ -3053,6 +3055,7 @@ fn execute_tool_call(
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
+                job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1),
                 openai,
@@ -3199,6 +3202,7 @@ fn execute_tool_call(
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
+                job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1),
                 openai,
@@ -3494,6 +3498,7 @@ fn execute_tool_call(
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
+                job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionRolesV1),
                 openai,
@@ -4213,6 +4218,7 @@ fn poll_agent_tool(
         spawn_gen3d_ai_text_thread(
             shared,
             progress,
+            job.cancel_flag.clone(),
             job.session.clone(),
             expected_schema,
             openai,
@@ -5662,6 +5668,7 @@ fn poll_agent_component_batch(
         spawn_gen3d_ai_text_thread(
             shared.clone(),
             progress.clone(),
+            job.cancel_flag.clone(),
             job.session.clone(),
             Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1),
             openai,

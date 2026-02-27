@@ -6,6 +6,7 @@ use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -455,6 +456,7 @@ impl Gen3dRunMetrics {
 #[derive(Resource, Default)]
 pub(crate) struct Gen3dAiJob {
     running: bool,
+    cancel_flag: Option<Arc<AtomicBool>>,
     build_complete: bool,
     mode: Gen3dAiMode,
     phase: Gen3dAiPhase,
@@ -1119,8 +1121,12 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
         return;
     }
 
-    // Cancel the current build. The in-flight background thread can't be forcefully
-    // stopped, but we ignore its eventual result and stop updating UI state.
+    // Cancel the current build. Any in-flight OpenAI request thread stops as soon as it observes
+    // the cancel flag; we also ignore its eventual result and stop updating UI state.
+    if let Some(flag) = job.cancel_flag.as_ref() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    job.cancel_flag = None;
     job.finish_run_metrics();
     job.running = false;
     job.build_complete = false;
@@ -1237,6 +1243,10 @@ pub(crate) fn gen3d_start_build_from_api(
     // Each Build is a fresh run (new cache dir + fresh AI session).
     job.reset_session();
     job.start_run_metrics();
+    if let Some(flag) = job.cancel_flag.take() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    job.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
     job.running = true;
     job.build_complete = false;
     job.mode = Gen3dAiMode::Agent;
@@ -1708,6 +1718,7 @@ pub(crate) fn gen3d_poll_ai_job(
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
+                job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
                 openai,
@@ -2277,6 +2288,7 @@ pub(crate) fn gen3d_poll_ai_job(
                     spawn_gen3d_ai_text_thread(
                         shared,
                         progress,
+                        job.cancel_flag.clone(),
                         job.session.clone(),
                         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
                         openai,
@@ -2670,6 +2682,7 @@ pub(crate) fn gen3d_poll_ai_job(
                     spawn_gen3d_ai_text_thread(
                         shared,
                         progress,
+                        job.cancel_flag.clone(),
                         job.session.clone(),
                         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
                         openai,
@@ -2763,6 +2776,7 @@ fn retry_gen3d_review_delta(
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
+        job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
         openai,
@@ -2845,6 +2859,7 @@ fn retry_gen3d_plan(
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
+        job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::PlanV1),
         openai,
@@ -3109,6 +3124,7 @@ fn poll_gen3d_parallel_components(
         spawn_gen3d_ai_text_thread(
             shared.clone(),
             progress.clone(),
+            job.cancel_flag.clone(),
             job.session.clone(),
             Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
             openai,
@@ -3181,6 +3197,10 @@ fn poll_gen3d_parallel_components(
 fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: impl Into<String>) {
     let err = err.into();
     error!("Gen3D: build failed: {}", truncate_for_ui(&err, 1200));
+    if let Some(flag) = job.cancel_flag.as_ref() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    job.cancel_flag = None;
     abort_pending_agent_tool_call(job, format!("Run failed: {err}"));
     workshop.error = Some(err);
     workshop.status = "Build failed.".into();
@@ -3252,6 +3272,10 @@ fn finish_job_best_effort(
         "Gen3D: stopping run due to budget: {}",
         truncate_for_ui(&reason, 800)
     );
+    if let Some(flag) = job.cancel_flag.as_ref() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    job.cancel_flag = None;
     append_gen3d_run_log(
         job.artifact_dir(),
         format!("budget_stop reason={}", truncate_for_ui(&reason, 600)),
@@ -3368,6 +3392,7 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
+        job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
         openai,
@@ -3483,6 +3508,7 @@ fn try_start_gen3d_replan(
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
+        job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::PlanV1),
         openai,
@@ -4918,6 +4944,7 @@ fn build_gen3d_validate_results(
 fn spawn_gen3d_ai_text_thread(
     shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>>,
     progress: Arc<Mutex<Gen3dAiProgress>>,
+    cancel: Option<Arc<AtomicBool>>,
     session: Gen3dAiSessionState,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     openai: crate::config::OpenAiConfig,
@@ -4956,6 +4983,7 @@ fn spawn_gen3d_ai_text_thread(
         let result = openai::generate_text_via_openai(
             &progress,
             session,
+            cancel,
             expected_schema,
             &openai.base_url,
             &openai.api_key,
@@ -5069,6 +5097,7 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
         let resp = openai::generate_text_via_openai(
             &progress,
             session,
+            None,
             Some(Gen3dAiJsonSchemaKind::DescriptorMetaV1),
             &openai.base_url,
             &openai.api_key,

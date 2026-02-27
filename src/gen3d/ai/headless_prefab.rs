@@ -136,6 +136,7 @@ fn gen3d_plan_via_openai(
     let resp = openai::generate_text_via_openai(
         progress,
         session.clone(),
+        None,
         Some(Gen3dAiJsonSchemaKind::PlanV1),
         &openai_cfg.base_url,
         &openai_cfg.api_key,
@@ -189,6 +190,7 @@ fn gen3d_component_draft_via_openai(
     let resp = openai::generate_text_via_openai(
         progress,
         session.clone(),
+        None,
         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
         &openai_cfg.base_url,
         &openai_cfg.api_key,

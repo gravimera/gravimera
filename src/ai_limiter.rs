@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 
 #[derive(Debug)]
@@ -66,4 +67,34 @@ pub(crate) fn acquire_permit() -> AiPermit {
 
     guard.in_use = guard.in_use.saturating_add(1);
     AiPermit { _private: () }
+}
+
+pub(crate) fn acquire_permit_cancellable(cancel: Option<&AtomicBool>) -> Result<AiPermit, ()> {
+    let lim = limiter();
+    let mut guard = lim
+        .inner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    while guard.in_use >= guard.max_permits {
+        if let Some(cancel) = cancel {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(());
+            }
+        }
+
+        let wait = lim
+            .cv
+            .wait_timeout(guard, std::time::Duration::from_millis(50));
+        match wait {
+            Ok((next, _timeout)) => guard = next,
+            Err(poisoned) => {
+                let (next, _timeout) = poisoned.into_inner();
+                guard = next;
+            }
+        }
+    }
+
+    guard.in_use = guard.in_use.saturating_add(1);
+    Ok(AiPermit { _private: () })
 }
