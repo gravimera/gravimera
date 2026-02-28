@@ -11,7 +11,7 @@ Guidelines:
 
 ## 1) Cross-cutting: HTTP/OpenAI + curl helpers
 
-- [ ] **Deduplicate curl/OpenAI helper code**
+- [x] **Deduplicate curl/OpenAI helper code**
   - Why: `Gen3D` and `SceneBuildAI` re-implement the same patterns (temp auth header file, HTTP status marker parsing, output text extraction, curl invocation patterns).
   - Where:
     - `src/gen3d/ai/openai.rs` (e.g. `TempSecretFile`, curl helpers)
@@ -82,4 +82,3 @@ Guidelines:
 - [ ] **Fix README drift vs current behavior**
   - Why: some README statements appear to disagree with newer Gen3D docs (e.g., fixed-joint rotation handling).
   - Done when: README is accurate and high-level; deeper details live in `docs/`.
-

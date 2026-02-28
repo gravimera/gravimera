@@ -25,6 +25,7 @@ mod motion_ui;
 mod navigation;
 mod object;
 mod object_forms;
+mod openai_shared;
 mod paths;
 mod physics;
 mod platform;

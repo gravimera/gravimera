@@ -24,6 +24,11 @@ use crate::scene_validation::{HardGateSpecV1, ScorecardSpecV1};
 use crate::types::{
     BuildObject, Commandable, ObjectId, ObjectPrefabId, ObjectTint, Player, SceneLayerOwner,
 };
+use crate::openai_shared::{
+    curl_auth_header_file, extract_openai_responses_output_text,
+    extract_openai_responses_sse_output_text, split_curl_http_status,
+    CURL_HTTP_STATUS_MARKER, CURL_HTTP_STATUS_WRITEOUT_ARG,
+};
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 const CURL_MAX_TIME_SECS: u32 = 600;
@@ -2196,62 +2201,6 @@ fn spawn_scene_build_llm_thread(
         });
 }
 
-struct TempSecretFile {
-    path: PathBuf,
-}
-
-impl TempSecretFile {
-    fn create(prefix: &str, contents: &str) -> std::io::Result<Self> {
-        use std::io::Write;
-
-        let mut path = std::env::temp_dir();
-        let pid = std::process::id();
-        let nonce = uuid::Uuid::new_v4();
-        path.push(format!("gravimera_{prefix}_{pid}_{nonce}.txt"));
-
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-        }
-
-        file.write_all(contents.as_bytes())?;
-        file.flush()?;
-
-        Ok(Self { path })
-    }
-
-    fn curl_header_arg(&self) -> String {
-        format!("@{}", self.path.display())
-    }
-}
-
-impl Drop for TempSecretFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-fn curl_auth_header_file(api_key: &str) -> Result<TempSecretFile, String> {
-    let api_key = api_key.replace(['\n', '\r'], "");
-    let headers = format!("Authorization: Bearer {api_key}\n");
-    TempSecretFile::create("openai_auth", &headers).map_err(|err| err.to_string())
-}
-
-fn split_curl_http_status<'a>(stdout: &'a str, marker: &str) -> (&'a str, Option<u16>) {
-    let Some(pos) = stdout.rfind(marker) else {
-        return (stdout, None);
-    };
-    let (body, rest) = stdout.split_at(pos);
-    let code_str = rest[marker.len()..].lines().next().unwrap_or("").trim();
-    (body, code_str.parse::<u16>().ok())
-}
-
 #[derive(Clone, Debug)]
 struct OpenAiCurlError {
     summary: String,
@@ -2265,77 +2214,6 @@ impl OpenAiCurlError {
             None => self.summary.clone(),
         }
     }
-}
-
-fn extract_openai_responses_output_text(json: &Value) -> Option<String> {
-    let output = json.get("output")?.as_array()?;
-    let mut out = String::new();
-    for item in output {
-        let Some(parts) = item.get("content").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        for part in parts {
-            let ty = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            if matches!(ty, "output_text" | "text") {
-                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                    out.push_str(text);
-                }
-            }
-        }
-    }
-    (!out.trim().is_empty()).then_some(out)
-}
-
-fn extract_openai_responses_sse_output_text(body: &str) -> Option<String> {
-    let mut out = String::new();
-    let mut saw_delta = false;
-
-    for line in body.lines() {
-        let line = line.trim();
-        let Some(data) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
-            continue;
-        }
-        let Ok(json) = serde_json::from_str::<Value>(data) else {
-            continue;
-        };
-
-        match json.get("type").and_then(|v| v.as_str()).unwrap_or("") {
-            "response.output_text.delta" => {
-                if let Some(delta) = json.get("delta").and_then(|v| v.as_str()) {
-                    saw_delta = true;
-                    out.push_str(delta);
-                }
-            }
-            "response.output_text.done" => {
-                if let Some(text) = json.get("text").and_then(|v| v.as_str()) {
-                    saw_delta = true;
-                    out.push_str(text);
-                }
-            }
-            // Some SSE streams include the full part payload instead of deltas.
-            "response.content_part.added" | "response.content_part.done" => {
-                if saw_delta {
-                    continue;
-                }
-                let Some(part) = json.get("part") else {
-                    continue;
-                };
-                if part.get("type").and_then(|v| v.as_str()) != Some("output_text") {
-                    continue;
-                }
-                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                    out.push_str(text);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    (!out.trim().is_empty()).then_some(out)
 }
 
 fn call_openai_responses_json_object(
@@ -2386,7 +2264,7 @@ fn call_openai_responses_json_object(
     })?;
 
     let auth_headers = curl_auth_header_file(api_key).map_err(|err| OpenAiCurlError {
-        summary: err,
+        summary: err.to_string(),
         status: None,
     })?;
 
@@ -2423,7 +2301,7 @@ fn call_openai_responses_json_object(
         .arg("@-")
         .arg(&url)
         .arg("-w")
-        .arg("\n__GRAVIMERA_HTTP_STATUS__%{http_code}\n")
+        .arg(CURL_HTTP_STATUS_WRITEOUT_ARG)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -2468,8 +2346,7 @@ fn call_openai_responses_json_object(
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let _ = std::fs::write(llm_dir.join("api_response_raw.txt"), &stdout);
 
-    const STATUS_MARKER: &str = "\n__GRAVIMERA_HTTP_STATUS__";
-    let (body, status_code) = split_curl_http_status(&stdout, STATUS_MARKER);
+    let (body, status_code) = split_curl_http_status(&stdout, CURL_HTTP_STATUS_MARKER);
     let status_code = status_code.ok_or_else(|| OpenAiCurlError {
         summary: "Missing HTTP status marker in curl output.".to_string(),
         status: None,
@@ -2616,6 +2493,7 @@ fn call_openai_chat_json_object(
     let auth_headers = match curl_auth_header_file(api_key) {
         Ok(headers) => headers,
         Err(err) => {
+            let err = err.to_string();
             set_progress(progress, run_id, run_dir, format!("{label}: failed: {err}"));
             return Err(err);
         }
@@ -2654,7 +2532,7 @@ fn call_openai_chat_json_object(
         .arg("@-")
         .arg(&url)
         .arg("-w")
-        .arg("\n__GRAVIMERA_HTTP_STATUS__%{http_code}\n")
+        .arg(CURL_HTTP_STATUS_WRITEOUT_ARG)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -2693,8 +2571,7 @@ fn call_openai_chat_json_object(
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let _ = std::fs::write(llm_dir.join("api_response_raw.txt"), &stdout);
 
-    const STATUS_MARKER: &str = "\n__GRAVIMERA_HTTP_STATUS__";
-    let (body, status_code) = split_curl_http_status(&stdout, STATUS_MARKER);
+    let (body, status_code) = split_curl_http_status(&stdout, CURL_HTTP_STATUS_MARKER);
     let status_code =
         status_code.ok_or_else(|| "Missing HTTP status marker in curl output.".to_string())?;
 

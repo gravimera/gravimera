@@ -6,6 +6,11 @@ use std::sync::{Arc, Mutex};
 use crate::gen3d::agent::{
     append_agent_trace_event_v1, run_root_dir_from_pass_dir, AgentTraceEventV1,
 };
+use crate::openai_shared::{
+    curl_auth_header_file, extract_openai_responses_output_text,
+    extract_openai_responses_sse_output_text, split_curl_http_status,
+    CURL_HTTP_STATUS_MARKER, CURL_HTTP_STATUS_WRITEOUT_ARG,
+};
 
 use super::super::{
     GEN3D_MAX_CHAT_HISTORY_MESSAGES, GEN3D_MAX_REQUEST_IMAGES,
@@ -322,55 +327,6 @@ fn persist_session_capabilities_if_changed(
     if after != before {
         persist_session_capabilities_to_cache(base_url, model, session);
     }
-}
-
-struct TempSecretFile {
-    path: PathBuf,
-}
-
-impl TempSecretFile {
-    fn create(prefix: &str, contents: &str) -> std::io::Result<Self> {
-        use std::io::Write;
-
-        let mut path = std::env::temp_dir();
-        let pid = std::process::id();
-        let nonce = uuid::Uuid::new_v4();
-        path.push(format!("gravimera_{prefix}_{pid}_{nonce}.txt"));
-
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-        }
-
-        file.write_all(contents.as_bytes())?;
-        file.flush()?;
-
-        Ok(Self { path })
-    }
-
-    fn curl_header_arg(&self) -> String {
-        format!("@{}", self.path.display())
-    }
-}
-
-impl Drop for TempSecretFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-fn curl_auth_header_file(api_key: &str) -> Result<TempSecretFile, std::io::Error> {
-    // IMPORTANT: do not pass secrets on the curl command line (visible via `ps`).
-    // Use `curl -H @file` so argv contains only the temp file path.
-    let api_key = api_key.replace(['\n', '\r'], "");
-    let headers = format!("Authorization: Bearer {api_key}\n");
-    TempSecretFile::create("openai_auth", &headers)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1279,77 +1235,6 @@ pub(super) fn openai_response_has_pending_status(json: &serde_json::Value) -> bo
     )
 }
 
-pub(super) fn extract_openai_response_text(json: &serde_json::Value) -> Option<String> {
-    let output = json.get("output")?.as_array()?;
-    let mut out = String::new();
-    for item in output {
-        let Some(parts) = item.get("content").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        for part in parts {
-            let ty = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            if matches!(ty, "output_text" | "text") {
-                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                    out.push_str(text);
-                }
-            }
-        }
-    }
-    (!out.trim().is_empty()).then_some(out)
-}
-
-fn extract_openai_responses_sse_output_text(body: &str) -> Option<String> {
-    let mut out = String::new();
-    let mut saw_delta = false;
-
-    for line in body.lines() {
-        let line = line.trim();
-        let Some(data) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
-            continue;
-        }
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(data) else {
-            continue;
-        };
-
-        match json.get("type").and_then(|v| v.as_str()).unwrap_or("") {
-            "response.output_text.delta" => {
-                if let Some(delta) = json.get("delta").and_then(|v| v.as_str()) {
-                    saw_delta = true;
-                    out.push_str(delta);
-                }
-            }
-            "response.output_text.done" => {
-                if let Some(text) = json.get("text").and_then(|v| v.as_str()) {
-                    saw_delta = true;
-                    out.push_str(text);
-                }
-            }
-            // Some SSE streams include the full part payload instead of deltas.
-            "response.content_part.added" | "response.content_part.done" => {
-                if saw_delta {
-                    continue;
-                }
-                let Some(part) = json.get("part") else {
-                    continue;
-                };
-                if part.get("type").and_then(|v| v.as_str()) != Some("output_text") {
-                    continue;
-                }
-                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                    out.push_str(text);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    (!out.trim().is_empty()).then_some(out)
-}
-
 fn json_to_u64(value: &serde_json::Value) -> Option<u64> {
     value
         .as_u64()
@@ -1888,7 +1773,7 @@ fn openai_responses_flow(
     }
 
     let total_tokens = extract_openai_total_tokens(&json);
-    let text = extract_openai_response_text(&json)
+    let text = extract_openai_responses_output_text(&json)
         .ok_or_else(|| OpenAiError::new("/responses returned no output text".into()))?;
 
     if success_used_previous_response_id {
@@ -2353,7 +2238,7 @@ fn openai_responses_curl(
         .arg("@-")
         .arg(&url)
         .arg("-w")
-        .arg("\n__GRAVIMERA_HTTP_STATUS__%{http_code}\n")
+        .arg(CURL_HTTP_STATUS_WRITEOUT_ARG)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -2390,8 +2275,7 @@ fn openai_responses_curl(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    const STATUS_MARKER: &str = "\n__GRAVIMERA_HTTP_STATUS__";
-    let (body, status_code) = split_curl_http_status(&stdout, STATUS_MARKER);
+    let (body, status_code) = split_curl_http_status(&stdout, CURL_HTTP_STATUS_MARKER);
     let status = status_code;
     if status.is_none() {
         warn!(
@@ -2552,7 +2436,7 @@ fn openai_chat_completions_curl(
         .arg("@-")
         .arg(&url)
         .arg("-w")
-        .arg("\n__GRAVIMERA_HTTP_STATUS__%{http_code}\n")
+        .arg(CURL_HTTP_STATUS_WRITEOUT_ARG)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -2589,8 +2473,7 @@ fn openai_chat_completions_curl(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    const STATUS_MARKER: &str = "\n__GRAVIMERA_HTTP_STATUS__";
-    let (body, status_code) = split_curl_http_status(&stdout, STATUS_MARKER);
+    let (body, status_code) = split_curl_http_status(&stdout, CURL_HTTP_STATUS_MARKER);
     if status_code.is_none() {
         warn!(
             "Gen3D: missing HTTP status marker in curl GET output (truncated): {}",
@@ -2700,15 +2583,6 @@ fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
-fn split_curl_http_status<'a>(stdout: &'a str, marker: &str) -> (&'a str, Option<u16>) {
-    let Some(pos) = stdout.rfind(marker) else {
-        return (stdout, None);
-    };
-    let (body, rest) = stdout.split_at(pos);
-    let code_str = rest[marker.len()..].lines().next().unwrap_or("").trim();
-    (body, code_str.parse::<u16>().ok())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2720,7 +2594,7 @@ mod tests {
             "status": "in_progress",
             "output": []
         });
-        assert!(extract_openai_response_text(&json).is_none());
+        assert!(extract_openai_responses_output_text(&json).is_none());
         assert_eq!(openai_response_status(&json), Some("in_progress"));
         assert!(openai_response_has_pending_status(&json));
     }
