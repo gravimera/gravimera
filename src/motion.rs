@@ -1704,6 +1704,32 @@ fn car_wheels_override_for_binding(
     binding: &ObjectRefEdgeBinding,
     library: &ObjectLibrary,
 ) -> Option<PartAnimationSlot> {
+    fn spin_axis_from_effective_size(effective_size: Vec3) -> Vec3 {
+        let e = effective_size.abs();
+        if !e.is_finite() {
+            return Vec3::X;
+        }
+        if e.x <= e.y && e.x <= e.z {
+            Vec3::X
+        } else if e.y <= e.x && e.y <= e.z {
+            Vec3::Y
+        } else {
+            Vec3::Z
+        }
+    }
+
+    fn radius_from_effective_size_and_axis(effective: Vec3, axis: Vec3) -> f32 {
+        let effective = effective.abs();
+        let axis = axis.abs();
+        if axis.x >= axis.y && axis.x >= axis.z {
+            0.5 * effective.y.max(effective.z).max(0.01)
+        } else if axis.y >= axis.x && axis.y >= axis.z {
+            0.5 * effective.x.max(effective.z).max(0.01)
+        } else {
+            0.5 * effective.x.max(effective.y).max(0.01)
+        }
+    }
+
     fn roll_sign_for_base_transform(axis_local: Vec3, base: Transform) -> f32 {
         if !axis_local.is_finite() {
             return 1.0;
@@ -1741,21 +1767,30 @@ fn car_wheels_override_for_binding(
         .iter()
         .find(|w| w.edge.matches_binding(binding))?;
 
+    let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
+    let scale = binding.base_transform.scale.abs();
+    let effective = (size * scale).abs().max(Vec3::splat(0.01));
+
+    // The spin axis in authored motion rigs isn't always reliable. Prefer a geometry-derived
+    // axis for wheels so roll uses the axle/thickness direction (smallest extent).
+    let axis_local = if effective.is_finite() {
+        spin_axis_from_effective_size(effective)
+    } else {
+        wheel.spin_axis_local
+    };
+
     let radians_per_meter = if let Some(v) = rig.radians_per_meter {
         v
     } else if let Some(radius_m) = rig.wheel_radius_m {
         1.0 / radius_m.max(0.01)
     } else {
-        let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
-        let scale = binding.base_transform.scale.abs();
-        let effective = (size * scale).abs().max(Vec3::splat(0.01));
-        let radius = 0.5 * effective.y.max(effective.z).max(0.01);
-        (1.0 / radius).clamp(-200.0, 200.0)
+        let radius = radius_from_effective_size_and_axis(effective, axis_local);
+        (1.0 / radius.max(0.01)).clamp(-200.0, 200.0)
     };
 
-    let sign = roll_sign_for_base_transform(wheel.spin_axis_local, binding.base_transform);
+    let sign = roll_sign_for_base_transform(axis_local, binding.base_transform);
     Some(wheel_spin_ambient_slot(
-        wheel.spin_axis_local,
+        axis_local,
         radians_per_meter * sign,
     ))
 }
@@ -3605,7 +3640,84 @@ mod tests {
 
         let parent_id = 0xCA7_u128;
         let wheel_id = 0x10_u128;
-        let library = make_library_with_anchors(parent_id, "axle", wheel_id, "root");
+        let mut library = make_library_with_anchors(parent_id, "axle", wheel_id, "root");
+        let mut wheel_def = library.get(wheel_id).expect("wheel").clone();
+        wheel_def.size = Vec3::new(0.2, 1.0, 1.0);
+        library.upsert(wheel_def);
+
+        let edge = MotionEdgeRefV1 {
+            parent_object_id: parent_id,
+            child_object_id: wheel_id,
+            parent_anchor: "axle".into(),
+            child_anchor: "root".into(),
+        };
+
+        let rig = CarRigV1 {
+            default_move_algorithm: None,
+            body: None,
+            wheels: vec![SpinEffectorV1 {
+                edge: edge.clone(),
+                spin_axis_local: Vec3::Z,
+            }],
+            tool_arms: Vec::new(),
+            wheel_radius_m: None,
+            radians_per_meter: Some(1.0),
+        };
+
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let binding = ObjectRefEdgeBinding {
+            root_entity: root,
+            parent_object_id: parent_id,
+            child_object_id: wheel_id,
+            attachment: Some(AttachmentDef {
+                parent_anchor: "axle".into(),
+                child_anchor: "root".into(),
+            }),
+            base_transform: Transform::IDENTITY,
+            base_slots: Vec::new(),
+            apply_aim_yaw: false,
+        };
+
+        let slot = car_wheels_override_for_binding(&rig, &binding, &library).expect("slot");
+        assert_eq!(slot.channel.as_ref(), "ambient");
+        assert_eq!(slot.spec.driver, PartAnimationDriver::MoveDistance);
+        let PartAnimationDef::Spin {
+            axis,
+            radians_per_unit,
+        } = slot.spec.clip
+        else {
+            panic!("expected spin clip");
+        };
+        assert_eq!(axis, Vec3::X);
+        assert!((radians_per_unit - 1.0).abs() < 1e-6);
+
+        let mirrored = ObjectRefEdgeBinding {
+            base_transform: Transform::from_scale(Vec3::new(-1.0, 1.0, 1.0)),
+            ..binding
+        };
+        let slot = car_wheels_override_for_binding(&rig, &mirrored, &library).expect("slot");
+        let PartAnimationDef::Spin {
+            axis,
+            radians_per_unit,
+        } = slot.spec.clip
+        else {
+            panic!("expected spin clip");
+        };
+        assert_eq!(axis, Vec3::X);
+        assert!((radians_per_unit + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn car_wheels_spin_axis_uses_smallest_extent_axis() {
+        use crate::object::visuals::ObjectRefEdgeBinding;
+
+        let parent_id = 0xCA7_u128;
+        let wheel_id = 0x11_u128;
+        let mut library = make_library_with_anchors(parent_id, "axle", wheel_id, "root");
+        let mut wheel_def = library.get(wheel_id).expect("wheel").clone();
+        wheel_def.size = Vec3::new(1.0, 1.0, 0.2);
+        library.upsert(wheel_def);
 
         let edge = MotionEdgeRefV1 {
             parent_object_id: parent_id,
@@ -3642,28 +3754,10 @@ mod tests {
         };
 
         let slot = car_wheels_override_for_binding(&rig, &binding, &library).expect("slot");
-        assert_eq!(slot.channel.as_ref(), "ambient");
-        assert_eq!(slot.spec.driver, PartAnimationDriver::MoveDistance);
-        let PartAnimationDef::Spin {
-            radians_per_unit, ..
-        } = slot.spec.clip
-        else {
+        let PartAnimationDef::Spin { axis, .. } = slot.spec.clip else {
             panic!("expected spin clip");
         };
-        assert!((radians_per_unit - 1.0).abs() < 1e-6);
-
-        let mirrored = ObjectRefEdgeBinding {
-            base_transform: Transform::from_scale(Vec3::new(-1.0, 1.0, 1.0)),
-            ..binding
-        };
-        let slot = car_wheels_override_for_binding(&rig, &mirrored, &library).expect("slot");
-        let PartAnimationDef::Spin {
-            radians_per_unit, ..
-        } = slot.spec.clip
-        else {
-            panic!("expected spin clip");
-        };
-        assert!((radians_per_unit + 1.0).abs() < 1e-6);
+        assert_eq!(axis, Vec3::Z);
     }
 
     #[test]
