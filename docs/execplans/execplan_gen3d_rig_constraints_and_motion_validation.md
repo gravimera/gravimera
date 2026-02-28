@@ -83,7 +83,7 @@ Key existing concepts and files:
   - `src/gen3d/ai/prompts.rs` (plan + component + review delta instructions)
   - `src/gen3d/ai/convert.rs` (plan/draft conversion; attachment offsets; animations)
   - `src/gen3d/ai/mod.rs` (auto-review capture and review request)
-  - `src/gen3d/ai/agent_loop.rs` (tool-driven agent loop and `llm_review_delta_v1`)
+  - `src/gen3d/ai/agent_loop/mod.rs` + `src/gen3d/ai/agent_review_delta.rs` (tool-driven agent loop and `llm_review_delta_v1`)
 
 Definitions used in this ExecPlan:
 

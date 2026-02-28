@@ -21,13 +21,13 @@ Guidelines:
 - [x] **Unify “threaded request result” plumbing**
   - Why: repeated `Arc<Mutex<Option<Result<...>>>>` + progress tracking patterns in both Gen3D and SceneBuildAI.
   - Where:
-    - `src/gen3d/ai/mod.rs` + `src/gen3d/ai/agent_loop.rs`
+    - `src/gen3d/ai/mod.rs` + `src/gen3d/ai/agent_loop/mod.rs`
     - `src/scene_build_ai.rs`
   - Done when: a small reusable abstraction handles “spawn worker thread + shared result + progress updates” without changing semantics.
 
 ## 2) Gen3D AI module structure
 
-- [ ] **Split `src/gen3d/ai/agent_loop.rs` into focused modules**
+- [x] **Split `src/gen3d/ai/agent_loop/mod.rs` into focused modules**
   - Why: very large file (state machine + tool execution + rendering capture + orchestration); hard to navigate/review.
   - Suggested split (example): `agent_state.rs`, `agent_step.rs`, `tool_dispatch.rs`, `render_capture.rs`, `progress.rs`, `metrics.rs`.
   - Done when: file size reduced substantially; public surface stays minimal; compile/tests unchanged.

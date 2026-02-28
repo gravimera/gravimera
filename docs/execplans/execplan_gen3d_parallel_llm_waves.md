@@ -31,7 +31,7 @@ Users should be able to observe the speedup by inspecting `gen3d_cache/<run_id>/
 ## Surprises & Discoveries
 
 - Observation: The current agent tool execution is intentionally sequential: a tool call that starts async work blocks the remainder of the step until completion.
-  Evidence: `src/gen3d/ai/agent_loop.rs` returns `ToolCallOutcome::StartedAsync` and the agent step resumes only after `poll_agent_tool` completes the pending tool.
+  Evidence: `src/gen3d/ai/agent_step.rs` returns `ToolCallOutcome::StartedAsync` and the agent step resumes only after `src/gen3d/ai/agent_tool_poll.rs` completes the pending tool.
 
 ## Decision Log
 
@@ -57,7 +57,7 @@ Gen3D AI code lives in `src/gen3d/ai/`.
 
 Key files:
 
-- `src/gen3d/ai/agent_loop.rs`: Executes agent tool calls; currently `llm_generate_component_v1` is 1 component at a time and blocks until done.
+- `src/gen3d/ai/agent_step.rs` + `src/gen3d/ai/agent_tool_dispatch.rs` + `src/gen3d/ai/agent_tool_poll.rs`: Executes agent tool calls; `llm_generate_component_v1` is 1 component at a time and blocks until done.
 - `src/gen3d/agent/tools.rs`: Tool registry and tool descriptions shown to the agent.
 - `src/config.rs`: Contains `gen3d_max_parallel_components` (existing user-facing config knob).
 - `src/gen3d/ai/mod.rs`: Owns `spawn_gen3d_ai_text_thread` and shared LLM call plumbing; also contains an older “parallel components” helper used outside the agent tool path.
@@ -90,9 +90,9 @@ In `src/gen3d/agent/tools.rs`:
     - `succeeded`: number
     - `failed`: array of `{ index, name, error }`
 
-In `src/gen3d/ai/agent_loop.rs`:
+In `src/gen3d/ai/agent_tool_dispatch.rs` + `src/gen3d/ai/agent_tool_poll.rs`:
 
-- Extend `execute_tool_call` to start the batch tool:
+- Extend `execute_tool_call` (in `src/gen3d/ai/agent_tool_dispatch.rs`) to start the batch tool:
   - Resolve the requested indices.
   - Store pending batch metadata in `job.agent` (requested indices, per-index completion tracking).
   - Initialize `job.component_queue` with the indices.
@@ -100,7 +100,7 @@ In `src/gen3d/ai/agent_loop.rs`:
   - Set `job.agent.pending_llm_tool` to a new `Gen3dAgentLlmToolKind::GenerateComponentsBatch`.
   - Set `job.phase = Gen3dAiPhase::AgentWaitingTool`.
 
-- Extend `poll_agent_tool` to support the batch tool:
+- Extend `poll_agent_tool` (in `src/gen3d/ai/agent_tool_poll.rs`) to support the batch tool:
   - While batch is pending:
     - poll and apply completed component requests,
     - start new requests up to `job.max_parallel_components` (bounded by `config.gen3d_max_parallel_components`),
@@ -114,7 +114,7 @@ Important: the batch tool must not switch the overall Gen3D run phase to “auto
 
 ### 2) Improve agent behavior: prefer waves
 
-In `src/gen3d/ai/agent_loop.rs` within `build_agent_system_instructions()`:
+In `src/gen3d/ai/agent_prompt.rs` within `build_agent_system_instructions()`:
 
 - Add explicit guidance:
   - Prefer `llm_generate_components_v1` to generate multiple missing components at once.

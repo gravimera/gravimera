@@ -27,7 +27,7 @@ You can see it working by producing a Gen3D render that previously looked washed
 ## Surprises & Discoveries
 
 - Observation: The tool docs for `render_preview_v1` already show a `background` argument, but the implementation ignores it.
-  Evidence: In `src/gen3d/ai/agent_loop.rs`, the handler parses `background` into a variable named `_background` and never uses it.
+  Evidence: In `src/gen3d/ai/agent_tool_dispatch.rs`, the handler parses `background` into a variable named `_background` and never uses it.
 
 - Observation: All Gen3D capture cameras use a fixed very-light clear color, which makes bright geometry blend into the background.
   Evidence: `src/gen3d/ai/mod.rs` (`start_gen3d_review_capture`) sets `Camera.clear_color` to `Color::srgb(0.93, 0.94, 0.96)`. `src/gen3d/preview.rs` uses the same clear color for the user-visible preview camera.
@@ -66,14 +66,14 @@ Key terms used in this plan:
 Important files and code locations:
 
 - Tool docs for render preview: `src/gen3d/agent/tools.rs` (`TOOL_ID_RENDER_PREVIEW` description includes `background`).
-- Tool implementation: `src/gen3d/ai/agent_loop.rs` (the match arm for `TOOL_ID_RENDER_PREVIEW` parses `background` but ignores it).
+- Tool implementation: `src/gen3d/ai/agent_tool_dispatch.rs` (the match arm for `TOOL_ID_RENDER_PREVIEW` parses `background` but ignores it).
 - Capture implementation: `src/gen3d/ai/mod.rs` (`start_gen3d_review_capture` spawns cameras; currently uses a fixed clear color).
-- Pass snapshot capture: `src/gen3d/ai/agent_loop.rs` (`maybe_start_pass_snapshot_capture` calls `start_gen3d_review_capture` with prefix `"pass"`).
+- Pass snapshot capture: `src/gen3d/ai/agent_step.rs` (`maybe_start_pass_snapshot_capture` calls `start_gen3d_review_capture` with prefix `"pass"`).
 - User-visible preview camera: `src/gen3d/preview.rs` (fixed clear color; out of scope to change behavior, but we may reuse constants for consistency).
 
 ## Plan of Work
 
-First, introduce a small “background preset” type in a place accessible to both `src/gen3d/ai/mod.rs` and `src/gen3d/ai/agent_loop.rs`. The simplest place is inside the `gen3d::ai` module near the existing `Gen3dReviewView` and capture state types, because `start_gen3d_review_capture` already lives there and is called from `agent_loop.rs` via `super::...`.
+First, introduce a small “background preset” type in a place accessible to both `src/gen3d/ai/mod.rs` and the agent tool handler(s) (for example `src/gen3d/ai/agent_tool_dispatch.rs`). The simplest place is inside the `gen3d::ai` module near the existing `Gen3dReviewView` and capture state types, because `start_gen3d_review_capture` already lives there and is called from agent code via `super::...`.
 
 Define a preset set that is stable and easy to document. At minimum:
 
@@ -85,7 +85,7 @@ Also treat `default` as an alias for `neutral_studio` for backward compatibility
 
 Second, change `start_gen3d_review_capture` to accept a background preset parameter and use it when constructing the `Camera { clear_color: ... }` component. This is the core behavioral change that affects all capture call sites (tool renders, auto-review renders, and pass snapshots), but we will keep the call sites’ chosen default behaviors explicit.
 
-Third, wire the `render_preview_v1.background` argument through the tool handler. Replace the unused `_background` parsing in `src/gen3d/ai/agent_loop.rs` with a real parse and pass the chosen preset into `start_gen3d_review_capture`. If parsing fails (unknown string), return a tool error that lists the accepted values so the agent can recover deterministically.
+Third, wire the `render_preview_v1.background` argument through the tool handler. Replace the unused `_background` parsing in `src/gen3d/ai/agent_tool_dispatch.rs` with a real parse and pass the chosen preset into `start_gen3d_review_capture`. If parsing fails (unknown string), return a tool error that lists the accepted values so the agent can recover deterministically.
 
 Fourth, improve pass snapshot screenshot legibility by changing `maybe_start_pass_snapshot_capture` to call `start_gen3d_review_capture` with `contrast_studio` instead of the neutral background. This specifically targets the reported “arm looks transparent” debugging experience, without altering the in-game preview panel.
 
@@ -101,7 +101,7 @@ All commands below run from the repo root: `/Users/flow/workspace/github/gravime
 
 1) Reconfirm the current problem in code (before editing):
 
-    rg -n "let _background" src/gen3d/ai/agent_loop.rs
+    rg -n "let _background" src/gen3d/ai/agent_tool_dispatch.rs
     rg -n "ClearColorConfig::Custom\\(Color::srgb\\(0\\.93, 0\\.94, 0\\.96\\)\\)" src/gen3d
 
 2) Implement the background preset type and parsing.
@@ -120,11 +120,11 @@ All commands below run from the repo root: `/Users/flow/workspace/github/gravime
    - Change the signature of `start_gen3d_review_capture(...)` to include a `background: Gen3dCaptureBackgroundPreset`.
    - In the camera spawn, replace the hard-coded `Color::srgb(0.93, 0.94, 0.96)` with `background.clear_color()`.
 
-   Update every call site in `src/gen3d/ai/mod.rs` and `src/gen3d/ai/agent_loop.rs` to pass an explicit preset.
+   Update every call site in `src/gen3d/ai/mod.rs`, `src/gen3d/ai/agent_tool_dispatch.rs`, and `src/gen3d/ai/agent_step.rs` to pass an explicit preset.
 
 4) Honor `render_preview_v1.background`.
 
-   Edit `src/gen3d/ai/agent_loop.rs` in the `TOOL_ID_RENDER_PREVIEW` handler:
+   Edit `src/gen3d/ai/agent_tool_dispatch.rs` in the `TOOL_ID_RENDER_PREVIEW` handler:
 
    - Replace the unused `_background` binding with real parsing.
    - Default when the arg is missing should be `neutral_studio` (so the current behavior is preserved).
@@ -134,7 +134,7 @@ All commands below run from the repo root: `/Users/flow/workspace/github/gravime
 
 5) Improve pass snapshot screenshots.
 
-   Edit `src/gen3d/ai/agent_loop.rs` in `maybe_start_pass_snapshot_capture(...)`:
+   Edit `src/gen3d/ai/agent_step.rs` in `maybe_start_pass_snapshot_capture(...)`:
 
    - Pass `Gen3dCaptureBackgroundPreset::ContrastStudio` when calling `super::start_gen3d_review_capture(...)`.
 
@@ -255,4 +255,3 @@ Define these stable interfaces in code:
     ) -> Result<Gen3dReviewCaptureState, String>
 
 Keep the implementation generic and deterministic. Do not introduce any content-dependent heuristics (for example, automatically choosing a background based on model colors). The goal is to give humans and the agent an explicit, reliable control knob.
-

@@ -17,7 +17,7 @@ Each entry includes enough pointers (cache dir, script, commit) to reproduce.
 
 - Agent emitted placeholder file paths like `$CALL_1.render_paths[0]` for `llm_review_delta_v1`, causing a failed tool call.
   - Symptom: `llm_review_delta_v1` fails with “Failed to read image $CALL_…: No such file or directory”.
-  - Fix: ignore `$...` placeholder paths in preview-image parsing and add an explicit “no placeholders” rule to the agent system prompt (`src/gen3d/ai/agent_loop.rs`).
+  - Fix: ignore `$...` placeholder paths in preview-image parsing (`src/gen3d/ai/agent_review_images.rs`) and add an explicit “no placeholders” rule to the agent system prompt (`src/gen3d/ai/agent_prompt.rs`).
 
 - Saving multiple Gen3D models could stack them on the same spawn position next to the hero, making animation inspection hard.
   - Fix: scatter spawn positions deterministically by save sequence (rings around the hero) in `src/gen3d/save.rs`.

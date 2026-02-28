@@ -57,7 +57,7 @@ Gen3D represents models as a graph of “components” (each is an `ObjectDef`) 
 
 Relevant code:
 
-- `src/gen3d/ai/agent_loop.rs`: Executes tool calls from the AI agent (`*_v1` tool protocol).
+- `src/gen3d/ai/agent_step.rs` + `src/gen3d/ai/agent_tool_dispatch.rs`: Executes tool calls from the AI agent (`*_v1` tool protocol).
 - `src/gen3d/agent/tools.rs`: Tool registry: ids, list, and describe payloads.
 - `src/gen3d/ai/copy_component.rs`: Current `copy_component_into` and `detach_component_copy` helpers.
 - `src/gen3d/ai/convert.rs`: `resolve_planned_component_transforms` computes assembled transforms using anchors/attachments.
@@ -90,7 +90,7 @@ Add a new Gen3D tool id:
 
 Expose it in `src/gen3d/agent/tools.rs` list + describe.
 
-Implement it in `src/gen3d/ai/agent_loop.rs` under the tool call match:
+Implement it in `src/gen3d/ai/agent_tool_dispatch.rs` under the tool call match:
 
 Inputs (args):
 
@@ -111,7 +111,7 @@ Behavior:
 
 ### Milestone 3: Update prompts and docs
 
-In `src/gen3d/ai/agent_loop.rs` system instructions, add explicit guidance:
+In `src/gen3d/ai/agent_prompt.rs` system instructions, add explicit guidance:
 
 - “For symmetric limb chains (legs/arms), generate ONE chain, then call `copy_component_subtree_v1` to fill the others.”
 - Mention `anchors=preserve_target` as the default safe setting.

@@ -82,7 +82,7 @@ Key code locations:
 - `src/gen3d/ai/schema.rs`: serde JSON structs for plan/draft/review.
 - `src/gen3d/ai/prompts.rs`: the system prompts that define the JSON schema and rules for plan/component/review generation.
 - `src/gen3d/ai/mod.rs`: legacy Gen3D flow that applies the plan into `job.planned_components` and builds initial stub `ObjectDef`s.
-- `src/gen3d/ai/agent_loop.rs`: Gen3D agent loop, tool handling, state summary, and copy tool implementations.
+- `src/gen3d/ai/agent_loop/mod.rs` + `src/gen3d/ai/agent_*.rs`: Gen3D agent loop wiring, tool handling, state summary, and copy tool implementations.
 - `src/gen3d/ai/copy_component.rs`: engine-side copy logic for components and subtrees.
 - `tools/gen3d_real_test.py`: end-to-end rendered Gen3D driver via Automation HTTP API.
 - `src/automation/mod.rs`: Automation endpoints used by the real test (`/v1/mode`, `/v1/gen3d/*`, `/v1/select`, `/v1/move`, `/v1/fire`, `/v1/step`, `/v1/screenshot`).
@@ -122,19 +122,19 @@ Third, persist and validate reuse groups:
 
 Fourth, expose reuse plan to the agent:
 
-- In `src/gen3d/ai/agent_loop.rs` `draft_summary`, include:
+- In `src/gen3d/ai/agent_prompt.rs` `draft_summary`, include:
   - `reuse_groups` (validated, with defaults applied)
   - `reuse_warnings` (if any)
   - `reuse_generation_plan`: component indices/names to generate first, and ready-to-use copy tool calls that will be applied after generation.
 
 Fifth, enforce a “plan-only” agent step:
 
-- Update `build_agent_system_instructions` to tell the agent not to include `llm_generate_components_v1` in the same step as `llm_generate_plan_v1`.
-- Add an engine guard in `execute_agent_actions`: after a successful `llm_generate_plan_v1` tool call, end the step immediately (request the next step) even if the agent included additional actions.
+- Update `build_agent_system_instructions` (in `src/gen3d/ai/agent_prompt.rs`) to tell the agent not to include `llm_generate_components_v1` in the same step as `llm_generate_plan_v1`.
+- Add an engine guard in `execute_agent_actions` (in `src/gen3d/ai/agent_step.rs`): after a successful `llm_generate_plan_v1` tool call, end the step immediately (request the next step) even if the agent included additional actions.
 
 Sixth, implement reuse-aware batch generation + auto-copy:
 
-- In `src/gen3d/ai/agent_loop.rs` tool handler for `llm_generate_components_v1`:
+- In `src/gen3d/ai/agent_tool_dispatch.rs` tool handler for `llm_generate_components_v1` (and its polling/completion path):
   - When the call does not specify explicit `component_indices`/`component_names` and `job` has validated `reuse_groups`, generate only:
     - all missing components that are NOT declared as copy targets (including full target subtrees for subtree reuse), plus
     - all source components/subtrees required by reuse groups.

@@ -53,7 +53,8 @@ Gen3D has a “Codex-style agent” mode where the model outputs a strict JSON s
 
 Key files:
 
-- `src/gen3d/ai/agent_loop.rs`: Builds `agent_step` prompts (`build_agent_user_text`) and executes tool calls including `llm_generate_plan_v1`, `llm_generate_component_v1`, and `llm_review_delta_v1`.
+- `src/gen3d/ai/agent_prompt.rs`: Builds `agent_step` prompts (`build_agent_user_text`) and the agent system instructions.
+- `src/gen3d/ai/agent_step.rs` + `src/gen3d/ai/agent_tool_dispatch.rs` + `src/gen3d/ai/agent_tool_poll.rs`: Executes agent tool calls, including `llm_generate_plan_v1`, `llm_generate_component_v1`, and `llm_review_delta_v1`.
 - `src/gen3d/ai/prompts.rs`: Builds the system/user prompts for plan generation, component generation, and review delta (currently includes large dumps of plan summaries and scene graph summaries).
 - `src/gen3d/ai/mod.rs`: Owns `spawn_gen3d_ai_text_thread`, the shared thread-based OpenAI call helper used by agent_step and LLM tools.
 - `src/gen3d/ai/openai.rs`: Builds and sends `/responses` requests, accepts a `reasoning_effort` string.

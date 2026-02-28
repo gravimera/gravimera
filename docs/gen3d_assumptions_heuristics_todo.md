@@ -33,7 +33,7 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
 - [x] **Stop auto-disabling animation channels after motion validation errors**
   - Fixed (2026-02-22): removed the Gen3D smoke-check fallback that silently replaced failing channels with an identity loop after repeated motion validation errors.
   - Result: motion validation failures are now surfaced as errors and must be repaired (plan/regen/authoring). The engine does not mutate authored motion as a “make it usable” guess.
-  - Code: `src/gen3d/ai/agent_loop.rs` (removed fallback policy), `src/gen3d/ai/convert.rs` (removed `disable_attachment_animation_channel_identity_loop` helper).
+  - Code: `src/gen3d/ai/agent_tool_dispatch.rs` (removed fallback policy), `src/gen3d/ai/convert.rs` (removed `disable_attachment_animation_channel_identity_loop` helper).
 
 - [x] **Make Gen3D JSON parsing strict (remove semantic-normalization heuristics)**
   - Fixed (2026-02-22): removed “near miss” normalization for enums/fields (attack kinds, animation drivers/clips, key alias rewrites) and removed named/material color guessing.
@@ -97,14 +97,14 @@ Status (2026-02-24):
 - [x] **Allow negative/zero scale effects (no engine-side “positive minimum” sanitization for tool transforms)**
   - Fixed (2026-02-23): Gen3D tool-call transform parsing preserves negative and zero scale (enables mirroring, squash-to-zero, stylized effects).
   - Runtime transform math uses safe decomposition that supports degenerate and mirrored transforms.
-  - Code: `src/gen3d/ai/agent_loop.rs` (`parse_delta_transform`), `src/geometry.rs` (`mat4_to_transform_allow_degenerate_scale`).
-  - Test: `src/gen3d/ai/agent_loop.rs` `gen3d_tool_transform_parsing_preserves_negative_and_zero_scale`.
+  - Code: `src/gen3d/ai/agent_parsing.rs` (`parse_delta_transform`), `src/geometry.rs` (`mat4_to_transform_allow_degenerate_scale`).
+  - Test: `src/gen3d/ai/agent_loop/mod.rs` `gen3d_tool_transform_parsing_preserves_negative_and_zero_scale`.
 
 - [x] **Motion validation: keep semantics-based checks non-blocking; remove channel-mutation fallback**
   - Fixed (2026-02-23):
     - `chain_axis_mismatch` is **warn-only** and is scoped to a narrow “limb link” shape to reduce false positives.
     - The engine does not disable/mutate authored motion channels as a fallback when validation finds issues.
-  - Code: `src/gen3d/ai/motion_validation.rs` (`chain_axis_mismatch` severity), `src/gen3d/ai/agent_loop.rs` (no channel-disable fallback policy).
+  - Code: `src/gen3d/ai/motion_validation.rs` (`chain_axis_mismatch` severity), `src/gen3d/ai/agent_tool_dispatch.rs` (no channel-disable fallback policy).
 
 ## 4) Diagnostics / guardrails to prevent “wrong result but no clue why”
 

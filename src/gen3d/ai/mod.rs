@@ -19,6 +19,17 @@ use crate::threaded_result::{new_shared_result, spawn_worker_thread, take_shared
 use crate::types::{AnimationChannelsActive, AttackClock, BuildScene, LocomotionClock};
 
 mod agent_loop;
+mod agent_component_batch;
+mod agent_parsing;
+mod agent_prompt;
+mod agent_regen_budget;
+mod agent_render_capture;
+mod agent_review_delta;
+mod agent_review_images;
+mod agent_step;
+mod agent_tool_dispatch;
+mod agent_tool_poll;
+mod agent_utils;
 mod artifacts;
 mod convert;
 mod copy_component;
@@ -56,6 +67,9 @@ use super::tool_feedback::{
     append_gen3d_tool_feedback_entry, Gen3dToolFeedbackEntry, Gen3dToolFeedbackHistory,
 };
 use super::{GEN3D_MAX_REQUEST_IMAGES, GEN3D_PREVIEW_DEFAULT_PITCH, GEN3D_PREVIEW_DEFAULT_YAW};
+
+const GEN3D_LLM_TOOL_SCHEMA_REPAIR_MAX_ATTEMPTS: u8 = 2;
+const GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES: u8 = 6;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Gen3dAiMode {
