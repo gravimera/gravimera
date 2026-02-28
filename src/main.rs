@@ -44,6 +44,7 @@ mod scene_store;
 mod scene_validation;
 mod selection_circle;
 mod setup;
+mod system_proxy;
 mod types;
 mod ui;
 mod workspace_ui;

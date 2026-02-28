@@ -2407,6 +2407,7 @@ fn call_openai_responses_json_object(
     let started = std::time::Instant::now();
 
     let mut cmd = std::process::Command::new("curl");
+    crate::system_proxy::apply_system_proxy_to_curl_command(&mut cmd, &url);
     cmd.arg("-sS")
         .arg("--connect-timeout")
         .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
@@ -2637,6 +2638,7 @@ fn call_openai_chat_json_object(
     let started = std::time::Instant::now();
 
     let mut cmd = std::process::Command::new("curl");
+    crate::system_proxy::apply_system_proxy_to_curl_command(&mut cmd, &url);
     cmd.arg("-sS")
         .arg("--connect-timeout")
         .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())

@@ -1842,6 +1842,7 @@ fn openai_responses_flow(
                 }
             })?;
             let mut cmd = std::process::Command::new("curl");
+            crate::system_proxy::apply_system_proxy_to_curl_command(&mut cmd, &url);
             cmd.arg("-sS")
                 .arg("--no-buffer")
                 .arg("--connect-timeout")
@@ -2335,6 +2336,7 @@ fn openai_responses_curl(
         CURL_HARD_TIMEOUT_SECS_DEFAULT
     };
     let mut cmd = std::process::Command::new("curl");
+    crate::system_proxy::apply_system_proxy_to_curl_command(&mut cmd, &url);
     cmd.arg("-sS")
         .arg("--no-buffer")
         .arg("--connect-timeout")
@@ -2533,6 +2535,7 @@ fn openai_chat_completions_curl(
     };
 
     let mut cmd = std::process::Command::new("curl");
+    crate::system_proxy::apply_system_proxy_to_curl_command(&mut cmd, &url);
     cmd.arg("-sS")
         .arg("--no-buffer")
         .arg("--connect-timeout")
