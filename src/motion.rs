@@ -856,18 +856,30 @@ fn bob_move_slot(move_cycle_m: f32, amplitude_m: f32, time_offset_units: f32) ->
 }
 
 pub(crate) fn wheel_spin_move_slot(axis_local: Vec3, radians_per_meter: f32) -> PartAnimationSlot {
+    wheel_spin_distance_slot("move", axis_local, radians_per_meter)
+}
+
+fn wheel_spin_distance_slot(
+    channel: &'static str,
+    axis_local: Vec3,
+    radians_per_unit: f32,
+) -> PartAnimationSlot {
     PartAnimationSlot {
-        channel: "move".into(),
+        channel: channel.into(),
         spec: PartAnimationSpec {
             driver: PartAnimationDriver::MoveDistance,
             speed_scale: 1.0,
             time_offset_units: 0.0,
             clip: PartAnimationDef::Spin {
                 axis: axis_local,
-                radians_per_unit: radians_per_meter,
+                radians_per_unit,
             },
         },
     }
+}
+
+fn wheel_spin_ambient_slot(axis_local: Vec3, radians_per_meter: f32) -> PartAnimationSlot {
+    wheel_spin_distance_slot("ambient", axis_local, radians_per_meter)
 }
 
 fn swing_idle_slot(
@@ -1539,6 +1551,14 @@ fn apply_motion_algorithms_for_edge(
     }
     if let Some(slot) = move_override_slot {
         effective_slots.retain(|s| s.channel.as_ref() != "move");
+        if slot.channel.as_ref() != "move" {
+            effective_slots.retain(|s| s.channel.as_ref() != slot.channel.as_ref());
+            if slot.channel.as_ref() == "ambient" {
+                // A MoveDistance-driven ambient spin is a persistent pose override; remove any
+                // idle slots so wheels don't snap back when the unit stops moving.
+                effective_slots.retain(|s| s.channel.as_ref() != "idle");
+            }
+        }
         effective_slots.push(slot);
     }
     if !attack_override_slots.is_empty() {
@@ -1684,6 +1704,28 @@ fn car_wheels_override_for_binding(
     binding: &ObjectRefEdgeBinding,
     library: &ObjectLibrary,
 ) -> Option<PartAnimationSlot> {
+    fn roll_sign_for_base_transform(axis_local: Vec3, base: Transform) -> f32 {
+        if !axis_local.is_finite() {
+            return 1.0;
+        }
+
+        let axis_parent = base.rotation * (axis_local * base.scale);
+        if !axis_parent.is_finite() || axis_parent.length_squared() <= 1e-6 {
+            return 1.0;
+        }
+
+        let roll_dir = axis_parent.cross(Vec3::Y);
+        if !roll_dir.is_finite() || roll_dir.length_squared() <= 1e-6 {
+            return 1.0;
+        }
+
+        if roll_dir.normalize().dot(Vec3::Z) < 0.0 {
+            -1.0
+        } else {
+            1.0
+        }
+    }
+
     if let Some(body) = rig.body.as_ref() {
         if body.matches_binding(binding) {
             let size = library.size(binding.child_object_id).unwrap_or(Vec3::ONE);
@@ -1711,9 +1753,10 @@ fn car_wheels_override_for_binding(
         (1.0 / radius).clamp(-200.0, 200.0)
     };
 
-    Some(wheel_spin_move_slot(
+    let sign = roll_sign_for_base_transform(wheel.spin_axis_local, binding.base_transform);
+    Some(wheel_spin_ambient_slot(
         wheel.spin_axis_local,
-        radians_per_meter,
+        radians_per_meter * sign,
     ))
 }
 
@@ -3554,6 +3597,73 @@ mod tests {
             }
             other => panic!("expected loop clip, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn car_wheels_spin_uses_ambient_channel_and_flips_under_mirror_scale() {
+        use crate::object::visuals::ObjectRefEdgeBinding;
+
+        let parent_id = 0xCA7_u128;
+        let wheel_id = 0x10_u128;
+        let library = make_library_with_anchors(parent_id, "axle", wheel_id, "root");
+
+        let edge = MotionEdgeRefV1 {
+            parent_object_id: parent_id,
+            child_object_id: wheel_id,
+            parent_anchor: "axle".into(),
+            child_anchor: "root".into(),
+        };
+
+        let rig = CarRigV1 {
+            default_move_algorithm: None,
+            body: None,
+            wheels: vec![SpinEffectorV1 {
+                edge: edge.clone(),
+                spin_axis_local: Vec3::X,
+            }],
+            tool_arms: Vec::new(),
+            wheel_radius_m: None,
+            radians_per_meter: Some(1.0),
+        };
+
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let binding = ObjectRefEdgeBinding {
+            root_entity: root,
+            parent_object_id: parent_id,
+            child_object_id: wheel_id,
+            attachment: Some(AttachmentDef {
+                parent_anchor: "axle".into(),
+                child_anchor: "root".into(),
+            }),
+            base_transform: Transform::IDENTITY,
+            base_slots: Vec::new(),
+            apply_aim_yaw: false,
+        };
+
+        let slot = car_wheels_override_for_binding(&rig, &binding, &library).expect("slot");
+        assert_eq!(slot.channel.as_ref(), "ambient");
+        assert_eq!(slot.spec.driver, PartAnimationDriver::MoveDistance);
+        let PartAnimationDef::Spin {
+            radians_per_unit, ..
+        } = slot.spec.clip
+        else {
+            panic!("expected spin clip");
+        };
+        assert!((radians_per_unit - 1.0).abs() < 1e-6);
+
+        let mirrored = ObjectRefEdgeBinding {
+            base_transform: Transform::from_scale(Vec3::new(-1.0, 1.0, 1.0)),
+            ..binding
+        };
+        let slot = car_wheels_override_for_binding(&rig, &mirrored, &library).expect("slot");
+        let PartAnimationDef::Spin {
+            radians_per_unit, ..
+        } = slot.spec.clip
+        else {
+            panic!("expected spin clip");
+        };
+        assert!((radians_per_unit + 1.0).abs() < 1e-6);
     }
 
     #[test]
