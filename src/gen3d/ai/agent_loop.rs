@@ -30,6 +30,7 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
     TOOL_ID_VALIDATE,
 };
+use crate::threaded_result::{new_shared_result, take_shared_result, SharedResult};
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
 use super::super::state::{
@@ -131,8 +132,7 @@ pub(super) fn spawn_agent_step_request(
         return Err("Internal error: missing OpenAI config.".into());
     };
 
-    let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-        Arc::new(Mutex::new(None));
+    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
     job.shared_result = Some(shared.clone());
     let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
         message: "Starting agent…".into(),
@@ -1255,8 +1255,7 @@ fn start_agent_llm_review_delta_call(
         &smoke_results,
     );
 
-    let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-        Arc::new(Mutex::new(None));
+    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
     job.shared_result = Some(shared.clone());
     let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
         message: "Reviewing…".into(),
@@ -3005,8 +3004,7 @@ fn execute_tool_call(
                 ));
             };
 
-            let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-                Arc::new(Mutex::new(None));
+            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
             job.shared_result = Some(shared.clone());
             let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
                 message: "Generating plan…".into(),
@@ -3177,8 +3175,7 @@ fn execute_tool_call(
                 ));
             };
 
-            let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-                Arc::new(Mutex::new(None));
+            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
             job.shared_result = Some(shared.clone());
             let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
                 message: "Generating component…".into(),
@@ -3473,8 +3470,7 @@ fn execute_tool_call(
             };
             let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
 
-            let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-                Arc::new(Mutex::new(None));
+            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
             job.shared_result = Some(shared.clone());
             let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
                 message: "Mapping motion roles…".into(),
@@ -4160,8 +4156,7 @@ fn poll_agent_tool(
              (The raw previous output is omitted here to avoid repeating invalid keys.)\n",
         );
 
-        let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-            Arc::new(Mutex::new(None));
+        let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
         job.shared_result = Some(shared.clone());
         let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
             message: format!("Repairing tool output (attempt {attempt})…"),
@@ -5399,15 +5394,7 @@ fn poll_agent_component_batch(
     // 1) Apply any completed component results.
     let mut i = 0usize;
     while i < job.component_in_flight.len() {
-        let maybe_result = {
-            let task = &job.component_in_flight[i];
-            let Ok(mut guard) = task.shared_result.lock() else {
-                i += 1;
-                continue;
-            };
-            guard.take()
-        };
-        let Some(result) = maybe_result else {
+        let Some(result) = take_shared_result(&job.component_in_flight[i].shared_result) else {
             i += 1;
             continue;
         };
@@ -5627,8 +5614,7 @@ fn poll_agent_component_batch(
             Vec::new()
         };
 
-        let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-            Arc::new(Mutex::new(None));
+        let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
         let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
             message: "Starting…".into(),
         }));

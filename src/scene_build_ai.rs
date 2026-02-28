@@ -29,6 +29,7 @@ use crate::openai_shared::{
     extract_openai_responses_sse_output_text, split_curl_http_status,
     CURL_HTTP_STATUS_MARKER, CURL_HTTP_STATUS_WRITEOUT_ARG,
 };
+use crate::threaded_result::{new_shared_result, spawn_worker_thread, take_shared_result, SharedResult};
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 const CURL_MAX_TIME_SECS: u32 = 600;
@@ -397,7 +398,7 @@ struct SceneBuildAiJob {
     capture: Option<SceneBuildStepScreenshotCapture>,
 
     progress: Arc<Mutex<SceneBuildAiProgress>>,
-    shared_result: Arc<Mutex<Option<Result<String, String>>>>,
+    shared_result: SharedResult<String, String>,
 }
 
 #[derive(Resource, Default)]
@@ -679,7 +680,7 @@ pub(crate) fn start_scene_build_from_description(
         next_run_step: 1,
         capture: None,
         progress,
-        shared_result: Arc::new(Mutex::new(None)),
+        shared_result: new_shared_result(),
     });
 
     Ok(run_id)
@@ -844,7 +845,7 @@ pub(crate) fn scene_build_ai_poll(
 
                     set_progress(&job.progress, &job.run_id, &job.run_dir, "Planning steps…");
 
-                    job.shared_result = Arc::new(Mutex::new(None));
+                    job.shared_result = new_shared_result();
                     spawn_scene_build_llm_thread(
                         job.shared_result.clone(),
                         job.progress.clone(),
@@ -1556,7 +1557,7 @@ Fix the JSON so it matches the schemas exactly and resolves the error. Return ON
         ),
     );
 
-    job.shared_result = Arc::new(Mutex::new(None));
+    job.shared_result = new_shared_result();
     let label = if attempt == 0 {
         format!("Step {}/{}", step_index + 1, total)
     } else {
@@ -1629,15 +1630,6 @@ fn rejection_summary(result: &Value) -> String {
     }
 
     parts.join("; ")
-}
-
-fn take_shared_result(
-    shared: &Arc<Mutex<Option<Result<String, String>>>>,
-) -> Option<Result<String, String>> {
-    let Ok(mut guard) = shared.lock() else {
-        return None;
-    };
-    guard.take()
 }
 
 fn finish_with_error(
@@ -2166,7 +2158,7 @@ fn build_prefab_catalog(
 }
 
 fn spawn_scene_build_llm_thread(
-    shared: Arc<Mutex<Option<Result<String, String>>>>,
+    shared: SharedResult<String, String>,
     progress: Arc<Mutex<SceneBuildAiProgress>>,
     run_id: String,
     run_dir: PathBuf,
@@ -2179,10 +2171,12 @@ fn spawn_scene_build_llm_thread(
     llm_dir: PathBuf,
     label: String,
 ) {
-    let _ = std::thread::Builder::new()
-        .name(format!("gravimera_scene_build_ai_{run_id}"))
-        .spawn(move || {
-            let res = call_openai_json_object(
+    let thread_name = format!("gravimera_scene_build_ai_{run_id}");
+    let _ = spawn_worker_thread(
+        thread_name,
+        shared,
+        move || {
+            call_openai_json_object(
                 &progress,
                 &run_id,
                 &run_dir,
@@ -2194,11 +2188,10 @@ fn spawn_scene_build_llm_thread(
                 &system_text,
                 &user_text,
                 &llm_dir,
-            );
-            if let Ok(mut guard) = shared.lock() {
-                *guard = Some(res);
-            }
-        });
+            )
+        },
+        |_| {},
+    );
 }
 
 #[derive(Clone, Debug)]

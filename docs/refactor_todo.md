@@ -18,7 +18,7 @@ Guidelines:
     - `src/scene_build_ai.rs` (similar helpers duplicated)
   - Done when: shared helper module is used by both call paths; behavior stays identical; no secrets are passed on argv.
 
-- [ ] **Unify “threaded request result” plumbing**
+- [x] **Unify “threaded request result” plumbing**
   - Why: repeated `Arc<Mutex<Option<Result<...>>>>` + progress tracking patterns in both Gen3D and SceneBuildAI.
   - Where:
     - `src/gen3d/ai/mod.rs` + `src/gen3d/ai/agent_loop.rs`

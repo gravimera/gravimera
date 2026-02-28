@@ -15,6 +15,7 @@ use crate::object::registry::{
     builtin_object_id, ObjectPartDef, ObjectPartKind, PartAnimationDef, PartAnimationDriver,
     PartAnimationSlot,
 };
+use crate::threaded_result::{new_shared_result, spawn_worker_thread, take_shared_result, SharedResult};
 use crate::types::{AnimationChannelsActive, AttackClock, BuildScene, LocomotionClock};
 
 mod agent_loop;
@@ -505,7 +506,7 @@ pub(crate) struct Gen3dAiJob {
     last_review_inputs: Vec<PathBuf>,
     last_review_user_text: String,
     review_delta_repair_attempt: u8,
-    shared_result: Option<Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>>>,
+    shared_result: Option<SharedResult<Gen3dAiTextResponse, String>>,
     shared_progress: Option<Arc<Mutex<Gen3dAiProgress>>>,
     run_started_at: Option<std::time::Instant>,
     last_run_elapsed: Option<std::time::Duration>,
@@ -522,7 +523,7 @@ struct Gen3dInFlightComponent {
     idx: usize,
     attempt: u8,
     sent_images: bool,
-    shared_result: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>>,
+    shared_result: SharedResult<Gen3dAiTextResponse, String>,
     _progress: Arc<Mutex<Gen3dAiProgress>>,
 }
 
@@ -1659,8 +1660,7 @@ pub(crate) fn gen3d_poll_ai_job(
                 set_progress(progress, "Requesting AI auto-review…");
             }
 
-            let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-                Arc::new(Mutex::new(None));
+            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
             job.shared_result = Some(shared.clone());
             let progress = job
                 .shared_progress
@@ -1821,13 +1821,7 @@ pub(crate) fn gen3d_poll_ai_job(
         return;
     };
 
-    let result = {
-        let Ok(mut guard) = shared.lock() else {
-            return;
-        };
-        guard.take()
-    };
-    let Some(result) = result else {
+    let Some(result) = take_shared_result(shared) else {
         return;
     };
 
@@ -2242,8 +2236,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         set_progress(progress, "Starting next component…");
                     }
 
-                    let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-                        Arc::new(Mutex::new(None));
+                    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
                     job.shared_result = Some(shared.clone());
 
                     let progress = job
@@ -2645,8 +2638,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         set_progress(progress, "Starting component regeneration…");
                     }
 
-                    let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-                        Arc::new(Mutex::new(None));
+                    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
                     job.shared_result = Some(shared.clone());
                     let progress = job
                         .shared_progress
@@ -2749,8 +2741,7 @@ fn retry_gen3d_review_delta(
         job.review_delta_repair_attempt, GEN3D_MAX_REVIEW_DELTA_REPAIRS
     );
 
-    let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-        Arc::new(Mutex::new(None));
+    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
     job.shared_result = Some(shared.clone());
     let progress = job
         .shared_progress
@@ -2842,8 +2833,7 @@ fn retry_gen3d_plan(
         return true;
     };
 
-    let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-        Arc::new(Mutex::new(None));
+    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
     job.shared_result = Some(shared.clone());
     let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
         message: "Starting…".into(),
@@ -2889,16 +2879,7 @@ fn poll_gen3d_parallel_components(
     // 1) Apply any completed component results.
     let mut i = 0usize;
     while i < job.component_in_flight.len() {
-        let maybe_result = {
-            let task = &job.component_in_flight[i];
-            let Ok(mut guard) = task.shared_result.lock() else {
-                i += 1;
-                continue;
-            };
-            guard.take()
-        };
-
-        let Some(result) = maybe_result else {
+        let Some(result) = take_shared_result(&job.component_in_flight[i].shared_result) else {
             i += 1;
             continue;
         };
@@ -3091,8 +3072,7 @@ fn poll_gen3d_parallel_components(
             Vec::new()
         };
 
-        let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-            Arc::new(Mutex::new(None));
+        let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
         let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
             message: "Starting…".into(),
         }));
@@ -3366,8 +3346,7 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
         up.z,
     );
 
-    let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-        Arc::new(Mutex::new(None));
+    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
     job.shared_result = Some(shared.clone());
     let progress = job
         .shared_progress
@@ -3481,8 +3460,7 @@ fn try_start_gen3d_replan(
     );
 
     job.phase = Gen3dAiPhase::WaitingPlan;
-    let shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>> =
-        Arc::new(Mutex::new(None));
+    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
     job.shared_result = Some(shared.clone());
     let progress = job
         .shared_progress
@@ -4942,7 +4920,7 @@ fn build_gen3d_validate_results(
 }
 
 fn spawn_gen3d_ai_text_thread(
-    shared: Arc<Mutex<Option<Result<Gen3dAiTextResponse, String>>>>,
+    shared: SharedResult<Gen3dAiTextResponse, String>,
     progress: Arc<Mutex<Gen3dAiProgress>>,
     cancel: Option<Arc<AtomicBool>>,
     session: Gen3dAiSessionState,
@@ -4956,100 +4934,104 @@ fn spawn_gen3d_ai_text_thread(
     prefix: String,
 ) {
     let url = crate::config::join_base_url(&openai.base_url, "responses");
-    std::thread::spawn(move || {
-        let thread_id = std::thread::current().id();
-        let started_at = std::time::Instant::now();
-        append_gen3d_run_log(
-            Some(&run_dir),
-            format!(
-                "request_thread_started prefix={} model={} images={} url={} reasoning_effort={} thread={:?}",
+    let run_dir_for_store = run_dir.clone();
+    let prefix_for_store = prefix.clone();
+    let thread_name = format!("gravimera_gen3d_ai_{prefix}");
+
+    spawn_worker_thread(
+        thread_name,
+        shared,
+        move || {
+            let thread_id = std::thread::current().id();
+            let started_at = std::time::Instant::now();
+            append_gen3d_run_log(
+                Some(&run_dir),
+                format!(
+                    "request_thread_started prefix={} model={} images={} url={} reasoning_effort={} thread={:?}",
+                    prefix,
+                    openai.model,
+                    image_paths.len(),
+                    url,
+                    reasoning_effort,
+                    thread_id
+                ),
+            );
+            debug!(
+                "Gen3D: request started (prefix={}, model={}, images={}, url={}, cache_dir={}, thread={:?})",
                 prefix,
                 openai.model,
                 image_paths.len(),
                 url,
-                reasoning_effort,
-                thread_id
-            ),
-        );
-        debug!(
-            "Gen3D: request started (prefix={}, model={}, images={}, url={}, cache_dir={}, thread={:?})",
-            prefix,
-            openai.model,
-            image_paths.len(),
-            url,
-            run_dir.display(),
-            thread_id,
-        );
-        let result = openai::generate_text_via_openai(
-            &progress,
-            session,
-            cancel,
-            expected_schema,
-            &openai.base_url,
-            &openai.api_key,
-            &openai.model,
-            &reasoning_effort,
-            &system_instructions,
-            &user_text,
-            &image_paths,
-            Some(&run_dir),
-            &prefix,
-        );
-        let openai_elapsed_ms = started_at.elapsed().as_millis();
-        append_gen3d_run_log(
-            Some(&run_dir),
-            format!(
-                "request_thread_openai_done prefix={} ok={} elapsed_ms={}",
+                run_dir.display(),
+                thread_id,
+            );
+            let result = openai::generate_text_via_openai(
+                &progress,
+                session,
+                cancel,
+                expected_schema,
+                &openai.base_url,
+                &openai.api_key,
+                &openai.model,
+                &reasoning_effort,
+                &system_instructions,
+                &user_text,
+                &image_paths,
+                Some(&run_dir),
+                &prefix,
+            );
+            let openai_elapsed_ms = started_at.elapsed().as_millis();
+            append_gen3d_run_log(
+                Some(&run_dir),
+                format!(
+                    "request_thread_openai_done prefix={} ok={} elapsed_ms={}",
+                    prefix,
+                    result.is_ok(),
+                    openai_elapsed_ms
+                ),
+            );
+            debug!(
+                "Gen3D: request thread OpenAI done (prefix={}, ok={}, elapsed_ms={}, thread={:?})",
                 prefix,
                 result.is_ok(),
-                openai_elapsed_ms
-            ),
-        );
-        debug!(
-            "Gen3D: request thread OpenAI done (prefix={}, ok={}, elapsed_ms={}, thread={:?})",
-            prefix,
-            result.is_ok(),
-            openai_elapsed_ms,
-            thread_id,
-        );
-
-        let shared_lock_started_at = std::time::Instant::now();
-        let mut guard = match shared.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
+                openai_elapsed_ms,
+                thread_id,
+            );
+            result
+        },
+        move |metrics| {
+            let thread_id = std::thread::current().id();
+            append_gen3d_run_log(
+                Some(&run_dir_for_store),
+                format!(
+                    "request_thread_shared_lock_acquired prefix={} wait_ms={}",
+                    prefix_for_store, metrics.lock_wait_ms
+                ),
+            );
+            if metrics.poisoned {
                 warn!(
                     "Gen3D: shared_result lock poisoned; continuing (prefix={}, thread={:?})",
-                    prefix, thread_id
+                    prefix_for_store, thread_id
                 );
-                poisoned.into_inner()
             }
-        };
-        let shared_lock_wait_ms = shared_lock_started_at.elapsed().as_millis();
-        append_gen3d_run_log(
-            Some(&run_dir),
-            format!(
-                "request_thread_shared_lock_acquired prefix={} wait_ms={}",
-                prefix, shared_lock_wait_ms
-            ),
-        );
-        if shared_lock_wait_ms >= 1_000 {
-            warn!(
-                "Gen3D: shared_result lock wait high (prefix={}, wait_ms={}, thread={:?})",
-                prefix, shared_lock_wait_ms, thread_id
+            if metrics.lock_wait_ms >= 1_000 {
+                warn!(
+                    "Gen3D: shared_result lock wait high (prefix={}, wait_ms={}, thread={:?})",
+                    prefix_for_store, metrics.lock_wait_ms, thread_id
+                );
+            } else {
+                debug!(
+                    "Gen3D: shared_result lock acquired (prefix={}, wait_ms={}, thread={:?})",
+                    prefix_for_store, metrics.lock_wait_ms, thread_id
+                );
+            }
+            append_gen3d_run_log(
+                Some(&run_dir_for_store),
+                format!("request_thread_shared_set prefix={}", prefix_for_store),
             );
-        } else {
-            debug!(
-                "Gen3D: shared_result lock acquired (prefix={}, wait_ms={}, thread={:?})",
-                prefix, shared_lock_wait_ms, thread_id
-            );
-        }
-
-        *guard = Some(result);
-        append_gen3d_run_log(
-            Some(&run_dir),
-            format!("request_thread_shared_set prefix={}", prefix),
-        );
-    });
+        },
+    )
+    .expect("Failed to spawn Gen3D AI thread");
 }
 
 pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(

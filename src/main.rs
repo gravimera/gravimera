@@ -47,6 +47,7 @@ mod selection_circle;
 mod setup;
 mod system_proxy;
 mod types;
+mod threaded_result;
 mod ui;
 mod workspace_ui;
 mod world_drag;
