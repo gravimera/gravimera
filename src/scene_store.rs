@@ -155,6 +155,7 @@ enum SceneDatAttackPrimaryMotionAlgorithm {
     BipedMeleeSwingV1 = 2,
     QuadrupedBiteV1 = 3,
     RangedRecoilV1 = 4,
+    ToolArmDigV1 = 5,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1632,6 +1633,9 @@ fn save_scene_dat_internal(
             AttackPrimaryMotionAlgorithm::RangedRecoilV1 => {
                 SceneDatAttackPrimaryMotionAlgorithm::RangedRecoilV1 as i32
             }
+            AttackPrimaryMotionAlgorithm::ToolArmDigV1 => {
+                SceneDatAttackPrimaryMotionAlgorithm::ToolArmDigV1 as i32
+            }
         }
     }
 
@@ -2242,6 +2246,9 @@ fn load_scene_dat_from_path(
             }
             x if x == SceneDatAttackPrimaryMotionAlgorithm::RangedRecoilV1 as i32 => {
                 Some(AttackPrimaryMotionAlgorithm::RangedRecoilV1)
+            }
+            x if x == SceneDatAttackPrimaryMotionAlgorithm::ToolArmDigV1 as i32 => {
+                Some(AttackPrimaryMotionAlgorithm::ToolArmDigV1)
             }
             _ => None,
         }

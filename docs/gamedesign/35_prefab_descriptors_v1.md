@@ -100,13 +100,13 @@ Fields:
 - `animation_channels`: optional array of strings (e.g. `"idle"`, `"move"`, `"attack"`).
 - `notes`: optional string (general contract notes).
 
-#### `interfaces.extra.motion_roles_v1` (semantic locomotion mapping; Gen3D)
+#### `interfaces.extra.motion_roles_v1` (semantic motion mapping; Gen3D)
 
 `interfaces.extra` may include an optional `motion_roles_v1` object that captures a **small,
-stable vocabulary** of locomotion roles (e.g. legs/wheels) for a generated Gen3D model.
+stable vocabulary** of motion roles (e.g. legs/wheels/arms) for a generated Gen3D model.
 
 This is intended to keep LLM outputs stable over time: the model labels **what parts do**
-(`leg`, `wheel`) rather than picking from an ever-growing list of engine algorithms.
+(`leg`, `wheel`, `arm`) rather than picking from an ever-growing list of engine algorithms.
 
 Notes:
 
@@ -116,6 +116,9 @@ Notes:
   edge via the saved prefab graph.
 - Runtime motion injection still relies on an explicit, non-heuristic rig contract
   (see `motion_rig_v1` below).
+- `role="arm"` is not limited to biped limbs; it may also represent an articulated tool arm
+  chain (e.g. excavator boom/stick/bucket) so melee `attack_primary` algorithms can target those
+  joints via `motion_rig_v1`.
 
 Top-level fields:
 
@@ -228,6 +231,9 @@ Requires a `car` object:
 - `wheels`: array of wheel objects:
   - `edge`: `MotionEdgeRefV1`
   - `spin_axis_local`: optional `[x, y, z]` array (defaults to `[1, 0, 0]`)
+- `tool_arms`: optional array of tool arm rigs:
+  - `joints`: array of `MotionEdgeRefV1` (proximal → distal) identifying an articulated arm chain
+    that may be animated by `attack_primary` algorithms.
 - `wheel_radius_m`: optional number. If present, the engine uses `radians_per_meter = 1 / wheel_radius_m`.
 - `radians_per_meter`: optional number. If present, overrides wheel spin rate directly.
 
@@ -310,7 +316,7 @@ Gen3D writes descriptor files for saved models. In addition to filling standard 
 
 - Populate `text.long` with a compact summary including derived facts, an AI plan extract (when available), and a derived motion summary.
 - Populate `interfaces.extra.motion_summary` with a structured summary of available animation channels (drivers/clip kinds/counts).
-- Populate `interfaces.extra.motion_roles_v1` with a semantic mapping of locomotion effectors (legs/wheels) when available (typically via `llm_generate_motion_roles_v1`).
+- Populate `interfaces.extra.motion_roles_v1` with a semantic mapping of motion effectors (legs/wheels/arms/etc) when available (typically via `llm_generate_motion_roles_v1`).
 - Populate `interfaces.extra.motion_rig_v1` when the model declares explicit rig edges for runtime motion algorithms (walk/wheels, etc.).
 - Populate `extra.facts` with a structured set of derived facts (size, mobility/attack presence, grounding, etc.).
 - Populate `text.short` and `tags` via a best-effort AI call (when OpenAI config is available). Tools should treat these as suggestions and preserve human edits.

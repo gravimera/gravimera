@@ -1291,6 +1291,93 @@ fn save_generated_prefab_descriptor_best_effort(
                 serde_json::Value::Object(obj)
             }
 
+            fn tool_arm_paths_from_arms<'a>(arms: &'a [Limb<'a>]) -> Vec<Vec<Limb<'a>>> {
+                use std::collections::{HashMap, HashSet};
+
+                if arms.is_empty() {
+                    return Vec::new();
+                }
+
+                let mut unique_by_child: HashMap<u128, Limb<'a>> = HashMap::new();
+                for limb in arms.iter().copied() {
+                    unique_by_child
+                        .entry(limb.edge.child_object_id)
+                        .or_insert(limb);
+                }
+                let mut unique: Vec<Limb<'a>> = unique_by_child.values().copied().collect();
+                unique.sort_by(|a, b| a.name.cmp(b.name));
+
+                let mut child_ids: HashSet<u128> = HashSet::new();
+                let mut by_parent: HashMap<u128, Vec<Limb<'a>>> = HashMap::new();
+                for limb in unique.iter().copied() {
+                    child_ids.insert(limb.edge.child_object_id);
+                    by_parent
+                        .entry(limb.edge.parent_object_id)
+                        .or_default()
+                        .push(limb);
+                }
+                for limbs in by_parent.values_mut() {
+                    limbs.sort_by(|a, b| a.name.cmp(b.name));
+                }
+
+                let mut roots: Vec<Limb<'a>> = unique
+                    .iter()
+                    .copied()
+                    .filter(|limb| !child_ids.contains(&limb.edge.parent_object_id))
+                    .collect();
+                roots.sort_by(|a, b| a.name.cmp(b.name));
+
+                fn visit<'a>(
+                    current: Limb<'a>,
+                    by_parent: &HashMap<u128, Vec<Limb<'a>>>,
+                    path: &mut Vec<Limb<'a>>,
+                    seen: &mut HashSet<u128>,
+                    out: &mut Vec<Vec<Limb<'a>>>,
+                ) {
+                    if !seen.insert(current.edge.child_object_id) {
+                        return;
+                    }
+                    path.push(current);
+
+                    let next = by_parent.get(&current.edge.child_object_id);
+                    if let Some(next) = next {
+                        if next.is_empty() {
+                            out.push(path.clone());
+                        } else {
+                            for limb in next.iter().copied() {
+                                visit(limb, by_parent, path, seen, out);
+                            }
+                        }
+                    } else {
+                        out.push(path.clone());
+                    }
+
+                    path.pop();
+                    seen.remove(&current.edge.child_object_id);
+                }
+
+                let mut out: Vec<Vec<Limb<'_>>> = Vec::new();
+                for root in roots {
+                    let mut path: Vec<Limb<'_>> = Vec::new();
+                    let mut seen: HashSet<u128> = HashSet::new();
+                    visit(root, &by_parent, &mut path, &mut seen, &mut out);
+                }
+
+                out.retain(|p| !p.is_empty());
+                out.sort_by(|a, b| {
+                    a.len()
+                        .cmp(&b.len())
+                        .reverse()
+                        .then_with(|| a[0].name.cmp(b[0].name))
+                });
+                out.truncate(4);
+
+                for path in out.iter_mut() {
+                    path.truncate(8);
+                }
+                out
+            }
+
             let mut legs: Vec<Limb<'_>> = Vec::new();
             let mut arms: Vec<Limb<'_>> = Vec::new();
             let mut wheels: Vec<Spinner<'_>> = Vec::new();
@@ -1430,16 +1517,26 @@ fn save_generated_prefab_descriptor_best_effort(
 
             if !wheels.is_empty() {
                 let wheels = wheels.into_iter().map(spinner_json).collect::<Vec<_>>();
+                let mut tool_arms: Vec<serde_json::Value> = Vec::new();
+                for path in tool_arm_paths_from_arms(&arms) {
+                    tool_arms.push(serde_json::json!({
+	                        "joints": path.into_iter().map(|limb| edge_json(limb.edge)).collect::<Vec<_>>(),
+	                    }));
+                }
+
                 let mut out = serde_json::json!({
                     "version": 1,
                     "kind": "car_v1",
-                    "default_move_algorithm": "car_wheels_v1",
+                    "default_move_algorithm": "none",
                     "car": {
                         "wheels": wheels,
                     }
                 });
                 if let Some(body_edge) = body_edge {
                     out["body"] = edge_json(body_edge);
+                }
+                if !tool_arms.is_empty() {
+                    out["car"]["tool_arms"] = serde_json::Value::Array(tool_arms);
                 }
                 return Some(out);
             }

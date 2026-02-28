@@ -114,6 +114,7 @@ pub(crate) enum AttackPrimaryMotionAlgorithm {
     BipedMeleeSwingV1,
     QuadrupedBiteV1,
     RangedRecoilV1,
+    ToolArmDigV1,
 }
 
 impl Default for AttackPrimaryMotionAlgorithm {
@@ -129,6 +130,7 @@ impl AttackPrimaryMotionAlgorithm {
             Self::BipedMeleeSwingV1 => "biped_melee_swing_v1",
             Self::QuadrupedBiteV1 => "quadruped_bite_v1",
             Self::RangedRecoilV1 => "ranged_recoil_v1",
+            Self::ToolArmDigV1 => "tool_arm_dig_v1",
         }
     }
 
@@ -138,6 +140,7 @@ impl AttackPrimaryMotionAlgorithm {
             Self::BipedMeleeSwingV1 => "Biped melee swing (v1)",
             Self::QuadrupedBiteV1 => "Quadruped bite (v1)",
             Self::RangedRecoilV1 => "Ranged recoil (v1)",
+            Self::ToolArmDigV1 => "Tool arm dig (v1)",
         }
     }
 
@@ -148,6 +151,7 @@ impl AttackPrimaryMotionAlgorithm {
             "biped_melee_swing_v1" => Some(Self::BipedMeleeSwingV1),
             "quadruped_bite_v1" => Some(Self::QuadrupedBiteV1),
             "ranged_recoil_v1" => Some(Self::RangedRecoilV1),
+            "tool_arm_dig_v1" => Some(Self::ToolArmDigV1),
             _ => None,
         }
     }
@@ -290,10 +294,16 @@ pub(crate) struct SpinEffectorV1 {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct ToolArmRigV1 {
+    pub(crate) joints: Vec<MotionEdgeRefV1>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CarRigV1 {
     pub(crate) default_move_algorithm: Option<MoveMotionAlgorithm>,
     pub(crate) body: Option<MotionEdgeRefV1>,
     pub(crate) wheels: Vec<SpinEffectorV1>,
+    pub(crate) tool_arms: Vec<ToolArmRigV1>,
     pub(crate) wheel_radius_m: Option<f32>,
     pub(crate) radians_per_meter: Option<f32>,
 }
@@ -389,7 +399,12 @@ impl MotionRigV1 {
             UnitAttackKind::Melee => match self {
                 Self::Biped(_) => out.push(AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1),
                 Self::Quadruped(_) => out.push(AttackPrimaryMotionAlgorithm::QuadrupedBiteV1),
-                Self::Car(_) | Self::Airplane(_) => {}
+                Self::Car(rig) => {
+                    if !rig.tool_arms.is_empty() {
+                        out.push(AttackPrimaryMotionAlgorithm::ToolArmDigV1);
+                    }
+                }
+                Self::Airplane(_) => {}
             },
         }
         out
@@ -494,8 +509,15 @@ struct SpinEffectorV1Raw {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+struct ToolArmRigV1Raw {
+    joints: Vec<MotionEdgeRefV1Raw>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct CarRigV1Raw {
     wheels: Vec<SpinEffectorV1Raw>,
+    #[serde(default)]
+    tool_arms: Vec<ToolArmRigV1Raw>,
     #[serde(default)]
     wheel_radius_m: Option<f32>,
     #[serde(default)]
@@ -640,10 +662,25 @@ impl MotionRigV1 {
                         })
                     })
                     .collect::<Result<Vec<_>, String>>()?;
+
+                let mut tool_arms: Vec<ToolArmRigV1> = Vec::new();
+                for tool_arm in car.tool_arms {
+                    if tool_arm.joints.is_empty() {
+                        continue;
+                    }
+                    tool_arms.push(ToolArmRigV1 {
+                        joints: tool_arm
+                            .joints
+                            .into_iter()
+                            .map(MotionEdgeRefV1::try_from_raw)
+                            .collect::<Result<Vec<_>, String>>()?,
+                    });
+                }
                 Ok(Self::Car(CarRigV1 {
                     default_move_algorithm,
                     body: body.clone(),
                     wheels,
+                    tool_arms,
                     wheel_radius_m: car.wheel_radius_m.filter(|v| v.is_finite() && *v > 0.0),
                     radians_per_meter: car
                         .radians_per_meter
@@ -1161,9 +1198,14 @@ pub(crate) fn ensure_default_motion_algorithm_controllers(
                 Some(UnitAttackKind::Melee) => match rig {
                     MotionRigV1::Biped(_) => AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1,
                     MotionRigV1::Quadruped(_) => AttackPrimaryMotionAlgorithm::QuadrupedBiteV1,
-                    MotionRigV1::Car(_) | MotionRigV1::Airplane(_) => {
-                        AttackPrimaryMotionAlgorithm::None
+                    MotionRigV1::Car(rig) => {
+                        if !rig.tool_arms.is_empty() {
+                            AttackPrimaryMotionAlgorithm::ToolArmDigV1
+                        } else {
+                            AttackPrimaryMotionAlgorithm::None
+                        }
                     }
+                    MotionRigV1::Airplane(_) => AttackPrimaryMotionAlgorithm::None,
                 },
                 None => AttackPrimaryMotionAlgorithm::None,
             };
@@ -1348,6 +1390,11 @@ fn validate_attack_primary_algorithm(
         (AttackPrimaryMotionAlgorithm::QuadrupedBiteV1, Some(MotionRigV1::Quadruped(_))) => {
             algorithm
         }
+        (AttackPrimaryMotionAlgorithm::ToolArmDigV1, Some(MotionRigV1::Car(rig)))
+            if !rig.tool_arms.is_empty() =>
+        {
+            algorithm
+        }
         (alg, Some(rig)) => {
             warn!(
                 "Motion: ignoring attack algorithm {} for rig kind {} (prefab {})",
@@ -1474,6 +1521,11 @@ fn apply_motion_algorithms_for_edge(
             }
             (AttackPrimaryMotionAlgorithm::QuadrupedBiteV1, Some(MotionRigV1::Quadruped(rig))) => {
                 quadruped_bite_override_for_binding(rig, binding, library, attack_window_secs)
+                    .into_iter()
+                    .collect()
+            }
+            (AttackPrimaryMotionAlgorithm::ToolArmDigV1, Some(MotionRigV1::Car(rig))) => {
+                tool_arm_dig_override_for_binding(rig, binding, library, attack_window_secs)
                     .into_iter()
                     .collect()
             }
@@ -2898,6 +2950,37 @@ fn quadruped_bite_override_for_binding(
     None
 }
 
+fn tool_arm_dig_override_for_binding(
+    rig: &CarRigV1,
+    binding: &ObjectRefEdgeBinding,
+    _library: &ObjectLibrary,
+    attack_window_secs: f32,
+) -> Option<PartAnimationSlot> {
+    const AMP_PROX_DEG: f32 = 18.0;
+    const AMP_DIST_DEG: f32 = 55.0;
+
+    for tool_arm in &rig.tool_arms {
+        for (idx, joint) in tool_arm.joints.iter().enumerate() {
+            if !joint.matches_binding(binding) {
+                continue;
+            }
+
+            let count = tool_arm.joints.len().max(1);
+            let t = if count > 1 {
+                (idx as f32) / ((count - 1) as f32)
+            } else {
+                0.0
+            };
+            let amp = AMP_PROX_DEG + (AMP_DIST_DEG - AMP_PROX_DEG) * t.clamp(0.0, 1.0);
+            // Generic "dig" motion: push the arm chain forward/down, then curl the end effector.
+            let sign = if idx + 1 == count { -1.0 } else { 1.0 };
+            return Some(swing_attack_slot(Vec3::X, attack_window_secs, amp * sign));
+        }
+    }
+
+    None
+}
+
 fn ranged_recoil_override_for_binding(
     rig: &MotionRigV1,
     binding: &ObjectRefEdgeBinding,
@@ -3210,6 +3293,63 @@ mod tests {
         assert_eq!(parsed.right_leg.parent_anchor, "hip_R_joint");
         assert_eq!(parsed.left_arm.unwrap().parent_anchor, "shoulder_L_joint");
         assert_eq!(parsed.right_arm.unwrap().parent_anchor, "shoulder_R_joint");
+    }
+
+    #[test]
+    fn motion_rig_v1_parses_car_with_tool_arm() {
+        let prefab_id = 0xCA7_u128;
+        let wheel = 0x10_u128;
+        let boom = 0x20_u128;
+        let bucket = 0x21_u128;
+
+        let rig = json!({
+            "version": 1,
+            "kind": "car_v1",
+            "car": {
+                "wheels": [{
+                    "edge": {
+                        "parent_object_id": uuid::Uuid::from_u128(prefab_id).to_string(),
+                        "child_object_id": uuid::Uuid::from_u128(wheel).to_string(),
+                        "parent_anchor": "axle",
+                        "child_anchor": "root",
+                    }
+                }],
+                "tool_arms": [{
+                    "joints": [
+                        {
+                            "parent_object_id": uuid::Uuid::from_u128(prefab_id).to_string(),
+                            "child_object_id": uuid::Uuid::from_u128(boom).to_string(),
+                            "parent_anchor": "boom_mount",
+                            "child_anchor": "root",
+                        },
+                        {
+                            "parent_object_id": uuid::Uuid::from_u128(boom).to_string(),
+                            "child_object_id": uuid::Uuid::from_u128(bucket).to_string(),
+                            "parent_anchor": "bucket_mount",
+                            "child_anchor": "root",
+                        }
+                    ]
+                }],
+            }
+        });
+
+        let doc = make_descriptor(prefab_id, rig);
+        let parsed = motion_rig_v1_from_descriptor(&doc)
+            .expect("parse ok")
+            .expect("rig present");
+
+        let MotionRigV1::Car(parsed) = parsed else {
+            panic!("expected car rig");
+        };
+        assert_eq!(parsed.wheels.len(), 1);
+        assert_eq!(parsed.tool_arms.len(), 1);
+        assert_eq!(parsed.tool_arms[0].joints.len(), 2);
+        assert_eq!(parsed.tool_arms[0].joints[0].child_object_id, boom);
+        assert_eq!(parsed.tool_arms[0].joints[1].child_object_id, bucket);
+
+        let parsed = MotionRigV1::Car(parsed);
+        let applicable = parsed.applicable_attack_primary_algorithms(Some(UnitAttackKind::Melee));
+        assert!(applicable.contains(&AttackPrimaryMotionAlgorithm::ToolArmDigV1));
     }
 
     #[test]

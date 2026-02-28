@@ -1042,7 +1042,7 @@ Rules:\n\
 
 pub(super) fn build_gen3d_motion_roles_system_instructions() -> String {
     "You are the Gravimera Gen3D motion roles mapper.\n\
-You will be given a generated component graph (names + attachments + transforms) and must label the locomotion effectors.\n\
+You will be given a generated component graph (names + attachments + transforms) and must label motion effectors for generic runtime animation.\n\
 Return ONLY a single JSON object for gen3d_motion_roles_v1 (no markdown, no prose).\n\n\
 Schema:\n\
 {\n\
@@ -1065,14 +1065,15 @@ Rules:\n\
   - Do NOT output the root component (it has no parent edge).\n\
 - Allowed `role` values:\n\
   - `leg`, `wheel`, `arm`, `head`, `ear`, `tail`, `wing`, `propeller`, `rotor`.\n\
+- When the prompt implies a tool-like melee action (e.g. digging), include the articulated tool-arm joints as `role=\"arm\"`.\n\
 - `phase_group`:\n\
   - For `leg`, set to 0 or 1 (two-phase gait: group 0 swings opposite group 1).\n\
-  - For `arm`, set to 0 or 1 when possible (recommended: match the same-side leg group so arms swing opposite).\n\
+  - For `arm`, set to 0 or 1 when it is part of a walking gait; otherwise it may be null.\n\
   - For `wheel`/`propeller`/`rotor`, MUST be null.\n\
 - `spin_axis_local`:\n\
   - For `wheel`/`propeller`/`rotor`, may be null or a unit-ish axis like [1,0,0].\n\
   - For other roles, MUST be null.\n\
-- If you cannot confidently identify locomotion effectors, return an EMPTY `move_effectors` list.\n"
+- If you cannot confidently identify any effectors, return an EMPTY `move_effectors` list.\n"
         .to_string()
 }
 
@@ -1090,7 +1091,9 @@ pub(super) fn build_gen3d_motion_roles_user_text(
     }
 
     let mut out = String::new();
-    out.push_str("Goal: label motion roles so the engine can inject generic move algorithms.\n");
+    out.push_str(
+        "Goal: label motion roles so the engine can inject generic move + attack animations.\n",
+    );
     if !has_images {
         out.push_str("No photos are provided for this run.\n");
     }

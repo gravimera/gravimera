@@ -134,7 +134,7 @@ impl Gen3dToolRegistryV1 {
                 tool_id: TOOL_ID_LLM_GENERATE_MOTION_ROLES,
                 title: "LLM: generate motion roles",
                 one_line_summary:
-                    "Labels locomotion effectors (legs/wheels) so the engine can inject generic move algorithms at runtime.",
+                    "Labels motion effectors (legs/wheels/arms/etc) so the engine can inject generic move/attack algorithms at runtime.",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_LLM_REVIEW_DELTA,
