@@ -619,6 +619,8 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
             .set(asset_plugin),
     );
 
+    app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default());
+
     app.init_state::<GameMode>();
     app.init_state::<BuildScene>();
     app.add_systems(PreUpdate, effects::clear_killed_enemies);
@@ -1068,6 +1070,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
         Update,
         (
             crate::ui::update_window_title,
+            crate::ui::update_fps_counter,
             crate::ui::update_health_bars
                 .after(rts::execute_move_orders)
                 .after(combat::update_lasers),

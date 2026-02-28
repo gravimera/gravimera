@@ -1,5 +1,6 @@
 use bevy::ecs::message::MessageReader;
 use bevy::ecs::query::QueryFilter;
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use rand::prelude::*;
@@ -78,6 +79,28 @@ pub(crate) fn update_window_title(
                     game.health,
                 );
             }
+        }
+    }
+}
+
+pub(crate) fn update_fps_counter(
+    diagnostics: Res<DiagnosticsStore>,
+    mut fps_text: Query<&mut Text, With<FpsCounterText>>,
+) {
+    let Ok(mut text) = fps_text.single_mut() else {
+        return;
+    };
+
+    let fps = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|diag| diag.smoothed());
+
+    match fps {
+        Some(value) if value.is_finite() => {
+            *text = Text::new(format!("{value:5.1} FPS"));
+        }
+        _ => {
+            *text = Text::new("FPS: --");
         }
     }
 }

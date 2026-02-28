@@ -571,36 +571,74 @@ pub(crate) fn setup_rendered(
                 position_type: PositionType::Absolute,
                 top: Val::Px(8.0),
                 right: Val::Px(10.0),
-                width: Val::Px(MINIMAP_SIZE_PX),
-                height: Val::Px(MINIMAP_SIZE_PX),
-                border: UiRect::all(Val::Px(MINIMAP_BORDER_PX)),
-                overflow: Overflow::clip(),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexEnd,
+                row_gap: Val::Px(6.0),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.75)),
-            BorderColor::all(Color::srgb(0.95, 0.85, 0.25)),
-            MinimapRoot,
+            ZIndex(280),
         ))
         .with_children(|parent| {
-            let inner_size = (MINIMAP_SIZE_PX - MINIMAP_BORDER_PX * 2.0).max(1.0);
-            parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(MINIMAP_BORDER_PX),
-                    top: Val::Px(MINIMAP_BORDER_PX),
-                    width: Val::Px(inner_size),
-                    height: Val::Px(inner_size),
-                    ..default()
-                },
-                ImageNode::new(minimap_floor)
-                    .with_mode(NodeImageMode::Tiled {
-                        tile_x: true,
-                        tile_y: true,
-                        stretch_value: 0.0,
-                    })
-                    .with_color(Color::srgba(1.0, 1.0, 1.0, 0.75)),
-                ZIndex(-2),
-            ));
+            parent
+                .spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("FPS: --"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                        TextShadow {
+                            offset: Vec2::splat(2.0),
+                            color: Color::linear_rgba(0.0, 0.0, 0.0, 0.85),
+                        },
+                        FpsCounterText,
+                    ));
+                });
+
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Px(MINIMAP_SIZE_PX),
+                        height: Val::Px(MINIMAP_SIZE_PX),
+                        border: UiRect::all(Val::Px(MINIMAP_BORDER_PX)),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.75)),
+                    BorderColor::all(Color::srgb(0.95, 0.85, 0.25)),
+                    MinimapRoot,
+                ))
+                .with_children(|parent| {
+                    let inner_size = (MINIMAP_SIZE_PX - MINIMAP_BORDER_PX * 2.0).max(1.0);
+                    parent.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(MINIMAP_BORDER_PX),
+                            top: Val::Px(MINIMAP_BORDER_PX),
+                            width: Val::Px(inner_size),
+                            height: Val::Px(inner_size),
+                            ..default()
+                        },
+                        ImageNode::new(minimap_floor)
+                            .with_mode(NodeImageMode::Tiled {
+                                tile_x: true,
+                                tile_y: true,
+                                stretch_value: 0.0,
+                            })
+                            .with_color(Color::srgba(1.0, 1.0, 1.0, 0.75)),
+                        ZIndex(-2),
+                    ));
+                });
         });
 
     commands.spawn((

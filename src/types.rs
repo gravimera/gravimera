@@ -215,6 +215,9 @@ pub(crate) struct HealthBar {
 pub(crate) struct HealthBarFill;
 
 #[derive(Component)]
+pub(crate) struct FpsCounterText;
+
+#[derive(Component)]
 pub(crate) struct MinimapRoot;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
