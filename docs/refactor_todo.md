@@ -32,7 +32,7 @@ Guidelines:
   - Suggested split (example): `agent_state.rs`, `agent_step.rs`, `tool_dispatch.rs`, `render_capture.rs`, `progress.rs`, `metrics.rs`.
   - Done when: file size reduced substantially; public surface stays minimal; compile/tests unchanged.
 
-- [ ] **Reduce “god module” surface in `src/gen3d/ai/mod.rs`**
+- [x] **Reduce “god module” surface in `src/gen3d/ai/mod.rs`**
   - Why: mixes types/state, rendering helpers, job lifecycle, batch logic, and misc helpers.
   - Done when: `mod.rs` becomes mostly re-exports + small glue; heavy logic lives in submodules.
 

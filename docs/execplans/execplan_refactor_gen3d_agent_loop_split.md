@@ -36,7 +36,7 @@ The change is “done” when:
 - [x] Run `cargo test`.
 - [x] Run UI smoke test (`cargo run -- --rendered-seconds 2` with a temp `GRAVIMERA_HOME`).
 - [x] Update `docs/refactor_todo.md` to check off the item.
-- [ ] Commit with a clear message.
+- [x] (2026-02-28) Commit with a clear message (`refactor(gen3d): split agent_loop into focused modules`, 9943d66).
 
 ## Surprises & Discoveries
 
