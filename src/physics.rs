@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 
 use crate::constants::*;
-use crate::geometry::{circle_intersects_aabb_xz, resolve_circle_against_aabbs, safe_abs_scale_y};
+use crate::geometry::{
+    circle_intersects_aabb_xz, clamp_world_xz, resolve_circle_against_aabbs, safe_abs_scale_y,
+};
 use crate::object::registry::{MovementBlockRule, ObjectLibrary};
 use crate::types::*;
 
@@ -110,12 +112,8 @@ pub(crate) fn separate_enemies(
         }));
         pos = resolve_circle_against_aabbs(pos, radius, &obstacles);
 
-        pos.x = pos
-            .x
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
-        pos.y = pos
-            .y
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+        pos.x = clamp_world_xz(pos.x, radius);
+        pos.y = clamp_world_xz(pos.y, radius);
 
         let y = if pounce.is_some() {
             transform.translation.y
@@ -269,12 +267,8 @@ pub(crate) fn separate_commandables(
         }));
         pos = resolve_circle_against_aabbs(pos, radius, &obstacles);
 
-        pos.x = pos
-            .x
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
-        pos.y = pos
-            .y
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+        pos.x = clamp_world_xz(pos.x, radius);
+        pos.y = clamp_world_xz(pos.y, radius);
 
         let y = match mobility_mode {
             crate::object::registry::MobilityMode::Air => transform.translation.y,

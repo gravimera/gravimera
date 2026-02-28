@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::geometry::{point_inside_aabb_xz, safe_abs_scale_y, snap_to_grid};
+use crate::geometry::{clamp_world_xz, point_inside_aabb_xz, safe_abs_scale_y, snap_to_grid};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::object::types::effects as effect_types;
@@ -939,12 +939,8 @@ pub(crate) fn keyboard_move_input(
         let mut pos = start_pos + step;
 
         let radius = collider.radius.max(0.01);
-        pos.x = pos
-            .x
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
-        pos.y = pos
-            .y
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+        pos.x = clamp_world_xz(pos.x, radius);
+        pos.y = clamp_world_xz(pos.y, radius);
 
         transform.translation.x = pos.x;
         transform.translation.z = pos.y;
@@ -1193,14 +1189,8 @@ pub(crate) fn build_unit_hotkeys(
             }
 
             let radius = collider.radius.max(0.01);
-            transform.translation.x = transform
-                .translation
-                .x
-                .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
-            transform.translation.z = transform
-                .translation
-                .z
-                .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+            transform.translation.x = clamp_world_xz(transform.translation.x, radius);
+            transform.translation.z = clamp_world_xz(transform.translation.z, radius);
         }
     }
 
@@ -1228,14 +1218,8 @@ pub(crate) fn build_unit_hotkeys(
         new_transform.translation.z = snap_to_grid(new_transform.translation.z, snap_step);
 
         let radius = collider.radius.max(0.01);
-        new_transform.translation.x = new_transform
-            .translation
-            .x
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
-        new_transform.translation.z = new_transform
-            .translation
-            .z
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+        new_transform.translation.x = clamp_world_xz(new_transform.translation.x, radius);
+        new_transform.translation.z = clamp_world_xz(new_transform.translation.z, radius);
 
         let tint = tint.map(|t| t.0);
         let mut entity_commands = commands.spawn((
@@ -1377,12 +1361,8 @@ pub(crate) fn execute_move_orders(
         }
 
         let radius = collider.radius.max(0.01);
-        pos.x = pos
-            .x
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
-        pos.y = pos
-            .y
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+        pos.x = clamp_world_xz(pos.x, radius);
+        pos.y = clamp_world_xz(pos.y, radius);
 
         transform.translation.x = pos.x;
         transform.translation.z = pos.y;

@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use crate::constants::WORLD_HALF_SIZE;
+
 pub(crate) fn circles_intersect_xz(a: Vec3, ra: f32, b: Vec3, rb: f32) -> bool {
     let delta = Vec2::new(a.x - b.x, a.z - b.z);
     delta.length_squared() <= (ra + rb) * (ra + rb)
@@ -23,6 +25,26 @@ pub(crate) fn ray_plane_intersection_y0(ray: Ray3d) -> Option<Vec3> {
 
 pub(crate) fn snap_to_grid(value: f32, grid: f32) -> f32 {
     (value / grid).round() * grid
+}
+
+pub(crate) fn clamp_world_xz(value: f32, half_extent: f32) -> f32 {
+    if !value.is_finite() {
+        return 0.0;
+    }
+
+    if !half_extent.is_finite() {
+        return value.clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+    }
+    let half_extent = half_extent.abs();
+
+    let min = -WORLD_HALF_SIZE + half_extent;
+    let max = WORLD_HALF_SIZE - half_extent;
+    if min.is_finite() && max.is_finite() && min <= max {
+        value.clamp(min, max)
+    } else {
+        // `f32::clamp` panics when `min > max` or if either bound is NaN.
+        value.clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE)
+    }
 }
 
 pub(crate) fn safe_abs_scale_component(value: f32) -> f32 {
@@ -284,5 +306,21 @@ pub(crate) fn push_circle_out_of_aabb_xz(
     } else {
         let sz = if delta.y >= 0.0 { 1.0 } else { -1.0 };
         Some(Vec2::new(0.0, sz * dz))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_world_xz_never_panics_on_oversized_or_invalid_half_extents() {
+        let big = WORLD_HALF_SIZE * 4.0;
+
+        assert_eq!(clamp_world_xz(100.0, big), WORLD_HALF_SIZE);
+        assert_eq!(clamp_world_xz(-100.0, big), -WORLD_HALF_SIZE);
+        assert_eq!(clamp_world_xz(100.0, f32::NAN), WORLD_HALF_SIZE);
+        assert_eq!(clamp_world_xz(f32::NAN, 1.0), 0.0);
+        assert_eq!(clamp_world_xz(f32::INFINITY, 1.0), 0.0);
     }
 }

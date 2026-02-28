@@ -3,7 +3,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::geometry::{normalize_flat_direction, snap_to_grid};
+use crate::geometry::{clamp_world_xz, normalize_flat_direction, snap_to_grid};
 use crate::object::registry::ObjectLibrary;
 use crate::object::registry::{ColliderProfile, MobilityMode};
 use crate::object::visuals;
@@ -519,12 +519,8 @@ fn spawn_near_hero(
         _ => origin_y,
     };
 
-    pos.x = pos
-        .x
-        .clamp(-WORLD_HALF_SIZE + half_xz.x, WORLD_HALF_SIZE - half_xz.x);
-    pos.z = pos
-        .z
-        .clamp(-WORLD_HALF_SIZE + half_xz.y, WORLD_HALF_SIZE - half_xz.y);
+    pos.x = clamp_world_xz(pos.x, half_xz.x);
+    pos.z = clamp_world_xz(pos.z, half_xz.y);
 
     pos
 }
@@ -541,12 +537,8 @@ fn spawn_at_pick(prefab_id: u128, hit: Vec3, surface_y: f32, library: &ObjectLib
         _ => surface_y + origin_y,
     };
 
-    pos.x = pos
-        .x
-        .clamp(-WORLD_HALF_SIZE + half_xz.x, WORLD_HALF_SIZE - half_xz.x);
-    pos.z = pos
-        .z
-        .clamp(-WORLD_HALF_SIZE + half_xz.y, WORLD_HALF_SIZE - half_xz.y);
+    pos.x = clamp_world_xz(pos.x, half_xz.x);
+    pos.z = clamp_world_xz(pos.z, half_xz.y);
 
     pos
 }

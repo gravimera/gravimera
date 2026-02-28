@@ -8,7 +8,7 @@ use crate::constants::*;
 use crate::effects::{spawn_blood_particles, spawn_energy_impact_particles};
 use crate::geometry::{
     circle_intersects_aabb_xz, circles_intersect_xz, normalize_flat_direction,
-    resolve_circle_against_aabbs, safe_abs_scale_y,
+    resolve_circle_against_aabbs, safe_abs_scale_y, clamp_world_xz,
 };
 use crate::models::{spawn_dog_model, spawn_enemy_human_model, spawn_gundam_model};
 use crate::object::registry::{
@@ -338,12 +338,8 @@ pub(crate) fn spawn_enemies(
         let angle = rng.gen_range(0.0..std::f32::consts::TAU);
         let dir = Vec2::new(angle.cos(), angle.sin());
         let mut candidate = player_center + dir * ENEMY_SPAWN_RADIUS;
-        candidate.x = candidate
-            .x
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
-        candidate.y = candidate
-            .y
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+        candidate.x = clamp_world_xz(candidate.x, radius);
+        candidate.y = clamp_world_xz(candidate.y, radius);
 
         if obstacles
             .iter()
@@ -363,12 +359,8 @@ pub(crate) fn spawn_enemies(
     });
 
     let spawn_center = Vec2::new(
-        spawn_center
-            .x
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius),
-        spawn_center
-            .y
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius),
+        clamp_world_xz(spawn_center.x, radius),
+        clamp_world_xz(spawn_center.y, radius),
     );
 
     spawn_enemy_rendered(
@@ -409,12 +401,8 @@ pub(crate) fn spawn_enemies_headless(
     let dir = Vec3::new(angle.cos(), 0.0, angle.sin());
     let spawn_pos = player_transform.translation + dir * ENEMY_SPAWN_RADIUS;
     let center = Vec2::new(
-        spawn_pos
-            .x
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius),
-        spawn_pos
-            .z
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius),
+        clamp_world_xz(spawn_pos.x, radius),
+        clamp_world_xz(spawn_pos.z, radius),
     );
 
     spawn_enemy_headless(&mut commands, &library, enemy_prefab_id, center);
@@ -489,12 +477,8 @@ pub(crate) fn move_enemies(
         };
 
         pos += Vec2::new(step_dir.x, step_dir.z) * enemy.speed * dt;
-        pos.x = pos
-            .x
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
-        pos.y = pos
-            .y
-            .clamp(-WORLD_HALF_SIZE + radius, WORLD_HALF_SIZE - radius);
+        pos.x = clamp_world_xz(pos.x, radius);
+        pos.y = clamp_world_xz(pos.y, radius);
 
         enemy_transform.translation.x = pos.x;
         enemy_transform.translation.z = pos.y;

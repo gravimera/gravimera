@@ -4,7 +4,8 @@ use std::collections::HashSet;
 use crate::assets::SceneAssets;
 use crate::constants::*;
 use crate::geometry::{
-    aabbs_intersect_xz, circle_intersects_aabb_xz, point_inside_aabb_xz, snap_to_grid,
+    aabbs_intersect_xz, circle_intersects_aabb_xz, clamp_world_xz, point_inside_aabb_xz,
+    snap_to_grid,
 };
 use crate::object::registry::{ColliderProfile, ObjectLibrary};
 use crate::object::types::buildings;
@@ -52,8 +53,8 @@ fn build_object_collider_half_xz(spec: BuildPreviewSpec, size: Vec3) -> Vec2 {
 fn snapped_center_xz(cursor_hit: Vec3, half: Vec2) -> Vec2 {
     let mut x = snap_to_grid(cursor_hit.x, BUILD_GRID_SIZE);
     let mut z = snap_to_grid(cursor_hit.z, BUILD_GRID_SIZE);
-    x = x.clamp(-WORLD_HALF_SIZE + half.x, WORLD_HALF_SIZE - half.x);
-    z = z.clamp(-WORLD_HALF_SIZE + half.y, WORLD_HALF_SIZE - half.y);
+    x = clamp_world_xz(x, half.x);
+    z = clamp_world_xz(z, half.y);
     Vec2::new(x, z)
 }
 
@@ -1404,14 +1405,8 @@ pub(crate) fn build_edit_selected_objects(
 
         transform.translation.x = snap_to_grid(transform.translation.x, BUILD_GRID_SIZE);
         transform.translation.z = snap_to_grid(transform.translation.z, BUILD_GRID_SIZE);
-        transform.translation.x = transform
-            .translation
-            .x
-            .clamp(-WORLD_HALF_SIZE + new_half.x, WORLD_HALF_SIZE - new_half.x);
-        transform.translation.z = transform
-            .translation
-            .z
-            .clamp(-WORLD_HALF_SIZE + new_half.y, WORLD_HALF_SIZE - new_half.y);
+        transform.translation.x = clamp_world_xz(transform.translation.x, new_half.x);
+        transform.translation.z = clamp_world_xz(transform.translation.z, new_half.y);
 
         dimensions.size = new_size;
         collider.half_extents = new_half;
