@@ -593,6 +593,17 @@ mod tests {
             other => panic!("expected CircleXZ collider, got {other:?}"),
         }
     }
+
+    #[test]
+    fn clamp_world_xz_never_panics_on_oversized_or_invalid_half_extents() {
+        let big = WORLD_HALF_SIZE * 4.0;
+
+        assert_eq!(clamp_world_xz(100.0, big), WORLD_HALF_SIZE);
+        assert_eq!(clamp_world_xz(-100.0, big), -WORLD_HALF_SIZE);
+        assert_eq!(clamp_world_xz(100.0, f32::NAN), WORLD_HALF_SIZE);
+        assert_eq!(clamp_world_xz(f32::NAN, 1.0), 0.0);
+        assert_eq!(clamp_world_xz(f32::INFINITY, 1.0), 0.0);
+    }
 }
 
 pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<ObjectDef>), String> {
@@ -742,6 +753,27 @@ fn collider_half_xz(collider: ColliderProfile, size: Vec3) -> Vec2 {
         ColliderProfile::AabbXZ { half_extents } => half_extents,
         ColliderProfile::CircleXZ { radius } => Vec2::splat(radius),
         ColliderProfile::None => Vec2::new(size.x * 0.5, size.z * 0.5),
+    }
+}
+
+fn clamp_world_xz(value: f32, half_extent: f32) -> f32 {
+    if !value.is_finite() {
+        return 0.0;
+    }
+
+    if !half_extent.is_finite() {
+        return value.clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+    }
+    let half_extent = half_extent.abs();
+
+    let min = -WORLD_HALF_SIZE + half_extent;
+    let max = WORLD_HALF_SIZE - half_extent;
+    if min.is_finite() && max.is_finite() && min <= max {
+        value.clamp(min, max)
+    } else {
+        // If the saved object is larger than the world bounds (or has invalid extents), clamp only
+        // against the world bounds. `f32::clamp` panics when `min > max`, so we must avoid that.
+        value.clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE)
     }
 }
 
@@ -916,12 +948,8 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         _ => ground_y,
     };
 
-    pos.x = pos
-        .x
-        .clamp(-WORLD_HALF_SIZE + half_xz.x, WORLD_HALF_SIZE - half_xz.x);
-    pos.z = pos
-        .z
-        .clamp(-WORLD_HALF_SIZE + half_xz.y, WORLD_HALF_SIZE - half_xz.y);
+    pos.x = clamp_world_xz(pos.x, half_xz.x);
+    pos.z = clamp_world_xz(pos.z, half_xz.y);
 
     let instance_id = ObjectId::new_v4();
     let transform = Transform::from_translation(pos);
