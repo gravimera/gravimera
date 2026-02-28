@@ -176,6 +176,11 @@ Top-level fields:
   - `"quadruped_walk_v1"`
   - `"car_wheels_v1"`
   - `"airplane_prop_v1"`
+  - If omitted, the engine uses a rig-kind default:
+    - `biped_v1`: `"biped_walk_v1"`
+    - `quadruped_v1`: `"quadruped_walk_v1"`
+    - `car_v1`: `"none"`
+    - `airplane_v1`: `"airplane_prop_v1"`
 - `move_cycle_m`: optional number (defaults to `1.0`). Used by walk rigs as the cycle length in
   **meters traveled** (driven by `MovePhase`).
 - `walk_swing_degrees`: optional number (defaults vary by rig kind). Used by walk rigs as the

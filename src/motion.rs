@@ -345,7 +345,7 @@ impl MotionRigV1 {
                 .unwrap_or(MoveMotionAlgorithm::QuadrupedWalkV1),
             Self::Car(rig) => rig
                 .default_move_algorithm
-                .unwrap_or(MoveMotionAlgorithm::CarWheelsV1),
+                .unwrap_or(MoveMotionAlgorithm::None),
             Self::Airplane(rig) => rig
                 .default_move_algorithm
                 .unwrap_or(MoveMotionAlgorithm::AirplanePropV1),
