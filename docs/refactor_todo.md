@@ -69,7 +69,7 @@ Guidelines:
 
 ## 7) Repo hygiene: tests, fixtures, and ignored dirs
 
-- [ ] **Normalize “test” directory usage**
+- [x] **Normalize “test” directory usage**
   - Why: repo contains `test/`, `tests/`, and `game_test/` with overlapping purposes; `.gitignore` currently ignores `tests` even though `tests/*` is tracked.
   - Done when: there is one canonical place for fixtures/artifacts, and ignore rules match what’s tracked.
 

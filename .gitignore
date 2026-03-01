@@ -6,6 +6,4 @@
 *.log
 config.toml
 cases
-game_test
-/test/
-tests
+game_test/
