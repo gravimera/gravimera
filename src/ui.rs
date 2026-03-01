@@ -86,21 +86,28 @@ pub(crate) fn update_window_title(
 pub(crate) fn update_fps_counter(
     diagnostics: Res<DiagnosticsStore>,
     mut fps_text: Query<&mut Text, With<FpsCounterText>>,
+    objects: Query<(), (With<ObjectId>, With<ObjectPrefabId>)>,
+    primitives: Query<(), With<Mesh3d>>,
 ) {
     let Ok(mut text) = fps_text.single_mut() else {
         return;
     };
 
+    let object_count = objects.iter().count();
+    let primitive_count = primitives.iter().count();
     let fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
         .and_then(|diag| diag.smoothed());
 
     match fps {
         Some(value) if value.is_finite() => {
-            *text = Text::new(format!("{value:5.1} FPS"));
+            *text = Text::new(format!(
+                "Obj: {object_count} | Prim: {primitive_count} | {value:5.1} FPS"
+            ));
         }
         _ => {
-            *text = Text::new("FPS: --");
+            *text =
+                Text::new(format!("Obj: {object_count} | Prim: {primitive_count} | FPS: --"));
         }
     }
 }

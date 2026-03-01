@@ -13,6 +13,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Gen3D workshop: in **Object Preview**, click **Gen3D** (top-left)
 - Scene Builder panel: in **Scene Build**, click **Scene Build** (top-left)
 - Console: `Enter` (commands: `/easy`, `/hard`, `/hell`)
+- HUD stats (top-right): object count, primitive count, FPS
 - Zoom: mouse wheel (in/out; no orbit/rotation)
 - Camera pan (mouse): move cursor near the window edge
 - Camera pan (keyboard): `W` / `A` / `S` / `D` when nothing is selected

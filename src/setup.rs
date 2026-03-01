@@ -591,7 +591,7 @@ pub(crate) fn setup_rendered(
                 ))
                 .with_children(|panel| {
                     panel.spawn((
-                        Text::new("FPS: --"),
+                        Text::new("Obj: -- | Prim: -- | FPS: --"),
                         TextFont {
                             font_size: 14.0,
                             ..default()
