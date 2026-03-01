@@ -38,7 +38,7 @@ Guidelines:
 
 ## 3) Automation HTTP API routing
 
-- [ ] **Refactor the big route match into per-feature handlers**
+- [x] **Refactor the big route match into per-feature handlers**
   - Why: `src/automation/mod.rs` has a large `(method, path)` match and huge handler signature; repeated JSON parse/error boilerplate.
   - Done when: routing is table-driven or split by feature area (`/v1/scene_sources/*`, `/v1/gen3d/*`, `/v1/animation/*`, etc.) with a small shared `AutomationContext`.
 

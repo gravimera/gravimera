@@ -425,6 +425,26 @@ struct AutomationGen3d<'w> {
     scene_saves: MessageWriter<'w, SceneSaveRequest>,
 }
 
+struct AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w> {
+    commands: &'a mut Commands<'cmd_w, 'cmd_s>,
+    config: &'a AppConfig,
+    active_realm_id: &'a str,
+    active_scene_id: &'a str,
+    library: &'a mut ObjectLibrary,
+    gen3d: &'a mut AutomationGen3d<'gen3d_w>,
+    world: &'a AutomationWorld<'world_w, 'world_s>,
+    mode: Option<&'a State<GameMode>>,
+    next_mode: Option<&'a mut NextState<GameMode>>,
+    build_scene: Option<&'a State<BuildScene>>,
+    next_build_scene: Option<&'a mut NextState<BuildScene>>,
+    selection: Option<&'a mut SelectionState>,
+    fire: Option<&'a mut FireControl>,
+    runtime: &'a mut AutomationRuntime,
+    scene_workspace: &'a mut crate::scene_sources_runtime::SceneSourcesWorkspace,
+    scene_build_runtime: Option<&'a mut crate::scene_build_ai::SceneBuildAiRuntime>,
+    exit: &'a mut MessageWriter<'exit_w, AppExit>,
+}
+
 fn automation_process_requests(
     mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
@@ -487,44 +507,27 @@ fn automation_process_requests(
             None => crate::paths::default_scene_id(),
         };
 
-        let reply = handle_request_main_thread(
-            &mut commands,
-            &config,
+        let mut ctx = AutomationContext {
+            commands: &mut commands,
+            config: &config,
             active_realm_id,
             active_scene_id,
-            gen3d.log_sinks.as_deref(),
-            &mut library,
-            gen3d.workshop.as_deref_mut(),
-            gen3d.job.as_deref_mut(),
-            gen3d.draft.as_deref_mut(),
-            gen3d.asset_server.as_deref(),
-            gen3d.assets.as_deref(),
-            gen3d.meshes.as_deref_mut(),
-            gen3d.materials.as_deref_mut(),
-            gen3d.material_cache.as_deref_mut(),
-            gen3d.mesh_cache.as_deref_mut(),
-            &mut gen3d.scene_saves,
-            &world.windows,
-            &world.players,
-            &world.player_q,
-            &world.commandables,
-            &world.enemies,
-            &world.build_objects,
-            &world.selectable_entities,
-            &world.state_objects,
-            &world.scene_instances,
-            mode.as_deref(),
-            next_mode.as_deref_mut(),
-            build_scene.as_deref(),
-            next_build_scene.as_deref_mut(),
-            selection.as_deref_mut(),
-            fire.as_deref_mut(),
-            &mut runtime,
-            &mut scene_workspace,
-            scene_build_runtime.as_deref_mut(),
-            &msg,
-            &mut exit,
-        );
+            library: &mut library,
+            gen3d: &mut gen3d,
+            world: &world,
+            mode: mode.as_deref(),
+            next_mode: next_mode.as_deref_mut(),
+            build_scene: build_scene.as_deref(),
+            next_build_scene: next_build_scene.as_deref_mut(),
+            selection: selection.as_deref_mut(),
+            fire: fire.as_deref_mut(),
+            runtime: &mut runtime,
+            scene_workspace: &mut scene_workspace,
+            scene_build_runtime: scene_build_runtime.as_deref_mut(),
+            exit: &mut exit,
+        };
+
+        let reply = handle_request_main_thread(&mut ctx, &msg);
         if let Some(reply) = reply {
             let _ = msg.reply.send(reply);
         } else {
@@ -654,96 +657,16 @@ struct SceneRunApplyPatchRequest {
     patch: crate::scene_sources_patch::SceneSourcesPatchV1,
 }
 
-fn handle_request_main_thread(
-    commands: &mut Commands,
-    config: &AppConfig,
-    active_realm_id: &str,
-    active_scene_id: &str,
-    log_sinks: Option<&crate::app::Gen3dLogSinks>,
-    library: &mut ObjectLibrary,
-    mut gen3d_workshop: Option<&mut crate::gen3d::Gen3dWorkshop>,
-    mut gen3d_job: Option<&mut crate::gen3d::Gen3dAiJob>,
-    mut gen3d_draft: Option<&mut crate::gen3d::Gen3dDraft>,
-    asset_server: Option<&AssetServer>,
-    assets: Option<&SceneAssets>,
-    meshes: Option<&mut Assets<Mesh>>,
-    materials: Option<&mut Assets<StandardMaterial>>,
-    material_cache: Option<&mut crate::object::visuals::MaterialCache>,
-    mesh_cache: Option<&mut crate::object::visuals::PrimitiveMeshCache>,
-    scene_saves: &mut MessageWriter<SceneSaveRequest>,
-    windows: &Query<(Entity, &Window), With<PrimaryWindow>>,
-    players: &Query<(), With<Player>>,
-    player_q: &Query<(&Transform, &Collider), With<Player>>,
-    commandables: &Query<(Entity, &Transform, &Collider, &ObjectPrefabId), With<Commandable>>,
-    enemies: &Query<(Entity, &ObjectId), With<Enemy>>,
-    build_objects: &Query<
-        (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
-        With<BuildObject>,
-    >,
-    selectable_entities: &Query<
-        (Entity, &ObjectId),
-        (
-            Or<(With<Commandable>, With<BuildObject>, With<Enemy>)>,
-            Without<Bullet>,
-        ),
-    >,
-    state_objects: &Query<
-        (
-            Entity,
-            &ObjectId,
-            &ObjectPrefabId,
-            &Transform,
-            Option<&Player>,
-            Option<&Enemy>,
-            Option<&BuildObject>,
-            Option<&Commandable>,
-        ),
-        Or<(With<Commandable>, With<BuildObject>, With<Enemy>)>,
-    >,
-    scene_instances: &Query<
-        (
-            Entity,
-            &Transform,
-            &ObjectId,
-            &ObjectPrefabId,
-            Option<&ObjectTint>,
-            Option<&ObjectForms>,
-            Option<&SceneLayerOwner>,
-        ),
-        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
-    >,
-    mode: Option<&State<GameMode>>,
-    next_mode: Option<&mut NextState<GameMode>>,
-    build_scene: Option<&State<BuildScene>>,
-    next_build_scene: Option<&mut NextState<BuildScene>>,
-    mut selection: Option<&mut SelectionState>,
-    mut fire: Option<&mut FireControl>,
-    runtime: &mut AutomationRuntime,
-    scene_workspace: &mut crate::scene_sources_runtime::SceneSourcesWorkspace,
-    mut scene_build_runtime: Option<&mut crate::scene_build_ai::SceneBuildAiRuntime>,
+fn handle_scene_sources_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
+    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
     msg: &AutomationRequest,
-    exit: &mut MessageWriter<AppExit>,
 ) -> Option<AutomationReply> {
+    let commands = &mut *ctx.commands;
+    let scene_workspace = &mut *ctx.scene_workspace;
+    let library = &mut *ctx.library;
+    let scene_instances = &ctx.world.scene_instances;
+
     match (msg.method.as_str(), msg.path.as_str()) {
-        ("GET", "/v1/health") => {
-            let body = serde_json::json!({
-                "ok": true,
-                "name": "gravimera",
-                "version": env!("CARGO_PKG_VERSION"),
-                "automation": {
-                    "disable_local_input": runtime.disable_local_input,
-                    "pause_on_start": runtime.pause_on_start,
-                    "paused": runtime.time_paused,
-                    "listen_addr": runtime.listen_addr,
-                }
-            })
-            .to_string();
-            Some(AutomationReply {
-                status: 200,
-                body: body.into_bytes(),
-                content_type: "application/json",
-            })
-        }
         ("POST", "/v1/scene_sources/reload") => {
             let _req: SceneSourcesReloadRequest = match serde_json::from_slice(&msg.body) {
                 Ok(v) => v,
@@ -1141,98 +1064,34 @@ fn handle_request_main_thread(
                 content_type: "application/json",
             })
         }
-        ("GET", "/v1/window") => {
-            let Some((window_entity, window)) = windows.iter().next() else {
-                return Some(json_error(
-                    501,
-                    "No primary window available (headless mode).",
-                ));
-            };
+        _ => Some(json_error(404, "Not found")),
+    }
+}
 
-            let cursor = window.cursor_position().map(|p| [p.x, p.y]);
-            let body = serde_json::json!({
-                "ok": true,
-                "window_entity": format!("{window_entity:?}"),
-                "width": window.width(),
-                "height": window.height(),
-                "scale_factor": window.scale_factor(),
-                "cursor": cursor,
-            })
-            .to_string();
-            Some(AutomationReply {
-                status: 200,
-                body: body.into_bytes(),
-                content_type: "application/json",
-            })
-        }
-        ("GET", "/v1/state") => {
-            let mode_str = mode.map(|m| match m.get() {
-                GameMode::Build => "build",
-                GameMode::Play => "play",
-            });
-            let build_scene_str = match (mode, build_scene) {
-                (Some(mode), Some(scene)) if matches!(mode.get(), GameMode::Build) => {
-                    Some(match scene.get() {
-                        BuildScene::Realm => "realm",
-                        BuildScene::Preview => "preview",
-                    })
-                }
-                _ => None,
-            };
+fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
+    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    let commands = &mut *ctx.commands;
+    let config = ctx.config;
+    let log_sinks = ctx.gen3d.log_sinks.as_deref();
+    let library = &mut *ctx.library;
+    let mut gen3d_workshop = ctx.gen3d.workshop.as_deref_mut();
+    let mut gen3d_job = ctx.gen3d.job.as_deref_mut();
+    let mut gen3d_draft = ctx.gen3d.draft.as_deref_mut();
+    let asset_server = ctx.gen3d.asset_server.as_deref();
+    let assets = ctx.gen3d.assets.as_deref();
+    let meshes = ctx.gen3d.meshes.as_deref_mut();
+    let materials = ctx.gen3d.materials.as_deref_mut();
+    let material_cache = ctx.gen3d.material_cache.as_deref_mut();
+    let mesh_cache = ctx.gen3d.mesh_cache.as_deref_mut();
+    let scene_saves = &mut ctx.gen3d.scene_saves;
 
-            let selected_ids: Vec<String> = selection
-                .as_deref()
-                .map(|sel| {
-                    sel.selected
-                        .iter()
-                        .filter_map(|entity| state_objects.get(*entity).ok().map(|v| v.1))
-                        .map(|id| uuid::Uuid::from_u128(id.0).to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
+    let player_q = &ctx.world.player_q;
+    let mode = ctx.mode;
+    let build_scene = ctx.build_scene;
 
-            let objects: Vec<serde_json::Value> = state_objects
-                .iter()
-                .map(|(_entity, instance_id, prefab_id, transform, player, enemy, build, unit)| {
-                    let forward = transform.rotation * Vec3::Z;
-                    let yaw = forward.x.atan2(forward.z);
-                    let attack = library.attack(prefab_id.0);
-                    let attack_kind = attack.as_ref().map(|attack| match attack.kind {
-                        crate::object::registry::UnitAttackKind::Melee => "melee",
-                        crate::object::registry::UnitAttackKind::RangedProjectile => {
-                            "ranged_projectile"
-                        }
-                    });
-                    serde_json::json!({
-                        "instance_id_uuid": uuid::Uuid::from_u128(instance_id.0).to_string(),
-                        "prefab_id_uuid": uuid::Uuid::from_u128(prefab_id.0).to_string(),
-                        "pos": [transform.translation.x, transform.translation.y, transform.translation.z],
-                        "scale": [transform.scale.x, transform.scale.y, transform.scale.z],
-                        "yaw": yaw,
-                        "is_player": player.is_some(),
-                        "is_enemy": enemy.is_some(),
-                        "is_build_object": build.is_some(),
-                        "is_commandable": unit.is_some(),
-                        "has_attack": attack.is_some(),
-                        "attack_kind": attack_kind,
-                    })
-                })
-                .collect();
-
-            let body = serde_json::json!({
-                "ok": true,
-                "mode": mode_str,
-                "build_scene": build_scene_str,
-                "selected_instance_ids": selected_ids,
-                "objects": objects,
-            })
-            .to_string();
-            Some(AutomationReply {
-                status: 200,
-                body: body.into_bytes(),
-                content_type: "application/json",
-            })
-        }
+    match (msg.method.as_str(), msg.path.as_str()) {
         ("GET", "/v1/gen3d/status") => {
             let Some(workshop) = gen3d_workshop.as_deref() else {
                 return Some(json_error(501, "Gen3D is not available in this app mode."));
@@ -1438,6 +1297,25 @@ fn handle_request_main_thread(
                 content_type: "application/json",
             })
         }
+        _ => Some(json_error(404, "Not found")),
+    }
+}
+
+fn handle_scene_build_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
+    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    let commands = &mut *ctx.commands;
+    let config = ctx.config;
+    let active_realm_id = ctx.active_realm_id;
+    let active_scene_id = ctx.active_scene_id;
+    let library = &mut *ctx.library;
+    let mut scene_build_runtime = ctx.scene_build_runtime.as_deref_mut();
+
+    let mode = ctx.mode;
+    let build_scene = ctx.build_scene;
+
+    match (msg.method.as_str(), msg.path.as_str()) {
         ("GET", "/v1/scene_build/status") => {
             let Some(scene_build) = scene_build_runtime.as_deref() else {
                 return Some(json_error(
@@ -1519,6 +1397,240 @@ fn handle_request_main_thread(
             let body =
                 serde_json::json!({ "ok": true, "canceled": run_id.is_some(), "run_id": run_id })
                     .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        _ => Some(json_error(404, "Not found")),
+    }
+}
+
+fn handle_animation_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
+    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    let commands = &mut *ctx.commands;
+    let selectable_entities = &ctx.world.selectable_entities;
+
+    match (msg.method.as_str(), msg.path.as_str()) {
+        ("POST", "/v1/animation/force_channel") => {
+            let req: ForceAnimationChannelRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            if req.instance_ids.is_empty() {
+                return Some(json_error(400, "instance_ids must be non-empty."));
+            }
+
+            let channel = req.channel.trim().to_string();
+
+            let mut id_to_entity: std::collections::HashMap<u128, Entity> =
+                std::collections::HashMap::with_capacity(selectable_entities.iter().len());
+            for (entity, object_id) in selectable_entities.iter() {
+                id_to_entity.insert(object_id.0, entity);
+            }
+
+            let mut missing: Vec<String> = Vec::new();
+            let mut targets: Vec<Entity> = Vec::with_capacity(req.instance_ids.len());
+            for id_str in req.instance_ids {
+                match uuid::Uuid::parse_str(id_str.trim()) {
+                    Ok(uuid) => {
+                        let id = uuid.as_u128();
+                        if let Some(entity) = id_to_entity.get(&id).copied() {
+                            targets.push(entity);
+                        } else {
+                            missing.push(uuid.to_string());
+                        }
+                    }
+                    Err(_) => missing.push(id_str),
+                }
+            }
+            if !missing.is_empty() {
+                return Some(json_error(
+                    404,
+                    format!("Instances not found: {}", missing.join(", ")),
+                ));
+            }
+
+            for entity in targets.iter().copied() {
+                let mut cmd = commands.entity(entity);
+                if channel.is_empty() {
+                    cmd.remove::<ForcedAnimationChannel>();
+                } else {
+                    cmd.insert(ForcedAnimationChannel {
+                        channel: channel.clone(),
+                    });
+                }
+            }
+
+            let body = serde_json::json!({
+                "ok": true,
+                "updated": targets.len(),
+                "channel": channel,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        _ => Some(json_error(404, "Not found")),
+    }
+}
+
+fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
+    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    if msg.path.starts_with("/v1/scene_sources/") {
+        return handle_scene_sources_routes(ctx, msg);
+    }
+    if msg.path.starts_with("/v1/gen3d/") {
+        return handle_gen3d_routes(ctx, msg);
+    }
+    if msg.path.starts_with("/v1/scene_build/") {
+        return handle_scene_build_routes(ctx, msg);
+    }
+    if msg.path.starts_with("/v1/animation/") {
+        return handle_animation_routes(ctx, msg);
+    }
+
+    let commands = &mut *ctx.commands;
+    let library = &mut *ctx.library;
+    let asset_server = ctx.gen3d.asset_server.as_deref();
+    let assets = ctx.gen3d.assets.as_deref();
+    let meshes = ctx.gen3d.meshes.as_deref_mut();
+    let materials = ctx.gen3d.materials.as_deref_mut();
+    let material_cache = ctx.gen3d.material_cache.as_deref_mut();
+    let mesh_cache = ctx.gen3d.mesh_cache.as_deref_mut();
+
+    let windows = &ctx.world.windows;
+    let players = &ctx.world.players;
+    let player_q = &ctx.world.player_q;
+    let commandables = &ctx.world.commandables;
+    let enemies = &ctx.world.enemies;
+    let build_objects = &ctx.world.build_objects;
+    let selectable_entities = &ctx.world.selectable_entities;
+    let state_objects = &ctx.world.state_objects;
+
+    let mode = ctx.mode;
+    let next_mode = ctx.next_mode.as_deref_mut();
+    let build_scene = ctx.build_scene;
+    let next_build_scene = ctx.next_build_scene.as_deref_mut();
+    let mut selection = ctx.selection.as_deref_mut();
+    let mut fire = ctx.fire.as_deref_mut();
+    let runtime = &mut *ctx.runtime;
+    let exit = &mut *ctx.exit;
+
+    match (msg.method.as_str(), msg.path.as_str()) {
+        ("GET", "/v1/health") => {
+            let body = serde_json::json!({
+                "ok": true,
+                "name": "gravimera",
+                "version": env!("CARGO_PKG_VERSION"),
+                "automation": {
+                    "disable_local_input": runtime.disable_local_input,
+                    "pause_on_start": runtime.pause_on_start,
+                    "paused": runtime.time_paused,
+                    "listen_addr": runtime.listen_addr,
+                }
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/window") => {
+            let Some((window_entity, window)) = windows.iter().next() else {
+                return Some(json_error(
+                    501,
+                    "No primary window available (headless mode).",
+                ));
+            };
+
+            let cursor = window.cursor_position().map(|p| [p.x, p.y]);
+            let body = serde_json::json!({
+                "ok": true,
+                "window_entity": format!("{window_entity:?}"),
+                "width": window.width(),
+                "height": window.height(),
+                "scale_factor": window.scale_factor(),
+                "cursor": cursor,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/state") => {
+            let mode_str = mode.map(|m| match m.get() {
+                GameMode::Build => "build",
+                GameMode::Play => "play",
+            });
+            let build_scene_str = match (mode, build_scene) {
+                (Some(mode), Some(scene)) if matches!(mode.get(), GameMode::Build) => {
+                    Some(match scene.get() {
+                        BuildScene::Realm => "realm",
+                        BuildScene::Preview => "preview",
+                    })
+                }
+                _ => None,
+            };
+
+            let selected_ids: Vec<String> = selection
+                .as_deref()
+                .map(|sel| {
+                    sel.selected
+                        .iter()
+                        .filter_map(|entity| state_objects.get(*entity).ok().map(|v| v.1))
+                        .map(|id| uuid::Uuid::from_u128(id.0).to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let objects: Vec<serde_json::Value> = state_objects
+                .iter()
+                .map(|(_entity, instance_id, prefab_id, transform, player, enemy, build, unit)| {
+                    let forward = transform.rotation * Vec3::Z;
+                    let yaw = forward.x.atan2(forward.z);
+                    let attack = library.attack(prefab_id.0);
+                    let attack_kind = attack.as_ref().map(|attack| match attack.kind {
+                        crate::object::registry::UnitAttackKind::Melee => "melee",
+                        crate::object::registry::UnitAttackKind::RangedProjectile => {
+                            "ranged_projectile"
+                        }
+                    });
+                    serde_json::json!({
+                        "instance_id_uuid": uuid::Uuid::from_u128(instance_id.0).to_string(),
+                        "prefab_id_uuid": uuid::Uuid::from_u128(prefab_id.0).to_string(),
+                        "pos": [transform.translation.x, transform.translation.y, transform.translation.z],
+                        "scale": [transform.scale.x, transform.scale.y, transform.scale.z],
+                        "yaw": yaw,
+                        "is_player": player.is_some(),
+                        "is_enemy": enemy.is_some(),
+                        "is_build_object": build.is_some(),
+                        "is_commandable": unit.is_some(),
+                        "has_attack": attack.is_some(),
+                        "attack_kind": attack_kind,
+                    })
+                })
+                .collect();
+
+            let body = serde_json::json!({
+                "ok": true,
+                "mode": mode_str,
+                "build_scene": build_scene_str,
+                "selected_instance_ids": selected_ids,
+                "objects": objects,
+            })
+            .to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),
@@ -1612,68 +1724,6 @@ fn handle_request_main_thread(
 
             let body =
                 serde_json::json!({ "ok": true, "path": path.display().to_string() }).to_string();
-            Some(AutomationReply {
-                status: 200,
-                body: body.into_bytes(),
-                content_type: "application/json",
-            })
-        }
-        ("POST", "/v1/animation/force_channel") => {
-            let req: ForceAnimationChannelRequest = match serde_json::from_slice(&msg.body) {
-                Ok(v) => v,
-                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
-            };
-            if req.instance_ids.is_empty() {
-                return Some(json_error(400, "instance_ids must be non-empty."));
-            }
-
-            let channel = req.channel.trim().to_string();
-
-            let mut id_to_entity: std::collections::HashMap<u128, Entity> =
-                std::collections::HashMap::with_capacity(selectable_entities.iter().len());
-            for (entity, object_id) in selectable_entities.iter() {
-                id_to_entity.insert(object_id.0, entity);
-            }
-
-            let mut missing: Vec<String> = Vec::new();
-            let mut targets: Vec<Entity> = Vec::with_capacity(req.instance_ids.len());
-            for id_str in req.instance_ids {
-                match uuid::Uuid::parse_str(id_str.trim()) {
-                    Ok(uuid) => {
-                        let id = uuid.as_u128();
-                        if let Some(entity) = id_to_entity.get(&id).copied() {
-                            targets.push(entity);
-                        } else {
-                            missing.push(uuid.to_string());
-                        }
-                    }
-                    Err(_) => missing.push(id_str),
-                }
-            }
-            if !missing.is_empty() {
-                return Some(json_error(
-                    404,
-                    format!("Instances not found: {}", missing.join(", ")),
-                ));
-            }
-
-            for entity in targets.iter().copied() {
-                let mut cmd = commands.entity(entity);
-                if channel.is_empty() {
-                    cmd.remove::<ForcedAnimationChannel>();
-                } else {
-                    cmd.insert(ForcedAnimationChannel {
-                        channel: channel.clone(),
-                    });
-                }
-            }
-
-            let body = serde_json::json!({
-                "ok": true,
-                "updated": targets.len(),
-                "channel": channel,
-            })
-            .to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),
