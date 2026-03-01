@@ -1,18 +1,18 @@
-use bevy::log::{debug, warn};
 use bevy::prelude::*;
 use std::path::PathBuf;
 
 use crate::config::AppConfig;
-use crate::gen3d::agent::{append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolCallJsonV1, Gen3dToolResultJsonV1};
 use crate::gen3d::agent::tools::TOOL_ID_LLM_REVIEW_DELTA;
+use crate::gen3d::agent::{
+    append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolCallJsonV1, Gen3dToolResultJsonV1,
+};
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
-use super::agent_review_delta::start_agent_llm_review_delta_call;
-use super::agent_review_images::review_capture_dimensions_for_max_dim;
-use super::agent_utils::{note_observable_tool_result, sanitize_prefix};
-use super::artifacts::{append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_json_artifact};
-use super::{fail_job, set_progress, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress};
 use super::super::state::{Gen3dDraft, Gen3dPreviewModelRoot, Gen3dWorkshop};
+use super::agent_review_delta::start_agent_llm_review_delta_call;
+use super::agent_utils::note_observable_tool_result;
+use super::artifacts::append_gen3d_jsonl_artifact;
+use super::{fail_job, set_progress, Gen3dAiJob, Gen3dAiPhase};
 
 pub(super) fn poll_agent_render_capture(
     config: &AppConfig,

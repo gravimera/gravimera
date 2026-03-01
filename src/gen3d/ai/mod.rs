@@ -1,7 +1,7 @@
 // Gen3D AI orchestration and helpers.
 
-mod agent_loop;
 mod agent_component_batch;
+mod agent_loop;
 mod agent_parsing;
 mod agent_prompt;
 mod agent_regen_budget;
@@ -28,8 +28,6 @@ mod structured_outputs;
 
 #[cfg(test)]
 mod regression_tests;
-
-use crate::threaded_result::take_shared_result;
 
 use super::{GEN3D_MAX_REQUEST_IMAGES, GEN3D_PREVIEW_DEFAULT_PITCH, GEN3D_PREVIEW_DEFAULT_YAW};
 

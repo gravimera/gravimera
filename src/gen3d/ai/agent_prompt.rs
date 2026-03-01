@@ -1,20 +1,17 @@
 use std::path::PathBuf;
 
 use crate::config::AppConfig;
-use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::gen3d::agent::tools::{
-    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_CREATE_WORKSPACE,
-    TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
-    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
-    TOOL_ID_LIST, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DESCRIBE,
+    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
-    TOOL_ID_VALIDATE,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
+use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 
-use super::Gen3dAiJob;
 use super::super::state::Gen3dWorkshop;
+use super::Gen3dAiJob;
 
 pub(super) fn build_agent_system_instructions() -> String {
     // Keep this short; the user text provides tool lists and current state.
@@ -800,4 +797,3 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         "tokens_total": job.total_tokens(),
     })
 }
-

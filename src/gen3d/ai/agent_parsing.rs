@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
-use crate::gen3d::agent::Gen3dAgentStepJsonV1;
-use super::Gen3dPlannedComponent;
 use super::parse::extract_json_object;
+use super::Gen3dPlannedComponent;
+use crate::gen3d::agent::Gen3dAgentStepJsonV1;
 
 pub(super) fn normalize_identifier_for_match(value: &str) -> String {
     let mut out = String::new();
@@ -30,7 +30,7 @@ pub(super) fn normalize_identifier_for_match(value: &str) -> String {
 }
 
 pub(super) fn resolve_component_index_by_name_hint(
-    components: &[super::Gen3dPlannedComponent],
+    components: &[Gen3dPlannedComponent],
     hint: &str,
 ) -> Option<usize> {
     let hint_norm = normalize_identifier_for_match(hint);

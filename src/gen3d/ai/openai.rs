@@ -8,8 +8,8 @@ use crate::gen3d::agent::{
 };
 use crate::openai_shared::{
     curl_auth_header_file, extract_openai_responses_output_text,
-    extract_openai_responses_sse_output_text, split_curl_http_status,
-    CURL_HTTP_STATUS_MARKER, CURL_HTTP_STATUS_WRITEOUT_ARG,
+    extract_openai_responses_sse_output_text, split_curl_http_status, CURL_HTTP_STATUS_MARKER,
+    CURL_HTTP_STATUS_WRITEOUT_ARG,
 };
 
 use super::super::{

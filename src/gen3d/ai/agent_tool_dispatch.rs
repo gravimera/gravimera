@@ -1,13 +1,7 @@
-use bevy::log::{debug, info, warn};
 use bevy::prelude::*;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
-use crate::gen3d::agent::{
-    append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolCallJsonV1, Gen3dToolRegistryV1,
-    Gen3dToolResultJsonV1,
-};
 use crate::gen3d::agent::tools::{
     TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_CREATE_WORKSPACE,
     TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
@@ -18,36 +12,31 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
     TOOL_ID_VALIDATE,
 };
+use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
+use super::super::state::{Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dWorkshop};
+use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::agent_parsing::{
-    normalize_identifier_for_match, parse_delta_transform, parse_quat_xyzw, parse_vec3,
-    resolve_component_index_by_name_hint,
+    normalize_identifier_for_match, parse_delta_transform, resolve_component_index_by_name_hint,
 };
 use super::agent_prompt::draft_summary;
-use super::agent_regen_budget::{consume_regen_budget, ensure_agent_regen_budget_len, regen_budget_allows};
+use super::agent_regen_budget::consume_regen_budget;
+use super::agent_review_delta::start_agent_llm_review_delta_call;
 use super::agent_review_images::{
     motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
-    review_capture_dimensions_for_max_dim, select_review_preview_images,
+    review_capture_dimensions_for_max_dim,
 };
-use super::agent_review_delta::start_agent_llm_review_delta_call;
-use super::agent_utils::{build_component_subset_workspace_defs, sanitize_prefix, truncate_json_for_log};
 use super::agent_step::ToolCallOutcome;
+use super::agent_utils::{build_component_subset_workspace_defs, sanitize_prefix};
 use super::artifacts::{
-    append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
-    write_gen3d_json_artifact, write_gen3d_text_artifact,
+    append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact,
 };
-use super::parse;
-use super::parse::extract_json_object;
 use super::{
     set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
-    Gen3dAiTextResponse, GEN3D_MAX_REQUEST_IMAGES,
+    Gen3dAiTextResponse,
 };
-use super::super::state::{
-    Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dWorkshop,
-};
-use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 
 pub(super) fn execute_tool_call(
     config: &AppConfig,

@@ -6,10 +6,8 @@ use crate::config::AppConfig;
 use crate::gen3d::agent::Gen3dToolResultJsonV1;
 use crate::threaded_result::{new_shared_result, take_shared_result, SharedResult};
 
-use super::agent_regen_budget::{
-    consume_regen_budget, ensure_agent_regen_budget_len, regen_budget_allows,
-};
-use super::agent_utils::{build_component_subset_workspace_defs, sanitize_prefix};
+use super::super::state::{Gen3dDraft, Gen3dWorkshop};
+use super::agent_utils::sanitize_prefix;
 use super::artifacts::{
     append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact,
 };
@@ -18,7 +16,6 @@ use super::{
     fail_job, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiProgress,
     Gen3dAiTextResponse,
 };
-use super::super::state::{Gen3dDraft, Gen3dWorkshop};
 
 pub(super) fn poll_agent_component_batch(
     config: &AppConfig,

@@ -1,22 +1,31 @@
-use bevy::log::{debug, info, warn};
+use bevy::log::{debug, warn};
 use bevy::prelude::*;
-use std::path::PathBuf;
 
 use crate::config::AppConfig;
-use crate::gen3d::agent::{append_agent_trace_event_v1, AgentTraceEventV1, Gen3dAgentActionJsonV1, Gen3dAgentStepJsonV1, Gen3dToolCallJsonV1, Gen3dToolResultJsonV1};
-use crate::gen3d::agent::tools::{TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE};
+use crate::gen3d::agent::tools::{
+    TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
+};
+use crate::gen3d::agent::{
+    append_agent_trace_event_v1, AgentTraceEventV1, Gen3dAgentActionJsonV1, Gen3dToolCallJsonV1,
+    Gen3dToolResultJsonV1,
+};
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
+use super::super::state::{
+    Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dWorkshop,
+};
+use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::agent_loop::spawn_agent_step_request;
 use super::agent_parsing::{is_transient_openai_error_message, parse_agent_step};
 use super::agent_tool_dispatch::execute_tool_call;
-use super::agent_utils::{compute_agent_state_hash, note_observable_tool_result, truncate_json_for_log};
-use super::agent_review_delta::start_agent_llm_review_delta_call;
-use super::artifacts::{append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact, write_gen3d_text_artifact};
-use super::{fail_job, gen3d_advance_pass, set_progress, take_shared_result, Gen3dAiJob, Gen3dAiPhase};
+use super::agent_utils::{
+    compute_agent_state_hash, note_observable_tool_result, truncate_json_for_log,
+};
+use super::artifacts::{
+    append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_text_artifact,
+};
 use super::GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES;
-use super::super::state::{Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dWorkshop};
-use super::super::tool_feedback::Gen3dToolFeedbackHistory;
+use super::{fail_job, gen3d_advance_pass, set_progress, Gen3dAiJob, Gen3dAiPhase};
 
 pub(super) fn poll_agent_step(
     config: &AppConfig,

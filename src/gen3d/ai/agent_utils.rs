@@ -1,11 +1,11 @@
 use bevy::prelude::*;
 use sha2::{Digest, Sha256};
 
-use crate::gen3d::agent::Gen3dToolResultJsonV1;
 use crate::gen3d::agent::tools::{TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE};
+use crate::gen3d::agent::Gen3dToolResultJsonV1;
 
-use super::Gen3dAiJob;
 use super::super::state::Gen3dDraft;
+use super::Gen3dAiJob;
 
 pub(super) fn note_observable_tool_result(job: &mut Gen3dAiJob, result: &Gen3dToolResultJsonV1) {
     if !result.ok {
@@ -230,4 +230,3 @@ pub(super) fn truncate_json_for_log(value: &serde_json::Value, max_chars: usize)
     }
     out
 }
-

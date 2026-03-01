@@ -55,7 +55,9 @@ fn is_motion_preview_image(path: &Path) -> bool {
         || name.contains("attack_frame")
 }
 
-pub(super) fn motion_sheets_needed_from_smoke_results(smoke_results: &serde_json::Value) -> (bool, bool) {
+pub(super) fn motion_sheets_needed_from_smoke_results(
+    smoke_results: &serde_json::Value,
+) -> (bool, bool) {
     // Returns (include_move_sheet, include_attack_sheet).
     //
     // We rely on motion_validation's structured issue list rather than prompt heuristics so we can
@@ -178,4 +180,3 @@ pub(super) fn review_capture_dimensions_for_max_dim(max_dim_px: u32) -> (u32, u3
     let h = (base_h * scale).round().clamp(256.0, 4096.0) as u32;
     (w, h)
 }
-

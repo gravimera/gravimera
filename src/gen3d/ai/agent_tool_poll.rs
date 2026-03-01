@@ -4,10 +4,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
-use crate::gen3d::agent::{append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolResultJsonV1};
 use crate::gen3d::agent::tools::TOOL_ID_LLM_GENERATE_PLAN;
+use crate::gen3d::agent::{append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
 
+use super::super::state::{Gen3dDraft, Gen3dPreview, Gen3dWorkshop};
+use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::agent_component_batch::poll_agent_component_batch;
 use super::agent_regen_budget::{ensure_agent_regen_budget_len, regen_budget_allows};
 use super::agent_review_images::{
@@ -15,7 +17,6 @@ use super::agent_review_images::{
     select_review_preview_images,
 };
 use super::agent_step::maybe_start_pass_snapshot_capture;
-use super::agent_tool_dispatch::execute_tool_call;
 use super::agent_utils::{note_observable_tool_result, sanitize_prefix, truncate_json_for_log};
 use super::artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
@@ -30,8 +31,6 @@ use super::{
     GEN3D_LLM_TOOL_SCHEMA_REPAIR_MAX_ATTEMPTS, GEN3D_MAX_REQUEST_IMAGES,
     GEN3D_PREVIEW_DEFAULT_PITCH, GEN3D_PREVIEW_DEFAULT_YAW,
 };
-use super::super::state::{Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dWorkshop};
-use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 
 pub(super) fn poll_agent_tool(
     config: &AppConfig,

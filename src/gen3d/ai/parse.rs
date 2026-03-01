@@ -3,8 +3,7 @@ use bevy::log::debug;
 use super::super::GEN3D_MAX_PARTS;
 use super::artifacts::write_gen3d_json_artifact;
 use super::schema::{
-    AiDescriptorMetaJsonV1, AiDraftJsonV1, AiMotionRolesJsonV1, AiPlanFillJsonV1, AiPlanJsonV1,
-    AiReviewDeltaJsonV1,
+    AiDescriptorMetaJsonV1, AiDraftJsonV1, AiMotionRolesJsonV1, AiPlanJsonV1, AiReviewDeltaJsonV1,
 };
 
 fn normalize_snake_case_token(raw: &str) -> String {
@@ -134,41 +133,6 @@ pub(super) fn parse_ai_plan_from_text(text: &str) -> Result<AiPlanJsonV1, String
         ));
     }
     Ok(plan)
-}
-
-pub(super) fn parse_ai_plan_fill_from_text(text: &str) -> Result<AiPlanFillJsonV1, String> {
-    debug!(
-        "Gen3D: extracted plan-fill output text (chars={})",
-        text.chars().count()
-    );
-    let json_text = extract_json_object(text).unwrap_or_else(|| text.to_string());
-    debug!(
-        "Gen3D: parsing plan-fill JSON (chars={})",
-        json_text.trim().chars().count()
-    );
-    if cfg!(debug_assertions) {
-        debug!(
-            "Gen3D: plan-fill output preview (start): {}",
-            super::truncate_for_ui(json_text.trim(), 800)
-        );
-    }
-
-    let json_text = json_text.trim();
-    let json_value: serde_json::Value =
-        serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
-    if json_value.get("version").is_none() {
-        return Err("AI plan-fill JSON missing required `version` (expected 1).".into());
-    }
-
-    let fill: AiPlanFillJsonV1 =
-        serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
-    if fill.version != 1 {
-        return Err(format!(
-            "Unsupported AI plan-fill version {} (expected 1)",
-            fill.version
-        ));
-    }
-    Ok(fill)
 }
 
 pub(super) fn parse_ai_review_delta_from_text(text: &str) -> Result<AiReviewDeltaJsonV1, String> {

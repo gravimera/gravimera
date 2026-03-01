@@ -4,11 +4,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
-use crate::gen3d::agent::{
-    append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolRegistryV1,
-};
 #[cfg(test)]
 use crate::gen3d::agent::Gen3dToolResultJsonV1;
+use crate::gen3d::agent::{append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolRegistryV1};
 
 use super::artifacts::append_gen3d_run_log;
 use super::{
@@ -20,19 +18,19 @@ use crate::gen3d::agent::tools::TOOL_ID_DESCRIBE;
 use crate::threaded_result::{new_shared_result, SharedResult};
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
+#[cfg(test)]
+use super::agent_parsing::{parse_delta_transform, resolve_component_index_by_name_hint};
 use super::agent_prompt::{build_agent_system_instructions, build_agent_user_text, draft_summary};
+use super::agent_render_capture::poll_agent_render_capture;
 #[cfg(test)]
 use super::agent_review_images::{
     motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
     review_capture_dimensions_for_max_dim, select_review_preview_images,
 };
-#[cfg(test)]
-use super::agent_parsing::{parse_delta_transform, resolve_component_index_by_name_hint};
-#[cfg(test)]
-use super::agent_utils::compute_agent_state_hash;
 use super::agent_step::{execute_agent_actions, poll_agent_pass_snapshot_capture, poll_agent_step};
 use super::agent_tool_poll::poll_agent_tool;
-use super::agent_render_capture::poll_agent_render_capture;
+#[cfg(test)]
+use super::agent_utils::compute_agent_state_hash;
 
 use super::super::state::{
     Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dWorkshop,

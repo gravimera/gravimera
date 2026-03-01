@@ -197,50 +197,6 @@ pub(crate) struct AiAimJson {
     pub(crate) components: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AiAnimationDriverJson {
-    Always,
-    MovePhase,
-    MoveDistance,
-    AttackTime,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum AiAnimationClipJson {
-    Loop {
-        duration_secs: f32,
-        #[serde(default)]
-        keyframes: Vec<AiAnimationKeyframeJson>,
-    },
-    Once {
-        duration_secs: f32,
-        #[serde(default)]
-        keyframes: Vec<AiAnimationKeyframeJson>,
-    },
-    PingPong {
-        duration_secs: f32,
-        #[serde(default)]
-        keyframes: Vec<AiAnimationKeyframeJson>,
-    },
-    Spin {
-        axis: [f32; 3],
-        radians_per_unit: f32,
-    },
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AiAnimationSpecJson {
-    pub(crate) driver: AiAnimationDriverJson,
-    #[serde(default)]
-    pub(crate) speed_scale: Option<f32>,
-    #[serde(default)]
-    pub(crate) time_offset_units: Option<f32>,
-    pub(crate) clip: AiAnimationClipJson,
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiRigJson {
@@ -449,24 +405,6 @@ pub(crate) struct AiAttachmentOffsetJson {
     pub(crate) scale: Option<[f32; 3]>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AiAnimationKeyframeJson {
-    pub(crate) time_secs: f32,
-    #[serde(default)]
-    pub(crate) delta: Option<AiAttachmentOffsetJson>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum AiPartAnimationJson {
-    Loop {
-        duration_secs: f32,
-        #[serde(default)]
-        keyframes: Vec<AiAnimationKeyframeJson>,
-    },
-}
-
 fn default_vec3_array() -> [f32; 3] {
     [0.0, 0.0, 0.0]
 }
@@ -629,14 +567,6 @@ pub(crate) enum AiReviewDeltaActionJsonV1 {
         #[serde(default)]
         reason: String,
     },
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AiPlanFillJsonV1 {
-    #[serde(default)]
-    pub(crate) version: u32,
-    pub(crate) mobility: AiMobilityJson,
 }
 
 #[derive(Clone, Debug, Deserialize)]

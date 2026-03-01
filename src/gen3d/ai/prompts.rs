@@ -549,53 +549,6 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
     )
 }
 
-pub(super) fn build_gen3d_plan_fill_system_instructions() -> String {
-    "You are a 3D modeling assistant.\n\
-     Return STRICT JSON that fills missing mobility for an already-created component plan.\n\
-     Do NOT change component names, the attachment tree, or geometry.\n\
-     You MUST output only the JSON object; no markdown.\n\n\
-     Mobility:\n\
-     - Output `mobility` with `kind`: `static` | `ground` | `air`.\n\
-     - For `ground` and `air`, provide `max_speed`.\n\n\
-     Schema:\n\
-     {\n\
-       \"version\": 1,\n\
-       \"mobility\": {\"kind\":\"static\"} | {\"kind\":\"ground\",\"max_speed\": number} | {\"kind\":\"air\",\"max_speed\": number}\n\
-     }\n"
-        .to_string()
-}
-
-pub(super) fn build_gen3d_plan_fill_user_text(
-    raw_prompt: &str,
-    has_images: bool,
-    plan: &crate::gen3d::ai::schema::AiPlanJsonV1,
-) -> String {
-    let mut out = String::new();
-    out.push_str(
-        "Step 1b (plan fill): Provide mobility for an existing plan.\n\
-         Do NOT change component names or the attachment structure.\n",
-    );
-    if !has_images {
-        out.push_str("No photos are provided for this run.\n");
-    }
-    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
-    out.push_str("\nComponents:\n");
-    for component in plan.components.iter() {
-        let parent = component
-            .attach_to
-            .as_ref()
-            .map(|att| att.parent.as_str())
-            .unwrap_or("<root>");
-        out.push_str(&format!(
-            "- name: {}; parent: {}; purpose: {}\n",
-            component.name,
-            parent,
-            component.purpose.trim()
-        ));
-    }
-    out
-}
-
 pub(super) fn build_gen3d_component_system_instructions() -> String {
     format!(
         "You are a 3D modeling assistant.\n\

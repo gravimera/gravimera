@@ -3,7 +3,6 @@ use serde_json::json;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dAiJsonSchemaKind {
     PlanV1,
-    PlanFillV1,
     ComponentDraftV1,
     ReviewDeltaV1,
     DescriptorMetaV1,
@@ -197,62 +196,6 @@ fn schema_attachment_offset() -> serde_json::Value {
     ])
 }
 
-fn schema_animation_keyframe() -> serde_json::Value {
-    schema_object(vec![
-        ("time_secs", schema_number()),
-        ("delta", schema_nullable(schema_attachment_offset())),
-    ])
-}
-
-fn schema_animation_clip() -> serde_json::Value {
-    let loop_clip = schema_object(vec![
-        ("kind", schema_enum(&["loop"])),
-        ("duration_secs", schema_number()),
-        ("keyframes", schema_array_of(schema_animation_keyframe())),
-    ]);
-    let once_clip = schema_object(vec![
-        ("kind", schema_enum(&["once"])),
-        ("duration_secs", schema_number()),
-        ("keyframes", schema_array_of(schema_animation_keyframe())),
-    ]);
-    let ping_pong_clip = schema_object(vec![
-        ("kind", schema_enum(&["ping_pong"])),
-        ("duration_secs", schema_number()),
-        ("keyframes", schema_array_of(schema_animation_keyframe())),
-    ]);
-    let spin = schema_object(vec![
-        ("kind", schema_enum(&["spin"])),
-        ("axis", schema_vec3()),
-        ("radians_per_unit", schema_number()),
-    ]);
-    schema_any_of(vec![loop_clip, once_clip, ping_pong_clip, spin])
-}
-
-fn schema_animation_spec() -> serde_json::Value {
-    schema_object(vec![
-        (
-            "driver",
-            schema_enum(&["always", "move_phase", "move_distance", "attack_time"]),
-        ),
-        ("speed_scale", schema_nullable(schema_number())),
-        ("time_offset_units", schema_nullable(schema_number())),
-        ("clip", schema_animation_clip()),
-    ])
-}
-
-fn schema_animations_by_channel() -> serde_json::Value {
-    // Open vocabulary map: channel_name -> animation spec (or null).
-    //
-    // The engine has special behavior for canonical channels (`idle`, `move`, `attack_primary`,
-    // `ambient`), but Gen3D is allowed to author additional channels (e.g. `dance`, `wave`) which
-    // can be user-triggered in gameplay.
-    json!({
-        "type": "object",
-        "additionalProperties": schema_nullable(schema_animation_spec()),
-        "maxProperties": 10
-    })
-}
-
 fn schema_joint() -> serde_json::Value {
     schema_object(vec![
         ("kind", schema_enum(&["fixed", "hinge", "ball", "free"])),
@@ -346,13 +289,6 @@ fn schema_plan() -> serde_json::Value {
         ("root_component", schema_nullable(schema_string())),
         ("reuse_groups", schema_array_of(schema_reuse_group())),
         ("components", schema_array_of(schema_plan_component())),
-    ])
-}
-
-fn schema_plan_fill() -> serde_json::Value {
-    schema_object(vec![
-        ("version", schema_integer()),
-        ("mobility", schema_mobility()),
     ])
 }
 
@@ -593,10 +529,6 @@ pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchema
         Gen3dAiJsonSchemaKind::PlanV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_plan_v1",
             schema: schema_plan(),
-        },
-        Gen3dAiJsonSchemaKind::PlanFillV1 => Gen3dAiJsonSchemaSpec {
-            name: "gen3d_plan_fill_v1",
-            schema: schema_plan_fill(),
         },
         Gen3dAiJsonSchemaKind::ComponentDraftV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_component_draft_v1",

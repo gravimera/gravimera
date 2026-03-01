@@ -1,7 +1,6 @@
-use super::schema::AiJointKindJson;
 use super::{convert, parse};
 use crate::gen3d::state::Gen3dDraft;
-use crate::object::registry::{builtin_object_id, ObjectPartDef, ObjectPartKind};
+use crate::object::registry::{ObjectPartDef, ObjectPartKind};
 use bevy::prelude::{Quat, Transform, Vec3};
 use serde_json::json;
 

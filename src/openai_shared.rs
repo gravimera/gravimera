@@ -1,8 +1,7 @@
 use serde_json::Value;
 use std::path::PathBuf;
 
-pub(crate) const CURL_HTTP_STATUS_WRITEOUT_ARG: &str =
-    "\n__GRAVIMERA_HTTP_STATUS__%{http_code}\n";
+pub(crate) const CURL_HTTP_STATUS_WRITEOUT_ARG: &str = "\n__GRAVIMERA_HTTP_STATUS__%{http_code}\n";
 pub(crate) const CURL_HTTP_STATUS_MARKER: &str = "\n__GRAVIMERA_HTTP_STATUS__";
 
 pub(crate) struct TempSecretFile {
@@ -133,4 +132,3 @@ pub(crate) fn extract_openai_responses_sse_output_text(body: &str) -> Option<Str
 
     (!out.trim().is_empty()).then_some(out)
 }
-

@@ -5,17 +5,17 @@ use crate::config::AppConfig;
 use crate::gen3d::agent::Gen3dToolCallJsonV1;
 use crate::threaded_result::{new_shared_result, SharedResult};
 
+use super::super::state::Gen3dDraft;
 use super::agent_review_images::{
     motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
     select_review_preview_images,
 };
 use super::agent_utils::sanitize_prefix;
+use super::artifacts::write_gen3d_json_artifact;
 use super::{
     set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
     Gen3dAiTextResponse, GEN3D_MAX_REQUEST_IMAGES,
 };
-use super::super::state::Gen3dDraft;
-use super::artifacts::write_gen3d_json_artifact;
 
 pub(super) fn start_agent_llm_review_delta_call(
     config: &AppConfig,
