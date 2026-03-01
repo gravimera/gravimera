@@ -54,7 +54,7 @@ Guidelines:
 
 ## 5) Config parsing and structure
 
-- [ ] **Reduce duplication in `src/config.rs` parse pipeline**
+- [x] **Reduce duplication in `src/config.rs` parse pipeline**
   - Why: many `parse_*` functions + duplicated “apply all parses” sequences; hard to add fields without missing a call site.
   - Options:
     - Convert to typed TOML via `toml` + `serde` (preferred if acceptable).

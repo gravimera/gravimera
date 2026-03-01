@@ -127,30 +127,7 @@ fn load_config_default() -> AppConfig {
         return out;
     };
 
-    parse_log_path_into_config(&mut out, &text);
-    parse_scene_dat_path_into_config(&mut out, &text);
-    parse_gen3d_cache_dir_into_config(&mut out, &text);
-    parse_automation_enabled_into_config(&mut out, &text);
-    parse_automation_bind_into_config(&mut out, &text);
-    parse_automation_disable_local_input_into_config(&mut out, &text);
-    parse_automation_pause_on_start_into_config(&mut out, &text);
-    parse_automation_token_into_config(&mut out, &text);
-    parse_refine_iterations_into_config(&mut out, &text);
-    parse_gen3d_max_parallel_components_into_config(&mut out, &text);
-    parse_gen3d_max_seconds_into_config(&mut out, &text);
-    parse_gen3d_max_tokens_into_config(&mut out, &text);
-    parse_gen3d_no_progress_max_steps_into_config(&mut out, &text);
-    parse_gen3d_max_replans_into_config(&mut out, &text);
-    parse_gen3d_max_regen_total_into_config(&mut out, &text);
-    parse_gen3d_max_regen_per_component_into_config(&mut out, &text);
-    parse_gen3d_save_pass_screenshots_into_config(&mut out, &text);
-    parse_gen3d_review_appearance_into_config(&mut out, &text);
-    parse_gen3d_reasoning_effort_plan_into_config(&mut out, &text);
-    parse_gen3d_reasoning_effort_agent_step_into_config(&mut out, &text);
-    parse_gen3d_reasoning_effort_component_into_config(&mut out, &text);
-    parse_gen3d_reasoning_effort_review_into_config(&mut out, &text);
-    parse_gen3d_reasoning_effort_repair_into_config(&mut out, &text);
-    populate_openai_config(&mut out, &text);
+    parse_config_text_into(&mut out, &text);
 
     out
 }
@@ -160,36 +137,40 @@ fn load_config_from_path(path: &Path) -> AppConfig {
     match std::fs::read_to_string(path) {
         Ok(text) => {
             out.loaded_from = Some(path.to_path_buf());
-            parse_log_path_into_config(&mut out, &text);
-            parse_scene_dat_path_into_config(&mut out, &text);
-            parse_gen3d_cache_dir_into_config(&mut out, &text);
-            parse_automation_enabled_into_config(&mut out, &text);
-            parse_automation_bind_into_config(&mut out, &text);
-            parse_automation_disable_local_input_into_config(&mut out, &text);
-            parse_automation_pause_on_start_into_config(&mut out, &text);
-            parse_automation_token_into_config(&mut out, &text);
-            parse_refine_iterations_into_config(&mut out, &text);
-            parse_gen3d_max_parallel_components_into_config(&mut out, &text);
-            parse_gen3d_max_seconds_into_config(&mut out, &text);
-            parse_gen3d_max_tokens_into_config(&mut out, &text);
-            parse_gen3d_no_progress_max_steps_into_config(&mut out, &text);
-            parse_gen3d_max_replans_into_config(&mut out, &text);
-            parse_gen3d_max_regen_total_into_config(&mut out, &text);
-            parse_gen3d_max_regen_per_component_into_config(&mut out, &text);
-            parse_gen3d_save_pass_screenshots_into_config(&mut out, &text);
-            parse_gen3d_review_appearance_into_config(&mut out, &text);
-            parse_gen3d_reasoning_effort_plan_into_config(&mut out, &text);
-            parse_gen3d_reasoning_effort_agent_step_into_config(&mut out, &text);
-            parse_gen3d_reasoning_effort_component_into_config(&mut out, &text);
-            parse_gen3d_reasoning_effort_review_into_config(&mut out, &text);
-            parse_gen3d_reasoning_effort_repair_into_config(&mut out, &text);
-            populate_openai_config(&mut out, &text);
+            parse_config_text_into(&mut out, &text);
         }
         Err(err) => out
             .errors
             .push(format!("Failed to read {}: {err}", path.display())),
     }
     out
+}
+
+fn parse_config_text_into(out: &mut AppConfig, text: &str) {
+    parse_log_path_into_config(out, text);
+    parse_scene_dat_path_into_config(out, text);
+    parse_gen3d_cache_dir_into_config(out, text);
+    parse_automation_enabled_into_config(out, text);
+    parse_automation_bind_into_config(out, text);
+    parse_automation_disable_local_input_into_config(out, text);
+    parse_automation_pause_on_start_into_config(out, text);
+    parse_automation_token_into_config(out, text);
+    parse_refine_iterations_into_config(out, text);
+    parse_gen3d_max_parallel_components_into_config(out, text);
+    parse_gen3d_max_seconds_into_config(out, text);
+    parse_gen3d_max_tokens_into_config(out, text);
+    parse_gen3d_no_progress_max_steps_into_config(out, text);
+    parse_gen3d_max_replans_into_config(out, text);
+    parse_gen3d_max_regen_total_into_config(out, text);
+    parse_gen3d_max_regen_per_component_into_config(out, text);
+    parse_gen3d_save_pass_screenshots_into_config(out, text);
+    parse_gen3d_review_appearance_into_config(out, text);
+    parse_gen3d_reasoning_effort_plan_into_config(out, text);
+    parse_gen3d_reasoning_effort_agent_step_into_config(out, text);
+    parse_gen3d_reasoning_effort_component_into_config(out, text);
+    parse_gen3d_reasoning_effort_review_into_config(out, text);
+    parse_gen3d_reasoning_effort_repair_into_config(out, text);
+    populate_openai_config(out, text);
 }
 
 fn populate_openai_config(out: &mut AppConfig, text: &str) {
