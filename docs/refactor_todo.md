@@ -73,7 +73,7 @@ Guidelines:
   - Why: repo contains `test/`, `tests/`, and `game_test/` with overlapping purposes; `.gitignore` currently ignores `tests` even though `tests/*` is tracked.
   - Done when: there is one canonical place for fixtures/artifacts, and ignore rules match what’s tracked.
 
-- [ ] **Move ad-hoc runtime artifacts out of versioned dirs**
+- [x] **Move ad-hoc runtime artifacts out of versioned dirs**
   - Why: `test/gen3d_real/*` includes logs/artifacts that look like outputs; keep only minimal fixtures under version control.
   - Done when: fixtures live under a clear `tests/fixtures/...` (or similar) and outputs go to ignored temp dirs.
 
