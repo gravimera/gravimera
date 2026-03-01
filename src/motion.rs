@@ -2126,21 +2126,21 @@ fn biped_kick_override_for_binding(
             PartAnimationKeyframeDef {
                 time_secs: wind,
                 delta: Transform {
-                    rotation: Quat::from_rotation_x(-kick * 0.15),
+                    rotation: Quat::from_rotation_x(kick * 0.15),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: strike,
                 delta: Transform {
-                    rotation: Quat::from_rotation_x(kick),
+                    rotation: Quat::from_rotation_x(-kick),
                     ..default()
                 },
             },
             PartAnimationKeyframeDef {
                 time_secs: settle,
                 delta: Transform {
-                    rotation: Quat::from_rotation_x(kick * 0.85),
+                    rotation: Quat::from_rotation_x(-kick * 0.85),
                     ..default()
                 },
             },
@@ -3854,7 +3854,7 @@ mod tests {
         let PartAnimationDef::Once { keyframes, .. } = &left_slots[0].spec.clip else {
             panic!("expected once clip");
         };
-        let expected = Quat::from_rotation_x(65.0_f32.to_radians());
+        let expected = Quat::from_rotation_x((-65.0_f32).to_radians());
         assert!(
             keyframes[2].delta.rotation.angle_between(expected) < 1e-5,
             "expected left leg variant 0 to kick"
