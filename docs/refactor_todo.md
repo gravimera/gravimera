@@ -63,7 +63,7 @@ Guidelines:
 
 ## 6) App wiring / plugins
 
-- [ ] **Modularize `src/app.rs` systems into plugins**
+- [x] **Modularize `src/app.rs` systems into plugins**
   - Why: `app.rs` is dense with `add_systems` calls; difficult to see feature boundaries and scheduling.
   - Done when: each feature area (scene store, automation, gen3d, object visuals, etc.) owns its plugin wiring, with ordering constraints documented in code.
 

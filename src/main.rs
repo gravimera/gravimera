@@ -1,5 +1,6 @@
 mod ai_limiter;
 mod app;
+mod app_plugins;
 mod assets;
 mod automation;
 mod build;
