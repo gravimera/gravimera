@@ -7,8 +7,8 @@ use crate::assets::SceneAssets;
 use crate::constants::*;
 use crate::effects::{spawn_blood_particles, spawn_energy_impact_particles};
 use crate::geometry::{
-    circle_intersects_aabb_xz, circles_intersect_xz, normalize_flat_direction,
-    resolve_circle_against_aabbs, safe_abs_scale_y, clamp_world_xz,
+    circle_intersects_aabb_xz, circles_intersect_xz, clamp_world_xz, normalize_flat_direction,
+    resolve_circle_against_aabbs, safe_abs_scale_y,
 };
 use crate::models::{spawn_dog_model, spawn_enemy_human_model, spawn_gundam_model};
 use crate::object::registry::{

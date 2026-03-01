@@ -111,6 +111,7 @@ impl IdleMotionAlgorithm {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AttackPrimaryMotionAlgorithm {
     None,
+    BipedKickV1,
     BipedMeleeSwingV1,
     QuadrupedBiteV1,
     RangedRecoilV1,
@@ -127,6 +128,7 @@ impl AttackPrimaryMotionAlgorithm {
     pub(crate) fn id_str(self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::BipedKickV1 => "biped_kick_v1",
             Self::BipedMeleeSwingV1 => "biped_melee_swing_v1",
             Self::QuadrupedBiteV1 => "quadruped_bite_v1",
             Self::RangedRecoilV1 => "ranged_recoil_v1",
@@ -137,6 +139,7 @@ impl AttackPrimaryMotionAlgorithm {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::None => "None (prefab-authored)",
+            Self::BipedKickV1 => "Biped kick (v1)",
             Self::BipedMeleeSwingV1 => "Biped melee swing (v1)",
             Self::QuadrupedBiteV1 => "Quadruped bite (v1)",
             Self::RangedRecoilV1 => "Ranged recoil (v1)",
@@ -148,6 +151,7 @@ impl AttackPrimaryMotionAlgorithm {
         match value.trim() {
             "" => None,
             "none" => Some(Self::None),
+            "biped_kick_v1" => Some(Self::BipedKickV1),
             "biped_melee_swing_v1" => Some(Self::BipedMeleeSwingV1),
             "quadruped_bite_v1" => Some(Self::QuadrupedBiteV1),
             "ranged_recoil_v1" => Some(Self::RangedRecoilV1),
@@ -403,7 +407,10 @@ impl MotionRigV1 {
                     out.push(AttackPrimaryMotionAlgorithm::RangedRecoilV1);
                 }
                 UnitAttackKind::Melee => match self {
-                    Self::Biped(_) => out.push(AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1),
+                    Self::Biped(_) => {
+                        out.push(AttackPrimaryMotionAlgorithm::BipedKickV1);
+                        out.push(AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1);
+                    }
                     Self::Quadruped(_) => out.push(AttackPrimaryMotionAlgorithm::QuadrupedBiteV1),
                     Self::Car(rig) => {
                         if !rig.tool_arms.is_empty() {
@@ -1215,7 +1222,7 @@ pub(crate) fn ensure_default_motion_algorithm_controllers(
                     AttackPrimaryMotionAlgorithm::RangedRecoilV1
                 }
                 Some(UnitAttackKind::Melee) => match rig {
-                    MotionRigV1::Biped(_) => AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1,
+                    MotionRigV1::Biped(_) => AttackPrimaryMotionAlgorithm::BipedKickV1,
                     MotionRigV1::Quadruped(_) => AttackPrimaryMotionAlgorithm::QuadrupedBiteV1,
                     MotionRigV1::Car(rig) => {
                         if !rig.tool_arms.is_empty() {
@@ -1405,6 +1412,7 @@ fn validate_attack_primary_algorithm(
     match (algorithm, rig) {
         (AttackPrimaryMotionAlgorithm::None, _) => AttackPrimaryMotionAlgorithm::None,
         (AttackPrimaryMotionAlgorithm::RangedRecoilV1, Some(_)) => algorithm,
+        (AttackPrimaryMotionAlgorithm::BipedKickV1, Some(MotionRigV1::Biped(_))) => algorithm,
         (AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1, Some(MotionRigV1::Biped(_))) => algorithm,
         (AttackPrimaryMotionAlgorithm::QuadrupedBiteV1, Some(MotionRigV1::Quadruped(_))) => {
             algorithm
@@ -1534,6 +1542,9 @@ fn apply_motion_algorithms_for_edge(
                 ranged_recoil_override_for_binding(rig, binding, library, attack_window_secs)
                     .into_iter()
                     .collect()
+            }
+            (AttackPrimaryMotionAlgorithm::BipedKickV1, Some(MotionRigV1::Biped(rig))) => {
+                biped_kick_override_for_binding(rig, binding, library, attack_window_secs)
             }
             (AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1, Some(MotionRigV1::Biped(rig))) => {
                 biped_melee_swing_override_for_binding(rig, binding, library, attack_window_secs)
@@ -2069,6 +2080,166 @@ fn airplane_idle_override_for_binding(
     }
 
     None
+}
+
+fn biped_kick_override_for_binding(
+    rig: &BipedRigV1,
+    binding: &ObjectRefEdgeBinding,
+    _library: &ObjectLibrary,
+    attack_window_secs: f32,
+) -> Vec<PartAnimationSlot> {
+    const KICK_PITCH_DEG: f32 = 65.0;
+    const BODY_ROLL_DEG: f32 = 8.0;
+
+    let duration = attack_window_secs.max(0.05);
+
+    fn hold_slot(duration_secs: f32) -> PartAnimationSlot {
+        PartAnimationSlot {
+            channel: "attack_primary".into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::AttackTime,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Once {
+                    duration_secs: duration_secs.max(0.05),
+                    keyframes: vec![PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::IDENTITY,
+                    }],
+                },
+            },
+        }
+    }
+
+    fn kick_slot(duration_secs: f32, pitch_degrees: f32) -> PartAnimationSlot {
+        let duration = duration_secs.max(0.05);
+        let kick = pitch_degrees.to_radians();
+        let wind = duration * 0.18;
+        let strike = duration * 0.45;
+        let settle = duration * 0.65;
+
+        let keyframes = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: wind,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x(-kick * 0.15),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: strike,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x(kick),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: settle,
+                delta: Transform {
+                    rotation: Quat::from_rotation_x(kick * 0.85),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        PartAnimationSlot {
+            channel: "attack_primary".into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::AttackTime,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Once {
+                    duration_secs: duration,
+                    keyframes,
+                },
+            },
+        }
+    }
+
+    fn body_balance_slot(duration_secs: f32, roll_degrees: f32) -> PartAnimationSlot {
+        let duration = duration_secs.max(0.05);
+        let roll = roll_degrees.to_radians();
+        let wind = duration * 0.18;
+        let strike = duration * 0.45;
+        let settle = duration * 0.70;
+
+        let keyframes = vec![
+            PartAnimationKeyframeDef {
+                time_secs: 0.0,
+                delta: Transform::IDENTITY,
+            },
+            PartAnimationKeyframeDef {
+                time_secs: wind,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z(roll * 0.65),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: strike,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z(roll),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: settle,
+                delta: Transform {
+                    rotation: Quat::from_rotation_z(roll * 0.80),
+                    ..default()
+                },
+            },
+            PartAnimationKeyframeDef {
+                time_secs: duration,
+                delta: Transform::IDENTITY,
+            },
+        ];
+
+        PartAnimationSlot {
+            channel: "attack_primary".into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::AttackTime,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Once {
+                    duration_secs: duration,
+                    keyframes,
+                },
+            },
+        }
+    }
+
+    // Two deterministic variants per attack:
+    // - Variant 0: left-leg kick
+    // - Variant 1: right-leg kick
+    if rig.left_leg.matches_binding(binding) {
+        return vec![kick_slot(duration, KICK_PITCH_DEG), hold_slot(duration)];
+    }
+    if rig.right_leg.matches_binding(binding) {
+        return vec![hold_slot(duration), kick_slot(duration, KICK_PITCH_DEG)];
+    }
+
+    if let Some(body) = rig.body.as_ref() {
+        if body.matches_binding(binding) {
+            // Lean toward the planted leg for balance:
+            // - Variant 0 (left kick): lean right (negative roll)
+            // - Variant 1 (right kick): lean left (positive roll)
+            return vec![
+                body_balance_slot(duration, -BODY_ROLL_DEG),
+                body_balance_slot(duration, BODY_ROLL_DEG),
+            ];
+        }
+    }
+
+    Vec::new()
 }
 
 fn biped_melee_swing_override_for_binding(
@@ -3618,6 +3789,99 @@ mod tests {
         assert!(
             keyframes[1].delta.rotation.angle_between(expected) < 1e-5,
             "expected right elbow to be treated as offhand"
+        );
+    }
+
+    #[test]
+    fn biped_kick_provides_left_and_right_variants() {
+        use crate::object::visuals::ObjectRefEdgeBinding;
+
+        let mut rig = BipedRigV1 {
+            move_cycle_m: 1.0,
+            walk_swing_degrees: 25.0,
+            default_move_algorithm: None,
+            body: None,
+            left_leg: MotionEdgeRefV1 {
+                parent_object_id: 0x1,
+                child_object_id: 0x2,
+                parent_anchor: "hip_l".into(),
+                child_anchor: "root".into(),
+            },
+            right_leg: MotionEdgeRefV1 {
+                parent_object_id: 0x1,
+                child_object_id: 0x3,
+                parent_anchor: "hip_r".into(),
+                child_anchor: "root".into(),
+            },
+            left_arm: None,
+            right_arm: None,
+            head: None,
+            tail: None,
+            ears: Vec::new(),
+        };
+        rig.normalize_left_right_hints();
+
+        let library = ObjectLibrary::default();
+        let root = Entity::from_bits(1);
+
+        let left_binding = ObjectRefEdgeBinding {
+            root_entity: root,
+            parent_object_id: 0x1,
+            child_object_id: 0x2,
+            attachment: Some(AttachmentDef {
+                parent_anchor: "hip_l".into(),
+                child_anchor: "root".into(),
+            }),
+            base_transform: Transform::IDENTITY,
+            base_slots: Vec::new(),
+            apply_aim_yaw: false,
+        };
+        let right_binding = ObjectRefEdgeBinding {
+            root_entity: root,
+            parent_object_id: 0x1,
+            child_object_id: 0x3,
+            attachment: Some(AttachmentDef {
+                parent_anchor: "hip_r".into(),
+                child_anchor: "root".into(),
+            }),
+            base_transform: Transform::IDENTITY,
+            base_slots: Vec::new(),
+            apply_aim_yaw: false,
+        };
+
+        let left_slots = biped_kick_override_for_binding(&rig, &left_binding, &library, 1.0);
+        assert_eq!(left_slots.len(), 2);
+        let PartAnimationDef::Once { keyframes, .. } = &left_slots[0].spec.clip else {
+            panic!("expected once clip");
+        };
+        let expected = Quat::from_rotation_x(65.0_f32.to_radians());
+        assert!(
+            keyframes[2].delta.rotation.angle_between(expected) < 1e-5,
+            "expected left leg variant 0 to kick"
+        );
+        let PartAnimationDef::Once { keyframes, .. } = &left_slots[1].spec.clip else {
+            panic!("expected once clip");
+        };
+        assert!(
+            keyframes[0].delta.rotation.angle_between(Quat::IDENTITY) < 1e-6,
+            "expected left leg variant 1 to hold"
+        );
+
+        let right_slots = biped_kick_override_for_binding(&rig, &right_binding, &library, 1.0);
+        assert_eq!(right_slots.len(), 2);
+        let PartAnimationDef::Once { keyframes, .. } = &right_slots[0].spec.clip else {
+            panic!("expected once clip");
+        };
+        assert!(
+            keyframes[0].delta.rotation.angle_between(Quat::IDENTITY) < 1e-6,
+            "expected right leg variant 0 to hold"
+        );
+        let PartAnimationDef::Once { keyframes, .. } = &right_slots[1].spec.clip else {
+            panic!("expected once clip");
+        };
+        assert!(
+            keyframes[2].delta.rotation.angle_between(expected) < 1e-5,
+            "expected right leg variant 1 to kick"
         );
     }
 

@@ -4,9 +4,7 @@ use bevy::prelude::*;
 use uuid::Uuid;
 
 use crate::assets::SceneAssets;
-use crate::constants::{
-    BUILD_GRID_SIZE, BUILD_UNIT_SIZE, CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION,
-};
+use crate::constants::{BUILD_GRID_SIZE, BUILD_UNIT_SIZE, CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION};
 use crate::geometry::{clamp_world_xz, normalize_flat_direction, snap_to_grid};
 use crate::object::registry::{
     ColliderProfile, MeshKey, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction,
@@ -593,7 +591,6 @@ mod tests {
             other => panic!("expected CircleXZ collider, got {other:?}"),
         }
     }
-
 }
 
 pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<ObjectDef>), String> {

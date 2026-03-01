@@ -64,7 +64,7 @@ You can see it working by:
 - Outcome: The engine can inject deterministic motion at runtime for prefabs that declare `motion_rig_v1`:
   - `idle`: `biped_idle_v1`, `quadruped_idle_v1`, `car_idle_v1`, `airplane_idle_v1`
   - `move`: `biped_walk_v1`, `quadruped_walk_v1`, `car_wheels_v1`, `airplane_prop_v1`
-  - `attack_primary`: `biped_melee_swing_v1`, `quadruped_bite_v1`, `ranged_recoil_v1`, `tool_arm_dig_v1`
+  - `attack_primary`: `biped_kick_v1`, `biped_melee_swing_v1`, `quadruped_bite_v1`, `ranged_recoil_v1`, `tool_arm_dig_v1`
 - Outcome: Gen3D can optionally produce `motion_roles_v1` (legs/wheels/arms/head/ears/tail/wings/props/rotors) via a dedicated tool call, and Save can derive a compatible `motion_rig_v1` from it.
 - Outcome: Gen3D no longer generates AI-authored animation clips in the plan; motion is driven by runtime algorithms.
 - Outcome: Per-channel motion algorithm selection persists per instance in `scene.dat` so runtime switching survives reloads.
