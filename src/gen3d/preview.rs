@@ -1,7 +1,6 @@
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
-use bevy::render::render_resource::{TextureFormat, TextureUsages};
 
 use crate::assets::SceneAssets;
 use crate::object::registry::{ColliderProfile, ObjectLibrary, ObjectPartKind};
@@ -26,7 +25,11 @@ pub(super) fn setup_preview_scene(
     materials: &mut Assets<StandardMaterial>,
     preview: &mut Gen3dPreview,
 ) -> Handle<Image> {
-    let target = create_preview_render_target(images);
+    let target = crate::orbit_capture::create_render_target(
+        images,
+        super::GEN3D_PREVIEW_WIDTH_PX,
+        super::GEN3D_PREVIEW_HEIGHT_PX,
+    );
     let root_entity = commands
         .spawn((
             Transform::IDENTITY,
@@ -40,8 +43,12 @@ pub(super) fn setup_preview_scene(
     preview.yaw = super::GEN3D_PREVIEW_DEFAULT_YAW;
     preview.pitch = super::GEN3D_PREVIEW_DEFAULT_PITCH;
     preview.distance = super::GEN3D_PREVIEW_DEFAULT_DISTANCE;
-    let camera_transform =
-        orbit_transform(preview.yaw, preview.pitch, preview.distance, preview.focus);
+    let camera_transform = crate::orbit_capture::orbit_transform(
+        preview.yaw,
+        preview.pitch,
+        preview.distance,
+        preview.focus,
+    );
 
     let camera_entity = commands
         .spawn((
@@ -430,8 +437,12 @@ pub(crate) fn gen3d_preview_orbit_controls(
     let Ok(mut camera_transform) = cameras.single_mut() else {
         return;
     };
-    *camera_transform =
-        orbit_transform(preview.yaw, preview.pitch, preview.distance, preview.focus);
+    *camera_transform = crate::orbit_capture::orbit_transform(
+        preview.yaw,
+        preview.pitch,
+        preview.distance,
+        preview.focus,
+    );
 }
 
 pub(crate) fn gen3d_apply_draft_to_preview(
@@ -605,23 +616,6 @@ pub(crate) fn gen3d_update_collision_overlay(
         ))
         .id();
     commands.entity(preview_root).add_child(collision_entity);
-}
-
-fn create_preview_render_target(images: &mut Assets<Image>) -> Handle<Image> {
-    let mut image = Image::new_target_texture(
-        super::GEN3D_PREVIEW_WIDTH_PX,
-        super::GEN3D_PREVIEW_HEIGHT_PX,
-        TextureFormat::bevy_default(),
-        None,
-    );
-    image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
-    images.add(image)
-}
-
-fn orbit_transform(yaw: f32, pitch: f32, distance: f32, focus: Vec3) -> Transform {
-    let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
-    let pos = focus + rot * Vec3::new(0.0, 0.0, distance);
-    Transform::from_translation(pos).looking_at(focus, Vec3::Y)
 }
 
 fn wrap_angle(mut v: f32) -> f32 {

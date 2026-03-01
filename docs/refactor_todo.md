@@ -44,11 +44,11 @@ Guidelines:
 
 ## 4) Camera orbit / screenshot helpers
 
-- [ ] **Extract shared orbit/screenshot/render-target utilities**
+- [x] **Extract shared orbit/screenshot/render-target utilities**
   - Why: orbit transform + render target creation exist in multiple places with small differences.
   - Where (examples):
     - `src/gen3d/preview.rs` (orbit + render target)
-    - `src/gen3d/ai/mod.rs` (orbit + capture helpers)
+    - `src/gen3d/ai/orchestration.rs` (orbit + capture helpers)
     - `src/scene_build_ai.rs` (orbit + capture helpers)
   - Done when: a shared helper module is used in all three sites; behavior is unchanged (same camera angles, distances, timeouts, and formats).
 

@@ -2,7 +2,6 @@ use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::log::{error, info, warn};
 use bevy::prelude::*;
-use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use serde::Serialize;
 use serde_json::Value;
@@ -12,6 +11,11 @@ use std::time::{Duration, Instant};
 
 use crate::config::AppConfig;
 use crate::object::registry::ObjectLibrary;
+use crate::openai_shared::{
+    curl_auth_header_file, extract_openai_responses_output_text,
+    extract_openai_responses_sse_output_text, split_curl_http_status, CURL_HTTP_STATUS_MARKER,
+    CURL_HTTP_STATUS_WRITEOUT_ARG,
+};
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::realm::ActiveRealmScene;
 use crate::scene_authoring_ui::SceneAuthoringUiState;
@@ -21,15 +25,12 @@ use crate::scene_sources_patch::{
 };
 use crate::scene_sources_runtime::{SceneSourcesWorkspace, SceneWorldInstance};
 use crate::scene_validation::{HardGateSpecV1, ScorecardSpecV1};
+use crate::threaded_result::{
+    new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
+};
 use crate::types::{
     BuildObject, Commandable, ObjectId, ObjectPrefabId, ObjectTint, Player, SceneLayerOwner,
 };
-use crate::openai_shared::{
-    curl_auth_header_file, extract_openai_responses_output_text,
-    extract_openai_responses_sse_output_text, split_curl_http_status,
-    CURL_HTTP_STATUS_MARKER, CURL_HTTP_STATUS_WRITEOUT_ARG,
-};
-use crate::threaded_result::{new_shared_result, spawn_worker_thread, take_shared_result, SharedResult};
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 const CURL_MAX_TIME_SECS: u32 = 600;
@@ -103,74 +104,6 @@ struct SceneBuildStepScreenshotCapture {
 #[derive(Component)]
 struct SceneBuildStepScreenshotCamera;
 
-fn create_scene_build_render_target(
-    images: &mut Assets<Image>,
-    width_px: u32,
-    height_px: u32,
-) -> Handle<Image> {
-    let mut image = Image::new_target_texture(
-        width_px.max(1),
-        height_px.max(1),
-        TextureFormat::bevy_default(),
-        None,
-    );
-    image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
-    images.add(image)
-}
-
-fn scene_build_orbit_transform(yaw: f32, pitch: f32, distance: f32, focus: Vec3) -> Transform {
-    let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
-    let pos = focus + rot * Vec3::new(0.0, 0.0, distance);
-    Transform::from_translation(pos).looking_at(focus, Vec3::Y)
-}
-
-fn scene_build_required_distance_for_view(
-    half_extents: Vec3,
-    yaw: f32,
-    pitch: f32,
-    fov_y: f32,
-    aspect: f32,
-    near: f32,
-) -> f32 {
-    let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
-    let mut view_dir = -rot * Vec3::Z;
-    if !view_dir.is_finite() || view_dir.length_squared() <= 1e-6 {
-        view_dir = -Vec3::Z;
-    } else {
-        view_dir = view_dir.normalize();
-    }
-
-    let mut right = Vec3::Y.cross(view_dir);
-    if !right.is_finite() || right.length_squared() <= 1e-6 {
-        right = Vec3::X;
-    } else {
-        right = right.normalize();
-    }
-    let mut up = view_dir.cross(right);
-    if !up.is_finite() || up.length_squared() <= 1e-6 {
-        up = Vec3::Y;
-    } else {
-        up = up.normalize();
-    }
-
-    let extent_right = half_extents.x * right.x.abs()
-        + half_extents.y * right.y.abs()
-        + half_extents.z * right.z.abs();
-    let extent_up =
-        half_extents.x * up.x.abs() + half_extents.y * up.y.abs() + half_extents.z * up.z.abs();
-    let extent_forward = half_extents.x * view_dir.x.abs()
-        + half_extents.y * view_dir.y.abs()
-        + half_extents.z * view_dir.z.abs();
-
-    let tan_y = (fov_y * 0.5).tan().max(1e-4);
-    let tan_x = (tan_y * aspect).max(1e-4);
-    let dist_y = extent_up / tan_y;
-    let dist_x = extent_right / tan_x;
-
-    // Ensure the near plane won't clip the bounds.
-    dist_x.max(dist_y).max(extent_forward + near + 0.05)
-}
-
 fn scene_build_focus_and_half_extents(
     library: &ObjectLibrary,
     instances: impl Iterator<Item = (Transform, ObjectPrefabId)>,
@@ -235,7 +168,14 @@ fn start_scene_build_step_screenshot_capture(
         .iter()
         .map(|view| {
             let (yaw, pitch) = view.orbit_angles();
-            scene_build_required_distance_for_view(half_extents, yaw, pitch, fov_y, aspect, near)
+            crate::orbit_capture::required_distance_for_view(
+                half_extents,
+                yaw,
+                pitch,
+                fov_y,
+                aspect,
+                near,
+            )
         })
         .fold(0.0f32, f32::max);
 
@@ -253,9 +193,9 @@ fn start_scene_build_step_screenshot_capture(
     let mut views_manifest = Vec::new();
 
     for &view in &SCENE_BUILD_STEP_SCREENSHOT_VIEWS {
-        let target = create_scene_build_render_target(images, width_px, height_px);
+        let target = crate::orbit_capture::create_render_target(images, width_px, height_px);
         let (yaw, pitch) = view.orbit_angles();
-        let transform = scene_build_orbit_transform(yaw, pitch, distance, focus);
+        let transform = crate::orbit_capture::orbit_transform(yaw, pitch, distance, focus);
 
         let camera = commands
             .spawn((
