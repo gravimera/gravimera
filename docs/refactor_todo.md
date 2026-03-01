@@ -79,6 +79,6 @@ Guidelines:
 
 ## 8) Documentation alignment
 
-- [ ] **Fix README drift vs current behavior**
+- [x] **Fix README drift vs current behavior**
   - Why: some README statements appear to disagree with newer Gen3D docs (e.g., fixed-joint rotation handling).
   - Done when: README is accurate and high-level; deeper details live in `docs/`.
