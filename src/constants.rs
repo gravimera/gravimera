@@ -196,7 +196,7 @@ pub(crate) const CAMERA_YAW_DEADZONE_RADS: f32 = 15.0 * std::f32::consts::PI / 1
 
 // Fully zoomed-in camera uses the same view direction as far zoom, just closer.
 // (i.e. scrolling zooms without orbiting/rotating the view.)
-pub(crate) const CAMERA_ZOOM_NEAR_SCALE: f32 = 1.0 / 3.0;
+pub(crate) const CAMERA_ZOOM_NEAR_SCALE: f32 = 1.0 / 10.0;
 pub(crate) const CAMERA_ZOOM_FAR_SCALE: f32 = 8.0;
 
 pub(crate) const DEFAULT_HEADLESS_SECONDS: f32 = 5.0;
