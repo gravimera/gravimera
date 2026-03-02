@@ -64,6 +64,11 @@ impl Plugin for RenderedSceneRuntimePlugin {
         );
         app.add_systems(
             Update,
+            scene_store::apply_pending_workspace_switch
+                .after(crate::workspace_ui::workspace_ui_dropdown_option_buttons),
+        );
+        app.add_systems(
+            Update,
             (
                 crate::motion::ensure_default_motion_algorithm_controllers,
                 crate::motion::apply_motion_algorithms_on_controller_change

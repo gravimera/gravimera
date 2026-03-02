@@ -45,6 +45,27 @@ impl Default for WorkspaceUiState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WorkspaceTabSwitch {
+    pub(crate) from: WorkspaceTab,
+    pub(crate) to: WorkspaceTab,
+}
+
+#[derive(Resource, Default, Debug)]
+pub(crate) struct PendingWorkspaceSwitch {
+    pending: Option<WorkspaceTabSwitch>,
+}
+
+impl PendingWorkspaceSwitch {
+    pub(crate) fn request(&mut self, from: WorkspaceTab, to: WorkspaceTab) {
+        self.pending = Some(WorkspaceTabSwitch { from, to });
+    }
+
+    pub(crate) fn take(&mut self) -> Option<WorkspaceTabSwitch> {
+        self.pending.take()
+    }
+}
+
 #[derive(Component)]
 pub(crate) struct WorkspaceUiRoot;
 
@@ -267,6 +288,7 @@ pub(crate) fn workspace_ui_dropdown_list_visibility(
 
 pub(crate) fn workspace_ui_dropdown_option_buttons(
     mut ui_state: ResMut<WorkspaceUiState>,
+    mut pending_switch: ResMut<PendingWorkspaceSwitch>,
     build_scene: Res<State<BuildScene>>,
     mut next_build_scene: ResMut<NextState<BuildScene>>,
     mut scene_ui: ResMut<SceneAuthoringUiState>,
@@ -282,7 +304,12 @@ pub(crate) fn workspace_ui_dropdown_option_buttons(
     for (interaction, button, mut bg) in &mut buttons {
         match *interaction {
             Interaction::Pressed => {
-                ui_state.tab = button.tab;
+                let from = ui_state.tab;
+                let to = button.tab;
+                if to != from {
+                    pending_switch.request(from, to);
+                    ui_state.tab = to;
+                }
                 ui_state.dropdown_open = false;
 
                 // Switching tabs should always return to the main realm view.

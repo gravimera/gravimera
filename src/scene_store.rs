@@ -1,4 +1,5 @@
 use bevy::ecs::message::{MessageReader, MessageWriter};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use prost::{Enumeration, Message, Oneof};
 use std::collections::{HashSet, VecDeque};
@@ -22,6 +23,7 @@ use crate::object::registry::{
 };
 use crate::object::visuals;
 use crate::types::*;
+use crate::workspace_ui::{PendingWorkspaceSwitch, WorkspaceTab};
 
 const SCENE_DAT_VERSION: u32 = 8;
 // Persist positions in centimeters (stable and easy to reason about for AI-authored worlds).
@@ -54,6 +56,20 @@ impl Default for SceneAutosaveState {
             primed: false,
         }
     }
+}
+
+#[derive(SystemParam)]
+pub(crate) struct WorkspaceSwitchDeps<'w> {
+    config: Res<'w, AppConfig>,
+    active: Res<'w, crate::realm::ActiveRealmScene>,
+    asset_server: Res<'w, AssetServer>,
+    assets: Res<'w, SceneAssets>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    material_cache: ResMut<'w, crate::object::visuals::MaterialCache>,
+    mesh_cache: ResMut<'w, crate::object::visuals::PrimitiveMeshCache>,
+    library: ResMut<'w, ObjectLibrary>,
+    prefab_descriptors: ResMut<'w, crate::prefab_descriptors::PrefabDescriptorLibrary>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -639,6 +655,21 @@ fn scene_dat_path(config: &AppConfig, active: &crate::realm::ActiveRealmScene) -
     }
 
     crate::realm::scene_dat_path(active)
+}
+
+fn workspace_scene_dat_path(
+    config: &AppConfig,
+    active: &crate::realm::ActiveRealmScene,
+    tab: WorkspaceTab,
+) -> PathBuf {
+    let base = scene_dat_path(config, active);
+    match tab {
+        WorkspaceTab::ObjectPreview => base,
+        WorkspaceTab::SceneBuild => {
+            let dir = base.parent().unwrap_or_else(|| Path::new("."));
+            dir.join("scene.build.dat")
+        }
+    }
 }
 
 fn quantize_world(value_m: f32, units_per_meter: u32) -> i32 {
@@ -1963,6 +1994,7 @@ pub(crate) fn load_scene_dat(
     mut commands: Commands,
     config: Res<AppConfig>,
     active: Res<crate::realm::ActiveRealmScene>,
+    workspace_ui: Res<crate::workspace_ui::WorkspaceUiState>,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -2019,7 +2051,7 @@ pub(crate) fn load_scene_dat(
         Err(err) => warn!("{err}"),
     }
 
-    let path = scene_dat_path(&config, &active);
+    let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
     match load_scene_dat_from_path(
         &mut commands,
         &asset_server,
@@ -2042,6 +2074,144 @@ pub(crate) fn load_scene_dat(
     }
 }
 
+pub(crate) fn apply_pending_workspace_switch(
+    mut commands: Commands,
+    mut pending_switch: ResMut<PendingWorkspaceSwitch>,
+    mut autosave: ResMut<SceneAutosaveState>,
+    mut selection: ResMut<SelectionState>,
+    mut world_drag: ResMut<crate::world_drag::WorldDragState>,
+    mut deps: WorkspaceSwitchDeps,
+    objects: Query<
+        (
+            &Transform,
+            &ObjectId,
+            &ObjectPrefabId,
+            Option<&ObjectTint>,
+            Option<&ObjectForms>,
+            Option<&MotionAlgorithmController>,
+        ),
+        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+    >,
+    existing_scene_entities: Query<
+        Entity,
+        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+    >,
+) {
+    let Some(switch) = pending_switch.take() else {
+        return;
+    };
+    if switch.from == switch.to {
+        return;
+    }
+
+    info!(
+        "Switching workspace: {} -> {}",
+        switch.from.label(),
+        switch.to.label()
+    );
+
+    let from_path = workspace_scene_dat_path(&deps.config, &deps.active, switch.from);
+    match save_scene_dat_internal(&objects, &deps.library, &from_path) {
+        Ok(instance_count) => {
+            info!(
+                "Saved {instance_count} scene instances to {} (workspace switch).",
+                from_path.display()
+            );
+        }
+        Err(err) => {
+            warn!(
+                "Failed to save {} before workspace switch: {err}",
+                from_path.display()
+            );
+        }
+    }
+
+    selection.clear();
+    *world_drag = crate::world_drag::WorldDragState::default();
+
+    for entity in &existing_scene_entities {
+        commands.entity(entity).try_despawn();
+    }
+
+    // Reset library to builtins + realm-shared prefabs for the active realm.
+    *deps.library = ObjectLibrary::default();
+    match crate::model_depot::load_depot_prefabs_into_library(&mut *deps.library) {
+        Ok(count) => {
+            if count > 0 {
+                info!("Loaded {count} depot prefab defs.");
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
+    match crate::realm_prefabs::load_realm_prefabs_into_library(
+        &deps.active.realm_id,
+        &mut *deps.library,
+    ) {
+        Ok(count) => {
+            if count > 0 {
+                info!(
+                    "Loaded {count} realm prefab defs for realm {}.",
+                    deps.active.realm_id
+                );
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
+
+    // Load optional realm prefab descriptors for the active realm.
+    deps.prefab_descriptors.clear();
+    match crate::model_depot::load_depot_prefab_descriptors_into_library(
+        &mut *deps.prefab_descriptors,
+    ) {
+        Ok(count) => {
+            if count > 0 {
+                info!("Loaded {count} depot prefab descriptors.");
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
+    match crate::prefab_descriptors::load_realm_prefab_descriptors_into_library(
+        &deps.active.realm_id,
+        &mut *deps.prefab_descriptors,
+    ) {
+        Ok(count) => {
+            if count > 0 {
+                info!(
+                    "Loaded {count} realm prefab descriptors for realm {}.",
+                    deps.active.realm_id
+                );
+            }
+        }
+        Err(err) => warn!("{err}"),
+    }
+
+    let to_path = workspace_scene_dat_path(&deps.config, &deps.active, switch.to);
+    match load_scene_dat_from_path(
+        &mut commands,
+        &deps.asset_server,
+        &deps.assets,
+        &mut deps.meshes,
+        &mut deps.materials,
+        &mut deps.material_cache,
+        &mut deps.mesh_cache,
+        &mut deps.library,
+        &to_path,
+    ) {
+        Ok(spawned) => {
+            if spawned > 0 {
+                info!("Loaded {spawned} scene instances from {}.", to_path.display());
+            }
+        }
+        Err(err) => {
+            warn!("{err}");
+        }
+    }
+
+    autosave.dirty = false;
+    autosave.primed = false;
+    autosave.timer.reset();
+}
+
 pub(crate) fn apply_pending_realm_scene_switch(
     mut commands: Commands,
     config: Res<AppConfig>,
@@ -2049,6 +2219,7 @@ pub(crate) fn apply_pending_realm_scene_switch(
     mut pending: ResMut<crate::realm::PendingRealmSceneSwitch>,
     mut autosave: ResMut<SceneAutosaveState>,
     mut workspace: ResMut<crate::scene_sources_runtime::SceneSourcesWorkspace>,
+    workspace_ui: Res<crate::workspace_ui::WorkspaceUiState>,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -2141,7 +2312,7 @@ pub(crate) fn apply_pending_realm_scene_switch(
         Err(err) => warn!("{err}"),
     }
 
-    let path = scene_dat_path(&config, &active);
+    let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
     match load_scene_dat_from_path(
         &mut commands,
         &asset_server,
@@ -2438,6 +2609,7 @@ pub(crate) fn scene_save_requests(
     >,
     config: Res<AppConfig>,
     active: Res<crate::realm::ActiveRealmScene>,
+    workspace_ui: Res<crate::workspace_ui::WorkspaceUiState>,
     library: Res<ObjectLibrary>,
     mut autosave: ResMut<SceneAutosaveState>,
 ) {
@@ -2449,7 +2621,7 @@ pub(crate) fn scene_save_requests(
         return;
     };
 
-    let path = scene_dat_path(&config, &active);
+    let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
     match save_scene_dat_internal(&objects, &library, &path) {
         Ok(instance_count) => {
             info!(
@@ -2481,6 +2653,7 @@ pub(crate) fn scene_autosave_tick(
     >,
     config: Res<AppConfig>,
     active: Res<crate::realm::ActiveRealmScene>,
+    workspace_ui: Res<crate::workspace_ui::WorkspaceUiState>,
     library: Res<ObjectLibrary>,
     mut autosave: ResMut<SceneAutosaveState>,
 ) {
@@ -2489,7 +2662,7 @@ pub(crate) fn scene_autosave_tick(
         return;
     }
 
-    let path = scene_dat_path(&config, &active);
+    let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
     match save_scene_dat_internal(&objects, &library, &path) {
         Ok(instance_count) => {
             info!(
