@@ -78,3 +78,7 @@ For creators who need more complex logic than behavior graphs:
 - modules cannot access filesystem/network directly; they only read observation data and emit actions.
 
 This is optional and can be disabled by realm policy.
+
+For the proposed Wasm “AI plugin” interface and host requirements, see:
+
+- `docs/gamedesign/38_wasm_brain_plugin_spec.md`
