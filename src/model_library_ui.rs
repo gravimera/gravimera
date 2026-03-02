@@ -122,9 +122,11 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
-                    height: Val::Px(680.0),
                     flex_direction: FlexDirection::Row,
                     column_gap: Val::Px(6.0),
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.0),
+                    min_height: Val::Px(0.0),
                     ..default()
                 },
                 BackgroundColor(Color::NONE),
@@ -158,7 +160,7 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
                 row.spawn((
                     Node {
                         width: Val::Px(8.0),
-                        height: Val::Px(680.0),
+                        height: Val::Percent(100.0),
                         position_type: PositionType::Relative,
                         ..default()
                     },
