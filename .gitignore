@@ -7,4 +7,5 @@
 config.toml
 cases
 game_test/
-/test/
+test
+tests
