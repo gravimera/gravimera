@@ -1275,6 +1275,7 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 workshop,
                 job,
                 draft,
+                false,
                 player_transform,
                 player_collider,
                 scene_saves,

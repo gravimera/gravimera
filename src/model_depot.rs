@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
+use crate::constants::CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION;
 use crate::object::registry::{MovementBlockRule, ObjectDef, ObjectLibrary};
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
 
@@ -66,12 +67,14 @@ fn patch_gen3d_building_movement_blocks(library: &mut ObjectLibrary) -> usize {
         if !def.label.as_ref().starts_with(GEN3D_SAVED_ROOT_LABEL_PREFIX) {
             continue;
         }
-        if matches!(def.interaction.movement_block, Some(MovementBlockRule::Always)) {
+        if !matches!(def.interaction.movement_block, Some(MovementBlockRule::Always)) {
             continue;
         }
 
         let mut updated = def.clone();
-        updated.interaction.movement_block = Some(MovementBlockRule::Always);
+        updated.interaction.movement_block = Some(MovementBlockRule::UpperBodyFraction(
+            CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION,
+        ));
         patched.push(updated);
     }
 
@@ -165,7 +168,7 @@ mod tests {
             interaction: ObjectInteraction {
                 blocks_bullets: true,
                 blocks_laser: true,
-                movement_block: Some(MovementBlockRule::UpperBodyFraction(2.0 / 3.0)),
+                movement_block: Some(MovementBlockRule::Always),
                 supports_standing: false,
             },
             aim: None,
@@ -183,19 +186,21 @@ mod tests {
         assert!(
             matches!(
                 library.get(prefab_id).unwrap().interaction.movement_block,
-                Some(MovementBlockRule::UpperBodyFraction(_))
+                Some(MovementBlockRule::Always)
             ),
-            "precondition failed: expected UpperBodyFraction movement_block",
+            "precondition failed: expected Always movement_block",
         );
 
         let patched = patch_gen3d_building_movement_blocks(&mut library);
         assert_eq!(patched, 1);
-        assert!(
-            matches!(
-                library.get(prefab_id).unwrap().interaction.movement_block,
-                Some(MovementBlockRule::Always)
-            ),
-            "expected movement_block to be upgraded to Always",
-        );
+        match library.get(prefab_id).unwrap().interaction.movement_block {
+            Some(MovementBlockRule::UpperBodyFraction(fraction)) => {
+                assert!(
+                    (fraction - CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION).abs() < 1e-6,
+                    "fraction={fraction}",
+                );
+            }
+            other => panic!("expected UpperBodyFraction movement_block, got {other:?}"),
+        }
     }
 }

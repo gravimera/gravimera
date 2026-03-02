@@ -24,7 +24,7 @@ The AI is instructed to prioritize **basic structure and proportions** over smal
 5. Review in the preview panel:
    - Orbit/zoom (LMB drag / mouse wheel).
    - Select preview motion channel via the **Anim** dropdown (lists available channels; canonical: Idle / Move / Attack).
-   - Toggle collider overlay via **Collision: On/Off**.
+   - Toggle collider overlay via **Collision: On/Off** (also controls whether saved buildings block unit movement).
    - Open the **Status / Tool Feedback** overlay via the top-right `≡` button (collapsed by default).
    - The preview shows run time and AI token counters (run + total) at top-left.
 6. If needed, change notes/images and click **Build** again.

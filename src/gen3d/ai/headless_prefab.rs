@@ -111,7 +111,7 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
         }
     }
 
-    let (root_prefab_id, defs) = super::super::save::draft_to_saved_defs(&draft)?;
+    let (root_prefab_id, defs) = super::super::save::draft_to_saved_defs(&draft, false)?;
 
     Ok(Gen3dHeadlessPrefabResult {
         root_prefab_id,

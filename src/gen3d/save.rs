@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use uuid::Uuid;
 
 use crate::assets::SceneAssets;
-use crate::constants::{BUILD_GRID_SIZE, BUILD_UNIT_SIZE};
+use crate::constants::{BUILD_GRID_SIZE, BUILD_UNIT_SIZE, CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION};
 use crate::geometry::{clamp_world_xz, normalize_flat_direction, snap_to_grid};
 use crate::object::registry::{
     ColliderProfile, MeshKey, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction,
@@ -19,7 +19,7 @@ use crate::types::{
 };
 
 use super::ai::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1, Gen3dAiJob};
-use super::state::{Gen3dDraft, Gen3dSaveButton, Gen3dWorkshop};
+use super::state::{Gen3dDraft, Gen3dPreview, Gen3dSaveButton, Gen3dWorkshop};
 
 #[derive(SystemParam)]
 pub(crate) struct Gen3dSaveRenderWorld<'w> {
@@ -79,13 +79,15 @@ impl Bounds {
     }
 }
 
-fn saved_root_interaction(collider: ColliderProfile) -> ObjectInteraction {
+fn saved_root_interaction(collider: ColliderProfile, collision_enabled: bool) -> ObjectInteraction {
     match collider {
         ColliderProfile::None => ObjectInteraction::none(),
         _ => ObjectInteraction {
             blocks_bullets: true,
             blocks_laser: true,
-            movement_block: Some(MovementBlockRule::Always),
+            movement_block: collision_enabled.then_some(MovementBlockRule::UpperBodyFraction(
+                CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION,
+            )),
             supports_standing: false,
         },
     }
@@ -577,7 +579,7 @@ mod tests {
         let draft = Gen3dDraft {
             defs: vec![root_def, body_root_def, torso_def],
         };
-        let (saved_root_id, saved_defs) = draft_to_saved_defs(&draft).expect("save ok");
+        let (saved_root_id, saved_defs) = draft_to_saved_defs(&draft, false).expect("save ok");
         let saved_root = saved_defs
             .iter()
             .find(|def| def.object_id == saved_root_id)
@@ -591,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn draft_to_saved_defs_sets_building_root_collision_to_always_block_movement() {
+    fn draft_to_saved_defs_building_root_collision_respects_collision_enabled_flag() {
         use crate::object::registry::{MovementBlockRule, ObjectPartDef};
 
         let root_id = super::super::gen3d_draft_object_id();
@@ -647,24 +649,46 @@ mod tests {
             defs: vec![root_def, body_def],
         };
 
-        let (saved_root_id, saved_defs) = draft_to_saved_defs(&draft).expect("save ok");
-        let saved_root = saved_defs
-            .iter()
-            .find(|def| def.object_id == saved_root_id)
-            .expect("saved root present");
-
         assert!(
-            matches!(
-                saved_root.interaction.movement_block,
-                Some(MovementBlockRule::Always)
-            ),
-            "expected Gen3D building roots to always block movement; got {:?}",
-            saved_root.interaction.movement_block
+            draft_to_saved_defs(&draft, false)
+                .ok()
+                .and_then(|(saved_root_id, saved_defs)| {
+                    saved_defs
+                        .iter()
+                        .find(|def| def.object_id == saved_root_id)
+                        .map(|def| def.interaction.movement_block)
+                })
+                .flatten()
+                .is_none(),
+            "expected collision-disabled Gen3D building roots to not block movement",
         );
+
+        let saved_root_movement_block = draft_to_saved_defs(&draft, true)
+            .ok()
+            .and_then(|(saved_root_id, saved_defs)| {
+                saved_defs
+                    .iter()
+                    .find(|def| def.object_id == saved_root_id)
+                    .map(|def| def.interaction.movement_block)
+            })
+            .flatten();
+
+        match saved_root_movement_block {
+            Some(MovementBlockRule::UpperBodyFraction(fraction)) => {
+                assert!(
+                    (fraction - CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION).abs() < 1e-6,
+                    "fraction={fraction}",
+                );
+            }
+            other => panic!("expected UpperBodyFraction movement_block, got {other:?}"),
+        };
     }
 }
 
-pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<ObjectDef>), String> {
+pub(super) fn draft_to_saved_defs(
+    draft: &Gen3dDraft,
+    collision_enabled: bool,
+) -> Result<(u128, Vec<ObjectDef>), String> {
     let root_id = super::gen3d_draft_object_id();
     let Some(root_def) = draft.defs.iter().find(|d| d.object_id == root_id) else {
         return Err("Gen3D: missing root draft object def.".into());
@@ -758,7 +782,7 @@ pub(super) fn draft_to_saved_defs(draft: &Gen3dDraft) -> Result<(u128, Vec<Objec
             new_def.interaction = if new_def.mobility.is_some() {
                 ObjectInteraction::none()
             } else {
-                saved_root_interaction(new_def.collider)
+                saved_root_interaction(new_def.collider, collision_enabled)
             };
         }
 
@@ -824,6 +848,7 @@ pub(crate) fn gen3d_save_button(
     mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
     mut job: ResMut<Gen3dAiJob>,
     draft: Res<Gen3dDraft>,
+    preview: Res<Gen3dPreview>,
     player_q: Query<(&Transform, &Collider), With<Player>>,
     mut scene_saves: MessageWriter<SceneSaveRequest>,
     mut last_interaction: Local<Option<Interaction>>,
@@ -887,6 +912,7 @@ pub(crate) fn gen3d_save_button(
                 &mut workshop,
                 &mut job,
                 &draft,
+                preview.show_collision,
                 player_transform,
                 player_collider,
                 &mut scene_saves,
@@ -916,6 +942,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
     draft: &Gen3dDraft,
+    collision_enabled: bool,
     player_transform: &Transform,
     player_collider: &Collider,
     scene_saves: &mut MessageWriter<SceneSaveRequest>,
@@ -928,7 +955,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     let snapshot = Gen3dDraft {
         defs: draft.defs.clone(),
     };
-    let (saved_root_id, defs) = draft_to_saved_defs(&snapshot)?;
+    let (saved_root_id, defs) = draft_to_saved_defs(&snapshot, collision_enabled)?;
     let depot_prefabs_dir =
         crate::model_depot::save_model_prefab_defs_to_depot(saved_root_id, saved_root_id, &defs)?;
     for def in defs {
