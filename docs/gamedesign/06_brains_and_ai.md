@@ -74,11 +74,12 @@ These guardrails let hosts run “living worlds” without risking runaway CPU u
 
 For creators who need more complex logic than behavior graphs:
 
-- support sandboxed modules (e.g. WebAssembly) with strict resource limits and a constrained API surface.
-- modules cannot access filesystem/network directly; they only read observation data and emit actions.
+- support managed sandboxed brain runtimes (standalone intelligence service processes) with strict resource limits and a constrained API surface.
+- brains do not mutate simulation state directly; they only receive bounded observations/events and emit semantic action requests.
+- deployments may be local sidecars, sandboxed containers/VMs, or remote services (host policy).
 
 This is optional and can be disabled by realm policy.
 
-For the proposed Wasm “AI plugin” interface and host requirements, see:
+For the proposed standalone intelligence service interface and host requirements, see:
 
-- `docs/gamedesign/38_wasm_brain_plugin_spec.md`
+- `docs/gamedesign/38_intelligence_service_spec.md`

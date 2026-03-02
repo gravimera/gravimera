@@ -49,12 +49,12 @@ Two supported patterns:
 
 1) **External AI (recommended)**: agents run models externally and send semantic actions. The server never executes untrusted code.
 
-2) **Embedded AI (optional)**: behavior graphs (and optional Wasm modules) run inside a sandbox:
-   - strict CPU/memory budgets
-   - no filesystem/network access
-   - only a narrow API: observe local world + emit semantic actions
+2) **Embedded AI (optional)**: behavior graphs and optional managed brain runtimes run under a sandbox boundary:
+   - behavior graphs run in-process with strict step budgets
+   - managed brain runtimes run out-of-process (sidecar/container/VM/remote) with CPU/memory limits and restricted network egress
+   - only a narrow API: bounded observations/events + semantic action requests
 
-Realms/hosts can disable embedded modules entirely.
+Realms/hosts can disable embedded brains entirely.
 
 ## Safe Authoring Validation
 
@@ -79,4 +79,3 @@ The engine must support:
 
 - realm-level policy configuration
 - moderation tools (ban token, revoke capabilities, quarantine a scene)
-

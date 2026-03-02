@@ -35,6 +35,6 @@ Modding is a policy choice per realm/server. Supported extension mechanisms:
 
 - new prefab packs (data + assets),
 - new behavior graph node libraries (data-defined),
-- optional sandboxed logic modules (Wasm) under strict permissions.
+- optional sandboxed brain runtimes (standalone intelligence services) under strict permissions.
 
 No mod is allowed to silently expand its capabilities; every capability is explicit in the manifest and must be approved by the host.
