@@ -1,10 +1,11 @@
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
-use crate::object::registry::{ObjectDef, ObjectLibrary};
+use crate::object::registry::{MovementBlockRule, ObjectDef, ObjectLibrary};
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
 
 const MODEL_PREFABS_DIR_NAME: &str = "prefabs";
+const GEN3D_SAVED_ROOT_LABEL_PREFIX: &str = "Gen3DModel_";
 
 pub(crate) fn depot_models_dir() -> PathBuf {
     crate::paths::depot_models_dir()
@@ -52,7 +53,33 @@ pub(crate) fn load_depot_prefabs_into_library(
             Err(err) => warn!("Depot: {err}"),
         }
     }
+    patch_gen3d_building_movement_blocks(library);
     Ok(loaded)
+}
+
+fn patch_gen3d_building_movement_blocks(library: &mut ObjectLibrary) -> usize {
+    let mut patched: Vec<ObjectDef> = Vec::new();
+    for (_prefab_id, def) in library.iter() {
+        if def.mobility.is_some() {
+            continue;
+        }
+        if !def.label.as_ref().starts_with(GEN3D_SAVED_ROOT_LABEL_PREFIX) {
+            continue;
+        }
+        if matches!(def.interaction.movement_block, Some(MovementBlockRule::Always)) {
+            continue;
+        }
+
+        let mut updated = def.clone();
+        updated.interaction.movement_block = Some(MovementBlockRule::Always);
+        patched.push(updated);
+    }
+
+    let count = patched.len();
+    for def in patched {
+        library.upsert(def);
+    }
+    count
 }
 
 pub(crate) fn load_depot_prefab_descriptors_into_library(
@@ -100,6 +127,7 @@ fn list_depot_models_in_dir(root: &Path) -> Result<Vec<u128>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::object::registry::{ColliderProfile, ObjectInteraction};
 
     #[test]
     fn list_depot_models_ignores_non_uuid_folders() {
@@ -120,5 +148,54 @@ mod tests {
         assert_eq!(models, vec![model_id]);
 
         let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
+    fn patch_gen3d_building_movement_blocks_upgrades_existing_models() {
+        let prefab_id = uuid::Uuid::new_v4().as_u128();
+        let mut library = ObjectLibrary::default();
+        library.upsert(ObjectDef {
+            object_id: prefab_id,
+            label: format!("{GEN3D_SAVED_ROOT_LABEL_PREFIX}deadbeef").into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::AabbXZ {
+                half_extents: Vec2::splat(0.5),
+            },
+            interaction: ObjectInteraction {
+                blocks_bullets: true,
+                blocks_laser: true,
+                movement_block: Some(MovementBlockRule::UpperBodyFraction(2.0 / 3.0)),
+                supports_standing: false,
+            },
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        assert!(
+            matches!(
+                library.get(prefab_id).unwrap().interaction.movement_block,
+                Some(MovementBlockRule::UpperBodyFraction(_))
+            ),
+            "precondition failed: expected UpperBodyFraction movement_block",
+        );
+
+        let patched = patch_gen3d_building_movement_blocks(&mut library);
+        assert_eq!(patched, 1);
+        assert!(
+            matches!(
+                library.get(prefab_id).unwrap().interaction.movement_block,
+                Some(MovementBlockRule::Always)
+            ),
+            "expected movement_block to be upgraded to Always",
+        );
     }
 }
