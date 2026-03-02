@@ -188,6 +188,9 @@ impl Plugin for RenderedUiPlugin {
             (
                 crate::model_library_ui::model_library_item_button_interactions
                     .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_scrollbar_drag
+                    .after(crate::model_library_ui::model_library_item_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_drag_update
                     .after(crate::model_library_ui::model_library_item_button_interactions)
                     .run_if(crate::automation::local_input_enabled),
@@ -402,6 +405,12 @@ impl Plugin for RenderedGen3dPlugin {
             )
                 .in_set(UiSystems::Content)
                 .run_if(in_state(BuildScene::Preview)),
+        );
+        app.add_systems(
+            PostUpdate,
+            crate::model_library_ui::model_library_update_scrollbar_ui
+                .in_set(UiSystems::Content)
+                .run_if(in_state(BuildScene::Realm)),
         );
     }
 }

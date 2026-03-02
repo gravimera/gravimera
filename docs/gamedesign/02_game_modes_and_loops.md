@@ -22,6 +22,8 @@ Build mode has two scene views:
 - **Realm scene**: the normal in-world camera view where instances live.
 - **3D Preview scene**: an asset-creation view for Gen3D (workshop UI + model preview). Gen3D exists only in this view.
 
+In Build mode’s Object Preview workspace, a left-side Models panel lists depot models; long lists are scrollable via a vertical scrollbar with a draggable thumb.
+
 ### Play Mode (Gameplay)
 
 Play mode is for moment-to-moment gameplay:

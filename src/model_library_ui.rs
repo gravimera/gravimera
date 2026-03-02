@@ -26,11 +26,17 @@ struct ModelLibraryDrag {
     preview_translation: Option<Vec3>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ModelLibraryScrollbarDrag {
+    grab_offset: f32,
+}
+
 #[derive(Resource, Debug)]
 pub(crate) struct ModelLibraryUiState {
     models_dirty: bool,
     drag: Option<ModelLibraryDrag>,
     spawn_seq: u32,
+    scrollbar_drag: Option<ModelLibraryScrollbarDrag>,
 }
 
 impl Default for ModelLibraryUiState {
@@ -39,6 +45,7 @@ impl Default for ModelLibraryUiState {
             models_dirty: true,
             drag: None,
             spawn_seq: 0,
+            scrollbar_drag: None,
         }
     }
 }
@@ -57,10 +64,19 @@ impl ModelLibraryUiState {
 pub(crate) struct ModelLibraryRoot;
 
 #[derive(Component)]
+pub(crate) struct ModelLibraryScrollPanel;
+
+#[derive(Component)]
 pub(crate) struct ModelLibraryList;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryListItem;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryScrollbarTrack;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryScrollbarThumb;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryItemButton {
@@ -106,26 +122,66 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
-                    flex_grow: 1.0,
-                    flex_basis: Val::Px(0.0),
-                    min_height: Val::Px(0.0),
-                    overflow: Overflow::scroll_y(),
+                    height: Val::Px(680.0),
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(6.0),
                     ..default()
                 },
                 BackgroundColor(Color::NONE),
-                ScrollPosition::default(),
             ))
-            .with_children(|scroll| {
-                scroll.spawn((
+            .with_children(|row| {
+                row.spawn((
                     Node {
-                        width: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(6.0),
+                        flex_grow: 1.0,
+                        flex_basis: Val::Px(0.0),
+                        min_height: Val::Px(0.0),
+                        overflow: Overflow::scroll_y(),
                         ..default()
                     },
                     BackgroundColor(Color::NONE),
-                    ModelLibraryList,
-                ));
+                    ScrollPosition::default(),
+                    ModelLibraryScrollPanel,
+                ))
+                .with_children(|scroll| {
+                    scroll.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(6.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                        ModelLibraryList,
+                    ));
+                });
+
+                row.spawn((
+                    Node {
+                        width: Val::Px(8.0),
+                        height: Val::Px(680.0),
+                        position_type: PositionType::Relative,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    Visibility::Hidden,
+                    ModelLibraryScrollbarTrack,
+                ))
+                .with_children(|track| {
+                    track.spawn((
+                        Button,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(1.0),
+                            right: Val::Px(1.0),
+                            top: Val::Px(0.0),
+                            height: Val::Px(18.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.20)),
+                        ModelLibraryScrollbarThumb,
+                    ));
+                });
             });
         });
 }
@@ -217,6 +273,139 @@ pub(crate) fn model_library_rebuild_list_ui(
     });
 
     state.models_dirty = false;
+}
+
+pub(crate) fn model_library_update_scrollbar_ui(
+    panels: Query<(&ComputedNode, &ScrollPosition), With<ModelLibraryScrollPanel>>,
+    mut tracks: Query<(&ComputedNode, &mut Visibility), With<ModelLibraryScrollbarTrack>>,
+    mut thumbs: Query<&mut Node, With<ModelLibraryScrollbarThumb>>,
+) {
+    let Ok((panel, scroll_pos)) = panels.single() else {
+        return;
+    };
+    let Ok((track_node, mut track_vis)) = tracks.single_mut() else {
+        return;
+    };
+    let Ok(mut thumb) = thumbs.single_mut() else {
+        return;
+    };
+
+    let panel_scale = panel.inverse_scale_factor();
+    let track_scale = track_node.inverse_scale_factor();
+    let viewport_h = panel.size.y.max(0.0) * panel_scale;
+    let content_h = panel.content_size.y.max(0.0) * panel_scale;
+    let track_h = track_node.size.y.max(1.0) * track_scale;
+
+    if viewport_h < 1.0 || content_h < 1.0 {
+        *track_vis = Visibility::Hidden;
+        return;
+    }
+
+    if content_h <= viewport_h + 0.5 {
+        *track_vis = Visibility::Hidden;
+        thumb.top = Val::Px(0.0);
+        thumb.height = Val::Px(track_h);
+        return;
+    }
+
+    *track_vis = Visibility::Visible;
+
+    let max_scroll = (content_h - viewport_h).max(1.0);
+    let scroll_y = scroll_pos.y.clamp(0.0, max_scroll);
+
+    let min_thumb_h = 14.0;
+    let thumb_h = (viewport_h * viewport_h / content_h).clamp(min_thumb_h, track_h);
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    let thumb_top = (max_thumb_top * (scroll_y / max_scroll)).clamp(0.0, max_thumb_top);
+
+    thumb.top = Val::Px(thumb_top);
+    thumb.height = Val::Px(thumb_h);
+}
+
+pub(crate) fn model_library_scrollbar_drag(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<ModelLibraryScrollPanel>>,
+    tracks: Query<(&ComputedNode, &UiGlobalTransform, &Visibility), With<ModelLibraryScrollbarTrack>>,
+    thumbs: Query<(&Interaction, &ComputedNode, &Node), With<ModelLibraryScrollbarThumb>>,
+) {
+    if !mouse_buttons.pressed(MouseButton::Left) {
+        state.scrollbar_drag = None;
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        return;
+    };
+    let Ok((panel_node, mut scroll)) = panels.single_mut() else {
+        return;
+    };
+    let Ok((track_node, track_transform, track_vis)) = tracks.single() else {
+        return;
+    };
+    if *track_vis != Visibility::Visible {
+        state.scrollbar_drag = None;
+        return;
+    }
+    let Ok((interaction, thumb_node, thumb_layout)) = thumbs.single() else {
+        return;
+    };
+
+    if state.scrollbar_drag.is_none() && *interaction == Interaction::Pressed {
+        if let Some(local) = track_transform
+            .try_inverse()
+            .map(|transform| transform.transform_point2(cursor))
+        {
+            let track_scale = track_node.inverse_scale_factor();
+            let thumb_scale = thumb_node.inverse_scale_factor();
+            let cursor_in_track = (local.y + track_node.size.y * 0.5) * track_scale;
+            let thumb_top = match thumb_layout.top {
+                Val::Px(value) => value,
+                _ => 0.0,
+            };
+            let grab_offset =
+                (cursor_in_track - thumb_top).clamp(0.0, thumb_node.size.y.max(1.0) * thumb_scale);
+            state.scrollbar_drag = Some(ModelLibraryScrollbarDrag { grab_offset });
+        }
+    }
+
+    let Some(drag) = state.scrollbar_drag else {
+        return;
+    };
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
+    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        return;
+    }
+
+    let track_scale = track_node.inverse_scale_factor();
+    let thumb_scale = thumb_node.inverse_scale_factor();
+    let track_h = track_node.size.y.max(1.0) * track_scale;
+    let thumb_h = thumb_node.size.y.max(1.0) * thumb_scale;
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    if max_thumb_top <= 1e-4 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(1.0);
+
+    let Some(local) = track_transform
+        .try_inverse()
+        .map(|transform| transform.transform_point2(cursor))
+    else {
+        return;
+    };
+    let cursor_in_track =
+        ((local.y + track_node.size.y * 0.5) * track_scale).clamp(0.0, track_h);
+    let thumb_top = (cursor_in_track - drag.grab_offset).clamp(0.0, max_thumb_top);
+
+    scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
 }
 
 pub(crate) fn model_library_item_button_interactions(
