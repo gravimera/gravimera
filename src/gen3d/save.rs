@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use uuid::Uuid;
 
 use crate::assets::SceneAssets;
-use crate::constants::{BUILD_GRID_SIZE, BUILD_UNIT_SIZE, CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION};
+use crate::constants::{BUILD_GRID_SIZE, BUILD_UNIT_SIZE};
 use crate::geometry::{clamp_world_xz, normalize_flat_direction, snap_to_grid};
 use crate::object::registry::{
     ColliderProfile, MeshKey, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction,
@@ -85,9 +85,7 @@ fn saved_root_interaction(collider: ColliderProfile) -> ObjectInteraction {
         _ => ObjectInteraction {
             blocks_bullets: true,
             blocks_laser: true,
-            movement_block: Some(MovementBlockRule::UpperBodyFraction(
-                CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION,
-            )),
+            movement_block: Some(MovementBlockRule::Always),
             supports_standing: false,
         },
     }
@@ -590,6 +588,79 @@ mod tests {
             }
             other => panic!("expected CircleXZ collider, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn draft_to_saved_defs_sets_building_root_collision_to_always_block_movement() {
+        use crate::object::registry::{MovementBlockRule, ObjectPartDef};
+
+        let root_id = super::super::gen3d_draft_object_id();
+        let body_id = 0x10u128;
+
+        let body_def = ObjectDef {
+            object_id: body_id,
+            label: "body".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(1.0, 1.0, 1.0),
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let root_def = ObjectDef {
+            object_id: root_id,
+            label: "gen3d_draft".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::object_ref(body_id, Transform::IDENTITY)],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let draft = Gen3dDraft {
+            defs: vec![root_def, body_def],
+        };
+
+        let (saved_root_id, saved_defs) = draft_to_saved_defs(&draft).expect("save ok");
+        let saved_root = saved_defs
+            .iter()
+            .find(|def| def.object_id == saved_root_id)
+            .expect("saved root present");
+
+        assert!(
+            matches!(
+                saved_root.interaction.movement_block,
+                Some(MovementBlockRule::Always)
+            ),
+            "expected Gen3D building roots to always block movement; got {:?}",
+            saved_root.interaction.movement_block
+        );
     }
 }
 
