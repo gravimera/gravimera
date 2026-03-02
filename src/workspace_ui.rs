@@ -51,6 +51,60 @@ pub(crate) struct WorkspaceTabSwitch {
     pub(crate) to: WorkspaceTab,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WorkspaceCameraSnapshot {
+    pub(crate) zoom_t: f32,
+    pub(crate) yaw: f32,
+    pub(crate) yaw_initialized: bool,
+    pub(crate) pitch: f32,
+    pub(crate) focus: Vec3,
+    pub(crate) focus_initialized: bool,
+}
+
+impl Default for WorkspaceCameraSnapshot {
+    fn default() -> Self {
+        Self {
+            zoom_t: crate::constants::CAMERA_ZOOM_DEFAULT,
+            yaw: 0.0,
+            yaw_initialized: false,
+            pitch: 0.0,
+            focus: Vec3::ZERO,
+            focus_initialized: false,
+        }
+    }
+}
+
+#[derive(Resource, Debug)]
+pub(crate) struct WorkspaceCameraState {
+    object_preview: WorkspaceCameraSnapshot,
+    scene_build: WorkspaceCameraSnapshot,
+}
+
+impl Default for WorkspaceCameraState {
+    fn default() -> Self {
+        Self {
+            object_preview: WorkspaceCameraSnapshot::default(),
+            scene_build: WorkspaceCameraSnapshot::default(),
+        }
+    }
+}
+
+impl WorkspaceCameraState {
+    pub(crate) fn get(&self, tab: WorkspaceTab) -> WorkspaceCameraSnapshot {
+        match tab {
+            WorkspaceTab::ObjectPreview => self.object_preview,
+            WorkspaceTab::SceneBuild => self.scene_build,
+        }
+    }
+
+    pub(crate) fn set(&mut self, tab: WorkspaceTab, snapshot: WorkspaceCameraSnapshot) {
+        match tab {
+            WorkspaceTab::ObjectPreview => self.object_preview = snapshot,
+            WorkspaceTab::SceneBuild => self.scene_build = snapshot,
+        }
+    }
+}
+
 #[derive(Resource, Default, Debug)]
 pub(crate) struct PendingWorkspaceSwitch {
     pending: Option<WorkspaceTabSwitch>,

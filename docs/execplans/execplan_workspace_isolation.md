@@ -16,11 +16,15 @@ Creators need “Object Preview” and “Scene Build” to behave as isolated w
 - [x] (2026-03-02 10:48Z) Update documentation to describe workspace isolation and file naming.
 - [x] (2026-03-02 10:36Z) Run the rendered smoke test and record results.
 - [x] (2026-03-02 10:52Z) Commit changes with a clear message.
+- [ ] Add workspace-isolated camera state and update docs.
+- [ ] Run the rendered smoke test and commit the camera isolation change.
 
 ## Surprises & Discoveries
 
 - Observation: Bevy system functions hit the 16-parameter limit; the workspace switch system needed a `SystemParam` wrapper to compile.
   Evidence: `error[E0599]: no method named after found for fn item ...` traced to the oversized system signature.
+- Observation: Camera state lives in `CameraZoom`, `CameraYaw`, `CameraPitch`, and `CameraFocus` resources and must be captured/restored for isolation.
+  Evidence: `/Users/lxl/projects/aiprojects/gravimera/src/types.rs` defines these as resources and player camera systems mutate them.
 
 ## Decision Log
 
@@ -41,6 +45,7 @@ Creators need “Object Preview” and “Scene Build” to behave as isolated w
 - Workspace switching now isolates Object Preview (`scene.dat`) from Scene Build (`scene.build.dat`), and load/save paths respect the active workspace.
 - Documentation updated to explain workspace isolation and file naming.
 - Rendered smoke test passes and changes are committed.
+- Camera isolation work in progress.
 
 ## Context and Orientation
 
@@ -129,3 +134,4 @@ No new external dependencies are required.
 - 2026-03-02 (Codex): Initial plan created to implement workspace isolation with `scene.dat` vs `scene.build.dat`.
 - 2026-03-02 (Codex): Updated progress, recorded the SystemParam workaround, and noted current outcomes after implementation.
 - 2026-03-02 (Codex): Marked commit completion and updated outcomes.
+- 2026-03-02 (Codex): Added camera isolation tasks after user request.

@@ -23,7 +23,9 @@ use crate::object::registry::{
 };
 use crate::object::visuals;
 use crate::types::*;
-use crate::workspace_ui::{PendingWorkspaceSwitch, WorkspaceTab};
+use crate::workspace_ui::{
+    PendingWorkspaceSwitch, WorkspaceCameraSnapshot, WorkspaceCameraState, WorkspaceTab,
+};
 
 const SCENE_DAT_VERSION: u32 = 8;
 // Persist positions in centimeters (stable and easy to reason about for AI-authored worlds).
@@ -58,6 +60,37 @@ impl Default for SceneAutosaveState {
     }
 }
 
+fn snapshot_camera(
+    zoom: &CameraZoom,
+    yaw: &CameraYaw,
+    pitch: &CameraPitch,
+    focus: &CameraFocus,
+) -> WorkspaceCameraSnapshot {
+    WorkspaceCameraSnapshot {
+        zoom_t: zoom.t,
+        yaw: yaw.yaw,
+        yaw_initialized: yaw.initialized,
+        pitch: pitch.pitch,
+        focus: focus.position,
+        focus_initialized: focus.initialized,
+    }
+}
+
+fn restore_camera(
+    snapshot: WorkspaceCameraSnapshot,
+    zoom: &mut CameraZoom,
+    yaw: &mut CameraYaw,
+    pitch: &mut CameraPitch,
+    focus: &mut CameraFocus,
+) {
+    zoom.t = snapshot.zoom_t;
+    yaw.yaw = snapshot.yaw;
+    yaw.initialized = snapshot.yaw_initialized;
+    pitch.pitch = snapshot.pitch;
+    focus.position = snapshot.focus;
+    focus.initialized = snapshot.focus_initialized;
+}
+
 #[derive(SystemParam)]
 pub(crate) struct WorkspaceSwitchDeps<'w> {
     config: Res<'w, AppConfig>,
@@ -70,6 +103,11 @@ pub(crate) struct WorkspaceSwitchDeps<'w> {
     mesh_cache: ResMut<'w, crate::object::visuals::PrimitiveMeshCache>,
     library: ResMut<'w, ObjectLibrary>,
     prefab_descriptors: ResMut<'w, crate::prefab_descriptors::PrefabDescriptorLibrary>,
+    camera_zoom: ResMut<'w, CameraZoom>,
+    camera_yaw: ResMut<'w, CameraYaw>,
+    camera_pitch: ResMut<'w, CameraPitch>,
+    camera_focus: ResMut<'w, CameraFocus>,
+    workspace_camera: ResMut<'w, WorkspaceCameraState>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -2108,6 +2146,22 @@ pub(crate) fn apply_pending_workspace_switch(
         "Switching workspace: {} -> {}",
         switch.from.label(),
         switch.to.label()
+    );
+
+    let camera_snapshot = snapshot_camera(
+        &deps.camera_zoom,
+        &deps.camera_yaw,
+        &deps.camera_pitch,
+        &deps.camera_focus,
+    );
+    deps.workspace_camera.set(switch.from, camera_snapshot);
+    let target_snapshot = deps.workspace_camera.get(switch.to);
+    restore_camera(
+        target_snapshot,
+        &mut deps.camera_zoom,
+        &mut deps.camera_yaw,
+        &mut deps.camera_pitch,
+        &mut deps.camera_focus,
     );
 
     let from_path = workspace_scene_dat_path(&deps.config, &deps.active, switch.from);
