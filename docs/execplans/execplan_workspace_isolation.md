@@ -15,7 +15,7 @@ Creators need “Object Preview” and “Scene Build” to behave as isolated w
 - [x] (2026-03-02 10:45Z) Add a workspace switch flow that saves the current workspace, clears selection/drag state, swaps scene entities, reloads the other workspace, and resets autosave state.
 - [x] (2026-03-02 10:48Z) Update documentation to describe workspace isolation and file naming.
 - [x] (2026-03-02 10:36Z) Run the rendered smoke test and record results.
-- [ ] Commit changes with a clear message.
+- [x] (2026-03-02 10:52Z) Commit changes with a clear message.
 
 ## Surprises & Discoveries
 
@@ -40,7 +40,7 @@ Creators need “Object Preview” and “Scene Build” to behave as isolated w
 
 - Workspace switching now isolates Object Preview (`scene.dat`) from Scene Build (`scene.build.dat`), and load/save paths respect the active workspace.
 - Documentation updated to explain workspace isolation and file naming.
-- Rendered smoke test passes; commit still pending.
+- Rendered smoke test passes and changes are committed.
 
 ## Context and Orientation
 
@@ -128,3 +128,4 @@ No new external dependencies are required.
 
 - 2026-03-02 (Codex): Initial plan created to implement workspace isolation with `scene.dat` vs `scene.build.dat`.
 - 2026-03-02 (Codex): Updated progress, recorded the SystemParam workaround, and noted current outcomes after implementation.
+- 2026-03-02 (Codex): Marked commit completion and updated outcomes.
