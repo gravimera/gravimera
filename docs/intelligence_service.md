@@ -88,6 +88,15 @@ Notes:
 - `TickInput.self_state.kind` and `TickInput.nearby_entities[*].kind` are currently the unit/building prefab UUID string.
 - The host includes both units and build objects in `nearby_entities` (bounded and distance-sorted).
 
+## Host defaults (when enabled)
+
+When `[intelligence_service].enabled = true`, the host automatically attaches a standalone brain to **newly spawned non-player units** (entities with `Commandable` and without `Player`):
+
+- Units that can attack (have an attack definition in the object library): `demo.opportunist.v1`
+- Units that cannot attack: `demo.coward.v1`
+
+You can override per-unit in the UI via the Meta panel’s Brain section.
+
 On Windows PowerShell, use `curl.exe` instead of `curl` if you hit the `Invoke-WebRequest` alias:
 
 ```powershell

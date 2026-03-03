@@ -23,6 +23,13 @@ impl Plugin for IntelligenceHostPlugin {
         );
         app.add_systems(
             Update,
+            intelligence_attach_default_brains
+                .before(intelligence_tick)
+                .run_if(in_state(BuildScene::Realm))
+                .run_if(intelligence_enabled),
+        );
+        app.add_systems(
+            Update,
             intelligence_tick
                 .before(crate::rts::execute_move_orders)
                 .run_if(in_state(BuildScene::Realm))
@@ -160,6 +167,41 @@ fn intelligence_debug_spawn_unit(
         prefab_id,
         None,
     );
+}
+
+fn intelligence_attach_default_brains(
+    mut commands: Commands,
+    library: Res<ObjectLibrary>,
+    units: Query<
+        (Entity, &ObjectPrefabId),
+        (
+            Added<Commandable>,
+            Without<Player>,
+            Without<Died>,
+            Without<StandaloneBrain>,
+        ),
+    >,
+) {
+    for (entity, prefab_id) in units.iter() {
+        let (module_id, capabilities): (&str, Vec<String>) = if library.attack(prefab_id.0).is_some()
+        {
+            (
+                "demo.opportunist.v1",
+                vec!["brain.move".into(), "brain.combat".into()],
+            )
+        } else {
+            ("demo.coward.v1", vec!["brain.move".into()])
+        };
+
+        commands.entity(entity).insert(StandaloneBrain {
+            module_id: module_id.into(),
+            config: json!({}),
+            capabilities,
+            brain_instance_id: None,
+            next_tick_due: 0,
+            last_error: None,
+        });
+    }
 }
 
 fn collect_nav_obstacles(
