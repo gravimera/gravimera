@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
 
-use crate::assets::SceneAssets;
 use crate::action_log::{ActionLogSource, ActionLogState, ActionLogWriter};
+use crate::assets::SceneAssets;
 use crate::constants::*;
 use crate::geometry::{clamp_world_xz, point_inside_aabb_xz, safe_abs_scale_y, snap_to_grid};
 use crate::navigation;
@@ -1576,6 +1576,88 @@ pub(crate) fn update_unit_aim_yaw_delta(
                 })
                 .unwrap_or(Vec2::ZERO),
         };
+
+        let delta = if dir2.length_squared() <= 1e-6 {
+            0.0
+        } else {
+            let desired_yaw = dir2.x.atan2(dir2.y);
+            let forward = transform.rotation * Vec3::Z;
+            let body_yaw = forward.x.atan2(forward.z);
+            wrap_angle(desired_yaw - body_yaw)
+        };
+
+        let max_delta_rads = match def.aim.as_ref() {
+            Some(aim) => aim
+                .max_yaw_delta_degrees
+                .map(|deg| deg.abs().to_radians())
+                .filter(|rads| rads.is_finite()),
+            None => match attack.kind {
+                crate::object::registry::UnitAttackKind::RangedProjectile => None,
+                crate::object::registry::UnitAttackKind::Melee => Some(120.0_f32.to_radians()),
+            },
+        };
+
+        let delta = match max_delta_rads {
+            None => delta,
+            Some(max) => {
+                let max = max.clamp(0.0, std::f32::consts::PI);
+                delta.clamp(-max, max)
+            }
+        };
+
+        commands
+            .entity(entity)
+            .insert(crate::types::AimYawDelta(delta));
+    }
+}
+
+pub(crate) fn update_brain_attack_aim_yaw_delta(
+    mut commands: Commands,
+    time: Res<Time>,
+    mode: Res<State<GameMode>>,
+    fire: Res<FireControl>,
+    selection: Res<SelectionState>,
+    library: Res<ObjectLibrary>,
+    targets: Query<&Transform, (Or<(With<Enemy>, With<Commandable>)>, Without<Died>)>,
+    attackers: Query<
+        (Entity, &Transform, &ObjectPrefabId, &BrainAttackOrder),
+        (With<Commandable>, Without<Died>),
+    >,
+) {
+    if !matches!(mode.get(), GameMode::Play) {
+        return;
+    }
+
+    let tick_index = (time.elapsed_secs_f64() * 60.0).floor().max(0.0) as u64;
+    let player_aiming = fire.active && fire.target.is_some() && !selection.selected.is_empty();
+
+    for (entity, transform, prefab_id, order) in attackers.iter() {
+        if player_aiming && selection.selected.contains(&entity) {
+            continue;
+        }
+
+        if let Some(valid_until_tick) = order.valid_until_tick {
+            if tick_index > valid_until_tick {
+                continue;
+            }
+        }
+
+        let Some(def) = library.get(prefab_id.0) else {
+            continue;
+        };
+        let Some(attack) = def.attack.as_ref() else {
+            continue;
+        };
+        let Ok(target_transform) = targets.get(order.target) else {
+            continue;
+        };
+
+        let origin = Vec2::new(transform.translation.x, transform.translation.z);
+        let target = Vec2::new(
+            target_transform.translation.x,
+            target_transform.translation.z,
+        );
+        let dir2 = target - origin;
 
         let delta = if dir2.length_squared() <= 1e-6 {
             0.0

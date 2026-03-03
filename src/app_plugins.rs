@@ -517,7 +517,8 @@ impl Plugin for RenderedGameplayPlugin {
                 rts::execute_move_orders.after(rts::keyboard_move_input),
                 rts::update_unit_aim_yaw_delta
                     .after(rts::execute_move_orders)
-                    .after(rts::update_fire_control),
+                    .after(rts::update_fire_control)
+                    .before(crate::object::visuals::update_part_animations),
                 combat::ensure_attack_cooldowns.after(rts::selection_input),
                 combat::tick_attack_cooldowns.after(combat::ensure_attack_cooldowns),
                 combat::unit_attack_execute
@@ -527,6 +528,16 @@ impl Plugin for RenderedGameplayPlugin {
                     .after(combat::unit_attack_execute)
                     .after(combat::brain_attack_execute),
             )
+                .run_if(console::console_closed)
+                .run_if(crate::scene_authoring_ui::scene_ui_closed)
+                .run_if(in_state(BuildScene::Realm)),
+        );
+        app.add_systems(
+            Update,
+            rts::update_brain_attack_aim_yaw_delta
+                .after(rts::update_unit_aim_yaw_delta)
+                .before(crate::object::visuals::update_part_animations)
+                .run_if(in_state(GameMode::Play))
                 .run_if(console::console_closed)
                 .run_if(crate::scene_authoring_ui::scene_ui_closed)
                 .run_if(in_state(BuildScene::Realm)),
