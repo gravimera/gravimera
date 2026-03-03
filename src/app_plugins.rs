@@ -14,6 +14,7 @@ use crate::rts;
 use crate::scene_store;
 use crate::setup;
 use crate::types::{BuildScene, GameMode};
+use crate::unit_health;
 
 pub(crate) struct RenderedStartupPlugin;
 
@@ -421,6 +422,18 @@ impl Plugin for RenderedGameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
+            (
+                unit_health::ensure_health_for_commandables,
+                unit_health::ensure_laser_damage_accum_for_units
+                    .after(unit_health::ensure_health_for_commandables),
+                unit_health::ensure_health_bars_for_units
+                    .after(unit_health::ensure_health_for_commandables),
+                unit_health::update_die_motions,
+            )
+                .run_if(in_state(BuildScene::Realm)),
+        );
+        app.add_systems(
+            Update,
             player::update_edge_scroll_cursor_indicator
                 .after(console::update_command_console_ui)
                 .run_if(in_state(BuildScene::Realm))
@@ -618,7 +631,13 @@ impl Plugin for RenderedGameplayPlugin {
                 .run_if(in_state(BuildScene::Realm))
                 .run_if(crate::automation::local_input_enabled),
         );
-        app.add_systems(OnEnter(GameMode::Build), build::enter_build_mode);
+        app.add_systems(
+            OnEnter(GameMode::Build),
+            (
+                build::enter_build_mode,
+                unit_health::recover_health_on_enter_build_mode.after(build::enter_build_mode),
+            ),
+        );
         app.add_systems(
             OnEnter(GameMode::Play),
             (

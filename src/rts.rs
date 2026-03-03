@@ -155,6 +155,51 @@ fn pick_enemy_entity_under_cursor(
     best
 }
 
+fn pick_unit_entity_under_cursor(
+    cursor: Vec2,
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    library: &ObjectLibrary,
+    enemies: &Query<(Entity, &Transform, &ObjectPrefabId), (With<Enemy>, Without<Died>)>,
+    commandables: &Query<
+        (Entity, &Transform, &ObjectPrefabId),
+        (With<Commandable>, Without<Player>, Without<Died>),
+    >,
+) -> Option<Entity> {
+    let mut best: Option<Entity> = None;
+    let mut best_d = f32::INFINITY;
+
+    let mut consider = |entity: Entity, transform: &Transform, prefab_id: &ObjectPrefabId| {
+        let scale_y = safe_abs_scale_y(transform.scale);
+        let height = library
+            .size(prefab_id.0)
+            .map(|s| s.y * scale_y)
+            .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
+        let world_pos = transform.translation + Vec3::Y * (height * 0.55);
+        let Some(screen) = world_to_screen(camera, camera_transform, world_pos) else {
+            return;
+        };
+
+        let d = screen.distance(cursor);
+        if d > MOVE_ENEMY_CLICK_RADIUS_PX {
+            return;
+        }
+        if d < best_d {
+            best_d = d;
+            best = Some(entity);
+        }
+    };
+
+    for (entity, transform, prefab_id) in enemies.iter() {
+        consider(entity, transform, prefab_id);
+    }
+    for (entity, transform, prefab_id) in commandables.iter() {
+        consider(entity, transform, prefab_id);
+    }
+
+    best
+}
+
 pub(crate) fn toggle_slow_move_mode(
     keys: Res<ButtonInput<KeyCode>>,
     mut slow_move: ResMut<SlowMoveMode>,
@@ -852,6 +897,8 @@ pub(crate) fn keyboard_move_input(
             &Collider,
             &ObjectPrefabId,
             Option<&mut MoveOrder>,
+            Option<&Health>,
+            Option<&Died>,
         ),
         (With<Commandable>, Without<MainCamera>),
     >,
@@ -914,8 +961,12 @@ pub(crate) fn keyboard_move_input(
         commands.entity(marker).try_despawn();
     }
 
-    for (entity, mut transform, collider, prefab_id, order) in &mut commandables {
+    for (entity, mut transform, collider, prefab_id, order, health, died) in &mut commandables {
         if !selection.selected.contains(&entity) {
+            continue;
+        }
+
+        if died.is_some() || health.is_some_and(|health| health.current <= 0) {
             continue;
         }
 
@@ -1270,6 +1321,8 @@ pub(crate) fn execute_move_orders(
             &Collider,
             &ObjectPrefabId,
             &mut MoveOrder,
+            Option<&Health>,
+            Option<&Died>,
         ),
         With<Commandable>,
     >,
@@ -1286,7 +1339,12 @@ pub(crate) fn execute_move_orders(
 
     let mut any_active_after = false;
 
-    for (entity, mut transform, collider, prefab_id, mut order) in movers.iter_mut() {
+    for (entity, mut transform, collider, prefab_id, mut order, health, died) in movers.iter_mut() {
+        if died.is_some() || health.is_some_and(|health| health.current <= 0) {
+            commands.entity(entity).remove::<MoveOrder>();
+            continue;
+        }
+
         let Some(target) = order.target else {
             commands.entity(entity).remove::<MoveOrder>();
             continue;
@@ -1407,7 +1465,11 @@ pub(crate) fn update_fire_control(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
-    enemies: Query<(Entity, &Transform, &ObjectPrefabId), With<Enemy>>,
+    enemies: Query<(Entity, &Transform, &ObjectPrefabId), (With<Enemy>, Without<Died>)>,
+    commandables: Query<
+        (Entity, &Transform, &ObjectPrefabId),
+        (With<Commandable>, Without<Player>, Without<Died>),
+    >,
     mut fire: ResMut<FireControl>,
 ) {
     if matches!(mode.get(), GameMode::Play) && game.game_over {
@@ -1433,10 +1495,15 @@ pub(crate) fn update_fire_control(
     if let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), camera_q.single()) {
         if let Some(cursor) = window.cursor_position() {
             let camera_global = GlobalTransform::from(*camera_transform);
-            if let Some(enemy_entity) =
-                pick_enemy_entity_under_cursor(cursor, camera, &camera_global, &library, &enemies)
-            {
-                fire.target = Some(FireTarget::Enemy(enemy_entity));
+            if let Some(unit_entity) = pick_unit_entity_under_cursor(
+                cursor,
+                camera,
+                &camera_global,
+                &library,
+                &enemies,
+                &commandables,
+            ) {
+                fire.target = Some(FireTarget::Unit(unit_entity));
             } else if let Ok(ray) = camera.viewport_to_world(&camera_global, cursor) {
                 if let Some(hit) = ray_plane_intersection_y(ray, 0.0) {
                     fire.target = Some(FireTarget::Point(Vec2::new(hit.x, hit.z)));
@@ -1445,8 +1512,8 @@ pub(crate) fn update_fire_control(
         }
     }
 
-    if let Some(FireTarget::Enemy(enemy)) = fire.target {
-        if enemies.get(enemy).is_err() {
+    if let Some(FireTarget::Unit(unit)) = fire.target {
+        if enemies.get(unit).is_err() && commandables.get(unit).is_err() {
             fire.target = None;
         }
     }
@@ -1457,7 +1524,7 @@ pub(crate) fn update_unit_aim_yaw_delta(
     fire: Res<FireControl>,
     selection: Res<SelectionState>,
     library: Res<ObjectLibrary>,
-    enemies: Query<&Transform, (With<Enemy>, Without<Commandable>)>,
+    targets: Query<&Transform, (Or<(With<Enemy>, With<Commandable>)>, Without<Died>)>,
     mut commandables: Query<
         (
             Entity,
@@ -1499,11 +1566,14 @@ pub(crate) fn update_unit_aim_yaw_delta(
         };
         let dir2 = match target {
             FireTarget::Point(point) => point - origin,
-            FireTarget::Enemy(enemy_entity) => enemies
-                .get(enemy_entity)
+            FireTarget::Unit(target_entity) => targets
+                .get(target_entity)
                 .ok()
-                .map(|enemy_transform| {
-                    Vec2::new(enemy_transform.translation.x, enemy_transform.translation.z) - origin
+                .map(|target_transform| {
+                    Vec2::new(
+                        target_transform.translation.x,
+                        target_transform.translation.z,
+                    ) - origin
                 })
                 .unwrap_or(Vec2::ZERO),
         };

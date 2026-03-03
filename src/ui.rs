@@ -34,6 +34,7 @@ pub(crate) struct HealthChangePopup {
 pub(crate) fn update_window_title(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     game: Res<Game>,
+    player_health: Query<&Health, With<Player>>,
     build: Res<BuildState>,
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
@@ -42,6 +43,8 @@ pub(crate) fn update_window_title(
         Ok(w) => w,
         Err(_) => return,
     };
+
+    let health = player_health.single().ok().map(|h| h.current).unwrap_or(0);
 
     match mode.get() {
         GameMode::Build => {
@@ -56,12 +59,12 @@ pub(crate) fn update_window_title(
                     "Gravimera — BUILD ({}) | score: {} | health: {} | B/F/T place | Esc select | F1 play | Tab forms | hold C copy",
                     build.selected.label(),
                     game.score,
-                    game.health
+                    health
                 );
             } else {
                 window.title = format!(
                     "Gravimera — BUILD | score: {} | health: {} | LMB select | B/F/T place | F1 play | Tab forms | hold C copy",
-                    game.score, game.health
+                    game.score, health
                 );
             }
         }
@@ -76,7 +79,7 @@ pub(crate) fn update_window_title(
                     "Gravimera — PLAY ({}) | score: {} | health: {} | LMB select | RMB move | Space fire (hold) | Ctrl/Cmd+1/2/3 switch | 1..9/0 motions | R restart | F1 build | Tab forms | hold C copy",
                     game.weapon.label(),
                     game.score,
-                    game.health,
+                    health,
                 );
             }
         }
@@ -106,24 +109,22 @@ pub(crate) fn update_fps_counter(
             ));
         }
         _ => {
-            *text =
-                Text::new(format!("Obj: {object_count} | Prim: {primitive_count} | FPS: --"));
+            *text = Text::new(format!(
+                "Obj: {object_count} | Prim: {primitive_count} | FPS: --"
+            ));
         }
     }
 }
 
 pub(crate) fn update_health_bars(
     mut commands: Commands,
-    game: Res<Game>,
-    player_q: Query<(&Transform, &HealthBar), With<Player>>,
     camera_q: Query<&Transform, With<MainCamera>>,
-    enemies_q: Query<(Entity, &Transform, &Enemy, &HealthBar), With<Enemy>>,
+    units_q: Query<(Entity, &Transform, &Health, &HealthBar), With<HealthBar>>,
     mut bar_roots_q: Query<
         &mut Transform,
         (
-            Without<Player>,
-            Without<Enemy>,
             Without<HealthBarFill>,
+            Without<HealthBar>,
             Without<MainCamera>,
         ),
     >,
@@ -131,6 +132,7 @@ pub(crate) fn update_health_bars(
         &mut Transform,
         (
             With<HealthBarFill>,
+            Without<HealthBar>,
             Without<Player>,
             Without<Enemy>,
             Without<MainCamera>,
@@ -152,34 +154,16 @@ pub(crate) fn update_health_bars(
         })
         .unwrap_or(Quat::IDENTITY);
 
-    if let Ok((player_transform, bar)) = player_q.single() {
-        let frac = if game.max_health > 0 {
-            (game.health.max(0) as f32 / game.max_health as f32).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        if let Ok(mut root_transform) = bar_roots_q.get_mut(bar.root) {
-            root_transform.rotation = player_transform.rotation.inverse() * desired_global_rotation;
-        }
-        if let Ok(mut transform) = fills_q.get_mut(bar.fill) {
-            update_health_bar_fill_transform(&mut transform, frac);
-        }
-    }
-
-    for (enemy_entity, enemy_transform, enemy, bar) in &enemies_q {
-        let frac = if enemy.max_health > 0 {
-            (enemy.health.max(0) as f32 / enemy.max_health as f32).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+    for (unit_entity, unit_transform, health, bar) in &units_q {
+        let frac = health.fraction();
 
         if let Ok(mut root_transform) = bar_roots_q.get_mut(bar.root) {
-            root_transform.rotation = enemy_transform.rotation.inverse() * desired_global_rotation;
+            root_transform.rotation = unit_transform.rotation.inverse() * desired_global_rotation;
         }
 
         if let Ok(mut fill_transform) = fills_q.get_mut(bar.fill) {
             update_health_bar_fill_transform(&mut fill_transform, frac);
-        } else if let Ok(mut entity_commands) = commands.get_entity(enemy_entity) {
+        } else if let Ok(mut entity_commands) = commands.get_entity(unit_entity) {
             entity_commands.try_remove::<HealthBar>();
         }
     }

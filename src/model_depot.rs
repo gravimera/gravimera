@@ -64,10 +64,17 @@ fn patch_gen3d_building_movement_blocks(library: &mut ObjectLibrary) -> usize {
         if def.mobility.is_some() {
             continue;
         }
-        if !def.label.as_ref().starts_with(GEN3D_SAVED_ROOT_LABEL_PREFIX) {
+        if !def
+            .label
+            .as_ref()
+            .starts_with(GEN3D_SAVED_ROOT_LABEL_PREFIX)
+        {
             continue;
         }
-        if !matches!(def.interaction.movement_block, Some(MovementBlockRule::Always)) {
+        if !matches!(
+            def.interaction.movement_block,
+            Some(MovementBlockRule::Always)
+        ) {
             continue;
         }
 

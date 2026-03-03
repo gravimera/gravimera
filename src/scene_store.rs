@@ -2253,7 +2253,10 @@ pub(crate) fn apply_pending_workspace_switch(
     ) {
         Ok(spawned) => {
             if spawned > 0 {
-                info!("Loaded {spawned} scene instances from {}.", to_path.display());
+                info!(
+                    "Loaded {spawned} scene instances from {}.",
+                    to_path.display()
+                );
             }
         }
         Err(err) => {

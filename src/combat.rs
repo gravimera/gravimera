@@ -299,7 +299,14 @@ mod tests {
 fn fire_direction_from_target(
     origin: Vec3,
     target: Option<FireTarget>,
-    enemies: &Query<&Transform, (With<Enemy>, Without<Player>)>,
+    units: &Query<
+        &Transform,
+        (
+            Or<(With<Commandable>, With<Enemy>)>,
+            Without<Player>,
+            Without<Died>,
+        ),
+    >,
 ) -> Option<Vec3> {
     match target {
         None => None,
@@ -311,7 +318,7 @@ fn fire_direction_from_target(
                 Some(Vec3::new(to.x, 0.0, to.y).normalize())
             }
         }
-        Some(FireTarget::Enemy(enemy_entity)) => enemies.get(enemy_entity).ok().and_then(|t| {
+        Some(FireTarget::Unit(target_entity)) => units.get(target_entity).ok().and_then(|t| {
             let to = t.translation - origin;
             let flat = Vec3::new(to.x, 0.0, to.z);
             if flat.length_squared() <= 1e-6 {
@@ -524,15 +531,26 @@ pub(crate) fn laser_kill_enemies(
     mut commands: Commands,
     time: Res<Time>,
     mut game: ResMut<Game>,
-    mut killed: ResMut<KilledEnemiesThisFrame>,
     mut effects: ResMut<EnemyKillEffects>,
     mut health_events: MessageWriter<HealthChangeEvent>,
     muzzles: Res<PlayerMuzzles>,
-    player_q: Query<&Transform, With<Player>>,
+    mut player_q: Query<(Entity, &Transform, &mut Health), With<Player>>,
     library: Res<ObjectLibrary>,
     objects: Query<(&Transform, &AabbCollider, &ObjectPrefabId), With<BuildObject>>,
     lasers: Query<&Laser>,
-    mut enemies: Query<(Entity, &Transform, &Collider, &ObjectPrefabId, &mut Enemy), With<Enemy>>,
+    mut units: Query<
+        (
+            Entity,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Enemy>,
+            &mut Health,
+            &mut LaserDamageAccum,
+            Option<&Died>,
+        ),
+        (Without<Player>, Or<(With<Commandable>, With<Enemy>)>),
+    >,
 ) {
     if game.game_over {
         return;
@@ -549,7 +567,7 @@ pub(crate) fn laser_kill_enemies(
     let Some(direction) = normalize_flat_direction(laser.direction) else {
         return;
     };
-    let Ok(player_transform) = player_q.single() else {
+    let Ok((player_entity, player_transform, mut player_health)) = player_q.single_mut() else {
         return;
     };
 
@@ -569,30 +587,39 @@ pub(crate) fn laser_kill_enemies(
             ))
         })
         .collect();
-    let gundams: Vec<(Vec2, f32)> = enemies
-        .iter_mut()
-        .filter_map(|(_entity, transform, collider, prefab_id, _enemy)| {
-            library.interaction(prefab_id.0).blocks_laser.then_some((
-                Vec2::new(transform.translation.x, transform.translation.z),
-                collider.radius,
-            ))
-        })
+    let laser_blockers: Vec<(Vec2, f32)> = units
+        .iter()
+        .filter_map(
+            |(entity, transform, collider, prefab_id, _enemy, health, _accum, died)| {
+                if entity == player_entity {
+                    return None;
+                }
+                if died.is_some() || health.current <= 0 {
+                    return None;
+                }
+                library.interaction(prefab_id.0).blocks_laser.then_some((
+                    Vec2::new(transform.translation.x, transform.translation.z),
+                    collider.radius,
+                ))
+            },
+        )
         .collect();
-    let range = laser_effective_range(origin, dir2, &obstacles, &gundams);
+    let range = laser_effective_range(origin, dir2, &obstacles, &laser_blockers);
 
     let mut kills = 0u32;
     let damage = dt * LASER_DAMAGE_PER_SEC;
+    let wall_time = time.elapsed_secs();
 
-    for (enemy_entity, enemy_transform, enemy_collider, prefab_id, mut enemy) in &mut enemies {
-        if killed.0.contains(&enemy_entity) {
+    for (entity, transform, collider, prefab_id, enemy, mut health, mut accum, died) in &mut units {
+        if died.is_some() || health.current <= 0 {
             continue;
         }
 
-        let enemy_pos = Vec2::new(enemy_transform.translation.x, enemy_transform.translation.z);
-        let to_enemy = enemy_pos - origin;
-        let proj = to_enemy.dot(dir2);
-        let r = LASER_HALF_WIDTH + enemy_collider.radius;
-        let perp2 = (to_enemy - dir2 * proj).length_squared();
+        let pos = Vec2::new(transform.translation.x, transform.translation.z);
+        let to = pos - origin;
+        let proj = to.dot(dir2);
+        let r = LASER_HALF_WIDTH + collider.radius;
+        let perp2 = (to - dir2 * proj).length_squared();
         if perp2 > r * r {
             continue;
         }
@@ -604,43 +631,49 @@ pub(crate) fn laser_kill_enemies(
             continue;
         }
 
-        enemy.laser_damage_accum += damage;
-        let whole = enemy.laser_damage_accum.floor() as i32;
+        accum.0 += damage;
+        let whole = accum.0.floor() as i32;
         if whole <= 0 {
             continue;
         }
-        enemy.laser_damage_accum -= whole as f32;
+        accum.0 -= whole as f32;
 
         let popup_offset_y = library
             .health_bar_offset_y(prefab_id.0)
             .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
-        let popup_pos = enemy_transform.translation + Vec3::Y * popup_offset_y;
+        let popup_pos = transform.translation + Vec3::Y * popup_offset_y;
         health_events.write(HealthChangeEvent {
             world_pos: popup_pos,
             delta: -whole,
             is_hero: false,
         });
 
-        enemy.health -= whole;
-
-        if enemy.health <= 0 && killed.0.insert(enemy_entity) {
-            commands.entity(enemy_entity).try_despawn();
-            effects.0.push(enemy_transform.translation);
-            kills += 1;
+        health.current = (health.current - whole).max(0);
+        if health.current <= 0 {
+            crate::unit_health::start_die_motion(
+                &mut commands,
+                wall_time,
+                &library,
+                entity,
+                prefab_id.0,
+                transform,
+            );
+            if enemy.is_some() {
+                effects.0.push(transform.translation);
+                kills += 1;
+            }
         }
     }
 
-    let health_gains = crate::enemies::apply_kill_rewards(&mut game, kills);
+    let health_gains = crate::enemies::apply_kill_rewards(&mut game, &mut player_health, kills);
     if health_gains > 0 {
-        if let Ok(player_transform) = player_q.single() {
-            let popup_pos = player_transform.translation + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y;
-            for _ in 0..health_gains {
-                health_events.write(HealthChangeEvent {
-                    world_pos: popup_pos,
-                    delta: 1,
-                    is_hero: true,
-                });
-            }
+        let popup_pos = player_transform.translation + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y;
+        for _ in 0..health_gains {
+            health_events.write(HealthChangeEvent {
+                world_pos: popup_pos,
+                delta: 1,
+                is_hero: true,
+            });
         }
     }
 }
@@ -654,7 +687,14 @@ pub(crate) fn player_fire(
     assets: Res<SceneAssets>,
     muzzles: Res<PlayerMuzzles>,
     mut player_q: Query<(Entity, &mut Transform), With<Player>>,
-    enemies: Query<&Transform, (With<Enemy>, Without<Player>)>,
+    units: Query<
+        &Transform,
+        (
+            Or<(With<Commandable>, With<Enemy>)>,
+            Without<Player>,
+            Without<Died>,
+        ),
+    >,
     lasers: Query<Entity, With<Laser>>,
 ) {
     if matches!(mode.get(), GameMode::Play) && game.game_over {
@@ -675,7 +715,7 @@ pub(crate) fn player_fire(
         return;
     }
     let Some(direction) =
-        fire_direction_from_target(player_transform.translation, fire.target, &enemies)
+        fire_direction_from_target(player_transform.translation, fire.target, &units)
     else {
         return;
     };
@@ -697,6 +737,7 @@ pub(crate) fn player_fire(
                 .spawn((
                     ObjectId::new_v4(),
                     ObjectPrefabId(projectiles::player_bullet::object_id()),
+                    ProjectileOwner(player_entity),
                     Transform::from_translation(spawn_pos).with_rotation(rotation),
                     Visibility::Inherited,
                     Bullet {
@@ -747,6 +788,7 @@ pub(crate) fn player_fire(
                     .spawn((
                         ObjectId::new_v4(),
                         ObjectPrefabId(projectiles::player_shotgun_pellet::object_id()),
+                        ProjectileOwner(player_entity),
                         Transform::from_translation(spawn_pos).with_rotation(rotation),
                         Visibility::Inherited,
                         Bullet {
@@ -843,10 +885,10 @@ pub(crate) fn unit_attack_execute(
     mut visuals_spawn: ProjectileVisualSpawnParams,
     library: Res<ObjectLibrary>,
     mut game: ResMut<Game>,
-    mut killed: ResMut<KilledEnemiesThisFrame>,
     mut effects: ResMut<EnemyKillEffects>,
     mut health_events: MessageWriter<HealthChangeEvent>,
-    player_q: Query<&Transform, With<Player>>,
+    player_entity_q: Query<Entity, With<Player>>,
+    player_transform_q: Query<&Transform, With<Player>>,
     mut commandables: Query<
         (
             Entity,
@@ -856,9 +898,21 @@ pub(crate) fn unit_attack_execute(
             Option<&AimYawDelta>,
             &mut AttackCooldown,
         ),
-        With<Commandable>,
+        (With<Commandable>, Without<Player>, Without<Died>),
     >,
-    mut enemies: Query<(Entity, &Transform, &Collider, &ObjectPrefabId, &mut Enemy), With<Enemy>>,
+    mut units: Query<
+        (
+            Entity,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Enemy>,
+            Option<&Player>,
+            &mut Health,
+            Option<&Died>,
+        ),
+        Or<(With<Commandable>, With<Enemy>)>,
+    >,
 ) {
     if matches!(mode.get(), GameMode::Play) && game.game_over {
         return;
@@ -887,6 +941,13 @@ pub(crate) fn unit_attack_execute(
         };
         if cooldown.remaining_secs > 0.0 {
             continue;
+        }
+
+        // Don't attack while dead (health can hit 0 before the `Died` marker is applied).
+        if let Ok((_e, _t, _c, _p, _enemy, _player, health, died)) = units.get(entity) {
+            if died.is_some() || health.current <= 0 {
+                continue;
+            }
         }
 
         let duration_secs = attack.anim_window_secs.max(0.0);
@@ -921,43 +982,66 @@ pub(crate) fn unit_attack_execute(
                     half.cos()
                 };
 
-                // If player clicked an enemy, prefer that target for melee.
+                // If player clicked a unit, prefer that target for melee.
                 let mut did_hit_target = false;
-                if let Some(FireTarget::Enemy(target_enemy)) = fire.target {
-                    if let Ok((
-                        enemy_entity,
-                        enemy_transform,
-                        enemy_collider,
-                        enemy_prefab,
-                        mut enemy,
-                    )) = enemies.get_mut(target_enemy)
-                    {
-                        if !killed.0.contains(&enemy_entity) {
-                            let to = enemy_transform.translation - origin;
-                            let to2 = Vec2::new(to.x, to.z);
-                            let dist = to2.length();
-                            let within = dist <= melee.range + melee.radius + enemy_collider.radius;
-                            let dir_ok = if to2.length_squared() <= 1e-6 {
-                                true
-                            } else {
-                                forward2.dot(to2.normalize()) >= cos_min
-                            };
-                            if within && dir_ok {
-                                let popup_offset_y = library
-                                    .health_bar_offset_y(enemy_prefab.0)
-                                    .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
-                                health_events.write(HealthChangeEvent {
-                                    world_pos: enemy_transform.translation
-                                        + Vec3::Y * popup_offset_y,
-                                    delta: -damage,
-                                    is_hero: false,
-                                });
-                                enemy.health -= damage;
-                                did_hit_target = true;
-                                if enemy.health <= 0 && killed.0.insert(enemy_entity) {
-                                    commands.entity(enemy_entity).try_despawn();
-                                    effects.0.push(enemy_transform.translation);
-                                    melee_kills = melee_kills.saturating_add(1);
+                if let Some(FireTarget::Unit(target_entity)) = fire.target {
+                    if target_entity != entity {
+                        if let Ok((
+                            target_entity,
+                            target_transform,
+                            target_collider,
+                            target_prefab,
+                            target_enemy,
+                            target_player,
+                            mut target_health,
+                            target_died,
+                        )) = units.get_mut(target_entity)
+                        {
+                            if target_died.is_none() && target_health.current > 0 {
+                                let to = target_transform.translation - origin;
+                                let to2 = Vec2::new(to.x, to.z);
+                                let dist = to2.length();
+                                let within =
+                                    dist <= melee.range + melee.radius + target_collider.radius;
+                                let dir_ok = if to2.length_squared() <= 1e-6 {
+                                    true
+                                } else {
+                                    forward2.dot(to2.normalize()) >= cos_min
+                                };
+                                if within && dir_ok {
+                                    let popup_offset_y = library
+                                        .health_bar_offset_y(target_prefab.0)
+                                        .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
+                                    health_events.write(HealthChangeEvent {
+                                        world_pos: target_transform.translation
+                                            + Vec3::Y * popup_offset_y,
+                                        delta: -damage,
+                                        is_hero: target_player.is_some(),
+                                    });
+
+                                    target_health.current = (target_health.current - damage).max(0);
+                                    did_hit_target = true;
+
+                                    if target_health.current <= 0 {
+                                        crate::unit_health::start_die_motion(
+                                            &mut commands,
+                                            wall_time,
+                                            &library,
+                                            target_entity,
+                                            target_prefab.0,
+                                            target_transform,
+                                        );
+                                        if target_enemy.is_some() {
+                                            effects.0.push(target_transform.translation);
+                                            melee_kills = melee_kills.saturating_add(1);
+                                        } else if target_player.is_some() {
+                                            game.game_over = true;
+                                            info!(
+                                                "GAME OVER. Final score: {}. Press R to restart.",
+                                                game.score
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -968,65 +1052,95 @@ pub(crate) fn unit_attack_execute(
                     continue;
                 }
 
-                // Otherwise, hit the closest enemy in the forward arc.
+                // Otherwise, hit the closest unit in the forward arc.
                 let mut best: Option<(Entity, f32)> = None;
-                for (enemy_entity, enemy_transform, enemy_collider, _enemy_prefab, _enemy) in
-                    enemies.iter_mut()
+                for (
+                    target_entity,
+                    target_transform,
+                    target_collider,
+                    _prefab_id,
+                    _enemy,
+                    _player,
+                    health,
+                    died,
+                ) in units.iter()
                 {
-                    if killed.0.contains(&enemy_entity) {
+                    if target_entity == entity {
                         continue;
                     }
-                    let to = enemy_transform.translation - origin;
+                    if died.is_some() || health.current <= 0 {
+                        continue;
+                    }
+                    let to = target_transform.translation - origin;
                     let to2 = Vec2::new(to.x, to.z);
                     if to2.length_squared() <= 1e-6 {
                         continue;
                     }
                     let dist = to2.length();
-                    if dist > melee.range + melee.radius + enemy_collider.radius {
+                    if dist > melee.range + melee.radius + target_collider.radius {
                         continue;
                     }
                     if forward2.dot(to2.normalize()) < cos_min {
                         continue;
                     }
                     best = Some(match best {
-                        None => (enemy_entity, dist),
-                        Some((best_e, best_d)) => {
-                            if dist < best_d {
-                                (enemy_entity, dist)
+                        None => (target_entity, dist),
+                        Some((best_entity, best_distance)) => {
+                            if dist < best_distance {
+                                (target_entity, dist)
                             } else {
-                                (best_e, best_d)
+                                (best_entity, best_distance)
                             }
                         }
                     });
                 }
 
-                let Some((enemy_entity, _dist)) = best else {
+                let Some((target_entity, _dist)) = best else {
                     continue;
                 };
                 if let Ok((
-                    enemy_entity,
-                    enemy_transform,
-                    _enemy_collider,
-                    enemy_prefab,
-                    mut enemy,
-                )) = enemies.get_mut(enemy_entity)
+                    target_entity,
+                    target_transform,
+                    _target_collider,
+                    target_prefab,
+                    target_enemy,
+                    target_player,
+                    mut target_health,
+                    target_died,
+                )) = units.get_mut(target_entity)
                 {
-                    if killed.0.contains(&enemy_entity) {
+                    if target_died.is_some() || target_health.current <= 0 {
                         continue;
                     }
                     let popup_offset_y = library
-                        .health_bar_offset_y(enemy_prefab.0)
+                        .health_bar_offset_y(target_prefab.0)
                         .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
                     health_events.write(HealthChangeEvent {
-                        world_pos: enemy_transform.translation + Vec3::Y * popup_offset_y,
+                        world_pos: target_transform.translation + Vec3::Y * popup_offset_y,
                         delta: -damage,
-                        is_hero: false,
+                        is_hero: target_player.is_some(),
                     });
-                    enemy.health -= damage;
-                    if enemy.health <= 0 && killed.0.insert(enemy_entity) {
-                        commands.entity(enemy_entity).try_despawn();
-                        effects.0.push(enemy_transform.translation);
-                        melee_kills = melee_kills.saturating_add(1);
+
+                    target_health.current = (target_health.current - damage).max(0);
+                    if target_health.current <= 0 {
+                        crate::unit_health::start_die_motion(
+                            &mut commands,
+                            wall_time,
+                            &library,
+                            target_entity,
+                            target_prefab.0,
+                            target_transform,
+                        );
+                        if target_enemy.is_some() {
+                            effects.0.push(target_transform.translation);
+                            melee_kills = melee_kills.saturating_add(1);
+                        } else if target_player.is_some() {
+                            game.game_over = true;
+                            info!(
+                                "GAME OVER. Final score: {}. Press R to restart.",
+                                game.score
+                            );
+                        }
                     }
                 }
             }
@@ -1059,6 +1173,7 @@ pub(crate) fn unit_attack_execute(
                 let mut bullet_entity = commands.spawn((
                     ObjectId::new_v4(),
                     ObjectPrefabId(ranged.projectile_prefab),
+                    ProjectileOwner(entity),
                     Transform::from_translation(spawn_pos).with_rotation(rotation),
                     Visibility::Inherited,
                     Bullet {
@@ -1084,9 +1199,18 @@ pub(crate) fn unit_attack_execute(
     }
 
     if melee_kills > 0 {
-        let health_gains = crate::enemies::apply_kill_rewards(&mut game, melee_kills);
+        let Ok(player_entity) = player_entity_q.single() else {
+            return;
+        };
+        let Ok((_e, _t, _c, _p, _enemy, _player, mut player_health, _died)) =
+            units.get_mut(player_entity)
+        else {
+            return;
+        };
+        let health_gains =
+            crate::enemies::apply_kill_rewards(&mut game, &mut player_health, melee_kills);
         if health_gains > 0 {
-            if let Ok(player_transform) = player_q.single() {
+            if let Ok(player_transform) = player_transform_q.single() {
                 let popup_pos = player_transform.translation + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y;
                 for _ in 0..health_gains {
                     health_events.write(HealthChangeEvent {
@@ -1206,24 +1330,47 @@ pub(crate) fn bullet_object_collisions(
 
 pub(crate) fn bullet_enemy_collisions(
     mut commands: Commands,
+    time: Res<Time>,
     mut game: ResMut<Game>,
-    mut killed: ResMut<KilledEnemiesThisFrame>,
     mut effects: ResMut<EnemyKillEffects>,
     mut health_events: MessageWriter<HealthChangeEvent>,
-    player_q: Query<&Transform, With<Player>>,
+    player_entity_q: Query<Entity, With<Player>>,
+    player_transform_q: Query<&Transform, With<Player>>,
     library: Res<ObjectLibrary>,
     assets: Option<Res<SceneAssets>>,
-    bullets: Query<(Entity, &Transform, &Collider, &ObjectPrefabId), With<Bullet>>,
-    mut enemies: Query<(Entity, &Transform, &Collider, &ObjectPrefabId, &mut Enemy), With<Enemy>>,
+    bullets: Query<
+        (
+            Entity,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&ProjectileOwner>,
+        ),
+        With<Bullet>,
+    >,
+    mut units: Query<
+        (
+            Entity,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Enemy>,
+            Option<&Player>,
+            &mut Health,
+            Option<&Died>,
+        ),
+        Or<(With<Commandable>, With<Enemy>)>,
+    >,
 ) {
     let assets = assets.as_deref();
     if game.game_over {
         return;
     }
 
-    let bullet_data: Vec<(Entity, Vec3, f32, i32, bool)> = bullets
+    let wall_time = time.elapsed_secs();
+    let bullet_data: Vec<(Entity, Vec3, f32, i32, bool, Option<Entity>)> = bullets
         .iter()
-        .map(|(entity, transform, collider, prefab_id)| {
+        .map(|(entity, transform, collider, prefab_id, owner)| {
             let (damage, spawn_energy_impact) = library
                 .projectile(prefab_id.0)
                 .map(|profile| (profile.damage, profile.spawn_energy_impact))
@@ -1234,29 +1381,43 @@ pub(crate) fn bullet_enemy_collisions(
                 collider.radius,
                 damage,
                 spawn_energy_impact,
+                owner.map(|o| o.0),
             )
         })
         .collect();
 
     let mut bullets_to_despawn: HashSet<Entity> = HashSet::default();
-    let mut enemies_to_despawn: Vec<(Entity, Vec3)> = Vec::new();
+    let mut enemy_kills: u32 = 0;
 
-    for (enemy_entity, enemy_transform, enemy_collider, prefab_id, mut enemy) in &mut enemies {
-        if killed.0.contains(&enemy_entity) {
+    for (
+        target_entity,
+        target_transform,
+        target_collider,
+        prefab_id,
+        enemy,
+        player,
+        mut health,
+        died,
+    ) in &mut units
+    {
+        if died.is_some() || health.current <= 0 {
             continue;
         }
 
-        for (bullet_entity, bullet_pos, bullet_radius, bullet_damage, spawn_energy_impact) in
+        for (bullet_entity, bullet_pos, bullet_radius, bullet_damage, spawn_energy_impact, owner) in
             &bullet_data
         {
             if bullets_to_despawn.contains(bullet_entity) {
                 continue;
             }
+            if owner.is_some_and(|owner| owner == target_entity) {
+                continue;
+            }
             if circles_intersect_xz(
                 *bullet_pos,
                 *bullet_radius,
-                enemy_transform.translation,
-                enemy_collider.radius,
+                target_transform.translation,
+                target_collider.radius,
             ) {
                 bullets_to_despawn.insert(*bullet_entity);
                 if *spawn_energy_impact {
@@ -1268,44 +1429,65 @@ pub(crate) fn bullet_enemy_collisions(
                 let popup_offset_y = library
                     .health_bar_offset_y(prefab_id.0)
                     .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
-                let popup_pos = enemy_transform.translation + Vec3::Y * popup_offset_y;
+                let popup_pos = target_transform.translation + Vec3::Y * popup_offset_y;
                 health_events.write(HealthChangeEvent {
                     world_pos: popup_pos,
                     delta: -*bullet_damage,
-                    is_hero: false,
+                    is_hero: player.is_some(),
                 });
 
-                enemy.health -= *bullet_damage;
-                if enemy.health <= 0 && killed.0.insert(enemy_entity) {
-                    enemies_to_despawn.push((enemy_entity, enemy_transform.translation));
+                health.current = (health.current - *bullet_damage).max(0);
+                if health.current <= 0 {
+                    crate::unit_health::start_die_motion(
+                        &mut commands,
+                        wall_time,
+                        &library,
+                        target_entity,
+                        prefab_id.0,
+                        target_transform,
+                    );
+                    if enemy.is_some() {
+                        effects.0.push(target_transform.translation);
+                        enemy_kills = enemy_kills.saturating_add(1);
+                    } else if player.is_some() {
+                        game.game_over = true;
+                        info!(
+                            "GAME OVER. Final score: {}. Press R to restart.",
+                            game.score
+                        );
+                    }
                     break;
                 }
             }
         }
     }
 
-    let health_gains =
-        crate::enemies::apply_kill_rewards(&mut game, enemies_to_despawn.len() as u32);
-    if health_gains > 0 {
-        if let Ok(player_transform) = player_q.single() {
-            let popup_pos = player_transform.translation + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y;
-            for _ in 0..health_gains {
-                health_events.write(HealthChangeEvent {
-                    world_pos: popup_pos,
-                    delta: 1,
-                    is_hero: true,
-                });
+    if enemy_kills > 0 {
+        let Ok(player_entity) = player_entity_q.single() else {
+            return;
+        };
+        let Ok((_e, _t, _c, _p, _enemy, _player, mut player_health, _died)) =
+            units.get_mut(player_entity)
+        else {
+            return;
+        };
+        let health_gains =
+            crate::enemies::apply_kill_rewards(&mut game, &mut player_health, enemy_kills);
+        if health_gains > 0 {
+            if let Ok(player_transform) = player_transform_q.single() {
+                let popup_pos = player_transform.translation + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y;
+                for _ in 0..health_gains {
+                    health_events.write(HealthChangeEvent {
+                        world_pos: popup_pos,
+                        delta: 1,
+                        is_hero: true,
+                    });
+                }
             }
         }
     }
-    for (_enemy_entity, pos) in enemies_to_despawn.iter() {
-        effects.0.push(*pos);
-    }
 
     for entity in bullets_to_despawn {
-        commands.entity(entity).try_despawn();
-    }
-    for (entity, _pos) in enemies_to_despawn {
         commands.entity(entity).try_despawn();
     }
 }

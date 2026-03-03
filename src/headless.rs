@@ -25,6 +25,9 @@ pub(crate) fn setup_headless(mut commands: Commands, exit: Res<HeadlessExit>) {
         ObjectPrefabId(characters::hero::object_id()),
         Transform::from_xyz(0.0, PLAYER_Y, 0.0),
         Player,
+        Commandable,
+        Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH),
+        LaserDamageAccum::default(),
         Collider {
             radius: PLAYER_RADIUS,
         },
@@ -158,6 +161,7 @@ pub(crate) fn headless_exit_after_timer(
     mut exit: MessageWriter<AppExit>,
     mut headless: ResMut<HeadlessExit>,
     game: Res<Game>,
+    player_health: Query<&Health, With<Player>>,
 ) {
     let Some(timer) = headless.timer.as_mut() else {
         return;
@@ -168,9 +172,10 @@ pub(crate) fn headless_exit_after_timer(
         return;
     }
 
+    let health = player_health.single().ok().map(|h| h.current).unwrap_or(0);
     println!(
         "Headless simulation finished. score: {} | health: {}",
-        game.score, game.health
+        game.score, health
     );
     exit.write(AppExit::Success);
 }

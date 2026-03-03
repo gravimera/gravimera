@@ -69,13 +69,54 @@ pub(crate) struct Player;
 #[derive(Component)]
 pub(crate) struct Commandable;
 
+#[derive(Component, Copy, Clone, Debug)]
+pub(crate) struct Health {
+    pub(crate) current: i32,
+    pub(crate) max: i32,
+}
+
+impl Health {
+    pub(crate) fn new(current: i32, max: i32) -> Self {
+        let max = max.max(1);
+        let current = current.clamp(0, max);
+        Self { current, max }
+    }
+
+    pub(crate) fn fraction(&self) -> f32 {
+        if self.max > 0 {
+            (self.current.max(0) as f32 / self.max as f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Marker for units that have died (health <= 0) and should remain as corpses.
+///
+/// `restore_transform` is used to revive the unit when switching back to Build mode.
+#[derive(Component, Clone, Debug)]
+pub(crate) struct Died {
+    pub(crate) restore_transform: Transform,
+}
+
+#[derive(Component, Clone, Debug)]
+pub(crate) struct DieMotion {
+    pub(crate) started_at_secs: f32,
+    pub(crate) duration_secs: f32,
+    pub(crate) start: Transform,
+    pub(crate) end: Transform,
+}
+
+#[derive(Component, Copy, Clone, Debug, Default)]
+pub(crate) struct LaserDamageAccum(pub(crate) f32);
+
+#[derive(Component, Copy, Clone, Debug)]
+pub(crate) struct ProjectileOwner(pub(crate) Entity);
+
 #[derive(Component)]
 pub(crate) struct Enemy {
     pub(crate) speed: f32,
     pub(crate) origin_y: f32,
-    pub(crate) health: i32,
-    pub(crate) max_health: i32,
-    pub(crate) laser_damage_accum: f32,
 }
 
 #[derive(Component)]
@@ -568,8 +609,6 @@ pub(crate) struct BuildDimensions {
 #[derive(Resource)]
 pub(crate) struct Game {
     pub(crate) score: u32,
-    pub(crate) health: i32,
-    pub(crate) max_health: i32,
     pub(crate) enemy_spawn: Timer,
     pub(crate) fire_cooldown_secs: f32,
     pub(crate) weapon: PlayerWeapon,
@@ -582,8 +621,6 @@ impl Default for Game {
     fn default() -> Self {
         Self {
             score: 0,
-            health: PLAYER_MAX_HEALTH,
-            max_health: PLAYER_MAX_HEALTH,
             enemy_spawn: Timer::from_seconds(ENEMY_SPAWN_EVERY_SECS, TimerMode::Repeating),
             fire_cooldown_secs: 0.0,
             weapon: PlayerWeapon::Normal,
@@ -666,7 +703,7 @@ impl Default for Aim {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum FireTarget {
     Point(Vec2),
-    Enemy(Entity),
+    Unit(Entity),
 }
 
 #[derive(Resource, Default)]

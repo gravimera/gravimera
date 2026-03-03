@@ -362,6 +362,8 @@ pub(crate) fn setup_rendered(
             Visibility::Inherited,
             Player,
             Commandable,
+            Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH),
+            LaserDamageAccum::default(),
             Collider {
                 radius: PLAYER_RADIUS,
             },

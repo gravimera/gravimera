@@ -101,10 +101,9 @@ fn spawn_enemy_common(
         Enemy {
             speed,
             origin_y: profile.origin_y,
-            health: profile.max_health,
-            max_health: profile.max_health,
-            laser_damage_accum: 0.0,
         },
+        Health::new(profile.max_health, profile.max_health),
+        LaserDamageAccum::default(),
         Collider { radius },
         EnemyAnimator {
             phase: 0.0,
@@ -246,13 +245,14 @@ fn spawn_enemy_headless(
     let _ = spawn_enemy_common(commands, library, enemy_prefab_id, center, speed, &mut rng);
 }
 
-pub(crate) fn apply_kill_rewards(game: &mut Game, kills: u32) -> u32 {
+pub(crate) fn apply_kill_rewards(game: &mut Game, player_health: &mut Health, kills: u32) -> u32 {
     let mut health_gains = 0u32;
     for _ in 0..kills {
         game.score = game.score.saturating_add(1);
         if game.score % 10 == 0 {
-            game.max_health = game.max_health.saturating_add(1);
-            game.health = game.health.saturating_add(1);
+            player_health.max = player_health.max.saturating_add(1).max(1);
+            player_health.current =
+                (player_health.current.saturating_add(1)).min(player_health.max);
             health_gains += 1;
         }
         if game.score % 5 == 0 {
@@ -414,7 +414,14 @@ pub(crate) fn move_enemies(
     player_q: Query<&Transform, With<Player>>,
     library: Res<ObjectLibrary>,
     mut enemies: Query<
-        (&mut Transform, &Enemy, &Collider, &ObjectPrefabId),
+        (
+            &mut Transform,
+            &Enemy,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Health>,
+            Option<&Died>,
+        ),
         (Without<Player>, Without<DogPounce>),
     >,
 ) {
@@ -428,7 +435,11 @@ pub(crate) fn move_enemies(
     };
 
     let dt = time.delta_secs();
-    for (mut enemy_transform, enemy, enemy_collider, prefab_id) in &mut enemies {
+    for (mut enemy_transform, enemy, enemy_collider, prefab_id, health, died) in &mut enemies {
+        if died.is_some() || health.is_some_and(|health| health.current <= 0) {
+            continue;
+        }
+
         let Some(profile) = library.enemy(prefab_id.0) else {
             continue;
         };
@@ -545,6 +556,8 @@ pub(crate) fn dog_try_start_pounce(
             &Collider,
             &Enemy,
             &mut DogPounceCooldown,
+            Option<&Health>,
+            Option<&Died>,
         ),
         (With<Enemy>, Without<DogPounce>),
     >,
@@ -562,7 +575,11 @@ pub(crate) fn dog_try_start_pounce(
     let player_radius = player_collider.radius;
     let mut rng = thread_rng();
 
-    for (entity, transform, collider, enemy, mut cooldown) in &mut dogs {
+    for (entity, transform, collider, enemy, mut cooldown, health, died) in &mut dogs {
+        if died.is_some() || health.is_some_and(|health| health.current <= 0) {
+            continue;
+        }
+
         let delta = Vec2::new(
             player_pos.x - transform.translation.x,
             player_pos.z - transform.translation.z,
@@ -618,11 +635,23 @@ pub(crate) fn update_dog_pounces(
     mut game: ResMut<Game>,
     mut health_events: MessageWriter<HealthChangeEvent>,
     assets: Option<Res<SceneAssets>>,
-    player_q: Query<(&Transform, &Collider), With<Player>>,
     library: Res<ObjectLibrary>,
     objects: Query<
         (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         (With<BuildObject>, Without<Enemy>),
+    >,
+    mut units: Query<
+        (
+            Entity,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Player>,
+            Option<&Enemy>,
+            &mut Health,
+            Option<&Died>,
+        ),
+        (Or<(With<Commandable>, With<Enemy>)>, Without<DogPounce>),
     >,
     mut pounces: Query<
         (
@@ -632,6 +661,8 @@ pub(crate) fn update_dog_pounces(
             &Enemy,
             &ObjectPrefabId,
             &mut DogPounce,
+            Option<&Health>,
+            Option<&Died>,
         ),
         (With<Enemy>, Without<Player>),
     >,
@@ -644,13 +675,7 @@ pub(crate) fn update_dog_pounces(
     if dt <= 0.0 {
         return;
     }
-
-    let (player_transform, player_collider) = match player_q.single() {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let player_pos = player_transform.translation;
-    let player_radius = player_collider.radius;
+    let wall_time = time.elapsed_secs();
 
     #[derive(Clone, Copy)]
     struct ObstacleAabb {
@@ -681,7 +706,14 @@ pub(crate) fn update_dog_pounces(
     let assets = assets.as_deref();
     let mut finished: Vec<Entity> = Vec::new();
 
-    for (entity, mut transform, collider, enemy, prefab_id, mut pounce) in &mut pounces {
+    for (entity, mut transform, collider, enemy, prefab_id, mut pounce, health, died) in
+        &mut pounces
+    {
+        if died.is_some() || health.is_some_and(|health| health.current <= 0) {
+            commands.entity(entity).try_remove::<DogPounce>();
+            continue;
+        }
+
         pounce.elapsed_secs += dt;
         let t = (pounce.elapsed_secs / pounce.duration_secs).clamp(0.0, 1.0);
         let t_smooth = t * t * (3.0 - 2.0 * t);
@@ -730,38 +762,73 @@ pub(crate) fn update_dog_pounces(
             transform.rotation = Quat::from_rotation_y(dir.x.atan2(dir.z));
         }
 
-        if !pounce.did_damage
-            && circles_intersect_xz(
-                player_pos,
-                player_radius,
-                transform.translation,
-                collider.radius,
-            )
-        {
-            pounce.did_damage = true;
-            game.health -= DOG_POUNCE_DAMAGE;
-            health_events.write(HealthChangeEvent {
-                world_pos: player_pos + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y,
-                delta: -DOG_POUNCE_DAMAGE,
-                is_hero: true,
-            });
+        if !pounce.did_damage {
+            for (
+                target_entity,
+                target_transform,
+                target_collider,
+                target_prefab,
+                target_player,
+                _target_enemy,
+                mut target_health,
+                target_died,
+            ) in &mut units
+            {
+                if target_entity == entity {
+                    continue;
+                }
+                if target_died.is_some() || target_health.current <= 0 {
+                    continue;
+                }
+                if !circles_intersect_xz(
+                    target_transform.translation,
+                    target_collider.radius,
+                    transform.translation,
+                    collider.radius,
+                ) {
+                    continue;
+                }
 
-            if let Some(assets) = assets {
-                let hit = player_pos + Vec3::new(0.0, PLAYER_GUN_Y, 0.0);
-                spawn_blood_particles(&mut commands, assets, hit);
+                pounce.did_damage = true;
+
+                let popup_offset_y = library
+                    .health_bar_offset_y(target_prefab.0)
+                    .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
+                health_events.write(HealthChangeEvent {
+                    world_pos: target_transform.translation + Vec3::Y * popup_offset_y,
+                    delta: -DOG_POUNCE_DAMAGE,
+                    is_hero: target_player.is_some(),
+                });
+
+                target_health.current = (target_health.current - DOG_POUNCE_DAMAGE).max(0);
+
+                if let Some(assets) = assets {
+                    let hit = target_transform.translation + Vec3::new(0.0, PLAYER_GUN_Y, 0.0);
+                    spawn_blood_particles(&mut commands, assets, hit);
+                }
+
+                if target_health.current <= 0 {
+                    crate::unit_health::start_die_motion(
+                        &mut commands,
+                        wall_time,
+                        &library,
+                        target_entity,
+                        target_prefab.0,
+                        target_transform,
+                    );
+                    if target_player.is_some() {
+                        game.game_over = true;
+                        info!(
+                            "GAME OVER. Final score: {}. Press R to restart.",
+                            game.score
+                        );
+                    }
+                }
+
+                transform.translation.y = base_y;
+                commands.entity(entity).try_remove::<DogPounce>();
+                break;
             }
-
-            transform.translation.y = base_y;
-            commands.entity(entity).try_remove::<DogPounce>();
-
-            if game.health <= 0 {
-                game.game_over = true;
-                info!(
-                    "GAME OVER. Final score: {}. Press R to restart.",
-                    game.score
-                );
-            }
-            continue;
         }
 
         if t >= 1.0 {
@@ -775,13 +842,24 @@ pub(crate) fn update_dog_pounces(
 }
 
 pub(crate) fn dog_bite_attack(
+    mut commands: Commands,
     time: Res<Time>,
     mut game: ResMut<Game>,
     mut health_events: MessageWriter<HealthChangeEvent>,
-    player_q: Query<(&Transform, &Collider), With<Player>>,
-    mut dogs: Query<
-        (Entity, &Transform, &Collider, &mut DogBiteCooldown),
-        (With<Enemy>, Without<Player>, Without<DogPounce>),
+    library: Res<ObjectLibrary>,
+    mut units: Query<
+        (
+            Entity,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Player>,
+            Option<&mut DogBiteCooldown>,
+            Option<&DogPounce>,
+            &mut Health,
+            Option<&Died>,
+        ),
+        Or<(With<Commandable>, With<Enemy>)>,
     >,
 ) {
     if game.game_over {
@@ -792,43 +870,133 @@ pub(crate) fn dog_bite_attack(
     if dt <= 0.0 {
         return;
     }
+    let wall_time = time.elapsed_secs();
 
-    let (player_transform, player_collider) = match player_q.single() {
-        Ok(v) => v,
-        Err(_) => return,
-    };
+    let mut live_targets: Vec<(Entity, Vec3, f32, i32)> = Vec::new();
+    let mut biters: Vec<(Entity, Vec3, f32)> = Vec::new();
 
-    let player_pos = player_transform.translation;
-    let player_radius = player_collider.radius;
+    for (entity, transform, collider, _prefab, _player, bite, pounce, health, died) in
+        units.iter_mut()
+    {
+        if died.is_none() && health.current > 0 {
+            live_targets.push((
+                entity,
+                transform.translation,
+                collider.radius,
+                health.current,
+            ));
+        }
 
-    for (_entity, transform, collider, mut bite) in &mut dogs {
+        let Some(mut bite) = bite else {
+            continue;
+        };
+        if pounce.is_some() {
+            continue;
+        }
+        if died.is_some() || health.current <= 0 {
+            continue;
+        }
+
         bite.remaining_secs -= dt;
         if bite.remaining_secs > 0.0 {
             continue;
         }
 
-        let delta = Vec2::new(
-            player_pos.x - transform.translation.x,
-            player_pos.z - transform.translation.z,
-        );
-        let bite_range = player_radius + collider.radius + DOG_BITE_RANGE_PADDING;
-        if delta.length_squared() > bite_range * bite_range {
-            continue;
+        biters.push((entity, transform.translation, collider.radius));
+    }
+
+    for (dog_entity, dog_pos, dog_radius) in biters {
+        let mut best: Option<(Entity, f32)> = None;
+        for (target_entity, target_pos, target_radius, target_health) in &live_targets {
+            if *target_entity == dog_entity {
+                continue;
+            }
+            if *target_health <= 0 {
+                continue;
+            }
+
+            let delta = Vec2::new(target_pos.x - dog_pos.x, target_pos.z - dog_pos.z);
+            let bite_range = target_radius + dog_radius + DOG_BITE_RANGE_PADDING;
+            let d2 = delta.length_squared();
+            if d2 > bite_range * bite_range {
+                continue;
+            }
+
+            best = Some(match best {
+                None => (*target_entity, d2),
+                Some((best_entity, best_d2)) => {
+                    if d2 < best_d2 {
+                        (*target_entity, d2)
+                    } else {
+                        (best_entity, best_d2)
+                    }
+                }
+            });
         }
 
-        bite.remaining_secs = DOG_BITE_EVERY_SECS;
-        game.health -= DOG_BITE_DAMAGE;
-        health_events.write(HealthChangeEvent {
-            world_pos: player_pos + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y,
-            delta: -DOG_BITE_DAMAGE,
-            is_hero: true,
-        });
-        if game.health <= 0 {
-            game.game_over = true;
-            info!(
-                "GAME OVER. Final score: {}. Press R to restart.",
-                game.score
-            );
+        let Some((target_entity, _d2)) = best else {
+            continue;
+        };
+
+        let mut player_died = false;
+        {
+            let Ok((
+                _target_entity,
+                target_transform,
+                _target_collider,
+                target_prefab,
+                target_player,
+                _target_bite,
+                _target_pounce,
+                mut target_health,
+                target_died,
+            )) = units.get_mut(target_entity)
+            else {
+                continue;
+            };
+            if target_died.is_some() || target_health.current <= 0 {
+                continue;
+            }
+
+            let popup_offset_y = library
+                .health_bar_offset_y(target_prefab.0)
+                .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
+            health_events.write(HealthChangeEvent {
+                world_pos: target_transform.translation + Vec3::Y * popup_offset_y,
+                delta: -DOG_BITE_DAMAGE,
+                is_hero: target_player.is_some(),
+            });
+
+            target_health.current = (target_health.current - DOG_BITE_DAMAGE).max(0);
+            if target_health.current <= 0 {
+                crate::unit_health::start_die_motion(
+                    &mut commands,
+                    wall_time,
+                    &library,
+                    target_entity,
+                    target_prefab.0,
+                    target_transform,
+                );
+
+                if target_player.is_some() {
+                    player_died = true;
+                    game.game_over = true;
+                    info!(
+                        "GAME OVER. Final score: {}. Press R to restart.",
+                        game.score
+                    );
+                }
+            }
+        }
+
+        if let Ok((_e, _t, _c, _p, _pl, bite, _pounce, _health, _died)) = units.get_mut(dog_entity)
+        {
+            if let Some(mut bite) = bite {
+                bite.remaining_secs = DOG_BITE_EVERY_SECS;
+            }
+        }
+
+        if player_died {
             break;
         }
     }
@@ -841,7 +1009,16 @@ pub(crate) fn enemy_shooting(
     assets: Option<Res<SceneAssets>>,
     player_q: Query<&Transform, With<Player>>,
     library: Res<ObjectLibrary>,
-    mut enemies: Query<(&Transform, &ObjectPrefabId, &mut EnemyShooter), With<Enemy>>,
+    mut enemies: Query<
+        (
+            &Transform,
+            &ObjectPrefabId,
+            &mut EnemyShooter,
+            Option<&Health>,
+            Option<&Died>,
+        ),
+        With<Enemy>,
+    >,
 ) {
     if game.game_over {
         return;
@@ -857,7 +1034,11 @@ pub(crate) fn enemy_shooting(
     let player_pos = player_transform.translation;
     let mut rng = thread_rng();
 
-    for (enemy_transform, enemy_type, mut shooter) in &mut enemies {
+    for (enemy_transform, enemy_type, mut shooter, health, died) in &mut enemies {
+        if died.is_some() || health.is_some_and(|health| health.current <= 0) {
+            continue;
+        }
+
         shooter.timer.tick(dt);
         if !shooter.timer.just_finished() {
             continue;
@@ -929,7 +1110,16 @@ pub(crate) fn gundam_shooting(
     assets: Option<Res<SceneAssets>>,
     player_q: Query<&Transform, With<Player>>,
     library: Res<ObjectLibrary>,
-    mut gundams: Query<(&Transform, &ObjectPrefabId, &mut GundamShooter), With<Enemy>>,
+    mut gundams: Query<
+        (
+            &Transform,
+            &ObjectPrefabId,
+            &mut GundamShooter,
+            Option<&Health>,
+            Option<&Died>,
+        ),
+        With<Enemy>,
+    >,
 ) {
     if game.game_over {
         return;
@@ -945,7 +1135,11 @@ pub(crate) fn gundam_shooting(
     let player_pos = player_transform.translation;
     let mut rng = thread_rng();
 
-    for (enemy_transform, enemy_type, mut shooter) in &mut gundams {
+    for (enemy_transform, enemy_type, mut shooter, health, died) in &mut gundams {
+        if died.is_some() || health.is_some_and(|health| health.current <= 0) {
+            continue;
+        }
+
         let Some(profile) = library.enemy(enemy_type.0) else {
             continue;
         };
@@ -1118,10 +1312,10 @@ pub(crate) fn enemy_projectile_object_collisions(
 
 pub(crate) fn enemy_projectile_player_collisions(
     mut commands: Commands,
+    time: Res<Time>,
     mut game: ResMut<Game>,
     mut health_events: MessageWriter<HealthChangeEvent>,
     assets: Option<Res<SceneAssets>>,
-    player_q: Query<(&Transform, &Collider), With<Player>>,
     library: Res<ObjectLibrary>,
     projectiles: Query<(
         Entity,
@@ -1130,16 +1324,25 @@ pub(crate) fn enemy_projectile_player_collisions(
         &EnemyProjectile,
         &ObjectPrefabId,
     )>,
+    mut units: Query<
+        (
+            Entity,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Player>,
+            Option<&Enemy>,
+            &mut Health,
+            Option<&Died>,
+        ),
+        Or<(With<Commandable>, With<Enemy>)>,
+    >,
 ) {
     if game.game_over {
         return;
     }
 
-    let (player_transform, player_collider) = match player_q.single() {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
+    let wall_time = time.elapsed_secs();
     let assets = assets.as_deref();
     for (entity, transform, collider, projectile, prefab_id) in &projectiles {
         if projectile.ttl_secs <= 0.0 {
@@ -1150,12 +1353,63 @@ pub(crate) fn enemy_projectile_player_collisions(
             continue;
         };
 
-        if !circles_intersect_xz(
-            player_transform.translation,
-            player_collider.radius,
-            transform.translation,
-            collider.radius,
-        ) {
+        let mut hit = None;
+        for (
+            target_entity,
+            target_transform,
+            target_collider,
+            target_prefab,
+            target_player,
+            _target_enemy,
+            mut health,
+            died,
+        ) in &mut units
+        {
+            if died.is_some() || health.current <= 0 {
+                continue;
+            }
+            if !circles_intersect_xz(
+                target_transform.translation,
+                target_collider.radius,
+                transform.translation,
+                collider.radius,
+            ) {
+                continue;
+            }
+
+            let popup_offset_y = library
+                .health_bar_offset_y(target_prefab.0)
+                .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
+            health_events.write(HealthChangeEvent {
+                world_pos: target_transform.translation + Vec3::Y * popup_offset_y,
+                delta: -projectile_profile.damage,
+                is_hero: target_player.is_some(),
+            });
+
+            health.current = (health.current - projectile_profile.damage).max(0);
+            if health.current <= 0 {
+                crate::unit_health::start_die_motion(
+                    &mut commands,
+                    wall_time,
+                    &library,
+                    target_entity,
+                    target_prefab.0,
+                    target_transform,
+                );
+                if target_player.is_some() {
+                    game.game_over = true;
+                    info!(
+                        "GAME OVER. Final score: {}. Press R to restart.",
+                        game.score
+                    );
+                }
+            }
+
+            hit = Some(target_entity);
+            break;
+        }
+
+        if hit.is_none() {
             continue;
         }
 
@@ -1166,19 +1420,7 @@ pub(crate) fn enemy_projectile_player_collisions(
             }
         }
 
-        game.health -= projectile_profile.damage;
-        health_events.write(HealthChangeEvent {
-            world_pos: player_transform.translation + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y,
-            delta: -projectile_profile.damage,
-            is_hero: true,
-        });
-
-        if game.health <= 0 {
-            game.game_over = true;
-            info!(
-                "GAME OVER. Final score: {}. Press R to restart.",
-                game.score
-            );
+        if game.game_over {
             break;
         }
     }

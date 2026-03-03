@@ -146,6 +146,10 @@ pub(crate) const BLOOD_PARTICLE_COUNT: usize = 14;
 pub(crate) const BLOOD_TTL_SECS: f32 = 0.45;
 pub(crate) const BLOOD_SPEED: f32 = 6.5;
 
+pub(crate) const UNIT_DIE_MOTION_SECS: f32 = 0.55;
+pub(crate) const UNIT_DIE_PITCH_RADS: f32 = std::f32::consts::FRAC_PI_2;
+pub(crate) const UNIT_DIE_SINK_FRACTION_HEIGHT: f32 = 0.20;
+
 pub(crate) const ENEMY_LEG_SWING_MAX_RADS: f32 = 0.85;
 pub(crate) const ENEMY_LEG_SWING_RADS_PER_SEC: f32 = 12.0;
 

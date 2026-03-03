@@ -16,7 +16,16 @@ pub(crate) fn restart_game(
     mut camera_pitch: ResMut<CameraPitch>,
     mut camera_focus: ResMut<CameraFocus>,
     mut move_state: ResMut<MoveCommandState>,
-    mut player_q: Query<(&mut Transform, Option<&mut PlayerAnimator>), With<Player>>,
+    mut player_q: Query<
+        (
+            Entity,
+            &mut Transform,
+            Option<&mut PlayerAnimator>,
+            &mut Health,
+            Option<&Died>,
+        ),
+        With<Player>,
+    >,
     move_orders: Query<Entity, With<MoveOrder>>,
     enemies: Query<Entity, With<Enemy>>,
     bullets: Query<Entity, With<Bullet>>,
@@ -29,8 +38,6 @@ pub(crate) fn restart_game(
     }
 
     game.score = 0;
-    game.health = PLAYER_MAX_HEALTH;
-    game.max_health = PLAYER_MAX_HEALTH;
     game.enemy_spawn.reset();
     game.fire_cooldown_secs = 0.0;
     game.weapon = PlayerWeapon::Normal;
@@ -48,11 +55,19 @@ pub(crate) fn restart_game(
         commands.entity(marker).try_despawn();
     }
 
-    if let Ok((mut player_transform, animator)) = player_q.single_mut() {
+    if let Ok((player_entity, mut player_transform, animator, mut health, died)) =
+        player_q.single_mut()
+    {
         *player_transform = Transform::from_xyz(0.0, PLAYER_Y, 0.0);
         if let Some(mut animator) = animator {
             animator.phase = 0.0;
             animator.last_translation = player_transform.translation;
+        }
+
+        *health = Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH);
+        if died.is_some() {
+            commands.entity(player_entity).remove::<Died>();
+            commands.entity(player_entity).remove::<DieMotion>();
         }
     }
 

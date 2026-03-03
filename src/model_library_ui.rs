@@ -329,7 +329,10 @@ pub(crate) fn model_library_scrollbar_drag(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut state: ResMut<ModelLibraryUiState>,
     mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<ModelLibraryScrollPanel>>,
-    tracks: Query<(&ComputedNode, &UiGlobalTransform, &Visibility), With<ModelLibraryScrollbarTrack>>,
+    tracks: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<ModelLibraryScrollbarTrack>,
+    >,
     thumbs: Query<(&Interaction, &ComputedNode, &Node), With<ModelLibraryScrollbarThumb>>,
 ) {
     if !mouse_buttons.pressed(MouseButton::Left) {
@@ -403,8 +406,7 @@ pub(crate) fn model_library_scrollbar_drag(
     else {
         return;
     };
-    let cursor_in_track =
-        ((local.y + track_node.size.y * 0.5) * track_scale).clamp(0.0, track_h);
+    let cursor_in_track = ((local.y + track_node.size.y * 0.5) * track_scale).clamp(0.0, track_h);
     let thumb_top = (cursor_in_track - drag.grab_offset).clamp(0.0, max_thumb_top);
 
     scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);

@@ -30,6 +30,8 @@ pub(crate) fn separate_enemies(
             &Enemy,
             &ObjectPrefabId,
             Option<&DogPounce>,
+            Option<&Health>,
+            Option<&Died>,
         ),
         With<Enemy>,
     >,
@@ -55,9 +57,17 @@ pub(crate) fn separate_enemies(
     {
         let mut pairs = enemies.iter_combinations_mut::<2>();
         while let Some(
-            [(mut a_transform, a_collider, _a_enemy, _a_type, _a_pounce), (mut b_transform, b_collider, _b_enemy, _b_type, _b_pounce)],
+            [(mut a_transform, a_collider, _a_enemy, _a_type, _a_pounce, a_health, a_died), (mut b_transform, b_collider, _b_enemy, _b_type, _b_pounce, b_health, b_died)],
         ) = pairs.fetch_next()
         {
+            if a_died.is_some()
+                || b_died.is_some()
+                || a_health.is_some_and(|health| health.current <= 0)
+                || b_health.is_some_and(|health| health.current <= 0)
+            {
+                continue;
+            }
+
             let a = Vec2::new(a_transform.translation.x, a_transform.translation.z);
             let b = Vec2::new(b_transform.translation.x, b_transform.translation.z);
             let delta = b - a;
@@ -82,7 +92,11 @@ pub(crate) fn separate_enemies(
         }
     }
 
-    for (mut transform, collider, enemy, prefab_id, pounce) in &mut enemies {
+    for (mut transform, collider, enemy, prefab_id, pounce, health, died) in &mut enemies {
+        if died.is_some() || health.is_some_and(|health| health.current <= 0) {
+            continue;
+        }
+
         let scale_y = safe_abs_scale_y(transform.scale);
         let origin_y = enemy.origin_y * scale_y;
         let radius = collider.radius;
@@ -157,6 +171,8 @@ pub(crate) fn separate_commandables(
             &Collider,
             &ObjectPrefabId,
             Option<&Player>,
+            Option<&Health>,
+            Option<&Died>,
         ),
         (With<Commandable>, Without<BuildObject>, Without<Enemy>),
     >,
@@ -186,9 +202,17 @@ pub(crate) fn separate_commandables(
     {
         let mut pairs = units.iter_combinations_mut::<2>();
         while let Some(
-            [(_a_entity, mut a_transform, a_collider, _a_prefab_id, _a_player), (_b_entity, mut b_transform, b_collider, _b_prefab_id, _b_player)],
+            [(_a_entity, mut a_transform, a_collider, _a_prefab_id, _a_player, a_health, a_died), (_b_entity, mut b_transform, b_collider, _b_prefab_id, _b_player, b_health, b_died)],
         ) = pairs.fetch_next()
         {
+            if a_died.is_some()
+                || b_died.is_some()
+                || a_health.is_some_and(|health| health.current <= 0)
+                || b_health.is_some_and(|health| health.current <= 0)
+            {
+                continue;
+            }
+
             let a = Vec2::new(a_transform.translation.x, a_transform.translation.z);
             let b = Vec2::new(b_transform.translation.x, b_transform.translation.z);
             let delta = b - a;
@@ -224,7 +248,11 @@ pub(crate) fn separate_commandables(
         }
     }
 
-    for (_entity, mut transform, collider, prefab_id, player) in &mut units {
+    for (_entity, mut transform, collider, prefab_id, player, health, died) in &mut units {
+        if died.is_some() || health.is_some_and(|health| health.current <= 0) {
+            continue;
+        }
+
         let scale_y = safe_abs_scale_y(transform.scale);
         let radius = if collider.radius.is_finite() {
             collider.radius.max(COMMANDABLE_MIN_SEPARATION_RADIUS)
@@ -302,7 +330,10 @@ pub(crate) fn separate_commandables(
 pub(crate) fn separate_player_from_enemies(
     library: Res<ObjectLibrary>,
     mut player_q: Query<(&mut Transform, &Collider), With<Player>>,
-    enemies: Query<(&Transform, &Collider), (With<Enemy>, Without<Player>)>,
+    enemies: Query<
+        (&Transform, &Collider, Option<&Health>, Option<&Died>),
+        (With<Enemy>, Without<Player>),
+    >,
     objects: Query<
         (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         (With<BuildObject>, Without<Player>),
@@ -360,7 +391,11 @@ pub(crate) fn separate_player_from_enemies(
     for _ in 0..6 {
         let mut moved = false;
 
-        for (enemy_transform, enemy_collider) in &enemies {
+        for (enemy_transform, enemy_collider, health, died) in &enemies {
+            if died.is_some() || health.is_some_and(|health| health.current <= 0) {
+                continue;
+            }
+
             let enemy_pos = Vec2::new(enemy_transform.translation.x, enemy_transform.translation.z);
             let delta = player_pos - enemy_pos;
             let dist2 = delta.length_squared();

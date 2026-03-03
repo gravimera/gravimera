@@ -51,6 +51,7 @@ mod system_proxy;
 mod threaded_result;
 mod types;
 mod ui;
+mod unit_health;
 mod workspace_ui;
 mod world_drag;
 

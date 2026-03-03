@@ -2053,7 +2053,7 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
                                 }
                             }
                             if let Some(enemy_entity) = found {
-                                fire.target = Some(FireTarget::Enemy(enemy_entity));
+                                fire.target = Some(FireTarget::Unit(enemy_entity));
                             } else {
                                 return Some(json_error(404, "Enemy not found."));
                             }

@@ -11,6 +11,7 @@ pub(crate) fn console_closed(console: Res<CommandConsole>) -> bool {
 
 fn apply_console_command(
     game: &mut Game,
+    player_health: &mut Health,
     ratios: &mut SpawnRatios,
     command: &str,
     player_popup_pos: Option<Vec3>,
@@ -21,7 +22,7 @@ fn apply_console_command(
         return;
     }
 
-    let previous_health = game.health;
+    let previous_health = player_health.current;
 
     let normalized = raw.strip_prefix('/').unwrap_or(raw).to_ascii_lowercase();
 
@@ -43,16 +44,15 @@ fn apply_console_command(
 
             match amount {
                 None => {
-                    game.health = 1000;
-                    game.max_health = 1000;
+                    *player_health = Health::new(1000, 1000);
                     game.shotgun_charges = 1000;
                     game.laser_charges = 1000;
                 }
                 Some(amount) => {
-                    game.health = game.health.saturating_add(amount);
-                    game.max_health = game.max_health.saturating_add(amount);
-                    if game.health > game.max_health {
-                        game.max_health = game.health;
+                    player_health.current = player_health.current.saturating_add(amount);
+                    player_health.max = player_health.max.saturating_add(amount).max(1);
+                    if player_health.current > player_health.max {
+                        player_health.max = player_health.current.max(1);
                     }
 
                     let amount_u32 = amount as u32;
@@ -63,7 +63,7 @@ fn apply_console_command(
 
             game.game_over = false;
             if let Some(pos) = player_popup_pos {
-                let delta = game.health - previous_health;
+                let delta = player_health.current - previous_health;
                 if delta != 0 {
                     health_events.write(HealthChangeEvent {
                         world_pos: pos,
@@ -80,6 +80,7 @@ fn apply_console_command(
         "easy" | "normal" => {
             *game = Game::default();
             *ratios = SpawnRatios::default();
+            *player_health = Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH);
             info!("Settings reset to /easy.");
         }
         "hard" | "difficult" => {
@@ -94,7 +95,7 @@ fn apply_console_command(
     }
 
     if let Some(pos) = player_popup_pos {
-        let delta = game.health - previous_health;
+        let delta = player_health.current - previous_health;
         if delta != 0 {
             health_events.write(HealthChangeEvent {
                 world_pos: pos,
@@ -112,6 +113,7 @@ pub(crate) fn toggle_command_console(
     mut ratios: ResMut<SpawnRatios>,
     mut health_events: MessageWriter<HealthChangeEvent>,
     player_q: Query<&Transform, With<Player>>,
+    mut player_health_q: Query<&mut Health, With<Player>>,
 ) {
     if !(keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter)) {
         return;
@@ -122,8 +124,14 @@ pub(crate) fn toggle_command_console(
             .single()
             .ok()
             .map(|transform| transform.translation + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y);
+        let Ok(mut player_health) = player_health_q.single_mut() else {
+            console.open = false;
+            console.buffer.clear();
+            return;
+        };
         apply_console_command(
             &mut game,
+            &mut player_health,
             &mut ratios,
             &console.buffer,
             popup_pos,
