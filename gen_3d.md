@@ -108,7 +108,7 @@ How it works:
 
 In-game UX (Realm):
 
-- Double-click a unit’s **selection circle** to open the **Motion** panel.
+- Double-click a unit’s **selection circle** to open the **Meta** panel.
 - Pick algorithms per channel (selection persists in `scene.dat`):
   - `Idle`:
     - `None` (use prefab-authored clips)

@@ -409,7 +409,10 @@ impl Plugin for RenderedGen3dPlugin {
         );
         app.add_systems(
             PostUpdate,
-            crate::model_library_ui::model_library_update_scrollbar_ui
+            (
+                crate::model_library_ui::model_library_update_scrollbar_ui,
+                crate::motion_ui::motion_algorithm_ui_update_scrollbar_ui,
+            )
                 .in_set(UiSystems::Content)
                 .run_if(in_state(BuildScene::Realm)),
         );
@@ -526,6 +529,9 @@ impl Plugin for RenderedGameplayPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::motion_algorithm_ui_button_styles
                     .after(crate::motion_ui::motion_algorithm_ui_button_clicks),
+                crate::motion_ui::motion_algorithm_ui_scrollbar_drag
+                    .after(crate::motion_ui::motion_algorithm_ui_button_styles)
+                    .run_if(crate::automation::local_input_enabled),
             )
                 .after(rts::selection_input)
                 .run_if(console::console_closed)

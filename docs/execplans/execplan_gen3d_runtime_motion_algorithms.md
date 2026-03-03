@@ -19,7 +19,7 @@ After this change, Gen3D’s “default strategy” becomes:
 You can see it working by:
 
 - Saving a Gen3D unit that declares a `biped_v1` rig contract (two legs).
-- Double-clicking that unit’s selection circle to open the Motion panel and switching its `move` motion algorithm between `none` and `biped_walk_v1`.
+- Double-clicking that unit’s selection circle to open the Meta panel and switching its `move` motion algorithm between `none` and `biped_walk_v1`.
 - Observing that the unit’s visual motion changes immediately while the game’s channel activation logic stays the same (movement still drives the `move` channel; attacks still drive `attack_primary`).
 
 ## Progress
@@ -32,7 +32,7 @@ You can see it working by:
 - [x] (2026-02-24) Persist per-instance `move` algorithm selection in `scene.dat`.
 - [x] (2026-02-24) Add per-channel motion algorithms for `idle`/`move`/`attack_primary`.
 - [x] (2026-02-24) Persist per-instance `idle` + `attack_primary` algorithm selection in `scene.dat`.
-- [x] (2026-02-24) Update Motion panel to switch `idle`/`move`/`attack_primary` per instance.
+- [x] (2026-02-24) Update Meta panel to switch `idle`/`move`/`attack_primary` per instance.
 - [x] (2026-02-24) Run unit tests (`cargo test`).
 - [x] (2026-02-24) Run the required rendered smoke test.
 - [x] (2026-02-24) Commit the changes.
@@ -212,7 +212,7 @@ Add a simple in-game control for switching the move algorithm on selected object
 
 Prescriptive UX (keep minimal):
 
-- Double-click a unit’s selection circle to open the Motion panel.
+- Double-click a unit’s selection circle to open the Meta panel.
 - Pick a `move` algorithm from the list (the list is derived from the prefab’s `motion_rig_v1` kind).
 - Selecting an algorithm updates all currently-selected units of the same prefab.
 
@@ -248,7 +248,7 @@ Acceptance behaviors after implementation:
 
 1) Rig + switching test:
    - Generate and Save a simple Gen3D biped-like unit.
-   - Start the game, select the unit, and double-click its selection circle to open the Motion panel.
+   - Start the game, select the unit, and double-click its selection circle to open the Meta panel.
    - Switch `Move: none` ↔ `Move: biped_walk_v1`.
    - Observe the unit’s motion changes immediately while moving (no crash).
 
@@ -257,7 +257,7 @@ Acceptance behaviors after implementation:
    - Only the animation content changes.
 
 3) Non-rigged models are safe:
-   - Selecting a model without `motion_rig_v1` does not crash; the Motion panel shows only `None (prefab-authored)`.
+   - Selecting a model without `motion_rig_v1` does not crash; the Meta panel shows only `None (prefab-authored)`.
 
 ## Idempotence and Recovery
 
