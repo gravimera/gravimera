@@ -44,7 +44,7 @@ fn apply_console_command(
 
             match amount {
                 None => {
-                    *player_health = Health::new(1000, 1000);
+                    *player_health = Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH);
                     game.shotgun_charges = 1000;
                     game.laser_charges = 1000;
                 }

@@ -53,7 +53,7 @@ Selection is disabled while:
 
 Place objects:
 
-- Choose object: `B` Block, `F` Fence, `T` Tree
+- Choose object: (no default keybinding; old `B`/`F`/`T` shortcuts removed)
 - Place: `LMB`
 - Fence axis / tree size: `G`
 - Exit placement (selection/edit mode): `Esc`
@@ -78,6 +78,7 @@ Units in Build mode:
 
 - Move selected: `RMB`
 - Fire: hold `Space` to fire at the cursor (point or enemy under cursor)
+- Enemies do not spawn automatically.
 - Switch weapon: `Ctrl/Cmd + 1/2/3`
 - Play selected motions (units/build objects): `1..9` and `0` (slot 10)
 - Restart: `R`

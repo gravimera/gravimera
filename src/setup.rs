@@ -15,11 +15,11 @@ pub(crate) fn setup_rendered(
     mut selection: ResMut<SelectionState>,
 ) {
     info!(
-        "Controls: LMB selects (click/drag), RMB issues move orders.\n\
+         "Controls: LMB selects (click/drag), RMB issues move orders.\n\
          F1 toggles Build/Play (or top-left button).\n\
          Forms: Tab cycles forms (selected), hold C to copy source current form (release to confirm; Esc cancels).\n\
          Build/Play: hold Space to fire toward the cursor (ground or an enemy).\n\
-         Build: B/F/T place (Block/Fence/Tree), G fence axis / tree size, LMB place, Esc select, LMB drag select, Delete remove, M duplicate unit, Ctrl/Cmd+D duplicate build.\n\
+         Build: Delete remove, M duplicate unit, Ctrl/Cmd+D duplicate build.\n\
          Edit: WASD move selected (camera-relative; CapsLock = 1/3 speed), ,/. rotate builds, -/= scale selected (Shift bigger).\n\
          Motions: 1..9 and 0 force-play the selected object's animation (slot 10).\n\
          Play: Ctrl/Cmd+1/2/3 switch guns (Normal/Shotgun/Laser), R restarts, Enter command.\n\

@@ -592,33 +592,12 @@ pub(crate) fn build_cancel_preview_and_clear_selection(
 }
 
 pub(crate) fn build_select_object(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut build: ResMut<BuildState>,
-    mut selection: ResMut<SelectionState>,
-    player: Query<Entity, With<Player>>,
+    _keys: Res<ButtonInput<KeyCode>>,
+    _build: ResMut<BuildState>,
+    _selection: ResMut<SelectionState>,
+    _player: Query<Entity, With<Player>>,
 ) {
-    if keys.just_pressed(KeyCode::KeyB) {
-        build.selected = BuildObjectKind::Block;
-        build.placing_active = true;
-        selection.drag_start = None;
-        selection.drag_end = None;
-    } else if keys.just_pressed(KeyCode::KeyF) {
-        build.selected = BuildObjectKind::Fence;
-        build.placing_active = true;
-        selection.drag_start = None;
-        selection.drag_end = None;
-    } else if keys.just_pressed(KeyCode::KeyT) {
-        build.selected = BuildObjectKind::Tree;
-        build.placing_active = true;
-        selection.drag_start = None;
-        selection.drag_end = None;
-    } else {
-        return;
-    }
-
-    if let Ok(entity) = player.single() {
-        selection.selected.insert(entity);
-    }
+    // NOTE: Build-mode keyboard shortcuts (B/F/T) were removed to avoid taking over common keys.
 }
 
 pub(crate) fn build_toggle_fence_axis(

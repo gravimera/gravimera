@@ -56,14 +56,14 @@ pub(crate) fn update_window_title(
             }
             if build.placing_active {
                 window.title = format!(
-                    "Gravimera — BUILD ({}) | score: {} | health: {} | B/F/T place | Esc select | F1 play | Tab forms | hold C copy",
+                    "Gravimera — BUILD ({}) | score: {} | health: {} | LMB place | Esc select | F1 play | Tab forms | hold C copy",
                     build.selected.label(),
                     game.score,
                     health
                 );
             } else {
                 window.title = format!(
-                    "Gravimera — BUILD | score: {} | health: {} | LMB select | B/F/T place | F1 play | Tab forms | hold C copy",
+                    "Gravimera — BUILD | score: {} | health: {} | LMB select | F1 play | Tab forms | hold C copy",
                     game.score, health
                 );
             }

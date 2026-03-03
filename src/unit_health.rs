@@ -5,7 +5,7 @@ use crate::constants::*;
 use crate::object::registry::ObjectLibrary;
 use crate::types::*;
 
-pub(crate) const DEFAULT_UNIT_MAX_HEALTH: i32 = 10;
+pub(crate) const DEFAULT_UNIT_MAX_HEALTH: i32 = 100;
 
 fn default_max_health_for_prefab(library: &ObjectLibrary, prefab_id: u128) -> i32 {
     library

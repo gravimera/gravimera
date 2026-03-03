@@ -739,8 +739,7 @@ impl Plugin for RenderedGameplayPlugin {
         app.add_systems(
             Update,
             (
-                enemies::spawn_enemies,
-                enemies::move_enemies.after(enemies::spawn_enemies),
+                enemies::move_enemies,
                 enemies::tick_dog_pounce_cooldowns.after(enemies::move_enemies),
                 enemies::dog_try_start_pounce.after(enemies::tick_dog_pounce_cooldowns),
                 enemies::update_dog_pounces.after(enemies::dog_try_start_pounce),

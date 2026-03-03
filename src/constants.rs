@@ -7,7 +7,7 @@ pub(crate) const PLAYER_Y: f32 = 0.55;
 pub(crate) const PLAYER_SPEED: f32 = 11.0;
 pub(crate) const SLOW_MOVE_SPEED_MULTIPLIER: f32 = 1.0 / 3.0;
 pub(crate) const PLAYER_RADIUS: f32 = 0.55;
-pub(crate) const PLAYER_MAX_HEALTH: i32 = 1000;
+pub(crate) const PLAYER_MAX_HEALTH: i32 = 10_000;
 
 pub(crate) const PLAYER_LEG_HEIGHT: f32 = PLAYER_Y;
 pub(crate) const PLAYER_LEG_SIZE: f32 = 0.24;
@@ -88,9 +88,9 @@ pub(crate) const DOG_BASE_SPEED: f32 = 5.6;
 pub(crate) const HUMAN_BASE_SPEED: f32 = ENEMY_BASE_SPEED;
 pub(crate) const GUNDAM_BASE_SPEED: f32 = 3.4 / 3.0;
 
-pub(crate) const DOG_HEALTH: i32 = 2;
-pub(crate) const HUMAN_HEALTH: i32 = 5;
-pub(crate) const GUNDAM_HEALTH: i32 = 20;
+pub(crate) const DOG_HEALTH: i32 = 20;
+pub(crate) const HUMAN_HEALTH: i32 = 50;
+pub(crate) const GUNDAM_HEALTH: i32 = 200;
 
 pub(crate) const HUMAN_STOP_DISTANCE: f32 = 6.0;
 pub(crate) const GUNDAM_STOP_DISTANCE: f32 = HUMAN_STOP_DISTANCE * 2.0;
