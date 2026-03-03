@@ -81,18 +81,26 @@ The service currently ships a few **demo** modules for development and testing:
 - `demo.opportunist.v1`: mostly rests (≈3/4) and sometimes wanders (≈1/4).
   - it may attack nearby moving units of different `kind`, and may fight back when attacked.
   - it only engages if it estimates it can win and still remain above 1/4 health.
+  - ranged units (tagged `attack.ranged` by the host) prefer to attack from distance instead of closing in.
+  - requires host-granted capabilities: `brain.move` and `brain.combat`.
+- `demo.belligerent.v1`: aggressive brain that attacks nearby units of different `kind`.
+  - it fights back when attacked (including by the hero).
+  - ranged units (tagged `attack.ranged`) attack from distance.
   - requires host-granted capabilities: `brain.move` and `brain.combat`.
 
 Notes:
 
 - `TickInput.self_state.kind` and `TickInput.nearby_entities[*].kind` are currently the unit/building prefab UUID string.
+- The host tags units with `attack.melee` / `attack.ranged` based on their attack definition.
 - The host includes both units and build objects in `nearby_entities` (bounded and distance-sorted).
 
 ## Host defaults (when enabled)
 
 When `[intelligence_service].enabled = true`, the host automatically attaches a standalone brain to **non-player units** (entities with `Commandable` and without `Player`) when they enter **Play** mode:
 
-- Units that can attack (have an attack definition in the object library): `demo.opportunist.v1`
+- Units that can attack (have an attack definition in the object library):
+  - Melee: 50% `demo.belligerent.v1`, 50% `demo.opportunist.v1`
+  - Ranged projectile: `demo.opportunist.v1`
 - Units that cannot attack: `demo.coward.v1`
 
 Brains only tick/act in **Play** mode. When switching back to **Build**, the host clears brain-issued move/attack orders so units stay still for review.

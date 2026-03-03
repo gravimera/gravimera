@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 const MODULE_DEMO_ORBIT: &str = "demo.orbit.v1";
 const MODULE_DEMO_COWARD: &str = "demo.coward.v1";
 const MODULE_DEMO_OPPORTUNIST: &str = "demo.opportunist.v1";
+const MODULE_DEMO_BELLIGERENT: &str = "demo.belligerent.v1";
 
 #[derive(Debug, Clone)]
 struct ServiceConfig {
@@ -117,11 +118,22 @@ struct OpportunistBrain {
     target: Option<CombatTarget>,
 }
 
+#[derive(Debug, Default)]
+struct BelligerentBrain {
+    mode_until_tick: u64,
+    wander_target: Option<[f32; 3]>,
+    last_health: Option<i32>,
+    health_max_est: Option<i32>,
+    target: Option<CombatTarget>,
+    last_attacked_tick: Option<u64>,
+}
+
 #[derive(Debug)]
 enum BrainModuleState {
     DemoOrbit,
     DemoCoward(CowardBrain),
     DemoOpportunist(OpportunistBrain),
+    DemoBelligerent(BelligerentBrain),
 }
 
 #[derive(Debug)]
@@ -147,6 +159,7 @@ fn module_supported(module_id: &str) -> bool {
     module_id == MODULE_DEMO_ORBIT
         || module_id == MODULE_DEMO_COWARD
         || module_id == MODULE_DEMO_OPPORTUNIST
+        || module_id == MODULE_DEMO_BELLIGERENT
 }
 
 fn respond_json(request: tiny_http::Request, status: u16, body_json: String) {
@@ -241,6 +254,9 @@ fn main() {
                 },
                 BrainModuleInfo {
                     module_id: MODULE_DEMO_OPPORTUNIST.into(),
+                },
+                BrainModuleInfo {
+                    module_id: MODULE_DEMO_BELLIGERENT.into(),
                 }];
                 let body = ListModulesResponse {
                     ok: true,
@@ -330,6 +346,9 @@ fn main() {
                     MODULE_DEMO_COWARD => BrainModuleState::DemoCoward(CowardBrain::default()),
                     MODULE_DEMO_OPPORTUNIST => {
                         BrainModuleState::DemoOpportunist(OpportunistBrain::default())
+                    }
+                    MODULE_DEMO_BELLIGERENT => {
+                        BrainModuleState::DemoBelligerent(BelligerentBrain::default())
                     }
                     _ => BrainModuleState::DemoOrbit,
                 };
@@ -467,6 +486,9 @@ fn tick_brain(instance: &mut BrainInstance, input: &TickInput) -> TickOutput {
         BrainModuleState::DemoOpportunist(state) => {
             tick_demo_opportunist(config, capabilities, state, input)
         }
+        BrainModuleState::DemoBelligerent(state) => {
+            tick_demo_belligerent(config, capabilities, state, input)
+        }
     }
 }
 
@@ -532,6 +554,10 @@ fn config_u32(config: &serde_json::Value, key: &str, default: u32, min: u32, max
 
 fn cap_enabled(capabilities: &HashSet<String>, cap: &str) -> bool {
     capabilities.contains(cap)
+}
+
+fn self_tagged(input: &TickInput, tag: &str) -> bool {
+    input.self_state.tags.iter().any(|t| t == tag)
 }
 
 fn is_tagged(entity: &NearbyEntity, tag: &str) -> bool {
@@ -865,10 +891,17 @@ fn tick_demo_opportunist(
 
     let self_kind = input.self_state.kind.as_str();
     let self_pos = input.self_state.pos;
+    let is_ranged = self_tagged(input, "attack.ranged");
 
     let wander_radius_m = config_f32(config, "wander_radius_m", 7.0, 0.5, 200.0);
     let wander_arrival_m = config_f32(config, "wander_arrival_m", 0.9, 0.1, 10.0);
-    let notice_m = config_f32(config, "notice_m", 7.0, 0.5, 50.0);
+    let notice_m_base = config_f32(config, "notice_m", 7.0, 0.5, 50.0);
+    let notice_m_ranged = config_f32(config, "notice_m_ranged", 12.0, 0.5, 50.0);
+    let notice_m = if is_ranged {
+        notice_m_ranged
+    } else {
+        notice_m_base
+    };
     let attack_chance = config_f32(config, "attack_chance", 0.45, 0.0, 1.0);
     let moving_threshold_mps = config_f32(config, "moving_threshold_mps", 0.35, 0.0, 50.0);
     let forget_target_ticks = config_u32(config, "forget_target_ticks", (TICKS_PER_SEC * 10) as u32, 1, 1_000_000) as u64;
@@ -955,7 +988,7 @@ fn tick_demo_opportunist(
                     valid_until_tick: Some(tick.saturating_add(30)),
                 });
             }
-            if can_move {
+            if can_move && !is_ranged {
                 commands.push(BrainCommand::MoveTo {
                     pos: target.last_known_pos,
                     valid_until_tick: Some(tick.saturating_add(60)),
@@ -1087,6 +1120,183 @@ fn tick_demo_opportunist(
             }
             commands.push(BrainCommand::SleepForTicks { ticks: 18 });
         }
+    }
+
+    TickOutput {
+        commands,
+        meta: TickOutputMeta::default(),
+    }
+}
+
+fn tick_demo_belligerent(
+    config: &serde_json::Value,
+    capabilities: &HashSet<String>,
+    state: &mut BelligerentBrain,
+    input: &TickInput,
+) -> TickOutput {
+    const TICKS_PER_SEC: u64 = 60;
+    let tick = input.tick_index;
+    let mut rng = SplitMix64::new(input.rng_seed ^ 0x1A45_5A6B_81E3_901C);
+
+    let can_move = cap_enabled(capabilities, "brain.move");
+    let can_combat = cap_enabled(capabilities, "brain.combat");
+
+    let self_kind = input.self_state.kind.as_str();
+    let self_pos = input.self_state.pos;
+    let is_ranged = self_tagged(input, "attack.ranged");
+
+    let wander_radius_m = config_f32(config, "wander_radius_m", 6.0, 0.5, 200.0);
+    let wander_arrival_m = config_f32(config, "wander_arrival_m", 0.9, 0.1, 10.0);
+    let notice_m_base = config_f32(config, "notice_m", 10.0, 0.5, 50.0);
+    let notice_m_ranged = config_f32(config, "notice_m_ranged", 14.0, 0.5, 50.0);
+    let notice_m = if is_ranged {
+        notice_m_ranged
+    } else {
+        notice_m_base
+    };
+    let forget_target_ticks =
+        config_u32(config, "forget_target_ticks", (TICKS_PER_SEC * 8) as u32, 1, 1_000_000) as u64;
+    let fight_back_ticks =
+        config_u32(config, "fight_back_ticks", (TICKS_PER_SEC * 4) as u32, 1, 1_000_000) as u64;
+
+    if let Some(max) = input.self_state.health_max {
+        state.health_max_est = Some(max.max(1));
+    }
+
+    let attacked = match (input.self_state.health, state.last_health) {
+        (Some(now), Some(prev)) => now < prev,
+        _ => false,
+    };
+    state.last_health = input.self_state.health;
+    if attacked {
+        state.last_attacked_tick = Some(tick);
+    }
+
+    let prefer_attacker = state
+        .last_attacked_tick
+        .is_some_and(|t0| tick.saturating_sub(t0) <= fight_back_ticks);
+
+    if attacked {
+        let attacker = nearest_entity(input, |e| {
+            if !is_tagged(e, "unit") {
+                return false;
+            }
+            if !self_kind.is_empty() && e.kind == self_kind {
+                return false;
+            }
+            true
+        })
+        .map(|(e, _d2)| e);
+        if let Some(attacker) = attacker {
+            let attacker_pos = add_pos(self_pos, attacker.rel_pos);
+            state.target = Some(CombatTarget {
+                id: attacker.entity_instance_id.clone(),
+                last_known_pos: attacker_pos,
+                last_known_health: attacker.health,
+                last_known_health_max: attacker.health_max,
+                last_seen_tick: tick,
+            });
+        }
+    }
+
+    // Refresh target from current snapshot.
+    if let Some(target) = state.target.as_mut() {
+        if let Some(seen) = input
+            .nearby_entities
+            .iter()
+            .find(|e| e.entity_instance_id == target.id)
+        {
+            target.last_known_pos = add_pos(self_pos, seen.rel_pos);
+            target.last_known_health = seen.health;
+            target.last_known_health_max = seen.health_max;
+            target.last_seen_tick = tick;
+        } else if tick.saturating_sub(target.last_seen_tick) > forget_target_ticks {
+            state.target = None;
+        }
+    }
+
+    // Aggressively pick any nearby hostile unit as the target (unless we're in a fight-back window).
+    if !prefer_attacker {
+        let max2 = notice_m * notice_m;
+        let nearest = nearest_entity(input, |e| {
+            if !is_tagged(e, "unit") {
+                return false;
+            }
+            if !self_kind.is_empty() && e.kind == self_kind {
+                return false;
+            }
+            let d2 = dist2_xz(e.rel_pos);
+            d2.is_finite() && d2 <= max2
+        })
+        .map(|(e, _d2)| e);
+        if let Some(pick) = nearest {
+            let pick_pos = add_pos(self_pos, pick.rel_pos);
+            state.target = Some(CombatTarget {
+                id: pick.entity_instance_id.clone(),
+                last_known_pos: pick_pos,
+                last_known_health: pick.health,
+                last_known_health_max: pick.health_max,
+                last_seen_tick: tick,
+            });
+        }
+    }
+
+    if let Some(target) = state.target.as_ref() {
+        let mut commands = Vec::new();
+        if can_combat {
+            commands.push(BrainCommand::AttackTarget {
+                target_id: target.id.clone(),
+                valid_until_tick: Some(tick.saturating_add(30)),
+            });
+        }
+        if can_move && !is_ranged {
+            commands.push(BrainCommand::MoveTo {
+                pos: target.last_known_pos,
+                valid_until_tick: Some(tick.saturating_add(60)),
+            });
+        }
+        commands.push(BrainCommand::SleepForTicks { ticks: 6 });
+        return TickOutput {
+            commands,
+            meta: TickOutputMeta::default(),
+        };
+    }
+
+    // No target: short rest/wander loop (wanders more than opportunist).
+    if tick >= state.mode_until_tick {
+        let r = rng.next_f32();
+        if r < 0.60 {
+            state.mode_until_tick = tick.saturating_add(rng.gen_range_u32(90, 180) as u64);
+            state.wander_target = Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
+        } else {
+            state.mode_until_tick = tick.saturating_add(rng.gen_range_u32(60, 150) as u64);
+            state.wander_target = None;
+        }
+    }
+
+    let mut commands = Vec::new();
+    if let Some(target) = state.wander_target {
+        let arrival2 = wander_arrival_m * wander_arrival_m;
+        let dx = target[0] - self_pos[0];
+        let dz = target[2] - self_pos[2];
+        let d2 = dx * dx + dz * dz;
+        if !d2.is_finite() || d2 <= arrival2 {
+            state.wander_target = Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
+        }
+
+        if can_move {
+            if let Some(target) = state.wander_target {
+                commands.push(BrainCommand::MoveTo {
+                    pos: target,
+                    valid_until_tick: Some(tick.saturating_add(60)),
+                });
+            }
+        }
+        commands.push(BrainCommand::SleepForTicks { ticks: 18 });
+    } else {
+        let remaining = state.mode_until_tick.saturating_sub(tick);
+        let sleep = remaining.min(48).max(12) as u32;
+        commands.push(BrainCommand::SleepForTicks { ticks: sleep });
     }
 
     TickOutput {

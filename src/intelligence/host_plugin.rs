@@ -190,7 +190,7 @@ fn intelligence_attach_default_brains(
     mut commands: Commands,
     library: Res<ObjectLibrary>,
     units: Query<
-        (Entity, &ObjectPrefabId),
+        (Entity, &ObjectId, &ObjectPrefabId),
         (
             Added<Commandable>,
             Without<Player>,
@@ -199,13 +199,21 @@ fn intelligence_attach_default_brains(
         ),
     >,
 ) {
-    for (entity, prefab_id) in units.iter() {
-        let (module_id, capabilities): (&str, Vec<String>) = if library.attack(prefab_id.0).is_some()
+    for (entity, object_id, prefab_id) in units.iter() {
+        let (module_id, capabilities): (&str, Vec<String>) = if let Some(attack) =
+            library.attack(prefab_id.0)
         {
-            (
-                "demo.opportunist.v1",
-                vec!["brain.move".into(), "brain.combat".into()],
-            )
+            let module_id = match attack.kind {
+                crate::object::registry::UnitAttackKind::Melee => {
+                    if (object_id.0 & 1) == 0 {
+                        "demo.belligerent.v1"
+                    } else {
+                        "demo.opportunist.v1"
+                    }
+                }
+                crate::object::registry::UnitAttackKind::RangedProjectile => "demo.opportunist.v1",
+            };
+            (module_id, vec!["brain.move".into(), "brain.combat".into()])
         } else {
             ("demo.coward.v1", vec!["brain.move".into()])
         };
@@ -443,6 +451,16 @@ fn intelligence_tick(
         if enemy.is_some() {
             tags.push("enemy".to_string());
         }
+        if let Some(attack) = library.attack(prefab_id.0) {
+            match attack.kind {
+                crate::object::registry::UnitAttackKind::Melee => {
+                    tags.push("attack.melee".to_string());
+                }
+                crate::object::registry::UnitAttackKind::RangedProjectile => {
+                    tags.push("attack.ranged".to_string());
+                }
+            }
+        }
 
         let speed = locomotion.map(|c| c.speed_mps).unwrap_or(0.0);
         let mut forward = transform.rotation * Vec3::Z;
@@ -499,6 +517,16 @@ fn intelligence_tick(
         let mut self_tags = vec!["unit".to_string()];
         if is_player.is_some() {
             self_tags.push("player".to_string());
+        }
+        if let Some(attack) = library.attack(prefab_id.0) {
+            match attack.kind {
+                crate::object::registry::UnitAttackKind::Melee => {
+                    self_tags.push("attack.melee".to_string());
+                }
+                crate::object::registry::UnitAttackKind::RangedProjectile => {
+                    self_tags.push("attack.ranged".to_string());
+                }
+            }
         }
 
         let self_vel = sensed_units
