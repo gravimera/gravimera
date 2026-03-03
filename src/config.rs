@@ -10,6 +10,10 @@ pub(crate) struct AppConfig {
     pub(crate) log_path: Option<PathBuf>,
     pub(crate) scene_dat_path: Option<PathBuf>,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
+    pub(crate) intelligence_service_enabled: bool,
+    pub(crate) intelligence_service_addr: Option<String>,
+    pub(crate) intelligence_service_token: Option<String>,
+    pub(crate) intelligence_service_debug_spawn_unit: bool,
     pub(crate) automation_enabled: bool,
     pub(crate) automation_bind: Option<String>,
     pub(crate) automation_token: Option<String>,
@@ -41,6 +45,10 @@ impl Default for AppConfig {
             log_path: None,
             scene_dat_path: None,
             gen3d_cache_dir: None,
+            intelligence_service_enabled: false,
+            intelligence_service_addr: None,
+            intelligence_service_token: None,
+            intelligence_service_debug_spawn_unit: false,
             automation_enabled: false,
             automation_bind: None,
             automation_token: None,
@@ -150,6 +158,10 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_log_path_into_config(out, text);
     parse_scene_dat_path_into_config(out, text);
     parse_gen3d_cache_dir_into_config(out, text);
+    parse_intelligence_service_enabled_into_config(out, text);
+    parse_intelligence_service_addr_into_config(out, text);
+    parse_intelligence_service_token_into_config(out, text);
+    parse_intelligence_service_debug_spawn_unit_into_config(out, text);
     parse_automation_enabled_into_config(out, text);
     parse_automation_bind_into_config(out, text);
     parse_automation_disable_local_input_into_config(out, text);
@@ -283,6 +295,38 @@ fn parse_automation_pause_on_start_into_config(out: &mut AppConfig, text: &str) 
 fn parse_automation_token_into_config(out: &mut AppConfig, text: &str) {
     match parse_automation_token(text) {
         Ok(Some(value)) => out.automation_token = Some(value),
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_intelligence_service_enabled_into_config(out: &mut AppConfig, text: &str) {
+    match parse_intelligence_service_enabled(text) {
+        Ok(Some(value)) => out.intelligence_service_enabled = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_intelligence_service_addr_into_config(out: &mut AppConfig, text: &str) {
+    match parse_intelligence_service_addr(text) {
+        Ok(Some(value)) => out.intelligence_service_addr = Some(value),
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_intelligence_service_token_into_config(out: &mut AppConfig, text: &str) {
+    match parse_intelligence_service_token(text) {
+        Ok(Some(value)) => out.intelligence_service_token = Some(value),
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_intelligence_service_debug_spawn_unit_into_config(out: &mut AppConfig, text: &str) {
+    match parse_intelligence_service_debug_spawn_unit(text) {
+        Ok(Some(value)) => out.intelligence_service_debug_spawn_unit = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -636,6 +680,256 @@ fn parse_automation_enabled(text: &str) -> Result<Option<bool>, String> {
         let parsed = parse_toml_bool(value).ok_or_else(|| {
             format!(
                 "config.toml:{line_no}: expected a boolean for `automation.enabled` (example: [automation]\\nenabled = true)"
+            )
+        })?;
+        out = Some(parsed);
+    }
+
+    Ok(out)
+}
+
+fn parse_intelligence_service_enabled(text: &str) -> Result<Option<bool>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<bool> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "intelligence_service_enabled"
+            && !(section.as_deref() == Some("intelligence_service") && key == "enabled")
+        {
+            continue;
+        }
+
+        if let Some(sec) = section.as_deref() {
+            if sec != "intelligence_service" && sec != "app" && key == "intelligence_service_enabled"
+            {
+                continue;
+            }
+            if sec != "intelligence_service" && key == "enabled" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let parsed = parse_toml_bool(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a boolean for `intelligence_service.enabled` (example: [intelligence_service]\\nenabled = true)"
+            )
+        })?;
+        out = Some(parsed);
+    }
+
+    Ok(out)
+}
+
+fn parse_intelligence_service_addr(text: &str) -> Result<Option<String>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<String> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "intelligence_service_addr"
+            && !(section.as_deref() == Some("intelligence_service") && key == "addr")
+        {
+            continue;
+        }
+
+        if let Some(sec) = section.as_deref() {
+            if sec != "intelligence_service" && sec != "app" && key == "intelligence_service_addr"
+            {
+                continue;
+            }
+            if sec != "intelligence_service" && key == "addr" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let value = if value.starts_with('"') || value.starts_with('\'') {
+            parse_toml_string(value).ok_or_else(|| {
+                format!(
+                    "config.toml:{line_no}: expected a string for `intelligence_service.addr` (example: [intelligence_service]\\naddr = \"127.0.0.1:8792\")"
+                )
+            })?
+        } else {
+            value.to_string()
+        };
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            out = None;
+        } else {
+            out = Some(trimmed.to_string());
+        }
+    }
+
+    Ok(out)
+}
+
+fn parse_intelligence_service_token(text: &str) -> Result<Option<String>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<String> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "intelligence_service_token"
+            && !(section.as_deref() == Some("intelligence_service") && key == "token")
+        {
+            continue;
+        }
+
+        if let Some(sec) = section.as_deref() {
+            if sec != "intelligence_service" && sec != "app" && key == "intelligence_service_token"
+            {
+                continue;
+            }
+            if sec != "intelligence_service" && key == "token" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let value = if value.starts_with('"') || value.starts_with('\'') {
+            parse_toml_string(value).ok_or_else(|| {
+                format!(
+                    "config.toml:{line_no}: expected a string for `intelligence_service.token` (example: [intelligence_service]\\ntoken = \"CHANGE_ME\")"
+                )
+            })?
+        } else {
+            value.to_string()
+        };
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            out = None;
+        } else {
+            out = Some(trimmed.to_string());
+        }
+    }
+
+    Ok(out)
+}
+
+fn parse_intelligence_service_debug_spawn_unit(text: &str) -> Result<Option<bool>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<bool> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "intelligence_service_debug_spawn_unit"
+            && !(section.as_deref() == Some("intelligence_service") && key == "debug_spawn_unit")
+        {
+            continue;
+        }
+
+        if let Some(sec) = section.as_deref() {
+            if sec != "intelligence_service"
+                && sec != "app"
+                && key == "intelligence_service_debug_spawn_unit"
+            {
+                continue;
+            }
+            if sec != "intelligence_service" && key == "debug_spawn_unit" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let parsed = parse_toml_bool(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a boolean for `intelligence_service.debug_spawn_unit` (example: [intelligence_service]\\ndebug_spawn_unit = true)"
             )
         })?;
         out = Some(parsed);

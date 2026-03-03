@@ -13,6 +13,18 @@
 # Relative paths are resolved relative to the config file directory.
 # scene_dat_path = "./scene.dat"
 
+[intelligence_service]
+
+# Optional: enable standalone brains via a local/remote intelligence service sidecar.
+# See: `docs/gamedesign/38_intelligence_service_spec.md`
+#
+# enabled = false
+# addr = "127.0.0.1:8792"
+# token = "CHANGE_ME" # optional; requires `Authorization: Bearer <token>`
+#
+# Dev-only: spawn a demo commandable unit with a demo standalone brain (`demo.orbit.v1`).
+# debug_spawn_unit = false
+
 [automation]
 
 # Optional: enable a local-only Automation HTTP API so tools/agents can drive the game

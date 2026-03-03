@@ -632,6 +632,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
         crate::app_plugins::RenderedSceneRuntimePlugin,
         crate::app_plugins::RenderedUiPlugin,
         crate::app_plugins::RenderedGen3dPlugin,
+        crate::intelligence::host_plugin::IntelligenceHostPlugin,
         crate::app_plugins::RenderedGameplayPlugin,
     ));
     app.run()
