@@ -13,7 +13,7 @@ use crate::player;
 use crate::rts;
 use crate::scene_store;
 use crate::setup;
-use crate::types::{BuildScene, GameMode};
+use crate::types::{AutoSpawnEnemies, BuildScene, GameMode};
 use crate::unit_health;
 
 pub(crate) struct RenderedStartupPlugin;
@@ -434,6 +434,10 @@ impl Plugin for RenderedGen3dPlugin {
 
 pub(crate) struct RenderedGameplayPlugin;
 
+fn auto_spawn_enemies_enabled(auto_spawn: Res<AutoSpawnEnemies>) -> bool {
+    auto_spawn.0
+}
+
 impl Plugin for RenderedGameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
@@ -789,7 +793,9 @@ impl Plugin for RenderedGameplayPlugin {
         app.add_systems(
             Update,
             (
-                enemies::spawn_enemies.before(enemies::move_enemies),
+                enemies::spawn_enemies
+                    .before(enemies::move_enemies)
+                    .run_if(auto_spawn_enemies_enabled),
                 enemies::move_enemies,
                 enemies::tick_dog_pounce_cooldowns.after(enemies::move_enemies),
                 enemies::dog_try_start_pounce.after(enemies::tick_dog_pounce_cooldowns),

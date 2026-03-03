@@ -644,6 +644,9 @@ pub(crate) struct SpawnRatios {
     pub(crate) gundam: f32,
 }
 
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub(crate) struct AutoSpawnEnemies(pub(crate) bool);
+
 impl Default for SpawnRatios {
     fn default() -> Self {
         Self::new(0.70, 0.27, 0.03)

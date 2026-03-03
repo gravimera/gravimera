@@ -80,7 +80,7 @@ Units in Build mode:
 - Move selected: `RMB`
 - Fire: hold `Space` to fire at the cursor (point or enemy under cursor)
 - Action Log panel: use the top-left **Log: On/Off** button (Play mode only)
-- Enemies spawn automatically (spawn ratios via `/easy`, `/hard`, `/hell` in the console).
+- Enemies do not spawn automatically.
 - Switch weapon: `Ctrl/Cmd + 1/2/3`
 - Play selected motions (units/build objects): `1..9` and `0` (slot 10)
 - Restart: `R`

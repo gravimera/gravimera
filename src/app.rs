@@ -549,6 +549,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<KilledEnemiesThisFrame>();
     app.init_resource::<EnemyKillEffects>();
     app.init_resource::<SpawnRatios>();
+    app.init_resource::<AutoSpawnEnemies>();
     app.init_resource::<CommandConsole>();
     app.init_resource::<crate::gen3d::Gen3dWorkshop>();
     app.init_resource::<crate::gen3d::Gen3dPreview>();
