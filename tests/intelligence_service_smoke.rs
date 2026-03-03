@@ -86,6 +86,19 @@ fn intelligence_service_health_spawn_tick_and_despawn() {
             module_id: "demo.orbit.v1".into(),
         },
     };
+
+    let (status, body) = http_request(addr, "GET", "/v1/modules", None).expect("modules");
+    assert_eq!(status, 200, "unexpected modules body: {body}");
+    let modules: ListModulesResponse = serde_json::from_str(&body).expect("modules response");
+    assert!(
+        modules
+            .modules
+            .iter()
+            .any(|m| m.module_id == "demo.orbit.v1"),
+        "demo module missing from modules list: {:?}",
+        modules.modules
+    );
+
     let (status, body) = http_request(
         addr,
         "POST",

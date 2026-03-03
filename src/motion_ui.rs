@@ -1,14 +1,20 @@
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use serde_json::json;
+use std::net::SocketAddr;
 
+use crate::config::AppConfig;
+use crate::intelligence::host_plugin::StandaloneBrain;
+use crate::intelligence::sidecar_client::SidecarClient;
 use crate::motion::{
     motion_rig_v1_for_prefab, AttackPrimaryMotionAlgorithm, IdleMotionAlgorithm,
     MotionAlgorithmController, MoveMotionAlgorithm,
 };
 use crate::object::registry::ObjectLibrary;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
-use crate::types::{Commandable, ObjectPrefabId, SelectionState};
+use crate::threaded_result::{new_shared_result, spawn_worker_thread, take_shared_result, SharedResult};
+use crate::types::{Commandable, MoveOrder, ObjectPrefabId, SelectionState};
 
 const PANEL_Z_INDEX: i32 = 940;
 const PANEL_WIDTH_PX: f32 = 300.0;
@@ -30,6 +36,11 @@ pub(crate) struct MotionAlgorithmUiState {
     last_click_target: Option<Entity>,
     last_click_time_secs: f32,
     scrollbar_drag: Option<MotionAlgorithmUiScrollbarDrag>,
+    brain_modules: Vec<String>,
+    brain_modules_loading: bool,
+    brain_modules_error: Option<String>,
+    brain_modules_job: Option<SharedResult<Vec<String>, String>>,
+    brain_modules_fetch_requested: bool,
 }
 
 impl Default for MotionAlgorithmUiState {
@@ -42,6 +53,11 @@ impl Default for MotionAlgorithmUiState {
             last_click_target: None,
             last_click_time_secs: -1.0,
             scrollbar_drag: None,
+            brain_modules: Vec::new(),
+            brain_modules_loading: false,
+            brain_modules_error: None,
+            brain_modules_job: None,
+            brain_modules_fetch_requested: false,
         }
     }
 }
@@ -62,6 +78,11 @@ impl MotionAlgorithmUiState {
         self.open = true;
         self.target = Some(entity);
         self.needs_rebuild = true;
+        self.brain_modules_fetch_requested = true;
+        self.brain_modules_loading = false;
+        self.brain_modules_error = None;
+        self.brain_modules_job = None;
+        self.brain_modules.clear();
     }
 
     pub(crate) fn close(&mut self) {
@@ -70,6 +91,11 @@ impl MotionAlgorithmUiState {
         self.needs_rebuild = false;
         self.last_built_target = None;
         self.scrollbar_drag = None;
+        self.brain_modules_fetch_requested = false;
+        self.brain_modules_loading = false;
+        self.brain_modules_error = None;
+        self.brain_modules_job = None;
+        self.brain_modules.clear();
     }
 }
 
@@ -108,6 +134,11 @@ pub(crate) enum MotionAlgorithmUiChannel {
 pub(crate) struct MotionAlgorithmUiButton {
     pub(crate) channel: MotionAlgorithmUiChannel,
     pub(crate) algorithm_id: &'static str,
+}
+
+#[derive(Component, Clone, Debug)]
+pub(crate) struct MetaBrainUiButton {
+    pub(crate) module_id: Option<String>,
 }
 
 pub(crate) fn setup_motion_algorithm_ui(mut commands: Commands) {
@@ -251,8 +282,13 @@ pub(crate) fn motion_algorithm_ui_update(
     mut commands: Commands,
     library: Res<ObjectLibrary>,
     descriptors: Res<PrefabDescriptorLibrary>,
+    config: Res<AppConfig>,
     mut state: ResMut<MotionAlgorithmUiState>,
-    roots: Query<(Option<&ObjectPrefabId>, Option<&MotionAlgorithmController>)>,
+    roots: Query<(
+        Option<&ObjectPrefabId>,
+        Option<&MotionAlgorithmController>,
+        Option<&StandaloneBrain>,
+    )>,
     mut roots_ui: Query<&mut Visibility, With<MotionAlgorithmUiRoot>>,
     mut subtitle: Query<&mut Text, With<MotionAlgorithmUiSubtitle>>,
     list: Query<Entity, With<MotionAlgorithmUiList>>,
@@ -273,7 +309,7 @@ pub(crate) fn motion_algorithm_ui_update(
         return;
     }
 
-    let Ok((prefab_id, controller)) = roots.get(target) else {
+    let Ok((prefab_id, controller, brain)) = roots.get(target) else {
         state.close();
         *visibility = Visibility::Hidden;
         return;
@@ -331,15 +367,91 @@ pub(crate) fn motion_algorithm_ui_update(
                 .and_then(|v| v.as_str())
         });
         let rig_kind = rig.as_ref().map(|r| r.kind_str()).unwrap_or("<none>");
+        let brain_label = match brain {
+            Some(brain) => brain.module_id.as_str(),
+            None => "fallback",
+        };
+        let brain_error = brain
+            .and_then(|b| b.last_error.as_deref())
+            .filter(|v| !v.trim().is_empty())
+            .map(|v| format!(" (error: {v})"))
+            .unwrap_or_default();
         let gen3d_line = gen3d_run_id
             .map(|run_id| format!("\nGen3D run: {run_id}"))
             .unwrap_or_default();
         *subtitle = Text::new(format!(
-            "Target: {label}{gen3d_line}\nRig: {rig_kind}\nIdle: {}\nMove: {}\nAttack: {}",
+            "Target: {label}{gen3d_line}\nBrain: {brain_label}{brain_error}\nRig: {rig_kind}\nIdle: {}\nMove: {}\nAttack: {}",
             current_idle.id_str(),
             current_move.id_str(),
             current_attack.id_str(),
         ));
+    }
+
+    if let Some(job) = state.brain_modules_job.as_ref() {
+        if let Some(result) = take_shared_result(job) {
+            state.brain_modules_job = None;
+            state.brain_modules_loading = false;
+            match result {
+                Ok(mut modules) => {
+                    modules.sort();
+                    modules.dedup();
+                    state.brain_modules = modules;
+                    state.brain_modules_error = None;
+                }
+                Err(err) => {
+                    state.brain_modules.clear();
+                    state.brain_modules_error = Some(err);
+                }
+            }
+            state.needs_rebuild = true;
+        }
+    }
+
+    if state.brain_modules_fetch_requested
+        && state.brain_modules_job.is_none()
+        && !state.brain_modules_loading
+        && config.intelligence_service_enabled
+    {
+        state.brain_modules_fetch_requested = false;
+
+        let addr_str = config
+            .intelligence_service_addr
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1:8792".to_string());
+        let addr = match addr_str.parse::<SocketAddr>() {
+            Ok(v) => v,
+            Err(err) => {
+                state.brain_modules_error = Some(format!("Invalid service addr `{addr_str}`: {err}"));
+                state.needs_rebuild = true;
+                return;
+            }
+        };
+        let token = config.intelligence_service_token.clone();
+
+        let shared = new_shared_result::<Vec<String>, String>();
+        let thread_name = "gravimera_meta_brain_modules".to_string();
+        let _ = spawn_worker_thread(
+            thread_name,
+            shared.clone(),
+            move || {
+                let client = SidecarClient::new(addr, token);
+                let resp = client.modules().map_err(|err| err.to_string())?;
+                if resp.protocol_version != crate::intelligence::protocol::PROTOCOL_VERSION {
+                    return Err(format!(
+                        "Protocol mismatch: host={} service={}",
+                        crate::intelligence::protocol::PROTOCOL_VERSION,
+                        resp.protocol_version
+                    ));
+                }
+                Ok(resp.modules.into_iter().map(|m| m.module_id).collect())
+            },
+            |_| {},
+        );
+
+        state.brain_modules_job = Some(shared);
+        state.brain_modules_loading = true;
+        state.brain_modules_error = None;
+        state.needs_rebuild = true;
     }
 
     if !state.needs_rebuild {
@@ -368,6 +480,11 @@ pub(crate) fn motion_algorithm_ui_update(
         .map(|r| r.applicable_attack_primary_algorithms(attack_kind))
         .unwrap_or_else(|| vec![AttackPrimaryMotionAlgorithm::None]);
 
+    let brain_remote_enabled = config.intelligence_service_enabled;
+    let brain_modules_loading = state.brain_modules_loading;
+    let brain_modules_error = state.brain_modules_error.clone();
+    let brain_modules = state.brain_modules.clone();
+
     commands.entity(list_entity).with_children(|list| {
         let section_font = TextFont {
             font_size: 12.0,
@@ -381,6 +498,97 @@ pub(crate) fn motion_algorithm_ui_update(
         let button_color = TextColor(Color::srgb(0.92, 0.92, 0.96));
         let button_bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
         let button_border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+
+        list.spawn((
+            Text::new("Brain"),
+            section_font.clone(),
+            section_color,
+            MotionAlgorithmUiListItem,
+        ));
+
+        list.spawn((
+            Button,
+            Node {
+                width: Val::Percent(100.0),
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            button_bg,
+            button_border,
+            MotionAlgorithmUiListItem,
+            MetaBrainUiButton { module_id: None },
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Text::new("Fallback (default)"),
+                button_font.clone(),
+                button_color,
+            ));
+        });
+
+        if !brain_remote_enabled {
+            list.spawn((
+                Text::new("Intelligence service disabled (enable in config.toml)."),
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.70, 0.70, 0.76)),
+                MotionAlgorithmUiListItem,
+            ));
+        } else if brain_modules_loading {
+            list.spawn((
+                Text::new("Loading remote brains..."),
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.70, 0.70, 0.76)),
+                MotionAlgorithmUiListItem,
+            ));
+        } else if let Some(err) = brain_modules_error.as_deref() {
+            list.spawn((
+                Text::new(format!("Failed to load remote brains: {err}")),
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.86, 0.70, 0.70)),
+                MotionAlgorithmUiListItem,
+            ));
+        } else if brain_modules.is_empty() {
+            list.spawn((
+                Text::new("No remote brains reported by the service."),
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.70, 0.70, 0.76)),
+                MotionAlgorithmUiListItem,
+            ));
+        } else {
+            for module_id in &brain_modules {
+                list.spawn((
+                    Button,
+                    Node {
+                        width: Val::Percent(100.0),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    button_bg,
+                    button_border,
+                    MotionAlgorithmUiListItem,
+                    MetaBrainUiButton {
+                        module_id: Some(module_id.clone()),
+                    },
+                ))
+                .with_children(|b| {
+                    b.spawn((Text::new(module_id.clone()), button_font.clone(), button_color));
+                });
+            }
+        }
 
         list.spawn((
             Text::new("Idle"),
@@ -780,6 +988,87 @@ pub(crate) fn motion_algorithm_ui_button_styles(
     }
 }
 
+pub(crate) fn meta_brain_ui_button_styles(
+    state: Res<MotionAlgorithmUiState>,
+    brains: Query<Option<&StandaloneBrain>>,
+    mut buttons: Query<
+        (
+            &Interaction,
+            &MetaBrainUiButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<Button>,
+    >,
+) {
+    let Some(target) = state.target else {
+        return;
+    };
+    if !state.open {
+        return;
+    }
+
+    let selected_module = brains
+        .get(target)
+        .ok()
+        .flatten()
+        .map(|b| b.module_id.as_str())
+        .map(|v| v.to_string());
+
+    for (interaction, button, mut bg, mut border) in &mut buttons {
+        let is_selected = match (selected_module.as_deref(), button.module_id.as_deref()) {
+            (None, None) => true,
+            (Some(selected), Some(module_id)) => selected == module_id,
+            _ => false,
+        };
+        let (base_bg, base_border) = if is_selected {
+            (
+                Color::srgba(0.10, 0.10, 0.14, 0.88),
+                Color::srgba(0.45, 0.45, 0.60, 0.85),
+            )
+        } else {
+            (
+                Color::srgba(0.05, 0.05, 0.06, 0.75),
+                Color::srgba(0.25, 0.25, 0.30, 0.65),
+            )
+        };
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(base_bg);
+                *border = BorderColor::all(base_border);
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(
+                    (base_bg.to_srgba().red + 0.02).min(1.0),
+                    (base_bg.to_srgba().green + 0.02).min(1.0),
+                    (base_bg.to_srgba().blue + 0.03).min(1.0),
+                    base_bg.to_srgba().alpha,
+                ));
+                *border = BorderColor::all(Color::srgba(
+                    (base_border.to_srgba().red + 0.08).min(1.0),
+                    (base_border.to_srgba().green + 0.08).min(1.0),
+                    (base_border.to_srgba().blue + 0.10).min(1.0),
+                    base_border.to_srgba().alpha,
+                ));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(
+                    (base_bg.to_srgba().red + 0.05).min(1.0),
+                    (base_bg.to_srgba().green + 0.05).min(1.0),
+                    (base_bg.to_srgba().blue + 0.07).min(1.0),
+                    base_bg.to_srgba().alpha,
+                ));
+                *border = BorderColor::all(Color::srgba(
+                    (base_border.to_srgba().red + 0.12).min(1.0),
+                    (base_border.to_srgba().green + 0.12).min(1.0),
+                    (base_border.to_srgba().blue + 0.14).min(1.0),
+                    base_border.to_srgba().alpha,
+                ));
+            }
+        }
+    }
+}
+
 pub(crate) fn motion_algorithm_ui_button_clicks(
     mut commands: Commands,
     mut state: ResMut<MotionAlgorithmUiState>,
@@ -856,6 +1145,71 @@ pub(crate) fn motion_algorithm_ui_button_clicks(
             alg_label,
             updated,
             uuid::Uuid::from_u128(target_prefab.0)
+        );
+
+        state.needs_rebuild = true;
+    }
+}
+
+pub(crate) fn meta_brain_ui_button_clicks(
+    mut commands: Commands,
+    mut state: ResMut<MotionAlgorithmUiState>,
+    config: Res<AppConfig>,
+    selection: Res<SelectionState>,
+    units: Query<(), With<Commandable>>,
+    mut buttons: Query<(&Interaction, &MetaBrainUiButton), Changed<Interaction>>,
+) {
+    if !state.open {
+        return;
+    }
+    let Some(target) = state.target else {
+        return;
+    };
+
+    for (interaction, button) in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        let mut updated = 0usize;
+        let mut targets: Vec<Entity> = selection.selected.iter().copied().collect();
+        if !selection.selected.contains(&target) {
+            targets.push(target);
+        }
+
+        for entity in targets {
+            if units.get(entity).is_err() {
+                continue;
+            }
+
+            match button.module_id.as_deref() {
+                None => {
+                    commands.entity(entity).remove::<StandaloneBrain>();
+                    commands.entity(entity).remove::<MoveOrder>();
+                    updated += 1;
+                }
+                Some(module_id) => {
+                    if !config.intelligence_service_enabled {
+                        continue;
+                    }
+
+                    commands.entity(entity).insert(StandaloneBrain {
+                        module_id: module_id.to_string(),
+                        config: json!({}),
+                        capabilities: vec!["brain.move".into()],
+                        brain_instance_id: None,
+                        next_tick_due: 0,
+                        last_error: None,
+                    });
+                    updated += 1;
+                }
+            }
+        }
+
+        info!(
+            "Meta: set brain={:?} for {} unit(s)",
+            button.module_id,
+            updated
         );
 
         state.needs_rebuild = true;

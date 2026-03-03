@@ -40,6 +40,18 @@ impl SidecarClient {
         self.request_json("POST", "/v1/load_module", &req)
     }
 
+    pub(crate) fn modules(&self) -> Result<ListModulesResponse, String> {
+        let (status, body) = self.http_request("GET", "/v1/modules", None)?;
+        if status != 200 {
+            if let Ok(err) = serde_json::from_str::<ErrorResponse>(&body) {
+                return Err(format!("HTTP {status}: {}", err.error));
+            }
+            return Err(format!("HTTP {status}: {body}"));
+        }
+        serde_json::from_str::<ListModulesResponse>(&body)
+            .map_err(|err| format!("modules decode: {err}"))
+    }
+
     pub(crate) fn spawn(
         &self,
         req: SpawnBrainInstanceRequest,

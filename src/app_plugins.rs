@@ -534,10 +534,16 @@ impl Plugin for RenderedGameplayPlugin {
                 crate::motion_ui::motion_algorithm_ui_button_clicks
                     .after(crate::motion_ui::motion_algorithm_ui_update)
                     .run_if(crate::automation::local_input_enabled),
+                crate::motion_ui::meta_brain_ui_button_clicks
+                    .after(crate::motion_ui::motion_algorithm_ui_update)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::motion_algorithm_ui_button_styles
                     .after(crate::motion_ui::motion_algorithm_ui_button_clicks),
+                crate::motion_ui::meta_brain_ui_button_styles
+                    .after(crate::motion_ui::meta_brain_ui_button_clicks),
                 crate::motion_ui::motion_algorithm_ui_scroll_wheel
                     .after(crate::motion_ui::motion_algorithm_ui_button_styles)
+                    .after(crate::motion_ui::meta_brain_ui_button_styles)
                     .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::motion_algorithm_ui_scrollbar_drag
                     .after(crate::motion_ui::motion_algorithm_ui_scroll_wheel)

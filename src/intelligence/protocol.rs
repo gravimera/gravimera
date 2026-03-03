@@ -76,6 +76,18 @@ pub struct LoadModuleResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrainModuleInfo {
+    pub module_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListModulesResponse {
+    pub ok: bool,
+    pub protocol_version: u32,
+    pub modules: Vec<BrainModuleInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpawnBrainInstanceRequest {
     pub protocol_version: u32,
     pub realm_id: String,

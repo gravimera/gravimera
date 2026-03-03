@@ -162,6 +162,17 @@ fn main() {
                 };
                 respond_json(request, 200, serde_json::to_string(&body).unwrap());
             }
+            ("GET", "/v1/modules") => {
+                let modules = vec![BrainModuleInfo {
+                    module_id: "demo.orbit.v1".into(),
+                }];
+                let body = ListModulesResponse {
+                    ok: true,
+                    protocol_version: PROTOCOL_VERSION,
+                    modules,
+                };
+                respond_json(request, 200, serde_json::to_string(&body).unwrap());
+            }
             ("POST", "/v1/load_module") => {
                 let req: LoadModuleRequest = match serde_json::from_slice(&body) {
                     Ok(v) => v,
