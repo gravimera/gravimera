@@ -255,6 +255,7 @@ pub(crate) fn motion_algorithm_ui_update(
     mut subtitle: Query<&mut Text, With<MotionAlgorithmUiSubtitle>>,
     list: Query<Entity, With<MotionAlgorithmUiList>>,
     existing_items: Query<Entity, With<MotionAlgorithmUiListItem>>,
+    mut scroll_panels: Query<&mut ScrollPosition, With<MotionAlgorithmUiScrollPanel>>,
 ) {
     let Ok(mut visibility) = roots_ui.single_mut() else {
         return;
@@ -286,6 +287,10 @@ pub(crate) fn motion_algorithm_ui_update(
     let target_changed = state.last_built_target != state.target;
     if target_changed {
         state.needs_rebuild = true;
+        state.scrollbar_drag = None;
+        if let Ok(mut scroll_pos) = scroll_panels.single_mut() {
+            scroll_pos.y = 0.0;
+        }
     }
 
     let current_idle = controller
@@ -474,11 +479,11 @@ pub(crate) fn motion_algorithm_ui_update(
 }
 
 pub(crate) fn motion_algorithm_ui_update_scrollbar_ui(
-    panels: Query<(&ComputedNode, &ScrollPosition), With<MotionAlgorithmUiScrollPanel>>,
+    mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<MotionAlgorithmUiScrollPanel>>,
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<MotionAlgorithmUiScrollbarTrack>>,
     mut thumbs: Query<&mut Node, With<MotionAlgorithmUiScrollbarThumb>>,
 ) {
-    let Ok((panel, scroll_pos)) = panels.single() else {
+    let Ok((panel, mut scroll_pos)) = panels.single_mut() else {
         return;
     };
     let Ok((track_node, mut track_vis)) = tracks.single_mut() else {
@@ -501,6 +506,7 @@ pub(crate) fn motion_algorithm_ui_update_scrollbar_ui(
 
     if content_h <= viewport_h + 0.5 {
         *track_vis = Visibility::Hidden;
+        scroll_pos.y = 0.0;
         thumb.top = Val::Px(0.0);
         thumb.height = Val::Px(track_h);
         return;
@@ -509,7 +515,8 @@ pub(crate) fn motion_algorithm_ui_update_scrollbar_ui(
     *track_vis = Visibility::Visible;
 
     let max_scroll = (content_h - viewport_h).max(1.0);
-    let scroll_y = scroll_pos.y.clamp(0.0, max_scroll);
+    scroll_pos.y = scroll_pos.y.clamp(0.0, max_scroll);
+    let scroll_y = scroll_pos.y;
 
     let min_thumb_h = 14.0;
     let thumb_h = (viewport_h * viewport_h / content_h).clamp(min_thumb_h, track_h);
