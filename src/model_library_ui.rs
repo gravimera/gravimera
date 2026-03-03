@@ -310,7 +310,7 @@ pub(crate) fn model_library_update_scrollbar_ui(
         return;
     }
 
-    *track_vis = Visibility::Visible;
+    *track_vis = Visibility::Inherited;
 
     let max_scroll = (content_h - viewport_h).max(1.0);
     let scroll_y = scroll_pos.y.clamp(0.0, max_scroll);
@@ -352,7 +352,7 @@ pub(crate) fn model_library_scrollbar_drag(
     let Ok((track_node, track_transform, track_vis)) = tracks.single() else {
         return;
     };
-    if *track_vis != Visibility::Visible {
+    if *track_vis == Visibility::Hidden {
         state.scrollbar_drag = None;
         return;
     }

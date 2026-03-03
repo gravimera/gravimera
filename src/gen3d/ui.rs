@@ -1325,7 +1325,7 @@ pub(crate) fn gen3d_update_prompt_scrollbar_ui(
         return;
     }
 
-    *track_vis = Visibility::Visible;
+    *track_vis = Visibility::Inherited;
 
     let max_scroll = (content_h - viewport_h).max(1.0);
     let scroll_y = panel.scroll_position.y.clamp(0.0, max_scroll);
