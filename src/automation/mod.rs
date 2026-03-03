@@ -439,10 +439,18 @@ struct AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit
     next_build_scene: Option<&'a mut NextState<BuildScene>>,
     selection: Option<&'a mut SelectionState>,
     fire: Option<&'a mut FireControl>,
+    motion_ui: Option<&'a mut crate::motion_ui::MotionAlgorithmUiState>,
     runtime: &'a mut AutomationRuntime,
     scene_workspace: &'a mut crate::scene_sources_runtime::SceneSourcesWorkspace,
     scene_build_runtime: Option<&'a mut crate::scene_build_ai::SceneBuildAiRuntime>,
     exit: &'a mut MessageWriter<'exit_w, AppExit>,
+}
+
+#[derive(SystemParam)]
+struct AutomationUi<'w> {
+    selection: Option<ResMut<'w, SelectionState>>,
+    fire: Option<ResMut<'w, FireControl>>,
+    motion_ui: Option<ResMut<'w, crate::motion_ui::MotionAlgorithmUiState>>,
 }
 
 fn automation_process_requests(
@@ -457,8 +465,7 @@ fn automation_process_requests(
     mut next_mode: Option<ResMut<NextState<GameMode>>>,
     build_scene: Option<Res<State<BuildScene>>>,
     mut next_build_scene: Option<ResMut<NextState<BuildScene>>>,
-    mut selection: Option<ResMut<SelectionState>>,
-    mut fire: Option<ResMut<FireControl>>,
+    mut ui: AutomationUi,
     mut library: ResMut<ObjectLibrary>,
     mut gen3d: AutomationGen3d,
     world: AutomationWorld,
@@ -519,8 +526,9 @@ fn automation_process_requests(
             next_mode: next_mode.as_deref_mut(),
             build_scene: build_scene.as_deref(),
             next_build_scene: next_build_scene.as_deref_mut(),
-            selection: selection.as_deref_mut(),
-            fire: fire.as_deref_mut(),
+            selection: ui.selection.as_deref_mut(),
+            fire: ui.fire.as_deref_mut(),
+            motion_ui: ui.motion_ui.as_deref_mut(),
             runtime: &mut runtime,
             scene_workspace: &mut scene_workspace,
             scene_build_runtime: scene_build_runtime.as_deref_mut(),
@@ -596,6 +604,12 @@ struct ScreenshotRequest {
     path: String,
     #[serde(default)]
     include_ui: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct MetaPanelRequest {
+    #[serde(default)]
+    instance_id_uuid: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1725,6 +1739,78 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
 
             let body =
                 serde_json::json!({ "ok": true, "path": path.display().to_string() }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/meta/open") => {
+            let Some(motion_ui) = ctx.motion_ui.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "Meta panel is not available in this app mode.",
+                ));
+            };
+
+            let req: MetaPanelRequest = if msg.body.is_empty() {
+                MetaPanelRequest {
+                    instance_id_uuid: None,
+                }
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let target_entity = if let Some(id_str) = req.instance_id_uuid.as_ref() {
+                let Ok(uuid) = uuid::Uuid::parse_str(id_str.trim()) else {
+                    return Some(json_error(400, "Invalid `instance_id_uuid`."));
+                };
+                let instance_id = ObjectId(uuid.as_u128());
+                state_objects.iter().find_map(
+                    |(entity, object_id, _prefab_id, _t, _p, _e, _b, commandable)| {
+                        (object_id.0 == instance_id.0 && commandable.is_some()).then_some(entity)
+                    },
+                )
+            } else {
+                selection.as_deref().and_then(|selection| {
+                    selection.selected.iter().copied().find(|entity| {
+                        state_objects
+                            .get(*entity)
+                            .ok()
+                            .and_then(|row| row.7)
+                            .is_some()
+                    })
+                })
+            };
+
+            let Some(target_entity) = target_entity else {
+                return Some(json_error(
+                    400,
+                    "No commandable target found (provide `instance_id_uuid` or select a unit).",
+                ));
+            };
+
+            motion_ui.open_for(target_entity);
+
+            let body = serde_json::json!({ "ok": true }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/meta/close") => {
+            let Some(motion_ui) = ctx.motion_ui.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "Meta panel is not available in this app mode.",
+                ));
+            };
+            motion_ui.close();
+            let body = serde_json::json!({ "ok": true }).to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),

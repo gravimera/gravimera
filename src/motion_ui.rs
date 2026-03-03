@@ -12,6 +12,7 @@ use crate::types::{Commandable, ObjectPrefabId, SelectionState};
 const PANEL_Z_INDEX: i32 = 940;
 const PANEL_WIDTH_PX: f32 = 300.0;
 const PANEL_MAX_HEIGHT_PX: f32 = 680.0;
+const PANEL_LIST_MIN_HEIGHT_PX: f32 = 260.0;
 const DOUBLE_CLICK_MAX_SECS: f32 = 0.35;
 
 #[derive(Debug, Clone, Copy)]
@@ -162,7 +163,7 @@ pub(crate) fn setup_motion_algorithm_ui(mut commands: Commands) {
                     column_gap: Val::Px(6.0),
                     flex_grow: 1.0,
                     flex_basis: Val::Px(0.0),
-                    min_height: Val::Px(0.0),
+                    min_height: Val::Px(PANEL_LIST_MIN_HEIGHT_PX),
                     ..default()
                 },
                 BackgroundColor(Color::NONE),
