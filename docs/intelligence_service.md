@@ -107,6 +107,8 @@ When `[intelligence_service].enabled = true`, the host automatically attaches a 
 
 Brains only tick/act in **Play** mode. When switching back to **Build**, the host clears brain-issued move/attack orders so units stay still for review.
 
+If the intelligence service disconnects (or is temporarily unavailable), the host will automatically retry connecting. If the service restarts and forgets existing brain instance ids, the host respawns those brain instances.
+
 You can override per-unit in the UI via the Meta panel’s Brain section.
 
 On Windows PowerShell, use `curl.exe` instead of `curl` if you hit the `Invoke-WebRequest` alias:

@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use serde_json::json;
 use std::net::SocketAddr;
 
+use crate::action_log::{ActionLogSource, ActionLogState};
 use crate::config::AppConfig;
 use crate::constants::*;
 use crate::geometry::safe_abs_scale_y;
@@ -9,7 +10,6 @@ use crate::intelligence::protocol::*;
 use crate::intelligence::sidecar_client::SidecarClient;
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
-use crate::action_log::{ActionLogSource, ActionLogState};
 use crate::types::*;
 
 pub(crate) struct IntelligenceHostPlugin;
@@ -231,7 +231,13 @@ fn intelligence_attach_default_brains(
 
 fn collect_nav_obstacles(
     objects: &Query<
-        (&ObjectId, &Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
+        (
+            &ObjectId,
+            &Transform,
+            &AabbCollider,
+            &BuildDimensions,
+            &ObjectPrefabId,
+        ),
         With<BuildObject>,
     >,
     library: &ObjectLibrary,
@@ -277,6 +283,16 @@ fn compute_rng_seed(
     u64::from_le_bytes(digest[0..8].try_into().unwrap_or([0u8; 8]))
 }
 
+fn looks_like_intelligence_disconnect(err: &str) -> bool {
+    let err = err.trim();
+    err.starts_with("connect ")
+        || err.starts_with("write request:")
+        || err.starts_with("read response:")
+        || err.starts_with("set_read_timeout:")
+        || err.starts_with("set_write_timeout:")
+        || err.starts_with("HTTP 0:")
+}
+
 fn intelligence_tick(
     mut commands: Commands,
     time: Res<Time>,
@@ -285,7 +301,13 @@ fn intelligence_tick(
     active: Option<Res<crate::realm::ActiveRealmScene>>,
     mut runtime: ResMut<IntelligenceHostRuntime>,
     mut action_log: ResMut<ActionLogState>,
-    mut brains: Query<(Entity, &ObjectId, &Transform, Option<&Health>, &mut StandaloneBrain)>,
+    mut brains: Query<(
+        Entity,
+        &ObjectId,
+        &Transform,
+        Option<&Health>,
+        &mut StandaloneBrain,
+    )>,
     movers: Query<
         (
             &Collider,
@@ -311,7 +333,13 @@ fn intelligence_tick(
         (Or<(With<Commandable>, With<Enemy>)>, Without<Died>),
     >,
     build_objects: Query<
-        (&ObjectId, &Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
+        (
+            &ObjectId,
+            &Transform,
+            &AabbCollider,
+            &BuildDimensions,
+            &ObjectPrefabId,
+        ),
         With<BuildObject>,
     >,
 ) {
@@ -372,7 +400,15 @@ fn intelligence_tick(
                 runtime.modules_loaded.insert(brain.module_id.clone());
             }
             Err(err) => {
-                debug!("Intelligence load_module failed (module_id={}): {err}", brain.module_id);
+                debug!(
+                    "Intelligence load_module failed (module_id={}): {err}",
+                    brain.module_id
+                );
+                if looks_like_intelligence_disconnect(err.as_str()) {
+                    runtime.connected = false;
+                    runtime.modules_loaded.clear();
+                    return;
+                }
             }
         }
     }
@@ -398,6 +434,15 @@ fn intelligence_tick(
             }
             Err(err) => {
                 brain.last_error = Some(err);
+                if brain
+                    .last_error
+                    .as_deref()
+                    .is_some_and(looks_like_intelligence_disconnect)
+                {
+                    runtime.connected = false;
+                    runtime.modules_loaded.clear();
+                    return;
+                }
             }
         }
     }
@@ -591,8 +636,7 @@ fn intelligence_tick(
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.entity_instance_id.cmp(&b.entity_instance_id))
         });
-        let mut nearby_entities: Vec<NearbyEntity> =
-            nearby.into_iter().map(|(_d2, e)| e).collect();
+        let mut nearby_entities: Vec<NearbyEntity> = nearby.into_iter().map(|(_d2, e)| e).collect();
         let dropped_nearby = nearby_entities
             .len()
             .saturating_sub(caps.max_nearby_entities as usize);
@@ -618,7 +662,11 @@ fn intelligence_tick(
                 tick_index,
             ),
             self_state: SelfState {
-                pos: [transform.translation.x, transform.translation.y, transform.translation.z],
+                pos: [
+                    transform.translation.x,
+                    transform.translation.y,
+                    transform.translation.z,
+                ],
                 yaw,
                 vel: [self_vel.x, self_vel.y, self_vel.z],
                 health: health.map(|h| h.current),
@@ -652,6 +700,10 @@ fn intelligence_tick(
         Ok(v) => v,
         Err(err) => {
             debug!("Intelligence tick_many failed: {err}");
+            if looks_like_intelligence_disconnect(err.as_str()) {
+                runtime.connected = false;
+                runtime.modules_loaded.clear();
+            }
             return;
         }
     };
@@ -662,7 +714,20 @@ fn intelligence_tick(
         };
         let Some(mut tick_output) = out.tick_output else {
             if let Some(err) = out.error {
-                debug!("Intelligence tick error (brain_instance_id={}): {err}", out.brain_instance_id);
+                debug!(
+                    "Intelligence tick error (brain_instance_id={}): {err}",
+                    out.brain_instance_id
+                );
+                if err.trim() == "Unknown brain_instance_id" {
+                    runtime.modules_loaded.clear();
+                    if let Ok((_entity, _obj_id, _transform, _health, mut brain)) =
+                        brains.get_mut(entity)
+                    {
+                        brain.brain_instance_id = None;
+                        brain.next_tick_due = 0;
+                        brain.last_error = Some(err);
+                    }
+                }
             }
             continue;
         };
@@ -822,10 +887,12 @@ fn intelligence_tick(
                         }
                     }
 
-                    commands.entity(entity).insert(crate::types::BrainAttackOrder {
-                        target: target_entity,
-                        valid_until_tick,
-                    });
+                    commands
+                        .entity(entity)
+                        .insert(crate::types::BrainAttackOrder {
+                            target: target_entity,
+                            valid_until_tick,
+                        });
                 }
                 _ => {}
             }
