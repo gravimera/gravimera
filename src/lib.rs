@@ -1,4 +1,6 @@
 mod ai_limiter;
+mod action_log;
+mod action_log_ui;
 mod app;
 mod app_plugins;
 mod assets;
@@ -59,4 +61,3 @@ mod world_drag;
 pub fn run() {
     app::run();
 }
-

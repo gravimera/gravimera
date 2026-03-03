@@ -3,6 +3,7 @@ use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
 
 use crate::assets::SceneAssets;
+use crate::action_log::{ActionLogSource, ActionLogState, ActionLogWriter};
 use crate::constants::*;
 use crate::geometry::{clamp_world_xz, point_inside_aabb_xz, safe_abs_scale_y, snap_to_grid};
 use crate::navigation;
@@ -691,6 +692,7 @@ pub(crate) fn move_command_input(
     commandables: Query<(Entity, &Transform, &Collider, &ObjectPrefabId), With<Commandable>>,
     selection: Res<SelectionState>,
     mut move_state: ResMut<MoveCommandState>,
+    mut action_log: ActionLogWriter,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Right) {
         return;
@@ -780,6 +782,7 @@ pub(crate) fn move_command_input(
     let obstacles = collect_nav_obstacles(&objects, &library);
 
     let mut any_order = false;
+    let mut moved_count: usize = 0;
     for entity in selection.selected.iter().copied() {
         let Ok((_entity, transform, collider, prefab_id)) = commandables.get(entity) else {
             continue;
@@ -842,6 +845,7 @@ pub(crate) fn move_command_input(
 
         commands.entity(entity).insert(order);
         any_order = true;
+        moved_count = moved_count.saturating_add(1);
     }
 
     if !any_order {
@@ -853,6 +857,13 @@ pub(crate) fn move_command_input(
 
     if let Some(marker) = move_state.marker.take() {
         commands.entity(marker).try_despawn();
+    }
+
+    if matches!(mode.get(), GameMode::Play) && moved_count > 0 {
+        action_log.push(
+            ActionLogSource::Player,
+            format!("move ({moved_count}) → ({:.1}, {:.1})", goal.x, goal.y),
+        );
     }
 
     let marker = commands
@@ -1458,6 +1469,7 @@ pub(crate) fn execute_move_orders(
 }
 
 pub(crate) fn update_fire_control(
+    time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<GameMode>>,
     game: Res<Game>,
@@ -1471,6 +1483,7 @@ pub(crate) fn update_fire_control(
         (With<Commandable>, Without<Player>, Without<Died>),
     >,
     mut fire: ResMut<FireControl>,
+    mut action_log: ResMut<ActionLogState>,
 ) {
     if matches!(mode.get(), GameMode::Play) && game.game_over {
         fire.active = false;
@@ -1516,6 +1529,25 @@ pub(crate) fn update_fire_control(
         if enemies.get(unit).is_err() && commandables.get(unit).is_err() {
             fire.target = None;
         }
+    }
+
+    if matches!(mode.get(), GameMode::Play) && keys.just_pressed(KeyCode::Space) && fire.active {
+        let msg = match fire.target {
+            Some(FireTarget::Unit(unit)) => {
+                let target_label = enemies
+                    .get(unit)
+                    .ok()
+                    .map(|(_e, _t, prefab)| prefab.0)
+                    .or_else(|| commandables.get(unit).ok().map(|(_e, _t, prefab)| prefab.0))
+                    .and_then(|prefab_id| library.get(prefab_id).map(|def| def.label.as_ref()))
+                    .unwrap_or("unit");
+                format!("fire → {target_label}")
+            }
+            Some(FireTarget::Point(point)) => format!("fire → ({:.1}, {:.1})", point.x, point.y),
+            None => "fire".to_string(),
+        };
+
+        action_log.push(time.elapsed_secs(), ActionLogSource::Player, msg);
     }
 }
 

@@ -9,6 +9,7 @@ use crate::intelligence::protocol::*;
 use crate::intelligence::sidecar_client::SidecarClient;
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
+use crate::action_log::{ActionLogSource, ActionLogState};
 use crate::types::*;
 
 pub(crate) struct IntelligenceHostPlugin;
@@ -275,8 +276,18 @@ fn intelligence_tick(
     library: Res<ObjectLibrary>,
     active: Option<Res<crate::realm::ActiveRealmScene>>,
     mut runtime: ResMut<IntelligenceHostRuntime>,
+    mut action_log: ResMut<ActionLogState>,
     mut brains: Query<(Entity, &ObjectId, &Transform, Option<&Health>, &mut StandaloneBrain)>,
-    movers: Query<(&Collider, &ObjectPrefabId, Option<&Player>), With<Commandable>>,
+    movers: Query<
+        (
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Player>,
+            Option<&MoveOrder>,
+            Option<&BrainAttackOrder>,
+        ),
+        With<Commandable>,
+    >,
     units: Query<
         (
             Entity,
@@ -478,7 +489,9 @@ fn intelligence_tick(
         if tick_index < brain.next_tick_due {
             continue;
         }
-        let Ok((_collider, prefab_id, is_player)) = movers.get(entity) else {
+        let Ok((_collider, prefab_id, is_player, _existing_move, _existing_attack)) =
+            movers.get(entity)
+        else {
             continue;
         };
 
@@ -634,14 +647,17 @@ fn intelligence_tick(
                     sleep_for = Some(sleep_for.unwrap_or(0).max(ticks));
                 }
                 BrainCommand::MoveTo { pos, .. } => {
-                    let Ok((collider, prefab_id, is_player)) = movers.get(entity) else {
-                        continue;
-                    };
-                    let goal = Vec2::new(pos[0], pos[2]);
-                    let Ok((_entity, _object_id, transform, _health, _brain)) = brains.get(entity)
+                    let Ok((collider, prefab_id, is_player, existing_move, _existing_attack)) =
+                        movers.get(entity)
                     else {
                         continue;
                     };
+                    let goal = Vec2::new(pos[0], pos[2]);
+                    let Ok((_entity, object_id, transform, _health, brain)) = brains.get(entity)
+                    else {
+                        continue;
+                    };
+                    let previous_target = existing_move.and_then(|order| order.target);
 
                     let scale_y = safe_abs_scale_y(transform.scale);
                     let origin_y = if is_player.is_some() {
@@ -699,13 +715,33 @@ fn intelligence_tick(
                     }
                     if order.target.is_some() {
                         commands.entity(entity).insert(order);
+
+                        let should_log = previous_target
+                            .map(|prev| prev.distance(clamped_goal) >= 0.8)
+                            .unwrap_or(true);
+                        if should_log {
+                            let label = library
+                                .get(prefab_id.0)
+                                .map(|def| def.label.as_ref())
+                                .unwrap_or("unit");
+                            let module_id = brain.module_id.as_str();
+                            let short_id = (object_id.0 & 0xffff_ffff) as u32;
+                            action_log.push(
+                                time.elapsed_secs(),
+                                ActionLogSource::Brain,
+                                format!(
+                                    "{label}#{short_id:08x} ({module_id}) move → ({:.1}, {:.1})",
+                                    clamped_goal.x, clamped_goal.y
+                                ),
+                            );
+                        }
                     }
                 }
                 BrainCommand::AttackTarget {
                     target_id,
                     valid_until_tick,
                 } => {
-                    let Ok((_entity, _object_id, _transform, _health, brain)) = brains.get(entity)
+                    let Ok((_entity, object_id, _transform, _health, brain)) = brains.get(entity)
                     else {
                         continue;
                     };
@@ -725,6 +761,39 @@ fn intelligence_tick(
                     if target_entity == entity {
                         continue;
                     }
+
+                    let mut should_log = true;
+                    if let Ok((_collider, prefab_id, _player, _move, existing_attack)) =
+                        movers.get(entity)
+                    {
+                        if existing_attack.is_some_and(|o| o.target == target_entity) {
+                            should_log = false;
+                        }
+
+                        if should_log {
+                            let attacker_label = library
+                                .get(prefab_id.0)
+                                .map(|def| def.label.as_ref())
+                                .unwrap_or("unit");
+                            let attacker_short_id = (object_id.0 & 0xffff_ffff) as u32;
+                            let target_label = units
+                                .get(target_entity)
+                                .ok()
+                                .and_then(|(_e, _id, _t, _c, prefab, _h, _p, _en, _lc)| {
+                                    library.get(prefab.0).map(|def| def.label.as_ref())
+                                })
+                                .unwrap_or("unit");
+                            action_log.push(
+                                time.elapsed_secs(),
+                                ActionLogSource::Brain,
+                                format!(
+                                    "{attacker_label}#{attacker_short_id:08x} ({}) attack → {target_label}",
+                                    brain.module_id.as_str()
+                                ),
+                            );
+                        }
+                    }
+
                     commands.entity(entity).insert(crate::types::BrainAttackOrder {
                         target: target_entity,
                         valid_until_tick,

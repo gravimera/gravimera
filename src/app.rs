@@ -541,6 +541,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<MoveCommandState>();
     app.init_resource::<SlowMoveMode>();
     app.init_resource::<BuildPreview>();
+    app.init_resource::<crate::action_log::ActionLogState>();
     app.init_resource::<CameraZoom>();
     app.init_resource::<CameraYaw>();
     app.init_resource::<CameraPitch>();

@@ -43,6 +43,10 @@ impl Plugin for RenderedStartupPlugin {
         );
         app.add_systems(
             Startup,
+            crate::action_log_ui::setup_action_log_ui.after(setup::setup_rendered),
+        );
+        app.add_systems(
+            Startup,
             crate::realm::realm_startup_init.after(setup::setup_rendered),
         );
         app.add_systems(
@@ -155,6 +159,7 @@ impl Plugin for RenderedUiPlugin {
             Update,
             (
                 crate::build::update_game_mode_toggle_button_label,
+                crate::action_log_ui::update_action_log_ui.after(crate::rts::execute_move_orders),
                 crate::workspace_ui::workspace_ui_update_visibility,
                 crate::workspace_ui::workspace_ui_dropdown_list_visibility
                     .after(crate::workspace_ui::workspace_ui_update_visibility),
@@ -175,6 +180,7 @@ impl Plugin for RenderedUiPlugin {
                 crate::workspace_ui::workspace_ui_models_toggle_button
                     .after(crate::workspace_ui::workspace_ui_action_button),
                 crate::build::handle_game_mode_toggle_button,
+                crate::action_log_ui::handle_action_log_toggle_button,
             )
                 .run_if(console::console_closed)
                 .run_if(crate::automation::local_input_enabled),
