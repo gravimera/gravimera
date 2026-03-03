@@ -7,9 +7,41 @@ use crate::geometry::ray_plane_intersection_y0;
 use crate::types::*;
 
 pub(crate) fn camera_zoom_input(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_panel_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryRoot>,
+    >,
+    meta_panel_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::motion_ui::MotionAlgorithmUiRoot>,
+    >,
     mut mouse_wheel: MessageReader<MouseWheel>,
     mut zoom: ResMut<CameraZoom>,
 ) {
+    let cursor_over_ui_panel = windows
+        .single()
+        .ok()
+        .and_then(|window| window.physical_cursor_position())
+        .is_some_and(|cursor| {
+            model_panel_roots
+                .single()
+                .ok()
+                .is_some_and(|(node, transform, vis)| {
+                    *vis != Visibility::Hidden && node.contains_point(*transform, cursor)
+                })
+                || meta_panel_roots
+                    .single()
+                    .ok()
+                    .is_some_and(|(node, transform, vis)| {
+                        *vis != Visibility::Hidden && node.contains_point(*transform, cursor)
+                    })
+        });
+    if cursor_over_ui_panel {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+
     let mut scroll = 0.0f32;
     for ev in mouse_wheel.read() {
         let delta = match ev.unit {

@@ -160,6 +160,8 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::workspace_ui::workspace_ui_update_visibility),
                 crate::workspace_ui::workspace_ui_update_labels
                     .after(crate::workspace_ui::workspace_ui_dropdown_list_visibility),
+                crate::workspace_ui::workspace_ui_models_toggle_button_ui
+                    .after(crate::workspace_ui::workspace_ui_update_labels),
             ),
         );
         app.add_systems(
@@ -170,6 +172,8 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::workspace_ui::workspace_ui_dropdown_button),
                 crate::workspace_ui::workspace_ui_action_button
                     .after(crate::workspace_ui::workspace_ui_dropdown_option_buttons),
+                crate::workspace_ui::workspace_ui_models_toggle_button
+                    .after(crate::workspace_ui::workspace_ui_action_button),
                 crate::build::handle_game_mode_toggle_button,
             )
                 .run_if(console::console_closed)
@@ -189,8 +193,11 @@ impl Plugin for RenderedUiPlugin {
             (
                 crate::model_library_ui::model_library_item_button_interactions
                     .run_if(crate::automation::local_input_enabled),
-                crate::model_library_ui::model_library_scrollbar_drag
+                crate::model_library_ui::model_library_scroll_wheel
                     .after(crate::model_library_ui::model_library_item_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_scrollbar_drag
+                    .after(crate::model_library_ui::model_library_scroll_wheel)
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_drag_update
                     .after(crate::model_library_ui::model_library_item_button_interactions)
@@ -529,8 +536,11 @@ impl Plugin for RenderedGameplayPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::motion_algorithm_ui_button_styles
                     .after(crate::motion_ui::motion_algorithm_ui_button_clicks),
-                crate::motion_ui::motion_algorithm_ui_scrollbar_drag
+                crate::motion_ui::motion_algorithm_ui_scroll_wheel
                     .after(crate::motion_ui::motion_algorithm_ui_button_styles)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::motion_ui::motion_algorithm_ui_scrollbar_drag
+                    .after(crate::motion_ui::motion_algorithm_ui_scroll_wheel)
                     .run_if(crate::automation::local_input_enabled),
             )
                 .after(rts::selection_input)

@@ -1,3 +1,4 @@
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -34,6 +35,7 @@ struct ModelLibraryScrollbarDrag {
 #[derive(Resource, Debug)]
 pub(crate) struct ModelLibraryUiState {
     models_dirty: bool,
+    open: bool,
     drag: Option<ModelLibraryDrag>,
     spawn_seq: u32,
     scrollbar_drag: Option<ModelLibraryScrollbarDrag>,
@@ -43,6 +45,7 @@ impl Default for ModelLibraryUiState {
     fn default() -> Self {
         Self {
             models_dirty: true,
+            open: true,
             drag: None,
             spawn_seq: 0,
             scrollbar_drag: None,
@@ -53,6 +56,21 @@ impl Default for ModelLibraryUiState {
 impl ModelLibraryUiState {
     pub(crate) fn mark_models_dirty(&mut self) {
         self.models_dirty = true;
+    }
+
+    pub(crate) fn is_open(&self) -> bool {
+        self.open
+    }
+
+    pub(crate) fn set_open(&mut self, open: bool) {
+        if self.open == open {
+            return;
+        }
+        self.open = open;
+        if !open {
+            self.drag = None;
+            self.scrollbar_drag = None;
+        }
     }
 
     pub(crate) fn is_drag_active(&self) -> bool {
@@ -192,9 +210,11 @@ pub(crate) fn model_library_update_visibility(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
     workspace: Res<crate::workspace_ui::WorkspaceUiState>,
+    state: Res<ModelLibraryUiState>,
     mut roots: Query<&mut Visibility, With<ModelLibraryRoot>>,
 ) {
-    let visible = matches!(mode.get(), GameMode::Build)
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
         && matches!(
             workspace.tab,
             crate::workspace_ui::WorkspaceTab::ObjectPreview
@@ -324,7 +344,82 @@ pub(crate) fn model_library_update_scrollbar_ui(
     thumb.height = Val::Px(thumb_h);
 }
 
+pub(crate) fn model_library_scroll_wheel(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    workspace: Res<crate::workspace_ui::WorkspaceUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut mouse_wheel: bevy::ecs::message::MessageReader<MouseWheel>,
+    state: Res<ModelLibraryUiState>,
+    roots: Query<(&ComputedNode, &UiGlobalTransform, &Visibility), With<ModelLibraryRoot>>,
+    mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<ModelLibraryScrollPanel>>,
+) {
+    if !state.is_open()
+        || !matches!(mode.get(), GameMode::Build)
+        || !matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        || !matches!(
+            workspace.tab,
+            crate::workspace_ui::WorkspaceTab::ObjectPreview
+        )
+        || state.scrollbar_drag.is_some()
+    {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+
+    let Ok((root_node, root_transform, root_vis)) = roots.single() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+    if *root_vis == Visibility::Hidden || !root_node.contains_point(*root_transform, cursor) {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+
+    let Ok((panel_node, mut scroll)) = panels.single_mut() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+
+    let mut delta_lines = 0.0f32;
+    for ev in mouse_wheel.read() {
+        let lines = match ev.unit {
+            MouseScrollUnit::Line => ev.y,
+            MouseScrollUnit::Pixel => ev.y / 120.0,
+        };
+        delta_lines += lines;
+    }
+    if delta_lines.abs() < 1e-4 {
+        return;
+    }
+
+    // `ScrollPosition` is in logical pixels. Approximate a line step as 24px.
+    let delta_px = delta_lines * 24.0;
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
+    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(0.0);
+    scroll.y = (scroll.y - delta_px).clamp(0.0, max_scroll);
+}
+
 pub(crate) fn model_library_scrollbar_drag(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    workspace: Res<crate::workspace_ui::WorkspaceUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut state: ResMut<ModelLibraryUiState>,
@@ -335,6 +430,18 @@ pub(crate) fn model_library_scrollbar_drag(
     >,
     thumbs: Query<(&Interaction, &ComputedNode, &Node), With<ModelLibraryScrollbarThumb>>,
 ) {
+    let active = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        && matches!(
+            workspace.tab,
+            crate::workspace_ui::WorkspaceTab::ObjectPreview
+        );
+    if !active {
+        state.scrollbar_drag = None;
+        return;
+    }
+
     if !mouse_buttons.pressed(MouseButton::Left) {
         state.scrollbar_drag = None;
         return;

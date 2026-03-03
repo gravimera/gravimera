@@ -1,3 +1,4 @@
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -526,6 +527,67 @@ pub(crate) fn motion_algorithm_ui_update_scrollbar_ui(
 
     thumb.top = Val::Px(thumb_top);
     thumb.height = Val::Px(thumb_h);
+}
+
+pub(crate) fn motion_algorithm_ui_scroll_wheel(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut mouse_wheel: bevy::ecs::message::MessageReader<MouseWheel>,
+    state: Res<MotionAlgorithmUiState>,
+    roots: Query<(&ComputedNode, &UiGlobalTransform, &Visibility), With<MotionAlgorithmUiRoot>>,
+    mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<MotionAlgorithmUiScrollPanel>>,
+) {
+    if !state.open || state.scrollbar_drag.is_some() {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+
+    let Ok((root_node, root_transform, root_vis)) = roots.single() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+    if *root_vis == Visibility::Hidden || !root_node.contains_point(*root_transform, cursor) {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+
+    let Ok((panel_node, mut scroll)) = panels.single_mut() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+
+    let mut delta_lines = 0.0f32;
+    for ev in mouse_wheel.read() {
+        let lines = match ev.unit {
+            MouseScrollUnit::Line => ev.y,
+            MouseScrollUnit::Pixel => ev.y / 120.0,
+        };
+        delta_lines += lines;
+    }
+    if delta_lines.abs() < 1e-4 {
+        return;
+    }
+
+    // `ScrollPosition` is in logical pixels. Approximate a line step as 24px.
+    let delta_px = delta_lines * 24.0;
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
+    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(0.0);
+    scroll.y = (scroll.y - delta_px).clamp(0.0, max_scroll);
 }
 
 pub(crate) fn motion_algorithm_ui_scrollbar_drag(

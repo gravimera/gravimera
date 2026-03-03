@@ -149,6 +149,12 @@ pub(crate) struct WorkspaceActionButton;
 #[derive(Component)]
 pub(crate) struct WorkspaceActionButtonText;
 
+#[derive(Component)]
+pub(crate) struct WorkspaceModelsToggleButton;
+
+#[derive(Component)]
+pub(crate) struct WorkspaceModelsToggleButtonText;
+
 pub(crate) fn setup_workspace_ui(mut commands: Commands) {
     commands
         .spawn((
@@ -226,6 +232,38 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
                     },
                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                     WorkspaceActionButtonText,
+                ));
+            });
+
+            root.spawn((
+                Button,
+                Node {
+                    width: Val::Px(132.0),
+                    height: Val::Px(BUTTON_HEIGHT_PX),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                Outline {
+                    width: Val::Px(1.0),
+                    color: Color::srgba(0.25, 0.25, 0.30, 0.65),
+                    offset: Val::Px(0.0),
+                },
+                WorkspaceModelsToggleButton,
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new("Hide Models"),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    WorkspaceModelsToggleButtonText,
                 ));
             });
 
@@ -401,6 +439,70 @@ pub(crate) fn workspace_ui_update_labels(
     }
     for mut text in &mut texts.p1() {
         **text = state.tab.action_label().into();
+    }
+}
+
+pub(crate) fn workspace_ui_models_toggle_button_ui(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    state: Res<WorkspaceUiState>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    mut buttons: Query<(&mut Node, &mut Visibility), With<WorkspaceModelsToggleButton>>,
+    mut texts: Query<&mut Text, With<WorkspaceModelsToggleButtonText>>,
+) {
+    let visible = matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm)
+        && matches!(state.tab, WorkspaceTab::ObjectPreview);
+    for (mut node, mut vis) in &mut buttons {
+        node.display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        *vis = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    let label = if model_library.is_open() {
+        "Hide Models"
+    } else {
+        "Show Models"
+    };
+    for mut text in &mut texts {
+        **text = label.into();
+    }
+}
+
+pub(crate) fn workspace_ui_models_toggle_button(
+    state: Res<WorkspaceUiState>,
+    build_scene: Res<State<BuildScene>>,
+    mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<WorkspaceModelsToggleButton>),
+    >,
+) {
+    for (interaction, mut bg) in &mut buttons {
+        match *interaction {
+            Interaction::Pressed => {
+                if matches!(state.tab, WorkspaceTab::ObjectPreview)
+                    && matches!(build_scene.get(), BuildScene::Realm)
+                {
+                    let next_open = !model_library.is_open();
+                    model_library.set_open(next_open);
+                }
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.85));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.75));
+            }
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
+            }
+        }
     }
 }
 
