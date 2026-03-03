@@ -9,6 +9,28 @@ pub(crate) fn console_closed(console: Res<CommandConsole>) -> bool {
     !console.open
 }
 
+fn parse_whos_your_daddy(normalized: &str) -> Option<Option<i32>> {
+    let who_prefixes = ["who's your daddy", "whos your daddy"];
+    for prefix in who_prefixes {
+        if let Some(rest) = normalized.strip_prefix(prefix) {
+            let amount_str = rest.trim();
+            let amount = if amount_str.is_empty() {
+                None
+            } else {
+                match amount_str.parse::<i32>() {
+                    Ok(v) if v > 0 => Some(v),
+                    _ => {
+                        warn!("Invalid amount for \"who's your daddy\": {amount_str:?}");
+                        None
+                    }
+                }
+            };
+            return Some(amount);
+        }
+    }
+    None
+}
+
 fn apply_console_command(
     game: &mut Game,
     player_health: &mut Health,
@@ -25,56 +47,6 @@ fn apply_console_command(
     let previous_health = player_health.current;
 
     let normalized = raw.strip_prefix('/').unwrap_or(raw).to_ascii_lowercase();
-
-    let who_prefixes = ["who's your daddy", "whos your daddy"];
-    for prefix in who_prefixes {
-        if let Some(rest) = normalized.strip_prefix(prefix) {
-            let amount_str = rest.trim();
-            let amount = if amount_str.is_empty() {
-                None
-            } else {
-                match amount_str.parse::<i32>() {
-                    Ok(v) if v > 0 => Some(v),
-                    _ => {
-                        warn!("Invalid amount for \"who's your daddy\": {amount_str:?}");
-                        None
-                    }
-                }
-            };
-
-            match amount {
-                None => {
-                    *player_health = Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH);
-                    game.shotgun_charges = 1000;
-                    game.laser_charges = 1000;
-                }
-                Some(amount) => {
-                    player_health.current = player_health.current.saturating_add(amount);
-                    player_health.max = player_health.max.saturating_add(amount).max(1);
-                    if player_health.current > player_health.max {
-                        player_health.max = player_health.current.max(1);
-                    }
-
-                    let amount_u32 = amount as u32;
-                    game.shotgun_charges = game.shotgun_charges.saturating_add(amount_u32);
-                    game.laser_charges = game.laser_charges.saturating_add(amount_u32);
-                }
-            }
-
-            game.game_over = false;
-            if let Some(pos) = player_popup_pos {
-                let delta = player_health.current - previous_health;
-                if delta != 0 {
-                    health_events.write(HealthChangeEvent {
-                        world_pos: pos,
-                        delta,
-                        is_hero: true,
-                    });
-                }
-            }
-            return;
-        }
-    }
 
     match normalized.as_str() {
         "easy" | "normal" => {
@@ -107,36 +79,117 @@ fn apply_console_command(
 }
 
 pub(crate) fn toggle_command_console(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut console: ResMut<CommandConsole>,
     mut game: ResMut<Game>,
     mut ratios: ResMut<SpawnRatios>,
+    library: Res<crate::object::registry::ObjectLibrary>,
     mut health_events: MessageWriter<HealthChangeEvent>,
-    player_q: Query<&Transform, With<Player>>,
-    mut player_health_q: Query<&mut Health, With<Player>>,
+    mut commandables: Query<
+        (
+            Entity,
+            &mut Transform,
+            &ObjectPrefabId,
+            &mut Health,
+            Option<&mut LaserDamageAccum>,
+            Option<&Died>,
+            Option<&Player>,
+        ),
+        With<Commandable>,
+    >,
 ) {
     if !(keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter)) {
         return;
     }
 
     if console.open {
-        let popup_pos = player_q
-            .single()
-            .ok()
-            .map(|transform| transform.translation + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y);
-        let Ok(mut player_health) = player_health_q.single_mut() else {
+        let raw = console.buffer.trim();
+        let normalized = raw.strip_prefix('/').unwrap_or(raw).to_ascii_lowercase();
+
+        if let Some(amount) = parse_whos_your_daddy(&normalized) {
+            match amount {
+                None => {
+                    game.shotgun_charges = 1000;
+                    game.laser_charges = 1000;
+                }
+                Some(amount) => {
+                    let amount_u32 = amount as u32;
+                    game.shotgun_charges = game.shotgun_charges.saturating_add(amount_u32);
+                    game.laser_charges = game.laser_charges.saturating_add(amount_u32);
+                }
+            }
+            game.game_over = false;
+
+            for (entity, mut transform, prefab_id, mut health, accum, died, player) in
+                &mut commandables
+            {
+                let previous_health = health.current;
+
+                match amount {
+                    None => {
+                        *health = Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH);
+                    }
+                    Some(amount) => {
+                        health.current = health.current.saturating_add(amount);
+                        health.max = health.max.saturating_add(amount).max(1);
+                        if health.current > health.max {
+                            health.max = health.current.max(1);
+                        }
+                    }
+                }
+
+                if let Some(mut accum) = accum {
+                    accum.0 = 0.0;
+                }
+
+                if health.current > 0 {
+                    if let Some(died) = died {
+                        *transform = died.restore_transform.clone();
+                    }
+                    commands.entity(entity).remove::<Died>();
+                    commands.entity(entity).remove::<DieMotion>();
+                }
+
+                let delta = health.current - previous_health;
+                if delta != 0 {
+                    let popup_offset_y = library
+                        .health_bar_offset_y(prefab_id.0)
+                        .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
+                    health_events.write(HealthChangeEvent {
+                        world_pos: transform.translation + Vec3::Y * popup_offset_y,
+                        delta,
+                        is_hero: player.is_some(),
+                    });
+                }
+            }
+
             console.open = false;
             console.buffer.clear();
             return;
-        };
-        apply_console_command(
-            &mut game,
-            &mut player_health,
-            &mut ratios,
-            &console.buffer,
-            popup_pos,
-            &mut health_events,
-        );
+        }
+
+        for (_entity, transform, prefab_id, mut health, _accum, _died, player) in &mut commandables
+        {
+            if player.is_none() {
+                continue;
+            }
+
+            let popup_offset_y = library
+                .health_bar_offset_y(prefab_id.0)
+                .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
+            let popup_pos = transform.translation + Vec3::Y * popup_offset_y;
+            apply_console_command(
+                &mut game,
+                &mut health,
+                &mut ratios,
+                &console.buffer,
+                Some(popup_pos),
+                &mut health_events,
+            );
+            break;
+        }
+
         console.open = false;
         console.buffer.clear();
     } else {
