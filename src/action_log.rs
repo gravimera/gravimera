@@ -52,9 +52,34 @@ impl ActionLogState {
     }
 
     pub(crate) fn push(&mut self, at_secs: f32, source: ActionLogSource, message: impl Into<String>) {
-        let msg = message.into();
-        if msg.trim().is_empty() {
+        if !self.enabled {
             return;
+        }
+        if self.max_entries == 0 {
+            return;
+        }
+
+        let msg = message.into();
+        let msg_trimmed = msg.trim();
+        if msg_trimmed.is_empty() {
+            return;
+        }
+
+        let mut msg = if msg_trimmed.len() == msg.len() {
+            msg
+        } else {
+            msg_trimmed.to_string()
+        };
+
+        // Hard cap message size to guarantee bounded memory usage.
+        const MAX_MESSAGE_BYTES: usize = 280;
+        if msg.len() > MAX_MESSAGE_BYTES {
+            let mut idx = MAX_MESSAGE_BYTES;
+            while idx > 0 && !msg.is_char_boundary(idx) {
+                idx = idx.saturating_sub(1);
+            }
+            msg.truncate(idx);
+            msg.push('…');
         }
 
         while self.entries.len() >= self.max_entries {
