@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 
 use crate::config::AppConfig;
 use crate::intelligence::host_plugin::StandaloneBrain;
+use crate::intelligence::protocol::{DespawnBrainInstanceRequest, PROTOCOL_VERSION};
 use crate::intelligence::sidecar_client::SidecarClient;
 use crate::motion::{
     motion_rig_v1_for_prefab, AttackPrimaryMotionAlgorithm, IdleMotionAlgorithm,
@@ -1157,6 +1158,7 @@ pub(crate) fn meta_brain_ui_button_clicks(
     config: Res<AppConfig>,
     selection: Res<SelectionState>,
     units: Query<(), With<Commandable>>,
+    brains: Query<Option<&StandaloneBrain>>,
     mut buttons: Query<(&Interaction, &MetaBrainUiButton), Changed<Interaction>>,
 ) {
     if !state.open {
@@ -1184,6 +1186,30 @@ pub(crate) fn meta_brain_ui_button_clicks(
 
             match button.module_id.as_deref() {
                 None => {
+                    if config.intelligence_service_enabled {
+                        let mut instance_ids = Vec::new();
+                        if let Ok(Some(brain)) = brains.get(entity) {
+                            if let Some(instance_id) = brain.brain_instance_id.clone() {
+                                instance_ids.push(instance_id);
+                            }
+                        }
+                        if !instance_ids.is_empty() {
+                            let addr_str = config
+                                .intelligence_service_addr
+                                .clone()
+                                .unwrap_or_else(|| "127.0.0.1:8792".to_string());
+                            if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+                                let client = SidecarClient::new(
+                                    addr,
+                                    config.intelligence_service_token.clone(),
+                                );
+                                let _ = client.despawn(DespawnBrainInstanceRequest {
+                                    protocol_version: PROTOCOL_VERSION,
+                                    brain_instance_ids: instance_ids,
+                                });
+                            }
+                        }
+                    }
                     commands.entity(entity).remove::<StandaloneBrain>();
                     commands.entity(entity).remove::<MoveOrder>();
                     updated += 1;

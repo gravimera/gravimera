@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::action_log::ActionLogState;
 use crate::constants::*;
 use crate::types::*;
 
@@ -12,6 +13,7 @@ pub(crate) fn restart_game(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut game: ResMut<Game>,
+    action_log: Option<ResMut<ActionLogState>>,
     mut camera_yaw: ResMut<CameraYaw>,
     mut camera_pitch: ResMut<CameraPitch>,
     mut camera_focus: ResMut<CameraFocus>,
@@ -35,6 +37,10 @@ pub(crate) fn restart_game(
 ) {
     if !keys.just_pressed(KeyCode::KeyR) {
         return;
+    }
+
+    if let Some(mut action_log) = action_log {
+        action_log.clear();
     }
 
     game.score = 0;

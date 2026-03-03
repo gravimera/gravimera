@@ -139,11 +139,6 @@ enum BrainModuleState {
 
 #[derive(Debug)]
 struct BrainInstance {
-    brain_instance_id: String,
-    realm_id: String,
-    scene_id: String,
-    unit_instance_id: String,
-    module_id: String,
     config: serde_json::Value,
     capabilities: HashSet<String>,
     module_state: BrainModuleState,
@@ -354,11 +349,6 @@ fn main() {
                     _ => BrainModuleState::DemoOrbit,
                 };
                 let instance = BrainInstance {
-                    brain_instance_id: brain_instance_id.clone(),
-                    realm_id: req.realm_id,
-                    scene_id: req.scene_id,
-                    unit_instance_id: req.unit_instance_id,
-                    module_id,
                     config: req.config,
                     capabilities: req.capabilities.into_iter().collect(),
                     module_state,

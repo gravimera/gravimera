@@ -123,39 +123,6 @@ fn pick_enemy_under_cursor(
     best
 }
 
-fn pick_enemy_entity_under_cursor(
-    cursor: Vec2,
-    camera: &Camera,
-    camera_transform: &GlobalTransform,
-    library: &ObjectLibrary,
-    enemies: &Query<(Entity, &Transform, &ObjectPrefabId), With<Enemy>>,
-) -> Option<Entity> {
-    let mut best = None;
-    let mut best_d = f32::INFINITY;
-
-    for (entity, transform, prefab_id) in enemies.iter() {
-        let scale_y = safe_abs_scale_y(transform.scale);
-        let height = library
-            .size(prefab_id.0)
-            .map(|s| s.y * scale_y)
-            .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
-        let world_pos = transform.translation + Vec3::Y * (height * 0.55);
-        let Some(screen) = world_to_screen(camera, camera_transform, world_pos) else {
-            continue;
-        };
-        let d = screen.distance(cursor);
-        if d > MOVE_ENEMY_CLICK_RADIUS_PX {
-            continue;
-        }
-        if d < best_d {
-            best_d = d;
-            best = Some(entity);
-        }
-    }
-
-    best
-}
-
 fn pick_unit_entity_under_cursor(
     cursor: Vec2,
     camera: &Camera,
