@@ -86,6 +86,22 @@ Override config loading:
 
 Gen3D requires OpenAI settings in `config.toml` (or `OPENAI_API_KEY` via env).
 
+## Intelligence Service (Standalone Brains)
+
+Optional: run unit brains in a separate local/remote process.
+
+Local dev quickstart:
+
+```bash
+# Terminal A
+cargo run --bin gravimera_intelligence_service
+
+# Terminal B (enable in ~/.gravimera/config.toml; see config.example.toml)
+cargo run
+```
+
+Docs: `docs/intelligence_service.md` (spec: `docs/gamedesign/38_intelligence_service_spec.md`).
+
 ## Docs
 
 - Game design (long-term target): `docs/gamedesign/README.md`
