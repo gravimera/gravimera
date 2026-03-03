@@ -571,6 +571,12 @@ impl MoveOrder {
     }
 }
 
+#[derive(Component, Clone, Debug)]
+pub(crate) struct BrainAttackOrder {
+    pub(crate) target: Entity,
+    pub(crate) valid_until_tick: Option<u64>,
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct MoveCommandState {
     pub(crate) marker: Option<Entity>,

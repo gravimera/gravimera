@@ -150,7 +150,12 @@ pub struct SelfState {
     pub yaw: f32,
     pub vel: [f32; 3],
     pub health: Option<i32>,
+    pub health_max: Option<i32>,
     pub stamina: Option<i32>,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +165,10 @@ pub struct NearbyEntity {
     pub rel_pos: [f32; 3],
     pub rel_vel: [f32; 3],
     pub tags: Vec<String>,
+    pub health: Option<i32>,
+    pub health_max: Option<i32>,
+    pub radius: Option<f32>,
+    pub aabb_half_extents: Option<[f32; 2]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,6 +240,10 @@ impl TickInput {
 pub enum BrainCommand {
     MoveTo {
         pos: [f32; 3],
+        valid_until_tick: Option<u64>,
+    },
+    AttackTarget {
+        target_id: String,
         valid_until_tick: Option<u64>,
     },
     SetMove {
@@ -326,7 +339,10 @@ mod tests {
                 yaw: 0.0,
                 vel: [0.0, 0.0, 0.0],
                 health: None,
+                health_max: None,
                 stamina: None,
+                kind: "thing".into(),
+                tags: vec![],
             },
             nearby_entities: (0..10)
                 .map(|i| NearbyEntity {
@@ -335,6 +351,10 @@ mod tests {
                     rel_pos: [0.0, 0.0, 0.0],
                     rel_vel: [0.0, 0.0, 0.0],
                     tags: vec![],
+                    health: None,
+                    health_max: None,
+                    radius: None,
+                    aabb_half_extents: None,
                 })
                 .collect(),
             events: (0..10)

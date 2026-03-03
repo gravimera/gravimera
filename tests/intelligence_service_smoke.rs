@@ -142,7 +142,10 @@ fn intelligence_service_health_spawn_tick_and_despawn() {
             yaw: 0.0,
             vel: [0.0, 0.0, 0.0],
             health: None,
+            health_max: None,
             stamina: None,
+            kind: "thing".into(),
+            tags: vec![],
         },
         nearby_entities: vec![],
         events: vec![],
@@ -210,4 +213,3 @@ fn intelligence_service_health_spawn_tick_and_despawn() {
     let _ = child.kill();
     let _ = child.wait();
 }
-

@@ -518,8 +518,18 @@ impl Plugin for RenderedGameplayPlugin {
                     .after(rts::update_unit_aim_yaw_delta)
                     .after(combat::tick_attack_cooldowns),
                 rts::clear_forced_animation_channel_after_one_shot
-                    .after(combat::unit_attack_execute),
+                    .after(combat::unit_attack_execute)
+                    .after(combat::brain_attack_execute),
             )
+                .run_if(console::console_closed)
+                .run_if(crate::scene_authoring_ui::scene_ui_closed)
+                .run_if(in_state(BuildScene::Realm)),
+        );
+        app.add_systems(
+            Update,
+            combat::brain_attack_execute
+                .after(rts::execute_move_orders)
+                .after(combat::tick_attack_cooldowns)
                 .run_if(console::console_closed)
                 .run_if(crate::scene_authoring_ui::scene_ui_closed)
                 .run_if(in_state(BuildScene::Realm)),

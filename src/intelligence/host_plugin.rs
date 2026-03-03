@@ -164,13 +164,13 @@ fn intelligence_debug_spawn_unit(
 
 fn collect_nav_obstacles(
     objects: &Query<
-        (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
+        (&ObjectId, &Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         With<BuildObject>,
     >,
     library: &ObjectLibrary,
 ) -> Vec<navigation::NavObstacle> {
     let mut obstacles = Vec::with_capacity(objects.iter().len());
-    for (transform, collider, dimensions, prefab_id) in objects.iter() {
+    for (_object_id, transform, collider, dimensions, prefab_id) in objects.iter() {
         let scale_y = safe_abs_scale_y(transform.scale);
         let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
         let bottom_y = transform.translation.y - origin_y;
@@ -219,8 +219,22 @@ fn intelligence_tick(
     mut runtime: ResMut<IntelligenceHostRuntime>,
     mut brains: Query<(Entity, &ObjectId, &Transform, Option<&Health>, &mut StandaloneBrain)>,
     movers: Query<(&Collider, &ObjectPrefabId, Option<&Player>), With<Commandable>>,
+    units: Query<
+        (
+            Entity,
+            &ObjectId,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Health>,
+            Option<&Player>,
+            Option<&Enemy>,
+            Option<&LocomotionClock>,
+        ),
+        (Or<(With<Commandable>, With<Enemy>)>, Without<Died>),
+    >,
     build_objects: Query<
-        (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
+        (&ObjectId, &Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         With<BuildObject>,
     >,
 ) {
@@ -317,6 +331,84 @@ fn intelligence_tick(
     }
 
     let obstacles = collect_nav_obstacles(&build_objects, &library);
+    let caps = BudgetCaps::default();
+
+    const SENSE_RADIUS_M: f32 = 14.0;
+    let sense_r2 = SENSE_RADIUS_M * SENSE_RADIUS_M;
+
+    #[derive(Clone)]
+    struct SensedUnit {
+        entity: Entity,
+        instance_id: String,
+        kind: String,
+        pos: Vec3,
+        vel: Vec3,
+        health: Option<i32>,
+        health_max: Option<i32>,
+        radius: f32,
+        tags: Vec<String>,
+    }
+
+    #[derive(Clone)]
+    struct SensedBuild {
+        instance_id: String,
+        kind: String,
+        pos: Vec3,
+        half_extents: Vec2,
+        tags: Vec<String>,
+    }
+
+    let mut sensed_units: Vec<SensedUnit> = Vec::new();
+    let mut instance_to_entity = std::collections::HashMap::<String, Entity>::new();
+    for (entity, object_id, transform, collider, prefab_id, health, player, enemy, locomotion) in
+        units.iter()
+    {
+        let instance_id = uuid::Uuid::from_u128(object_id.0).to_string();
+        instance_to_entity.insert(instance_id.clone(), entity);
+
+        let kind = uuid::Uuid::from_u128(prefab_id.0).to_string();
+        let mut tags = vec!["unit".to_string()];
+        if player.is_some() {
+            tags.push("player".to_string());
+        }
+        if enemy.is_some() {
+            tags.push("enemy".to_string());
+        }
+
+        let speed = locomotion.map(|c| c.speed_mps).unwrap_or(0.0);
+        let mut forward = transform.rotation * Vec3::Z;
+        forward.y = 0.0;
+        let vel = if speed > 0.0 && forward.length_squared() > 1e-6 {
+            forward.normalize() * speed
+        } else {
+            Vec3::ZERO
+        };
+
+        sensed_units.push(SensedUnit {
+            entity,
+            instance_id,
+            kind,
+            pos: transform.translation,
+            vel,
+            health: health.map(|h| h.current),
+            health_max: health.map(|h| h.max),
+            radius: collider.radius,
+            tags,
+        });
+    }
+
+    let mut sensed_builds: Vec<SensedBuild> = Vec::new();
+    for (object_id, transform, collider, _dimensions, prefab_id) in build_objects.iter() {
+        let instance_id = uuid::Uuid::from_u128(object_id.0).to_string();
+        let kind = uuid::Uuid::from_u128(prefab_id.0).to_string();
+        sensed_builds.push(SensedBuild {
+            instance_id,
+            kind,
+            pos: transform.translation,
+            half_extents: collider.half_extents,
+            tags: vec!["build".to_string(), "building".to_string()],
+        });
+    }
 
     // Build a batched tick request.
     let mut items = Vec::new();
@@ -328,9 +420,89 @@ fn intelligence_tick(
         if tick_index < brain.next_tick_due {
             continue;
         }
-        brain_to_entity.insert(brain_instance_id.clone(), entity);
+        let Ok((_collider, prefab_id, is_player)) = movers.get(entity) else {
+            continue;
+        };
+
+        let self_kind = uuid::Uuid::from_u128(prefab_id.0).to_string();
+        let mut self_tags = vec!["unit".to_string()];
+        if is_player.is_some() {
+            self_tags.push("player".to_string());
+        }
+
+        let self_vel = sensed_units
+            .iter()
+            .find(|u| u.entity == entity)
+            .map(|u| u.vel)
+            .unwrap_or(Vec3::ZERO);
 
         let unit_instance_id = uuid::Uuid::from_u128(object_id.0).to_string();
+        let self_pos = transform.translation;
+        let mut nearby: Vec<(f32, NearbyEntity)> = Vec::new();
+        for u in &sensed_units {
+            if u.entity == entity {
+                continue;
+            }
+            let delta = u.pos - self_pos;
+            let dist2 = delta.x * delta.x + delta.z * delta.z;
+            if !dist2.is_finite() || dist2 > sense_r2 {
+                continue;
+            }
+
+            let rel_vel = u.vel - self_vel;
+            nearby.push((
+                dist2,
+                NearbyEntity {
+                    entity_instance_id: u.instance_id.clone(),
+                    kind: u.kind.clone(),
+                    rel_pos: [delta.x, delta.y, delta.z],
+                    rel_vel: [rel_vel.x, rel_vel.y, rel_vel.z],
+                    tags: u.tags.clone(),
+                    health: u.health,
+                    health_max: u.health_max,
+                    radius: Some(u.radius.max(0.0)),
+                    aabb_half_extents: None,
+                },
+            ));
+        }
+        for b in &sensed_builds {
+            let delta = b.pos - self_pos;
+            let dist2 = delta.x * delta.x + delta.z * delta.z;
+            if !dist2.is_finite() || dist2 > sense_r2 {
+                continue;
+            }
+            nearby.push((
+                dist2,
+                NearbyEntity {
+                    entity_instance_id: b.instance_id.clone(),
+                    kind: b.kind.clone(),
+                    rel_pos: [delta.x, delta.y, delta.z],
+                    rel_vel: [0.0, 0.0, 0.0],
+                    tags: b.tags.clone(),
+                    health: None,
+                    health_max: None,
+                    radius: None,
+                    aabb_half_extents: Some([b.half_extents.x.max(0.0), b.half_extents.y.max(0.0)]),
+                },
+            ));
+        }
+        nearby.sort_by(|(a_dist2, a), (b_dist2, b)| {
+            a_dist2
+                .partial_cmp(b_dist2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.entity_instance_id.cmp(&b.entity_instance_id))
+        });
+        let mut nearby_entities: Vec<NearbyEntity> =
+            nearby.into_iter().map(|(_d2, e)| e).collect();
+        let dropped_nearby = nearby_entities
+            .len()
+            .saturating_sub(caps.max_nearby_entities as usize);
+        if nearby_entities.len() > caps.max_nearby_entities as usize {
+            nearby_entities.truncate(caps.max_nearby_entities as usize);
+        }
+
+        brain_to_entity.insert(brain_instance_id.clone(), entity);
+
         let forward = transform.rotation * Vec3::Z;
         let yaw = forward.x.atan2(forward.z);
         let input = TickInput {
@@ -349,14 +521,20 @@ fn intelligence_tick(
             self_state: SelfState {
                 pos: [transform.translation.x, transform.translation.y, transform.translation.z],
                 yaw,
-                vel: [0.0, 0.0, 0.0],
+                vel: [self_vel.x, self_vel.y, self_vel.z],
                 health: health.map(|h| h.current),
+                health_max: health.map(|h| h.max),
                 stamina: None,
+                kind: self_kind,
+                tags: self_tags,
             },
-            nearby_entities: Vec::new(),
+            nearby_entities: nearby_entities,
             events: Vec::new(),
             capabilities: brain.capabilities.clone(),
-            meta: TickInputMeta::default(),
+            meta: TickInputMeta {
+                nearby_entities_dropped: dropped_nearby as u32,
+                events_dropped: 0,
+            },
         };
         items.push(TickManyItem {
             brain_instance_id,
@@ -383,9 +561,6 @@ fn intelligence_tick(
         let Some(entity) = brain_to_entity.get(&out.brain_instance_id).copied() else {
             continue;
         };
-        let Ok((collider, prefab_id, is_player)) = movers.get(entity) else {
-            continue;
-        };
         let Some(mut tick_output) = out.tick_output else {
             if let Some(err) = out.error {
                 debug!("Intelligence tick error (brain_instance_id={}): {err}", out.brain_instance_id);
@@ -401,6 +576,9 @@ fn intelligence_tick(
                     sleep_for = Some(sleep_for.unwrap_or(0).max(ticks));
                 }
                 BrainCommand::MoveTo { pos, .. } => {
+                    let Ok((collider, prefab_id, is_player)) = movers.get(entity) else {
+                        continue;
+                    };
                     let goal = Vec2::new(pos[0], pos[2]);
                     let Ok((_entity, _object_id, transform, _health, _brain)) = brains.get(entity)
                     else {
@@ -464,6 +642,35 @@ fn intelligence_tick(
                     if order.target.is_some() {
                         commands.entity(entity).insert(order);
                     }
+                }
+                BrainCommand::AttackTarget {
+                    target_id,
+                    valid_until_tick,
+                } => {
+                    let Ok((_entity, _object_id, _transform, _health, brain)) = brains.get(entity)
+                    else {
+                        continue;
+                    };
+                    if !brain.capabilities.iter().any(|c| c == "brain.combat") {
+                        continue;
+                    }
+                    if let Some(valid_until_tick) = valid_until_tick {
+                        if tick_index > valid_until_tick {
+                            continue;
+                        }
+                    }
+
+                    let target_id = target_id.trim();
+                    let Some(target_entity) = instance_to_entity.get(target_id).copied() else {
+                        continue;
+                    };
+                    if target_entity == entity {
+                        continue;
+                    }
+                    commands.entity(entity).insert(crate::types::BrainAttackOrder {
+                        target: target_entity,
+                        valid_until_tick,
+                    });
                 }
                 _ => {}
             }

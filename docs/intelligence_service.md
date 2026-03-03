@@ -70,6 +70,24 @@ curl -s http://127.0.0.1:8792/v1/health
 curl -s http://127.0.0.1:8792/v1/modules
 ```
 
+## Demo brain modules (built-in)
+
+The service currently ships a few **demo** modules for development and testing:
+
+- `demo.orbit.v1`: circles around a center point.
+  - config: `{ "center": [x,z], "radius": f32, "rads_per_tick": f32 }`
+- `demo.coward.v1`: wanders/rests/“looks around”, but flees from nearby units of different `kind`.
+  - on taking damage (health drop), it tries to hide behind nearby buildings and remembers the attacker as “dangerous” for ~60 seconds.
+- `demo.opportunist.v1`: mostly rests (≈3/4) and sometimes wanders (≈1/4).
+  - it may attack nearby moving units of different `kind`, and may fight back when attacked.
+  - it only engages if it estimates it can win and still remain above 1/4 health.
+  - requires host-granted capabilities: `brain.move` and `brain.combat`.
+
+Notes:
+
+- `TickInput.self_state.kind` and `TickInput.nearby_entities[*].kind` are currently the unit/building prefab UUID string.
+- The host includes both units and build objects in `nearby_entities` (bounded and distance-sorted).
+
 On Windows PowerShell, use `curl.exe` instead of `curl` if you hit the `Invoke-WebRequest` alias:
 
 ```powershell
@@ -96,4 +114,3 @@ This usually means the service process is still running and has the `.exe` open.
 ```powershell
 Get-Process gravimera_intelligence_service -ErrorAction SilentlyContinue | Stop-Process -Force
 ```
-

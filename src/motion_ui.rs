@@ -1196,7 +1196,7 @@ pub(crate) fn meta_brain_ui_button_clicks(
                     commands.entity(entity).insert(StandaloneBrain {
                         module_id: module_id.to_string(),
                         config: json!({}),
-                        capabilities: vec!["brain.move".into()],
+                        capabilities: vec!["brain.move".into(), "brain.combat".into()],
                         brain_instance_id: None,
                         next_tick_due: 0,
                         last_error: None,

@@ -1224,6 +1224,268 @@ pub(crate) fn unit_attack_execute(
     }
 }
 
+pub(crate) fn brain_attack_execute(
+    mut commands: Commands,
+    time: Res<Time>,
+    mode: Res<State<GameMode>>,
+    mut visuals_spawn: ProjectileVisualSpawnParams,
+    library: Res<ObjectLibrary>,
+    mut game: ResMut<Game>,
+    mut effects: ResMut<EnemyKillEffects>,
+    mut health_events: MessageWriter<HealthChangeEvent>,
+    player_entity_q: Query<Entity, With<Player>>,
+    player_transform_q: Query<&Transform, With<Player>>,
+    mut attackers: Query<
+        (
+            Entity,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            &mut AttackCooldown,
+            &BrainAttackOrder,
+        ),
+        (With<Commandable>, With<AttackCooldown>, Without<Died>),
+    >,
+    mut units: Query<
+        (
+            Entity,
+            &Transform,
+            &Collider,
+            &ObjectPrefabId,
+            Option<&Enemy>,
+            Option<&Player>,
+            &mut Health,
+            Option<&Died>,
+        ),
+        Or<(With<Commandable>, With<Enemy>)>,
+    >,
+) {
+    if matches!(mode.get(), GameMode::Play) && game.game_over {
+        return;
+    }
+
+    let tick_index = (time.elapsed_secs_f64() * 60.0).floor().max(0.0) as u64;
+    let wall_time = time.elapsed_secs();
+    let mut melee_kills: u32 = 0;
+
+    for (entity, transform, _collider, prefab_id, mut cooldown, order) in attackers.iter_mut() {
+        if let Some(valid_until_tick) = order.valid_until_tick {
+            if tick_index > valid_until_tick {
+                commands.entity(entity).remove::<BrainAttackOrder>();
+                continue;
+            }
+        }
+
+        // Don't attack while dead (health can hit 0 before the `Died` marker is applied).
+        if let Ok((_e, _t, _c, _p, _enemy, _player, health, died)) = units.get_mut(entity) {
+            if died.is_some() || health.current <= 0 {
+                continue;
+            }
+        }
+
+        let Some(def) = library.get(prefab_id.0) else {
+            commands.entity(entity).remove::<BrainAttackOrder>();
+            continue;
+        };
+        let Some(attack) = def.attack.as_ref() else {
+            commands.entity(entity).remove::<BrainAttackOrder>();
+            continue;
+        };
+
+        let Ok((
+            target_entity,
+            target_transform,
+            target_collider,
+            target_prefab,
+            target_enemy,
+            target_player,
+            mut target_health,
+            target_died,
+        )) = units.get_mut(order.target)
+        else {
+            commands.entity(entity).remove::<BrainAttackOrder>();
+            continue;
+        };
+
+        if target_entity == entity {
+            commands.entity(entity).remove::<BrainAttackOrder>();
+            continue;
+        }
+        if target_died.is_some() || target_health.current <= 0 {
+            commands.entity(entity).remove::<BrainAttackOrder>();
+            continue;
+        }
+
+        if cooldown.remaining_secs > 0.0 {
+            continue;
+        }
+
+        let to_target = target_transform.translation - transform.translation;
+        let Some(direction) = normalize_flat_direction(to_target) else {
+            continue;
+        };
+
+        let duration_secs = attack.anim_window_secs.max(0.0);
+        if duration_secs > 0.0 {
+            commands.entity(entity).insert(AttackClock {
+                started_at_secs: wall_time,
+                duration_secs,
+            });
+        }
+        cooldown.remaining_secs = attack.cooldown_secs.max(0.0);
+
+        let damage = attack.damage.max(0);
+        match attack.kind {
+            UnitAttackKind::Melee => {
+                let Some(melee) = attack.melee.as_ref() else {
+                    continue;
+                };
+                if damage == 0 {
+                    continue;
+                }
+
+                let to2 = Vec2::new(to_target.x, to_target.z);
+                let dist = to2.length();
+                if dist > melee.range + melee.radius + target_collider.radius {
+                    continue;
+                }
+
+                let popup_offset_y = library
+                    .health_bar_offset_y(target_prefab.0)
+                    .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
+                health_events.write(HealthChangeEvent {
+                    world_pos: target_transform.translation + Vec3::Y * popup_offset_y,
+                    delta: -damage,
+                    is_hero: target_player.is_some(),
+                });
+
+                target_health.current = (target_health.current - damage).max(0);
+                if target_health.current <= 0 {
+                    crate::unit_health::start_die_motion(
+                        &mut commands,
+                        wall_time,
+                        &library,
+                        target_entity,
+                        target_prefab.0,
+                        target_transform,
+                    );
+                    if target_enemy.is_some() {
+                        effects.0.push(target_transform.translation);
+                        melee_kills = melee_kills.saturating_add(1);
+                    } else if target_player.is_some() {
+                        game.game_over = true;
+                        info!(
+                            "GAME OVER. Final score: {}. Press R to restart.",
+                            game.score
+                        );
+                    }
+                }
+            }
+            UnitAttackKind::RangedProjectile => {
+                let Some(ranged) = attack.ranged.as_ref() else {
+                    continue;
+                };
+                let Some(projectile_profile) = library.projectile(ranged.projectile_prefab) else {
+                    continue;
+                };
+                let Some(projectile_def) = library.get(ranged.projectile_prefab) else {
+                    continue;
+                };
+
+                let dir2 = Vec2::new(direction.x, direction.z);
+                let desired_yaw = dir2.x.atan2(dir2.y);
+                let forward = transform.rotation * Vec3::Z;
+                let body_yaw = forward.x.atan2(forward.z);
+                let mut delta = desired_yaw - body_yaw;
+                while delta > std::f32::consts::PI {
+                    delta -= std::f32::consts::TAU;
+                }
+                while delta < -std::f32::consts::PI {
+                    delta += std::f32::consts::TAU;
+                }
+
+                let max_delta_rads = match def.aim.as_ref() {
+                    Some(aim) => aim
+                        .max_yaw_delta_degrees
+                        .map(|deg| deg.abs().to_radians())
+                        .filter(|rads| rads.is_finite()),
+                    None => None,
+                };
+                if let Some(max) = max_delta_rads {
+                    let max = max.clamp(0.0, std::f32::consts::PI);
+                    delta = delta.clamp(-max, max);
+                }
+
+                let aim_rot = Quat::from_rotation_y(delta);
+                let muzzle_pos = anchor_world_position(
+                    &library,
+                    prefab_id.0,
+                    transform,
+                    &ranged.muzzle,
+                    aim_rot,
+                )
+                .unwrap_or_else(|| transform.translation + Vec3::Y * 1.0);
+
+                let radius = projectile_collider_radius(projectile_def);
+                let spawn_pos = muzzle_pos + direction * (radius * 1.05 + 0.01);
+                let velocity = direction * projectile_profile.speed;
+                let yaw = direction.x.atan2(direction.z);
+                let rotation = Quat::from_rotation_y(yaw);
+
+                let mut bullet_entity = commands.spawn((
+                    ObjectId::new_v4(),
+                    ObjectPrefabId(ranged.projectile_prefab),
+                    ProjectileOwner(entity),
+                    Transform::from_translation(spawn_pos).with_rotation(rotation),
+                    Visibility::Inherited,
+                    Bullet {
+                        velocity,
+                        ttl_secs: projectile_profile.ttl_secs,
+                    },
+                    Collider { radius },
+                ));
+                visuals::spawn_object_visuals(
+                    &mut bullet_entity,
+                    &library,
+                    &visuals_spawn.asset_server,
+                    &visuals_spawn.assets,
+                    &mut visuals_spawn.meshes,
+                    &mut visuals_spawn.materials,
+                    &mut visuals_spawn.material_cache,
+                    &mut visuals_spawn.mesh_cache,
+                    ranged.projectile_prefab,
+                    None,
+                );
+            }
+        }
+    }
+
+    if melee_kills > 0 {
+        let Ok(player_entity) = player_entity_q.single() else {
+            return;
+        };
+        let Ok((_e, _t, _c, _p, _enemy, _player, mut player_health, _died)) =
+            units.get_mut(player_entity)
+        else {
+            return;
+        };
+        let health_gains =
+            crate::enemies::apply_kill_rewards(&mut game, &mut player_health, melee_kills);
+        if health_gains > 0 {
+            if let Ok(player_transform) = player_transform_q.single() {
+                let popup_pos = player_transform.translation + Vec3::Y * PLAYER_HEALTH_BAR_OFFSET_Y;
+                for _ in 0..health_gains {
+                    health_events.write(HealthChangeEvent {
+                        world_pos: popup_pos,
+                        delta: 1,
+                        is_hero: true,
+                    });
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn move_bullets(
     time: Res<Time>,
     mut bullets: Query<(&mut Transform, &Bullet, Option<&Children>), Without<BulletVisual>>,
