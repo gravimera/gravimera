@@ -77,14 +77,16 @@ The service currently ships a few **demo** modules for development and testing:
 - `demo.orbit.v1`: circles around a center point.
   - config: `{ "center": [x,z], "radius": f32, "rads_per_tick": f32 }`
 - `demo.coward.v1`: wanders/rests/“looks around”, but flees from nearby units of different `kind`.
-  - on taking damage (health drop), it tries to hide behind nearby buildings and remembers the attacker as “dangerous” for ~60 seconds.
+  - on taking damage (health drop), it guesses the attacker as the nearest hostile unit in its snapshot.
+  - if the attacker seems more powerful (based on health/max health), it panic-flees (may try to hide behind nearby buildings) and remembers that attacker as “dangerous” for ~60 seconds.
 - `demo.opportunist.v1`: mostly rests (≈3/4) and sometimes wanders (≈1/4).
   - it may attack nearby moving units of different `kind`, and may fight back when attacked.
   - it only engages if it estimates it can win and still remain above 1/4 health.
+  - if the attacker seems more powerful (based on health/max health), it disengages and flees.
   - ranged units (tagged `attack.ranged` by the host) prefer to attack from distance instead of closing in.
   - requires host-granted capabilities: `brain.move` and `brain.combat`.
 - `demo.belligerent.v1`: aggressive brain that attacks nearby units of different `kind`.
-  - it fights back when attacked (including by the hero).
+  - when attacked, the attacker gets the most attention: it focuses that unit and chases it until it gets away (lost for a while), then resumes normal targeting.
   - ranged units (tagged `attack.ranged`) attack from distance.
   - requires host-granted capabilities: `brain.move` and `brain.combat`.
 

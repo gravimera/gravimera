@@ -126,6 +126,7 @@ struct BelligerentBrain {
     health_max_est: Option<i32>,
     target: Option<CombatTarget>,
     last_attacked_tick: Option<u64>,
+    focus_attacker_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -568,6 +569,23 @@ fn dist2_xz(rel_pos: [f32; 3]) -> f32 {
     rel_pos[0] * rel_pos[0] + rel_pos[2] * rel_pos[2]
 }
 
+fn health_pair(health: Option<i32>, health_max: Option<i32>) -> (i32, i32) {
+    let current = health.unwrap_or(0).max(0);
+    let max = health_max.unwrap_or(current.max(1)).max(1);
+    (current, max)
+}
+
+fn other_is_more_powerful(
+    self_health: Option<i32>,
+    self_health_max: Option<i32>,
+    other_health: Option<i32>,
+    other_health_max: Option<i32>,
+) -> bool {
+    let (self_current, self_max) = health_pair(self_health, self_health_max);
+    let (other_current, other_max) = health_pair(other_health, other_health_max);
+    other_max > self_max || (other_max == self_max && other_current > self_current)
+}
+
 fn normalize_xz(dx: f32, dz: f32) -> Option<(f32, f32)> {
     let l2 = dx * dx + dz * dz;
     if !l2.is_finite() || l2 <= 1e-6 {
@@ -709,7 +727,6 @@ fn tick_demo_coward(
 
     let flee_trigger_m = config_f32(config, "flee_trigger_m", 2.8, 0.5, 50.0);
     let flee_distance_m = config_f32(config, "flee_distance_m", 12.0, 2.0, 200.0);
-    let attacker_guess_m = config_f32(config, "attacker_guess_m", 6.0, 1.0, 50.0);
     let wander_radius_m = config_f32(config, "wander_radius_m", 8.0, 0.5, 200.0);
     let wander_arrival_m = config_f32(config, "wander_arrival_m", 0.8, 0.1, 10.0);
     let panic_hide_ticks = config_u32(config, "panic_hide_ticks", 600, 0, 60_000) as u64;
@@ -726,26 +743,40 @@ fn tick_demo_coward(
     };
     state.last_health = input.self_state.health;
 
-    if attacked {
-        let attacker = nearest_entity(input, |e| {
-            if !is_tagged(e, "unit") {
-                return false;
-            }
-            if self_kind.is_empty() {
-                return true;
-            }
-            e.kind != self_kind
+    let attacker = attacked
+        .then(|| {
+            nearest_entity(input, |e| {
+                if !is_tagged(e, "unit") {
+                    return false;
+                }
+                if self_kind.is_empty() {
+                    return true;
+                }
+                e.kind != self_kind
+            })
+            .map(|(e, _d2)| e)
         })
-        .and_then(|(e, d2)| {
-            let max2 = attacker_guess_m * attacker_guess_m;
-            (d2 <= max2).then_some(e)
-        });
+        .flatten();
 
+    let mut flee_due_to_attacker_power = false;
+    if attacked {
         if let Some(attacker) = attacker {
-            state
-                .dangerous
-                .insert(attacker.entity_instance_id.clone(), tick.saturating_add(dangerous_ticks));
-            state.last_attacker = Some(attacker.entity_instance_id.clone());
+            flee_due_to_attacker_power = other_is_more_powerful(
+                input.self_state.health,
+                input.self_state.health_max,
+                attacker.health,
+                attacker.health_max,
+            );
+            if flee_due_to_attacker_power {
+                state.dangerous.insert(
+                    attacker.entity_instance_id.clone(),
+                    tick.saturating_add(dangerous_ticks),
+                );
+                state.last_attacker = Some(attacker.entity_instance_id.clone());
+            }
+        } else {
+            // Attacked, but no hostile unit in our snapshot: panic-flee anyway.
+            flee_due_to_attacker_power = true;
         }
         state.last_attacked_tick = Some(tick);
     }
@@ -774,11 +805,21 @@ fn tick_demo_coward(
 
     let threat = close_threat
         .map(|(e, _d2)| e)
-        .or_else(|| dangerous_visible.map(|(e, _d2)| e));
+        .or_else(|| dangerous_visible.map(|(e, _d2)| e))
+        .or_else(|| (flee_due_to_attacker_power && attacked).then_some(attacker).flatten());
 
-    if let Some(threat) = threat {
-        let threat_pos = add_pos(self_pos, threat.rel_pos);
-        let threat_rel = [threat_pos[0] - self_pos[0], threat_pos[1] - self_pos[1], threat_pos[2] - self_pos[2]];
+    if threat.is_some() || (attacked && flee_due_to_attacker_power) {
+        let (threat_pos, threat_rel) = if let Some(threat) = threat {
+            let threat_pos = add_pos(self_pos, threat.rel_pos);
+            let threat_rel = [
+                threat_pos[0] - self_pos[0],
+                threat_pos[1] - self_pos[1],
+                threat_pos[2] - self_pos[2],
+            ];
+            (Some(threat_pos), threat_rel)
+        } else {
+            (None, [0.0, 0.0, 0.0])
+        };
 
         let mut goal = None;
         if recently_attacked {
@@ -786,16 +827,22 @@ fn tick_demo_coward(
                 .map(|(e, _d2)| e);
             if let Some(building) = building {
                 let building_pos = add_pos(self_pos, building.rel_pos);
-                let away_dx = building_pos[0] - threat_pos[0];
-                let away_dz = building_pos[2] - threat_pos[2];
-                if let Some((nx, nz)) = normalize_xz(away_dx, away_dz) {
-                    let half = building
-                        .aabb_half_extents
-                        .map(|h| h[0].max(h[1]))
-                        .unwrap_or(1.0)
-                        .max(0.1);
-                    let offset = (half + hide_buffer_m).clamp(0.5, 50.0);
-                    goal = Some([building_pos[0] + nx * offset, self_pos[1], building_pos[2] + nz * offset]);
+                if let Some(threat_pos) = threat_pos {
+                    let away_dx = building_pos[0] - threat_pos[0];
+                    let away_dz = building_pos[2] - threat_pos[2];
+                    if let Some((nx, nz)) = normalize_xz(away_dx, away_dz) {
+                        let half = building
+                            .aabb_half_extents
+                            .map(|h| h[0].max(h[1]))
+                            .unwrap_or(1.0)
+                            .max(0.1);
+                        let offset = (half + hide_buffer_m).clamp(0.5, 50.0);
+                        goal = Some([
+                            building_pos[0] + nx * offset,
+                            self_pos[1],
+                            building_pos[2] + nz * offset,
+                        ]);
+                    }
                 }
             }
         }
@@ -973,6 +1020,12 @@ fn tick_demo_opportunist(
             .last_known_health_max
             .unwrap_or(other_current.max(1))
             .max(1);
+        let other_more_powerful = other_is_more_powerful(
+            Some(self_current),
+            Some(self_max),
+            Some(other_current),
+            Some(other_max),
+        );
 
         let estimated_final = self_current.saturating_sub(other_current);
         let estimated_final_ok = (estimated_final as f32) > quarter;
@@ -980,7 +1033,12 @@ fn tick_demo_opportunist(
         let other_fraction = (other_current as f32 / other_max as f32).clamp(0.0, 1.0);
         let believe_can_beat = self_fraction >= other_fraction && self_fraction > 0.25;
 
-        if !health_too_low && believe_can_beat && estimated_final_ok && other_current > 0 {
+        if !health_too_low
+            && !other_more_powerful
+            && believe_can_beat
+            && estimated_final_ok
+            && other_current > 0
+        {
             let mut commands = Vec::new();
             if can_combat {
                 commands.push(BrainCommand::AttackTarget {
@@ -1051,6 +1109,9 @@ fn tick_demo_opportunist(
                 .health_max
                 .unwrap_or(other_current.max(1))
                 .max(1);
+            if other_max > self_max {
+                continue;
+            }
             let self_fraction = (self_current as f32 / self_max as f32).clamp(0.0, 1.0);
             let other_fraction = (other_current as f32 / other_max as f32).clamp(0.0, 1.0);
             let estimated_final = self_current.saturating_sub(other_current);
@@ -1156,8 +1217,22 @@ fn tick_demo_belligerent(
     };
     let forget_target_ticks =
         config_u32(config, "forget_target_ticks", (TICKS_PER_SEC * 8) as u32, 1, 1_000_000) as u64;
-    let fight_back_ticks =
-        config_u32(config, "fight_back_ticks", (TICKS_PER_SEC * 4) as u32, 1, 1_000_000) as u64;
+    let attacker_focus_forget_ticks = config_u32(
+        config,
+        "attacker_focus_forget_ticks",
+        (TICKS_PER_SEC * 15) as u32,
+        1,
+        1_000_000,
+    ) as u64;
+    let attacker_focus_arrival_grace_ticks = config_u32(
+        config,
+        "attacker_focus_arrival_grace_ticks",
+        (TICKS_PER_SEC * 1) as u32,
+        0,
+        1_000_000,
+    ) as u64;
+    let attacker_focus_arrival_m =
+        config_f32(config, "attacker_focus_arrival_m", 1.0, 0.1, 50.0);
 
     if let Some(max) = input.self_state.health_max {
         state.health_max_est = Some(max.max(1));
@@ -1171,10 +1246,6 @@ fn tick_demo_belligerent(
     if attacked {
         state.last_attacked_tick = Some(tick);
     }
-
-    let prefer_attacker = state
-        .last_attacked_tick
-        .is_some_and(|t0| tick.saturating_sub(t0) <= fight_back_ticks);
 
     if attacked {
         let attacker = nearest_entity(input, |e| {
@@ -1196,6 +1267,7 @@ fn tick_demo_belligerent(
                 last_known_health_max: attacker.health_max,
                 last_seen_tick: tick,
             });
+            state.focus_attacker_id = Some(attacker.entity_instance_id.clone());
         }
     }
 
@@ -1210,13 +1282,57 @@ fn tick_demo_belligerent(
             target.last_known_health = seen.health;
             target.last_known_health_max = seen.health_max;
             target.last_seen_tick = tick;
-        } else if tick.saturating_sub(target.last_seen_tick) > forget_target_ticks {
-            state.target = None;
+        } else {
+            let is_focused_attacker = state
+                .focus_attacker_id
+                .as_deref()
+                .is_some_and(|id| id == target.id.as_str());
+            let forget_after = if is_focused_attacker {
+                attacker_focus_forget_ticks
+            } else {
+                forget_target_ticks
+            };
+            if tick.saturating_sub(target.last_seen_tick) > forget_after {
+                state.target = None;
+                if is_focused_attacker {
+                    state.focus_attacker_id = None;
+                }
+            }
         }
     }
 
-    // Aggressively pick any nearby hostile unit as the target (unless we're in a fight-back window).
-    if !prefer_attacker {
+    // When focusing an attacker, keep chasing them until they're far away (lost for a while).
+    if let (Some(focus_id), Some(target)) = (state.focus_attacker_id.as_deref(), state.target.as_ref())
+    {
+        if target.id != focus_id {
+            state.focus_attacker_id = None;
+        } else if target.last_known_health.is_some_and(|h| h <= 0) {
+            state.target = None;
+            state.focus_attacker_id = None;
+        } else {
+            let since_seen = tick.saturating_sub(target.last_seen_tick);
+            if since_seen >= attacker_focus_arrival_grace_ticks && since_seen > 0 {
+                let dx = target.last_known_pos[0] - self_pos[0];
+                let dz = target.last_known_pos[2] - self_pos[2];
+                let d2 = dx * dx + dz * dz;
+                let arrival2 = attacker_focus_arrival_m * attacker_focus_arrival_m;
+                if d2.is_finite() && d2 <= arrival2 {
+                    state.target = None;
+                    state.focus_attacker_id = None;
+                }
+            }
+        }
+    } else if state.target.is_none() {
+        state.focus_attacker_id = None;
+    }
+
+    let focusing_attacker = state
+        .focus_attacker_id
+        .as_deref()
+        .is_some_and(|id| state.target.as_ref().is_some_and(|t| t.id == id));
+
+    // Aggressively pick any nearby hostile unit as the target (unless we're focused on an attacker).
+    if !focusing_attacker {
         let max2 = notice_m * notice_m;
         let nearest = nearest_entity(input, |e| {
             if !is_tagged(e, "unit") {
