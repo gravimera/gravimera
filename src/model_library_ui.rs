@@ -45,7 +45,7 @@ impl Default for ModelLibraryUiState {
     fn default() -> Self {
         Self {
             models_dirty: true,
-            open: true,
+            open: false,
             drag: None,
             spawn_seq: 0,
             scrollbar_drag: None,

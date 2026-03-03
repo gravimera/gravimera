@@ -12,7 +12,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Workspaces are isolated: **Object Preview** saves to `scene.dat`, **Scene Build** saves to `scene.build.dat`, and switching swaps the saved world.
 - Camera position/zoom are also isolated per workspace.
 - Gen3D workshop: in **Object Preview**, click **Gen3D** (top-left)
-- Models panel: in **Object Preview**, click **Hide Models** / **Show Models** (top-left)
+- Models panel (hidden by default): in **Object Preview**, click **Show Models** / **Hide Models** (top-left)
 - Scene Builder panel: in **Scene Build**, click **Scene Build** (top-left)
 - Console: `Enter` (commands: `/easy`, `/hard`, `/hell`)
 - HUD stats (top-right): object count, primitive count, FPS
