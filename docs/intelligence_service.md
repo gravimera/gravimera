@@ -90,10 +90,12 @@ Notes:
 
 ## Host defaults (when enabled)
 
-When `[intelligence_service].enabled = true`, the host automatically attaches a standalone brain to **newly spawned non-player units** (entities with `Commandable` and without `Player`):
+When `[intelligence_service].enabled = true`, the host automatically attaches a standalone brain to **non-player units** (entities with `Commandable` and without `Player`) when they enter **Play** mode:
 
 - Units that can attack (have an attack definition in the object library): `demo.opportunist.v1`
 - Units that cannot attack: `demo.coward.v1`
+
+Brains only tick/act in **Play** mode. When switching back to **Build**, the host clears brain-issued move/attack orders so units stay still for review.
 
 You can override per-unit in the UI via the Meta panel’s Brain section.
 

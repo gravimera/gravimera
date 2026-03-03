@@ -530,6 +530,7 @@ impl Plugin for RenderedGameplayPlugin {
             combat::brain_attack_execute
                 .after(rts::execute_move_orders)
                 .after(combat::tick_attack_cooldowns)
+                .run_if(in_state(GameMode::Play))
                 .run_if(console::console_closed)
                 .run_if(crate::scene_authoring_ui::scene_ui_closed)
                 .run_if(in_state(BuildScene::Realm)),

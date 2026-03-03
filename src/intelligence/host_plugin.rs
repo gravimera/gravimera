@@ -22,9 +22,14 @@ impl Plugin for IntelligenceHostPlugin {
             intelligence_debug_spawn_unit.after(crate::setup::setup_rendered),
         );
         app.add_systems(
+            OnEnter(GameMode::Build),
+            intelligence_clear_brain_orders_on_enter_build.run_if(in_state(BuildScene::Realm)),
+        );
+        app.add_systems(
             Update,
             intelligence_attach_default_brains
                 .before(intelligence_tick)
+                .run_if(in_state(GameMode::Play))
                 .run_if(in_state(BuildScene::Realm))
                 .run_if(intelligence_enabled),
         );
@@ -32,6 +37,7 @@ impl Plugin for IntelligenceHostPlugin {
             Update,
             intelligence_tick
                 .before(crate::rts::execute_move_orders)
+                .run_if(in_state(GameMode::Play))
                 .run_if(in_state(BuildScene::Realm))
                 .run_if(intelligence_enabled),
         );
@@ -167,6 +173,16 @@ fn intelligence_debug_spawn_unit(
         prefab_id,
         None,
     );
+}
+
+fn intelligence_clear_brain_orders_on_enter_build(
+    mut commands: Commands,
+    units: Query<Entity, With<StandaloneBrain>>,
+) {
+    for entity in units.iter() {
+        commands.entity(entity).remove::<MoveOrder>();
+        commands.entity(entity).remove::<BrainAttackOrder>();
+    }
 }
 
 fn intelligence_attach_default_brains(

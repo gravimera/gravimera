@@ -869,7 +869,7 @@ fn tick_demo_opportunist(
     let wander_radius_m = config_f32(config, "wander_radius_m", 7.0, 0.5, 200.0);
     let wander_arrival_m = config_f32(config, "wander_arrival_m", 0.9, 0.1, 10.0);
     let notice_m = config_f32(config, "notice_m", 7.0, 0.5, 50.0);
-    let attack_chance = config_f32(config, "attack_chance", 0.20, 0.0, 1.0);
+    let attack_chance = config_f32(config, "attack_chance", 0.45, 0.0, 1.0);
     let moving_threshold_mps = config_f32(config, "moving_threshold_mps", 0.35, 0.0, 50.0);
     let forget_target_ticks = config_u32(config, "forget_target_ticks", (TICKS_PER_SEC * 10) as u32, 1, 1_000_000) as u64;
 
