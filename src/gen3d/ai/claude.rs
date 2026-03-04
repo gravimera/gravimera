@@ -709,4 +709,3 @@ data: {"type":"message_stop"}
         assert_eq!(tokens, Some(52));
     }
 }
-

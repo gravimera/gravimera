@@ -67,6 +67,7 @@ Plan-level reuse:
 - Reuse tools default to `anchors=preserve_interfaces`: preserve each target component’s mount interface (and external child-attachment anchors), but copy other anchors so internal anchors stay consistent with copied/mirrored geometry.
   - Use `preserve_target` only if you must keep *all* target anchors unchanged.
   - Use `copy_source` to overwrite target anchors to match the source exactly.
+  - When copying a subtree, the engine may need internal parent anchors (e.g. `next`) to exist on the target in order to attach expanded descendants. With `preserve_interfaces` / `copy_source`, missing internal parent anchors are hydrated deterministically from the source so subtree expansion can proceed. With `preserve_target`, missing required anchors still fail the copy.
 
 The loop continues until the AI returns `done`, the user clicks **Stop**, or a budget/no-progress guard stops best-effort.
 

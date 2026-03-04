@@ -1401,7 +1401,9 @@ fn hydrate_reuse_target_attachment_anchors(
     }
 
     for (target_idx, source_idx) in target_to_source {
-        if target_idx >= components.len() || source_idx >= components.len() || target_idx == source_idx
+        if target_idx >= components.len()
+            || source_idx >= components.len()
+            || target_idx == source_idx
         {
             continue;
         }

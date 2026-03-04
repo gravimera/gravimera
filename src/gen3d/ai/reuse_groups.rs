@@ -264,6 +264,7 @@ pub(super) fn missing_only_generation_indices(
                         planned_components,
                         source_idx,
                         target_root,
+                        group.anchors_mode,
                     );
                     let Ok(pairs) = pairs else {
                         continue;
@@ -333,6 +334,7 @@ pub(super) fn copyable_target_count(
                         planned_components,
                         source_idx,
                         target_root,
+                        group.anchors_mode,
                     );
                     let Ok(pairs) = pairs else {
                         continue;
@@ -461,6 +463,7 @@ pub(super) fn apply_auto_copy(
                         planned_components,
                         source_root_idx,
                         target_root_idx,
+                        group.anchors_mode,
                     ) {
                         Ok(pairs) => pairs,
                         Err(err) => {

@@ -710,7 +710,13 @@ pub(super) fn copy_component_subtree_into(
     alignment: Gen3dCopyAlignmentMode,
     delta: Transform,
 ) -> Result<Vec<Gen3dCopyComponentOutcome>, String> {
-    ensure_target_subtree_shape(components, draft, source_root_idx, target_root_idx)?;
+    ensure_target_subtree_shape(
+        components,
+        draft,
+        source_root_idx,
+        target_root_idx,
+        anchors_mode,
+    )?;
 
     let children = build_children_map(components);
     let pairs = map_subtree_pairs(components, &children, source_root_idx, target_root_idx)?;
@@ -747,6 +753,7 @@ pub(super) fn preflight_subtree_copy_pairs(
     components: &[Gen3dPlannedComponent],
     source_root_idx: usize,
     target_root_idx: usize,
+    anchors_mode: Gen3dCopyAnchorsMode,
 ) -> Result<Vec<(usize, usize)>, String> {
     // Run the same structural checks as the real subtree copy path, but on scratch state so we
     // can decide whether to copy or generate before mutating live draft/component data.
@@ -757,6 +764,7 @@ pub(super) fn preflight_subtree_copy_pairs(
         &mut scratch_draft,
         source_root_idx,
         target_root_idx,
+        anchors_mode,
     )?;
     let children = build_children_map(&scratch_components);
     let pairs = map_subtree_pairs(
@@ -773,6 +781,7 @@ fn ensure_target_subtree_shape(
     draft: &mut Gen3dDraft,
     source_root_idx: usize,
     target_root_idx: usize,
+    anchors_mode: Gen3dCopyAnchorsMode,
 ) -> Result<(), String> {
     if source_root_idx >= components.len() || target_root_idx >= components.len() {
         return Err("copy_component_subtree: root index out of range".into());
@@ -830,10 +839,12 @@ fn ensure_target_subtree_shape(
     fn clone_missing_subtree(
         components: &mut Vec<Gen3dPlannedComponent>,
         draft: &mut Gen3dDraft,
-        source_idx: usize,
+        source_parent_idx: usize,
+        source_child_idx: usize,
         target_parent_idx: usize,
         target_root_name: &str,
         source_children_map: &[Vec<usize>],
+        anchors_mode: Gen3dCopyAnchorsMode,
     ) -> Result<usize, String> {
         if components.len() >= GEN3D_MAX_COMPONENTS {
             return Err(format!(
@@ -841,7 +852,7 @@ fn ensure_target_subtree_shape(
             ));
         }
 
-        let source = components[source_idx].clone();
+        let source = components[source_child_idx].clone();
         let parent_name = components[target_parent_idx].name.clone();
         let mut new_comp = source.clone();
         let proposed_name = format!("{target_root_name}__{}", source.name);
@@ -850,27 +861,69 @@ fn ensure_target_subtree_shape(
         new_comp.pos = Vec3::ZERO;
         new_comp.rot = Quat::IDENTITY;
         new_comp.actual_size = None;
-        if let Some(mut att) = new_comp.attach_to.clone() {
-            att.parent = parent_name;
-            new_comp.attach_to = Some(att);
-        } else {
+        let Some(mut att) = new_comp.attach_to.clone() else {
             return Err(format!(
                 "copy_component_subtree: source component `{}` is missing attach_to; cannot clone under `{}`",
                 source.name, components[target_parent_idx].name
             ));
+        };
+        att.parent = parent_name;
+        new_comp.attach_to = Some(att.clone());
+
+        let parent_anchor = att.parent_anchor.as_str();
+        if parent_anchor != "origin"
+            && !components[target_parent_idx]
+                .anchors
+                .iter()
+                .any(|a| a.name.as_ref() == parent_anchor)
+        {
+            if anchors_mode == Gen3dCopyAnchorsMode::PreserveTargetAnchors {
+                return Err(format!(
+                    "copy_component_subtree: cannot attach cloned component `{}` to `{}`: missing parent_anchor `{}`",
+                    new_comp.name, components[target_parent_idx].name, parent_anchor
+                ));
+            }
+
+            let Some(source_parent_anchor) = components.get(source_parent_idx).and_then(|p| {
+                p.anchors
+                    .iter()
+                    .find(|a| a.name.as_ref() == parent_anchor)
+                    .cloned()
+            }) else {
+                return Err(format!(
+                    "copy_component_subtree: cannot attach cloned component `{}` to `{}`: missing parent_anchor `{}` (source parent `{}` is missing the same anchor)",
+                    new_comp.name,
+                    components[target_parent_idx].name,
+                    parent_anchor,
+                    components
+                        .get(source_parent_idx)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("<missing>")
+                ));
+            };
+
+            if let Some(target_parent) = components.get_mut(target_parent_idx) {
+                if !target_parent
+                    .anchors
+                    .iter()
+                    .any(|a| a.name.as_ref() == parent_anchor)
+                {
+                    target_parent.anchors.push(source_parent_anchor.clone());
+                }
+            }
+            ensure_stub_def_exists(draft, &components[target_parent_idx]);
+            if let Some(parent_def) = def_for_component(draft, &components[target_parent_idx].name)
+            {
+                if !parent_def
+                    .anchors
+                    .iter()
+                    .any(|a| a.name.as_ref() == parent_anchor)
+                {
+                    parent_def.anchors.push(source_parent_anchor);
+                }
+            }
         }
 
-        let new_idx = components.len();
-        components.push(new_comp.clone());
-        ensure_stub_def_exists(draft, &new_comp);
-
-        // Add attachment reference from parent -> new child in the draft.
-        let Some(att) = new_comp.attach_to.as_ref() else {
-            return Err(
-                "copy_component_subtree: internal error: missing attach_to after clone".into(),
-            );
-        };
-        let parent_anchor = att.parent_anchor.as_str();
         if parent_anchor != "origin"
             && !components[target_parent_idx]
                 .anchors
@@ -883,6 +936,10 @@ fn ensure_target_subtree_shape(
             ));
         }
 
+        let new_idx = components.len();
+        components.push(new_comp.clone());
+        ensure_stub_def_exists(draft, &new_comp);
+
         let child_id = component_object_id(&new_comp.name);
         let attachment = crate::object::registry::AttachmentDef {
             parent_anchor: att.parent_anchor.clone().into(),
@@ -890,19 +947,22 @@ fn ensure_target_subtree_shape(
         };
         let mut part = ObjectPartDef::object_ref(child_id, att.offset).with_attachment(attachment);
         part.animations.extend(att.animations.clone());
+        ensure_stub_def_exists(draft, &components[target_parent_idx]);
         if let Some(parent_def) = def_for_component(draft, &components[target_parent_idx].name) {
             parent_def.parts.push(part);
         }
 
         // Recursively clone descendants.
-        for &source_child in source_children_map[source_idx].iter() {
+        for &source_child in source_children_map[source_child_idx].iter() {
             let _ = clone_missing_subtree(
                 components,
                 draft,
+                source_child_idx,
                 source_child,
                 new_idx,
                 target_root_name,
                 source_children_map,
+                anchors_mode,
             )?;
         }
 
@@ -915,6 +975,7 @@ fn ensure_target_subtree_shape(
         source_idx: usize,
         target_idx: usize,
         target_root_name: &str,
+        anchors_mode: Gen3dCopyAnchorsMode,
     ) -> Result<(), String> {
         let children = build_children_map(components);
         let source_children = children.get(source_idx).cloned().unwrap_or_default();
@@ -939,10 +1000,12 @@ fn ensure_target_subtree_shape(
             let new_child_idx = clone_missing_subtree(
                 components,
                 draft,
+                source_idx,
                 *s_child,
                 target_idx,
                 target_root_name,
                 &source_children_map,
+                anchors_mode,
             )?;
             target_by_key.insert(key.clone(), new_child_idx);
         }
@@ -955,7 +1018,14 @@ fn ensure_target_subtree_shape(
                     key, components[target_idx].name
                 ));
             };
-            rec(components, draft, s_child, t_child, target_root_name)?;
+            rec(
+                components,
+                draft,
+                s_child,
+                t_child,
+                target_root_name,
+                anchors_mode,
+            )?;
         }
         Ok(())
     }
@@ -966,6 +1036,7 @@ fn ensure_target_subtree_shape(
         source_root_idx,
         target_root_idx,
         &target_root_name,
+        anchors_mode,
     )
 }
 
@@ -2044,6 +2115,246 @@ mod tests {
         assert!(
             generated_new,
             "expected subtree copy to create + populate new descendant component defs under leg_1_root"
+        );
+    }
+
+    #[test]
+    fn subtree_copy_hydrates_missing_internal_parent_anchors_on_targets() {
+        // Repro for the octopus: the plan declares a reused subtree where the source parent has an
+        // internal anchor (e.g. `next`) required to attach descendants, but the target parent does
+        // not define that anchor in the plan. Subtree copy should hydrate the missing parent anchor
+        // deterministically so the subtree can be expanded and copied.
+        let mut components = vec![
+            stub_component("body"),
+            stub_component("tentacle_a_base"),
+            stub_component("tentacle_a_mid"),
+            stub_component("tentacle_b_base"),
+        ];
+        components[0].anchors = vec![
+            anchor_named_forward("mount_a", Vec3::Z),
+            anchor_named_forward("mount_b", Vec3::Z),
+        ];
+        components[1].anchors = vec![
+            anchor_named_forward("mount", Vec3::Z),
+            anchor_named_forward("next", Vec3::Z),
+        ];
+        components[2].anchors = vec![anchor_named_forward("mount", Vec3::Z)];
+        // Target base is missing `next`.
+        components[3].anchors = vec![anchor_named_forward("mount", Vec3::Z)];
+
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "mount_a".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[2].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "tentacle_a_base".into(),
+            parent_anchor: "next".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[3].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "mount_b".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        // Mark source chain as generated.
+        components[1].actual_size = Some(Vec3::ONE);
+        components[2].actual_size = Some(Vec3::ONE);
+
+        let body_id = component_object_id("body");
+        let a_base_id = component_object_id("tentacle_a_base");
+        let a_mid_id = component_object_id("tentacle_a_mid");
+        let b_base_id = component_object_id("tentacle_b_base");
+
+        let mut a_base_def = stub_def(a_base_id, "tentacle_a_base");
+        a_base_def.anchors = vec![
+            anchor_named_forward("mount", Vec3::Z),
+            anchor_named_forward("next", Vec3::Z),
+        ];
+        let mut a_mid_def = stub_def(a_mid_id, "tentacle_a_mid");
+        a_mid_def.anchors = vec![anchor_named_forward("mount", Vec3::Z)];
+        let mut b_base_def = stub_def(b_base_id, "tentacle_b_base");
+        b_base_def.anchors = vec![anchor_named_forward("mount", Vec3::Z)];
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![
+            {
+                let mut def = stub_def(body_id, "body");
+                def.anchors = vec![
+                    anchor_named_forward("mount_a", Vec3::Z),
+                    anchor_named_forward("mount_b", Vec3::Z),
+                ];
+                def
+            },
+            a_base_def,
+            a_mid_def,
+            b_base_def,
+        ];
+
+        copy_component_subtree_into(
+            &mut components,
+            &mut draft,
+            1,
+            3,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
+            Transform::IDENTITY,
+        )
+        .expect("subtree copy ok");
+
+        assert!(
+            components
+                .iter()
+                .any(|c| c.name.as_str() == "tentacle_b_base__tentacle_a_mid"),
+            "expected subtree copy to expand missing descendants under the target root"
+        );
+
+        let b_base_def_after = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == b_base_id)
+            .unwrap();
+        assert!(
+            b_base_def_after
+                .anchors
+                .iter()
+                .any(|a| a.name.as_ref() == "next"),
+            "expected subtree copy to hydrate missing internal anchor `next` on the target root"
+        );
+
+        let mid_id = component_object_id("tentacle_b_base__tentacle_a_mid");
+        assert!(
+            b_base_def_after.parts.iter().any(|p| {
+                matches!(p.kind, ObjectPartKind::ObjectRef { object_id } if object_id == mid_id)
+                    && p.attachment.as_ref().is_some_and(|att| {
+                        att.parent_anchor.as_ref() == "next" && att.child_anchor.as_ref() == "mount"
+                    })
+            }),
+            "expected subtree copy to attach the expanded mid segment under `next`"
+        );
+    }
+
+    #[test]
+    fn subtree_copy_preserve_target_stays_strict_when_parent_anchor_is_missing() {
+        let mut components = vec![
+            stub_component("body"),
+            stub_component("tentacle_a_base"),
+            stub_component("tentacle_a_mid"),
+            stub_component("tentacle_b_base"),
+        ];
+        components[0].anchors = vec![
+            anchor_named_forward("mount_a", Vec3::Z),
+            anchor_named_forward("mount_b", Vec3::Z),
+        ];
+        components[1].anchors = vec![
+            anchor_named_forward("mount", Vec3::Z),
+            anchor_named_forward("next", Vec3::Z),
+        ];
+        components[2].anchors = vec![anchor_named_forward("mount", Vec3::Z)];
+        components[3].anchors = vec![anchor_named_forward("mount", Vec3::Z)];
+
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "mount_a".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[2].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "tentacle_a_base".into(),
+            parent_anchor: "next".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[3].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "mount_b".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        // Mark source chain as generated.
+        components[1].actual_size = Some(Vec3::ONE);
+        components[2].actual_size = Some(Vec3::ONE);
+
+        let body_id = component_object_id("body");
+        let a_base_id = component_object_id("tentacle_a_base");
+        let a_mid_id = component_object_id("tentacle_a_mid");
+        let b_base_id = component_object_id("tentacle_b_base");
+
+        let mut a_base_def = stub_def(a_base_id, "tentacle_a_base");
+        a_base_def.anchors = vec![
+            anchor_named_forward("mount", Vec3::Z),
+            anchor_named_forward("next", Vec3::Z),
+        ];
+        let mut a_mid_def = stub_def(a_mid_id, "tentacle_a_mid");
+        a_mid_def.anchors = vec![anchor_named_forward("mount", Vec3::Z)];
+        let mut b_base_def = stub_def(b_base_id, "tentacle_b_base");
+        b_base_def.anchors = vec![anchor_named_forward("mount", Vec3::Z)];
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![
+            {
+                let mut def = stub_def(body_id, "body");
+                def.anchors = vec![
+                    anchor_named_forward("mount_a", Vec3::Z),
+                    anchor_named_forward("mount_b", Vec3::Z),
+                ];
+                def
+            },
+            a_base_def,
+            a_mid_def,
+            b_base_def,
+        ];
+
+        let before_components = components.len();
+        let before_defs = draft.defs.len();
+        let err = copy_component_subtree_into(
+            &mut components,
+            &mut draft,
+            1,
+            3,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
+            Transform::IDENTITY,
+        )
+        .expect_err("expected strict preserve_target to fail");
+        assert!(
+            err.contains("missing parent_anchor") && err.contains("next"),
+            "expected missing parent_anchor error, got {err:?}"
+        );
+        assert_eq!(
+            components.len(),
+            before_components,
+            "expected preserve_target failure to not expand components"
+        );
+        assert_eq!(
+            draft.defs.len(),
+            before_defs,
+            "expected preserve_target failure to not add new defs"
+        );
+        assert!(
+            !components
+                .iter()
+                .any(|c| c.name.as_str() == "tentacle_b_base__tentacle_a_mid"),
+            "expected preserve_target failure to not create partial descendant components"
         );
     }
 
