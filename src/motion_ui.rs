@@ -12,7 +12,9 @@ use crate::motion::{
 };
 use crate::object::registry::ObjectLibrary;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
-use crate::threaded_result::{new_shared_result, spawn_worker_thread, take_shared_result, SharedResult};
+use crate::threaded_result::{
+    new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
+};
 use crate::types::{Commandable, MoveOrder, ObjectPrefabId, SelectionState};
 
 const PANEL_Z_INDEX: i32 = 940;
@@ -414,7 +416,8 @@ pub(crate) fn motion_algorithm_ui_update(
         state.brain_modules_fetch_requested = false;
 
         let Some(addr) = runtime.service_addr else {
-            state.brain_modules_error = Some("Intelligence service enabled but missing addr.".into());
+            state.brain_modules_error =
+                Some("Intelligence service enabled but missing addr.".into());
             state.needs_rebuild = true;
             return;
         };
@@ -1220,8 +1223,7 @@ pub(crate) fn meta_brain_ui_button_clicks(
 
         info!(
             "Meta: set brain={:?} for {} unit(s)",
-            button.module_id,
-            updated
+            button.module_id, updated
         );
 
         state.needs_rebuild = true;

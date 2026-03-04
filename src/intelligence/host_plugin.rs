@@ -95,7 +95,8 @@ fn intelligence_host_init(mut runtime: ResMut<IntelligenceHostRuntime>, config: 
     runtime.embedded_service = None;
 
     runtime.service_addr = None;
-    runtime.enabled = config.intelligence_service_enabled && config.intelligence_service_mode.enabled();
+    runtime.enabled =
+        config.intelligence_service_enabled && config.intelligence_service_mode.enabled();
     if !runtime.enabled {
         return;
     }

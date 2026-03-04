@@ -338,8 +338,8 @@ pub(super) fn parse_ai_motion_authoring_from_text(
         return Err("AI motion-authoring JSON missing required `version` (expected 1).".into());
     }
 
-    let mut authored: AiMotionAuthoringJsonV1 = serde_json::from_value(json_value)
-        .map_err(|err| format!("AI JSON schema error: {err}"))?;
+    let mut authored: AiMotionAuthoringJsonV1 =
+        serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
     if authored.version != 1 {
         return Err(format!(
             "Unsupported AI motion-authoring version {} (expected 1)",
@@ -398,10 +398,7 @@ pub(super) fn parse_ai_motion_authoring_from_text(
         for slot in edge.slots.iter_mut() {
             slot.channel = slot.channel.trim().to_ascii_lowercase();
 
-            if matches!(
-                slot.driver,
-                super::schema::AiAnimationDriverJsonV1::Unknown
-            ) {
+            if matches!(slot.driver, super::schema::AiAnimationDriverJsonV1::Unknown) {
                 return Err(format!(
                     "AI motion-authoring slot has unknown driver for component `{}` channel `{}`",
                     edge.component, slot.channel
@@ -609,7 +606,10 @@ mod tests {
             parse_ai_motion_authoring_from_text(text).expect("motion authoring should parse");
         assert_eq!(authored.version, 1);
         assert_eq!(authored.reason.as_str(), "test");
-        assert_eq!(authored.replace_channels, vec!["idle".to_string(), "move".to_string()]);
+        assert_eq!(
+            authored.replace_channels,
+            vec!["idle".to_string(), "move".to_string()]
+        );
         assert!(authored.notes.is_none());
         assert_eq!(authored.edges.len(), 1);
         assert_eq!(authored.edges[0].component.as_str(), "leg_l");

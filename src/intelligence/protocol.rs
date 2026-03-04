@@ -174,9 +174,15 @@ pub struct NearbyEntity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BrainEvent {
-    EventsDropped { count: u32 },
-    SeenEnter { entity_instance_id: String },
-    SeenExit { entity_instance_id: String },
+    EventsDropped {
+        count: u32,
+    },
+    SeenEnter {
+        entity_instance_id: String,
+    },
+    SeenExit {
+        entity_instance_id: String,
+    },
     CommandResult {
         command_id: String,
         ok: bool,
@@ -213,12 +219,10 @@ impl TickInput {
         let max_events = caps.max_events_per_delivery as usize;
         if max_events == 0 {
             if !self.events.is_empty() {
-                self.meta.events_dropped = self.meta.events_dropped.saturating_add(
-                    self.events
-                        .len()
-                        .try_into()
-                        .unwrap_or(u32::MAX),
-                );
+                self.meta.events_dropped = self
+                    .meta
+                    .events_dropped
+                    .saturating_add(self.events.len().try_into().unwrap_or(u32::MAX));
                 self.events.clear();
             }
             return;
@@ -256,7 +260,9 @@ pub enum BrainCommand {
         target_id: Option<String>,
         valid_until_tick: Option<u64>,
     },
-    SleepForTicks { ticks: u32 },
+    SleepForTicks {
+        ticks: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

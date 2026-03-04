@@ -1,5 +1,5 @@
-use bevy::prelude::*;
 use bevy::ecs::system::SystemParam;
+use bevy::prelude::*;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +51,12 @@ impl ActionLogState {
         self.version = self.version.wrapping_add(1);
     }
 
-    pub(crate) fn push(&mut self, at_secs: f32, source: ActionLogSource, message: impl Into<String>) {
+    pub(crate) fn push(
+        &mut self,
+        at_secs: f32,
+        source: ActionLogSource,
+        message: impl Into<String>,
+    ) {
         if !self.enabled {
             return;
         }

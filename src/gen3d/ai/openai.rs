@@ -1023,15 +1023,7 @@ fn mock_generate_text_via_openai(
                 "tentacle_7",
             ],
             MockKind::Mantis => vec![
-                "body",
-                "head",
-                "arm_l",
-                "arm_r",
-                "leg_fl",
-                "leg_fr",
-                "leg_ml",
-                "leg_mr",
-                "leg_bl",
+                "body", "head", "arm_l", "arm_r", "leg_fl", "leg_fr", "leg_ml", "leg_mr", "leg_bl",
                 "leg_br",
             ],
         }
@@ -1546,9 +1538,10 @@ fn mock_generate_text_via_openai(
         })
         .to_string()
     } else if artifact_prefix.starts_with("tool_motion_roles_") {
-        let (run_id, attempt, plan_hash, assembly_rev) =
-            parse_applies_to_from_user_text(user_text).ok_or_else(|| {
-                "mock://gen3d failed to parse applies_to values from motion-roles user_text".to_string()
+        let (run_id, attempt, plan_hash, assembly_rev) = parse_applies_to_from_user_text(user_text)
+            .ok_or_else(|| {
+                "mock://gen3d failed to parse applies_to values from motion-roles user_text"
+                    .to_string()
             })?;
 
         let kind = mock_kind_from_text(user_text);
@@ -1562,7 +1555,9 @@ fn mock_generate_text_via_openai(
                         .next()
                         .unwrap_or_else(|| "wheels".into())
                 };
-                vec![serde_json::json!({"component": child, "role": "wheel", "phase_group": null, "spin_axis_local": [1.0, 0.0, 0.0]})]
+                vec![
+                    serde_json::json!({"component": child, "role": "wheel", "phase_group": null, "spin_axis_local": [1.0, 0.0, 0.0]}),
+                ]
             }
             MockKind::Mantis => {
                 let children = parse_child_components_from_motion_roles_user_text(user_text);
@@ -1595,8 +1590,8 @@ fn mock_generate_text_via_openai(
         })
         .to_string()
     } else if artifact_prefix.starts_with("tool_motion_authoring_") {
-        let (run_id, attempt, plan_hash, assembly_rev) =
-            parse_applies_to_from_user_text(user_text).ok_or_else(|| {
+        let (run_id, attempt, plan_hash, assembly_rev) = parse_applies_to_from_user_text(user_text)
+            .ok_or_else(|| {
                 "mock://gen3d failed to parse applies_to values from motion-authoring user_text"
                     .to_string()
             })?;

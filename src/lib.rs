@@ -1,6 +1,6 @@
-mod ai_limiter;
 mod action_log;
 mod action_log_ui;
+mod ai_limiter;
 mod app;
 mod app_plugins;
 mod assets;

@@ -3,6 +3,7 @@ This folder contains ExecPlans (execution plans) for larger features and refacto
 - Active plan: `docs/execplans/execplan_gen3d_codex_style_agent.md`
 - Gen3D model export (glTF/GLB + editable bundles): `docs/execplans/execplan_gen3d_export_glb.md`
 - Gen3D runtime motion algorithms (rig contracts + realtime switching): `docs/execplans/execplan_gen3d_runtime_motion_algorithms.md`
+- Gen3D motion authoring prompt precision + join-frame constraints: `docs/execplans/execplan_gen3d_motion_authoring_prompt_precision_and_plan_join_frames.md`
 - Scene generation roadmap: `docs/execplans/execplan_scene_generation_pipeline.md`
 - Mechanical transform mapping v2 (grouped assignment for 200+ primitives): `docs/execplans/execplan_object_forms_mechanical_transform_mapping_v2.md`
 - Scene generation milestones (execute in order):

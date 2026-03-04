@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use super::schema::AiContactKindJson;
 use super::Gen3dPlannedComponent;
 use crate::gen3d::state::{Gen3dDraft, Gen3dSpeedMode};
 
@@ -60,11 +61,15 @@ pub(super) fn build_gen3d_plan_user_text(
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
          Avoid z-fighting at joins: do NOT make parent/child faces flush and coplanar; add a small epsilon offset along the attachment direction (e.g. `attach_to.offset.pos[2]` ~= 0.005m).\n\
          Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
-          - Set `parent_anchor.forward` (+Z) to point from the parent toward the child (attachment direction) in the PARENT component's local axes.\n\
+            - Set `parent_anchor.forward` (+Z) to point from the parent toward the child (attachment direction) in the PARENT component's local axes.\n\
           - Set `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) in the CHILD component's local axes so the child can rotate into the parent's join frame.\n\
             They do NOT need to numerically equal the parent's vectors.\n\
             Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
-          - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
+          - Engine constraint (strict): for EVERY attachment, the join anchor axes must be in the same hemisphere.\n\
+            - Require: dot(parent_anchor.forward, child_anchor.forward) > 0 AND dot(parent_anchor.up, child_anchor.up) > 0.\n\
+              (This dot check is applied as an engine guardrail in component-local coordinates.)\n\
+            - If either dot is negative, FIX the anchor bases (flip the child anchor's forward/up as needed) and/or encode the flip via `attach_to.offset` rotation.\n\
+              Do NOT rely on opposed anchors.\n\
             - Whenever you author an `attach_to.offset` rotation (`offset.forward`/`offset.up` or `offset.rot_quat_xyzw`), you MUST include `offset.rot_frame` explicitly (`\"join\"` or `\"parent\"`).\n\
          Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
     );
@@ -113,11 +118,15 @@ pub(super) fn build_gen3d_plan_user_text_with_hints(
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
          Avoid z-fighting at joins: do NOT make parent/child faces flush and coplanar; add a small epsilon offset along the attachment direction (e.g. `attach_to.offset.pos[2]` ~= 0.005m).\n\
          Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
-          - Set `parent_anchor.forward` (+Z) to point from the parent toward the child (attachment direction) in the PARENT component's local axes.\n\
+            - Set `parent_anchor.forward` (+Z) to point from the parent toward the child (attachment direction) in the PARENT component's local axes.\n\
           - Set `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) in the CHILD component's local axes so the child can rotate into the parent's join frame.\n\
             They do NOT need to numerically equal the parent's vectors.\n\
             Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
-          - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
+          - Engine constraint (strict): for EVERY attachment, the join anchor axes must be in the same hemisphere.\n\
+            - Require: dot(parent_anchor.forward, child_anchor.forward) > 0 AND dot(parent_anchor.up, child_anchor.up) > 0.\n\
+              (This dot check is applied as an engine guardrail in component-local coordinates.)\n\
+            - If either dot is negative, FIX the anchor bases (flip the child anchor's forward/up as needed) and/or encode the flip via `attach_to.offset` rotation.\n\
+              Do NOT rely on opposed anchors.\n\
             - Whenever you author an `attach_to.offset` rotation (`offset.forward`/`offset.up` or `offset.rot_quat_xyzw`), you MUST include `offset.rot_frame` explicitly (`\"join\"` or `\"parent\"`).\n\
          Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n",
     );
@@ -463,7 +472,11 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             - Set `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) in the CHILD component's local axes so the child can rotate into the parent's join frame.\n\
               They do NOT need to numerically equal the parent's vectors.\n\
               Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
-            - Do NOT make the join frames 180° opposed (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation.\n\
+            - Engine constraint (strict): for EVERY attachment, the join anchor axes must be in the same hemisphere.\n\
+              - Require: dot(parent_anchor.forward, child_anchor.forward) > 0 AND dot(parent_anchor.up, child_anchor.up) > 0.\n\
+                (This dot check is applied as an engine guardrail in component-local coordinates.)\n\
+              - If either dot is negative, FIX the anchor bases (flip the child anchor's forward/up as needed) and/or encode the flip via `attach_to.offset` rotation.\n\
+                Do NOT rely on opposed anchors.\n\
           - Then `offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n\
           - For flush joins, use a small NEGATIVE `offset.pos[2]` (slight inset/overlap). For surface overlays, use a small POSITIVE `offset.pos[2]` (slight outset) so thin details are not buried.\n\
           Motion metadata (optional; recommended for movable objects):\n\
@@ -1068,6 +1081,14 @@ Rules:\n\
 - You MUST copy the provided applies_to values exactly.\n\
 - You MUST NOT invent component names. Target attachment edges by naming the CHILD component in `edges[].component`.\n\
   - Do NOT include the root component (it has no parent edge).\n\
+- Minimize output size:\n\
+  - Only include `edges[]` entries you intend to CHANGE. Omit edges you are not touching.\n\
+  - Prefer replacing ONLY the channels you actually author (e.g. if you only author `move`, set replace_channels=[\"move\"]).\n\
+  - Prefer a SMALL number of authored edges. Default target: <= 12 edges unless strictly required.\n\
+  - Prefer simple loop clips with FEW keyframes (target 3 keyframes at t=0.0,0.5,1.0). Avoid >5 keyframes unless necessary.\n\
+  - Prefer using `time_offset_units` to create phase offsets across repeated limbs instead of unique keyframe shapes per limb.\n\
+  - Keep deltas small and stable; avoid large translations.\n\
+  - Output compact JSON (no pretty formatting).\n\
 - Coordinate frames:\n\
   - These authored keyframes animate the ATTACHMENT OFFSET for that edge.\n\
   - `delta` transforms are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
@@ -1174,12 +1195,68 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             .unwrap_or(Quat::IDENTITY)
     }
 
+    fn infer_cycle_m_for_prompt(
+        rig_move_cycle_m: Option<f32>,
+        components: &[Gen3dPlannedComponent],
+    ) -> (f32, &'static str) {
+        if let Some(v) = rig_move_cycle_m
+            .filter(|v| v.is_finite())
+            .map(|v| v.abs())
+            .filter(|v| *v > 1e-3)
+        {
+            return (v, "rig.move_cycle_m");
+        }
+
+        for comp in components.iter() {
+            let Some(att) = comp.attach_to.as_ref() else {
+                continue;
+            };
+            let Some(slot) = att.animations.iter().find(|s| s.channel.as_ref() == "move") else {
+                continue;
+            };
+            if !matches!(
+                slot.spec.driver,
+                crate::object::registry::PartAnimationDriver::MovePhase
+                    | crate::object::registry::PartAnimationDriver::MoveDistance
+            ) {
+                continue;
+            }
+            let (duration_secs, repeats) = match &slot.spec.clip {
+                crate::object::registry::PartAnimationDef::Loop { duration_secs, .. }
+                | crate::object::registry::PartAnimationDef::Once { duration_secs, .. } => {
+                    (*duration_secs, 1.0)
+                }
+                crate::object::registry::PartAnimationDef::PingPong { duration_secs, .. } => {
+                    (*duration_secs, 2.0)
+                }
+                crate::object::registry::PartAnimationDef::Spin { .. } => continue,
+            };
+            if !duration_secs.is_finite() || duration_secs <= 0.0 {
+                continue;
+            }
+            let speed_scale = slot.spec.speed_scale.max(1e-6);
+            let effective = (repeats * duration_secs / speed_scale).abs();
+            if effective.is_finite() && effective > 1e-3 {
+                return (effective, "move.loop.duration_secs");
+            }
+        }
+
+        (1.0, "default")
+    }
+
     let mut out = String::new();
     out.push_str("Goal: decide if runtime motion is sufficient, or author explicit per-edge animation clips.\n");
     if !has_images {
         out.push_str("No photos are provided for this run.\n");
     }
-    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    let prompt = raw_prompt.trim();
+    if prompt.is_empty() {
+        out.push_str("User prompt: (none)\n");
+    } else {
+        out.push_str("User prompt:\n");
+        out.push_str(prompt);
+        out.push('\n');
+    }
     out.push('\n');
 
     out.push_str("You MUST copy these values into `applies_to` exactly:\n");
@@ -1211,6 +1288,106 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     let mut name_to_idx: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for (idx, c) in components.iter().enumerate() {
         name_to_idx.insert(c.name.as_str(), idx);
+    }
+
+    let (cycle_m, cycle_source) = infer_cycle_m_for_prompt(rig_move_cycle_m, components);
+    let cycle_m = cycle_m.abs().max(1e-3);
+
+    let slip_warn_m: f32 = (0.08 + 0.08 * cycle_m).clamp(0.12, 0.35);
+    let slip_error_m: f32 = slip_warn_m * 2.0;
+    let lift_warn_m: f32 = (0.06 + 0.06 * cycle_m).clamp(0.10, 0.30);
+    let lift_error_m: f32 = lift_warn_m * 2.0;
+
+    out.push_str("Motion validation model (important):\n");
+    out.push_str(&format!(
+        "- The root is assumed to translate forward along WORLD +Z by cycle_m meters per cycle (cycle_m={cycle_m:.3}, source={cycle_source}).\n"
+    ));
+    out.push_str(&format!(
+        "- If a ground contact has a stance schedule, it is treated as PLANTED during stance: keep its anchor stable in world XZ and near-constant Y during stance.\n  - slip_error_m={slip_error_m:.3} (warn={slip_warn_m:.3}) lift_error_m={lift_error_m:.3} (warn={lift_warn_m:.3})\n"
+    ));
+    out.push_str("- Stance schedule semantics: stance runs from phase_01 (inclusive) for duty_factor_01 of the cycle (wrap at 1.0).\n");
+    out.push('\n');
+
+    let mut ground_contact_components: Vec<&str> = Vec::new();
+    let mut ground_contact_lines: Vec<String> = Vec::new();
+    for comp in components.iter() {
+        for contact in comp.contacts.iter() {
+            if contact.kind != AiContactKindJson::Ground {
+                continue;
+            }
+            ground_contact_components.push(comp.name.as_str());
+            let stance = contact
+                .stance
+                .as_ref()
+                .map(|s| {
+                    format!(
+                        "{{phase_01={:.3},duty_factor_01={:.3}}}",
+                        s.phase_01, s.duty_factor_01
+                    )
+                })
+                .unwrap_or_else(|| "null".to_string());
+            let anchor_pos_local = comp
+                .anchors
+                .iter()
+                .find(|a| a.name.as_ref() == contact.anchor.trim())
+                .map(|a| fmt_vec3(a.transform.translation))
+                .unwrap_or_else(|| "null".to_string());
+            ground_contact_lines.push(format!(
+                "- component={} contact={} anchor={} anchor_pos_local={} stance={}",
+                comp.name.trim(),
+                contact.name.trim(),
+                contact.anchor.trim(),
+                anchor_pos_local,
+                stance
+            ));
+        }
+    }
+    ground_contact_components.sort();
+    ground_contact_components.dedup();
+    ground_contact_lines.sort();
+    ground_contact_lines.dedup();
+
+    if ground_contact_lines.is_empty() {
+        out.push_str("Ground contacts: (none)\n\n");
+    } else {
+        let total_ground_contacts = ground_contact_lines.len();
+        out.push_str("Ground contacts:\n");
+        for line in ground_contact_lines.iter().take(64) {
+            out.push_str(line);
+            out.push('\n');
+        }
+        if total_ground_contacts > 64 {
+            out.push_str(&format!(
+                "... (truncated; total_ground_contacts={})\n",
+                total_ground_contacts
+            ));
+        }
+        out.push('\n');
+
+        out.push_str("Contact parent chains (ground contact component <- parent <- ...):\n");
+        for &name in ground_contact_components.iter().take(64) {
+            let mut chain: Vec<&str> = Vec::new();
+            let mut cursor = name;
+            for _ in 0..64 {
+                chain.push(cursor);
+                let Some(idx) = name_to_idx.get(cursor).copied() else {
+                    break;
+                };
+                let Some(att) = components.get(idx).and_then(|c| c.attach_to.as_ref()) else {
+                    break;
+                };
+                cursor = att.parent.as_str();
+            }
+            out.push_str(&format!("- {}\n", chain.join(" <- ")));
+        }
+        if ground_contact_components.len() > 64 {
+            out.push_str(&format!(
+                "... (truncated; total_ground_contact_components={})\n",
+                ground_contact_components.len()
+            ));
+        }
+        out.push('\n');
+        out.push_str("Authoring guidance: prioritize authoring `move` clips on edges in the contact chains above. Use time_offset_units for phase staggering; keep keyframes minimal.\n\n");
     }
 
     out.push_str("Attachment edges (child components with attach_to):\n");
@@ -1250,7 +1427,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             .collect();
 
         out.push_str(&format!(
-            "- child={} parent={} parent_anchor={} child_anchor={} base_offset.pos(join)={} base_offset.rot_quat_xyzw(join)={} join_right_world={} join_up_world={} join_forward_world={} existing_slots={:?}\n",
+            "- child={} parent={} parent_anchor={} child_anchor={} base_offset.pos(join)={} base_offset.rot_quat_xyzw(join)={} join_right_world={} join_up_world={} join_forward_world={} existing_slots={:?}",
             child.name.trim(),
             att.parent.trim(),
             att.parent_anchor.trim(),
@@ -1262,6 +1439,28 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             fmt_vec3(join_forward_world),
             slots,
         ));
+
+        let ground_contacts: Vec<String> = child
+            .contacts
+            .iter()
+            .filter(|c| c.kind == AiContactKindJson::Ground)
+            .map(|c| {
+                let stance = match c.stance.as_ref() {
+                    Some(stance) => format!("{:.3}/{:.3}", stance.phase_01, stance.duty_factor_01),
+                    None => "null".to_string(),
+                };
+                format!(
+                    "{{contact={},anchor={},stance={}}}",
+                    c.name.trim(),
+                    c.anchor.trim(),
+                    stance
+                )
+            })
+            .collect();
+        if !ground_contacts.is_empty() {
+            out.push_str(&format!(" ground_contacts={:?}", ground_contacts));
+        }
+        out.push('\n');
     }
 
     out

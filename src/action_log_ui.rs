@@ -148,14 +148,24 @@ pub(crate) fn update_action_log_ui(
         &mut Visibility,
         (With<ActionLogToggleButton>, Without<ActionLogPanelRoot>),
     >,
-    mut panel_vis: Query<&mut Visibility, (With<ActionLogPanelRoot>, Without<ActionLogToggleButton>)>,
-    mut toggle_texts: Query<&mut Text, (With<ActionLogToggleButtonText>, Without<ActionLogPanelText>)>,
-    mut panel_texts: Query<&mut Text, (With<ActionLogPanelText>, Without<ActionLogToggleButtonText>)>,
+    mut panel_vis: Query<
+        &mut Visibility,
+        (With<ActionLogPanelRoot>, Without<ActionLogToggleButton>),
+    >,
+    mut toggle_texts: Query<
+        &mut Text,
+        (With<ActionLogToggleButtonText>, Without<ActionLogPanelText>),
+    >,
+    mut panel_texts: Query<
+        &mut Text,
+        (With<ActionLogPanelText>, Without<ActionLogToggleButtonText>),
+    >,
     mut last_version: Local<u64>,
     mut last_enabled: Local<bool>,
     mut last_visible: Local<bool>,
 ) {
-    let can_show = matches!(mode.get(), GameMode::Play) && matches!(build_scene.get(), BuildScene::Realm);
+    let can_show =
+        matches!(mode.get(), GameMode::Play) && matches!(build_scene.get(), BuildScene::Realm);
     let visible = can_show && action_log.enabled;
 
     for mut vis in &mut toggle_vis {
@@ -173,7 +183,11 @@ pub(crate) fn update_action_log_ui(
         };
     }
 
-    let label = if action_log.enabled { "Log: On" } else { "Log: Off" };
+    let label = if action_log.enabled {
+        "Log: On"
+    } else {
+        "Log: Off"
+    };
     for mut text in &mut toggle_texts {
         **text = label.into();
     }
@@ -199,7 +213,10 @@ pub(crate) fn update_action_log_ui(
     }
 }
 
-fn format_action_log_body(entries: &std::collections::VecDeque<ActionLogEntry>, max_lines: usize) -> String {
+fn format_action_log_body(
+    entries: &std::collections::VecDeque<ActionLogEntry>,
+    max_lines: usize,
+) -> String {
     if entries.is_empty() || max_lines == 0 {
         return "(no actions yet)".to_string();
     }
@@ -217,7 +234,10 @@ fn format_action_log_body(entries: &std::collections::VecDeque<ActionLogEntry>, 
         if idx > 0 {
             out.push('\n');
         }
-        out.push_str(&format!("[{time_s:>6.1}] {source} {}", entry.message.trim()));
+        out.push_str(&format!(
+            "[{time_s:>6.1}] {source} {}",
+            entry.message.trim()
+        ));
     }
     out
 }

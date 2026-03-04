@@ -193,7 +193,11 @@ fn intelligence_service_health_spawn_tick_and_despawn() {
             saw_move = true;
         }
     }
-    assert!(saw_move, "expected BrainCommand::MoveTo, got: {:?}", out.commands);
+    assert!(
+        saw_move,
+        "expected BrainCommand::MoveTo, got: {:?}",
+        out.commands
+    );
 
     let despawn = DespawnBrainInstanceRequest {
         protocol_version: PROTOCOL_VERSION,

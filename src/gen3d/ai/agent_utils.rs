@@ -6,7 +6,7 @@ use crate::gen3d::agent::Gen3dToolResultJsonV1;
 use crate::object::registry::MobilityMode;
 
 use super::super::state::Gen3dDraft;
-use super::{AiMoveEffectorRoleJsonV1, AiMotionRolesJsonV1, Gen3dAiJob, Gen3dPlannedComponent};
+use super::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1, Gen3dAiJob, Gen3dPlannedComponent};
 
 pub(super) fn note_observable_tool_result(job: &mut Gen3dAiJob, result: &Gen3dToolResultJsonV1) {
     if !result.ok {

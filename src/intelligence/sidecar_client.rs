@@ -137,4 +137,3 @@ impl SidecarClient {
         Ok((status, body.to_string()))
     }
 }
-

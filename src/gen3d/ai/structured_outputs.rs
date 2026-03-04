@@ -585,11 +585,7 @@ fn schema_motion_authoring() -> serde_json::Value {
         ("applies_to", applies_to),
         (
             "decision",
-            schema_enum(&[
-                "runtime_ok",
-                "author_clips",
-                "regen_geometry_required",
-            ]),
+            schema_enum(&["runtime_ok", "author_clips", "regen_geometry_required"]),
         ),
         ("reason", schema_string()),
         ("replace_channels", schema_array_of(schema_string())),

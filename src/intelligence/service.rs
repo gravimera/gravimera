@@ -52,7 +52,9 @@ impl EmbeddedIntelligenceService {
         let thread = std::thread::Builder::new()
             .name("gravimera_intelligence_embedded".into())
             .spawn(move || serve_until_stop(server, token, stop))
-            .map_err(|err| format!("Failed to spawn embedded intelligence service thread: {err}"))?;
+            .map_err(|err| {
+                format!("Failed to spawn embedded intelligence service thread: {err}")
+            })?;
 
         Ok(Self {
             listen_addr,
@@ -359,7 +361,9 @@ fn handle_http_request(
             let module_state = match module_id.as_str() {
                 MODULE_DEMO_ORBIT => BrainModuleState::DemoOrbit,
                 MODULE_DEMO_COWARD => BrainModuleState::DemoCoward(CowardBrain::default()),
-                MODULE_DEMO_OPPORTUNIST => BrainModuleState::DemoOpportunist(OpportunistBrain::default()),
+                MODULE_DEMO_OPPORTUNIST => {
+                    BrainModuleState::DemoOpportunist(OpportunistBrain::default())
+                }
                 MODULE_DEMO_BELLIGERENT => {
                     BrainModuleState::DemoBelligerent(BelligerentBrain::default())
                 }
@@ -732,7 +736,13 @@ fn tick_demo_coward(
     let wander_radius_m = config_f32(config, "wander_radius_m", 8.0, 0.5, 200.0);
     let wander_arrival_m = config_f32(config, "wander_arrival_m", 0.8, 0.1, 10.0);
     let panic_hide_ticks = config_u32(config, "panic_hide_ticks", 600, 0, 60_000) as u64;
-    let dangerous_ticks = config_u32(config, "dangerous_ticks", (TICKS_PER_SEC * 60) as u32, 1, 1_000_000) as u64;
+    let dangerous_ticks = config_u32(
+        config,
+        "dangerous_ticks",
+        (TICKS_PER_SEC * 60) as u32,
+        1,
+        1_000_000,
+    ) as u64;
     let hide_buffer_m = config_f32(config, "hide_buffer_m", 1.2, 0.1, 20.0);
 
     // Update / expire danger marks.
@@ -808,7 +818,11 @@ fn tick_demo_coward(
     let threat = close_threat
         .map(|(e, _d2)| e)
         .or_else(|| dangerous_visible.map(|(e, _d2)| e))
-        .or_else(|| (flee_due_to_attacker_power && attacked).then_some(attacker).flatten());
+        .or_else(|| {
+            (flee_due_to_attacker_power && attacked)
+                .then_some(attacker)
+                .flatten()
+        });
 
     if threat.is_some() || (attacked && flee_due_to_attacker_power) {
         let (threat_pos, threat_rel) = if let Some(threat) = threat {
@@ -825,8 +839,7 @@ fn tick_demo_coward(
 
         let mut goal = None;
         if recently_attacked {
-            let building = nearest_entity(input, |e| is_tagged(e, "building"))
-                .map(|(e, _d2)| e);
+            let building = nearest_entity(input, |e| is_tagged(e, "building")).map(|(e, _d2)| e);
             if let Some(building) = building {
                 let building_pos = add_pos(self_pos, building.rel_pos);
                 if let Some(threat_pos) = threat_pos {
@@ -848,7 +861,8 @@ fn tick_demo_coward(
                 }
             }
         }
-        let goal = goal.unwrap_or_else(|| flee_from_rel(self_pos, threat_rel, flee_distance_m, &mut rng));
+        let goal =
+            goal.unwrap_or_else(|| flee_from_rel(self_pos, threat_rel, flee_distance_m, &mut rng));
 
         let mut commands = Vec::new();
         if can_move {
@@ -891,10 +905,12 @@ fn tick_demo_coward(
                 let dz = target[2] - self_pos[2];
                 let d2 = dx * dx + dz * dz;
                 if !d2.is_finite() || d2 <= arrival2 {
-                    state.wander_target = Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
+                    state.wander_target =
+                        Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
                 }
             } else {
-                state.wander_target = Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
+                state.wander_target =
+                    Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
             }
 
             if can_move {
@@ -953,7 +969,13 @@ fn tick_demo_opportunist(
     };
     let attack_chance = config_f32(config, "attack_chance", 0.45, 0.0, 1.0);
     let moving_threshold_mps = config_f32(config, "moving_threshold_mps", 0.35, 0.0, 50.0);
-    let forget_target_ticks = config_u32(config, "forget_target_ticks", (TICKS_PER_SEC * 10) as u32, 1, 1_000_000) as u64;
+    let forget_target_ticks = config_u32(
+        config,
+        "forget_target_ticks",
+        (TICKS_PER_SEC * 10) as u32,
+        1,
+        1_000_000,
+    ) as u64;
 
     if let Some(max) = input.self_state.health_max {
         state.health_max_est = Some(max.max(1));
@@ -1107,10 +1129,7 @@ fn tick_demo_opportunist(
             let Some(other_current) = e.health.map(|h| h.max(0)) else {
                 continue;
             };
-            let other_max = e
-                .health_max
-                .unwrap_or(other_current.max(1))
-                .max(1);
+            let other_max = e.health_max.unwrap_or(other_current.max(1)).max(1);
             if other_max > self_max {
                 continue;
             }
@@ -1170,7 +1189,8 @@ fn tick_demo_opportunist(
                         Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
                 }
             } else {
-                state.wander_target = Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
+                state.wander_target =
+                    Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
             }
 
             if can_move {
@@ -1217,8 +1237,13 @@ fn tick_demo_belligerent(
     } else {
         notice_m_base
     };
-    let forget_target_ticks =
-        config_u32(config, "forget_target_ticks", (TICKS_PER_SEC * 8) as u32, 1, 1_000_000) as u64;
+    let forget_target_ticks = config_u32(
+        config,
+        "forget_target_ticks",
+        (TICKS_PER_SEC * 8) as u32,
+        1,
+        1_000_000,
+    ) as u64;
     let attacker_focus_forget_ticks = config_u32(
         config,
         "attacker_focus_forget_ticks",
@@ -1233,8 +1258,7 @@ fn tick_demo_belligerent(
         0,
         1_000_000,
     ) as u64;
-    let attacker_focus_arrival_m =
-        config_f32(config, "attacker_focus_arrival_m", 1.0, 0.1, 50.0);
+    let attacker_focus_arrival_m = config_f32(config, "attacker_focus_arrival_m", 1.0, 0.1, 50.0);
 
     if let Some(max) = input.self_state.health_max {
         state.health_max_est = Some(max.max(1));
@@ -1304,7 +1328,8 @@ fn tick_demo_belligerent(
     }
 
     // When focusing an attacker, keep chasing them until they're far away (lost for a while).
-    if let (Some(focus_id), Some(target)) = (state.focus_attacker_id.as_deref(), state.target.as_ref())
+    if let (Some(focus_id), Some(target)) =
+        (state.focus_attacker_id.as_deref(), state.target.as_ref())
     {
         if target.id != focus_id {
             state.focus_attacker_id = None;
