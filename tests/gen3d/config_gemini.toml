@@ -22,5 +22,4 @@ max_parallel_components = 6
 [gemini]
 base_url = "https://right.codes/gemini/v1beta"
 model = "gemini-3-pro-preview"
-X_GOOG_API_KEY = ""
-
+token = ""

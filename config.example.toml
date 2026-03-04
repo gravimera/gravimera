@@ -118,8 +118,8 @@ model = "gpt-4.1"
 # "low" | "medium" | "high"
 model_reasoning_effort = "high"
 
-# Your OpenAI API key.
-OPENAI_API_KEY = "YOUR_OPENAI_API_KEY_HERE"
+# API token (OpenAI API key). Can also be provided via env `OPENAI_API_KEY`.
+token = "YOUR_OPENAI_API_KEY_HERE"
 
 [gemini]
 
@@ -130,5 +130,5 @@ base_url = "https://right.codes/gemini/v1beta"
 # Any Gemini model id. See: https://docs.right.codes/docs/rc_extension/curl.html#gemini
 model = "gemini-3-pro-preview"
 
-# Your Gemini API key (sent as `x-goog-api-key`).
-X_GOOG_API_KEY = "YOUR_GEMINI_API_KEY_HERE"
+# API token (sent as `x-goog-api-key`). Can also be provided via env `X_GOOG_API_KEY` / `GEMINI_API_KEY`.
+token = "YOUR_GEMINI_API_KEY_HERE"

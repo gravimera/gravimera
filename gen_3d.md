@@ -189,8 +189,8 @@ Gen3D budgets / guard:
 
 Gen3D AI provider:
 
-- `[gen3d].ai_service = "openai"` (default) uses `[openai]` config (`OPENAI_API_KEY` can be provided via env).
-- `[gen3d].ai_service = "gemini"` uses `[gemini]` config (`X_GOOG_API_KEY` can be provided via env).
+- `[gen3d].ai_service = "openai"` (default) uses `[openai]` config (`token` or env `OPENAI_API_KEY`).
+- `[gen3d].ai_service = "gemini"` uses `[gemini]` config (`token` or env `X_GOOG_API_KEY` / `GEMINI_API_KEY`).
 
 ---
 

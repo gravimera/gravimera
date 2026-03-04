@@ -50,7 +50,7 @@ This ExecPlan focuses on **generic improvements with a low regression risk**:
   Evidence: Reported expectation: “legs are mostly the same (3D model), only angles/animations differ; copy should still help”.
 
 - Observation: Rendered end-to-end Gen3D regressions require `OPENAI_API_KEY`.
-  Evidence: `tools/gen3d_real_test.py` returns HTTP 400 from Automation `/v1/gen3d/build` when the key is missing: `config.toml: missing openai.OPENAI_API_KEY (or env OPENAI_API_KEY)`.
+  Evidence: `tools/gen3d_real_test.py` returns HTTP 400 from Automation `/v1/gen3d/build` when the key is missing: `config.toml: missing openai.token / openai.OPENAI_API_KEY (or env OPENAI_API_KEY)`.
 
 ## Decision Log
 

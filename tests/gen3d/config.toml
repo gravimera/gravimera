@@ -22,4 +22,4 @@ max_parallel_components = 6
 base_url = "https://right.codes/codex/v1"
 model = "gpt-5.2"
 model_reasoning_effort = "high"
-OPENAI_API_KEY = ""
+token = ""

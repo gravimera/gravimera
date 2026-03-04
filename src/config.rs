@@ -243,7 +243,7 @@ fn populate_openai_config(out: &mut AppConfig, text: &str) {
             }
             if cfg.api_key.trim().is_empty() {
                 out.errors.push(
-                    "config.toml: missing `openai.OPENAI_API_KEY` (or env `OPENAI_API_KEY`)".into(),
+                    "config.toml: missing `openai.token` / `openai.OPENAI_API_KEY` (or env `OPENAI_API_KEY`)".into(),
                 );
             } else {
                 out.openai = Some(cfg);
@@ -279,7 +279,7 @@ fn populate_gemini_config(out: &mut AppConfig, text: &str) {
             }
             if cfg.api_key.trim().is_empty() {
                 out.errors.push(
-                    "config.toml: missing `gemini.X_GOOG_API_KEY` (or env `X_GOOG_API_KEY` / `GEMINI_API_KEY`)".into(),
+                    "config.toml: missing `gemini.token` / `gemini.X_GOOG_API_KEY` (or env `X_GOOG_API_KEY` / `GEMINI_API_KEY`)".into(),
                 );
             } else {
                 out.gemini = Some(cfg);
@@ -2333,6 +2333,7 @@ fn parse_openai_config(text: &str) -> Result<OpenAiConfig, String> {
             "base_url" => base_url = Some(value),
             "model" => model = Some(value),
             "model_reasoning_effort" => effort = Some(value),
+            "token" | "api_key" => api_key = Some(value),
             "OPENAI_API_KEY" => api_key = Some(value),
             _ => {}
         }
@@ -2386,6 +2387,7 @@ fn parse_gemini_config(text: &str) -> Result<GeminiConfig, String> {
         match key {
             "base_url" => base_url = Some(value),
             "model" => model = Some(value),
+            "token" | "api_key" => api_key = Some(value),
             "X_GOOG_API_KEY" | "x_goog_api_key" | "GEMINI_API_KEY" => api_key = Some(value),
             _ => {}
         }
@@ -2457,7 +2459,7 @@ mod tests {
         [gemini]
         base_url = "mock://gen3d"
         model = "mock"
-        X_GOOG_API_KEY = "mock"
+        token = "mock"
         "#;
 
         let mut cfg = AppConfig::default();
@@ -2465,6 +2467,30 @@ mod tests {
         assert_eq!(cfg.gen3d_ai_service, Gen3dAiService::Gemini);
         assert!(cfg.gemini.is_some());
         assert!(cfg.openai.is_none());
+        assert!(
+            cfg.errors.is_empty(),
+            "unexpected config errors: {:?}",
+            cfg.errors
+        );
+    }
+
+    #[test]
+    fn parses_openai_token_alias() {
+        let text = r#"
+        [gen3d]
+        ai_service = "openai"
+
+        [openai]
+        base_url = "mock://gen3d"
+        model = "mock"
+        token = "mock"
+        "#;
+
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert_eq!(cfg.gen3d_ai_service, Gen3dAiService::OpenAi);
+        assert!(cfg.openai.is_some());
+        assert!(cfg.gemini.is_none());
         assert!(
             cfg.errors.is_empty(),
             "unexpected config errors: {:?}",
