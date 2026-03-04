@@ -4,6 +4,8 @@ _(Spec document; product intent lives in `docs/gamedesign/06_brains_and_ai.md`.)
 
 This document defines a **final target** architecture for “AI plugins” that fully control a unit by running in a **standalone intelligence service process** (instead of embedded Wasm).
 
+For developer/player convenience, the host may also support an **embedded** mode where the same intelligence-service implementation runs **in-process**. Embedded mode does **not** provide isolation and should only be used for **trusted** brain code (e.g. built-in/demo modules).
+
 A standalone brain is an optional advanced brain type alongside:
 
 - external agents driving units via the HTTP API, and
@@ -47,6 +49,9 @@ The core idea remains: **sense → decide → act**, where the host simulation i
 The simulation host must assume the intelligence service is **untrusted** unless explicitly configured otherwise. All requests are validated, rate-limited, and capability-gated.
 
 ## Deployment Models
+
+0) **Embedded (dev convenience / single-player)**  
+   Intelligence service runs **inside** the host process. This is ergonomic, but it is **not** a trust boundary.
 
 1) **Local sidecar (dev / low latency)**  
    Intelligence service runs on the same machine; transport is IPC (Unix domain socket / named pipe).

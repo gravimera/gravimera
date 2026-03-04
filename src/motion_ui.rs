@@ -2,10 +2,8 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use serde_json::json;
-use std::net::SocketAddr;
 
-use crate::config::AppConfig;
-use crate::intelligence::host_plugin::StandaloneBrain;
+use crate::intelligence::host_plugin::{IntelligenceHostRuntime, StandaloneBrain};
 use crate::intelligence::protocol::{DespawnBrainInstanceRequest, PROTOCOL_VERSION};
 use crate::intelligence::sidecar_client::SidecarClient;
 use crate::motion::{
@@ -283,7 +281,7 @@ pub(crate) fn motion_algorithm_ui_update(
     mut commands: Commands,
     library: Res<ObjectLibrary>,
     descriptors: Res<PrefabDescriptorLibrary>,
-    config: Res<AppConfig>,
+    runtime: Res<IntelligenceHostRuntime>,
     mut state: ResMut<MotionAlgorithmUiState>,
     roots: Query<(
         Option<&ObjectPrefabId>,
@@ -411,23 +409,16 @@ pub(crate) fn motion_algorithm_ui_update(
     if state.brain_modules_fetch_requested
         && state.brain_modules_job.is_none()
         && !state.brain_modules_loading
-        && config.intelligence_service_enabled
+        && runtime.enabled
     {
         state.brain_modules_fetch_requested = false;
 
-        let addr_str = config
-            .intelligence_service_addr
-            .clone()
-            .unwrap_or_else(|| "127.0.0.1:8792".to_string());
-        let addr = match addr_str.parse::<SocketAddr>() {
-            Ok(v) => v,
-            Err(err) => {
-                state.brain_modules_error = Some(format!("Invalid service addr `{addr_str}`: {err}"));
-                state.needs_rebuild = true;
-                return;
-            }
+        let Some(addr) = runtime.service_addr else {
+            state.brain_modules_error = Some("Intelligence service enabled but missing addr.".into());
+            state.needs_rebuild = true;
+            return;
         };
-        let token = config.intelligence_service_token.clone();
+        let token = runtime.token.clone();
 
         let shared = new_shared_result::<Vec<String>, String>();
         let thread_name = "gravimera_meta_brain_modules".to_string();
@@ -481,7 +472,7 @@ pub(crate) fn motion_algorithm_ui_update(
         .map(|r| r.applicable_attack_primary_algorithms(attack_kind))
         .unwrap_or_else(|| vec![AttackPrimaryMotionAlgorithm::None]);
 
-    let brain_remote_enabled = config.intelligence_service_enabled;
+    let brain_remote_enabled = runtime.enabled;
     let brain_modules_loading = state.brain_modules_loading;
     let brain_modules_error = state.brain_modules_error.clone();
     let brain_modules = state.brain_modules.clone();
@@ -530,7 +521,9 @@ pub(crate) fn motion_algorithm_ui_update(
 
         if !brain_remote_enabled {
             list.spawn((
-                Text::new("Intelligence service disabled (enable in config.toml)."),
+                Text::new(
+                    "Intelligence service disabled (set [intelligence_service] mode = \"embedded\" | \"sidecar\" in config.toml).",
+                ),
                 TextFont {
                     font_size: 11.0,
                     ..default()
@@ -540,7 +533,7 @@ pub(crate) fn motion_algorithm_ui_update(
             ));
         } else if brain_modules_loading {
             list.spawn((
-                Text::new("Loading remote brains..."),
+                Text::new("Loading brain modules..."),
                 TextFont {
                     font_size: 11.0,
                     ..default()
@@ -550,7 +543,7 @@ pub(crate) fn motion_algorithm_ui_update(
             ));
         } else if let Some(err) = brain_modules_error.as_deref() {
             list.spawn((
-                Text::new(format!("Failed to load remote brains: {err}")),
+                Text::new(format!("Failed to load brain modules: {err}")),
                 TextFont {
                     font_size: 11.0,
                     ..default()
@@ -560,7 +553,7 @@ pub(crate) fn motion_algorithm_ui_update(
             ));
         } else if brain_modules.is_empty() {
             list.spawn((
-                Text::new("No remote brains reported by the service."),
+                Text::new("No brain modules reported by the service."),
                 TextFont {
                     font_size: 11.0,
                     ..default()
@@ -1155,7 +1148,7 @@ pub(crate) fn motion_algorithm_ui_button_clicks(
 pub(crate) fn meta_brain_ui_button_clicks(
     mut commands: Commands,
     mut state: ResMut<MotionAlgorithmUiState>,
-    config: Res<AppConfig>,
+    runtime: Res<IntelligenceHostRuntime>,
     selection: Res<SelectionState>,
     units: Query<(), With<Commandable>>,
     brains: Query<Option<&StandaloneBrain>>,
@@ -1186,7 +1179,7 @@ pub(crate) fn meta_brain_ui_button_clicks(
 
             match button.module_id.as_deref() {
                 None => {
-                    if config.intelligence_service_enabled {
+                    if runtime.enabled {
                         let mut instance_ids = Vec::new();
                         if let Ok(Some(brain)) = brains.get(entity) {
                             if let Some(instance_id) = brain.brain_instance_id.clone() {
@@ -1194,15 +1187,8 @@ pub(crate) fn meta_brain_ui_button_clicks(
                             }
                         }
                         if !instance_ids.is_empty() {
-                            let addr_str = config
-                                .intelligence_service_addr
-                                .clone()
-                                .unwrap_or_else(|| "127.0.0.1:8792".to_string());
-                            if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-                                let client = SidecarClient::new(
-                                    addr,
-                                    config.intelligence_service_token.clone(),
-                                );
+                            if let Some(addr) = runtime.service_addr {
+                                let client = SidecarClient::new(addr, runtime.token.clone());
                                 let _ = client.despawn(DespawnBrainInstanceRequest {
                                     protocol_version: PROTOCOL_VERSION,
                                     brain_instance_ids: instance_ids,
@@ -1215,7 +1201,7 @@ pub(crate) fn meta_brain_ui_button_clicks(
                     updated += 1;
                 }
                 Some(module_id) => {
-                    if !config.intelligence_service_enabled {
+                    if !runtime.enabled {
                         continue;
                     }
 

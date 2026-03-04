@@ -15,11 +15,17 @@
 
 [intelligence_service]
 
-# Optional: enable standalone brains via a local/remote intelligence service sidecar.
-# See: `docs/gamedesign/38_intelligence_service_spec.md`
+# Optional: enable standalone brains via an intelligence service.
+# See: `docs/intelligence_service.md` (spec: `docs/gamedesign/38_intelligence_service_spec.md`).
+#
+# Modes:
+# - "embedded" (default): run the intelligence service inside the Gravimera process.
+# - "sidecar": connect to a standalone `gravimera_intelligence_service` process (local/remote).
+# - "disabled": hard-disable standalone brains (same as `enabled = false`).
 #
 # enabled = false
-# addr = "127.0.0.1:8792"
+# mode = "embedded"
+# addr = "127.0.0.1:8792" # sidecar addr; embedded bind addr (use "127.0.0.1:0" for a random port)
 # token = "CHANGE_ME" # optional; requires `Authorization: Bearer <token>`
 #
 # Dev-only: spawn a demo commandable unit with a demo standalone brain (`demo.orbit.v1`).

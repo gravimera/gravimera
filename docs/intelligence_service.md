@@ -1,12 +1,70 @@
 # Intelligence Service (Standalone Brains)
 
-Gravimera can optionally run unit “brains” in a **separate process** (a local or remote *intelligence service*). The host simulation stays authoritative: the service only *requests* actions.
+Gravimera can run unit “brains” via an **intelligence service**. The host simulation stays authoritative: the service only *requests* actions.
 
 Design/spec reference: `docs/gamedesign/38_intelligence_service_spec.md`.
 
-## Start the local service
+## Run modes
 
-In one terminal:
+When enabled, Gravimera can run the intelligence service in two ways:
+
+- **Embedded** (default): the service runs inside the Gravimera game process.
+- **Sidecar**: the service runs as a separate local/remote process (`gravimera_intelligence_service`).
+
+## Configure the game (host)
+
+Copy the template config (or edit your existing config):
+
+```bash
+mkdir -p ~/.gravimera
+cp config.example.toml ~/.gravimera/config.toml
+```
+
+Enable and configure in `config.toml`:
+
+```toml
+[intelligence_service]
+enabled = true
+
+# "embedded" (default) | "sidecar" | "disabled"
+mode = "embedded"
+
+# addr meaning depends on mode:
+# - embedded: bind addr (default: "127.0.0.1:0" for a random port)
+# - sidecar: service addr to connect (default: "127.0.0.1:8792")
+# addr = "127.0.0.1:0"
+
+# Optional: require `Authorization: Bearer <token>` on every request.
+# token = "secret"
+
+# Dev-only: spawn a demo commandable unit with a demo standalone brain.
+# debug_spawn_unit = true
+```
+
+Config location:
+
+- Default: `~/.gravimera/config.toml`
+- Override base dir: `GRAVIMERA_HOME=/path/to/dir` (config becomes `$GRAVIMERA_HOME/config.toml`)
+- Override config path: `GRAVIMERA_CONFIG=/path/to/config.toml`
+
+## Embedded mode (default)
+
+If `mode = "embedded"`, Gravimera starts the intelligence service at startup.
+
+- Default bind: `127.0.0.1:0` (random free port).
+- The actual listen address is logged on startup.
+
+Quick checks (HTTP/JSON):
+
+```bash
+# Replace with the logged address.
+curl -s http://127.0.0.1:<port>/v1/health
+curl -s http://127.0.0.1:<port>/v1/modules
+```
+
+## Sidecar mode (standalone process)
+
+If `mode = "sidecar"`, run the service in one terminal:
 
 ```bash
 cargo run --bin gravimera_intelligence_service
@@ -23,51 +81,10 @@ Example:
 cargo run --bin gravimera_intelligence_service -- --bind 127.0.0.1:8792 --token secret
 ```
 
-## Configure the game (host)
-
-Copy the template config (or edit your existing config):
-
-```bash
-mkdir -p ~/.gravimera
-cp config.example.toml ~/.gravimera/config.toml
-```
-
-Enable the service in `config.toml`:
-
-```toml
-[intelligence_service]
-enabled = true
-addr = "127.0.0.1:8792"
-# token = "secret" # if the service was started with --token
-
-# Dev-only: spawn a demo commandable unit with a demo standalone brain.
-# debug_spawn_unit = true
-```
-
-Config location:
-
-- Default: `~/.gravimera/config.toml`
-- Override base dir: `GRAVIMERA_HOME=/path/to/dir` (config becomes `$GRAVIMERA_HOME/config.toml`)
-- Override config path: `GRAVIMERA_CONFIG=/path/to/config.toml`
-
-## Run + verify
-
-In another terminal:
+Then run the game in another terminal:
 
 ```bash
 cargo run
-```
-
-Quick checks (the protocol is HTTP/JSON, not gRPC):
-
-- `GET /v1/health`
-- `GET /v1/modules` (list “brain modules” the service reports)
-
-Example:
-
-```bash
-curl -s http://127.0.0.1:8792/v1/health
-curl -s http://127.0.0.1:8792/v1/modules
 ```
 
 ## Demo brain modules (built-in)
@@ -98,7 +115,7 @@ Notes:
 
 ## Host defaults (when enabled)
 
-When `[intelligence_service].enabled = true`, the host automatically attaches a standalone brain to **non-player units** (entities with `Commandable` and without `Player`) when they enter **Play** mode:
+When `intelligence_service.enabled = true` (and `mode != "disabled"`), the host automatically attaches a standalone brain to **non-player units** (entities with `Commandable` and without `Player`) when they enter **Play** mode:
 
 - Units that can attack (have an attack definition in the object library):
   - Melee: 50% `demo.belligerent.v1`, 50% `demo.opportunist.v1`
@@ -114,7 +131,7 @@ You can override per-unit in the UI via the Meta panel’s Brain section.
 On Windows PowerShell, use `curl.exe` instead of `curl` if you hit the `Invoke-WebRequest` alias:
 
 ```powershell
-curl.exe -s http://127.0.0.1:8792/v1/health
+curl.exe -s http://127.0.0.1:<port>/v1/health
 ```
 
 ## Use from the UI (Meta panel)
@@ -122,7 +139,7 @@ curl.exe -s http://127.0.0.1:8792/v1/health
 - Double-click a unit’s selection circle to open the **Meta** panel.
 - In the **Brain** section:
   - `Fallback (default)` detaches the standalone brain.
-  - Remote brains are fetched asynchronously from the service after the panel opens (via `GET /v1/modules`).
+  - Brain modules are fetched asynchronously from the service after the panel opens (via `GET /v1/modules`).
 
 ## Tests
 

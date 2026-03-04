@@ -11,6 +11,7 @@ pub(crate) struct AppConfig {
     pub(crate) scene_dat_path: Option<PathBuf>,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
     pub(crate) intelligence_service_enabled: bool,
+    pub(crate) intelligence_service_mode: IntelligenceServiceMode,
     pub(crate) intelligence_service_addr: Option<String>,
     pub(crate) intelligence_service_token: Option<String>,
     pub(crate) intelligence_service_debug_spawn_unit: bool,
@@ -38,6 +39,20 @@ pub(crate) struct AppConfig {
     pub(crate) errors: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum IntelligenceServiceMode {
+    Disabled,
+    #[default]
+    Embedded,
+    Sidecar,
+}
+
+impl IntelligenceServiceMode {
+    pub(crate) fn enabled(&self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -46,6 +61,7 @@ impl Default for AppConfig {
             scene_dat_path: None,
             gen3d_cache_dir: None,
             intelligence_service_enabled: false,
+            intelligence_service_mode: IntelligenceServiceMode::Embedded,
             intelligence_service_addr: None,
             intelligence_service_token: None,
             intelligence_service_debug_spawn_unit: false,
@@ -159,6 +175,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_scene_dat_path_into_config(out, text);
     parse_gen3d_cache_dir_into_config(out, text);
     parse_intelligence_service_enabled_into_config(out, text);
+    parse_intelligence_service_mode_into_config(out, text);
     parse_intelligence_service_addr_into_config(out, text);
     parse_intelligence_service_token_into_config(out, text);
     parse_intelligence_service_debug_spawn_unit_into_config(out, text);
@@ -303,6 +320,14 @@ fn parse_automation_token_into_config(out: &mut AppConfig, text: &str) {
 fn parse_intelligence_service_enabled_into_config(out: &mut AppConfig, text: &str) {
     match parse_intelligence_service_enabled(text) {
         Ok(Some(value)) => out.intelligence_service_enabled = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_intelligence_service_mode_into_config(out: &mut AppConfig, text: &str) {
+    match parse_intelligence_service_mode(text) {
+        Ok(Some(value)) => out.intelligence_service_mode = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -740,6 +765,85 @@ fn parse_intelligence_service_enabled(text: &str) -> Result<Option<bool>, String
             )
         })?;
         out = Some(parsed);
+    }
+
+    Ok(out)
+}
+
+fn parse_intelligence_service_mode(text: &str) -> Result<Option<IntelligenceServiceMode>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<IntelligenceServiceMode> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "intelligence_service_mode"
+            && !(section.as_deref() == Some("intelligence_service") && key == "mode")
+        {
+            continue;
+        }
+
+        if let Some(sec) = section.as_deref() {
+            if sec != "intelligence_service" && sec != "app" && key == "intelligence_service_mode"
+            {
+                continue;
+            }
+            if sec != "intelligence_service" && key == "mode" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let value = if value.starts_with('"') || value.starts_with('\'') {
+            parse_toml_string(value).ok_or_else(|| {
+                format!(
+                    "config.toml:{line_no}: expected a string for `intelligence_service.mode` (example: [intelligence_service]\\nmode = \"embedded\")"
+                )
+            })?
+        } else {
+            value.to_string()
+        };
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let mode = match trimmed.to_ascii_lowercase().as_str() {
+            "disabled" | "off" | "none" => IntelligenceServiceMode::Disabled,
+            "embedded" => IntelligenceServiceMode::Embedded,
+            "sidecar" | "standalone" | "remote" | "external" => IntelligenceServiceMode::Sidecar,
+            _ => {
+                return Err(format!(
+                    "config.toml:{line_no}: invalid `intelligence_service.mode` value `{trimmed}` (expected: \"embedded\" | \"sidecar\" | \"disabled\")"
+                ));
+            }
+        };
+
+        out = Some(mode);
     }
 
     Ok(out)
@@ -2091,6 +2195,9 @@ fn parse_openai_config(text: &str) -> Result<OpenAiConfig, String> {
 mod tests {
     use super::parse_gen3d_review_appearance;
     use super::parse_gen3d_save_pass_screenshots;
+    use super::{
+        parse_config_text_into, parse_intelligence_service_mode, AppConfig, IntelligenceServiceMode,
+    };
 
     #[test]
     fn parses_gen3d_save_pass_screenshots_from_gen3d_section() {
@@ -2127,6 +2234,77 @@ mod tests {
         gen3d_review_appearance = false
         "#;
         assert_eq!(parse_gen3d_review_appearance(text).unwrap(), Some(false));
+    }
+
+    #[test]
+    fn default_intelligence_service_mode_is_embedded() {
+        assert_eq!(
+            AppConfig::default().intelligence_service_mode,
+            IntelligenceServiceMode::Embedded
+        );
+    }
+
+    #[test]
+    fn default_intelligence_service_enabled_is_false() {
+        assert!(!AppConfig::default().intelligence_service_enabled);
+    }
+
+    #[test]
+    fn parses_intelligence_service_mode_from_section() {
+        let text = r#"
+        [intelligence_service]
+        mode = "sidecar"
+        "#;
+        assert_eq!(
+            parse_intelligence_service_mode(text).unwrap(),
+            Some(IntelligenceServiceMode::Sidecar)
+        );
+    }
+
+    #[test]
+    fn parses_intelligence_service_mode_synonym_standalone() {
+        let text = r#"
+        [intelligence_service]
+        mode = "standalone"
+        "#;
+        assert_eq!(
+            parse_intelligence_service_mode(text).unwrap(),
+            Some(IntelligenceServiceMode::Sidecar)
+        );
+    }
+
+    #[test]
+    fn parses_intelligence_service_mode_invalid_value_is_error() {
+        let text = r#"
+        [intelligence_service]
+        mode = "wat"
+        "#;
+        let err = parse_intelligence_service_mode(text).unwrap_err();
+        assert!(err.contains("invalid `intelligence_service.mode` value"), "err={err}");
+    }
+
+    #[test]
+    fn parses_intelligence_service_enabled_true_from_section() {
+        let text = r#"
+        [intelligence_service]
+        enabled = true
+        "#;
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert!(cfg.intelligence_service_enabled);
+    }
+
+    #[test]
+    fn parses_intelligence_service_enabled_and_mode_together() {
+        let text = r#"
+        [intelligence_service]
+        mode = "sidecar"
+        enabled = true
+        "#;
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert!(cfg.intelligence_service_enabled);
+        assert_eq!(cfg.intelligence_service_mode, IntelligenceServiceMode::Sidecar);
     }
 }
 

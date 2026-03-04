@@ -88,17 +88,10 @@ Gen3D requires OpenAI settings in `config.toml` (or `OPENAI_API_KEY` via env).
 
 ## Intelligence Service (Standalone Brains)
 
-Optional: run unit brains in a separate local/remote process.
+Optional: run unit brains via the intelligence service.
 
-Local dev quickstart:
-
-```bash
-# Terminal A
-cargo run --bin gravimera_intelligence_service
-
-# Terminal B (enable in ~/.gravimera/config.toml; see config.example.toml)
-cargo run
-```
+- Default mode (when enabled): **embedded** (runs inside the Gravimera process).
+- Sidecar mode: run `cargo run --bin gravimera_intelligence_service` and set `[intelligence_service].mode = "sidecar"` in `config.toml`.
 
 Docs: `docs/intelligence_service.md` (spec: `docs/gamedesign/38_intelligence_service_spec.md`).
 

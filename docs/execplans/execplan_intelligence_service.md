@@ -155,6 +155,7 @@ Quick manual demo (rendered mode):
 
     [intelligence_service]
     enabled = true
+    mode = "sidecar"
     addr = "127.0.0.1:8792"
     debug_spawn_unit = true
 
@@ -170,7 +171,8 @@ Quick manual demo (rendered mode):
 
 ### New binaries
 
-- `src/bin/gravimera_intelligence_service.rs`: standalone service process implementing the `/v1/*` endpoints and demo brain modules.
+- `src/bin/gravimera_intelligence_service.rs`: standalone service process entrypoint.
+- `src/intelligence/service.rs`: service implementation for `/v1/*` endpoints and demo brain modules (used by both embedded and sidecar modes).
 
 ---
 

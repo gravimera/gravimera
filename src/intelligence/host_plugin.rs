@@ -46,13 +46,14 @@ impl Plugin for IntelligenceHostPlugin {
 }
 
 #[derive(Resource, Default)]
-struct IntelligenceHostRuntime {
-    enabled: bool,
-    service_addr: Option<SocketAddr>,
-    token: Option<String>,
-    connected: bool,
-    modules_loaded: std::collections::HashSet<String>,
-    last_connect_attempt_tick: u64,
+pub(crate) struct IntelligenceHostRuntime {
+    pub(crate) enabled: bool,
+    pub(crate) service_addr: Option<SocketAddr>,
+    pub(crate) token: Option<String>,
+    pub(crate) connected: bool,
+    pub(crate) modules_loaded: std::collections::HashSet<String>,
+    pub(crate) last_connect_attempt_tick: u64,
+    embedded_service: Option<crate::intelligence::service::EmbeddedIntelligenceService>,
 }
 
 fn intelligence_enabled(runtime: Res<IntelligenceHostRuntime>) -> bool {
@@ -87,29 +88,63 @@ impl StandaloneBrain {
 }
 
 fn intelligence_host_init(mut runtime: ResMut<IntelligenceHostRuntime>, config: Res<AppConfig>) {
-    runtime.enabled = config.intelligence_service_enabled;
     runtime.token = config.intelligence_service_token.clone();
     runtime.connected = false;
     runtime.modules_loaded.clear();
     runtime.last_connect_attempt_tick = 0;
+    runtime.embedded_service = None;
 
+    runtime.service_addr = None;
+    runtime.enabled = config.intelligence_service_enabled && config.intelligence_service_mode.enabled();
     if !runtime.enabled {
-        runtime.service_addr = None;
         return;
     }
 
-    let addr_str = config
-        .intelligence_service_addr
-        .clone()
-        .unwrap_or_else(|| "127.0.0.1:8792".to_string());
-    match addr_str.parse::<SocketAddr>() {
-        Ok(addr) => runtime.service_addr = Some(addr),
-        Err(err) => {
-            runtime.enabled = false;
-            runtime.service_addr = None;
-            warn!("Intelligence service disabled: invalid addr `{addr_str}`: {err}");
+    match config.intelligence_service_mode {
+        crate::config::IntelligenceServiceMode::Embedded => {
+            let bind = config
+                .intelligence_service_addr
+                .clone()
+                .unwrap_or_else(|| "127.0.0.1:0".to_string());
+
+            match crate::intelligence::service::EmbeddedIntelligenceService::start(
+                bind.as_str(),
+                runtime.token.clone(),
+            ) {
+                Ok(service) => {
+                    runtime.service_addr = Some(service.listen_addr());
+                    info!(
+                        "Embedded intelligence service listening on http://{} (protocol_version={})",
+                        service.listen_addr(),
+                        PROTOCOL_VERSION
+                    );
+                    runtime.embedded_service = Some(service);
+                }
+                Err(err) => {
+                    runtime.enabled = false;
+                    runtime.service_addr = None;
+                    warn!("Embedded intelligence service disabled: {err}");
+                }
+            }
         }
-    }
+        crate::config::IntelligenceServiceMode::Sidecar => {
+            let addr_str = config
+                .intelligence_service_addr
+                .clone()
+                .unwrap_or_else(|| "127.0.0.1:8792".to_string());
+            match addr_str.parse::<SocketAddr>() {
+                Ok(addr) => runtime.service_addr = Some(addr),
+                Err(err) => {
+                    runtime.enabled = false;
+                    runtime.service_addr = None;
+                    warn!("Intelligence service disabled: invalid addr `{addr_str}`: {err}");
+                }
+            }
+        }
+        crate::config::IntelligenceServiceMode::Disabled => {
+            runtime.enabled = false;
+        }
+    };
 }
 
 fn intelligence_debug_spawn_unit(
@@ -124,7 +159,10 @@ fn intelligence_debug_spawn_unit(
     mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
     existing: Query<(), With<StandaloneBrain>>,
 ) {
-    if !config.intelligence_service_enabled || !config.intelligence_service_debug_spawn_unit {
+    if !config.intelligence_service_enabled
+        || !config.intelligence_service_mode.enabled()
+        || !config.intelligence_service_debug_spawn_unit
+    {
         return;
     }
     if existing.iter().next().is_some() {
@@ -343,7 +381,7 @@ fn intelligence_tick(
         With<BuildObject>,
     >,
 ) {
-    if !config.intelligence_service_enabled {
+    if !config.intelligence_service_enabled || !config.intelligence_service_mode.enabled() {
         runtime.enabled = false;
         return;
     }
