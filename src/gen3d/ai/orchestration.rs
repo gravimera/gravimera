@@ -19,6 +19,7 @@ use crate::threaded_result::{
 use crate::types::{AnimationChannelsActive, AttackClock, BuildScene, LocomotionClock};
 
 use super::agent_loop;
+use super::ai_service::{generate_text_via_ai_service, Gen3dAiServiceConfig};
 use super::artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
     write_gen3d_json_artifact,
@@ -107,7 +108,7 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
         return;
     }
 
-    // Cancel the current build. Any in-flight OpenAI request thread stops as soon as it observes
+    // Cancel the current build. Any in-flight AI request thread stops as soon as it observes
     // the cancel flag; we also ignore its eventual result and stop updating UI state.
     if let Some(flag) = job.cancel_flag.as_ref() {
         flag.store(true, Ordering::Relaxed);
@@ -158,13 +159,29 @@ pub(crate) fn gen3d_start_build_from_api(
         return Err("Provide at least 1 image or a text prompt.".into());
     }
 
-    let Some(openai) = config.openai.clone() else {
-        let details = if config.errors.is_empty() {
-            "Missing config.toml. See gen_3d.md for setup.".to_string()
-        } else {
-            config.errors.join("\n")
-        };
-        return Err(details);
+    let ai = match config.gen3d_ai_service {
+        crate::config::Gen3dAiService::OpenAi => match config.openai.clone() {
+            Some(openai) => Gen3dAiServiceConfig::OpenAi(openai),
+            None => {
+                let details = if config.errors.is_empty() {
+                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                } else {
+                    config.errors.join("\n")
+                };
+                return Err(details);
+            }
+        },
+        crate::config::Gen3dAiService::Gemini => match config.gemini.clone() {
+            Some(gemini) => Gen3dAiServiceConfig::Gemini(gemini),
+            None => {
+                let details = if config.errors.is_empty() {
+                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                } else {
+                    config.errors.join("\n")
+                };
+                return Err(details);
+            }
+        },
     };
 
     job.log_sinks = log_sinks;
@@ -189,11 +206,12 @@ pub(crate) fn gen3d_start_build_from_api(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0),
-            "openai": {
-                "model": openai.model,
-                "reasoning_effort": openai.model_reasoning_effort,
-                "base_url": openai.base_url,
-            },
+            "ai": {
+                "service": ai.service_label(),
+                "model": ai.model(),
+                "reasoning_effort": ai.model_reasoning_effort(),
+                "base_url": ai.base_url(),
+            }
         }),
     );
 
@@ -208,12 +226,13 @@ pub(crate) fn gen3d_start_build_from_api(
     append_gen3d_run_log(
         Some(&pass_dir),
         format!(
-            "run_start speed={} max_parallel={} model={} reasoning_effort={} base_url={} review_appearance={} images={} prompt_chars={}",
+            "run_start speed={} max_parallel={} service={} model={} reasoning_effort={} base_url={} review_appearance={} images={} prompt_chars={}",
             workshop.speed_mode.short_label(),
             config.gen3d_max_parallel_components.max(1),
-            openai.model,
-            openai.model_reasoning_effort,
-            openai.base_url,
+            ai.service_label(),
+            ai.model(),
+            ai.model_reasoning_effort(),
+            ai.base_url(),
             config.gen3d_review_appearance,
             cached_image_paths.len(),
             workshop.prompt.chars().count()
@@ -222,8 +241,9 @@ pub(crate) fn gen3d_start_build_from_api(
 
     workshop.error = None;
     workshop.status = format!(
-        "Planning components…\nModel: {}\nImages: {}",
-        openai.model,
+        "Planning components…\nService: {}\nModel: {}\nImages: {}",
+        ai.service_label(),
+        ai.model(),
         cached_image_paths.len()
     );
 
@@ -241,7 +261,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.capture_previews_only = false;
     job.plan_attempt = 0;
     job.max_parallel_components = config.gen3d_max_parallel_components.max(1);
-    job.openai = Some(openai.clone());
+    job.ai = Some(ai.clone());
     job.run_id = Some(run_id);
     job.attempt = 0;
     job.pass = 0;
@@ -286,8 +306,9 @@ pub(crate) fn gen3d_start_build_from_api(
     draft.defs.clear();
 
     workshop.status = format!(
-        "Building…\nModel: {}\nImages: {}",
-        job.openai.as_ref().map(|c| c.model.as_str()).unwrap_or(""),
+        "Building…\nService: {}\nModel: {}\nImages: {}",
+        job.ai.as_ref().map(|c| c.service_label()).unwrap_or(""),
+        job.ai.as_ref().map(|c| c.model()).unwrap_or(""),
         job.user_images.len()
     );
 
@@ -559,8 +580,8 @@ pub(crate) fn gen3d_poll_ai_job(
             let review_paths = job.review_static_paths.clone();
             job.review_static_paths.clear();
 
-            let Some(openai) = job.openai.clone() else {
-                workshop.error = Some("Internal error: missing OpenAI config.".into());
+            let Some(ai) = job.ai.clone() else {
+                workshop.error = Some("Internal error: missing AI config.".into());
                 if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
                     workshop.status = "Auto-review failed (continuing build).".into();
                     resume_after_per_component_review(&mut workshop, &mut job);
@@ -701,14 +722,14 @@ pub(crate) fn gen3d_poll_ai_job(
                 &smoke_results,
             );
             job.last_review_user_text = user_text.clone();
-            let reasoning_effort = openai.model_reasoning_effort.clone();
+            let reasoning_effort = ai.model_reasoning_effort().to_string();
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
-                openai,
+                ai,
                 reasoning_effort,
                 system,
                 user_text,
@@ -1180,11 +1201,11 @@ pub(crate) fn gen3d_poll_ai_job(
                     job.component_queue_pos = next_pos;
                     let next_idx = job.component_queue[next_pos];
 
-                    let Some(openai) = job.openai.clone() else {
+                    let Some(ai) = job.ai.clone() else {
                         fail_job(
                             &mut workshop,
                             &mut job,
-                            "Internal error: missing OpenAI config.",
+                            "Internal error: missing AI config.",
                         );
                         return;
                     };
@@ -1264,14 +1285,14 @@ pub(crate) fn gen3d_poll_ai_job(
                             ),
                         },
                     };
-                    let reasoning_effort = openai.model_reasoning_effort.clone();
+                    let reasoning_effort = ai.model_reasoning_effort().to_string();
                     spawn_gen3d_ai_text_thread(
                         shared,
                         progress,
                         job.cancel_flag.clone(),
                         job.session.clone(),
                         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-                        openai,
+                        ai,
                         reasoning_effort,
                         system,
                         user_text,
@@ -1585,11 +1606,11 @@ pub(crate) fn gen3d_poll_ai_job(
                     job.component_queue = regen_allowed;
                     job.component_queue_pos = 0;
 
-                    let Some(openai) = job.openai.clone() else {
+                    let Some(ai) = job.ai.clone() else {
                         fail_job(
                             &mut workshop,
                             &mut job,
-                            "Internal error: missing OpenAI config.",
+                            "Internal error: missing AI config.",
                         );
                         return;
                     };
@@ -1657,14 +1678,14 @@ pub(crate) fn gen3d_poll_ai_job(
                             job.planned_components[idx].name
                         ),
                     };
-                    let reasoning_effort = openai.model_reasoning_effort.clone();
+                    let reasoning_effort = ai.model_reasoning_effort().to_string();
                     spawn_gen3d_ai_text_thread(
                         shared,
                         progress,
                         job.cancel_flag.clone(),
                         job.session.clone(),
                         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-                        openai,
+                        ai,
                         reasoning_effort,
                         system,
                         user_text,
@@ -1705,7 +1726,7 @@ fn retry_gen3d_review_delta(
     }
     job.review_delta_repair_attempt += 1;
 
-    let Some(openai) = job.openai.clone() else {
+    let Some(ai) = job.ai.clone() else {
         return false;
     };
     let Some(run_dir) = job.pass_dir.clone() else {
@@ -1750,14 +1771,14 @@ fn retry_gen3d_review_delta(
         job.review_delta_repair_attempt
     );
     let images = job.last_review_inputs.clone();
-    let reasoning_effort = openai.model_reasoning_effort.clone();
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
-        openai,
+        ai,
         reasoning_effort,
         system,
         user_text,
@@ -1812,8 +1833,8 @@ fn retry_gen3d_plan(
         job.user_images.len()
     );
 
-    let Some(openai) = job.openai.clone() else {
-        fail_job(workshop, job, "Internal error: missing OpenAI config.");
+    let Some(ai) = job.ai.clone() else {
+        fail_job(workshop, job, "Internal error: missing AI config.");
         return true;
     };
     let Some(run_dir) = job.pass_dir.clone() else {
@@ -1833,14 +1854,14 @@ fn retry_gen3d_plan(
     let user_text =
         build_gen3d_plan_user_text(&job.user_prompt_raw, !job.user_images.is_empty(), speed);
     let prefix = format!("plan_retry{}", job.plan_attempt);
-    let reasoning_effort = openai.model_reasoning_effort.clone();
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::PlanV1),
-        openai,
+        ai,
         reasoning_effort,
         system,
         user_text,
@@ -2043,8 +2064,8 @@ fn poll_gen3d_parallel_components(
             continue;
         }
 
-        let Some(openai) = job.openai.clone() else {
-            fail_job(workshop, job, "Internal error: missing OpenAI config.");
+        let Some(ai) = job.ai.clone() else {
+            fail_job(workshop, job, "Internal error: missing AI config.");
             return;
         };
         let Some(run_dir) = job.pass_dir.clone() else {
@@ -2088,14 +2109,14 @@ fn poll_gen3d_parallel_components(
                 attempt
             )
         };
-        let reasoning_effort = openai.model_reasoning_effort.clone();
+        let reasoning_effort = ai.model_reasoning_effort().to_string();
         spawn_gen3d_ai_text_thread(
             shared.clone(),
             progress.clone(),
             job.cancel_flag.clone(),
             job.session.clone(),
             Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-            openai,
+            ai,
             reasoning_effort,
             system,
             user_text,
@@ -2304,8 +2325,8 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
         return;
     }
 
-    let Some(openai) = job.openai.clone() else {
-        fail_job(workshop, job, "Internal error: missing OpenAI config.");
+    let Some(ai) = job.ai.clone() else {
+        fail_job(workshop, job, "Internal error: missing AI config.");
         return;
     };
     let Some(run_dir) = job.pass_dir.clone() else {
@@ -2355,14 +2376,14 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
         next_idx + 1,
         job.planned_components[next_idx].name
     );
-    let reasoning_effort = openai.model_reasoning_effort.clone();
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-        openai,
+        ai,
         reasoning_effort,
         system,
         user_text,
@@ -2386,8 +2407,8 @@ fn try_start_gen3d_replan(
     }
     job.replan_attempts += 1;
 
-    let Some(openai) = job.openai.clone() else {
-        fail_job(workshop, job, "Internal error: missing OpenAI config.");
+    let Some(ai) = job.ai.clone() else {
+        fail_job(workshop, job, "Internal error: missing AI config.");
         return true;
     };
     let Some(run_dir) = job.run_dir.clone() else {
@@ -2442,9 +2463,10 @@ fn try_start_gen3d_replan(
 
     workshop.error = None;
     workshop.status = format!(
-        "Re-planning components…\nReason: {}\nModel: {}\nImages: {}",
+        "Re-planning components…\nReason: {}\nService: {}\nModel: {}\nImages: {}",
         reason,
-        openai.model,
+        ai.service_label(),
+        ai.model(),
         job.user_images.len()
     );
 
@@ -2471,14 +2493,14 @@ fn try_start_gen3d_replan(
         fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
         return true;
     };
-    let reasoning_effort = openai.model_reasoning_effort.clone();
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::PlanV1),
-        openai,
+        ai,
         reasoning_effort,
         system,
         user_text,
@@ -3853,7 +3875,7 @@ pub(super) fn spawn_gen3d_ai_text_thread(
     cancel: Option<Arc<AtomicBool>>,
     session: Gen3dAiSessionState,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
-    openai: crate::config::OpenAiConfig,
+    ai: Gen3dAiServiceConfig,
     reasoning_effort: String,
     system_instructions: String,
     user_text: String,
@@ -3861,7 +3883,9 @@ pub(super) fn spawn_gen3d_ai_text_thread(
     run_dir: PathBuf,
     prefix: String,
 ) {
-    let url = crate::config::join_base_url(&openai.base_url, "responses");
+    let service = ai.service_label();
+    let model = ai.model().to_string();
+    let base_url = ai.base_url().to_string();
     let run_dir_for_store = run_dir.clone();
     let prefix_for_store = prefix.clone();
     let thread_name = format!("gravimera_gen3d_ai_{prefix}");
@@ -3875,32 +3899,32 @@ pub(super) fn spawn_gen3d_ai_text_thread(
             append_gen3d_run_log(
                 Some(&run_dir),
                 format!(
-                    "request_thread_started prefix={} model={} images={} url={} reasoning_effort={} thread={:?}",
+                    "request_thread_started prefix={} service={} model={} images={} base_url={} reasoning_effort={} thread={:?}",
                     prefix,
-                    openai.model,
+                    service,
+                    model,
                     image_paths.len(),
-                    url,
+                    base_url,
                     reasoning_effort,
                     thread_id
                 ),
             );
             debug!(
-                "Gen3D: request started (prefix={}, model={}, images={}, url={}, cache_dir={}, thread={:?})",
+                "Gen3D: request started (prefix={}, service={}, model={}, images={}, base_url={}, cache_dir={}, thread={:?})",
                 prefix,
-                openai.model,
+                service,
+                model,
                 image_paths.len(),
-                url,
+                base_url,
                 run_dir.display(),
                 thread_id,
             );
-            let result = openai::generate_text_via_openai(
+            let result = generate_text_via_ai_service(
                 &progress,
                 session,
                 cancel,
                 expected_schema,
-                &openai.base_url,
-                &openai.api_key,
-                &openai.model,
+                &ai,
                 &reasoning_effort,
                 &system_instructions,
                 &user_text,
@@ -3908,21 +3932,21 @@ pub(super) fn spawn_gen3d_ai_text_thread(
                 Some(&run_dir),
                 &prefix,
             );
-            let openai_elapsed_ms = started_at.elapsed().as_millis();
+            let elapsed_ms = started_at.elapsed().as_millis();
             append_gen3d_run_log(
                 Some(&run_dir),
                 format!(
-                    "request_thread_openai_done prefix={} ok={} elapsed_ms={}",
+                    "request_thread_ai_done prefix={} ok={} elapsed_ms={}",
                     prefix,
                     result.is_ok(),
-                    openai_elapsed_ms
+                    elapsed_ms
                 ),
             );
             debug!(
-                "Gen3D: request thread OpenAI done (prefix={}, ok={}, elapsed_ms={}, thread={:?})",
+                "Gen3D: request thread AI done (prefix={}, ok={}, elapsed_ms={}, thread={:?})",
                 prefix,
                 result.is_ok(),
-                openai_elapsed_ms,
+                elapsed_ms,
                 thread_id,
             );
             result
@@ -3976,7 +4000,7 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
     plan_extracted_text: Option<String>,
     motion_summary_json: Option<serde_json::Value>,
 ) {
-    let Some(openai) = job.openai.clone() else {
+    let Some(ai) = job.ai.clone() else {
         return;
     };
 
@@ -4003,15 +4027,13 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
             motion_summary_json.as_ref(),
         );
 
-        let reasoning_effort = openai::cap_reasoning_effort(&openai.model_reasoning_effort, "low");
-        let resp = openai::generate_text_via_openai(
+        let reasoning_effort = openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+        let resp = generate_text_via_ai_service(
             &progress,
             session,
             None,
             Some(Gen3dAiJsonSchemaKind::DescriptorMetaV1),
-            &openai.base_url,
-            &openai.api_key,
-            &openai.model,
+            &ai,
             &reasoning_effort,
             &system,
             &user_text,

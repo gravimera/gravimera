@@ -191,11 +191,8 @@ pub(super) fn parse_agent_step(text: &str) -> Result<Gen3dAgentStepJsonV1, Strin
     Ok(step)
 }
 
-pub(super) fn is_transient_openai_error_message(err: &str) -> bool {
+pub(super) fn is_transient_ai_error_message(err: &str) -> bool {
     let lower = err.to_ascii_lowercase();
-    if !lower.contains("openai") {
-        return false;
-    }
     lower.contains("http 429")
         || lower.contains("http 408")
         || lower.contains("http 409")

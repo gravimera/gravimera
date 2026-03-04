@@ -141,7 +141,7 @@ pub(super) fn poll_agent_tool(
         workshop: &mut Gen3dWorkshop,
         call: &crate::gen3d::agent::Gen3dToolCallJsonV1,
         kind: super::Gen3dAgentLlmToolKind,
-        openai: crate::config::OpenAiConfig,
+        ai: super::ai_service::Gen3dAiServiceConfig,
         reasoning_effort_cap: &str,
         pass_dir: PathBuf,
         system: String,
@@ -208,10 +208,8 @@ pub(super) fn poll_agent_tool(
             ),
         );
 
-        let reasoning_effort = super::openai::cap_reasoning_effort(
-            &openai.model_reasoning_effort,
-            reasoning_effort_cap,
-        );
+        let reasoning_effort =
+            super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), reasoning_effort_cap);
         let expected_schema = match kind {
             super::Gen3dAgentLlmToolKind::GeneratePlan => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1)
@@ -236,7 +234,7 @@ pub(super) fn poll_agent_tool(
             job.cancel_flag.clone(),
             job.session.clone(),
             expected_schema,
-            openai,
+            ai,
             reasoning_effort,
             system,
             user_text,
@@ -363,8 +361,8 @@ pub(super) fn poll_agent_tool(
                                         }),
                                     )
                                 }
-                                Err(err) => match (job.openai.clone(), job.pass_dir.clone()) {
-                                    (Some(openai), Some(pass_dir)) => {
+                                Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                                    (Some(ai), Some(pass_dir)) => {
                                         let system =
                                             super::prompts::build_gen3d_plan_system_instructions();
                                         let prompt_override =
@@ -411,7 +409,7 @@ pub(super) fn poll_agent_tool(
                                             workshop,
                                             &call,
                                             kind,
-                                            openai,
+                                            ai,
                                             &config.gen3d_reasoning_effort_repair,
                                             pass_dir,
                                             system,
@@ -437,8 +435,8 @@ pub(super) fn poll_agent_tool(
                                 },
                             }
                         }
-                        Err(err) => match (job.openai.clone(), job.pass_dir.clone()) {
-                            (Some(openai), Some(pass_dir)) => {
+                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                            (Some(ai), Some(pass_dir)) => {
                                 let system = super::prompts::build_gen3d_plan_system_instructions();
                                 let prompt_override =
                                     call.args.get("prompt").and_then(|v| v.as_str());
@@ -481,7 +479,7 @@ pub(super) fn poll_agent_tool(
                                     workshop,
                                     &call,
                                     kind,
-                                    openai,
+                                    ai,
                                     &config.gen3d_reasoning_effort_repair,
                                     pass_dir,
                                     system,
@@ -584,8 +582,8 @@ pub(super) fn poll_agent_tool(
                                     }),
                                 )
                             }
-                            Err(err) => match (job.openai.clone(), job.pass_dir.clone()) {
-                                (Some(openai), Some(pass_dir)) => {
+                            Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                                (Some(ai), Some(pass_dir)) => {
                                     let system =
                                         super::prompts::build_gen3d_component_system_instructions();
                                     let user_text = super::prompts::build_gen3d_component_user_text(
@@ -601,7 +599,7 @@ pub(super) fn poll_agent_tool(
                                         workshop,
                                         &call,
                                         kind,
-                                        openai,
+                                        ai,
                                         &config.gen3d_reasoning_effort_repair,
                                         pass_dir,
                                         system,
@@ -630,8 +628,8 @@ pub(super) fn poll_agent_tool(
                                 ),
                             },
                         },
-                        Err(err) => match (job.openai.clone(), job.pass_dir.clone()) {
-                            (Some(openai), Some(pass_dir)) => {
+                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                            (Some(ai), Some(pass_dir)) => {
                                 let system =
                                     super::prompts::build_gen3d_component_system_instructions();
                                 let user_text = super::prompts::build_gen3d_component_user_text(
@@ -647,7 +645,7 @@ pub(super) fn poll_agent_tool(
                                     workshop,
                                     &call,
                                     kind,
-                                    openai,
+                                    ai,
                                     &config.gen3d_reasoning_effort_repair,
                                     pass_dir,
                                     system,
@@ -828,8 +826,8 @@ pub(super) fn poll_agent_tool(
                                 )
                             }
                         }
-                        Err(err) => match (job.openai.clone(), job.pass_dir.clone()) {
-                            (Some(openai), Some(pass_dir)) => {
+                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                            (Some(ai), Some(pass_dir)) => {
                                 let system = super::prompts::build_gen3d_motion_roles_system_instructions();
                                 let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
                                 let user_text = super::prompts::build_gen3d_motion_roles_user_text(
@@ -846,7 +844,7 @@ pub(super) fn poll_agent_tool(
                                     workshop,
                                     &call,
                                     kind,
-                                    openai,
+                                    ai,
                                     &config.gen3d_reasoning_effort_repair,
                                     pass_dir,
                                     system,
@@ -981,7 +979,7 @@ pub(super) fn poll_agent_tool(
                                     super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips
                                 )
                             {
-                                
+
                                 let mut name_to_idx: std::collections::HashMap<String, usize> =
                                     std::collections::HashMap::new();
                                 for (idx, c) in job.planned_components.iter().enumerate() {
@@ -1245,8 +1243,8 @@ pub(super) fn poll_agent_tool(
                                 )
                             }
                         }
-                        Err(err) => match (job.openai.clone(), job.pass_dir.clone()) {
-	                            (Some(openai), Some(pass_dir)) => {
+                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+	                            (Some(ai), Some(pass_dir)) => {
 	                                let system = super::prompts::build_gen3d_motion_authoring_system_instructions();
 	                                let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
 	                                let roles = job.motion_roles_for_current_draft();
@@ -1292,7 +1290,7 @@ pub(super) fn poll_agent_tool(
                                     workshop,
                                     &call,
                                     kind,
-                                    openai,
+                                    ai,
                                     &config.gen3d_reasoning_effort_repair,
                                     pass_dir,
                                     system,
@@ -1421,11 +1419,9 @@ pub(super) fn poll_agent_tool(
 
                                     if non_actionable_regen_only {
                                         let visual_qa_required = job
-                                            .openai
+                                            .ai
                                             .as_ref()
-                                            .map(|openai| {
-                                                !openai.base_url.starts_with("mock://gen3d")
-                                            })
+                                            .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
                                             .unwrap_or(true);
                                         let qa_ok = job.agent.ever_validated
                                             && job.agent.ever_smoke_checked
@@ -1475,8 +1471,8 @@ pub(super) fn poll_agent_tool(
                                             &extracted_feedback,
                                         );
                                     }
-                                    match (job.openai.clone(), job.pass_dir.clone()) {
-                                        (Some(openai), Some(pass_dir)) => {
+                                    match (job.ai.clone(), job.pass_dir.clone()) {
+                                        (Some(ai), Some(pass_dir)) => {
                                             let run_id = job
                                                 .run_id
                                                 .map(|id| id.to_string())
@@ -1562,7 +1558,7 @@ pub(super) fn poll_agent_tool(
                                                 workshop,
                                                 &call,
                                                 kind,
-                                                openai,
+                                                ai,
                                                 &config.gen3d_reasoning_effort_repair,
                                                 pass_dir,
                                                 system,
@@ -1589,8 +1585,8 @@ pub(super) fn poll_agent_tool(
                                 }
                             }
                         }
-                        Err(err) => match (job.openai.clone(), job.pass_dir.clone()) {
-                            (Some(openai), Some(pass_dir)) => {
+                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                            (Some(ai), Some(pass_dir)) => {
                                 let run_id =
                                     job.run_id.map(|id| id.to_string()).unwrap_or_default();
                                 let scene_graph_summary = super::build_gen3d_scene_graph_summary(
@@ -1664,7 +1660,7 @@ pub(super) fn poll_agent_tool(
                                     workshop,
                                     &call,
                                     kind,
-                                    openai,
+                                    ai,
                                     &config.gen3d_reasoning_effort_repair,
                                     pass_dir,
                                     system,

@@ -1,6 +1,6 @@
 # Gen3D Workshop (MVP)
 
-Gen3D is an in-game “workshop” mode that drafts a 3D object from **0–6 photos and/or a text prompt** using an OpenAI vision-capable model. The draft is built from a small set of **atom primitives** (cuboid/sphere/cylinder/cone) and assembled as a **combined object** via data-driven composition.
+Gen3D is an in-game “workshop” mode that drafts a 3D object from **0–6 photos and/or a text prompt** using an AI vision-capable model (OpenAI-compatible or Gemini). The draft is built from a small set of **atom primitives** (cuboid/sphere/cylinder/cone) and assembled as a **combined object** via data-driven composition.
 
 This file describes the **current implementation** in this repo.
 
@@ -165,7 +165,7 @@ Per-step (under `attempt_0/pass_*/`):
 
 ---
 
-## `config.toml` (OpenAI + Gen3D + Logging)
+## `config.toml` (AI + Gen3D + Logging)
 
 Start by copying `config.example.toml` to `~/.gravimera/config.toml` (the real `config.toml` is gitignored so secrets don’t get committed).
 
@@ -186,6 +186,11 @@ Gen3D budgets / guard:
 - `[gen3d].review_appearance` controls whether the AI reviews visual appearance from preview renders (default: `false` / structural-only).
 - `[gen3d].max_seconds` / `[gen3d].max_tokens` cap a Build run (set to `0` to disable a budget).
 - `[gen3d].no_progress_max_steps` stops best-effort if the agent produces no progress for N steps (set to `0` to disable).
+
+Gen3D AI provider:
+
+- `[gen3d].ai_service = "openai"` (default) uses `[openai]` config (`OPENAI_API_KEY` can be provided via env).
+- `[gen3d].ai_service = "gemini"` uses `[gemini]` config (`X_GOOG_API_KEY` can be provided via env).
 
 ---
 

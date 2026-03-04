@@ -17,7 +17,7 @@ use super::super::state::{
 };
 use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::agent_loop::spawn_agent_step_request;
-use super::agent_parsing::{is_transient_openai_error_message, parse_agent_step};
+use super::agent_parsing::{is_transient_ai_error_message, parse_agent_step};
 use super::agent_tool_dispatch::execute_tool_call;
 use super::agent_utils::{
     compute_agent_state_hash, note_observable_tool_result, truncate_json_for_log,
@@ -144,13 +144,13 @@ pub(super) fn poll_agent_step(
             }
         }
         Err(err) => {
-            if is_transient_openai_error_message(&err) {
+            if is_transient_ai_error_message(&err) {
                 job.agent.step_request_retry_attempt =
                     job.agent.step_request_retry_attempt.saturating_add(1);
                 let attempt = job.agent.step_request_retry_attempt;
                 if attempt <= GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES {
                     workshop.status = format!(
-                        "OpenAI request failed (attempt {attempt}/{GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES}); retrying…"
+                        "AI request failed (attempt {attempt}/{GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES}); retrying…"
                     );
                     workshop.error = Some(err.clone());
                     append_gen3d_run_log(
@@ -178,7 +178,7 @@ pub(super) fn poll_agent_step(
                         workshop,
                         job,
                         format!(
-                            "OpenAI transient failure after {attempt} retry attempt(s). Last error: {}",
+                            "AI transient failure after {attempt} retry attempt(s). Last error: {}",
                             super::truncate_for_ui(&err, 600)
                         ),
                     );
@@ -237,9 +237,9 @@ pub(super) fn execute_agent_actions(
             let max_steps = config.gen3d_no_progress_max_steps;
             if max_steps > 0 && job.agent.no_progress_steps >= max_steps {
                 let visual_qa_required = job
-                    .openai
+                    .ai
                     .as_ref()
-                    .map(|openai| !openai.base_url.starts_with("mock://gen3d"))
+                    .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
                     .unwrap_or(true);
                 let qa_ok = job.agent.ever_validated
                     && job.agent.ever_smoke_checked
@@ -338,9 +338,9 @@ pub(super) fn execute_agent_actions(
                     continue;
                 }
                 let llm_available = job
-                    .openai
+                    .ai
                     .as_ref()
-                    .map(|openai| !openai.base_url.starts_with("mock://gen3d"))
+                    .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
                     .unwrap_or(true);
                 let appearance_review_enabled = llm_available && job.review_appearance;
 

@@ -8,10 +8,9 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
     TOOL_ID_LIST, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_MOTION_ROLES,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
-    TOOL_ID_VALIDATE,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
+    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SET_ACTIVE_WORKSPACE,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -733,11 +732,11 @@ pub(super) fn execute_tool_call(
             ))
         }
         TOOL_ID_LLM_GENERATE_PLAN => {
-            let Some(openai) = job.openai.clone() else {
+            let Some(ai) = job.ai.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing OpenAI config".into(),
+                    "Missing AI config".into(),
                 ));
             };
             let Some(pass_dir) = job.pass_dir.clone() else {
@@ -791,7 +790,7 @@ pub(super) fn execute_tool_call(
                 &required_component_names,
             );
             let reasoning_effort = super::openai::cap_reasoning_effort(
-                &openai.model_reasoning_effort,
+                ai.model_reasoning_effort(),
                 &config.gen3d_reasoning_effort_plan,
             );
             spawn_gen3d_ai_text_thread(
@@ -800,7 +799,7 @@ pub(super) fn execute_tool_call(
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1),
-                openai,
+                ai,
                 reasoning_effort,
                 system,
                 user_text,
@@ -904,11 +903,11 @@ pub(super) fn execute_tool_call(
                 ));
             }
 
-            let Some(openai) = job.openai.clone() else {
+            let Some(ai) = job.ai.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing OpenAI config".into(),
+                    "Missing AI config".into(),
                 ));
             };
             let Some(pass_dir) = job.pass_dir.clone() else {
@@ -937,7 +936,7 @@ pub(super) fn execute_tool_call(
             );
             job.agent.pending_llm_repair_attempt = 0;
             let reasoning_effort = super::openai::cap_reasoning_effort(
-                &openai.model_reasoning_effort,
+                ai.model_reasoning_effort(),
                 &config.gen3d_reasoning_effort_component,
             );
             spawn_gen3d_ai_text_thread(
@@ -946,7 +945,7 @@ pub(super) fn execute_tool_call(
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1),
-                openai,
+                ai,
                 reasoning_effort,
                 system,
                 user_text,
@@ -961,11 +960,11 @@ pub(super) fn execute_tool_call(
             ToolCallOutcome::StartedAsync
         }
         TOOL_ID_LLM_GENERATE_COMPONENTS => {
-            let Some(_openai) = job.openai.clone() else {
+            let Some(_ai) = job.ai.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing OpenAI config".into(),
+                    "Missing AI config".into(),
                 ));
             };
             let Some(_pass_dir) = job.pass_dir.clone() else {
@@ -1198,11 +1197,11 @@ pub(super) fn execute_tool_call(
                     "No planned components yet. Generate a plan first.".into(),
                 ));
             }
-            let Some(openai) = job.openai.clone() else {
+            let Some(ai) = job.ai.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing OpenAI config".into(),
+                    "Missing AI config".into(),
                 ));
             };
             let Some(pass_dir) = job.pass_dir.clone() else {
@@ -1234,14 +1233,14 @@ pub(super) fn execute_tool_call(
                 &job.planned_components,
             );
             let reasoning_effort =
-                super::openai::cap_reasoning_effort(&openai.model_reasoning_effort, "low");
+                super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionRolesV1),
-                openai,
+                ai,
                 reasoning_effort,
                 system,
                 user_text,
@@ -1263,11 +1262,11 @@ pub(super) fn execute_tool_call(
                     "No planned components yet. Generate a plan first.".into(),
                 ));
             }
-            let Some(openai) = job.openai.clone() else {
+            let Some(ai) = job.ai.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing OpenAI config".into(),
+                    "Missing AI config".into(),
                 ));
             };
             let Some(pass_dir) = job.pass_dir.clone() else {
@@ -1329,14 +1328,14 @@ pub(super) fn execute_tool_call(
                 draft,
             );
             let reasoning_effort =
-                super::openai::cap_reasoning_effort(&openai.model_reasoning_effort, "medium");
+                super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "medium");
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1),
-                openai,
+                ai,
                 reasoning_effort,
                 system,
                 user_text,
@@ -1519,11 +1518,11 @@ pub(super) fn execute_tool_call(
             }
         }
         TOOL_ID_LLM_REVIEW_DELTA => {
-            if job.openai.is_none() {
+            if job.ai.is_none() {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing OpenAI config".into(),
+                    "Missing AI config".into(),
                 ));
             };
             let Some(pass_dir) = job.pass_dir.clone() else {

@@ -24,8 +24,8 @@ pub(super) fn start_agent_llm_review_delta_call(
     call: Gen3dToolCallJsonV1,
 ) -> Result<(), String> {
     let review_appearance = job.review_appearance;
-    let Some(openai) = job.openai.clone() else {
-        return Err("Missing OpenAI config".into());
+    let Some(ai) = job.ai.clone() else {
+        return Err("Missing AI config".into());
     };
     let Some(pass_dir) = job.pass_dir.clone() else {
         return Err("Missing pass dir".into());
@@ -113,7 +113,7 @@ pub(super) fn start_agent_llm_review_delta_call(
     job.agent.pending_llm_repair_attempt = 0;
 
     let reasoning_effort = super::openai::cap_reasoning_effort(
-        &openai.model_reasoning_effort,
+        ai.model_reasoning_effort(),
         &config.gen3d_reasoning_effort_review,
     );
     spawn_gen3d_ai_text_thread(
@@ -122,7 +122,7 @@ pub(super) fn start_agent_llm_review_delta_call(
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1),
-        openai,
+        ai,
         reasoning_effort,
         system,
         user_text,

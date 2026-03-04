@@ -269,8 +269,8 @@ pub(super) fn poll_agent_component_batch(
             continue;
         }
 
-        let Some(openai) = job.openai.clone() else {
-            fail_job(workshop, job, "Internal error: missing OpenAI config.");
+        let Some(ai) = job.ai.clone() else {
+            fail_job(workshop, job, "Internal error: missing AI config.");
             return None;
         };
         let Some(pass_dir) = job.pass_dir.clone() else {
@@ -320,7 +320,7 @@ pub(super) fn poll_agent_component_batch(
         };
 
         let reasoning_effort = super::openai::cap_reasoning_effort(
-            &openai.model_reasoning_effort,
+            ai.model_reasoning_effort(),
             &config.gen3d_reasoning_effort_component,
         );
         spawn_gen3d_ai_text_thread(
@@ -329,7 +329,7 @@ pub(super) fn poll_agent_component_batch(
             job.cancel_flag.clone(),
             job.session.clone(),
             Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1),
-            openai,
+            ai,
             reasoning_effort,
             system,
             user_text,

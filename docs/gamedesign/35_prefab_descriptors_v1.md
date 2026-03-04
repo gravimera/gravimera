@@ -319,4 +319,4 @@ Gen3D writes descriptor files for saved models. In addition to filling standard 
 - Populate `interfaces.extra.motion_roles_v1` with a semantic mapping of motion effectors (legs/wheels/arms/etc) when available (typically via `llm_generate_motion_roles_v1`).
 - Populate `interfaces.extra.motion_rig_v1` when the model declares explicit rig edges for runtime motion algorithms (walk/wheels, etc.).
 - Populate `extra.facts` with a structured set of derived facts (size, mobility/attack presence, grounding, etc.).
-- Populate `text.short` and `tags` via a best-effort AI call (when OpenAI config is available). Tools should treat these as suggestions and preserve human edits.
+- Populate `text.short` and `tags` via a best-effort AI call (when AI config is available). Tools should treat these as suggestions and preserve human edits.

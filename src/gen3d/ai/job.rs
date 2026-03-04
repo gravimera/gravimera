@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::object::registry::PartAnimationSlot;
 use crate::threaded_result::SharedResult;
 
+use super::ai_service::Gen3dAiServiceConfig;
 use super::reuse_groups;
 use super::schema::*;
 
@@ -419,7 +420,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) build_complete: bool,
     pub(super) mode: Gen3dAiMode,
     pub(super) phase: Gen3dAiPhase,
-    pub(super) openai: Option<crate::config::OpenAiConfig>,
+    pub(super) ai: Option<Gen3dAiServiceConfig>,
     pub(super) run_id: Option<Uuid>,
     pub(super) attempt: u32,
     pub(super) pass: u32,
@@ -831,6 +832,7 @@ impl Gen3dAiJob {
 pub(super) enum Gen3dAiApi {
     Responses,
     ChatCompletions,
+    GeminiStreamGenerateContent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

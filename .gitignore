@@ -9,3 +9,7 @@ cases
 game_test/
 test
 tests
+
+!tests/
+!tests/gen3d/
+!tests/gen3d/config_gemini.toml

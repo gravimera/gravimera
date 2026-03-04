@@ -7,9 +7,11 @@ const CONFIG_OVERRIDE_ENV: &str = "GRAVIMERA_CONFIG";
 #[derive(Resource, Clone, Debug)]
 pub(crate) struct AppConfig {
     pub(crate) openai: Option<OpenAiConfig>,
+    pub(crate) gemini: Option<GeminiConfig>,
     pub(crate) log_path: Option<PathBuf>,
     pub(crate) scene_dat_path: Option<PathBuf>,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
+    pub(crate) gen3d_ai_service: Gen3dAiService,
     pub(crate) intelligence_service_enabled: bool,
     pub(crate) intelligence_service_mode: IntelligenceServiceMode,
     pub(crate) intelligence_service_addr: Option<String>,
@@ -57,9 +59,11 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             openai: None,
+            gemini: None,
             log_path: None,
             scene_dat_path: None,
             gen3d_cache_dir: None,
+            gen3d_ai_service: Gen3dAiService::OpenAi,
             intelligence_service_enabled: false,
             intelligence_service_mode: IntelligenceServiceMode::Embedded,
             intelligence_service_addr: None,
@@ -97,6 +101,20 @@ pub(crate) struct OpenAiConfig {
     pub(crate) model: String,
     pub(crate) model_reasoning_effort: String,
     pub(crate) api_key: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GeminiConfig {
+    pub(crate) base_url: String,
+    pub(crate) model: String,
+    pub(crate) api_key: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Gen3dAiService {
+    #[default]
+    OpenAi,
+    Gemini,
 }
 
 pub(crate) fn default_config_path() -> PathBuf {
@@ -174,6 +192,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_log_path_into_config(out, text);
     parse_scene_dat_path_into_config(out, text);
     parse_gen3d_cache_dir_into_config(out, text);
+    parse_gen3d_ai_service_into_config(out, text);
     parse_intelligence_service_enabled_into_config(out, text);
     parse_intelligence_service_mode_into_config(out, text);
     parse_intelligence_service_addr_into_config(out, text);
@@ -200,9 +219,20 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_gen3d_reasoning_effort_review_into_config(out, text);
     parse_gen3d_reasoning_effort_repair_into_config(out, text);
     populate_openai_config(out, text);
+    populate_gemini_config(out, text);
 }
 
 fn populate_openai_config(out: &mut AppConfig, text: &str) {
+    if !config_has_section(text, "openai") {
+        if matches!(out.gen3d_ai_service, Gen3dAiService::OpenAi) {
+            out.errors.push(
+                "config.toml: missing [openai] section (required when [gen3d].ai_service = \"openai\")"
+                    .into(),
+            );
+        }
+        return;
+    }
+
     match parse_openai_config(text) {
         Ok(mut cfg) => {
             // Allow env override for convenience (keeps secrets out of files if desired).
@@ -219,6 +249,50 @@ fn populate_openai_config(out: &mut AppConfig, text: &str) {
                 out.openai = Some(cfg);
             }
         }
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn populate_gemini_config(out: &mut AppConfig, text: &str) {
+    if !config_has_section(text, "gemini") {
+        if matches!(out.gen3d_ai_service, Gen3dAiService::Gemini) {
+            out.errors.push(
+                "config.toml: missing [gemini] section (required when [gen3d].ai_service = \"gemini\")"
+                    .into(),
+            );
+        }
+        return;
+    }
+
+    match parse_gemini_config(text) {
+        Ok(mut cfg) => {
+            // Allow env override for convenience (keeps secrets out of files if desired).
+            if cfg.api_key.trim().is_empty() {
+                if let Ok(key) = std::env::var("X_GOOG_API_KEY") {
+                    cfg.api_key = key;
+                }
+            }
+            if cfg.api_key.trim().is_empty() {
+                if let Ok(key) = std::env::var("GEMINI_API_KEY") {
+                    cfg.api_key = key;
+                }
+            }
+            if cfg.api_key.trim().is_empty() {
+                out.errors.push(
+                    "config.toml: missing `gemini.X_GOOG_API_KEY` (or env `X_GOOG_API_KEY` / `GEMINI_API_KEY`)".into(),
+                );
+            } else {
+                out.gemini = Some(cfg);
+            }
+        }
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_gen3d_ai_service_into_config(out: &mut AppConfig, text: &str) {
+    match parse_gen3d_ai_service(text) {
+        Ok(Some(value)) => out.gen3d_ai_service = value,
+        Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
 }
@@ -657,6 +731,72 @@ fn parse_gen3d_cache_dir(text: &str) -> Result<Option<PathBuf>, String> {
     Ok(out)
 }
 
+fn parse_gen3d_ai_service(text: &str) -> Result<Option<Gen3dAiService>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<Gen3dAiService> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "ai_service" && key != "gen3d_ai_service" {
+            continue;
+        }
+
+        // Accept at top-level, or under `[gen3d]` / `[app]` for convenience.
+        if let Some(sec) = section.as_deref() {
+            if sec != "gen3d" && sec != "app" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let parsed = parse_toml_string(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a quoted string value for `gen3d.ai_service` (example: [gen3d]\\nai_service = \"openai\")"
+            )
+        })?;
+        let parsed = parsed.trim().to_ascii_lowercase();
+        if parsed.is_empty() {
+            out = None;
+            continue;
+        }
+
+        out = Some(match parsed.as_str() {
+            "openai" => Gen3dAiService::OpenAi,
+            "gemini" => Gen3dAiService::Gemini,
+            other => {
+                return Err(format!(
+                    "config.toml:{line_no}: unsupported `gen3d.ai_service` value {other:?} (expected \"openai\" or \"gemini\")"
+                ));
+            }
+        });
+    }
+
+    Ok(out)
+}
+
 fn parse_automation_enabled(text: &str) -> Result<Option<bool>, String> {
     let mut section: Option<String> = None;
     let mut out: Option<bool> = None;
@@ -744,7 +884,9 @@ fn parse_intelligence_service_enabled(text: &str) -> Result<Option<bool>, String
         }
 
         if let Some(sec) = section.as_deref() {
-            if sec != "intelligence_service" && sec != "app" && key == "intelligence_service_enabled"
+            if sec != "intelligence_service"
+                && sec != "app"
+                && key == "intelligence_service_enabled"
             {
                 continue;
             }
@@ -801,8 +943,7 @@ fn parse_intelligence_service_mode(text: &str) -> Result<Option<IntelligenceServ
         }
 
         if let Some(sec) = section.as_deref() {
-            if sec != "intelligence_service" && sec != "app" && key == "intelligence_service_mode"
-            {
+            if sec != "intelligence_service" && sec != "app" && key == "intelligence_service_mode" {
                 continue;
             }
             if sec != "intelligence_service" && key == "mode" {
@@ -880,8 +1021,7 @@ fn parse_intelligence_service_addr(text: &str) -> Result<Option<String>, String>
         }
 
         if let Some(sec) = section.as_deref() {
-            if sec != "intelligence_service" && sec != "app" && key == "intelligence_service_addr"
-            {
+            if sec != "intelligence_service" && sec != "app" && key == "intelligence_service_addr" {
                 continue;
             }
             if sec != "intelligence_service" && key == "addr" {
@@ -2136,6 +2276,26 @@ fn expand_tilde_path(value: &str) -> PathBuf {
     crate::paths::expand_tilde_path(value)
 }
 
+fn config_has_section(text: &str, target: &str) -> bool {
+    let target = target.trim();
+    if target.is_empty() {
+        return false;
+    }
+
+    for raw_line in text.lines() {
+        let line = strip_comment(raw_line).trim();
+        if !(line.starts_with('[') && line.ends_with(']')) {
+            continue;
+        }
+        let section = line.trim_matches(&['[', ']'][..]).trim();
+        if section == target {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn parse_openai_config(text: &str) -> Result<OpenAiConfig, String> {
     let mut in_openai = false;
     let mut base_url = None::<String>;
@@ -2191,12 +2351,64 @@ fn parse_openai_config(text: &str) -> Result<OpenAiConfig, String> {
     })
 }
 
+fn parse_gemini_config(text: &str) -> Result<GeminiConfig, String> {
+    let mut in_gemini = false;
+    let mut base_url = None::<String>;
+    let mut model = None::<String>;
+    let mut api_key = None::<String>;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let section = line.trim_matches(&['[', ']'][..]).trim();
+            in_gemini = section == "gemini";
+            continue;
+        }
+        if !in_gemini {
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        let value = parse_toml_string(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a quoted string value for key `{key}` (example: {key} = \"...\")"
+            )
+        })?;
+
+        match key {
+            "base_url" => base_url = Some(value),
+            "model" => model = Some(value),
+            "X_GOOG_API_KEY" | "x_goog_api_key" | "GEMINI_API_KEY" => api_key = Some(value),
+            _ => {}
+        }
+    }
+
+    let base_url = base_url.unwrap_or_else(|| "https://right.codes/gemini/v1beta".into());
+    let model = model.ok_or_else(|| "config.toml: missing `gemini.model`".to_string())?;
+    let api_key = api_key.unwrap_or_default();
+
+    Ok(GeminiConfig {
+        base_url,
+        model,
+        api_key,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_gen3d_review_appearance;
     use super::parse_gen3d_save_pass_screenshots;
     use super::{
-        parse_config_text_into, parse_intelligence_service_mode, AppConfig, IntelligenceServiceMode,
+        parse_config_text_into, parse_intelligence_service_mode, AppConfig, Gen3dAiService,
+        IntelligenceServiceMode,
     };
 
     #[test]
@@ -2234,6 +2446,30 @@ mod tests {
         gen3d_review_appearance = false
         "#;
         assert_eq!(parse_gen3d_review_appearance(text).unwrap(), Some(false));
+    }
+
+    #[test]
+    fn parses_gen3d_ai_service_and_gemini_config() {
+        let text = r#"
+        [gen3d]
+        ai_service = "gemini"
+
+        [gemini]
+        base_url = "mock://gen3d"
+        model = "mock"
+        X_GOOG_API_KEY = "mock"
+        "#;
+
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert_eq!(cfg.gen3d_ai_service, Gen3dAiService::Gemini);
+        assert!(cfg.gemini.is_some());
+        assert!(cfg.openai.is_none());
+        assert!(
+            cfg.errors.is_empty(),
+            "unexpected config errors: {:?}",
+            cfg.errors
+        );
     }
 
     #[test]
@@ -2280,7 +2516,10 @@ mod tests {
         mode = "wat"
         "#;
         let err = parse_intelligence_service_mode(text).unwrap_err();
-        assert!(err.contains("invalid `intelligence_service.mode` value"), "err={err}");
+        assert!(
+            err.contains("invalid `intelligence_service.mode` value"),
+            "err={err}"
+        );
     }
 
     #[test]
@@ -2304,7 +2543,10 @@ mod tests {
         let mut cfg = AppConfig::default();
         parse_config_text_into(&mut cfg, text);
         assert!(cfg.intelligence_service_enabled);
-        assert_eq!(cfg.intelligence_service_mode, IntelligenceServiceMode::Sidecar);
+        assert_eq!(
+            cfg.intelligence_service_mode,
+            IntelligenceServiceMode::Sidecar
+        );
     }
 }
 

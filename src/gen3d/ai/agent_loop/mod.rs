@@ -123,8 +123,8 @@ pub(super) fn spawn_agent_step_request(
     job: &mut Gen3dAiJob,
     pass_dir: PathBuf,
 ) -> Result<(), String> {
-    let Some(openai) = job.openai.clone() else {
-        return Err("Internal error: missing OpenAI config.".into());
+    let Some(ai) = job.ai.clone() else {
+        return Err("Internal error: missing AI config.".into());
     };
 
     let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
@@ -179,7 +179,7 @@ pub(super) fn spawn_agent_step_request(
     );
 
     let reasoning_effort = super::openai::cap_reasoning_effort(
-        &openai.model_reasoning_effort,
+        ai.model_reasoning_effort(),
         &config.gen3d_reasoning_effort_agent_step,
     );
     spawn_gen3d_ai_text_thread(
@@ -188,7 +188,7 @@ pub(super) fn spawn_agent_step_request(
         job.cancel_flag.clone(),
         job.session.clone(),
         None,
-        openai,
+        ai,
         reasoning_effort,
         system,
         user_text,
@@ -204,6 +204,7 @@ pub(super) fn spawn_agent_step_request(
 mod tests {
     use super::*;
     use crate::config::{AppConfig, OpenAiConfig};
+    use crate::gen3d::ai::ai_service::Gen3dAiServiceConfig;
     use crate::gen3d::state::{Gen3dDraft, Gen3dPreview, Gen3dSpeedMode, Gen3dWorkshop};
     use crate::gen3d::tool_feedback::Gen3dToolFeedbackHistory;
     use uuid::Uuid;
@@ -571,7 +572,7 @@ mod tests {
         };
 
         let mut config = AppConfig {
-            openai: Some(openai),
+            openai: Some(openai.clone()),
             ..Default::default()
         };
         // Keep budgets unlimited for the test, but bound execution time in the loop below.
@@ -587,7 +588,7 @@ mod tests {
         job.build_complete = false;
         job.mode = super::super::Gen3dAiMode::Agent;
         job.phase = super::super::Gen3dAiPhase::AgentWaitingStep;
-        job.openai = config.openai.clone();
+        job.ai = Some(Gen3dAiServiceConfig::OpenAi(openai));
         job.run_id = Some(run_id);
         job.attempt = 0;
         job.pass = 0;

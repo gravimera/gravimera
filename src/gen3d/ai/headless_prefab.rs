@@ -10,8 +10,8 @@ use crate::config::AppConfig;
 use crate::gen3d::state::{Gen3dDraft, Gen3dSpeedMode};
 use crate::object::registry::{ObjectDef, ObjectPartDef, ObjectPartKind};
 
+use super::ai_service::{generate_text_via_ai_service, Gen3dAiServiceConfig};
 use super::convert;
-use super::openai;
 use super::parse;
 use super::prompts;
 use super::schema::{AiDraftJsonV1, AiPlanJsonV1};
@@ -34,8 +34,25 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
         return Err("Gen3D headless: empty prompt".into());
     }
 
-    let Some(openai_cfg) = config.openai.as_ref() else {
-        return Err("OpenAI is not configured (missing [openai] in config.toml).".into());
+    let llm = match config.gen3d_ai_service {
+        crate::config::Gen3dAiService::OpenAi => config
+            .openai
+            .as_ref()
+            .cloned()
+            .map(Gen3dAiServiceConfig::OpenAi)
+            .ok_or_else(|| {
+                "Gen3D headless: OpenAI is not configured (missing [openai] in config.toml)."
+                    .to_string()
+            })?,
+        crate::config::Gen3dAiService::Gemini => config
+            .gemini
+            .as_ref()
+            .cloned()
+            .map(Gen3dAiServiceConfig::Gemini)
+            .ok_or_else(|| {
+                "Gen3D headless: Gemini is not configured (missing [gemini] in config.toml)."
+                    .to_string()
+            })?,
     };
 
     std::fs::create_dir_all(run_dir)
@@ -52,7 +69,7 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
         config,
         &progress,
         &mut session,
-        openai_cfg,
+        &llm,
         prompt,
         has_images,
         speed,
@@ -84,11 +101,11 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
     };
 
     for (idx, planned) in planned_components.iter().enumerate() {
-        let ai = gen3d_component_draft_via_openai(
+        let draft_json = gen3d_component_draft_via_openai(
             config,
             &progress,
             &mut session,
-            openai_cfg,
+            &llm,
             prompt,
             has_images,
             speed,
@@ -99,7 +116,7 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
             run_dir,
         )?;
 
-        let mut def = convert::ai_to_component_def(planned, ai, Some(run_dir))?;
+        let mut def = convert::ai_to_component_def(planned, draft_json, Some(run_dir))?;
         if let Some(mut refs) = child_ref_parts.remove(&def.object_id) {
             def.parts.append(&mut refs);
         }
@@ -123,7 +140,7 @@ fn gen3d_plan_via_openai(
     config: &AppConfig,
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
-    openai_cfg: &crate::config::OpenAiConfig,
+    ai: &Gen3dAiServiceConfig,
     prompt: &str,
     has_images: bool,
     speed: Gen3dSpeedMode,
@@ -133,14 +150,12 @@ fn gen3d_plan_via_openai(
     let system = prompts::build_gen3d_plan_system_instructions();
     let user = prompts::build_gen3d_plan_user_text(prompt, has_images, speed);
 
-    let resp = openai::generate_text_via_openai(
+    let resp = generate_text_via_ai_service(
         progress,
         session.clone(),
         None,
         Some(Gen3dAiJsonSchemaKind::PlanV1),
-        &openai_cfg.base_url,
-        &openai_cfg.api_key,
-        &openai_cfg.model,
+        ai,
         config.gen3d_reasoning_effort_plan.trim(),
         &system,
         &user,
@@ -157,7 +172,7 @@ fn gen3d_component_draft_via_openai(
     config: &AppConfig,
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
-    openai_cfg: &crate::config::OpenAiConfig,
+    ai: &Gen3dAiServiceConfig,
     prompt: &str,
     has_images: bool,
     speed: Gen3dSpeedMode,
@@ -187,14 +202,12 @@ fn gen3d_component_draft_via_openai(
         sanitize_artifact_key(component)
     );
 
-    let resp = openai::generate_text_via_openai(
+    let resp = generate_text_via_ai_service(
         progress,
         session.clone(),
         None,
         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-        &openai_cfg.base_url,
-        &openai_cfg.api_key,
-        &openai_cfg.model,
+        ai,
         config.gen3d_reasoning_effort_component.trim(),
         &system,
         &user,

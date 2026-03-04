@@ -56,7 +56,7 @@ cargo run -- --headless --headless-seconds 10
 
 By default Gravimera stores runtime data under `~/.gravimera/`:
 
-- `~/.gravimera/config.toml` (settings, OpenAI)
+- `~/.gravimera/config.toml` (settings, OpenAI/Gemini)
 - `~/.gravimera/openai_capabilities_cache.json` (cached OpenAI-compatible endpoint capabilities, keyed by `base_url` + `model`)
 - `~/.gravimera/depot/models/` (local 3D model depot; Gen3D saves generated models here; layout spec `docs/gamedesign/36_model_depot_v1.md`)
   - `~/.gravimera/depot/models/<model_uuid>/prefabs/`
@@ -84,7 +84,7 @@ Override config loading:
 - CLI: `cargo run -- --config /path/to/config.toml`
 - Env: `GRAVIMERA_CONFIG=/path/to/config.toml cargo run`
 
-Gen3D requires OpenAI settings in `config.toml` (or `OPENAI_API_KEY` via env).
+Gen3D requires AI settings in `config.toml` (`[openai]` by default; set `[gen3d].ai_service = "gemini"` to use `[gemini]`).
 
 ## Intelligence Service (Standalone Brains)
 
