@@ -814,6 +814,12 @@ pub(super) fn ai_plan_to_initial_draft_defs(
         }
     }
 
+    // Reuse groups are allowed to omit duplicate anchor definitions on targets, because geometry
+    // (and most anchors) will be produced by deterministic copy later. However, the plan
+    // conversion phase still needs the attachment interface anchors to exist so it can validate
+    // and resolve the assembly tree. Hydrate ONLY missing required anchors for reuse targets.
+    hydrate_reuse_target_attachment_anchors(&plan.reuse_groups, &name_to_idx, &mut components);
+
     let root_idx = if let Some(root_name) = plan
         .root_component
         .as_ref()
@@ -1298,6 +1304,190 @@ pub(super) fn ai_plan_to_initial_draft_defs(
     });
 
     Ok((planned, plan.assembly_notes, defs))
+}
+
+fn hydrate_reuse_target_attachment_anchors(
+    reuse_groups: &[AiReuseGroupJson],
+    name_to_idx: &HashMap<String, usize>,
+    components: &mut [AiPlanComponentJson],
+) {
+    fn is_reuse_kind(kind: AiReuseGroupKindJson) -> bool {
+        matches!(
+            kind,
+            AiReuseGroupKindJson::Component
+                | AiReuseGroupKindJson::CopyComponent
+                | AiReuseGroupKindJson::Subtree
+                | AiReuseGroupKindJson::CopyComponentSubtree
+        )
+    }
+
+    fn find_anchor<'a>(anchors: &'a [AiAnchorJson], name: &str) -> Option<&'a AiAnchorJson> {
+        anchors.iter().find(|a| a.name.trim() == name)
+    }
+
+    fn has_anchor(anchors: &[AiAnchorJson], name: &str) -> bool {
+        anchors.iter().any(|a| a.name.trim() == name)
+    }
+
+    fn canonical_anchor(name: &str) -> AiAnchorJson {
+        AiAnchorJson {
+            name: name.to_string(),
+            pos: [0.0, 0.0, 0.0],
+            forward: [0.0, 0.0, 1.0],
+            up: [0.0, 1.0, 0.0],
+        }
+    }
+
+    if reuse_groups.is_empty() || components.is_empty() {
+        return;
+    }
+
+    // Map each reuse target component index to its chosen source index.
+    let mut target_to_source: HashMap<usize, usize> = HashMap::new();
+    for group in reuse_groups.iter() {
+        if !is_reuse_kind(group.kind) {
+            continue;
+        }
+        let source_name = group.source.trim();
+        if source_name.is_empty() {
+            continue;
+        }
+        let Some(&source_idx) = name_to_idx.get(source_name) else {
+            continue;
+        };
+        for raw_target in group.targets.iter() {
+            let target_name = raw_target.trim();
+            if target_name.is_empty() || target_name == source_name {
+                continue;
+            }
+            let Some(&target_idx) = name_to_idx.get(target_name) else {
+                continue;
+            };
+            target_to_source.entry(target_idx).or_insert(source_idx);
+        }
+    }
+    if target_to_source.is_empty() {
+        return;
+    }
+
+    // Collect anchor names that are REQUIRED by attachments:
+    // - attach_to.child_anchor on each component
+    // - attach_to.parent_anchor on the parent component for each edge
+    let mut required_by_component: Vec<HashSet<String>> = vec![HashSet::new(); components.len()];
+    for (idx, comp) in components.iter().enumerate() {
+        let Some(att) = comp.attach_to.as_ref() else {
+            continue;
+        };
+        let child_anchor = att.child_anchor.trim();
+        if !child_anchor.is_empty() && child_anchor != "origin" {
+            required_by_component[idx].insert(child_anchor.to_string());
+        }
+    }
+    for comp in components.iter() {
+        let Some(att) = comp.attach_to.as_ref() else {
+            continue;
+        };
+        let parent_name = att.parent.trim();
+        let parent_anchor = att.parent_anchor.trim();
+        if parent_anchor.is_empty() || parent_anchor == "origin" {
+            continue;
+        }
+        let Some(&parent_idx) = name_to_idx.get(parent_name) else {
+            continue;
+        };
+        if parent_idx < required_by_component.len() {
+            required_by_component[parent_idx].insert(parent_anchor.to_string());
+        }
+    }
+
+    for (target_idx, source_idx) in target_to_source {
+        if target_idx >= components.len() || source_idx >= components.len() || target_idx == source_idx
+        {
+            continue;
+        }
+
+        let required = match required_by_component.get(target_idx) {
+            Some(required) if !required.is_empty() => required,
+            _ => continue,
+        };
+
+        let target_snapshot = &components[target_idx];
+        let source_snapshot = &components[source_idx];
+
+        let mut to_add: Vec<AiAnchorJson> = Vec::new();
+        for required_name in required.iter() {
+            let name = required_name.trim();
+            if name.is_empty() || name == "origin" {
+                continue;
+            }
+            if has_anchor(&target_snapshot.anchors, name) {
+                continue;
+            }
+
+            let is_mount_anchor = target_snapshot
+                .attach_to
+                .as_ref()
+                .is_some_and(|att| att.child_anchor.trim() == name);
+
+            let synthesized = if is_mount_anchor {
+                // Mount interface anchor: match the parent's join frame basis so join-frame
+                // validation can proceed deterministically for reuse targets.
+                let (forward, up) = (|| -> Option<([f32; 3], [f32; 3])> {
+                    let att = target_snapshot.attach_to.as_ref()?;
+                    let parent_name = att.parent.trim();
+                    let parent_anchor_name = att.parent_anchor.trim();
+                    if parent_anchor_name.is_empty() || parent_anchor_name == "origin" {
+                        return Some(([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]));
+                    }
+                    let &parent_idx = name_to_idx.get(parent_name)?;
+                    let parent = components.get(parent_idx)?;
+                    let parent_anchor = find_anchor(&parent.anchors, parent_anchor_name)?;
+                    Some((parent_anchor.forward, parent_anchor.up))
+                })()
+                .unwrap_or(([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]));
+
+                let pos = find_anchor(&source_snapshot.anchors, name)
+                    .map(|a| a.pos)
+                    .unwrap_or([0.0, 0.0, 0.0]);
+
+                AiAnchorJson {
+                    name: name.to_string(),
+                    pos,
+                    forward,
+                    up,
+                }
+            } else if let Some(source_anchor) = find_anchor(&source_snapshot.anchors, name) {
+                AiAnchorJson {
+                    name: name.to_string(),
+                    pos: source_anchor.pos,
+                    forward: source_anchor.forward,
+                    up: source_anchor.up,
+                }
+            } else {
+                canonical_anchor(name)
+            };
+
+            debug!(
+                "Gen3D: hydrating missing attachment anchor `{}` on reuse target `{}` (source `{}`)",
+                name,
+                target_snapshot.name.trim(),
+                source_snapshot.name.trim()
+            );
+            to_add.push(synthesized);
+        }
+
+        if to_add.is_empty() {
+            continue;
+        }
+
+        if let Some(target) = components.get_mut(target_idx) {
+            for anchor in to_add {
+                if !has_anchor(&target.anchors, anchor.name.trim()) {
+                    target.anchors.push(anchor);
+                }
+            }
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -3262,6 +3452,104 @@ mod tests {
         assert!(
             err.contains("opposing anchor up vectors"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn plan_attachment_errors_on_missing_child_anchor_without_reuse() {
+        let plan_text = r##"{
+          "version": 8,
+          "mobility": { "kind": "static" },
+          "components": [
+            {
+              "name": "root",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "socket", "pos": [0.0, 0.0, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ]
+            },
+            {
+              "name": "child",
+              "size": [1.0, 1.0, 1.0],
+              "attach_to": {
+                "parent": "root",
+                "parent_anchor": "socket",
+                "child_anchor": "mount",
+                "offset": { "pos": [0.0, 0.0, 0.0] }
+              }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let err = ai_plan_to_initial_draft_defs(plan).unwrap_err();
+        assert!(
+            err.contains("missing required child_anchor `mount`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn reuse_target_hydrates_missing_child_anchor_for_plan_conversion() {
+        let plan_text = r##"{
+          "version": 8,
+          "mobility": { "kind": "static" },
+          "reuse_groups": [
+            { "kind": "component", "source": "child_source", "targets": ["child_target"], "alignment": "rotation" }
+          ],
+          "components": [
+            {
+              "name": "root",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "socket", "pos": [0.0, 0.0, 0.0], "forward": [0.707,0.0,0.707], "up": [0,1,0] }
+              ]
+            },
+            {
+              "name": "child_source",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "mount", "pos": [0.0, 0.0, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ],
+              "attach_to": {
+                "parent": "root",
+                "parent_anchor": "socket",
+                "child_anchor": "mount",
+                "offset": { "pos": [0.0, 0.0, 0.0] }
+              }
+            },
+            {
+              "name": "child_target",
+              "size": [1.0, 1.0, 1.0],
+              "attach_to": {
+                "parent": "root",
+                "parent_anchor": "socket",
+                "child_anchor": "mount",
+                "offset": { "pos": [0.0, 0.0, 0.0] }
+              }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let (planned, _notes, _defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+
+        let target = planned
+            .iter()
+            .find(|c| c.name.trim() == "child_target")
+            .expect("target should exist");
+        let mount = target
+            .anchors
+            .iter()
+            .find(|a| a.name.as_ref() == "mount")
+            .expect("mount anchor should be hydrated");
+        let forward = (mount.transform.rotation * Vec3::Z).normalize();
+        let expected = Vec3::new(0.707, 0.0, 0.707).normalize();
+        assert!(
+            (forward - expected).length() < 1e-4,
+            "unexpected hydrated forward: got={:?} expected={:?}",
+            forward,
+            expected
         );
     }
 

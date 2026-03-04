@@ -62,8 +62,9 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
     - `resolve_planned_component_transforms` errors if an attachment references a missing `parent_anchor` / `child_anchor` (no silent identity).
     - Review-delta `tweak_attachment` validates that the specified parent/child anchors exist (errors early instead of producing a broken assembly).
     - Copy/mirror helpers no longer treat missing anchors as identity (errors instead of guessing).
+    - Update (2026-03-05): plan conversion **hydrates missing required attachment anchors for `reuse_groups` targets only** (e.g. `attach_to.child_anchor`) using deterministic copy-friendly defaults, so reuse targets may omit duplicate anchors without blocking plan validation/conversion. Non-reuse missing anchors still error.
   - Code: `src/gen3d/ai/convert.rs` (anchor lookup + review-delta validation), `src/gen3d/ai/copy_component.rs` (anchor lookup).
-  - Test: `src/gen3d/ai/convert.rs` `review_delta_tweak_attachment_errors_on_missing_anchors`.
+  - Test: `src/gen3d/ai/convert.rs` `review_delta_tweak_attachment_errors_on_missing_anchors`, `reuse_target_hydrates_missing_child_anchor_for_plan_conversion`.
 
 - [x] **Join-frame alignment assumptions (forward opposition errors; up opposition must error too)**
   - Fixed (2026-02-23): plan validation now errors on **opposing up** as well as opposing forward so 180° join-frame roll flips never happen silently.
