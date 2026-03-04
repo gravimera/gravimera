@@ -1,6 +1,6 @@
 # Gen3D Workshop (MVP)
 
-Gen3D is an in-game “workshop” mode that drafts a 3D object from **0–6 photos and/or a text prompt** using an AI vision-capable model (OpenAI-compatible or Gemini). The draft is built from a small set of **atom primitives** (cuboid/sphere/cylinder/cone) and assembled as a **combined object** via data-driven composition.
+Gen3D is an in-game “workshop” mode that drafts a 3D object from **0–6 photos and/or a text prompt** using an AI vision-capable model (OpenAI-compatible, Gemini, or Claude). The draft is built from a small set of **atom primitives** (cuboid/sphere/cylinder/cone) and assembled as a **combined object** via data-driven composition.
 
 This file describes the **current implementation** in this repo.
 
@@ -191,6 +191,7 @@ Gen3D AI provider:
 
 - `[gen3d].ai_service = "openai"` (default) uses `[openai]` config (`token` or env `OPENAI_API_KEY`).
 - `[gen3d].ai_service = "gemini"` uses `[gemini]` config (`token` or env `X_GOOG_API_KEY` / `GEMINI_API_KEY`).
+- `[gen3d].ai_service = "claude"` uses `[claude]` config (`token` or env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`).
 
 ---
 

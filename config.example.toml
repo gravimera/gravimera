@@ -56,6 +56,7 @@
 # AI service used by Gen3D:
 # - "openai" (default)
 # - "gemini"
+# - "claude"
 # ai_service = "openai"
 
 # Optional: override where Gen3D artifacts are cached.
@@ -132,3 +133,15 @@ model = "gemini-3-pro-preview"
 
 # API token (sent as `x-goog-api-key`). Can also be provided via env `X_GOOG_API_KEY` / `GEMINI_API_KEY`.
 token = "YOUR_GEMINI_API_KEY_HERE"
+
+[claude]
+
+# Claude Messages API base URL.
+# Right Codes proxy example: "https://right.codes/claude/v1"
+base_url = "https://right.codes/claude/v1"
+
+# Any Claude model id. See: https://docs.right.codes/docs/rc_extension/curl.html#claude
+model = "claude-sonnet-4-5-20250929"
+
+# API token (sent as `x-api-key`). Can also be provided via env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`.
+token = "YOUR_CLAUDE_API_KEY_HERE"

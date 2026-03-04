@@ -16,6 +16,7 @@ mod ai_service;
 mod artifacts;
 mod convert;
 mod copy_component;
+mod claude;
 mod gemini;
 mod headless_prefab;
 mod job;

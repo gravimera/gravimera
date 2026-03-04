@@ -53,6 +53,15 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
                 "Gen3D headless: Gemini is not configured (missing [gemini] in config.toml)."
                     .to_string()
             })?,
+        crate::config::Gen3dAiService::Claude => config
+            .claude
+            .as_ref()
+            .cloned()
+            .map(Gen3dAiServiceConfig::Claude)
+            .ok_or_else(|| {
+                "Gen3D headless: Claude is not configured (missing [claude] in config.toml)."
+                    .to_string()
+            })?,
     };
 
     std::fs::create_dir_all(run_dir)

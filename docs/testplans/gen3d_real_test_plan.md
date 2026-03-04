@@ -24,15 +24,16 @@ This plan ensures we catch those failures by exercising the real engine loop and
 1) A working `config.toml` with:
 
 - `[automation] enabled=true` (so the test runner can drive the game)
-- `[gen3d].ai_service = "openai"` (default) with `[openai]` configured **or** `[gen3d].ai_service = "gemini"` with `[gemini]` configured
+- `[gen3d].ai_service = "openai"` (default) with `[openai]` configured **or** `[gen3d].ai_service = "gemini"` with `[gemini]` configured **or** `[gen3d].ai_service = "claude"` with `[claude]` configured
 
 Config notes:
 
-- Both `[openai]` and `[gemini]` support `base_url`, `model`, and `token` in `config.toml`.
+- `[openai]`, `[gemini]`, and `[claude]` support `base_url`, `model`, and `token` in `config.toml`.
 - Tokens can be kept out of the repo and provided via env:
   - OpenAI: `OPENAI_API_KEY`
   - Gemini: `X_GOOG_API_KEY` (or `GEMINI_API_KEY`)
-- Reference fixtures: `tests/gen3d/config.toml` (OpenAI) and `tests/gen3d/config_gemini.toml` (Gemini).
+  - Claude: `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`)
+- Reference fixtures: `tests/gen3d/config.toml` (OpenAI), `tests/gen3d/config_gemini.toml` (Gemini), and `tests/gen3d/config_claude.toml` (Claude).
 
 Start from `config.example.toml` (it is safe to copy; `config.toml` is gitignored).
 

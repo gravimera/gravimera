@@ -8,6 +8,7 @@ const CONFIG_OVERRIDE_ENV: &str = "GRAVIMERA_CONFIG";
 pub(crate) struct AppConfig {
     pub(crate) openai: Option<OpenAiConfig>,
     pub(crate) gemini: Option<GeminiConfig>,
+    pub(crate) claude: Option<ClaudeConfig>,
     pub(crate) log_path: Option<PathBuf>,
     pub(crate) scene_dat_path: Option<PathBuf>,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
@@ -60,6 +61,7 @@ impl Default for AppConfig {
         Self {
             openai: None,
             gemini: None,
+            claude: None,
             log_path: None,
             scene_dat_path: None,
             gen3d_cache_dir: None,
@@ -110,11 +112,19 @@ pub(crate) struct GeminiConfig {
     pub(crate) api_key: String,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ClaudeConfig {
+    pub(crate) base_url: String,
+    pub(crate) model: String,
+    pub(crate) api_key: String,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Gen3dAiService {
     #[default]
     OpenAi,
     Gemini,
+    Claude,
 }
 
 pub(crate) fn default_config_path() -> PathBuf {
@@ -220,6 +230,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_gen3d_reasoning_effort_repair_into_config(out, text);
     populate_openai_config(out, text);
     populate_gemini_config(out, text);
+    populate_claude_config(out, text);
 }
 
 fn populate_openai_config(out: &mut AppConfig, text: &str) {
@@ -283,6 +294,42 @@ fn populate_gemini_config(out: &mut AppConfig, text: &str) {
                 );
             } else {
                 out.gemini = Some(cfg);
+            }
+        }
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn populate_claude_config(out: &mut AppConfig, text: &str) {
+    if !config_has_section(text, "claude") {
+        if matches!(out.gen3d_ai_service, Gen3dAiService::Claude) {
+            out.errors.push(
+                "config.toml: missing [claude] section (required when [gen3d].ai_service = \"claude\")"
+                    .into(),
+            );
+        }
+        return;
+    }
+
+    match parse_claude_config(text) {
+        Ok(mut cfg) => {
+            // Allow env override for convenience (keeps secrets out of files if desired).
+            if cfg.api_key.trim().is_empty() {
+                if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+                    cfg.api_key = key;
+                }
+            }
+            if cfg.api_key.trim().is_empty() {
+                if let Ok(key) = std::env::var("CLAUDE_API_KEY") {
+                    cfg.api_key = key;
+                }
+            }
+            if cfg.api_key.trim().is_empty() {
+                out.errors.push(
+                    "config.toml: missing `claude.token` / `claude.ANTHROPIC_API_KEY` (or env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`)".into(),
+                );
+            } else {
+                out.claude = Some(cfg);
             }
         }
         Err(err) => out.errors.push(err),
@@ -786,9 +833,10 @@ fn parse_gen3d_ai_service(text: &str) -> Result<Option<Gen3dAiService>, String> 
         out = Some(match parsed.as_str() {
             "openai" => Gen3dAiService::OpenAi,
             "gemini" => Gen3dAiService::Gemini,
+            "claude" => Gen3dAiService::Claude,
             other => {
                 return Err(format!(
-                    "config.toml:{line_no}: unsupported `gen3d.ai_service` value {other:?} (expected \"openai\" or \"gemini\")"
+                    "config.toml:{line_no}: unsupported `gen3d.ai_service` value {other:?} (expected \"openai\", \"gemini\", or \"claude\")"
                 ));
             }
         });
@@ -2404,6 +2452,58 @@ fn parse_gemini_config(text: &str) -> Result<GeminiConfig, String> {
     })
 }
 
+fn parse_claude_config(text: &str) -> Result<ClaudeConfig, String> {
+    let mut in_claude = false;
+    let mut base_url = None::<String>;
+    let mut model = None::<String>;
+    let mut api_key = None::<String>;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let section = line.trim_matches(&['[', ']'][..]).trim();
+            in_claude = section == "claude";
+            continue;
+        }
+        if !in_claude {
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        let value = parse_toml_string(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a quoted string value for key `{key}` (example: {key} = \"...\")"
+            )
+        })?;
+
+        match key {
+            "base_url" => base_url = Some(value),
+            "model" => model = Some(value),
+            "token" | "api_key" => api_key = Some(value),
+            "ANTHROPIC_API_KEY" | "CLAUDE_API_KEY" => api_key = Some(value),
+            _ => {}
+        }
+    }
+
+    let base_url = base_url.unwrap_or_else(|| "https://right.codes/claude/v1".into());
+    let model = model.ok_or_else(|| "config.toml: missing `claude.model`".to_string())?;
+    let api_key = api_key.unwrap_or_default();
+
+    Ok(ClaudeConfig {
+        base_url,
+        model,
+        api_key,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_gen3d_review_appearance;
@@ -2467,6 +2567,32 @@ mod tests {
         assert_eq!(cfg.gen3d_ai_service, Gen3dAiService::Gemini);
         assert!(cfg.gemini.is_some());
         assert!(cfg.openai.is_none());
+        assert!(cfg.claude.is_none());
+        assert!(
+            cfg.errors.is_empty(),
+            "unexpected config errors: {:?}",
+            cfg.errors
+        );
+    }
+
+    #[test]
+    fn parses_gen3d_ai_service_and_claude_config() {
+        let text = r#"
+        [gen3d]
+        ai_service = "claude"
+
+        [claude]
+        base_url = "mock://gen3d"
+        model = "mock"
+        token = "mock"
+        "#;
+
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert_eq!(cfg.gen3d_ai_service, Gen3dAiService::Claude);
+        assert!(cfg.claude.is_some());
+        assert!(cfg.openai.is_none());
+        assert!(cfg.gemini.is_none());
         assert!(
             cfg.errors.is_empty(),
             "unexpected config errors: {:?}",
@@ -2491,6 +2617,7 @@ mod tests {
         assert_eq!(cfg.gen3d_ai_service, Gen3dAiService::OpenAi);
         assert!(cfg.openai.is_some());
         assert!(cfg.gemini.is_none());
+        assert!(cfg.claude.is_none());
         assert!(
             cfg.errors.is_empty(),
             "unexpected config errors: {:?}",

@@ -833,6 +833,7 @@ pub(super) enum Gen3dAiApi {
     Responses,
     ChatCompletions,
     GeminiStreamGenerateContent,
+    ClaudeMessages,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

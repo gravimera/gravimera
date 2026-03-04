@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use crate::config::{GeminiConfig, OpenAiConfig};
+use crate::config::{ClaudeConfig, GeminiConfig, OpenAiConfig};
 
 use super::structured_outputs::Gen3dAiJsonSchemaKind;
 use super::{Gen3dAiProgress, Gen3dAiSessionState, Gen3dAiTextResponse};
@@ -11,6 +11,7 @@ use super::{Gen3dAiProgress, Gen3dAiSessionState, Gen3dAiTextResponse};
 pub(super) enum Gen3dAiServiceConfig {
     OpenAi(OpenAiConfig),
     Gemini(GeminiConfig),
+    Claude(ClaudeConfig),
 }
 
 impl Gen3dAiServiceConfig {
@@ -18,6 +19,7 @@ impl Gen3dAiServiceConfig {
         match self {
             Self::OpenAi(_) => "openai",
             Self::Gemini(_) => "gemini",
+            Self::Claude(_) => "claude",
         }
     }
 
@@ -25,6 +27,7 @@ impl Gen3dAiServiceConfig {
         match self {
             Self::OpenAi(cfg) => cfg.base_url.as_str(),
             Self::Gemini(cfg) => cfg.base_url.as_str(),
+            Self::Claude(cfg) => cfg.base_url.as_str(),
         }
     }
 
@@ -32,6 +35,7 @@ impl Gen3dAiServiceConfig {
         match self {
             Self::OpenAi(cfg) => cfg.model.as_str(),
             Self::Gemini(cfg) => cfg.model.as_str(),
+            Self::Claude(cfg) => cfg.model.as_str(),
         }
     }
 
@@ -42,6 +46,9 @@ impl Gen3dAiServiceConfig {
             // rest of the Gen3D orchestration expects an effective effort string for logging +
             // budget capping. Treat Gemini as "high" here; the Gemini backend ignores this.
             Self::Gemini(_) => "high",
+            // Claude does not support the OpenAI Responses `reasoning.effort` parameter, but keep
+            // the same logging/budget surface.
+            Self::Claude(_) => "high",
         }
     }
 }
@@ -83,6 +90,20 @@ pub(super) fn generate_text_via_ai_service(
             &gemini.base_url,
             &gemini.api_key,
             &gemini.model,
+            system_instructions,
+            user_text,
+            image_paths,
+            run_dir,
+            artifact_prefix,
+        ),
+        Gen3dAiServiceConfig::Claude(claude) => super::claude::generate_text_via_claude(
+            progress,
+            session,
+            cancel,
+            expected_schema,
+            &claude.base_url,
+            &claude.api_key,
+            &claude.model,
             system_instructions,
             user_text,
             image_paths,

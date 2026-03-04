@@ -182,6 +182,17 @@ pub(crate) fn gen3d_start_build_from_api(
                 return Err(details);
             }
         },
+        crate::config::Gen3dAiService::Claude => match config.claude.clone() {
+            Some(claude) => Gen3dAiServiceConfig::Claude(claude),
+            None => {
+                let details = if config.errors.is_empty() {
+                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                } else {
+                    config.errors.join("\n")
+                };
+                return Err(details);
+            }
+        },
     };
 
     job.log_sinks = log_sinks;
