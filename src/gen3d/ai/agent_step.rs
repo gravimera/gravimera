@@ -3,7 +3,8 @@ use bevy::prelude::*;
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
+    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{
     append_agent_trace_event_v1, AgentTraceEventV1, Gen3dAgentActionJsonV1, Gen3dToolCallJsonV1,
@@ -438,6 +439,53 @@ pub(super) fn execute_agent_actions(
                     warn!("Gen3D agent requested done while motion_validation failed; continuing");
                     job.agent.step_action_idx = job.agent.step_actions.len();
                     continue;
+                }
+
+                let movable = draft
+                    .root_def()
+                    .and_then(|def| def.mobility.as_ref())
+                    .is_some();
+                if movable {
+                    let roles = job.motion_roles_for_current_draft();
+                    let mobility_mode = draft
+                        .root_def()
+                        .and_then(|def| def.mobility.as_ref())
+                        .map(|m| m.mode);
+                    let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
+                        roles,
+                        &job.planned_components,
+                        mobility_mode,
+                    );
+
+                    let has_move = job.planned_components.iter().any(|c| {
+                        c.attach_to.as_ref().is_some_and(|att| {
+                            att.animations
+                                .iter()
+                                .any(|slot| slot.channel.as_ref() == "move")
+                        })
+                    });
+
+                    if runtime_candidate.is_none() && !has_move {
+                        workshop.error = Some(format!(
+                            "Agent requested done, but this is a movable unit with no runtime motion rig candidate and no authored `move` animation slots.\n\
+Continue and call `{TOOL_ID_LLM_GENERATE_MOTION_AUTHORING}` to bake motion clips onto attachment edges, then run `{TOOL_ID_SMOKE_CHECK}`."
+                        ));
+                        workshop.status =
+                            "Continuing Gen3D build…(motion authoring required)".into();
+                        append_agent_trace_event_v1(
+                            job.run_dir.as_deref(),
+                            &AgentTraceEventV1::Info {
+                                message: "agent_done_ignored (missing move animation)".to_string(),
+                            },
+                        );
+                        append_gen3d_run_log(
+                            job.pass_dir.as_deref(),
+                            "agent_done_ignored (missing move animation); continuing",
+                        );
+                        warn!("Gen3D agent requested done without any motion path; continuing");
+                        job.agent.step_action_idx = job.agent.step_actions.len();
+                        continue;
+                    }
                 }
                 let status = if reason.trim().is_empty() {
                     "Build finished.".to_string()

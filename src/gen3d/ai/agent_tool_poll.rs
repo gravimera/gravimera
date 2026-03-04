@@ -223,6 +223,9 @@ pub(super) fn poll_agent_tool(
             super::Gen3dAgentLlmToolKind::GenerateMotionRoles => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionRolesV1)
             }
+            super::Gen3dAgentLlmToolKind::GenerateMotionAuthoring => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1)
+            }
             super::Gen3dAgentLlmToolKind::ReviewDelta => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1)
             }
@@ -852,6 +855,452 @@ pub(super) fn poll_agent_tool(
                                     &err,
                                     &text,
                                     &format!("tool_motion_roles_{}", call.call_id),
+                                ) {
+                                    return;
+                                }
+                                Gen3dToolResultJsonV1::err(
+                                    call.call_id.clone(),
+                                    call.tool_id.clone(),
+                                    err,
+                                )
+                            }
+                            _ => Gen3dToolResultJsonV1::err(
+                                call.call_id.clone(),
+                                call.tool_id.clone(),
+                                err,
+                            ),
+                        },
+                    }
+                }
+                super::Gen3dAgentLlmToolKind::GenerateMotionAuthoring => {
+                    use crate::object::registry::{
+                        PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
+                        PartAnimationSlot, PartAnimationSpec,
+                    };
+
+                    let text = resp.text;
+                    if let Some(dir) = job.pass_dir.as_deref() {
+                        write_gen3d_text_artifact(
+                            Some(dir),
+                            "motion_authoring_raw.txt",
+                            text.trim(),
+                        );
+                    }
+
+                    match super::parse::parse_ai_motion_authoring_from_text(&text) {
+                        Ok(authored) => {
+                            let expected_run_id =
+                                job.run_id.map(|id| id.to_string()).unwrap_or_default();
+                            let mut issues: Vec<String> = Vec::new();
+                            if !expected_run_id.trim().is_empty()
+                                && authored.applies_to.run_id.trim() != expected_run_id.trim()
+                            {
+                                issues.push(format!(
+                                    "applies_to.run_id mismatch (got {}, expected {})",
+                                    authored.applies_to.run_id.trim(),
+                                    expected_run_id.trim()
+                                ));
+                            }
+                            if authored.applies_to.attempt != job.attempt
+                                || authored.applies_to.plan_hash.trim() != job.plan_hash.trim()
+                                || authored.applies_to.assembly_rev != job.assembly_rev
+                            {
+                                issues.push(format!(
+                                    "applies_to mismatch (got attempt={} plan_hash={} assembly_rev={}, expected attempt={} plan_hash={} assembly_rev={})",
+                                    authored.applies_to.attempt,
+                                    authored.applies_to.plan_hash.trim(),
+                                    authored.applies_to.assembly_rev,
+                                    job.attempt,
+                                    job.plan_hash.trim(),
+                                    job.assembly_rev,
+                                ));
+                            }
+
+                            let mobility_mode = draft
+                                .root_def()
+                                .and_then(|def| def.mobility.as_ref())
+                                .map(|m| m.mode);
+                            let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
+                                job.motion_roles_for_current_draft(),
+                                &job.planned_components,
+                                mobility_mode,
+                            );
+                            let has_move_existing = job.planned_components.iter().any(|c| {
+                                c.attach_to.as_ref().is_some_and(|att| {
+                                    att.animations
+                                        .iter()
+                                        .any(|slot| slot.channel.as_ref() == "move")
+                                })
+                            });
+
+                            if issues.is_empty() {
+                                match authored.decision {
+                                    super::schema::AiMotionAuthoringDecisionJsonV1::RuntimeOk => {
+                                        if !authored.replace_channels.is_empty()
+                                            || !authored.edges.is_empty()
+                                        {
+                                            issues.push("decision=runtime_ok must set replace_channels=[] and edges=[] (do not author clips).".to_string());
+                                        }
+                                        if runtime_candidate.is_none() && !has_move_existing {
+                                            issues.push("decision=runtime_ok is invalid because there is no runtime motion rig candidate and no authored `move` slots. Use decision=author_clips or decision=regen_geometry_required.".to_string());
+                                        }
+                                    }
+                                    super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => {
+                                        if !authored.replace_channels.is_empty()
+                                            || !authored.edges.is_empty()
+                                        {
+                                            issues.push("decision=regen_geometry_required must set replace_channels=[] and edges=[] (do not author clips).".to_string());
+                                        }
+                                        if authored.reason.trim().is_empty() {
+                                            issues.push("decision=regen_geometry_required must include a non-empty `reason`.".to_string());
+                                        }
+                                    }
+                                    super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips => {
+                                        if authored.replace_channels.is_empty() {
+                                            issues.push(
+                                                "replace_channels must be non-empty when decision=author_clips"
+                                                    .to_string(),
+                                            );
+                                        }
+                                        if authored.edges.is_empty() {
+                                            issues.push(
+                                                "edges must be non-empty when decision=author_clips"
+                                                    .to_string(),
+                                            );
+                                        }
+                                    }
+                                    super::schema::AiMotionAuthoringDecisionJsonV1::Unknown => {
+                                        issues.push("AI motion-authoring has unknown `decision` value.".to_string());
+                                    }
+                                }
+                            }
+
+                            if issues.is_empty()
+                                && matches!(
+                                    authored.decision,
+                                    super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips
+                                )
+                            {
+                                
+                                let mut name_to_idx: std::collections::HashMap<String, usize> =
+                                    std::collections::HashMap::new();
+                                for (idx, c) in job.planned_components.iter().enumerate() {
+                                    name_to_idx.insert(c.name.clone(), idx);
+                                }
+
+                                let replace: std::collections::HashSet<&str> = authored
+                                    .replace_channels
+                                    .iter()
+                                    .map(|s| s.as_str())
+                                    .collect();
+
+                                fn driver_from_ai(
+                                    driver: super::schema::AiAnimationDriverJsonV1,
+                                ) -> Option<PartAnimationDriver> {
+                                    match driver {
+                                        super::schema::AiAnimationDriverJsonV1::Always => {
+                                            Some(PartAnimationDriver::Always)
+                                        }
+                                        super::schema::AiAnimationDriverJsonV1::MovePhase => {
+                                            Some(PartAnimationDriver::MovePhase)
+                                        }
+                                        super::schema::AiAnimationDriverJsonV1::MoveDistance => {
+                                            Some(PartAnimationDriver::MoveDistance)
+                                        }
+                                        super::schema::AiAnimationDriverJsonV1::AttackTime => {
+                                            Some(PartAnimationDriver::AttackTime)
+                                        }
+                                        super::schema::AiAnimationDriverJsonV1::Unknown => None,
+                                    }
+                                }
+
+                                fn transform_from_delta(
+                                    delta: &super::schema::AiAnimationDeltaTransformJsonV1,
+                                ) -> Transform {
+                                    let translation = delta
+                                        .pos
+                                        .unwrap_or([0.0, 0.0, 0.0])
+                                        .map(|v| if v.is_finite() { v } else { 0.0 });
+                                    let translation = Vec3::new(
+                                        translation[0],
+                                        translation[1],
+                                        translation[2],
+                                    );
+
+                                    let scale = delta
+                                        .scale
+                                        .unwrap_or([1.0, 1.0, 1.0])
+                                        .map(|v| if v.is_finite() { v } else { 1.0 });
+                                    let scale = Vec3::new(scale[0], scale[1], scale[2]);
+
+                                    let rotation = match delta.rot_quat_xyzw {
+                                        Some([x, y, z, w]) => {
+                                            let q = Quat::from_xyzw(x, y, z, w);
+                                            if q.is_finite() {
+                                                q.normalize()
+                                            } else {
+                                                Quat::IDENTITY
+                                            }
+                                        }
+                                        _ => Quat::IDENTITY,
+                                    };
+
+                                    Transform {
+                                        translation,
+                                        rotation,
+                                        scale,
+                                    }
+                                }
+
+                                for edge in authored.edges.iter() {
+                                    let name = edge.component.trim();
+                                    if name.is_empty() {
+                                        continue;
+                                    }
+                                    let Some(&component_idx) = name_to_idx.get(name) else {
+                                        issues.push(format!("Unknown component: {name}"));
+                                        continue;
+                                    };
+                                    if job.planned_components[component_idx].attach_to.is_none() {
+                                        issues.push(format!(
+                                            "Component {name} is the root (no attach_to); cannot author edge motion"
+                                        ));
+                                        continue;
+                                    }
+
+                                    let mut replacement_slots: Vec<PartAnimationSlot> = Vec::new();
+                                    let mut channels_seen: std::collections::HashSet<&str> =
+                                        std::collections::HashSet::new();
+                                    for slot in edge.slots.iter() {
+                                        let channel = slot.channel.trim();
+                                        if channel.is_empty() {
+                                            continue;
+                                        }
+                                        if channel != "attack_primary"
+                                            && !channels_seen.insert(channel)
+                                        {
+                                            issues.push(format!(
+                                                "Duplicate channel `{channel}` for component `{name}` (only attack_primary may have multiple variants)"
+                                            ));
+                                            continue;
+                                        }
+
+                                        let Some(driver) = driver_from_ai(slot.driver) else {
+                                            issues.push(format!(
+                                                "Unknown driver for component `{name}` channel `{channel}`"
+                                            ));
+                                            continue;
+                                        };
+
+                                        let speed_scale = slot.speed_scale.abs().max(1e-3);
+                                        let time_offset_units = slot.time_offset_units;
+
+                                        let clip = match &slot.clip {
+                                            super::schema::AiAnimationClipJsonV1::Loop {
+                                                duration_units,
+                                                keyframes,
+                                            } => PartAnimationDef::Loop {
+                                                duration_secs: duration_units.abs().max(1e-3),
+                                                keyframes: keyframes
+                                                    .iter()
+                                                    .map(|kf| PartAnimationKeyframeDef {
+                                                        time_secs: kf.t_units,
+                                                        delta: transform_from_delta(&kf.delta),
+                                                    })
+                                                    .collect(),
+                                            },
+                                            super::schema::AiAnimationClipJsonV1::Once {
+                                                duration_units,
+                                                keyframes,
+                                            } => PartAnimationDef::Once {
+                                                duration_secs: duration_units.abs().max(1e-3),
+                                                keyframes: keyframes
+                                                    .iter()
+                                                    .map(|kf| PartAnimationKeyframeDef {
+                                                        time_secs: kf.t_units,
+                                                        delta: transform_from_delta(&kf.delta),
+                                                    })
+                                                    .collect(),
+                                            },
+                                            super::schema::AiAnimationClipJsonV1::PingPong {
+                                                duration_units,
+                                                keyframes,
+                                            } => PartAnimationDef::PingPong {
+                                                duration_secs: duration_units.abs().max(1e-3),
+                                                keyframes: keyframes
+                                                    .iter()
+                                                    .map(|kf| PartAnimationKeyframeDef {
+                                                        time_secs: kf.t_units,
+                                                        delta: transform_from_delta(&kf.delta),
+                                                    })
+                                                    .collect(),
+                                            },
+                                            super::schema::AiAnimationClipJsonV1::Spin {
+                                                axis,
+                                                radians_per_unit,
+                                            } => PartAnimationDef::Spin {
+                                                axis: Vec3::new(axis[0], axis[1], axis[2]),
+                                                radians_per_unit: *radians_per_unit,
+                                            },
+                                        };
+
+                                        replacement_slots.push(PartAnimationSlot {
+                                            channel: channel.to_string().into(),
+                                            spec: PartAnimationSpec {
+                                                driver,
+                                                speed_scale,
+                                                time_offset_units,
+                                                clip,
+                                            },
+                                        });
+                                    }
+
+                                    if let Some(att) =
+                                        job.planned_components[component_idx].attach_to.as_mut()
+                                    {
+                                        att.animations.retain(|slot| {
+                                            !replace.contains(slot.channel.as_ref())
+                                        });
+                                        att.animations.extend(replacement_slots);
+                                    }
+                                }
+
+                                if issues.is_empty() {
+                                    let movable = draft
+                                        .root_def()
+                                        .and_then(|def| def.mobility.as_ref())
+                                        .is_some();
+                                    if movable {
+                                        let has_move = job.planned_components.iter().any(|c| {
+                                            c.attach_to.as_ref().is_some_and(|att| {
+                                                att.animations
+                                                    .iter()
+                                                    .any(|slot| slot.channel.as_ref() == "move")
+                                            })
+                                        });
+                                        if !has_move {
+                                            issues.push("decision=author_clips must produce at least one `move` animation slot for movable drafts.".to_string());
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !issues.is_empty() {
+                                issues.sort();
+                                issues.dedup();
+                                Gen3dToolResultJsonV1::err(
+                                    call.call_id,
+                                    call.tool_id,
+                                    format!(
+                                        "motion-authoring validation failed:\n- {}",
+                                        issues.join("\n- ")
+                                    ),
+                                )
+                            } else {
+                                if let Some(dir) = job.pass_dir.as_deref() {
+                                    write_gen3d_json_artifact(
+                                        Some(dir),
+                                        "motion_authoring.json",
+                                        &serde_json::to_value(&authored)
+                                            .unwrap_or(serde_json::Value::Null),
+                                    );
+                                }
+
+                                if matches!(
+                                    authored.decision,
+                                    super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips
+                                ) {
+                                    if let Err(err) = super::convert::sync_attachment_tree_to_defs(
+                                        &job.planned_components,
+                                        draft,
+                                    ) {
+                                        return fail_job(
+                                            workshop,
+                                            job,
+                                            format!("Failed to apply motion-authoring: {err}"),
+                                        );
+                                    }
+                                    write_gen3d_assembly_snapshot(
+                                        job.pass_dir.as_deref(),
+                                        &job.planned_components,
+                                    );
+                                }
+
+                                job.motion_authoring = Some(authored.clone());
+                                job.agent.pending_llm_repair_attempt = 0;
+
+                                Gen3dToolResultJsonV1::ok(
+                                    call.call_id,
+                                    call.tool_id,
+                                    serde_json::json!({
+                                        "ok": true,
+                                        "decision": match authored.decision {
+                                            super::schema::AiMotionAuthoringDecisionJsonV1::RuntimeOk => "runtime_ok",
+                                            super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips => "author_clips",
+                                            super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => "regen_geometry_required",
+                                            super::schema::AiMotionAuthoringDecisionJsonV1::Unknown => "unknown",
+                                        },
+                                        "edges": authored.edges.len(),
+                                    }),
+                                )
+                            }
+                        }
+                        Err(err) => match (job.openai.clone(), job.pass_dir.clone()) {
+	                            (Some(openai), Some(pass_dir)) => {
+	                                let system = super::prompts::build_gen3d_motion_authoring_system_instructions();
+	                                let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
+	                                let roles = job.motion_roles_for_current_draft();
+	                                let mobility_mode = draft
+	                                    .root_def()
+	                                    .and_then(|def| def.mobility.as_ref())
+	                                    .map(|m| m.mode);
+	                                let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
+	                                    roles,
+	                                    &job.planned_components,
+	                                    mobility_mode,
+	                                );
+	                                let (mut has_idle_slot, mut has_move_slot) = (false, false);
+	                                for comp in job.planned_components.iter() {
+	                                    let Some(att) = comp.attach_to.as_ref() else {
+	                                        continue;
+	                                    };
+	                                    for slot in att.animations.iter() {
+	                                        match slot.channel.as_ref() {
+	                                            "idle" => has_idle_slot = true,
+	                                            "move" => has_move_slot = true,
+	                                            _ => {}
+	                                        }
+	                                    }
+	                                }
+	                                let user_text = super::prompts::build_gen3d_motion_authoring_user_text(
+	                                    &job.user_prompt_raw,
+	                                    !job.user_images.is_empty(),
+	                                    &run_id,
+	                                    job.attempt,
+	                                    &job.plan_hash,
+	                                    job.assembly_rev,
+	                                    job.rig_move_cycle_m,
+	                                    roles.is_some(),
+	                                    runtime_candidate,
+	                                    has_idle_slot,
+	                                    has_move_slot,
+	                                    &job.planned_components,
+	                                    draft,
+	                                );
+	                                if schedule_llm_tool_schema_repair(
+                                    job,
+                                    workshop,
+                                    &call,
+                                    kind,
+                                    openai,
+                                    &config.gen3d_reasoning_effort_repair,
+                                    pass_dir,
+                                    system,
+                                    user_text,
+                                    Vec::new(),
+                                    &err,
+                                    &text,
+                                    &format!("tool_motion_authoring_{}", call.call_id),
                                 ) {
                                     return;
                                 }

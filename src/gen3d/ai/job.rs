@@ -26,6 +26,7 @@ pub(super) enum Gen3dAgentLlmToolKind {
     GenerateComponent { component_idx: usize },
     GenerateComponentsBatch,
     GenerateMotionRoles,
+    GenerateMotionAuthoring,
     ReviewDelta,
 }
 
@@ -448,6 +449,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) plan_collider: Option<AiColliderJson>,
     pub(super) rig_move_cycle_m: Option<f32>,
     pub(super) motion_roles: Option<AiMotionRolesJsonV1>,
+    pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
     pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     pub(super) reuse_group_warnings: Vec<String>,
     pub(super) pending_plan: Option<AiPlanJsonV1>,
@@ -537,6 +539,16 @@ impl Gen3dAiJob {
             && roles.applies_to.plan_hash.trim() == self.plan_hash.trim()
             && roles.applies_to.assembly_rev == self.assembly_rev)
             .then_some(roles)
+    }
+
+    pub(crate) fn motion_authoring_for_current_draft(&self) -> Option<&AiMotionAuthoringJsonV1> {
+        let authored = self.motion_authoring.as_ref()?;
+        let run_id = self.run_id.map(|id| id.to_string()).unwrap_or_default();
+        (authored.applies_to.run_id.trim() == run_id.trim()
+            && authored.applies_to.attempt == self.attempt
+            && authored.applies_to.plan_hash.trim() == self.plan_hash.trim()
+            && authored.applies_to.assembly_rev == self.assembly_rev)
+            .then_some(authored)
     }
 
     pub(crate) fn active_workspace_id(&self) -> &str {

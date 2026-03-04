@@ -3,7 +3,8 @@ use bevy::log::debug;
 use super::super::GEN3D_MAX_PARTS;
 use super::artifacts::write_gen3d_json_artifact;
 use super::schema::{
-    AiDescriptorMetaJsonV1, AiDraftJsonV1, AiMotionRolesJsonV1, AiPlanJsonV1, AiReviewDeltaJsonV1,
+    AiDescriptorMetaJsonV1, AiDraftJsonV1, AiMotionAuthoringJsonV1, AiMotionRolesJsonV1,
+    AiPlanJsonV1, AiReviewDeltaJsonV1,
 };
 
 fn normalize_snake_case_token(raw: &str) -> String {
@@ -311,6 +312,190 @@ pub(super) fn parse_ai_motion_roles_from_text(text: &str) -> Result<AiMotionRole
     Ok(roles)
 }
 
+pub(super) fn parse_ai_motion_authoring_from_text(
+    text: &str,
+) -> Result<AiMotionAuthoringJsonV1, String> {
+    debug!(
+        "Gen3D: extracted motion-authoring output text (chars={})",
+        text.chars().count()
+    );
+    let json_text = extract_json_object(text).unwrap_or_else(|| text.to_string());
+    debug!(
+        "Gen3D: parsing motion-authoring JSON (chars={})",
+        json_text.trim().chars().count()
+    );
+    if cfg!(debug_assertions) {
+        debug!(
+            "Gen3D: motion-authoring output preview (start): {}",
+            super::truncate_for_ui(json_text.trim(), 800)
+        );
+    }
+
+    let json_text = json_text.trim();
+    let json_value: serde_json::Value =
+        serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
+    if json_value.get("version").is_none() {
+        return Err("AI motion-authoring JSON missing required `version` (expected 1).".into());
+    }
+
+    let mut authored: AiMotionAuthoringJsonV1 = serde_json::from_value(json_value)
+        .map_err(|err| format!("AI JSON schema error: {err}"))?;
+    if authored.version != 1 {
+        return Err(format!(
+            "Unsupported AI motion-authoring version {} (expected 1)",
+            authored.version
+        ));
+    }
+
+    if matches!(
+        authored.decision,
+        super::schema::AiMotionAuthoringDecisionJsonV1::Unknown
+    ) {
+        return Err("AI motion-authoring has unknown `decision` value.".into());
+    }
+
+    authored.reason = authored.reason.trim().to_string();
+
+    if let Some(notes) = authored.notes.as_ref().map(|v| v.trim().to_string()) {
+        authored.notes = (!notes.is_empty()).then_some(notes);
+    }
+
+    // Normalize replace_channels.
+    let mut channels: Vec<String> = Vec::new();
+    for raw in authored.replace_channels.into_iter() {
+        let ch = raw.trim().to_ascii_lowercase();
+        if ch.is_empty() {
+            continue;
+        }
+        channels.push(ch);
+    }
+    channels.sort();
+    channels.dedup();
+    if channels.len() > 8 {
+        channels.truncate(8);
+    }
+    authored.replace_channels = channels;
+
+    // Sanitize edges/slots.
+    const MAX_EDGES: usize = 64;
+    const MAX_SLOTS_PER_EDGE: usize = 32;
+    const MAX_KEYFRAMES: usize = 48;
+
+    if authored.edges.len() > MAX_EDGES {
+        debug!(
+            "Gen3D: truncating motion-authoring edges from {} to {MAX_EDGES}",
+            authored.edges.len()
+        );
+        authored.edges.truncate(MAX_EDGES);
+    }
+
+    for edge in authored.edges.iter_mut() {
+        edge.component = edge.component.trim().to_string();
+        if edge.slots.len() > MAX_SLOTS_PER_EDGE {
+            edge.slots.truncate(MAX_SLOTS_PER_EDGE);
+        }
+
+        for slot in edge.slots.iter_mut() {
+            slot.channel = slot.channel.trim().to_ascii_lowercase();
+
+            if matches!(
+                slot.driver,
+                super::schema::AiAnimationDriverJsonV1::Unknown
+            ) {
+                return Err(format!(
+                    "AI motion-authoring slot has unknown driver for component `{}` channel `{}`",
+                    edge.component, slot.channel
+                ));
+            }
+            if !slot.speed_scale.is_finite() {
+                return Err(format!(
+                    "AI motion-authoring slot speed_scale is non-finite for component `{}` channel `{}`",
+                    edge.component, slot.channel
+                ));
+            }
+            if !slot.time_offset_units.is_finite() {
+                slot.time_offset_units = 0.0;
+            }
+
+            match &mut slot.clip {
+                super::schema::AiAnimationClipJsonV1::Loop {
+                    duration_units,
+                    keyframes,
+                }
+                | super::schema::AiAnimationClipJsonV1::Once {
+                    duration_units,
+                    keyframes,
+                }
+                | super::schema::AiAnimationClipJsonV1::PingPong {
+                    duration_units,
+                    keyframes,
+                } => {
+                    if !duration_units.is_finite() || *duration_units <= 1e-6 {
+                        return Err(format!(
+                            "AI motion-authoring clip has invalid duration_units for component `{}` channel `{}`",
+                            edge.component, slot.channel
+                        ));
+                    }
+                    if keyframes.len() > MAX_KEYFRAMES {
+                        keyframes.truncate(MAX_KEYFRAMES);
+                    }
+                    if keyframes.is_empty() {
+                        return Err(format!(
+                            "AI motion-authoring clip has 0 keyframes for component `{}` channel `{}`",
+                            edge.component, slot.channel
+                        ));
+                    }
+
+                    for keyframe in keyframes.iter_mut() {
+                        if !keyframe.t_units.is_finite() {
+                            keyframe.t_units = 0.0;
+                        }
+                        keyframe.t_units = keyframe.t_units.clamp(0.0, *duration_units);
+
+                        if let Some(pos) = keyframe.delta.pos.as_ref() {
+                            if pos.iter().any(|v| !v.is_finite()) {
+                                keyframe.delta.pos = None;
+                            }
+                        }
+                        if let Some(scale) = keyframe.delta.scale.as_ref() {
+                            if scale.iter().any(|v| !v.is_finite()) {
+                                keyframe.delta.scale = None;
+                            }
+                        }
+                        if let Some(quat) = keyframe.delta.rot_quat_xyzw.as_ref() {
+                            if quat.iter().any(|v| !v.is_finite()) {
+                                keyframe.delta.rot_quat_xyzw = None;
+                            }
+                        }
+                    }
+
+                    keyframes.sort_by(|a, b| {
+                        a.t_units
+                            .partial_cmp(&b.t_units)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
+                super::schema::AiAnimationClipJsonV1::Spin {
+                    axis,
+                    radians_per_unit,
+                } => {
+                    if axis.iter().any(|v| !v.is_finite()) {
+                        return Err(format!(
+                            "AI motion-authoring spin axis is non-finite for component `{}` channel `{}`",
+                            edge.component, slot.channel
+                        ));
+                    }
+                    if !radians_per_unit.is_finite() {
+                        *radians_per_unit = 0.0;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(authored)
+}
+
 pub(super) fn extract_json_object(text: &str) -> Option<String> {
     let mut depth = 0i32;
     let mut start: Option<usize> = None;
@@ -386,6 +571,64 @@ mod tests {
         assert_eq!(roles.move_effectors.len(), 2);
         assert_eq!(roles.move_effectors[0].component.as_str(), "left_thigh");
         assert_eq!(roles.notes.as_deref(), Some("test"));
+    }
+
+    #[test]
+    fn parses_motion_authoring_and_sanitizes() {
+        let text = r#"ok {
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":2},
+          "decision": "author_clips",
+          "reason": "  test  ",
+          "replace_channels": [" MOVE ", "idle", ""],
+          "edges": [
+            {
+              "component":" leg_l ",
+              "slots":[
+                {
+                  "channel":"MOVE",
+                  "driver":"move_phase",
+                  "speed_scale": 1.0,
+                  "time_offset_units": 0.0,
+                  "clip": {
+                    "kind":"loop",
+                    "duration_units": 1.0,
+                    "keyframes": [
+                      {"t_units": 1.2, "delta": {"pos": [0,0,0], "rot_quat_xyzw": [0,0,0,1], "scale": null}},
+                      {"t_units": -0.2, "delta": {"pos": null, "rot_quat_xyzw": null, "scale": null}}
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "notes": "  "
+        }"#;
+
+        let authored =
+            parse_ai_motion_authoring_from_text(text).expect("motion authoring should parse");
+        assert_eq!(authored.version, 1);
+        assert_eq!(authored.reason.as_str(), "test");
+        assert_eq!(authored.replace_channels, vec!["idle".to_string(), "move".to_string()]);
+        assert!(authored.notes.is_none());
+        assert_eq!(authored.edges.len(), 1);
+        assert_eq!(authored.edges[0].component.as_str(), "leg_l");
+        assert_eq!(authored.edges[0].slots.len(), 1);
+        assert_eq!(authored.edges[0].slots[0].channel.as_str(), "move");
+        match &authored.edges[0].slots[0].clip {
+            super::super::schema::AiAnimationClipJsonV1::Loop { keyframes, .. } => {
+                assert_eq!(keyframes.len(), 2);
+                assert!(
+                    keyframes[0].t_units <= keyframes[1].t_units,
+                    "expected keyframes sorted"
+                );
+                assert!(
+                    (0.0..=1.0).contains(&keyframes[0].t_units)
+                        && (0.0..=1.0).contains(&keyframes[1].t_units)
+                );
+            }
+            other => panic!("unexpected clip: {other:?}"),
+        }
     }
 
     #[test]

@@ -7,6 +7,7 @@ pub(super) enum Gen3dAiJsonSchemaKind {
     ReviewDeltaV1,
     DescriptorMetaV1,
     MotionRolesV1,
+    MotionAuthoringV1,
 }
 
 pub(super) struct Gen3dAiJsonSchemaSpec {
@@ -524,6 +525,79 @@ fn schema_motion_roles() -> serde_json::Value {
     ])
 }
 
+fn schema_motion_authoring() -> serde_json::Value {
+    let applies_to = schema_object(vec![
+        ("run_id", schema_string()),
+        ("attempt", schema_integer()),
+        ("plan_hash", schema_string()),
+        ("assembly_rev", schema_integer()),
+    ]);
+
+    let delta = schema_object(vec![
+        ("pos", schema_nullable(schema_vec3())),
+        ("rot_quat_xyzw", schema_nullable(schema_quat_xyzw())),
+        ("scale", schema_nullable(schema_vec3())),
+    ]);
+
+    let keyframe = schema_object(vec![("t_units", schema_number()), ("delta", delta)]);
+
+    let clip_loop = schema_object(vec![
+        ("kind", schema_enum(&["loop"])),
+        ("duration_units", schema_number()),
+        ("keyframes", schema_array_of(keyframe.clone())),
+    ]);
+    let clip_once = schema_object(vec![
+        ("kind", schema_enum(&["once"])),
+        ("duration_units", schema_number()),
+        ("keyframes", schema_array_of(keyframe.clone())),
+    ]);
+    let clip_ping_pong = schema_object(vec![
+        ("kind", schema_enum(&["ping_pong"])),
+        ("duration_units", schema_number()),
+        ("keyframes", schema_array_of(keyframe)),
+    ]);
+    let clip_spin = schema_object(vec![
+        ("kind", schema_enum(&["spin"])),
+        ("axis", schema_vec3()),
+        ("radians_per_unit", schema_number()),
+    ]);
+
+    let clip = schema_any_of(vec![clip_loop, clip_once, clip_ping_pong, clip_spin]);
+
+    let slot = schema_object(vec![
+        ("channel", schema_string()),
+        (
+            "driver",
+            schema_enum(&["always", "move_phase", "move_distance", "attack_time"]),
+        ),
+        ("speed_scale", schema_number()),
+        ("time_offset_units", schema_number()),
+        ("clip", clip),
+    ]);
+
+    let edge = schema_object(vec![
+        ("component", schema_string()),
+        ("slots", schema_array_of(slot)),
+    ]);
+
+    schema_object(vec![
+        ("version", schema_integer()),
+        ("applies_to", applies_to),
+        (
+            "decision",
+            schema_enum(&[
+                "runtime_ok",
+                "author_clips",
+                "regen_geometry_required",
+            ]),
+        ),
+        ("reason", schema_string()),
+        ("replace_channels", schema_array_of(schema_string())),
+        ("edges", schema_array_of(edge)),
+        ("notes", schema_nullable(schema_string())),
+    ])
+}
+
 pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchemaSpec {
     match kind {
         Gen3dAiJsonSchemaKind::PlanV1 => Gen3dAiJsonSchemaSpec {
@@ -545,6 +619,10 @@ pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchema
         Gen3dAiJsonSchemaKind::MotionRolesV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_motion_roles_v1",
             schema: schema_motion_roles(),
+        },
+        Gen3dAiJsonSchemaKind::MotionAuthoringV1 => Gen3dAiJsonSchemaSpec {
+            name: "gen3d_motion_authoring_v1",
+            schema: schema_motion_authoring(),
         },
     }
 }

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use super::Gen3dPlannedComponent;
-use crate::gen3d::state::Gen3dSpeedMode;
+use crate::gen3d::state::{Gen3dDraft, Gen3dSpeedMode};
 
 use crate::gen3d::{GEN3D_DEFAULT_STYLE_PROMPT, GEN3D_MAX_COMPONENTS, GEN3D_MAX_PARTS};
 
@@ -1030,6 +1030,57 @@ Rules:\n\
         .to_string()
 }
 
+pub(super) fn build_gen3d_motion_authoring_system_instructions() -> String {
+    "You are the Gravimera Gen3D motion authoring assistant.\n\
+You will be given a generated component graph (components + attachments + anchors + current base offsets).\n\
+Your job is to decide whether existing runtime motion is sufficient, or to author explicit per-edge animation clips.\n\
+Return ONLY a single JSON object for gen3d_motion_authoring_v1 (no markdown, no prose).\n\n\
+Schema:\n\
+{\n\
+  \"version\": 1,\n\
+  \"applies_to\": {\"run_id\":\"uuid\",\"attempt\":0,\"plan_hash\":\"sha256:...\",\"assembly_rev\":0},\n\
+  \"decision\": \"runtime_ok\" | \"author_clips\" | \"regen_geometry_required\",\n\
+  \"reason\": \"short reason\",\n\
+  \"replace_channels\": [\"idle\",\"move\",\"attack_primary\"],\n\
+  \"edges\": [\n\
+    {\n\
+      \"component\": \"child_component_name\",\n\
+      \"slots\": [\n\
+        {\n\
+          \"channel\": \"idle|move|attack_primary|ambient\",\n\
+          \"driver\": \"always|move_phase|move_distance|attack_time\",\n\
+          \"speed_scale\": 1.0,\n\
+          \"time_offset_units\": 0.0,\n\
+          \"clip\": {\n\
+            \"kind\": \"loop|once|ping_pong|spin\",\n\
+            \"duration_units\": 1.0,\n\
+            \"keyframes\": [\n\
+              {\"t_units\": 0.0, \"delta\": {\"pos\": [0,0,0] | null, \"rot_quat_xyzw\": [0,0,0,1] | null, \"scale\": [1,1,1] | null}}\n\
+            ]\n\
+          }\n\
+        }\n\
+      ]\n\
+    }\n\
+  ],\n\
+  \"notes\": \"...\" | null\n\
+}\n\n\
+Rules:\n\
+- You MUST copy the provided applies_to values exactly.\n\
+- You MUST NOT invent component names. Target attachment edges by naming the CHILD component in `edges[].component`.\n\
+  - Do NOT include the root component (it has no parent edge).\n\
+- Coordinate frames:\n\
+  - These authored keyframes animate the ATTACHMENT OFFSET for that edge.\n\
+  - `delta` transforms are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
+  - The engine applies: animated_offset = base_offset * delta(t).\n\
+- `replace_channels`:\n\
+  - If decision=author_clips, list the channels you want the engine to REPLACE on targeted edges before adding your slots.\n\
+  - If decision=runtime_ok, set replace_channels=[] and edges=[] (do not author clips).\n\
+- For movable units, prefer authoring at least `idle` + `move` (and `attack_primary` if the unit has an attack).\n\
+- If the prompt implies motion that cannot be achieved with the existing articulation (for example: a snake with only one rigid body component), use decision=regen_geometry_required.\n\
+  - In that case, do NOT author clips. Explain what articulation is missing in `reason`/`notes`.\n"
+        .to_string()
+}
+
 pub(super) fn build_gen3d_motion_roles_user_text(
     raw_prompt: &str,
     has_images: bool,
@@ -1078,6 +1129,138 @@ pub(super) fn build_gen3d_motion_roles_user_text(
             fmt_vec3(up),
             fmt_vec3(size),
             c.contacts.len()
+        ));
+    }
+
+    out
+}
+
+pub(super) fn build_gen3d_motion_authoring_user_text(
+    raw_prompt: &str,
+    has_images: bool,
+    run_id: &str,
+    attempt: u32,
+    plan_hash: &str,
+    assembly_rev: u32,
+    rig_move_cycle_m: Option<f32>,
+    motion_roles_present: bool,
+    motion_runtime_candidate: Option<&str>,
+    has_idle_slot: bool,
+    has_move_slot: bool,
+    components: &[Gen3dPlannedComponent],
+    draft: &Gen3dDraft,
+) -> String {
+    fn fmt_vec3(v: Vec3) -> String {
+        format!("[{:.3},{:.3},{:.3}]", v.x, v.y, v.z)
+    }
+
+    fn fmt_quat_xyzw(q: Quat) -> String {
+        if !q.is_finite() {
+            return "[0,0,0,1]".into();
+        }
+        let q = q.normalize();
+        format!("[{:.4},{:.4},{:.4},{:.4}]", q.x, q.y, q.z, q.w)
+    }
+
+    fn anchor_rot_local(component: &Gen3dPlannedComponent, anchor: &str) -> Quat {
+        if anchor == "origin" {
+            return Quat::IDENTITY;
+        }
+        component
+            .anchors
+            .iter()
+            .find(|a| a.name.as_ref() == anchor)
+            .map(|a| a.transform.rotation)
+            .unwrap_or(Quat::IDENTITY)
+    }
+
+    let mut out = String::new();
+    out.push_str("Goal: decide if runtime motion is sufficient, or author explicit per-edge animation clips.\n");
+    if !has_images {
+        out.push_str("No photos are provided for this run.\n");
+    }
+    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push('\n');
+
+    out.push_str("You MUST copy these values into `applies_to` exactly:\n");
+    out.push_str(&format!("- run_id: {run_id}\n"));
+    out.push_str(&format!("- attempt: {attempt}\n"));
+    out.push_str(&format!("- plan_hash: {plan_hash}\n"));
+    out.push_str(&format!("- assembly_rev: {assembly_rev}\n\n"));
+
+    let mobility_present = draft.root_def().and_then(|r| r.mobility.as_ref()).is_some();
+    let attack_present = draft.root_def().and_then(|r| r.attack.as_ref()).is_some();
+    out.push_str(&format!(
+        "Draft summary: mobility_present={} attack_present={} rig_move_cycle_m={} motion_roles_present={} motion_runtime_candidate={} has_idle_slot={} has_move_slot={}\n",
+        mobility_present,
+        attack_present,
+        rig_move_cycle_m
+            .filter(|v| v.is_finite())
+            .map(|v| format!("{v:.3}"))
+            .unwrap_or_else(|| "null".into()),
+        motion_roles_present,
+        motion_runtime_candidate.unwrap_or("null"),
+        has_idle_slot,
+        has_move_slot,
+    ));
+    if mobility_present && motion_runtime_candidate.is_none() && !has_move_slot {
+        out.push_str("NOTE: runtime motion is NOT available for this draft (no runtime rig candidate). Do NOT return decision=runtime_ok; you MUST either author clips or request geometry regeneration.\n");
+    }
+    out.push('\n');
+
+    let mut name_to_idx: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (idx, c) in components.iter().enumerate() {
+        name_to_idx.insert(c.name.as_str(), idx);
+    }
+
+    out.push_str("Attachment edges (child components with attach_to):\n");
+    for child in components.iter() {
+        let Some(att) = child.attach_to.as_ref() else {
+            continue;
+        };
+        let parent_idx = name_to_idx.get(att.parent.as_str()).copied();
+        let parent = parent_idx.and_then(|idx| components.get(idx));
+
+        let parent_rot = parent.map(|p| p.rot).unwrap_or(Quat::IDENTITY);
+        let parent_anchor_rot_local = parent
+            .map(|p| anchor_rot_local(p, att.parent_anchor.as_str()))
+            .unwrap_or(Quat::IDENTITY);
+        let join_rot_world = parent_rot * parent_anchor_rot_local;
+        let join_right_world = join_rot_world * Vec3::X;
+        let join_up_world = join_rot_world * Vec3::Y;
+        let join_forward_world = join_rot_world * Vec3::Z;
+
+        let slots: Vec<String> = att
+            .animations
+            .iter()
+            .map(|slot| {
+                let kind = match &slot.spec.clip {
+                    crate::object::registry::PartAnimationDef::Loop { .. } => "loop",
+                    crate::object::registry::PartAnimationDef::Once { .. } => "once",
+                    crate::object::registry::PartAnimationDef::PingPong { .. } => "ping_pong",
+                    crate::object::registry::PartAnimationDef::Spin { .. } => "spin",
+                };
+                format!(
+                    "{}:{}:{}",
+                    slot.channel.as_ref(),
+                    format!("{:?}", slot.spec.driver).to_ascii_lowercase(),
+                    kind
+                )
+            })
+            .collect();
+
+        out.push_str(&format!(
+            "- child={} parent={} parent_anchor={} child_anchor={} base_offset.pos(join)={} base_offset.rot_quat_xyzw(join)={} join_right_world={} join_up_world={} join_forward_world={} existing_slots={:?}\n",
+            child.name.trim(),
+            att.parent.trim(),
+            att.parent_anchor.trim(),
+            att.child_anchor.trim(),
+            fmt_vec3(att.offset.translation),
+            fmt_quat_xyzw(att.offset.rotation),
+            fmt_vec3(join_right_world),
+            fmt_vec3(join_up_world),
+            fmt_vec3(join_forward_world),
+            slots,
         ));
     }
 

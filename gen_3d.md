@@ -130,6 +130,9 @@ Notes:
   of reusable, deterministic motion generators.
 - The Gen3D agent may call `llm_generate_motion_roles_v1` to label locomotion effectors
   (legs/wheels/propellers/rotors, etc).
+- If runtime motion mapping is not possible (no compatible rig candidate; e.g. snake/octopus/hexapod),
+  the agent can call `llm_generate_motion_authoring_v1` to author explicit per-edge animation clips
+  that are baked onto attachment edges (no engine inference).
 - Algorithms are applied only when the descriptor declares the required `motion_rig_v1` edges.
 
 ## Cache / Debugging Artifacts

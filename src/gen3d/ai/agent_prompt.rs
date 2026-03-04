@@ -4,7 +4,8 @@ use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DESCRIBE,
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_MOTION_ROLES,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW,
     TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
@@ -38,6 +39,10 @@ Rules:\n\
 - Runtime motion roles (recommended for movable units):\n\
   - If the draft is a movable unit (mobility is ground/air) and `state_summary.motion_roles.applies_to_current` is false, call `llm_generate_motion_roles_v1` before finishing.\n\
   - This produces an explicit, non-heuristic mapping of locomotion effectors (legs/wheels) so the engine can inject generic `move` algorithms at runtime.\n\
+- Motion authoring fallback (required when runtime motion cannot be used):\n\
+  - If the draft is a movable unit AND `state_summary.motion_runtime_candidate` is null AND `state_summary.motion_coverage.has_move` is false, call `llm_generate_motion_authoring_v1`.\n\
+  - This tool can author explicit per-edge animation clips (idle/move/attack) so the unit will not end up with zero animation.\n\
+  - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if runtime motion is available.\n\
 - Visual QA / appearance review:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer validate_v1 + smoke_check_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
@@ -199,6 +204,17 @@ pub(super) fn build_agent_user_text(
                 out.push_str("ok");
                 if let Some(move_effectors) = move_effectors {
                     out.push_str(&format!(" move_effectors={move_effectors}"));
+                }
+            }
+            TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => {
+                let decision = value.get("decision").and_then(|v| v.as_str());
+                let edges = value.get("edges").and_then(|v| v.as_u64());
+                out.push_str("ok");
+                if let Some(decision) = decision {
+                    out.push_str(&format!(" decision={decision}"));
+                }
+                if let Some(edges) = edges {
+                    out.push_str(&format!(" edges={edges}"));
                 }
             }
             TOOL_ID_LLM_REVIEW_DELTA => {
@@ -724,6 +740,97 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         }
     };
 
+    let motion_authoring_status = {
+        match job.motion_authoring.as_ref() {
+            Some(authored) => {
+                let applies_to_current = job.motion_authoring_for_current_draft().is_some();
+                let decision = match authored.decision {
+                    super::schema::AiMotionAuthoringDecisionJsonV1::RuntimeOk => "runtime_ok",
+                    super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips => "author_clips",
+                    super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => {
+                        "regen_geometry_required"
+                    }
+                    super::schema::AiMotionAuthoringDecisionJsonV1::Unknown => "unknown",
+                };
+                serde_json::json!({
+                    "present": true,
+                    "applies_to_current": applies_to_current,
+                    "decision": decision,
+                    "edges": authored.edges.len(),
+                })
+            }
+            None => serde_json::json!({
+                "present": false,
+                "applies_to_current": false,
+                "decision": null,
+                "edges": 0,
+            }),
+        }
+    };
+
+    let motion_runtime_candidate = {
+        let roles = job.motion_roles_for_current_draft();
+        super::agent_utils::motion_runtime_candidate_kind(
+            roles,
+            &job.planned_components,
+            None,
+        )
+    };
+
+    let motion_coverage = {
+        let mut edges_total = 0usize;
+        let mut edges_with_any_slots = 0usize;
+        let mut slots_total = 0usize;
+        let mut move_edges = 0usize;
+        let mut has_move = false;
+        let mut has_idle = false;
+        let mut has_attack = false;
+        let mut has_ambient = false;
+        let mut slots_by_channel: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+
+        for comp in job.planned_components.iter() {
+            let Some(att) = comp.attach_to.as_ref() else {
+                continue;
+            };
+            edges_total += 1;
+            if !att.animations.is_empty() {
+                edges_with_any_slots += 1;
+            }
+            let mut edge_has_move = false;
+            for slot in att.animations.iter() {
+                slots_total += 1;
+                let channel = slot.channel.as_ref();
+                *slots_by_channel.entry(channel.to_string()).or_insert(0) += 1;
+                match channel {
+                    "move" => {
+                        has_move = true;
+                        edge_has_move = true;
+                    }
+                    "idle" => has_idle = true,
+                    "attack_primary" => has_attack = true,
+                    "ambient" => has_ambient = true,
+                    _ => {}
+                }
+            }
+            if edge_has_move {
+                move_edges += 1;
+            }
+        }
+
+        serde_json::json!({
+            "edges_total": edges_total,
+            "edges_with_any_slots": edges_with_any_slots,
+            "slots_total": slots_total,
+            "move_edges": move_edges,
+            "has_move": has_move,
+            "has_idle": has_idle,
+            "has_attack_primary": has_attack,
+            "has_ambient": has_ambient,
+            "slots_by_channel": slots_by_channel,
+        })
+    };
+
     serde_json::json!({
         "run_id": job.run_id.map(|id| id.to_string()),
         "attempt": job.attempt,
@@ -731,6 +838,9 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         "plan_hash": job.plan_hash,
         "assembly_rev": job.assembly_rev,
         "motion_roles": motion_roles_status,
+        "motion_authoring": motion_authoring_status,
+        "motion_runtime_candidate": motion_runtime_candidate,
+        "motion_coverage": motion_coverage,
         "review_appearance": job.review_appearance,
         "needs_review": job.agent.rendered_since_last_review,
         "no_progress_steps": job.agent.no_progress_steps,

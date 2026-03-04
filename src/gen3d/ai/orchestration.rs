@@ -134,6 +134,7 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.agent = Gen3dAgentState::default();
     job.save_seq = 0;
     job.motion_roles = None;
+    job.motion_authoring = None;
 
     workshop.error = None;
     workshop.status = "Build cancelled. Click Build to start a new run.".to_string();
@@ -266,6 +267,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
     job.motion_roles = None;
+    job.motion_authoring = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
     job.pending_plan = None;
@@ -1792,6 +1794,7 @@ fn retry_gen3d_plan(
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
     job.motion_roles = None;
+    job.motion_authoring = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
     job.pending_plan = None;
@@ -2419,6 +2422,7 @@ fn try_start_gen3d_replan(
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
     job.motion_roles = None;
+    job.motion_authoring = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
     job.pending_plan = None;

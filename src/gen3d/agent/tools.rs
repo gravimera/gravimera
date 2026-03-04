@@ -18,6 +18,7 @@ pub(crate) const TOOL_ID_LLM_GENERATE_PLAN: &str = "llm_generate_plan_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENT: &str = "llm_generate_component_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENTS: &str = "llm_generate_components_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_MOTION_ROLES: &str = "llm_generate_motion_roles_v1";
+pub(crate) const TOOL_ID_LLM_GENERATE_MOTION_AUTHORING: &str = "llm_generate_motion_authoring_v1";
 pub(crate) const TOOL_ID_LLM_REVIEW_DELTA: &str = "llm_review_delta_v1";
 
 pub(crate) const TOOL_ID_RENDER_PREVIEW: &str = "render_preview_v1";
@@ -135,6 +136,12 @@ impl Gen3dToolRegistryV1 {
                 title: "LLM: generate motion roles",
                 one_line_summary:
                     "Labels motion effectors (legs/wheels/arms/etc) so the engine can inject generic move/attack algorithms at runtime.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+                title: "LLM: generate motion authoring",
+                one_line_summary:
+                    "Generates a motion authoring spec to bake animation clips onto attachment edges (fallback for non-standard movement).",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_LLM_REVIEW_DELTA,
@@ -459,6 +466,22 @@ impl Gen3dToolRegistryV1 {
                 result_example: serde_json::json!({
                     "ok": true,
                     "move_effectors": 4,
+                }),
+            }),
+            TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+                title: "LLM: generate motion authoring",
+                one_line_summary:
+                    "Generates a motion authoring spec to bake animation clips onto attachment edges (fallback for non-standard movement).",
+                description:
+                    "Decides whether runtime motion mapping is sufficient, or returns explicit per-edge animation clips to bake into the prefab.\n\
+                     This is used when a movable unit cannot be mapped into an existing runtime rig (or when the prompt implies custom/stylized motion).\n\
+                     The engine applies the result deterministically (no inference).",
+                args_example: serde_json::json!({}),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "decision": "author_clips",
+                    "edges": 6,
                 }),
             }),
             TOOL_ID_LLM_REVIEW_DELTA => Some(Gen3dToolDescriptionV1 {

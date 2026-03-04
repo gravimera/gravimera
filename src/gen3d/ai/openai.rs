@@ -723,7 +723,7 @@ pub(super) fn generate_text_via_openai(
     }
 
     if base_url.starts_with("mock://gen3d") {
-        #[cfg(test)]
+        #[cfg(any(test, debug_assertions))]
         {
             set_progress(progress, "Mocking OpenAI…");
             let resp = mock_generate_text_via_openai(
@@ -761,9 +761,9 @@ pub(super) fn generate_text_via_openai(
             return Ok(resp);
         }
 
-        #[cfg(not(test))]
+        #[cfg(not(any(test, debug_assertions)))]
         {
-            return Err("mock://gen3d base_url is only supported in tests".into());
+            return Err("mock://gen3d base_url is only supported in tests and debug builds".into());
         }
     }
 
@@ -963,13 +963,13 @@ pub(super) fn generate_text_via_openai(
     ))
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 fn mock_generate_text_via_openai(
     _progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: Gen3dAiSessionState,
     _expected_schema: Option<Gen3dAiJsonSchemaKind>,
     _system_instructions: &str,
-    _user_text: &str,
+    user_text: &str,
     image_paths: &[PathBuf],
     run_dir: Option<&Path>,
     artifact_prefix: &str,
@@ -980,6 +980,400 @@ fn mock_generate_text_via_openai(
     if !image_paths.is_empty() {
         // We don't support mock images yet; keep the mock minimal for now.
         return Err("mock://gen3d does not support images (tests should use prompt-only)".into());
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum MockKind {
+        Warcar,
+        Snake,
+        Octopus,
+        Mantis,
+    }
+
+    fn mock_kind_from_text(text: &str) -> MockKind {
+        let t = text.to_ascii_lowercase();
+        if t.contains("octopus") {
+            return MockKind::Octopus;
+        }
+        if t.contains("mantis") {
+            return MockKind::Mantis;
+        }
+        if t.contains("snake") {
+            return MockKind::Snake;
+        }
+        if t.contains("warcar") || t.contains("cannon") || t.contains("tank") {
+            return MockKind::Warcar;
+        }
+        MockKind::Warcar
+    }
+
+    fn components_for_kind(kind: MockKind) -> Vec<&'static str> {
+        match kind {
+            MockKind::Warcar => vec!["chassis", "wheels", "turret", "cannon", "details"],
+            MockKind::Snake => vec!["body", "seg_0", "seg_1", "seg_2", "seg_3", "seg_4", "seg_5"],
+            MockKind::Octopus => vec![
+                "body",
+                "tentacle_0",
+                "tentacle_1",
+                "tentacle_2",
+                "tentacle_3",
+                "tentacle_4",
+                "tentacle_5",
+                "tentacle_6",
+                "tentacle_7",
+            ],
+            MockKind::Mantis => vec![
+                "body",
+                "head",
+                "arm_l",
+                "arm_r",
+                "leg_fl",
+                "leg_fr",
+                "leg_ml",
+                "leg_mr",
+                "leg_bl",
+                "leg_br",
+            ],
+        }
+    }
+
+    fn plan_json_for_kind(kind: MockKind) -> serde_json::Value {
+        match kind {
+            MockKind::Warcar => serde_json::json!({
+                "version": 8,
+                "mobility": { "kind": "ground", "max_speed": 6.0 },
+                "attack": {
+                    "kind": "ranged_projectile",
+                    "cooldown_secs": 0.8,
+                    "muzzle": { "component": "cannon", "anchor": "muzzle" },
+                    "projectile": {
+                        "shape": "sphere",
+                        "radius": 0.12,
+                        "color": [1.0, 0.75, 0.2, 1.0],
+                        "unlit": true,
+                        "speed": 26.0,
+                        "ttl_secs": 2.0,
+                        "damage": 5,
+                        "obstacle_rule": "bullets_blockers",
+                        "spawn_energy_impact": false
+                    }
+                },
+                "assembly_notes": "Mock plan: keep structure simple and readable.",
+                "root_component": "chassis",
+                "components": [
+                    {
+                        "name": "chassis",
+                        "purpose": "Main armored body of the warcar.",
+                        "modeling_notes": "Chunky low-poly proportions. Serves as the root component.",
+                        "size": [4.0, 1.4, 7.0],
+                        "anchors": [],
+                        "attach_to": null
+                    },
+                    {
+                        "name": "wheels",
+                        "purpose": "Four big off-road wheels.",
+                        "modeling_notes": "Simple cylinders; readable tread.",
+                        "size": [5.0, 1.2, 7.5],
+                        "anchors": [],
+                        "attach_to": {
+                            "parent": "chassis",
+                            "parent_anchor": "origin",
+                            "child_anchor": "origin",
+                            "offset": { "pos": [0.0, -0.8, 0.0], "scale": [1.0, 1.0, 1.0] }
+                        }
+                    },
+                    {
+                        "name": "turret",
+                        "purpose": "Roof turret base.",
+                        "modeling_notes": "Low profile ring + mount.",
+                        "size": [2.0, 0.8, 2.0],
+                        "anchors": [],
+                        "attach_to": {
+                            "parent": "chassis",
+                            "parent_anchor": "origin",
+                            "child_anchor": "origin",
+                            "offset": { "pos": [0.0, 1.1, -1.2], "scale": [1.0, 1.0, 1.0] }
+                        }
+                    },
+                    {
+                        "name": "cannon",
+                        "purpose": "Cannon barrel and housing.",
+                        "modeling_notes": "Short thick barrel; clearly a cannon.",
+                        "size": [1.0, 1.0, 3.2],
+                        "anchors": [
+                            { "name": "muzzle", "pos": [0.0, 0.0, 1.6], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
+                        ],
+                        "attach_to": {
+                            "parent": "turret",
+                            "parent_anchor": "origin",
+                            "child_anchor": "origin",
+                            "offset": { "pos": [0.0, 0.2, 1.2], "scale": [1.0, 1.0, 1.0] }
+                        }
+                    },
+                    {
+                        "name": "details",
+                        "purpose": "Small silhouette details (bumper/plates/exhaust).",
+                        "modeling_notes": "Keep sparse; avoid clutter.",
+                        "size": [4.5, 1.6, 7.5],
+                        "anchors": [],
+                        "attach_to": {
+                            "parent": "chassis",
+                            "parent_anchor": "origin",
+                            "child_anchor": "origin",
+                            "offset": { "pos": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0] }
+                        }
+                    }
+                ]
+            }),
+            MockKind::Snake => serde_json::json!({
+                "version": 8,
+                "mobility": { "kind": "ground", "max_speed": 5.0 },
+                "attack": { "kind": "none" },
+                "assembly_notes": "Mock plan: segmented snake body for slither motion authoring.",
+                "root_component": "body",
+                "components": [
+                    {
+                        "name": "body",
+                        "purpose": "Main snake body (root).",
+                        "modeling_notes": "Long, low body; keep simple.",
+                        "size": [0.8, 0.6, 2.2],
+                        "anchors": [],
+                        "attach_to": null
+                    },
+                    {
+                        "name": "seg_0",
+                        "purpose": "Body segment 0.",
+                        "modeling_notes": "Repeatable segment.",
+                        "size": [0.7, 0.5, 1.0],
+                        "anchors": [],
+                        "attach_to": {"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.0,0.0,0.75],"scale":[1.0,1.0,1.0]}}
+                    },
+                    {
+                        "name": "seg_1",
+                        "purpose": "Body segment 1.",
+                        "modeling_notes": "Repeatable segment.",
+                        "size": [0.65, 0.48, 0.95],
+                        "anchors": [],
+                        "attach_to": {"parent":"seg_0","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.0,0.0,0.7],"scale":[1.0,1.0,1.0]}}
+                    },
+                    {
+                        "name": "seg_2",
+                        "purpose": "Body segment 2.",
+                        "modeling_notes": "Repeatable segment.",
+                        "size": [0.62, 0.46, 0.9],
+                        "anchors": [],
+                        "attach_to": {"parent":"seg_1","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.0,0.0,0.65],"scale":[1.0,1.0,1.0]}}
+                    },
+                    {
+                        "name": "seg_3",
+                        "purpose": "Body segment 3.",
+                        "modeling_notes": "Repeatable segment.",
+                        "size": [0.58, 0.44, 0.85],
+                        "anchors": [],
+                        "attach_to": {"parent":"seg_2","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.0,0.0,0.6],"scale":[1.0,1.0,1.0]}}
+                    },
+                    {
+                        "name": "seg_4",
+                        "purpose": "Body segment 4.",
+                        "modeling_notes": "Repeatable segment.",
+                        "size": [0.55, 0.42, 0.8],
+                        "anchors": [],
+                        "attach_to": {"parent":"seg_3","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.0,0.0,0.55],"scale":[1.0,1.0,1.0]}}
+                    },
+                    {
+                        "name": "seg_5",
+                        "purpose": "Body segment 5 (tail).",
+                        "modeling_notes": "Slightly taper to tail.",
+                        "size": [0.5, 0.4, 0.75],
+                        "anchors": [],
+                        "attach_to": {"parent":"seg_4","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.0,0.0,0.5],"scale":[1.0,1.0,1.0]}}
+                    }
+                ]
+            }),
+            MockKind::Octopus => serde_json::json!({
+                "version": 8,
+                "mobility": { "kind": "ground", "max_speed": 4.0 },
+                "attack": { "kind": "melee", "cooldown_secs": 0.8, "damage": 4, "range": 1.0, "radius": 0.6, "arc_degrees": 120.0 },
+                "assembly_notes": "Mock plan: octopus body + 8 tentacles for undulation motion authoring.",
+                "root_component": "body",
+                "components": [
+                    {
+                        "name": "body",
+                        "purpose": "Octopus mantle/body (root).",
+                        "modeling_notes": "Bulbous body; keep simple.",
+                        "size": [1.4, 1.1, 1.4],
+                        "anchors": [],
+                        "attach_to": null
+                    },
+                    {
+                        "name": "tentacle_0",
+                        "purpose": "Tentacle 0.",
+                        "modeling_notes": "Simple taper.",
+                        "size": [0.35, 0.35, 1.2],
+                        "anchors": [],
+                        "attach_to": {"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.8,-0.3,0.4],"scale":[1.0,1.0,1.0]}}
+                    },
+                    { "name": "tentacle_1", "purpose":"Tentacle 1.", "modeling_notes":"Simple taper.", "size":[0.35,0.35,1.2], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.9,-0.3,0.0],"scale":[1.0,1.0,1.0]}} },
+                    { "name": "tentacle_2", "purpose":"Tentacle 2.", "modeling_notes":"Simple taper.", "size":[0.35,0.35,1.2], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.8,-0.3,-0.4],"scale":[1.0,1.0,1.0]}} },
+                    { "name": "tentacle_3", "purpose":"Tentacle 3.", "modeling_notes":"Simple taper.", "size":[0.35,0.35,1.2], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.4,-0.3,-0.8],"scale":[1.0,1.0,1.0]}} },
+                    { "name": "tentacle_4", "purpose":"Tentacle 4.", "modeling_notes":"Simple taper.", "size":[0.35,0.35,1.2], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.0,-0.3,-0.9],"scale":[1.0,1.0,1.0]}} },
+                    { "name": "tentacle_5", "purpose":"Tentacle 5.", "modeling_notes":"Simple taper.", "size":[0.35,0.35,1.2], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[-0.4,-0.3,-0.8],"scale":[1.0,1.0,1.0]}} },
+                    { "name": "tentacle_6", "purpose":"Tentacle 6.", "modeling_notes":"Simple taper.", "size":[0.35,0.35,1.2], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[-0.8,-0.3,-0.4],"scale":[1.0,1.0,1.0]}} },
+                    { "name": "tentacle_7", "purpose":"Tentacle 7.", "modeling_notes":"Simple taper.", "size":[0.35,0.35,1.2], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[-0.9,-0.3,0.0],"scale":[1.0,1.0,1.0]}} }
+                ]
+            }),
+            MockKind::Mantis => serde_json::json!({
+                "version": 8,
+                "mobility": { "kind": "ground", "max_speed": 5.5 },
+                "attack": { "kind": "melee", "cooldown_secs": 0.6, "damage": 6, "range": 1.1, "radius": 0.55, "arc_degrees": 140.0 },
+                "assembly_notes": "Mock plan: mantis body with 6 legs + 2 scythe arms (requires authored motion).",
+                "root_component": "body",
+                "components": [
+                    {
+                        "name": "body",
+                        "purpose": "Mantis torso (root).",
+                        "modeling_notes": "Tall-ish thorax + abdomen silhouette; keep readable.",
+                        "size": [1.0, 1.2, 2.0],
+                        "anchors": [],
+                        "attach_to": null
+                    },
+                    { "name":"head", "purpose":"Head.", "modeling_notes":"Small head.", "size":[0.6,0.6,0.6], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.0,0.6,0.9],"scale":[1.0,1.0,1.0]}} },
+                    { "name":"arm_l", "purpose":"Left scythe arm.", "modeling_notes":"Curved blade-like forelimb.", "size":[0.3,0.8,1.0], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[-0.55,0.3,0.6],"scale":[1.0,1.0,1.0]}} },
+                    { "name":"arm_r", "purpose":"Right scythe arm.", "modeling_notes":"Curved blade-like forelimb.", "size":[0.3,0.8,1.0], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.55,0.3,0.6],"scale":[1.0,1.0,1.0]}} },
+                    { "name":"leg_fl", "purpose":"Front left leg.", "modeling_notes":"Thin leg.", "size":[0.25,0.4,0.8], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[-0.6,-0.3,0.5],"scale":[1.0,1.0,1.0]}} },
+                    { "name":"leg_fr", "purpose":"Front right leg.", "modeling_notes":"Thin leg.", "size":[0.25,0.4,0.8], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.6,-0.3,0.5],"scale":[1.0,1.0,1.0]}} },
+                    { "name":"leg_ml", "purpose":"Mid left leg.", "modeling_notes":"Thin leg.", "size":[0.25,0.4,0.9], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[-0.65,-0.35,0.0],"scale":[1.0,1.0,1.0]}} },
+                    { "name":"leg_mr", "purpose":"Mid right leg.", "modeling_notes":"Thin leg.", "size":[0.25,0.4,0.9], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.65,-0.35,0.0],"scale":[1.0,1.0,1.0]}} },
+                    { "name":"leg_bl", "purpose":"Back left leg.", "modeling_notes":"Thin leg.", "size":[0.25,0.4,0.9], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[-0.6,-0.35,-0.55],"scale":[1.0,1.0,1.0]}} },
+                    { "name":"leg_br", "purpose":"Back right leg.", "modeling_notes":"Thin leg.", "size":[0.25,0.4,0.9], "anchors":[], "attach_to":{"parent":"body","parent_anchor":"origin","child_anchor":"origin","offset":{"pos":[0.6,-0.35,-0.55],"scale":[1.0,1.0,1.0]}} }
+                ]
+            }),
+        }
+    }
+
+    fn parse_applies_to_from_user_text(user_text: &str) -> Option<(String, u32, String, u32)> {
+        let mut run_id: Option<String> = None;
+        let mut attempt: Option<u32> = None;
+        let mut plan_hash: Option<String> = None;
+        let mut assembly_rev: Option<u32> = None;
+
+        for line in user_text.lines().map(|l| l.trim()) {
+            if let Some(v) = line.strip_prefix("- run_id:") {
+                run_id = Some(v.trim().to_string());
+            } else if let Some(v) = line.strip_prefix("- attempt:") {
+                attempt = v.trim().parse::<u32>().ok();
+            } else if let Some(v) = line.strip_prefix("- plan_hash:") {
+                plan_hash = Some(v.trim().to_string());
+            } else if let Some(v) = line.strip_prefix("- assembly_rev:") {
+                assembly_rev = v.trim().parse::<u32>().ok();
+            }
+        }
+
+        Some((run_id?, attempt?, plan_hash?, assembly_rev?))
+    }
+
+    fn extract_agent_user_prompt(user_text: &str) -> String {
+        let mut lines = user_text.lines();
+        while let Some(line) = lines.next() {
+            if line.trim() == "User prompt:" {
+                break;
+            }
+        }
+        let mut prompt_lines: Vec<String> = Vec::new();
+        for line in lines {
+            if line.trim_start().starts_with("Input images:") {
+                break;
+            }
+            prompt_lines.push(line.to_string());
+        }
+        prompt_lines.join("\n").trim().to_string()
+    }
+
+    fn parse_child_components_from_motion_roles_user_text(user_text: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for line in user_text.lines().map(|l| l.trim()) {
+            let Some(rest) = line.strip_prefix("- name=") else {
+                continue;
+            };
+            let mut name: Option<&str> = None;
+            let mut parent: Option<&str> = None;
+            for token in rest.split_whitespace() {
+                if let Some(v) = token.strip_prefix("parent=") {
+                    parent = Some(v);
+                } else if name.is_none() {
+                    name = Some(token);
+                }
+            }
+            let (Some(name), Some(parent)) = (name, parent) else {
+                continue;
+            };
+            if parent == "<root>" {
+                continue;
+            }
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            out.push(name.to_string());
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    fn parse_child_components_from_motion_authoring_user_text(user_text: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for line in user_text.lines().map(|l| l.trim()) {
+            let Some(rest) = line.strip_prefix("- child=") else {
+                continue;
+            };
+            let Some(name) = rest.split_whitespace().next() else {
+                continue;
+            };
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            out.push(name.to_string());
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    fn parse_required_anchor_names_from_component_user_text(user_text: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut in_required = false;
+        for line in user_text.lines().map(|l| l.trim()) {
+            if line == "Required anchors for this component (MUST include all in output JSON):" {
+                in_required = true;
+                continue;
+            }
+            if !in_required {
+                continue;
+            }
+            if !line.starts_with("- ") {
+                if line.is_empty() {
+                    continue;
+                }
+                if !out.is_empty() {
+                    break;
+                }
+                continue;
+            }
+            let rest = line.trim_start_matches("- ").trim();
+            let Some((name, _)) = rest.split_once(':') else {
+                continue;
+            };
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            out.push(name.to_string());
+        }
+        out.sort();
+        out.dedup();
+        out
     }
 
     let text = if artifact_prefix == "agent_step" {
@@ -1011,13 +1405,18 @@ fn mock_generate_text_via_openai(
             .and_then(|dir| attempt_dir_for_pass_dir(dir))
             .is_some_and(attempt_has_plan);
 
+        let prompt = extract_agent_user_prompt(user_text);
+        let kind = mock_kind_from_text(&prompt);
+        let component_names = components_for_kind(kind);
+        let needs_motion_authoring = kind != MockKind::Warcar;
+
         // Intentionally uses some common “wrong” arg spellings (name/component_id/base) to
         // regression-test tool-call tolerance.
         if !has_plan {
             // Planning must be its own step (the engine enforces this).
             serde_json::json!({
                 "version": 1,
-                "status_summary": "Mock: plan the warcar components.",
+                "status_summary": format!("Mock: plan components ({:?}).", kind),
                 "actions": [
                     {
                         "kind": "tool_call",
@@ -1036,154 +1435,94 @@ fn mock_generate_text_via_openai(
                         "call_id": "call_3_plan",
                         "tool_id": "llm_generate_plan_v1",
                         "args": {
-                            "prompt": "A warcar with a cannon as weapon",
+                            "prompt": prompt,
                             "style": "Voxel/Pixel Art",
-                            "components": ["chassis","wheels","turret","cannon","details"]
+                            "components": component_names
                         }
                     }
                 ]
             })
             .to_string()
         } else {
+            let mut actions: Vec<serde_json::Value> = Vec::new();
+            actions.push(serde_json::json!({
+                "kind": "tool_call",
+                "call_id": "call_1_create_ws",
+                "tool_id": "create_workspace_v1",
+                "args": { "name": "warcar_preview", "base": "main" }
+            }));
+            actions.push(serde_json::json!({
+                "kind": "tool_call",
+                "call_id": "call_2_set_ws",
+                "tool_id": "set_active_workspace_v1",
+                "args": { "name": "warcar_preview" }
+            }));
+            actions.push(serde_json::json!({
+                "kind": "tool_call",
+                "call_id": "call_4_components",
+                "tool_id": "llm_generate_components_v1",
+                "args": {
+                    "component_names": component_names
+                }
+            }));
+            actions.push(serde_json::json!({
+                "kind": "tool_call",
+                "call_id": "call_9_validate",
+                "tool_id": "validate_v1",
+                "args": {}
+            }));
+            actions.push(serde_json::json!({
+                "kind": "tool_call",
+                "call_id": "call_10_smoke",
+                "tool_id": "smoke_check_v1",
+                "args": {}
+            }));
+            actions.push(serde_json::json!({
+                "kind": "tool_call",
+                "call_id": "call_11_motion_roles",
+                "tool_id": "llm_generate_motion_roles_v1",
+                "args": {}
+            }));
+            if needs_motion_authoring {
+                actions.push(serde_json::json!({
+                    "kind": "tool_call",
+                    "call_id": "call_12_motion_authoring",
+                    "tool_id": "llm_generate_motion_authoring_v1",
+                    "args": {}
+                }));
+            }
+            actions.push(serde_json::json!({
+                "kind": "done",
+                "reason": "Mock Gen3D build completed."
+            }));
             serde_json::json!({
                 "version": 1,
-                "status_summary": "Mock: generate the planned components and run QA.",
-                "actions": [
-                    {
-                        "kind": "tool_call",
-                        "call_id": "call_1_create_ws",
-                        "tool_id": "create_workspace_v1",
-                        "args": { "name": "warcar_preview", "base": "main" }
-                    },
-                    {
-                        "kind": "tool_call",
-                        "call_id": "call_2_set_ws",
-                        "tool_id": "set_active_workspace_v1",
-                        "args": { "name": "warcar_preview" }
-                    },
-                    {
-                        "kind": "tool_call",
-                        "call_id": "call_4_components",
-                        "tool_id": "llm_generate_components_v1",
-                        "args": {
-                            "component_names": ["chassis","wheels","turret","cannon","details"]
-                        }
-                    },
-                    {
-                        "kind": "tool_call",
-                        "call_id": "call_9_validate",
-                        "tool_id": "validate_v1",
-                        "args": {}
-                    },
-                    {
-                        "kind": "tool_call",
-                        "call_id": "call_10_smoke",
-                        "tool_id": "smoke_check_v1",
-                        "args": {}
-                    },
-                    {
-                        "kind": "done",
-                        "reason": "Mock Gen3D build completed."
-                    }
-                ]
+                "status_summary": format!("Mock: generate components ({:?}) and run QA.", kind),
+                "actions": actions
             })
             .to_string()
         }
     } else if artifact_prefix.starts_with("tool_plan_") {
-        serde_json::json!({
-            "version": 8,
-            "mobility": { "kind": "ground", "max_speed": 6.0 },
-            "attack": {
-                "kind": "ranged_projectile",
-                "cooldown_secs": 0.8,
-                "muzzle": { "component": "cannon", "anchor": "muzzle" },
-                "projectile": {
-                    "shape": "sphere",
-                    "radius": 0.12,
-                    "color": [1.0, 0.75, 0.2, 1.0],
-                    "unlit": true,
-                    "speed": 26.0,
-                    "ttl_secs": 2.0,
-                    "damage": 5,
-                    "obstacle_rule": "bullets_blockers",
-                    "spawn_energy_impact": false
-                }
-            },
-            "assembly_notes": "Mock plan: keep structure simple and readable.",
-            "root_component": "chassis",
-            "components": [
-                {
-                    "name": "chassis",
-                    "purpose": "Main armored body of the warcar.",
-                    "modeling_notes": "Chunky low-poly proportions. Serves as the root component.",
-                    "size": [4.0, 1.4, 7.0],
-                    "anchors": [],
-                    "attach_to": null
-                },
-                {
-                    "name": "wheels",
-                    "purpose": "Four big off-road wheels.",
-                    "modeling_notes": "Simple cylinders; readable tread.",
-                    "size": [5.0, 1.2, 7.5],
-                    "anchors": [],
-                    "attach_to": {
-                        "parent": "chassis",
-                        "parent_anchor": "origin",
-                        "child_anchor": "origin",
-                        "offset": { "pos": [0.0, -0.8, 0.0], "scale": [1.0, 1.0, 1.0] }
-                    }
-                },
-                {
-                    "name": "turret",
-                    "purpose": "Roof turret base.",
-                    "modeling_notes": "Low profile ring + mount.",
-                    "size": [2.0, 0.8, 2.0],
-                    "anchors": [],
-                    "attach_to": {
-                        "parent": "chassis",
-                        "parent_anchor": "origin",
-                        "child_anchor": "origin",
-                        "offset": { "pos": [0.0, 1.1, -1.2], "scale": [1.0, 1.0, 1.0] }
-                    }
-                },
-                {
-                    "name": "cannon",
-                    "purpose": "Cannon barrel and housing.",
-                    "modeling_notes": "Short thick barrel; clearly a cannon.",
-                    "size": [1.0, 1.0, 3.2],
-                    "anchors": [
-                        { "name": "muzzle", "pos": [0.0, 0.0, 1.6], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
-                    ],
-                    "attach_to": {
-                        "parent": "turret",
-                        "parent_anchor": "origin",
-                        "child_anchor": "origin",
-                        "offset": { "pos": [0.0, 0.2, 1.2], "scale": [1.0, 1.0, 1.0] }
-                    }
-                },
-                {
-                    "name": "details",
-                    "purpose": "Small silhouette details (bumper/plates/exhaust).",
-                    "modeling_notes": "Keep sparse; avoid clutter.",
-                    "size": [4.5, 1.6, 7.5],
-                    "anchors": [],
-                    "attach_to": {
-                        "parent": "chassis",
-                        "parent_anchor": "origin",
-                        "child_anchor": "origin",
-                        "offset": { "pos": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0] }
-                    }
-                }
-            ]
-        })
-        .to_string()
+        plan_json_for_kind(mock_kind_from_text(user_text)).to_string()
     } else if artifact_prefix.starts_with("tool_component") {
         // All components use the same small primitive set; the engine maps them into the current
         // planned component via its object_id.
+        let required_anchor_names = parse_required_anchor_names_from_component_user_text(user_text);
+        let anchors: Vec<serde_json::Value> = required_anchor_names
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name,
+                    "pos": [0.0, 0.0, 0.0],
+                    "forward": [0.0, 0.0, 1.0],
+                    "up": [0.0, 1.0, 0.0],
+                })
+            })
+            .collect();
         serde_json::json!({
             "version": 2,
             "collider": null,
-            "anchors": [],
+            "anchors": anchors,
             "parts": [
                 {
                     "primitive": "cuboid",
@@ -1204,6 +1543,126 @@ fn mock_generate_text_via_openai(
                     "scale": [0.35, 0.35, 0.35]
                 }
             ]
+        })
+        .to_string()
+    } else if artifact_prefix.starts_with("tool_motion_roles_") {
+        let (run_id, attempt, plan_hash, assembly_rev) =
+            parse_applies_to_from_user_text(user_text).ok_or_else(|| {
+                "mock://gen3d failed to parse applies_to values from motion-roles user_text".to_string()
+            })?;
+
+        let kind = mock_kind_from_text(user_text);
+        let move_effectors: Vec<serde_json::Value> = match kind {
+            MockKind::Warcar => {
+                let child = if user_text.contains("wheels") {
+                    "wheels".to_string()
+                } else {
+                    parse_child_components_from_motion_roles_user_text(user_text)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| "wheels".into())
+                };
+                vec![serde_json::json!({"component": child, "role": "wheel", "phase_group": null, "spin_axis_local": [1.0, 0.0, 0.0]})]
+            }
+            MockKind::Mantis => {
+                let children = parse_child_components_from_motion_roles_user_text(user_text);
+                let mut legs: Vec<String> = children
+                    .into_iter()
+                    .filter(|name| name.starts_with("leg_"))
+                    .collect();
+                legs.sort();
+                legs.into_iter()
+                    .take(12)
+                    .enumerate()
+                    .map(|(idx, name)| {
+                        serde_json::json!({
+                            "component": name,
+                            "role": "leg",
+                            "phase_group": (idx as u32) % 2,
+                            "spin_axis_local": null
+                        })
+                    })
+                    .collect()
+            }
+            MockKind::Snake | MockKind::Octopus => Vec::new(),
+        };
+
+        serde_json::json!({
+          "version": 1,
+          "applies_to": { "run_id": run_id, "attempt": attempt, "plan_hash": plan_hash, "assembly_rev": assembly_rev },
+          "move_effectors": move_effectors,
+          "notes": format!("Mock motion roles ({:?})", kind)
+        })
+        .to_string()
+    } else if artifact_prefix.starts_with("tool_motion_authoring_") {
+        let (run_id, attempt, plan_hash, assembly_rev) =
+            parse_applies_to_from_user_text(user_text).ok_or_else(|| {
+                "mock://gen3d failed to parse applies_to values from motion-authoring user_text"
+                    .to_string()
+            })?;
+
+        let children = parse_child_components_from_motion_authoring_user_text(user_text);
+        let targets: Vec<String> = if children.is_empty() {
+            Vec::new()
+        } else {
+            children.into_iter().take(8).collect()
+        };
+
+        let mut edges: Vec<serde_json::Value> = Vec::new();
+        for (idx, child) in targets.iter().enumerate() {
+            let phase = idx as f32 * 0.08;
+            edges.push(serde_json::json!({
+                "component": child,
+                "slots": [
+                    {
+                        "channel": "move",
+                        "driver": "move_phase",
+                        "speed_scale": 1.0,
+                        "time_offset_units": phase,
+                        "clip": {
+                            "kind": "loop",
+                            "duration_units": 1.0,
+                            "keyframes": [
+                                {"t_units": 0.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}},
+                                {"t_units": 0.5, "delta": {"pos": [0.03, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}},
+                                {"t_units": 1.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}
+                            ]
+                        }
+                    },
+                    {
+                        "channel": "idle",
+                        "driver": "always",
+                        "speed_scale": 1.0,
+                        "time_offset_units": phase,
+                        "clip": {
+                            "kind": "loop",
+                            "duration_units": 1.6,
+                            "keyframes": [
+                                {"t_units": 0.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}},
+                                {"t_units": 0.8, "delta": {"pos": [0.0, 0.015, 0.0], "rot_quat_xyzw": null, "scale": null}},
+                                {"t_units": 1.6, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}
+                            ]
+                        }
+                    }
+                ]
+            }));
+        }
+
+        serde_json::json!({
+          "version": 1,
+          "applies_to": { "run_id": run_id, "attempt": attempt, "plan_hash": plan_hash, "assembly_rev": assembly_rev },
+          "decision": "author_clips",
+          "reason": "Mock: bake simple per-edge move+idle loops.",
+          "replace_channels": ["move", "idle"],
+          "edges": edges,
+          "notes": null
+        })
+        .to_string()
+    } else if artifact_prefix == "descriptor_meta" {
+        serde_json::json!({
+            "version": 1,
+            "short": "Mock prefab (Gen3D).",
+            "tags": ["mock", "gen3d"]
         })
         .to_string()
     } else {

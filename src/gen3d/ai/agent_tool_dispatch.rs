@@ -7,7 +7,8 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
     TOOL_ID_LIST, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_MOTION_ROLES,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW,
     TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
     TOOL_ID_VALIDATE,
@@ -1252,6 +1253,102 @@ pub(super) fn execute_tool_call(
             job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::GenerateMotionRoles);
             job.phase = Gen3dAiPhase::AgentWaitingTool;
             workshop.status = "Mapping motion roles…".into();
+            ToolCallOutcome::StartedAsync
+        }
+        TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => {
+            if job.planned_components.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "No planned components yet. Generate a plan first.".into(),
+                ));
+            }
+            let Some(openai) = job.openai.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing OpenAI config".into(),
+                ));
+            };
+            let Some(pass_dir) = job.pass_dir.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing pass dir".into(),
+                ));
+            };
+            let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
+
+            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+            job.shared_result = Some(shared.clone());
+            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+                message: "Authoring motion…".into(),
+            }));
+            job.shared_progress = Some(progress.clone());
+            set_progress(&progress, "Calling model for motion authoring…");
+            job.agent.pending_llm_repair_attempt = 0;
+
+            let roles = job.motion_roles_for_current_draft();
+            let mobility_mode = draft
+                .root_def()
+                .and_then(|def| def.mobility.as_ref())
+                .map(|m| m.mode);
+            let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
+                roles,
+                &job.planned_components,
+                mobility_mode,
+            );
+            let (mut has_idle_slot, mut has_move_slot) = (false, false);
+            for comp in job.planned_components.iter() {
+                let Some(att) = comp.attach_to.as_ref() else {
+                    continue;
+                };
+                for slot in att.animations.iter() {
+                    match slot.channel.as_ref() {
+                        "idle" => has_idle_slot = true,
+                        "move" => has_move_slot = true,
+                        _ => {}
+                    }
+                }
+            }
+
+            let system = super::prompts::build_gen3d_motion_authoring_system_instructions();
+            let user_text = super::prompts::build_gen3d_motion_authoring_user_text(
+                &job.user_prompt_raw,
+                !job.user_images.is_empty(),
+                &run_id,
+                job.attempt,
+                &job.plan_hash,
+                job.assembly_rev,
+                job.rig_move_cycle_m,
+                roles.is_some(),
+                runtime_candidate,
+                has_idle_slot,
+                has_move_slot,
+                &job.planned_components,
+                draft,
+            );
+            let reasoning_effort =
+                super::openai::cap_reasoning_effort(&openai.model_reasoning_effort, "medium");
+            spawn_gen3d_ai_text_thread(
+                shared,
+                progress,
+                job.cancel_flag.clone(),
+                job.session.clone(),
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1),
+                openai,
+                reasoning_effort,
+                system,
+                user_text,
+                Vec::new(),
+                pass_dir,
+                sanitize_prefix(&format!("tool_motion_authoring_{}", &call.call_id)),
+            );
+            job.agent.pending_tool_call = Some(call);
+            job.agent.pending_llm_tool =
+                Some(super::Gen3dAgentLlmToolKind::GenerateMotionAuthoring);
+            job.phase = Gen3dAiPhase::AgentWaitingTool;
+            workshop.status = "Authoring motion…".into();
             ToolCallOutcome::StartedAsync
         }
         TOOL_ID_RENDER_PREVIEW => {

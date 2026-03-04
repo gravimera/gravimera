@@ -1409,7 +1409,7 @@ fn component_index_from_object_id(
         .position(|c| component_object_id_for_name(&c.name) == object_id)
 }
 
-fn sync_attachment_tree_to_defs(
+pub(super) fn sync_attachment_tree_to_defs(
     components: &[Gen3dPlannedComponent],
     draft: &mut Gen3dDraft,
 ) -> Result<(), String> {

@@ -616,3 +616,98 @@ pub(crate) struct AiMotionRolesJsonV1 {
     #[serde(default)]
     pub(crate) notes: Option<String>,
 }
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiMotionAuthoringDecisionJsonV1 {
+    RuntimeOk,
+    AuthorClips,
+    RegenGeometryRequired,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiAnimationDriverJsonV1 {
+    Always,
+    MovePhase,
+    MoveDistance,
+    AttackTime,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiAnimationDeltaTransformJsonV1 {
+    #[serde(default)]
+    pub(crate) pos: Option<[f32; 3]>,
+    #[serde(default)]
+    pub(crate) rot_quat_xyzw: Option<[f32; 4]>,
+    #[serde(default)]
+    pub(crate) scale: Option<[f32; 3]>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiAnimationKeyframeJsonV1 {
+    pub(crate) t_units: f32,
+    pub(crate) delta: AiAnimationDeltaTransformJsonV1,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum AiAnimationClipJsonV1 {
+    Loop {
+        duration_units: f32,
+        keyframes: Vec<AiAnimationKeyframeJsonV1>,
+    },
+    Once {
+        duration_units: f32,
+        keyframes: Vec<AiAnimationKeyframeJsonV1>,
+    },
+    PingPong {
+        duration_units: f32,
+        keyframes: Vec<AiAnimationKeyframeJsonV1>,
+    },
+    Spin {
+        axis: [f32; 3],
+        radians_per_unit: f32,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiAuthoredAnimationSlotJsonV1 {
+    pub(crate) channel: String,
+    pub(crate) driver: AiAnimationDriverJsonV1,
+    pub(crate) speed_scale: f32,
+    pub(crate) time_offset_units: f32,
+    pub(crate) clip: AiAnimationClipJsonV1,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiAuthoredAnimationEdgeJsonV1 {
+    pub(crate) component: String,
+    #[serde(default)]
+    pub(crate) slots: Vec<AiAuthoredAnimationSlotJsonV1>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiMotionAuthoringJsonV1 {
+    #[serde(default)]
+    pub(crate) version: u32,
+    pub(crate) applies_to: AiReviewDeltaAppliesToJsonV1,
+    pub(crate) decision: AiMotionAuthoringDecisionJsonV1,
+    #[serde(default)]
+    pub(crate) reason: String,
+    #[serde(default)]
+    pub(crate) replace_channels: Vec<String>,
+    #[serde(default)]
+    pub(crate) edges: Vec<AiAuthoredAnimationEdgeJsonV1>,
+    #[serde(default)]
+    pub(crate) notes: Option<String>,
+}
