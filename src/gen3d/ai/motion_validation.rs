@@ -6,7 +6,7 @@ use crate::object::registry::{
     PartAnimationSlot,
 };
 
-use super::schema::{AiContactKindJson, AiJointKindJson};
+use super::schema::{AiContactKindJson, AiContactStanceJson, AiJointKindJson};
 use super::{Gen3dPlannedAttachment, Gen3dPlannedComponent};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,6 +158,581 @@ pub(super) fn build_motion_validation_report(
             "issues": issues_json,
         }),
     }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct MotionAutoRepairResult {
+    pub(super) applied: bool,
+    pub(super) assigned_stances: usize,
+    pub(super) repaired_edges: Vec<String>,
+    pub(super) contact_errors_before: usize,
+    pub(super) contact_errors_after: usize,
+    pub(super) notes: Vec<String>,
+}
+
+impl MotionAutoRepairResult {
+    pub(super) fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "applied": self.applied,
+            "assigned_stances": self.assigned_stances,
+            "repaired_edges": self.repaired_edges,
+            "contact_errors_before": self.contact_errors_before,
+            "contact_errors_after": self.contact_errors_after,
+            "notes": self.notes,
+        })
+    }
+}
+
+/// Deterministic, generic fallback: when contact-related motion validation errors exist, adjust
+/// contact stances and/or author join-frame translation deltas on `move` clips so declared planted
+/// contacts stay stable during stance.
+///
+/// This is intentionally *not* a heuristic “gait generator”; it only uses declared contacts +
+/// stance schedules and the engine’s existing sampling model. If validation already passes, it
+/// returns `applied=false` and makes no changes.
+pub(super) fn apply_contact_lock_auto_repair_if_needed(
+    rig_move_cycle_m: Option<f32>,
+    components: &mut [Gen3dPlannedComponent],
+) -> MotionAutoRepairResult {
+    #[derive(Clone, Debug)]
+    struct ContactLockSpec {
+        contact_component_idx: usize,
+        anchor_local_translation: Vec3,
+        stance_indices: Vec<usize>,
+        baseline_world: Vec3,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct EdgeCorrections {
+        world_error_sum: Vec<Vec3>,
+        world_error_count: Vec<u32>,
+    }
+
+    fn contact_validation_skipped_for_spin_move(comp: &Gen3dPlannedComponent) -> bool {
+        comp.attach_to
+            .as_ref()
+            .and_then(|att| find_move_slot(att))
+            .map(|slot| matches!(slot.spec.clip, PartAnimationDef::Spin { .. }))
+            .unwrap_or(false)
+    }
+
+    fn contact_error_count(
+        samples_t_m: &[f32],
+        samples_phase_01: &[f32],
+        cycle_m: f32,
+        root_idx: usize,
+        children: &[Vec<usize>],
+        components: &[Gen3dPlannedComponent],
+    ) -> usize {
+        let world_per_sample: Vec<Vec<Transform>> = samples_t_m
+            .iter()
+            .map(|&t_m| compute_world_transforms_at_t(components, children, root_idx, t_m))
+            .collect();
+
+        let slip_warn_m: f32 = (0.08 + 0.08 * cycle_m).clamp(0.12, 0.35);
+        let lift_warn_m: f32 = (0.06 + 0.06 * cycle_m).clamp(0.10, 0.30);
+        let slip_error_m = slip_warn_m * 2.0;
+        let lift_error_m = lift_warn_m * 2.0;
+
+        let mut errors = 0usize;
+        for (component_idx, comp) in components.iter().enumerate() {
+            let move_is_spin = contact_validation_skipped_for_spin_move(comp);
+            for contact in comp.contacts.iter() {
+                if contact.kind != AiContactKindJson::Ground {
+                    continue;
+                }
+                if move_is_spin {
+                    continue;
+                }
+                let Some(stance) = contact.stance.as_ref() else {
+                    errors += 1;
+                    continue;
+                };
+
+                let phase_start = if stance.phase_01.is_finite() {
+                    stance.phase_01.rem_euclid(1.0)
+                } else {
+                    0.0
+                };
+                let duty = if stance.duty_factor_01.is_finite() {
+                    stance.duty_factor_01.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                if duty <= 1e-4 {
+                    continue;
+                }
+
+                let anchor_name = contact.anchor.trim();
+                let anchor_local = anchor_transform_from_component(comp, anchor_name);
+
+                let mut positions_world: Vec<Vec3> = Vec::with_capacity(samples_t_m.len());
+                for (i, &t_m) in samples_t_m.iter().enumerate() {
+                    let component_world = world_per_sample
+                        .get(i)
+                        .and_then(|w| w.get(component_idx))
+                        .copied()
+                        .unwrap_or(Transform::IDENTITY);
+                    let p = component_world
+                        .to_matrix()
+                        .transform_point3(anchor_local.translation);
+                    let root_translation = Vec3::Z * t_m;
+                    positions_world.push(root_translation + p);
+                }
+
+                let stance_mid_phase = (phase_start + duty * 0.5).rem_euclid(1.0);
+                let mut stance_indices: Vec<usize> = Vec::new();
+                for (i, &phase) in samples_phase_01.iter().enumerate() {
+                    if phase_in_stance(phase, phase_start, duty) {
+                        stance_indices.push(i);
+                    }
+                }
+                if stance_indices.len() < 2 {
+                    continue;
+                }
+
+                let baseline_idx = stance_indices
+                    .iter()
+                    .copied()
+                    .min_by(|&a, &b| {
+                        let da = circular_distance(samples_phase_01[a], stance_mid_phase);
+                        let db = circular_distance(samples_phase_01[b], stance_mid_phase);
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .unwrap_or(stance_indices[0]);
+                let baseline = positions_world[baseline_idx];
+                let ground_y = baseline.y;
+
+                let mut max_slip_m: f32 = 0.0;
+                let mut max_lift_m: f32 = 0.0;
+                for &i in &stance_indices {
+                    let p = positions_world[i];
+                    let dx = p.x - baseline.x;
+                    let dz = p.z - baseline.z;
+                    let slip = (dx * dx + dz * dz).sqrt();
+                    max_slip_m = max_slip_m.max(slip);
+                    let lift = (p.y - ground_y).abs();
+                    max_lift_m = max_lift_m.max(lift);
+                }
+
+                if max_slip_m.is_finite() && max_slip_m >= slip_error_m {
+                    errors += 1;
+                }
+                if max_lift_m.is_finite() && max_lift_m >= lift_error_m {
+                    errors += 1;
+                }
+            }
+        }
+        errors
+    }
+
+    fn choose_repair_edge_idx(
+        contact_component_idx: usize,
+        components: &[Gen3dPlannedComponent],
+        name_to_idx: &std::collections::HashMap<String, usize>,
+    ) -> Option<usize> {
+        let mut idx = contact_component_idx;
+        loop {
+            let Some(att) = components[idx].attach_to.as_ref() else {
+                break;
+            };
+            let has_move = att.animations.iter().any(|slot| {
+                slot.channel.as_ref() == "move"
+                    && matches!(
+                        slot.spec.driver,
+                        PartAnimationDriver::MovePhase | PartAnimationDriver::MoveDistance
+                    )
+                    && !matches!(slot.spec.clip, PartAnimationDef::Spin { .. })
+            });
+            if has_move {
+                return Some(idx);
+            }
+            let Some(parent_idx) = name_to_idx.get(att.parent.as_str()).copied() else {
+                break;
+            };
+            idx = parent_idx;
+        }
+
+        // No existing move slot in the chain: fall back to the contact component's own attachment
+        // edge (if it is not the root).
+        components[contact_component_idx]
+            .attach_to
+            .as_ref()
+            .is_some()
+            .then_some(contact_component_idx)
+    }
+
+    let mut result = MotionAutoRepairResult::default();
+    if components.is_empty() {
+        return result;
+    }
+
+    let (cycle_m, _cycle_source) = infer_cycle_m(rig_move_cycle_m, components);
+    let cycle_m = cycle_m.max(1e-3);
+
+    let samples_t_m: Vec<f32> = (0..SAMPLE_COUNT)
+        .map(|i| (i as f32 / SAMPLE_COUNT as f32) * cycle_m)
+        .collect();
+    let samples_phase_01: Vec<f32> = samples_t_m.iter().map(|t| *t / cycle_m).collect();
+
+    let mut name_to_idx: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for (idx, c) in components.iter().enumerate() {
+        name_to_idx.insert(c.name.clone(), idx);
+    }
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); components.len()];
+    for (idx, c) in components.iter().enumerate() {
+        let Some(att) = c.attach_to.as_ref() else {
+            continue;
+        };
+        if let Some(parent_idx) = name_to_idx.get(att.parent.as_str()).copied() {
+            children[parent_idx].push(idx);
+        }
+    }
+    let root_idx = components
+        .iter()
+        .position(|c| c.attach_to.is_none())
+        .unwrap_or(0);
+
+    result.contact_errors_before = contact_error_count(
+        &samples_t_m,
+        &samples_phase_01,
+        cycle_m,
+        root_idx,
+        &children,
+        components,
+    );
+
+    // First, ensure all ground contacts have stance (unless spin move).
+    let mut missing: Vec<(usize, usize, String, String)> = Vec::new();
+    for (component_idx, comp) in components.iter().enumerate() {
+        if contact_validation_skipped_for_spin_move(comp) {
+            continue;
+        }
+        for (contact_idx, contact) in comp.contacts.iter().enumerate() {
+            if contact.kind != AiContactKindJson::Ground {
+                continue;
+            }
+            if contact.stance.is_some() {
+                continue;
+            }
+            missing.push((
+                component_idx,
+                contact_idx,
+                comp.name.clone(),
+                contact.name.clone(),
+            ));
+        }
+    }
+
+    if !missing.is_empty() {
+        missing.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.3.cmp(&b.3)));
+        let n = missing.len().max(1) as f32;
+        for (i, (component_idx, contact_idx, _, _)) in missing.iter().enumerate() {
+            let phase_01 = (i as f32) / n;
+            components[*component_idx].contacts[*contact_idx].stance = Some(AiContactStanceJson {
+                phase_01,
+                duty_factor_01: 0.5,
+            });
+            result.assigned_stances += 1;
+        }
+        result
+            .notes
+            .push(format!("assigned {} missing ground stances", result.assigned_stances));
+    }
+
+    // Evaluate slip/lift and build lock specs for contacts that exceed error thresholds.
+    let world_per_sample: Vec<Vec<Transform>> = samples_t_m
+        .iter()
+        .map(|&t_m| compute_world_transforms_at_t(components, &children, root_idx, t_m))
+        .collect();
+
+    let slip_warn_m: f32 = (0.08 + 0.08 * cycle_m).clamp(0.12, 0.35);
+    let lift_warn_m: f32 = (0.06 + 0.06 * cycle_m).clamp(0.10, 0.30);
+    let slip_error_m = slip_warn_m * 2.0;
+    let lift_error_m = lift_warn_m * 2.0;
+
+    let mut lock_specs: Vec<ContactLockSpec> = Vec::new();
+    for (component_idx, comp) in components.iter().enumerate() {
+        if contact_validation_skipped_for_spin_move(comp) {
+            continue;
+        }
+        for contact in comp.contacts.iter() {
+            if contact.kind != AiContactKindJson::Ground {
+                continue;
+            }
+            let Some(stance) = contact.stance.as_ref() else {
+                continue;
+            };
+
+            let phase_start = if stance.phase_01.is_finite() {
+                stance.phase_01.rem_euclid(1.0)
+            } else {
+                0.0
+            };
+            let duty = if stance.duty_factor_01.is_finite() {
+                stance.duty_factor_01.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            if duty <= 1e-4 {
+                continue;
+            }
+
+            let anchor_name = contact.anchor.trim();
+            let anchor_local = anchor_transform_from_component(comp, anchor_name);
+            let anchor_local_translation = anchor_local.translation;
+
+            let mut positions_world: Vec<Vec3> = Vec::with_capacity(samples_t_m.len());
+            for (i, &t_m) in samples_t_m.iter().enumerate() {
+                let component_world = world_per_sample
+                    .get(i)
+                    .and_then(|w| w.get(component_idx))
+                    .copied()
+                    .unwrap_or(Transform::IDENTITY);
+                let p = component_world
+                    .to_matrix()
+                    .transform_point3(anchor_local_translation);
+                let root_translation = Vec3::Z * t_m;
+                positions_world.push(root_translation + p);
+            }
+
+            let stance_mid_phase = (phase_start + duty * 0.5).rem_euclid(1.0);
+            let mut stance_indices: Vec<usize> = Vec::new();
+            for (i, &phase) in samples_phase_01.iter().enumerate() {
+                if phase_in_stance(phase, phase_start, duty) {
+                    stance_indices.push(i);
+                }
+            }
+            if stance_indices.len() < 2 {
+                continue;
+            }
+
+            let baseline_idx = stance_indices
+                .iter()
+                .copied()
+                .min_by(|&a, &b| {
+                    let da = circular_distance(samples_phase_01[a], stance_mid_phase);
+                    let db = circular_distance(samples_phase_01[b], stance_mid_phase);
+                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(stance_indices[0]);
+            let baseline = positions_world[baseline_idx];
+            let ground_y = baseline.y;
+
+            let mut max_slip_m: f32 = 0.0;
+            let mut max_lift_m: f32 = 0.0;
+            for &i in &stance_indices {
+                let p = positions_world[i];
+                let dx = p.x - baseline.x;
+                let dz = p.z - baseline.z;
+                let slip = (dx * dx + dz * dz).sqrt();
+                max_slip_m = max_slip_m.max(slip);
+                let lift = (p.y - ground_y).abs();
+                max_lift_m = max_lift_m.max(lift);
+            }
+
+            let slip_error = max_slip_m.is_finite() && max_slip_m >= slip_error_m;
+            let lift_error = max_lift_m.is_finite() && max_lift_m >= lift_error_m;
+            if !(slip_error || lift_error) {
+                continue;
+            }
+
+            lock_specs.push(ContactLockSpec {
+                contact_component_idx: component_idx,
+                anchor_local_translation,
+                stance_indices,
+                baseline_world: baseline,
+            });
+        }
+    }
+
+    if lock_specs.is_empty() && result.assigned_stances == 0 {
+        result.contact_errors_after = result.contact_errors_before;
+        return result;
+    }
+
+    // Accumulate per-edge corrections in world space.
+    let mut per_edge: std::collections::HashMap<usize, EdgeCorrections> =
+        std::collections::HashMap::new();
+    for spec in &lock_specs {
+        let Some(edge_idx) = choose_repair_edge_idx(spec.contact_component_idx, components, &name_to_idx) else {
+            result.notes.push(format!(
+                "skipped contact lock for component={} (no repairable attachment edge)",
+                components
+                    .get(spec.contact_component_idx)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("?")
+            ));
+            continue;
+        };
+        let entry = per_edge.entry(edge_idx).or_insert_with(|| EdgeCorrections {
+            world_error_sum: vec![Vec3::ZERO; SAMPLE_COUNT],
+            world_error_count: vec![0u32; SAMPLE_COUNT],
+        });
+
+        // For each stance sample, compute current drift and request a translation that would
+        // place the contact anchor back at its baseline.
+        for &i in &spec.stance_indices {
+            if i >= SAMPLE_COUNT {
+                continue;
+            }
+            let t_m = samples_t_m.get(i).copied().unwrap_or(0.0);
+            let component_world = world_per_sample
+                .get(i)
+                .and_then(|w| w.get(spec.contact_component_idx))
+                .copied()
+                .unwrap_or(Transform::IDENTITY);
+            let p = component_world
+                .to_matrix()
+                .transform_point3(spec.anchor_local_translation);
+            let root_translation = Vec3::Z * t_m;
+            let pos_world = root_translation + p;
+            let world_error = spec.baseline_world - pos_world;
+            if !world_error.is_finite() {
+                continue;
+            }
+            entry.world_error_sum[i] += world_error;
+            entry.world_error_count[i] = entry.world_error_count[i].saturating_add(1);
+        }
+    }
+
+    // Apply per-edge corrections by authoring a replacement move loop.
+    let mut repaired_edges: Vec<String> = Vec::new();
+    for (edge_idx, corr) in per_edge {
+        let Some(att) = components
+            .get(edge_idx)
+            .and_then(|c| c.attach_to.as_ref())
+        else {
+            continue;
+        };
+        let Some(parent_idx) = name_to_idx.get(att.parent.as_str()).copied() else {
+            continue;
+        };
+
+        let existing_move_slot = components[edge_idx]
+            .attach_to
+            .as_ref()
+            .and_then(|a| find_move_slot(a));
+
+        let mut keyframes: Vec<PartAnimationKeyframeDef> = Vec::with_capacity(SAMPLE_COUNT + 1);
+        for i in 0..SAMPLE_COUNT {
+            let t_m = samples_t_m.get(i).copied().unwrap_or(0.0);
+
+            let base_delta = existing_move_slot
+                .map(|slot| sample_move_delta(slot, t_m))
+                .unwrap_or(Transform::IDENTITY);
+
+            let world_error_avg = if corr.world_error_count[i] > 0 {
+                corr.world_error_sum[i] / (corr.world_error_count[i] as f32)
+            } else {
+                Vec3::ZERO
+            };
+
+            let parent_world = world_per_sample
+                .get(i)
+                .and_then(|w| w.get(parent_idx))
+                .copied()
+                .unwrap_or(Transform::IDENTITY);
+            let parent_anchor =
+                anchor_transform_from_component(&components[parent_idx], att.parent_anchor.as_str());
+            let base_offset_rot = if att.offset.rotation.is_finite() {
+                att.offset.rotation.normalize()
+            } else {
+                Quat::IDENTITY
+            };
+            let parent_world_rot = if parent_world.rotation.is_finite() {
+                parent_world.rotation.normalize()
+            } else {
+                Quat::IDENTITY
+            };
+            let parent_anchor_rot = if parent_anchor.rotation.is_finite() {
+                parent_anchor.rotation.normalize()
+            } else {
+                Quat::IDENTITY
+            };
+            let join_rot_world = (parent_world_rot * parent_anchor_rot * base_offset_rot).normalize();
+            let delta_translation_join = join_rot_world.inverse() * world_error_avg;
+
+            let mut delta = base_delta;
+            delta.translation = delta.translation + delta_translation_join;
+            if !delta.translation.is_finite() {
+                delta.translation = Vec3::ZERO;
+            }
+            if !delta.rotation.is_finite() {
+                delta.rotation = Quat::IDENTITY;
+            } else {
+                delta.rotation = delta.rotation.normalize();
+            }
+            if !delta.scale.is_finite() {
+                delta.scale = Vec3::ONE;
+            }
+
+            keyframes.push(PartAnimationKeyframeDef {
+                time_secs: t_m,
+                delta,
+            });
+        }
+
+        // Close the loop deterministically.
+        if let Some(first) = keyframes.first().cloned() {
+            keyframes.push(PartAnimationKeyframeDef {
+                time_secs: cycle_m,
+                delta: first.delta,
+            });
+        }
+
+        let new_slot = PartAnimationSlot {
+            channel: "move".into(),
+            spec: crate::object::registry::PartAnimationSpec {
+                driver: PartAnimationDriver::MovePhase,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Loop {
+                    duration_secs: cycle_m,
+                    keyframes,
+                },
+            },
+        };
+
+        if let Some(att_mut) = components[edge_idx].attach_to.as_mut() {
+            if let Some(existing_idx) = att_mut
+                .animations
+                .iter()
+                .position(|s| s.channel.as_ref() == "move")
+            {
+                att_mut.animations[existing_idx] = new_slot;
+            } else {
+                att_mut.animations.push(new_slot);
+            }
+        }
+
+        repaired_edges.push(components[edge_idx].name.clone());
+    }
+
+    repaired_edges.sort();
+    repaired_edges.dedup();
+    result.repaired_edges = repaired_edges.clone();
+    if !repaired_edges.is_empty() {
+        result.notes.push(format!(
+            "replaced move clips on {} edge(s)",
+            repaired_edges.len()
+        ));
+    }
+
+    if result.assigned_stances > 0 || !result.repaired_edges.is_empty() {
+        result.applied = true;
+    }
+
+    result.contact_errors_after = contact_error_count(
+        &samples_t_m,
+        &samples_phase_01,
+        cycle_m,
+        root_idx,
+        &children,
+        components,
+    );
+    result
 }
 
 fn validate_chain_anchor_axes(components: &[Gen3dPlannedComponent], issues: &mut Vec<MotionIssue>) {
@@ -2700,6 +3275,75 @@ mod tests {
                 .any(|i| i.get("kind").and_then(|v| v.as_str()) == Some("contact_slip")),
             "expected contact_slip issue, got {issues:?}"
         );
+    }
+
+    #[test]
+    fn contact_lock_auto_repair_fixes_contact_slip_errors() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        let move_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::MovePhase,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 2.0,
+                keyframes: vec![PartAnimationKeyframeDef {
+                    time_secs: 0.0,
+                    delta: Transform::IDENTITY,
+                }],
+            },
+        };
+
+        let mut foot = stub_component(
+            "foot",
+            vec![anchor("mount", Vec3::ZERO), anchor("contact", Vec3::ZERO)],
+        );
+        foot.contacts.push(super::super::AiContactJson {
+            name: "foot_contact".into(),
+            anchor: "contact".into(),
+            kind: AiContactKindJson::Ground,
+            stance: Some(super::super::AiContactStanceJson {
+                phase_01: 0.0,
+                duty_factor_01: 0.5,
+            }),
+        });
+        foot.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
+            }],
+        });
+
+        let mut components = vec![root, foot];
+
+        let before = build_motion_validation_report(Some(2.0), &components);
+        let before_ok = before
+            .motion_validation
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        assert!(!before_ok, "expected motion validation to fail before repair");
+
+        let repair = apply_contact_lock_auto_repair_if_needed(Some(2.0), &mut components);
+        assert!(repair.applied, "expected repair to apply");
+        assert!(
+            repair.repaired_edges.iter().any(|n| n == "foot"),
+            "expected foot edge to be repaired, got {:?}",
+            repair.repaired_edges
+        );
+
+        let after = build_motion_validation_report(Some(2.0), &components);
+        let after_ok = after
+            .motion_validation
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(after_ok, "expected motion validation to pass after repair");
     }
 
     #[test]

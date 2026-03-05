@@ -2134,8 +2134,22 @@ pub(super) fn apply_ai_review_delta_actions(
                     continue;
                 };
 
+                let before = contact.stance.clone();
                 if let Some(stance) = stance {
-                    contact.stance = stance;
+                    let move_is_spin = components[idx]
+                        .attach_to
+                        .as_ref()
+                        .and_then(|att| att.animations.iter().find(|s| s.channel.as_ref() == "move"))
+                        .map(|slot| matches!(slot.spec.clip, PartAnimationDef::Spin { .. }))
+                        .unwrap_or(false);
+
+                    // Guardrail: for ground contacts, clearing stance makes motion validation
+                    // thrash between slip and stance-missing. The only generic exception is a
+                    // wheel-like move that is a pure `spin` (stance validation is skipped).
+                    let clearing_ground_stance = stance.is_none() && contact.kind == AiContactKindJson::Ground;
+                    if !(clearing_ground_stance && !move_is_spin) {
+                        contact.stance = stance;
+                    }
                 }
 
                 if !reason.trim().is_empty() {
@@ -2147,7 +2161,9 @@ pub(super) fn apply_ai_review_delta_actions(
                         reason.trim()
                     );
                 }
-                result.had_actions = true;
+                if contact.stance != before {
+                    result.had_actions = true;
+                }
             }
             AiReviewDeltaActionJsonV1::TweakMobility { mobility, reason } => {
                 let mobility = mobility_from_ai(&mobility);
@@ -3254,7 +3270,7 @@ mod tests {
     }
 
     #[test]
-    fn applies_review_delta_tweak_contact_clears_stance() {
+    fn applies_review_delta_tweak_contact_does_not_clear_ground_stance() {
         let plan_text = r##"{
           "version": 8,
           "mobility": { "kind": "static" },
@@ -3309,8 +3325,97 @@ mod tests {
         let apply =
             apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft, None)
                 .expect("apply should succeed");
+        assert!(!apply.had_actions);
+        assert!(planned[0].contacts[0].stance.is_some());
+    }
+
+    #[test]
+    fn applies_review_delta_tweak_contact_allows_clearing_stance_for_move_spin() {
+        let plan_text = r##"{
+          "version": 8,
+          "mobility": { "kind": "static" },
+          "components": [
+            {
+              "name": "body",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "wheel_mount", "pos": [0.0, 0.0, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ]
+            },
+            {
+              "name": "wheel",
+              "size": [1.0, 1.0, 0.2],
+              "anchors": [
+                { "name": "mount", "pos": [0.0, 0.0, 0.0], "forward": [0,0,1], "up": [0,1,0] },
+                { "name": "rim_contact", "pos": [0.0, -0.5, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+              ],
+              "contacts": [
+                {
+                  "name": "rim",
+                  "kind": "ground",
+                  "anchor": "rim_contact",
+                  "stance": { "phase_01": 0.0, "duty_factor_01": 1.0 }
+                }
+              ],
+              "attach_to": {
+                "parent": "body",
+                "parent_anchor": "wheel_mount",
+                "child_anchor": "mount",
+                "offset": { "pos": [0.0, 0.0, 0.0] }
+              }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let plan_collider = plan.collider.clone();
+        let (mut planned, _notes, defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+        let mut draft = Gen3dDraft { defs };
+
+        let wheel_idx = planned.iter().position(|c| c.name == "wheel").unwrap();
+        let Some(att) = planned[wheel_idx].attach_to.as_mut() else {
+            panic!("wheel should be attached");
+        };
+        att.animations.push(PartAnimationSlot {
+            channel: "move".into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::MoveDistance,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Spin {
+                    axis: Vec3::Z,
+                    radians_per_unit: 1.0,
+                },
+            },
+        });
+
+        assert!(planned[wheel_idx].contacts[0].stance.is_some());
+
+        let component_id =
+            Uuid::from_u128(builtin_object_id("gravimera/gen3d/component/wheel")).to_string();
+        let delta = AiReviewDeltaJsonV1 {
+            version: 1,
+            applies_to: AiReviewDeltaAppliesToJsonV1 {
+                run_id: "test".into(),
+                attempt: 0,
+                plan_hash: "sha256:test".into(),
+                assembly_rev: 0,
+            },
+            actions: vec![AiReviewDeltaActionJsonV1::TweakContact {
+                component_id,
+                contact_name: "rim".into(),
+                stance: Some(None),
+                reason: String::new(),
+            }],
+            summary: None,
+            notes: None,
+        };
+
+        let apply =
+            apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft, None)
+                .expect("apply should succeed");
         assert!(apply.had_actions);
-        assert!(planned[0].contacts[0].stance.is_none());
+        assert!(planned[wheel_idx].contacts[0].stance.is_none());
     }
 
     #[test]

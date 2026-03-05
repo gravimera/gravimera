@@ -344,7 +344,7 @@ pub(crate) enum AiContactKindJson {
     Unknown,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiContactStanceJson {
     pub(crate) phase_01: f32,

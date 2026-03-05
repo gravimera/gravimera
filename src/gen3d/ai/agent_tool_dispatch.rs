@@ -130,13 +130,67 @@ pub(super) fn execute_tool_call(
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_SMOKE_CHECK => {
-            let json = super::build_gen3d_smoke_results(
+            let mut json = super::build_gen3d_smoke_results(
                 &job.user_prompt_raw,
                 !job.user_images.is_empty(),
                 job.rig_move_cycle_m,
                 &job.planned_components,
                 draft,
             );
+
+            let has_contact_error = json
+                .get("motion_validation")
+                .and_then(|v| v.get("issues"))
+                .and_then(|v| v.as_array())
+                .is_some_and(|issues| {
+                    issues.iter().any(|i| {
+                        i.get("severity").and_then(|v| v.as_str()) == Some("error")
+                            && matches!(
+                                i.get("kind").and_then(|v| v.as_str()),
+                                Some("contact_stance_missing" | "contact_slip" | "contact_lift")
+                            )
+                    })
+                });
+
+            if has_contact_error {
+                let repair = super::motion_validation::apply_contact_lock_auto_repair_if_needed(
+                    job.rig_move_cycle_m,
+                    &mut job.planned_components,
+                );
+                if repair.applied {
+                    if let Some(dir) = job.pass_dir.as_deref() {
+                        write_gen3d_json_artifact(
+                            Some(dir),
+                            "motion_auto_repair.json",
+                            &repair.to_json(),
+                        );
+                        write_gen3d_json_artifact(Some(dir), "smoke_results_pre_repair.json", &json);
+                    }
+
+                    if let Err(err) = super::convert::sync_attachment_tree_to_defs(
+                        &job.planned_components,
+                        draft,
+                    ) {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call.call_id,
+                            call.tool_id,
+                            format!("motion auto-repair failed to sync attachments: {err}"),
+                        ));
+                    }
+                    write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
+
+                    json = super::build_gen3d_smoke_results(
+                        &job.user_prompt_raw,
+                        !job.user_images.is_empty(),
+                        job.rig_move_cycle_m,
+                        &job.planned_components,
+                        draft,
+                    );
+                    if let serde_json::Value::Object(ref mut map) = json {
+                        map.insert("motion_auto_repair".to_string(), repair.to_json());
+                    }
+                }
+            }
 
             job.agent.last_smoke_ok = json.get("ok").and_then(|v| v.as_bool());
             job.agent.last_motion_ok = json
