@@ -331,7 +331,7 @@ Candidate additions:
 
 ## Next actions checklist (docs + design)
 
-- [ ] Document the “respect `done` by default” policy (including UI messaging and artifacts).
+- [x] (2026-03-07) Document the “respect `done` by default” policy (including UI messaging and artifacts).
 - [x] (2026-03-07) Design `qa_v1` output schema + artifact names and update the agent prompt to prefer it.
 - [x] (2026-03-07) Design artifact inspection tools with strict scoping and bounded reads.
 - [ ] Design a generic async task API and migrate existing ad-hoc async flows toward it.

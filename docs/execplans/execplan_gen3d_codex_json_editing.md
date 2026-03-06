@@ -45,7 +45,7 @@ Pre-implementation contracts (must be written down before coding):
 
 - [x] (2026-03-07) Record roadmap decisions and tool ideas in `docs/gen3d/next_actions.md`.
 - [x] (2026-03-07) Milestone A (Foundation): add `qa_v1` and run-artifact read tools (list/read/search) for the current run dir.
-- [ ] Milestone B (“Stop means stop”): accept agent `done` by default (keep only empty-draft guard) and surface QA/review state as machine-observable status.
+- [x] (2026-03-07) Milestone B (“Stop means stop”): accept agent `done` by default (keep only empty-draft guard) and surface QA/review state as machine-observable status.
 - [ ] Milestone C (Resumable sessions): add “Continue” for a stopped/cancelled session without resetting the draft.
 - [ ] Milestone D (Edit-from-prefab entry points): implement deterministic “seed Gen3D from Gen3D-saved prefab” APIs (Edit and Fork semantics).
 - [ ] Milestone E (Meta panel wiring): add Meta panel buttons Copy/Edit/Fork (gated to Gen3D-saved prefabs) and connect them to the entry points.
@@ -79,6 +79,10 @@ Pre-implementation contracts (must be written down before coding):
   Rationale: Enables deterministic, rendered end-to-end Gen3D tests without requiring secrets (the mock backend never calls the network).
   Date/Author: 2026-03-07 / agent
 
+- Decision: Respect `done` unconditionally (except empty draft) and report unfinished QA/review as warnings, not guardrails.
+  Rationale: “Stop means stop” is required for agent autonomy and resumable sessions; visibility beats silent override.
+  Date/Author: 2026-03-07 / agent
+
 ## Outcomes & Retrospective
 
 - Milestone A delivered:
@@ -87,6 +91,11 @@ Pre-implementation contracts (must be written down before coding):
   - Updated the agent prompt to prefer `qa_v1` and to mention artifact tools.
   - Updated `mock://gen3d` agent flow to call `qa_v1` so QA composition is exercised in offline runs.
   - Ran the required rendered smoke test and a rendered `tools/gen3d_real_test.py` run using `mock://gen3d` (no key).
+
+- Milestone B delivered:
+  - Agent `done` now ends the run immediately when a usable draft exists (empty draft remains a hard guardrail).
+  - Instead of continuing the run, the UI status message includes best-effort “unfinished checks” warnings (missing QA/review, motion validation failure, missing motion path).
+  - Updated the agent prompt to prefer running `qa_v1` before `done`.
 
 ## Context and Orientation
 

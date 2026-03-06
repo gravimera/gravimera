@@ -33,7 +33,7 @@ Rules:\n\
 - Prefer small, explainable steps that improve basic structure and correctness.\n\
 - Prioritize BASIC STRUCTURE over tiny details. This is a voxel/pixel-art game; do not chase micro-adjustments forever.\n\
 - STOP when the model is good enough:\n\
-  - If the latest review delta accepts the model / has no actionable fixes (and QA has been run), output a \"done\" action.\n\
+  - If the latest review delta accepts the model / has no actionable fixes (and `qa_v1` has been run), output a \"done\" action.\n\
   - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
   - If budgets prevent further improvement (regen budgets, time, tokens), output a \"done\" action with a best-effort reason.\n\
 - Runtime motion roles (recommended for movable units):\n\

@@ -321,8 +321,8 @@ pub(super) fn execute_agent_actions(
         let action = job.agent.step_actions[job.agent.step_action_idx].clone();
         match action {
             Gen3dAgentActionJsonV1::Done { reason } => {
-                // Guardrail: some models treat "done" as "end of step" rather than "end of run".
-                // Only stop the run if we have a usable draft (at least one non-projectile primitive part).
+                // Guardrail: only stop if we have a usable draft (at least one non-projectile primitive part).
+                // If the agent says "done" too early (empty draft), continue so it can generate primitives.
                 if draft.total_non_projectile_primitive_parts() == 0 {
                     workshop.error = Some(
                         "Agent requested done before generating any primitives; continuing."
@@ -337,6 +337,9 @@ pub(super) fn execute_agent_actions(
                     warn!("Gen3D agent requested done before primitives existed; continuing");
                     continue;
                 }
+
+                // Stop means stop: respect `done` even if QA/review are incomplete.
+                // However, keep "unfinished" state visible in the UI status message.
                 let llm_available = job
                     .ai
                     .as_ref()
@@ -344,101 +347,33 @@ pub(super) fn execute_agent_actions(
                     .unwrap_or(true);
                 let appearance_review_enabled = llm_available && job.review_appearance;
 
-                if appearance_review_enabled && job.agent.rendered_since_last_review {
-                    let images: Vec<String> = job
-                        .agent
-                        .last_render_images
-                        .iter()
-                        .map(|p| p.display().to_string())
-                        .collect();
-                    workshop.error = Some(format!(
-                        "Agent requested done, but preview renders have not been reviewed yet. Call `llm_review_delta_v1` with `preview_images` set to the latest render outputs: {images:?}"
-                    ));
-                    workshop.status = "Continuing Gen3D build… (review required)".into();
-                    append_agent_trace_event_v1(
-                        job.run_dir.as_deref(),
-                        &AgentTraceEventV1::Info {
-                            message: "agent_done_ignored (review required)".to_string(),
-                        },
-                    );
-                    append_gen3d_run_log(
-                        job.pass_dir.as_deref(),
-                        "agent_done_ignored (review required); continuing",
-                    );
-                    warn!(
-                        "Gen3D agent requested done without reviewing latest renders; continuing"
-                    );
-                    job.agent.step_action_idx = job.agent.step_actions.len();
-                    continue;
-                }
-
-                let mut missing: Vec<&str> = Vec::new();
+                let mut unfinished: Vec<String> = Vec::new();
                 if appearance_review_enabled && !job.agent.ever_rendered {
-                    missing.push(TOOL_ID_RENDER_PREVIEW);
+                    unfinished.push(format!("No `{TOOL_ID_RENDER_PREVIEW}` has been run."));
+                }
+                if appearance_review_enabled && job.agent.rendered_since_last_review {
+                    unfinished.push("Latest preview renders have not been reviewed.".into());
                 }
                 if llm_available && !job.agent.ever_reviewed {
-                    missing.push(TOOL_ID_LLM_REVIEW_DELTA);
+                    unfinished.push(format!("No `{TOOL_ID_LLM_REVIEW_DELTA}` has been run."));
                 }
-                if !job.agent.ever_validated {
-                    missing.push(TOOL_ID_VALIDATE);
-                }
-                if !job.agent.ever_smoke_checked {
-                    missing.push(TOOL_ID_SMOKE_CHECK);
-                }
-                if !missing.is_empty() {
-                    let missing_list = missing.join(", ");
-                    let qa_sequence = if appearance_review_enabled {
-                        format!(
-                            "{TOOL_ID_RENDER_PREVIEW} -> {TOOL_ID_LLM_REVIEW_DELTA} -> {TOOL_ID_VALIDATE} -> {TOOL_ID_SMOKE_CHECK}"
-                        )
-                    } else if llm_available {
-                        format!(
-                            "{TOOL_ID_LLM_REVIEW_DELTA} -> {TOOL_ID_VALIDATE} -> {TOOL_ID_SMOKE_CHECK}"
-                        )
-                    } else {
-                        format!("{TOOL_ID_VALIDATE} -> {TOOL_ID_SMOKE_CHECK}")
-                    };
-                    workshop.error = Some(format!(
-                        "Agent requested done, but required QA tools have not been run yet: {missing_list}. Continue and run the minimal QA sequence: {qa_sequence}."
+                if !job.agent.ever_validated || !job.agent.ever_smoke_checked {
+                    let mut missing: Vec<&str> = Vec::new();
+                    if !job.agent.ever_validated {
+                        missing.push(TOOL_ID_VALIDATE);
+                    }
+                    if !job.agent.ever_smoke_checked {
+                        missing.push(TOOL_ID_SMOKE_CHECK);
+                    }
+                    unfinished.push(format!(
+                        "QA not run: {} (recommended: `qa_v1`).",
+                        missing.join(", ")
                     ));
-                    workshop.status = "Continuing Gen3D build… (QA required)".into();
-                    append_agent_trace_event_v1(
-                        job.run_dir.as_deref(),
-                        &AgentTraceEventV1::Info {
-                            message: "agent_done_ignored (QA required)".to_string(),
-                        },
-                    );
-                    append_gen3d_run_log(
-                        job.pass_dir.as_deref(),
-                        format!(
-                            "agent_done_ignored (QA required missing={missing_list}); continuing"
-                        ),
-                    );
-                    warn!(
-                        "Gen3D agent requested done without required QA tools; continuing (missing: {missing_list})"
-                    );
-                    job.agent.step_action_idx = job.agent.step_actions.len();
-                    continue;
+                } else if job.agent.last_smoke_ok == Some(false) {
+                    unfinished.push("Latest smoke check reported ok=false.".into());
                 }
                 if job.agent.last_motion_ok == Some(false) {
-                    workshop.error = Some(
-                        "Agent requested done, but motion_validation failed in the latest smoke_check_v1. Continue and repair motion (llm_review_delta_v1), or re-run smoke_check_v1 until validation passes."
-                            .to_string(),
-                    );
-                    workshop.status = "Continuing Gen3D build…(motion repair required)".into();
-                    append_agent_trace_event_v1(
-                        job.run_dir.as_deref(),
-                        &AgentTraceEventV1::Info {
-                            message: "agent_done_ignored (motion_validation failed)".to_string(),
-                        },
-                    );
-                    append_gen3d_run_log(
-                        job.pass_dir.as_deref(),
-                        "agent_done_ignored (motion_validation failed); continuing",
-                    );
-                    warn!("Gen3D agent requested done while motion_validation failed; continuing");
-                    job.agent.step_action_idx = job.agent.step_actions.len();
-                    continue;
+                    unfinished.push("Latest motion_validation reported ok=false.".into());
                 }
 
                 let movable = draft
@@ -466,32 +401,26 @@ pub(super) fn execute_agent_actions(
                     });
 
                     if runtime_candidate.is_none() && !has_move {
-                        workshop.error = Some(format!(
-                            "Agent requested done, but this is a movable unit with no runtime motion rig candidate and no authored `move` animation slots.\n\
-Continue and call `{TOOL_ID_LLM_GENERATE_MOTION_AUTHORING}` to bake motion clips onto attachment edges, then run `{TOOL_ID_SMOKE_CHECK}`."
+                        unfinished.push(format!(
+                            "Movable unit has no runtime motion rig candidate and no authored `move` slots (suggestion: `{TOOL_ID_LLM_GENERATE_MOTION_AUTHORING}` then `{TOOL_ID_SMOKE_CHECK}`)."
                         ));
-                        workshop.status =
-                            "Continuing Gen3D build…(motion authoring required)".into();
-                        append_agent_trace_event_v1(
-                            job.run_dir.as_deref(),
-                            &AgentTraceEventV1::Info {
-                                message: "agent_done_ignored (missing move animation)".to_string(),
-                            },
-                        );
-                        append_gen3d_run_log(
-                            job.pass_dir.as_deref(),
-                            "agent_done_ignored (missing move animation); continuing",
-                        );
-                        warn!("Gen3D agent requested done without any motion path; continuing");
-                        job.agent.step_action_idx = job.agent.step_actions.len();
-                        continue;
                     }
                 }
-                let status = if reason.trim().is_empty() {
+
+                let mut status = if reason.trim().is_empty() {
                     "Build finished.".to_string()
                 } else {
                     format!("Build finished.\nReason: {}", reason.trim())
                 };
+                if !unfinished.is_empty() {
+                    status.push_str("\n\nUnfinished checks (best effort):");
+                    for item in unfinished {
+                        status.push_str("\n- ");
+                        status.push_str(item.trim());
+                    }
+                }
+
+                workshop.error = None;
                 if maybe_start_pass_snapshot_capture(
                     config,
                     commands,
