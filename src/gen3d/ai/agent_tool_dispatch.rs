@@ -164,13 +164,16 @@ pub(super) fn execute_tool_call(
                             "motion_auto_repair.json",
                             &repair.to_json(),
                         );
-                        write_gen3d_json_artifact(Some(dir), "smoke_results_pre_repair.json", &json);
+                        write_gen3d_json_artifact(
+                            Some(dir),
+                            "smoke_results_pre_repair.json",
+                            &json,
+                        );
                     }
 
-                    if let Err(err) = super::convert::sync_attachment_tree_to_defs(
-                        &job.planned_components,
-                        draft,
-                    ) {
+                    if let Err(err) =
+                        super::convert::sync_attachment_tree_to_defs(&job.planned_components, draft)
+                    {
                         return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                             call.call_id,
                             call.tool_id,
@@ -650,6 +653,7 @@ pub(super) fn execute_tool_call(
                     anchors_mode,
                     alignment,
                     delta,
+                    super::copy_component::Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
                 );
                 let outcomes = match outcomes {
                     Ok(v) => v,

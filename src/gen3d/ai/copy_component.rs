@@ -29,6 +29,17 @@ pub(super) enum Gen3dCopyAlignmentMode {
     MirrorMountX,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Gen3dSubtreeCopyMissingBranchPolicy {
+    /// Clone all missing target branches when a source child exists with the same attachment edge
+    /// key. This matches the default expectations for explicit user tool calls.
+    CloneAllMissing,
+    /// Do not clone (and do not require) missing branches that contain components referenced by
+    /// root-level interfaces (e.g. attack muzzle, aim components). This is intended for automatic
+    /// symmetry reuse so we don't silently create non-functional duplicates.
+    SkipExternallyReferenced,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Gen3dCopyComponentOutcome {
     pub(super) source_component_name: String,
@@ -606,12 +617,33 @@ fn children_by_attachment_edge_key(
     Ok(out)
 }
 
-fn subtree_contains_anchor_named(
+fn root_externally_referenced_component_object_ids(draft: &Gen3dDraft) -> HashSet<u128> {
+    let mut ids: HashSet<u128> = HashSet::new();
+    let Some(root) = draft.root_def() else {
+        return ids;
+    };
+
+    if let Some(aim) = root.aim.as_ref() {
+        ids.extend(aim.components.iter().copied());
+    }
+    if let Some(attack) = root.attack.as_ref() {
+        if let Some(ranged) = attack.ranged.as_ref() {
+            ids.insert(ranged.muzzle.object_id);
+        }
+    }
+
+    ids
+}
+
+fn subtree_contains_component_object_id_in_set(
     components: &[Gen3dPlannedComponent],
     children: &[Vec<usize>],
     root_idx: usize,
-    anchor_name: &str,
+    object_ids: &HashSet<u128>,
 ) -> bool {
+    if object_ids.is_empty() {
+        return false;
+    }
     if root_idx >= components.len() || root_idx >= children.len() {
         return false;
     }
@@ -627,11 +659,8 @@ fn subtree_contains_anchor_named(
         }
         visited[idx] = true;
 
-        if components[idx]
-            .anchors
-            .iter()
-            .any(|a| a.name.as_ref() == anchor_name)
-        {
+        let object_id = component_object_id(&components[idx].name);
+        if object_ids.contains(&object_id) {
             return true;
         }
         if let Some(child_indices) = children.get(idx) {
@@ -649,6 +678,7 @@ fn map_subtree_pairs(
     children: &[Vec<usize>],
     source_root_idx: usize,
     target_root_idx: usize,
+    skip_component_object_ids: Option<&HashSet<u128>>,
 ) -> Result<Vec<(usize, usize)>, String> {
     if source_root_idx >= components.len() || target_root_idx >= components.len() {
         return Err("map_subtree_pairs: root index out of range".into());
@@ -669,6 +699,7 @@ fn map_subtree_pairs(
         pairs: &mut Vec<(usize, usize)>,
         visiting_source: &mut [bool],
         visiting_target: &mut [bool],
+        skip_component_object_ids: Option<&HashSet<u128>>,
     ) -> Result<(), String> {
         if visiting_source[source_idx] {
             return Err(format!(
@@ -701,10 +732,9 @@ fn map_subtree_pairs(
         ordered_source.sort_by(|(a, _), (b, _)| a.cmp(b));
         for (key, s_child) in ordered_source {
             let Some(&t_child) = target_by_key.get(&key) else {
-                // Allow subtree copy to ignore missing weapon-like branches. These are typically
-                // optional equipment and cloning them during symmetry reuse can create
-                // non-functional duplicates when the root attack supports only one muzzle.
-                if subtree_contains_anchor_named(components, children, s_child, "muzzle") {
+                if skip_component_object_ids.is_some_and(|ids| {
+                    subtree_contains_component_object_id_in_set(components, children, s_child, ids)
+                }) {
                     continue;
                 }
                 return Err(format!(
@@ -723,6 +753,7 @@ fn map_subtree_pairs(
                 pairs,
                 visiting_source,
                 visiting_target,
+                skip_component_object_ids,
             )?;
         }
 
@@ -739,6 +770,7 @@ fn map_subtree_pairs(
         &mut pairs,
         &mut visiting_source,
         &mut visiting_target,
+        skip_component_object_ids,
     )?;
 
     Ok(pairs)
@@ -753,17 +785,30 @@ pub(super) fn copy_component_subtree_into(
     anchors_mode: Gen3dCopyAnchorsMode,
     alignment: Gen3dCopyAlignmentMode,
     delta: Transform,
+    missing_branch_policy: Gen3dSubtreeCopyMissingBranchPolicy,
 ) -> Result<Vec<Gen3dCopyComponentOutcome>, String> {
+    let referenced_ids = (missing_branch_policy
+        == Gen3dSubtreeCopyMissingBranchPolicy::SkipExternallyReferenced)
+        .then(|| root_externally_referenced_component_object_ids(draft));
+    let referenced_ids = referenced_ids.as_ref();
+
     ensure_target_subtree_shape(
         components,
         draft,
         source_root_idx,
         target_root_idx,
         anchors_mode,
+        referenced_ids,
     )?;
 
     let children = build_children_map(components);
-    let pairs = map_subtree_pairs(components, &children, source_root_idx, target_root_idx)?;
+    let pairs = map_subtree_pairs(
+        components,
+        &children,
+        source_root_idx,
+        target_root_idx,
+        referenced_ids,
+    )?;
 
     let copied_target_indices = if anchors_mode == Gen3dCopyAnchorsMode::PreserveInterfaceAnchors {
         let mut out: HashSet<usize> = HashSet::new();
@@ -795,10 +840,17 @@ pub(super) fn copy_component_subtree_into(
 
 pub(super) fn preflight_subtree_copy_pairs(
     components: &[Gen3dPlannedComponent],
+    draft: &Gen3dDraft,
     source_root_idx: usize,
     target_root_idx: usize,
     anchors_mode: Gen3dCopyAnchorsMode,
+    missing_branch_policy: Gen3dSubtreeCopyMissingBranchPolicy,
 ) -> Result<Vec<(usize, usize)>, String> {
+    let referenced_ids = (missing_branch_policy
+        == Gen3dSubtreeCopyMissingBranchPolicy::SkipExternallyReferenced)
+        .then(|| root_externally_referenced_component_object_ids(draft));
+    let referenced_ids = referenced_ids.as_ref();
+
     // Run the same structural checks as the real subtree copy path, but on scratch state so we
     // can decide whether to copy or generate before mutating live draft/component data.
     let mut scratch_components = components.to_vec();
@@ -809,6 +861,7 @@ pub(super) fn preflight_subtree_copy_pairs(
         source_root_idx,
         target_root_idx,
         anchors_mode,
+        referenced_ids,
     )?;
     let children = build_children_map(&scratch_components);
     let pairs = map_subtree_pairs(
@@ -816,6 +869,7 @@ pub(super) fn preflight_subtree_copy_pairs(
         &children,
         source_root_idx,
         target_root_idx,
+        referenced_ids,
     )?;
     Ok(pairs)
 }
@@ -826,6 +880,7 @@ fn ensure_target_subtree_shape(
     source_root_idx: usize,
     target_root_idx: usize,
     anchors_mode: Gen3dCopyAnchorsMode,
+    skip_component_object_ids: Option<&HashSet<u128>>,
 ) -> Result<(), String> {
     if source_root_idx >= components.len() || target_root_idx >= components.len() {
         return Err("copy_component_subtree: root index out of range".into());
@@ -1020,6 +1075,7 @@ fn ensure_target_subtree_shape(
         target_idx: usize,
         target_root_name: &str,
         anchors_mode: Gen3dCopyAnchorsMode,
+        skip_component_object_ids: Option<&HashSet<u128>>,
     ) -> Result<(), String> {
         let children = build_children_map(components);
         let source_children = children.get(source_idx).cloned().unwrap_or_default();
@@ -1041,8 +1097,14 @@ fn ensure_target_subtree_shape(
             if target_by_key.contains_key(key) {
                 continue;
             }
-            if subtree_contains_anchor_named(components.as_slice(), &source_children_map, *s_child, "muzzle")
-            {
+            if skip_component_object_ids.is_some_and(|ids| {
+                subtree_contains_component_object_id_in_set(
+                    components.as_slice(),
+                    &source_children_map,
+                    *s_child,
+                    ids,
+                )
+            }) {
                 continue;
             }
             let new_child_idx = clone_missing_subtree(
@@ -1061,8 +1123,14 @@ fn ensure_target_subtree_shape(
         // Recurse into matched children (including newly cloned ones).
         for (key, s_child) in ordered_source {
             let Some(&t_child) = target_by_key.get(&key) else {
-                if subtree_contains_anchor_named(components.as_slice(), &source_children_map, s_child, "muzzle")
-                {
+                if skip_component_object_ids.is_some_and(|ids| {
+                    subtree_contains_component_object_id_in_set(
+                        components.as_slice(),
+                        &source_children_map,
+                        s_child,
+                        ids,
+                    )
+                }) {
                     continue;
                 }
                 return Err(format!(
@@ -1077,6 +1145,7 @@ fn ensure_target_subtree_shape(
                 t_child,
                 target_root_name,
                 anchors_mode,
+                skip_component_object_ids,
             )?;
         }
         Ok(())
@@ -1089,6 +1158,7 @@ fn ensure_target_subtree_shape(
         target_root_idx,
         &target_root_name,
         anchors_mode,
+        skip_component_object_ids,
     )
 }
 
@@ -1407,6 +1477,7 @@ mod tests {
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
+            Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
         .expect("subtree copy ok");
 
@@ -1591,6 +1662,7 @@ mod tests {
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
+            Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
         .expect("subtree copy ok");
 
@@ -1622,73 +1694,105 @@ mod tests {
     }
 
     #[test]
-    fn subtree_copy_does_not_clone_missing_muzzle_subtrees() {
-        let mut components = vec![
-            stub_component("hand_l"),
-            stub_component("hand_r"),
-            stub_component("gun_core"),
-            stub_component("gun_barrel"),
-        ];
+    fn subtree_copy_skip_policy_avoids_cloning_externally_referenced_subtrees() {
+        use crate::object::registry::{
+            AnchorRef, RangedAttackProfile, UnitAttackKind, UnitAttackProfile,
+        };
 
-        components[0]
-            .anchors
-            .push(anchor_named_forward("grip", Vec3::X));
-        components[1]
-            .anchors
-            .push(anchor_named_forward("grip", Vec3::X));
-        components[2]
-            .anchors
-            .push(anchor_named_forward("mount", Vec3::Z));
-        components[3]
-            .anchors
-            .push(anchor_named_forward("mount", Vec3::Z));
-        components[3]
-            .anchors
-            .push(anchor_named_forward("muzzle", Vec3::Z));
+        fn setup() -> (Vec<Gen3dPlannedComponent>, Gen3dDraft, u128) {
+            let mut components = vec![
+                stub_component("hand_l"),
+                stub_component("hand_r"),
+                stub_component("gun_core"),
+                stub_component("gun_barrel"),
+            ];
 
-        components[2].attach_to = Some(super::super::Gen3dPlannedAttachment {
-            parent: "hand_r".into(),
-            parent_anchor: "grip".into(),
-            child_anchor: "mount".into(),
-            offset: Transform::IDENTITY,
-            joint: None,
-            animations: Vec::new(),
-        });
-        components[3].attach_to = Some(super::super::Gen3dPlannedAttachment {
-            parent: "gun_core".into(),
-            parent_anchor: "mount".into(),
-            child_anchor: "mount".into(),
-            offset: Transform::IDENTITY,
-            joint: None,
-            animations: Vec::new(),
-        });
+            components[0]
+                .anchors
+                .push(anchor_named_forward("grip", Vec3::X));
+            components[1]
+                .anchors
+                .push(anchor_named_forward("grip", Vec3::X));
+            components[2]
+                .anchors
+                .push(anchor_named_forward("mount", Vec3::Z));
+            components[3]
+                .anchors
+                .push(anchor_named_forward("mount", Vec3::Z));
+            components[3]
+                .anchors
+                .push(anchor_named_forward("muzzle", Vec3::Z));
 
-        // Source subtree is generated.
-        components[1].actual_size = Some(Vec3::ONE);
-        components[2].actual_size = Some(Vec3::ONE);
-        components[3].actual_size = Some(Vec3::ONE);
+            components[2].attach_to = Some(super::super::Gen3dPlannedAttachment {
+                parent: "hand_r".into(),
+                parent_anchor: "grip".into(),
+                child_anchor: "mount".into(),
+                offset: Transform::IDENTITY,
+                joint: None,
+                animations: Vec::new(),
+            });
+            components[3].attach_to = Some(super::super::Gen3dPlannedAttachment {
+                parent: "gun_core".into(),
+                parent_anchor: "mount".into(),
+                child_anchor: "mount".into(),
+                offset: Transform::IDENTITY,
+                joint: None,
+                animations: Vec::new(),
+            });
 
-        let hand_l_id = component_object_id("hand_l");
-        let hand_r_id = component_object_id("hand_r");
-        let gun_core_id = component_object_id("gun_core");
-        let gun_barrel_id = component_object_id("gun_barrel");
+            // Source subtree is generated.
+            components[1].actual_size = Some(Vec3::ONE);
+            components[2].actual_size = Some(Vec3::ONE);
+            components[3].actual_size = Some(Vec3::ONE);
 
-        let mut hand_l_def = stub_def(hand_l_id, "hand_l");
-        hand_l_def.anchors = components[0].anchors.clone();
-        hand_l_def.parts.clear();
+            let root_id = super::super::super::gen3d_draft_object_id();
+            let projectile_id = super::super::super::gen3d_draft_projectile_object_id();
+            let hand_l_id = component_object_id("hand_l");
+            let gun_barrel_id = component_object_id("gun_barrel");
 
-        let mut hand_r_def = stub_def(hand_r_id, "hand_r");
-        hand_r_def.anchors = components[1].anchors.clone();
+            let mut root_def = stub_def(root_id, "root");
+            root_def.attack = Some(UnitAttackProfile {
+                kind: UnitAttackKind::RangedProjectile,
+                cooldown_secs: 0.5,
+                damage: 1,
+                anim_window_secs: 0.35,
+                melee: None,
+                ranged: Some(RangedAttackProfile {
+                    projectile_prefab: projectile_id,
+                    muzzle: AnchorRef {
+                        object_id: gun_barrel_id,
+                        anchor: "muzzle".into(),
+                    },
+                }),
+            });
 
-        let mut gun_core_def = stub_def(gun_core_id, "gun_core");
-        gun_core_def.anchors = components[2].anchors.clone();
+            let mut hand_l_def = stub_def(hand_l_id, "hand_l");
+            hand_l_def.anchors = components[0].anchors.clone();
+            hand_l_def.parts.clear();
 
-        let mut gun_barrel_def = stub_def(gun_barrel_id, "gun_barrel");
-        gun_barrel_def.anchors = components[3].anchors.clone();
+            let mut hand_r_def = stub_def(component_object_id("hand_r"), "hand_r");
+            hand_r_def.anchors = components[1].anchors.clone();
 
-        let mut draft = Gen3dDraft::default();
-        draft.defs = vec![hand_l_def, hand_r_def, gun_core_def, gun_barrel_def];
+            let mut gun_core_def = stub_def(component_object_id("gun_core"), "gun_core");
+            gun_core_def.anchors = components[2].anchors.clone();
 
+            let mut gun_barrel_def = stub_def(gun_barrel_id, "gun_barrel");
+            gun_barrel_def.anchors = components[3].anchors.clone();
+
+            let mut draft = Gen3dDraft::default();
+            draft.defs = vec![
+                root_def,
+                hand_l_def,
+                hand_r_def,
+                gun_core_def,
+                gun_barrel_def,
+            ];
+
+            (components, draft, hand_l_id)
+        }
+
+        // CloneAllMissing keeps explicit tool behavior: clone missing branches.
+        let (mut components, mut draft, _hand_l_id) = setup();
         let before_len = components.len();
         copy_component_subtree_into(
             &mut components,
@@ -1699,21 +1803,49 @@ mod tests {
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
+            Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
+        )
+        .expect("subtree copy ok");
+        assert!(
+            components.len() > before_len,
+            "expected CloneAllMissing subtree copy to clone missing branches"
+        );
+        assert!(
+            components.iter().any(|c| c.name.starts_with("hand_l__")),
+            "expected cloned `hand_l__*` components to exist"
+        );
+
+        // SkipExternallyReferenced avoids cloning branches that contain externally referenced ids.
+        let (mut components, mut draft, hand_l_id) = setup();
+        let before_len = components.len();
+        copy_component_subtree_into(
+            &mut components,
+            &mut draft,
+            1,
+            0,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
+            Transform::IDENTITY,
+            Gen3dSubtreeCopyMissingBranchPolicy::SkipExternallyReferenced,
         )
         .expect("subtree copy ok");
 
         assert_eq!(
             components.len(),
             before_len,
-            "expected subtree copy to not clone muzzle-bearing branches"
+            "expected SkipExternallyReferenced subtree copy to not clone externally referenced branches"
         );
         assert!(
             !components.iter().any(|c| c.name.starts_with("hand_l__")),
-            "expected no cloned `hand_l__*` components, got {:?}",
-            components.iter().map(|c| c.name.as_str()).collect::<Vec<_>>()
+            "expected no cloned `hand_l__*` components when skipping externally referenced branches"
         );
 
-        let hand_l_after = draft.defs.iter().find(|d| d.object_id == hand_l_id).unwrap();
+        let hand_l_after = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == hand_l_id)
+            .unwrap();
         assert!(
             hand_l_after
                 .parts
@@ -2241,6 +2373,7 @@ mod tests {
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
+            Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
         .expect("subtree copy ok");
 
@@ -2364,6 +2497,7 @@ mod tests {
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
+            Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
         .expect("subtree copy ok");
 
@@ -2488,6 +2622,7 @@ mod tests {
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
+            Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
         .expect_err("expected strict preserve_target to fail");
         assert!(
@@ -2629,6 +2764,7 @@ mod tests {
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
+            Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
         .expect("subtree copy ok");
 
@@ -3043,6 +3179,7 @@ mod tests {
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
             Transform::IDENTITY,
+            Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
         .expect("subtree copy ok");
 

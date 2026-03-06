@@ -66,9 +66,9 @@ This ExecPlan focuses on **generic improvements with a low regression risk**:
   Rationale: A constant phase offset is generic (independent of object type), deterministic, and avoids duplicating keyframes for repeated limbs with staggered gaits.
   Date/Author: 2026-02-11 / Codex
 
-- Decision: Match subtree copy children by explicit attachment edge keys `(parent_anchor, child_anchor)` and allow cloning missing branches even when a target subtree is partially populated, except for weapon-like subtrees (any subtree containing a `muzzle` anchor), which are never auto-cloned.
-  Rationale: Per-target offsets/animations and naming differences should not block reuse. Attachment edge keys are the plan’s explicit interface and avoid heuristic name matching. Skipping `muzzle` subtrees avoids accidentally duplicating weapons during symmetry reuse when the unit supports only a single muzzle/attack.
-  Date/Author: 2026-02-11 / Codex
+- Decision: Match subtree copy children by explicit attachment edge keys `(parent_anchor, child_anchor)` and allow cloning missing branches even when a target subtree is partially populated. For automatic symmetry reuse (`auto_copy`), skip missing-branch cloning when the source subtree contains component ids referenced by root interfaces (e.g. attack muzzle, aim components).
+  Rationale: Per-target offsets/animations and naming differences should not block reuse. Attachment edge keys are the plan’s explicit interface and avoid heuristic name matching. Skipping externally referenced branches prevents creating duplicate components that are not wired into those interfaces (common case: duplicate weapons when the unit supports only one muzzle/attack).
+  Date/Author: 2026-03-07 / Codex
 
 ## Outcomes & Retrospective
 

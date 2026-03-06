@@ -2139,14 +2139,17 @@ pub(super) fn apply_ai_review_delta_actions(
                     let move_is_spin = components[idx]
                         .attach_to
                         .as_ref()
-                        .and_then(|att| att.animations.iter().find(|s| s.channel.as_ref() == "move"))
+                        .and_then(|att| {
+                            att.animations.iter().find(|s| s.channel.as_ref() == "move")
+                        })
                         .map(|slot| matches!(slot.spec.clip, PartAnimationDef::Spin { .. }))
                         .unwrap_or(false);
 
                     // Guardrail: for ground contacts, clearing stance makes motion validation
                     // thrash between slip and stance-missing. The only generic exception is a
                     // wheel-like move that is a pure `spin` (stance validation is skipped).
-                    let clearing_ground_stance = stance.is_none() && contact.kind == AiContactKindJson::Ground;
+                    let clearing_ground_stance =
+                        stance.is_none() && contact.kind == AiContactKindJson::Ground;
                     if !(clearing_ground_stance && !move_is_spin) {
                         contact.stance = stance;
                     }

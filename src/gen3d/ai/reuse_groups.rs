@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-use super::copy_component::{Gen3dCopyAlignmentMode, Gen3dCopyAnchorsMode, Gen3dCopyMode};
+use super::copy_component::{
+    Gen3dCopyAlignmentMode, Gen3dCopyAnchorsMode, Gen3dCopyMode,
+    Gen3dSubtreeCopyMissingBranchPolicy,
+};
 use super::schema::{
     AiReuseAlignmentJson, AiReuseAnchorsJson, AiReuseGroupJson, AiReuseGroupKindJson,
     AiReuseModeJson,
@@ -234,6 +237,7 @@ pub(super) fn missing_only_generation_indices(
     let children = build_children_map(planned_components);
     let mut required_sources = vec![false; planned_components.len()];
     let mut skip_targets = vec![false; planned_components.len()];
+    let dummy_draft = super::super::state::Gen3dDraft::default();
 
     for group in reuse_groups {
         let source_idx = group.source_root_idx;
@@ -262,9 +266,11 @@ pub(super) fn missing_only_generation_indices(
                 for &target_root in &group.target_root_indices {
                     let pairs = super::copy_component::preflight_subtree_copy_pairs(
                         planned_components,
+                        &dummy_draft,
                         source_idx,
                         target_root,
                         group.anchors_mode,
+                        Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
                     );
                     let Ok(pairs) = pairs else {
                         continue;
@@ -304,6 +310,7 @@ pub(super) fn copyable_target_count(
     let children = build_children_map(planned_components);
     let mut required_sources = vec![false; planned_components.len()];
     let mut skip_targets = vec![false; planned_components.len()];
+    let dummy_draft = super::super::state::Gen3dDraft::default();
 
     for group in reuse_groups {
         let source_idx = group.source_root_idx;
@@ -332,9 +339,11 @@ pub(super) fn copyable_target_count(
                 for &target_root in &group.target_root_indices {
                     let pairs = super::copy_component::preflight_subtree_copy_pairs(
                         planned_components,
+                        &dummy_draft,
                         source_idx,
                         target_root,
                         group.anchors_mode,
+                        Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
                     );
                     let Ok(pairs) = pairs else {
                         continue;
@@ -461,9 +470,11 @@ pub(super) fn apply_auto_copy(
                 for &target_root_idx in &group.target_root_indices {
                     let pairs = match super::copy_component::preflight_subtree_copy_pairs(
                         planned_components,
+                        draft,
                         source_root_idx,
                         target_root_idx,
                         group.anchors_mode,
+                        Gen3dSubtreeCopyMissingBranchPolicy::SkipExternallyReferenced,
                     ) {
                         Ok(pairs) => pairs,
                         Err(err) => {
@@ -514,6 +525,7 @@ pub(super) fn apply_auto_copy(
                         group.anchors_mode,
                         group.alignment,
                         Transform::IDENTITY,
+                        Gen3dSubtreeCopyMissingBranchPolicy::SkipExternallyReferenced,
                     ) {
                         Ok(outcomes) => {
                             report.subtree_copies_applied += 1;

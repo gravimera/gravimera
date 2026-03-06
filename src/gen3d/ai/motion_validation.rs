@@ -387,9 +387,10 @@ pub(super) fn apply_contact_lock_auto_repair_if_needed(
             });
             result.assigned_stances += 1;
         }
-        result
-            .notes
-            .push(format!("assigned {} missing ground stances", result.assigned_stances));
+        result.notes.push(format!(
+            "assigned {} missing ground stances",
+            result.assigned_stances
+        ));
     }
 
     fn stance_metrics(
@@ -432,7 +433,10 @@ pub(super) fn apply_contact_lock_auto_repair_if_needed(
                 da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             })
             .unwrap_or(stance_indices[0]);
-        let baseline = positions_world.get(baseline_idx).copied().unwrap_or(Vec3::ZERO);
+        let baseline = positions_world
+            .get(baseline_idx)
+            .copied()
+            .unwrap_or(Vec3::ZERO);
         let ground_y = baseline.y;
 
         let mut max_slip_m: f32 = 0.0;
@@ -612,8 +616,7 @@ pub(super) fn apply_contact_lock_auto_repair_if_needed(
             ) else {
                 continue;
             };
-            if (new_phase_start - phase_start).abs() <= 1e-6 && (new_duty - duty).abs() <= 1e-6
-            {
+            if (new_phase_start - phase_start).abs() <= 1e-6 && (new_duty - duty).abs() <= 1e-6 {
                 continue;
             }
 
@@ -3241,7 +3244,10 @@ mod tests {
             .get("ok")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
-        assert!(!before_ok, "expected motion validation to fail before repair");
+        assert!(
+            !before_ok,
+            "expected motion validation to fail before repair"
+        );
 
         let repair = apply_contact_lock_auto_repair_if_needed(Some(2.0), &mut components);
         assert!(repair.applied, "expected repair to apply");
