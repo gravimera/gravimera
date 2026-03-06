@@ -49,7 +49,8 @@ fn gen3d_draft_projectile_object_id() -> u128 {
 }
 
 pub(crate) use ai::{
-    gen3d_cancel_build_from_api, gen3d_resume_build_from_api, gen3d_start_build_from_api,
+    gen3d_apply_pending_seed_from_prefab, gen3d_cancel_build_from_api,
+    gen3d_resume_build_from_api, gen3d_start_build_from_api,
     gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };
@@ -69,7 +70,7 @@ pub(crate) use preview::{
     gen3d_preview_tick_selected_animation, gen3d_update_collision_overlay,
 };
 pub(crate) use save::gen3d_save_button;
-pub(crate) use save::gen3d_save_current_draft_from_api;
+pub(crate) use save::gen3d_save_current_draft_seed_aware_from_api;
 pub(crate) use state::*;
 pub(crate) use status::{gen3d_status_scroll_wheel, gen3d_update_status_scrollbar_ui};
 pub(crate) use tool_feedback::{gen3d_load_tool_feedback_history, Gen3dToolFeedbackHistory};

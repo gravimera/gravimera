@@ -42,7 +42,8 @@ use super::reuse_groups;
 
 use super::super::state::{
     Gen3dContinueButton, Gen3dDraft, Gen3dGenerateButton, Gen3dPreview, Gen3dPreviewModelRoot,
-    Gen3dReviewCaptureCamera, Gen3dSideTab, Gen3dSpeedMode, Gen3dWorkshop,
+    Gen3dPendingSeedFromPrefab, Gen3dReviewCaptureCamera, Gen3dSeedFromPrefabMode, Gen3dSideTab,
+    Gen3dSpeedMode, Gen3dWorkshop,
 };
 use super::super::tool_feedback::{
     append_gen3d_tool_feedback_entry, gen3d_tool_feedback_history_path, Gen3dToolFeedbackEntry,
@@ -151,6 +152,62 @@ pub(crate) fn gen3d_continue_button(
                     workshop.error = Some(err);
                 }
             }
+        }
+    }
+}
+
+pub(crate) fn gen3d_apply_pending_seed_from_prefab(
+    build_scene: Res<State<BuildScene>>,
+    config: Res<AppConfig>,
+    log_sinks: Option<Res<crate::app::Gen3dLogSinks>>,
+    mut pending: ResMut<Gen3dPendingSeedFromPrefab>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut job: ResMut<Gen3dAiJob>,
+    mut draft: ResMut<Gen3dDraft>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+
+    let Some(req) = pending.request.take() else {
+        return;
+    };
+
+    if job.is_running() {
+        workshop.error = Some("Cannot seed while a Gen3D build is running.".into());
+        return;
+    }
+
+    let log_sinks = log_sinks.map(|sinks| sinks.into_inner().clone());
+    job.set_seed_target_entity(None);
+    let result = match req.mode {
+        Gen3dSeedFromPrefabMode::EditOverwrite => gen3d_start_edit_session_from_prefab_id_from_api(
+            build_scene.as_ref(),
+            &config,
+            log_sinks,
+            &mut workshop,
+            &mut job,
+            &mut draft,
+            req.prefab_id,
+        ),
+        Gen3dSeedFromPrefabMode::Fork => gen3d_start_fork_session_from_prefab_id_from_api(
+            build_scene.as_ref(),
+            &config,
+            log_sinks,
+            &mut workshop,
+            &mut job,
+            &mut draft,
+            req.prefab_id,
+        ),
+    };
+
+    match result {
+        Ok(()) => {
+            job.set_seed_target_entity(req.target_entity);
+        }
+        Err(err) => {
+            workshop.error = Some(err);
+            workshop.status = "Failed to seed Gen3D session from prefab.".into();
         }
     }
 }
@@ -500,6 +557,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
         Gen3dSeededSessionMode::EditOverwrite => Some(prefab_id),
         Gen3dSeededSessionMode::Fork => None,
     };
+    job.seed_target_entity = None;
 
     // Create pass_0 to record the seed action and to enable Continue.
     gen3d_set_current_attempt_pass(job, &run_dir, 0, 0)?;
@@ -915,6 +973,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.save_seq = 0;
     job.edit_base_prefab_id = None;
     job.save_overwrite_prefab_id = None;
+    job.seed_target_entity = None;
     draft.defs.clear();
 
     workshop.status = format!(

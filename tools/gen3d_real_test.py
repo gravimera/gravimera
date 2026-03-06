@@ -569,6 +569,128 @@ def run_edit_fork_regression(
     print(f"OK: edit overwrote {edited_prefab_id}, fork created {fork_prefab_id}")
 
 
+def run_meta_edit_fork_regression(
+    *,
+    api_base: str,
+    run_dir: Path,
+    instance_id_uuid: str,
+    prefab_id_uuid: str,
+    dt_secs: float,
+) -> None:
+    def post(path: str, body: dict[str, Any]) -> dict[str, Any]:
+        if path in ("/v1/step", "/v1/gen3d/save", "/v1/screenshot"):
+            timeout = 300.0
+        else:
+            timeout = 30.0
+        return _http_json("POST", f"{api_base}{path}", body, timeout=timeout)
+
+    def get(path: str) -> dict[str, Any]:
+        return _http_json("GET", f"{api_base}{path}", None, timeout=30.0)
+
+    def step(frames: int) -> None:
+        post("/v1/step", {"frames": frames, "dt_secs": dt_secs})
+
+    def wait_can_resume(label: str) -> None:
+        t0 = time.monotonic()
+        while True:
+            step(5)
+            status = get("/v1/gen3d/status")
+            if bool(status.get("can_resume")):
+                return
+            err = status.get("error")
+            if err:
+                raise RuntimeError(f"{label}: gen3d/status error: {err}. status={status}")
+            if time.monotonic() - t0 > 10.0:
+                raise RuntimeError(f"{label}: timed out waiting for can_resume=true. status={status}")
+
+    def find_prefab_id_for_instance(target_instance_id: str) -> str | None:
+        state = get("/v1/state")
+        for obj in state.get("objects", []):
+            if obj.get("instance_id_uuid") == target_instance_id:
+                return str(obj.get("prefab_id_uuid") or "").strip() or None
+        return None
+
+    print(f"=== Meta Gen3D edit/fork regression: instance_id_uuid={instance_id_uuid} ===")
+
+    meta_dir = run_dir / "external_screenshots_meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+
+    # Ensure we're in Build Realm and the unit is selected.
+    post("/v1/mode", {"mode": "build"})
+    step(5)
+    post("/v1/select", {"instance_ids": [instance_id_uuid]})
+    step(2)
+
+    # Capture the Meta panel (should show Gen3D section + buttons for Gen3D-saved prefabs).
+    post("/v1/meta/open", {"instance_id_uuid": instance_id_uuid})
+    step(2)
+    post("/v1/screenshot", {"path": str(meta_dir / "meta_open.png")})
+
+    # Copy: duplicates an instance with the same prefab id.
+    copy = post("/v1/meta/gen3d/copy", {"instance_id_uuid": instance_id_uuid})
+    copy_instance = str(copy.get("instance_id_uuid") or "").strip()
+    if not copy_instance or copy_instance == instance_id_uuid:
+        raise RuntimeError(f"meta/gen3d/copy returned invalid instance_id_uuid: {copy}")
+    step(2)
+    post("/v1/screenshot", {"path": str(meta_dir / "after_copy.png")})
+
+    copy_prefab = find_prefab_id_for_instance(copy_instance)
+    if copy_prefab != prefab_id_uuid:
+        raise RuntimeError(
+            f"Copy expected prefab_id_uuid={prefab_id_uuid}, got {copy_prefab} for instance {copy_instance}"
+        )
+
+    # Edit (overwrite): seed from selected instance, then Save should keep the same prefab id.
+    post("/v1/meta/gen3d/edit", {"instance_id_uuid": instance_id_uuid})
+    wait_can_resume("meta_edit")
+    edited = post("/v1/gen3d/save", {})
+    edited_prefab = str(edited.get("prefab_id_uuid") or "").strip()
+    edited_instance = str(edited.get("instance_id_uuid") or "").strip()
+    if edited_instance != instance_id_uuid:
+        raise RuntimeError(
+            f"Edit expected instance_id_uuid={instance_id_uuid}, got {edited_instance}. resp={edited}"
+        )
+    if edited_prefab != prefab_id_uuid:
+        raise RuntimeError(
+            f"Edit overwrite expected prefab_id_uuid={prefab_id_uuid}, got {edited_prefab}. resp={edited}"
+        )
+
+    post("/v1/mode", {"mode": "build"})
+    step(5)
+    current_prefab = find_prefab_id_for_instance(instance_id_uuid)
+    if current_prefab != prefab_id_uuid:
+        raise RuntimeError(
+            f"After Edit overwrite, expected instance prefab_id_uuid={prefab_id_uuid}, got {current_prefab}"
+        )
+
+    # Fork (new id): seed from selected instance, then Save should rebind the same instance to a new prefab id.
+    post("/v1/meta/gen3d/fork", {"instance_id_uuid": instance_id_uuid})
+    wait_can_resume("meta_fork")
+    fork_saved = post("/v1/gen3d/save", {})
+    fork_prefab = str(fork_saved.get("prefab_id_uuid") or "").strip()
+    fork_instance = str(fork_saved.get("instance_id_uuid") or "").strip()
+    if fork_instance != instance_id_uuid:
+        raise RuntimeError(
+            f"Fork expected instance_id_uuid={instance_id_uuid}, got {fork_instance}. resp={fork_saved}"
+        )
+    if not fork_prefab or fork_prefab == prefab_id_uuid:
+        raise RuntimeError(
+            f"Fork expected new prefab_id_uuid (different from {prefab_id_uuid}), got {fork_prefab}. resp={fork_saved}"
+        )
+
+    post("/v1/mode", {"mode": "build"})
+    step(5)
+    current_prefab = find_prefab_id_for_instance(instance_id_uuid)
+    if current_prefab != fork_prefab:
+        raise RuntimeError(
+            f"After Fork save, expected instance prefab_id_uuid={fork_prefab}, got {current_prefab}"
+        )
+
+    post("/v1/screenshot", {"path": str(meta_dir / "after_fork.png")})
+
+    print(f"OK: meta copy={copy_instance}, edit overwrote {edited_prefab}, fork rebound to {fork_prefab}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, help="Path to config.toml (automation must be enabled)")
@@ -596,6 +718,11 @@ def main() -> int:
         "--edit-fork-regression",
         action="store_true",
         help="After Save, seed an Edit (overwrite) and Fork (new prefab id) Gen3D session from the saved prefab.",
+    )
+    ap.add_argument(
+        "--meta-edit-fork-regression",
+        action="store_true",
+        help="After Save, exercise Meta panel Gen3D Copy/Edit/Fork via /v1/meta/gen3d/* and validate fork rebinds the selected instance.",
     )
     ap.add_argument(
         "--save-early",
@@ -735,6 +862,14 @@ def main() -> int:
                         prefab_id_uuid=result.prefab_id_uuid,
                         dt_secs=args.dt_secs,
                     )
+                if args.meta_edit_fork_regression:
+                    run_meta_edit_fork_regression(
+                        api_base=api_base,
+                        run_dir=result.run_dir,
+                        instance_id_uuid=result.instance_id_uuid,
+                        prefab_id_uuid=result.prefab_id_uuid,
+                        dt_secs=args.dt_secs,
+                    )
         finally:
             shutdown_game(game)
     else:
@@ -768,6 +903,14 @@ def main() -> int:
                 if args.edit_fork_regression:
                     run_edit_fork_regression(
                         api_base=api_base,
+                        prefab_id_uuid=result.prefab_id_uuid,
+                        dt_secs=args.dt_secs,
+                    )
+                if args.meta_edit_fork_regression:
+                    run_meta_edit_fork_regression(
+                        api_base=api_base,
+                        run_dir=result.run_dir,
+                        instance_id_uuid=result.instance_id_uuid,
                         prefab_id_uuid=result.prefab_id_uuid,
                         dt_secs=args.dt_secs,
                     )

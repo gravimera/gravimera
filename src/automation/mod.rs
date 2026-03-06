@@ -18,9 +18,10 @@ use serde::Deserialize;
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
-use crate::geometry::safe_abs_scale_y;
+use crate::geometry::{clamp_world_xz, safe_abs_scale_y, snap_to_grid};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
+use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::scene_store::SceneSaveRequest;
 use crate::types::*;
 
@@ -394,6 +395,19 @@ struct AutomationWorld<'w, 's> {
         ),
         Or<(With<Commandable>, With<BuildObject>, With<Enemy>)>,
     >,
+    world_objects: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static ObjectId,
+            &'static Transform,
+            &'static ObjectPrefabId,
+            Option<&'static ObjectTint>,
+        ),
+        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+    >,
+    children_q: Query<'w, 's, &'static Children>,
     scene_instances: Query<
         'w,
         's,
@@ -416,6 +430,7 @@ struct AutomationGen3d<'w> {
     workshop: Option<ResMut<'w, crate::gen3d::Gen3dWorkshop>>,
     job: Option<ResMut<'w, crate::gen3d::Gen3dAiJob>>,
     draft: Option<ResMut<'w, crate::gen3d::Gen3dDraft>>,
+    pending_seed: Option<ResMut<'w, crate::gen3d::Gen3dPendingSeedFromPrefab>>,
     asset_server: Option<Res<'w, AssetServer>>,
     assets: Option<Res<'w, SceneAssets>>,
     meshes: Option<ResMut<'w, Assets<Mesh>>>,
@@ -431,6 +446,7 @@ struct AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit
     active_realm_id: &'a str,
     active_scene_id: &'a str,
     library: &'a mut ObjectLibrary,
+    prefab_descriptors: &'a mut PrefabDescriptorLibrary,
     gen3d: &'a mut AutomationGen3d<'gen3d_w>,
     world: &'a AutomationWorld<'world_w, 'world_s>,
     mode: Option<&'a State<GameMode>>,
@@ -467,6 +483,7 @@ fn automation_process_requests(
     mut next_build_scene: Option<ResMut<NextState<BuildScene>>>,
     mut ui: AutomationUi,
     mut library: ResMut<ObjectLibrary>,
+    mut prefab_descriptors: ResMut<PrefabDescriptorLibrary>,
     mut gen3d: AutomationGen3d,
     world: AutomationWorld,
 ) {
@@ -520,6 +537,7 @@ fn automation_process_requests(
             active_realm_id,
             active_scene_id,
             library: &mut library,
+            prefab_descriptors: &mut prefab_descriptors,
             gen3d: &mut gen3d,
             world: &world,
             mode: mode.as_deref(),
@@ -608,6 +626,12 @@ struct ScreenshotRequest {
 
 #[derive(Deserialize)]
 struct MetaPanelRequest {
+    #[serde(default)]
+    instance_id_uuid: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MetaGen3dActionRequest {
     #[serde(default)]
     instance_id_uuid: Option<String>,
 }
@@ -1095,6 +1119,7 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
     let config = ctx.config;
     let log_sinks = ctx.gen3d.log_sinks.as_deref();
     let library = &mut *ctx.library;
+    let prefab_descriptors = &mut *ctx.prefab_descriptors;
     let mut gen3d_workshop = ctx.gen3d.workshop.as_deref_mut();
     let mut gen3d_job = ctx.gen3d.job.as_deref_mut();
     let mut gen3d_draft = ctx.gen3d.draft.as_deref_mut();
@@ -1107,6 +1132,8 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
     let scene_saves = &mut ctx.gen3d.scene_saves;
 
     let player_q = &ctx.world.player_q;
+    let world_objects = &ctx.world.world_objects;
+    let children_q = &ctx.world.children_q;
     let mode = ctx.mode;
     let build_scene = ctx.build_scene;
 
@@ -1447,7 +1474,7 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 return Some(json_error(500, "Cannot save: missing hero entity."));
             };
 
-            let saved = match crate::gen3d::gen3d_save_current_draft_from_api(
+            let saved = match crate::gen3d::gen3d_save_current_draft_seed_aware_from_api(
                 commands,
                 asset_server,
                 assets,
@@ -1456,13 +1483,15 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 material_cache,
                 mesh_cache,
                 library,
-                None,
+                prefab_descriptors,
                 workshop,
                 job,
                 draft,
                 false,
                 player_transform,
                 player_collider,
+                world_objects,
+                children_q,
                 scene_saves,
             ) {
                 Ok(saved) => saved,
@@ -1982,6 +2011,307 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
             };
             motion_ui.close();
             let body = serde_json::json!({ "ok": true }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/meta/gen3d/copy") => {
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D actions require build scene switching (rendered mode).",
+                ));
+            };
+            if !matches!(build_scene.get(), BuildScene::Realm) {
+                return Some(json_error(409, "Switch to Build Realm scene first."));
+            }
+
+            let Some(asset_server) = asset_server else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D Copy requires AssetServer (rendered mode).",
+                ));
+            };
+            let Some(assets) = assets else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D Copy requires SceneAssets (rendered mode).",
+                ));
+            };
+            let Some(meshes) = meshes else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D Copy requires meshes (rendered mode).",
+                ));
+            };
+            let Some(materials) = materials else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D Copy requires materials (rendered mode).",
+                ));
+            };
+            let Some(material_cache) = material_cache else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D Copy requires material cache (rendered mode).",
+                ));
+            };
+            let Some(mesh_cache) = mesh_cache else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D Copy requires mesh cache (rendered mode).",
+                ));
+            };
+
+            let req: MetaGen3dActionRequest = if msg.body.is_empty() {
+                MetaGen3dActionRequest {
+                    instance_id_uuid: None,
+                }
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let target_entity = if let Some(id_str) = req.instance_id_uuid.as_ref() {
+                let Ok(uuid) = uuid::Uuid::parse_str(id_str.trim()) else {
+                    return Some(json_error(400, "Invalid `instance_id_uuid`."));
+                };
+                let instance_id = ObjectId(uuid.as_u128());
+                state_objects.iter().find_map(
+                    |(entity, object_id, _prefab_id, _t, _p, _e, _b, commandable)| {
+                        (object_id.0 == instance_id.0 && commandable.is_some()).then_some(entity)
+                    },
+                )
+            } else {
+                selection.as_deref().and_then(|selection| {
+                    selection.selected.iter().copied().find(|entity| {
+                        state_objects
+                            .get(*entity)
+                            .ok()
+                            .and_then(|row| row.7)
+                            .is_some()
+                    })
+                })
+            };
+
+            let Some(target_entity) = target_entity else {
+                return Some(json_error(
+                    400,
+                    "No commandable target found (provide `instance_id_uuid` or select a unit).",
+                ));
+            };
+
+            let Ok((_entity, transform, _instance_id, prefab_id, tint, forms, _owner)) =
+                ctx.world.scene_instances.get(target_entity)
+            else {
+                return Some(json_error(404, "Target instance not found."));
+            };
+
+            let is_gen3d_saved = ctx
+                .prefab_descriptors
+                .get(prefab_id.0)
+                .and_then(|d| d.provenance.as_ref())
+                .and_then(|p| p.source.as_deref())
+                .is_some_and(|v| v.trim() == "gen3d");
+            if !is_gen3d_saved {
+                return Some(json_error(
+                    400,
+                    "Copy is supported only for Gen3D-saved prefabs.",
+                ));
+            }
+
+            let Some(def) = library.get(prefab_id.0) else {
+                return Some(json_error(404, "Prefab not found."));
+            };
+            let size = def.size.abs();
+            let collider_half_xz = match def.collider {
+                crate::object::registry::ColliderProfile::CircleXZ { radius } => {
+                    Vec2::splat(radius.abs())
+                }
+                crate::object::registry::ColliderProfile::AabbXZ { half_extents } => Vec2::new(
+                    half_extents.x.abs().max(0.01),
+                    half_extents.y.abs().max(0.01),
+                ),
+                crate::object::registry::ColliderProfile::None => {
+                    Vec2::new((size.x * 0.5).max(0.01), (size.z * 0.5).max(0.01))
+                }
+            };
+            let radius = collider_half_xz.x.max(collider_half_xz.y).max(0.1);
+
+            let snap_step = BUILD_GRID_SIZE.max(0.01);
+            let offset_step = BUILD_UNIT_SIZE.max(snap_step);
+            let offset = Vec3::new(offset_step, 0.0, offset_step);
+
+            let mut new_transform = *transform;
+            new_transform.translation += offset;
+            new_transform.translation.x = snap_to_grid(new_transform.translation.x, snap_step);
+            new_transform.translation.z = snap_to_grid(new_transform.translation.z, snap_step);
+            new_transform.translation.x = clamp_world_xz(new_transform.translation.x, radius);
+            new_transform.translation.z = clamp_world_xz(new_transform.translation.z, radius);
+
+            let forms = forms
+                .cloned()
+                .unwrap_or_else(|| ObjectForms::new_single(prefab_id.0));
+            let tint_color = tint.map(|t| t.0);
+            let instance_id = ObjectId::new_v4();
+
+            let mut entity_commands = commands.spawn((
+                instance_id,
+                *prefab_id,
+                forms,
+                Commandable,
+                Collider { radius },
+                new_transform,
+                Visibility::Inherited,
+            ));
+            if let Some(tint_color) = tint_color {
+                entity_commands.insert(ObjectTint(tint_color));
+            }
+
+            crate::object::visuals::spawn_object_visuals(
+                &mut entity_commands,
+                library,
+                asset_server,
+                assets,
+                meshes,
+                materials,
+                material_cache,
+                mesh_cache,
+                prefab_id.0,
+                tint_color,
+            );
+
+            let body = serde_json::json!({
+                "ok": true,
+                "instance_id_uuid": uuid::Uuid::from_u128(instance_id.0).to_string(),
+                "prefab_id_uuid": uuid::Uuid::from_u128(prefab_id.0).to_string(),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/meta/gen3d/edit") | ("POST", "/v1/meta/gen3d/fork") => {
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D actions require build scene switching (rendered mode).",
+                ));
+            };
+            if !matches!(build_scene.get(), BuildScene::Realm) {
+                return Some(json_error(409, "Switch to Build Realm scene first."));
+            }
+            let Some(next_mode) = next_mode else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D actions require game mode switching (rendered mode).",
+                ));
+            };
+            let Some(next_build_scene) = next_build_scene else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D actions require build scene switching (rendered mode).",
+                ));
+            };
+            let Some(pending_seed) = ctx.gen3d.pending_seed.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            if ctx.gen3d.job.as_deref().is_some_and(|job| job.is_running()) {
+                return Some(json_error(
+                    409,
+                    "Cannot seed while a Gen3D build is running (stop it first).",
+                ));
+            }
+
+            let req: MetaGen3dActionRequest = if msg.body.is_empty() {
+                MetaGen3dActionRequest {
+                    instance_id_uuid: None,
+                }
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let target_entity = if let Some(id_str) = req.instance_id_uuid.as_ref() {
+                let Ok(uuid) = uuid::Uuid::parse_str(id_str.trim()) else {
+                    return Some(json_error(400, "Invalid `instance_id_uuid`."));
+                };
+                let instance_id = ObjectId(uuid.as_u128());
+                state_objects.iter().find_map(
+                    |(entity, object_id, _prefab_id, _t, _p, _e, _b, commandable)| {
+                        (object_id.0 == instance_id.0 && commandable.is_some()).then_some(entity)
+                    },
+                )
+            } else {
+                selection.as_deref().and_then(|selection| {
+                    selection.selected.iter().copied().find(|entity| {
+                        state_objects
+                            .get(*entity)
+                            .ok()
+                            .and_then(|row| row.7)
+                            .is_some()
+                    })
+                })
+            };
+
+            let Some(target_entity) = target_entity else {
+                return Some(json_error(
+                    400,
+                    "No commandable target found (provide `instance_id_uuid` or select a unit).",
+                ));
+            };
+
+            let Ok((_entity, _transform, instance_id, prefab_id, _tint, _forms, _owner)) =
+                ctx.world.scene_instances.get(target_entity)
+            else {
+                return Some(json_error(404, "Target instance not found."));
+            };
+
+            let is_gen3d_saved = ctx
+                .prefab_descriptors
+                .get(prefab_id.0)
+                .and_then(|d| d.provenance.as_ref())
+                .and_then(|p| p.source.as_deref())
+                .is_some_and(|v| v.trim() == "gen3d");
+            if !is_gen3d_saved {
+                return Some(json_error(
+                    400,
+                    "Edit/Fork is supported only for Gen3D-saved prefabs.",
+                ));
+            }
+
+            let mode = if msg.path.as_str().ends_with("/edit") {
+                crate::gen3d::Gen3dSeedFromPrefabMode::EditOverwrite
+            } else {
+                crate::gen3d::Gen3dSeedFromPrefabMode::Fork
+            };
+            pending_seed.request = Some(crate::gen3d::Gen3dSeedFromPrefabRequest {
+                mode,
+                prefab_id: prefab_id.0,
+                target_entity: Some(target_entity),
+            });
+
+            if let Some(motion_ui) = ctx.motion_ui.as_deref_mut() {
+                motion_ui.close();
+            }
+            next_mode.set(GameMode::Build);
+            next_build_scene.set(BuildScene::Preview);
+
+            let body = serde_json::json!({
+                "ok": true,
+                "instance_id_uuid": uuid::Uuid::from_u128(instance_id.0).to_string(),
+                "prefab_id_uuid": uuid::Uuid::from_u128(prefab_id.0).to_string(),
+            })
+            .to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),

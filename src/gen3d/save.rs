@@ -14,8 +14,8 @@ use crate::object::registry::{
 use crate::object::visuals;
 use crate::scene_store::SceneSaveRequest;
 use crate::types::{
-    AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, ObjectId, ObjectPrefabId,
-    Player,
+    AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, ObjectForms, ObjectId,
+    ObjectPrefabId, ObjectTint, Player,
 };
 
 use super::ai::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1, Gen3dAiJob};
@@ -844,6 +844,274 @@ fn collider_half_xz(collider: ColliderProfile, size: Vec3) -> Vec2 {
     }
 }
 
+fn save_gen3d_snapshot_to_depot_and_library(
+    library: &mut ObjectLibrary,
+    prefab_descriptors: Option<&mut crate::prefab_descriptors::PrefabDescriptorLibrary>,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    snapshot: &Gen3dDraft,
+    collision_enabled: bool,
+) -> Result<(u128, ObjectDef), String> {
+    let (saved_root_id, defs) =
+        draft_to_saved_defs(snapshot, collision_enabled, job.save_overwrite_prefab_id())?;
+    let depot_prefabs_dir =
+        crate::model_depot::save_model_prefab_defs_to_depot(saved_root_id, saved_root_id, &defs)?;
+
+    save_gen3d_source_bundle_best_effort(
+        &crate::model_depot::depot_model_dir(saved_root_id),
+        snapshot,
+    );
+
+    for def in defs {
+        library.upsert(def);
+    }
+
+    let Some(root_def) = library.get(saved_root_id).cloned() else {
+        return Err("Cannot save: missing saved prefab def.".into());
+    };
+
+    let descriptor = save_generated_prefab_descriptor_best_effort(
+        &depot_prefabs_dir,
+        &root_def,
+        library,
+        job,
+        workshop,
+    );
+    if let Some(prefab_descriptors) = prefab_descriptors {
+        prefab_descriptors.upsert(saved_root_id, descriptor);
+    }
+
+    Ok((saved_root_id, root_def))
+}
+
+fn collect_descendants(root: Entity, children_q: &Query<&Children>) -> Vec<Entity> {
+    let mut stack = vec![root];
+    let mut out: Vec<Entity> = Vec::new();
+    while let Some(entity) = stack.pop() {
+        let Ok(children) = children_q.get(entity) else {
+            continue;
+        };
+        for child in children.iter() {
+            out.push(child);
+            stack.push(child);
+        }
+    }
+    out
+}
+
+fn refresh_object_visuals_for_root(
+    commands: &mut Commands,
+    library: &ObjectLibrary,
+    asset_server: &AssetServer,
+    assets: &SceneAssets,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    material_cache: &mut visuals::MaterialCache,
+    mesh_cache: &mut visuals::PrimitiveMeshCache,
+    root_entity: Entity,
+    prefab_id: u128,
+    tint: Option<Color>,
+    children_q: &Query<&Children>,
+) {
+    let descendants = collect_descendants(root_entity, children_q);
+    for entity in descendants.into_iter().rev() {
+        commands.entity(entity).try_despawn();
+    }
+
+    let mut ec = commands.entity(root_entity);
+    visuals::spawn_object_visuals(
+        &mut ec,
+        library,
+        asset_server,
+        assets,
+        meshes,
+        materials,
+        material_cache,
+        mesh_cache,
+        prefab_id,
+        tint,
+    );
+}
+
+fn gen3d_save_seeded_session_in_place(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    assets: &SceneAssets,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    material_cache: &mut visuals::MaterialCache,
+    mesh_cache: &mut visuals::PrimitiveMeshCache,
+    library: &mut ObjectLibrary,
+    prefab_descriptors: &mut crate::prefab_descriptors::PrefabDescriptorLibrary,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+    collision_enabled: bool,
+    target_entity: Entity,
+    world_objects: &Query<
+        (Entity, &ObjectId, &Transform, &ObjectPrefabId, Option<&ObjectTint>),
+        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+    >,
+    children_q: &Query<&Children>,
+    scene_saves: &mut MessageWriter<SceneSaveRequest>,
+) -> Result<Gen3dSavedInstance, String> {
+    if draft.root_def().is_none() || draft.total_non_projectile_primitive_parts() == 0 {
+        return Err("Cannot save: draft is empty.".into());
+    }
+
+    let base_prefab_id = job.edit_base_prefab_id().unwrap_or(0);
+    let (target_instance_id, target_tint, target_pos) = match world_objects.get(target_entity) {
+        Ok((_entity, instance_id, transform, _prefab_id, tint)) => {
+            (*instance_id, tint.map(|t| t.0), transform.translation)
+        }
+        Err(_) => {
+            return Err("Cannot save: missing target instance (it may have been deleted).".into());
+        }
+    };
+
+    // Snapshot at call time so a concurrent Build run can't mutate it mid-save.
+    let snapshot = Gen3dDraft {
+        defs: draft.defs.clone(),
+    };
+    let overwrite_prefab_id = job.save_overwrite_prefab_id();
+    let (saved_root_id, root_def) = save_gen3d_snapshot_to_depot_and_library(
+        library,
+        Some(prefab_descriptors),
+        workshop,
+        job,
+        &snapshot,
+        collision_enabled,
+    )?;
+
+    let size = root_def.size;
+    let half_xz = collider_half_xz(root_def.collider, size);
+    let object_radius = half_xz.x.max(half_xz.y).max(0.1);
+    let mobility = root_def.mobility.is_some();
+
+    let mut updated_instances = 0usize;
+    if overwrite_prefab_id.is_some() {
+        // Edit (overwrite): refresh visuals for all instances of this prefab id.
+        for (entity, _instance_id, _transform, prefab_id, tint) in world_objects {
+            if prefab_id.0 != saved_root_id {
+                continue;
+            }
+            refresh_object_visuals_for_root(
+                commands,
+                library,
+                asset_server,
+                assets,
+                meshes,
+                materials,
+                material_cache,
+                mesh_cache,
+                entity,
+                saved_root_id,
+                tint.map(|t| t.0),
+                children_q,
+            );
+            if mobility {
+                commands
+                    .entity(entity)
+                    .insert(Collider { radius: object_radius });
+            } else {
+                commands.entity(entity).insert(BuildDimensions { size });
+                commands.entity(entity).insert(AabbCollider { half_extents: half_xz });
+            }
+            updated_instances += 1;
+        }
+
+        workshop.status = format!(
+            "Saved model to the depot (overwrote prefab). Updated {updated_instances} instance(s) in the world. Exit Gen3D to inspect."
+        );
+    } else {
+        // Fork: bind only the selected instance to the new prefab id.
+        if !mobility {
+            return Err("Fork save expects a unit prefab (mobility=true).".into());
+        }
+
+        commands
+            .entity(target_entity)
+            .insert(ObjectPrefabId(saved_root_id));
+        commands
+            .entity(target_entity)
+            .insert(ObjectForms::new_single(saved_root_id));
+        commands
+            .entity(target_entity)
+            .insert(Collider { radius: object_radius });
+
+        refresh_object_visuals_for_root(
+            commands,
+            library,
+            asset_server,
+            assets,
+            meshes,
+            materials,
+            material_cache,
+            mesh_cache,
+            target_entity,
+            saved_root_id,
+            target_tint,
+            children_q,
+        );
+        updated_instances = 1;
+
+        // After the initial fork save, treat subsequent saves as "edit the fork" (overwrite).
+        job.set_edit_base_prefab_id(Some(saved_root_id));
+        job.set_save_overwrite_prefab_id(Some(saved_root_id));
+
+        workshop.status =
+            "Saved forked model to the depot and updated the selected instance. Exit Gen3D to inspect."
+                .into();
+        scene_saves.write(SceneSaveRequest::new("Gen3D forked model"));
+    }
+
+    workshop.error = None;
+
+    // Persist a small save artifact for debugging / correlation with agent runs.
+    let save_seq = job.bump_save_seq();
+    if let Some(run_dir) = job.run_dir_path() {
+        let created_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let artifact = serde_json::json!({
+            "version": 1,
+            "created_at_ms": created_at_ms,
+            "save_seq": save_seq,
+            "kind": if overwrite_prefab_id.is_some() { "edit_overwrite" } else { "fork_rebind" },
+            "run_id": job.run_id().map(|id| id.to_string()),
+            "attempt": job.attempt(),
+            "pass": job.pass(),
+            "plan_hash": job.plan_hash(),
+            "assembly_rev": job.assembly_rev(),
+            "workspace_id": job.active_workspace_id(),
+            "base_prefab_id_uuid": uuid::Uuid::from_u128(base_prefab_id).to_string(),
+            "saved_root_id_uuid": uuid::Uuid::from_u128(saved_root_id).to_string(),
+            "target_instance_id_uuid": uuid::Uuid::from_u128(target_instance_id.0).to_string(),
+            "updated_instances": updated_instances,
+            "mobility": mobility,
+            "target_world_pos": [target_pos.x, target_pos.y, target_pos.z],
+        });
+        let path = run_dir.join(format!("save_{save_seq:04}.json"));
+        if let Err(err) = std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&artifact).unwrap_or_else(|_| artifact.to_string()),
+        ) {
+            warn!(
+                "Gen3D: failed to write save artifact {}: {err}",
+                path.display()
+            );
+        }
+    }
+
+    Ok(Gen3dSavedInstance {
+        instance_id: target_instance_id,
+        prefab_id: saved_root_id,
+        mobility,
+        position: target_pos,
+    })
+}
+
 pub(crate) fn gen3d_save_button(
     build_scene: Res<State<crate::types::BuildScene>>,
     mut commands: Commands,
@@ -856,6 +1124,11 @@ pub(crate) fn gen3d_save_button(
     draft: Res<Gen3dDraft>,
     preview: Res<Gen3dPreview>,
     player_q: Query<(&Transform, &Collider), With<Player>>,
+    world_objects: Query<
+        (Entity, &ObjectId, &Transform, &ObjectPrefabId, Option<&ObjectTint>),
+        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+    >,
+    children_q: Query<&Children>,
     mut scene_saves: MessageWriter<SceneSaveRequest>,
     mut last_interaction: Local<Option<Interaction>>,
     mut buttons: Query<
@@ -905,7 +1178,7 @@ pub(crate) fn gen3d_save_button(
                 return;
             };
 
-            match gen3d_save_current_draft_from_api(
+            match gen3d_save_current_draft_seed_aware_from_api(
                 &mut commands,
                 &render.asset_server,
                 &render.assets,
@@ -914,13 +1187,15 @@ pub(crate) fn gen3d_save_button(
                 &mut *render.material_cache,
                 &mut *render.mesh_cache,
                 &mut library,
-                Some(&mut *prefab_descriptors),
+                &mut *prefab_descriptors,
                 &mut workshop,
                 &mut job,
                 &draft,
                 preview.show_collision,
                 player_transform,
                 player_collider,
+                &world_objects,
+                &children_q,
                 &mut scene_saves,
             ) {
                 Ok(_) => model_library.mark_models_dirty(),
@@ -933,6 +1208,76 @@ pub(crate) fn gen3d_save_button(
     }
 
     *last_interaction = Some(*interaction);
+}
+
+pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    assets: &SceneAssets,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    material_cache: &mut visuals::MaterialCache,
+    mesh_cache: &mut visuals::PrimitiveMeshCache,
+    library: &mut ObjectLibrary,
+    prefab_descriptors: &mut crate::prefab_descriptors::PrefabDescriptorLibrary,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+    collision_enabled: bool,
+    player_transform: &Transform,
+    player_collider: &Collider,
+    world_objects: &Query<
+        (Entity, &ObjectId, &Transform, &ObjectPrefabId, Option<&ObjectTint>),
+        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+    >,
+    children_q: &Query<&Children>,
+    scene_saves: &mut MessageWriter<SceneSaveRequest>,
+) -> Result<Gen3dSavedInstance, String> {
+    let seeded_target = job
+        .seed_target_entity()
+        .zip(job.edit_base_prefab_id())
+        .map(|(entity, _)| entity);
+
+    if let Some(target_entity) = seeded_target {
+        gen3d_save_seeded_session_in_place(
+            commands,
+            asset_server,
+            assets,
+            meshes,
+            materials,
+            material_cache,
+            mesh_cache,
+            library,
+            prefab_descriptors,
+            workshop,
+            job,
+            draft,
+            collision_enabled,
+            target_entity,
+            world_objects,
+            children_q,
+            scene_saves,
+        )
+    } else {
+        gen3d_save_current_draft_from_api(
+            commands,
+            asset_server,
+            assets,
+            meshes,
+            materials,
+            material_cache,
+            mesh_cache,
+            library,
+            Some(prefab_descriptors),
+            workshop,
+            job,
+            draft,
+            collision_enabled,
+            player_transform,
+            player_collider,
+            scene_saves,
+        )
+    }
 }
 
 pub(crate) fn gen3d_save_current_draft_from_api(
@@ -961,34 +1306,14 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     let snapshot = Gen3dDraft {
         defs: draft.defs.clone(),
     };
-    let (saved_root_id, defs) =
-        draft_to_saved_defs(&snapshot, collision_enabled, job.save_overwrite_prefab_id())?;
-    let depot_prefabs_dir =
-        crate::model_depot::save_model_prefab_defs_to_depot(saved_root_id, saved_root_id, &defs)?;
-
-    save_gen3d_source_bundle_best_effort(
-        &crate::model_depot::depot_model_dir(saved_root_id),
-        &snapshot,
-    );
-
-    for def in defs {
-        library.upsert(def);
-    }
-
-    let Some(root_def) = library.get(saved_root_id) else {
-        return Err("Cannot save: missing saved prefab def.".into());
-    };
-
-    let descriptor = save_generated_prefab_descriptor_best_effort(
-        &depot_prefabs_dir,
-        root_def,
+    let (saved_root_id, root_def) = save_gen3d_snapshot_to_depot_and_library(
         library,
-        job,
+        prefab_descriptors,
         workshop,
-    );
-    if let Some(prefab_descriptors) = prefab_descriptors {
-        prefab_descriptors.upsert(saved_root_id, descriptor);
-    }
+        job,
+        &snapshot,
+        collision_enabled,
+    )?;
 
     let size = root_def.size;
     let half_xz = collider_half_xz(root_def.collider, size);

@@ -477,6 +477,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) save_seq: u32,
     pub(super) edit_base_prefab_id: Option<u128>,
     pub(super) save_overwrite_prefab_id: Option<u128>,
+    pub(super) seed_target_entity: Option<Entity>,
     pub(super) metrics: Gen3dRunMetrics,
 }
 
@@ -515,8 +516,24 @@ impl Gen3dAiJob {
         self.edit_base_prefab_id
     }
 
+    pub(crate) fn set_edit_base_prefab_id(&mut self, id: Option<u128>) {
+        self.edit_base_prefab_id = id;
+    }
+
     pub(crate) fn save_overwrite_prefab_id(&self) -> Option<u128> {
         self.save_overwrite_prefab_id
+    }
+
+    pub(crate) fn set_save_overwrite_prefab_id(&mut self, id: Option<u128>) {
+        self.save_overwrite_prefab_id = id;
+    }
+
+    pub(crate) fn seed_target_entity(&self) -> Option<Entity> {
+        self.seed_target_entity
+    }
+
+    pub(crate) fn set_seed_target_entity(&mut self, entity: Option<Entity>) {
+        self.seed_target_entity = entity;
     }
 
     pub(crate) fn run_dir_path(&self) -> Option<&Path> {

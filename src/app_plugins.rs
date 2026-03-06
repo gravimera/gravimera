@@ -385,6 +385,12 @@ impl Plugin for RenderedGen3dPlugin {
         );
         app.add_systems(
             Update,
+            crate::gen3d::gen3d_apply_pending_seed_from_prefab
+                .run_if(in_state(BuildScene::Preview))
+                .before(crate::gen3d::gen3d_poll_ai_job),
+        );
+        app.add_systems(
+            Update,
             crate::gen3d::gen3d_poll_ai_job.after(crate::gen3d::gen3d_generate_button),
         );
         app.add_systems(
@@ -609,13 +615,19 @@ impl Plugin for RenderedGameplayPlugin {
                 crate::motion_ui::meta_brain_ui_button_clicks
                     .after(crate::motion_ui::motion_algorithm_ui_update)
                     .run_if(crate::automation::local_input_enabled),
+                crate::motion_ui::meta_gen3d_ui_button_clicks
+                    .after(crate::motion_ui::motion_algorithm_ui_update)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::motion_algorithm_ui_button_styles
                     .after(crate::motion_ui::motion_algorithm_ui_button_clicks),
                 crate::motion_ui::meta_brain_ui_button_styles
                     .after(crate::motion_ui::meta_brain_ui_button_clicks),
+                crate::motion_ui::meta_gen3d_ui_button_styles
+                    .after(crate::motion_ui::meta_gen3d_ui_button_clicks),
                 crate::motion_ui::motion_algorithm_ui_scroll_wheel
                     .after(crate::motion_ui::motion_algorithm_ui_button_styles)
                     .after(crate::motion_ui::meta_brain_ui_button_styles)
+                    .after(crate::motion_ui::meta_gen3d_ui_button_styles)
                     .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::motion_algorithm_ui_scrollbar_drag
                     .after(crate::motion_ui::motion_algorithm_ui_scroll_wheel)

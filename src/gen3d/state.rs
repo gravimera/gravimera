@@ -54,6 +54,24 @@ pub(crate) enum Gen3dSideTab {
     ToolFeedback,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Gen3dSeedFromPrefabMode {
+    EditOverwrite,
+    Fork,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Gen3dSeedFromPrefabRequest {
+    pub(crate) mode: Gen3dSeedFromPrefabMode,
+    pub(crate) prefab_id: u128,
+    pub(crate) target_entity: Option<Entity>,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct Gen3dPendingSeedFromPrefab {
+    pub(crate) request: Option<Gen3dSeedFromPrefabRequest>,
+}
+
 impl Default for Gen3dSideTab {
     fn default() -> Self {
         Self::Status

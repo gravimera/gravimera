@@ -48,7 +48,7 @@ Pre-implementation contracts (must be written down before coding):
 - [x] (2026-03-07) Milestone B (“Stop means stop”): accept agent `done` by default (keep only empty-draft guard) and surface QA/review state as machine-observable status.
 - [x] (2026-03-07) Milestone C (Resumable sessions): add “Continue” for a stopped/cancelled session without resetting the draft.
 - [x] (2026-03-07) Milestone D (Edit-from-prefab entry points): implement deterministic “seed Gen3D from Gen3D-saved prefab” APIs (Edit and Fork semantics).
-- [ ] Milestone E (Meta panel wiring): add Meta panel buttons Copy/Edit/Fork (gated to Gen3D-saved prefabs) and connect them to the entry points.
+- [x] (2026-03-07) Milestone E (Meta panel wiring): add Meta panel buttons Copy/Edit/Fork (gated to Gen3D-saved prefabs) and connect them to the entry points.
 - [ ] Milestone F (Deterministic patch ops): add an engine “apply_patch-like” tool (`apply_draft_ops_v1`) with explicit IDs and a structured diff.
 - [ ] Milestone G (Snapshots + branching): add snapshot/diff/restore and workspace diff/merge/copy tools so the agent can branch and compare alternatives safely.
 
@@ -116,6 +116,13 @@ Pre-implementation contracts (must be written down before coding):
   - Implemented Edit (overwrite) Save semantics by allowing the Save path to keep the same root prefab id; prunes stale prefab-def JSON files on overwrite.
   - Verified Edit overwrite + Fork new-id via a rendered regression: `tools/gen3d_real_test.py --edit-fork-regression` using `mock://gen3d` (no key).
 
+- Milestone E delivered:
+  - Added Meta panel Gen3D actions (Gen3D-saved prefabs only): Copy (duplicate instance), Edit (overwrite prefab id), Fork (new prefab id for the selected instance).
+  - Edit/Fork from the Meta panel seed a Gen3D session from the selected instance and switch to Build Preview scene.
+  - Save is now seed-aware: Edit refreshes all instances of the overwritten prefab id; Fork rebinds only the selected instance to the new prefab id.
+  - Added Automation HTTP APIs: `POST /v1/meta/gen3d/copy`, `POST /v1/meta/gen3d/edit`, `POST /v1/meta/gen3d/fork`.
+  - Verified via a rendered regression: `tools/gen3d_real_test.py --meta-edit-fork-regression` using `mock://gen3d` (no key).
+
 ## Context and Orientation
 
 Gen3D code lives in `src/gen3d/`.
@@ -137,7 +144,7 @@ Prefab descriptors:
 
 Meta panel UI:
 
-- Implemented in `src/motion_ui.rs` today (shows algorithms/brains). This is where the Copy/Edit/Fork buttons will be added.
+- Implemented in `src/motion_ui.rs` today (shows algorithms/brains). This is where the Copy/Edit/Fork buttons live.
 
 Terminology:
 
