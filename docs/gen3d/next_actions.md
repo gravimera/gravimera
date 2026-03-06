@@ -81,11 +81,22 @@ remains available so the agent (and user) can continue later.
 
 User-visible outcomes:
 - A “Continue” action should resume the agent loop on the existing draft.
-- A saved prefab should be editable: from the Meta panel, a player can click **Edit** to open a
-  Gen3D edit session seeded from that prefab and issue prompts like:
+- A saved prefab should be editable: from the Meta panel, a player can open a Gen3D edit session
+  seeded from that prefab and issue prompts like:
   - “regenerate animation for move/attack”
   - “regenerate component X”
   - “regenerate the whole model but keep silhouette”
+
+Scope constraint:
+- Editing is supported **only for Gen3D-saved prefabs** (prefabs whose descriptor includes
+  `provenance.source="gen3d"` and `provenance.gen3d`).
+
+Meta panel UX (planned):
+- **Copy**: duplicate/spawn a new instance that references the same prefab id (no Gen3D).
+- **Edit**: open Gen3D seeded from this prefab and **overwrite the same prefab id** on save.
+  - This affects all instances that reference that prefab id.
+- **Fork**: open Gen3D seeded from this prefab and **save to a new prefab id**, then rebind only
+  the selected instance to the new prefab id.
 
 Key constraints (no heuristics):
 - “Editing” must be explicit, schema/tool driven:
@@ -99,9 +110,7 @@ Implementation sketch (later):
   - `resume_session_v1` (continue the agent loop after stop).
 - Persist minimal provenance in prefab descriptors so edit sessions can recover stable component
   names and structure without depending on a local cache folder.
-- Decide save semantics:
-  - **Fork by default** (produce a new prefab id + replace the selected instance), or
-  - overwrite in place (fast, but updates all instances of that prefab).
+- Implement the Meta panel buttons and wire them to edit-session entry points.
 
 ## Tooling roadmap (agent-facing)
 
@@ -158,3 +167,4 @@ Candidate additions:
 - [ ] Design a generic async task API and migrate existing ad-hoc async flows toward it.
 - [ ] Specify “no runtime motion mapping” changes to the agent prompt + QA gating.
 - [ ] Specify resumable sessions + “Edit prefab” workflow + save semantics (fork vs overwrite).
+- [ ] Add Meta panel buttons: Copy / Edit / Fork (Gen3D-prefab-gated).
