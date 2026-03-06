@@ -119,6 +119,28 @@ Implementation sketch (later):
 Goal: make Gen3D feel like “Codex editing a JSON codebase”: the agent can inspect state/history,
 apply deterministic patches, branch/compare alternatives, and resume work with full context.
 
+## Context window / token budget policy (design)
+
+Goal: enable many “Continue” iterations without blowing up LLM context windows.
+
+Principles:
+
+- **Prefer stateless requests**: each agent step/tool call should be solvable from a compact
+  `state_summary` + on-demand artifact reads, not by growing hidden conversation state.
+- **History is pull-based**: the engine writes detailed artifacts; the agent fetches only what it
+  needs via bounded read/search tools instead of embedding long histories in every prompt.
+- **Diffs over dumps**: prefer small “what changed” summaries and transaction logs over resending
+  full plan/draft JSON blobs repeatedly.
+- **Strict caps everywhere**: cap recent tool results included inline; cap images per request and
+  prefer low-res renders during iteration; cap artifact read sizes.
+
+Implementation implications (later):
+
+- Avoid relying on provider conversation continuation (`previous_response_id` / chat history) as the
+  primary memory mechanism; keep memory explicit and inspectable via artifacts.
+- Make `get_state_summary_v1` the canonical compact “working set” input for the agent.
+- Add `list_run_artifacts_v1` / `read_artifact_v1` / `search_artifacts_v1` (bounded, run-dir scoped).
+
 ### Phase 1: observability (read the “repo”)
 
 - Artifact index + bounded reads:

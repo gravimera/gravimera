@@ -22,6 +22,14 @@ Engineering constraints (must hold throughout):
 1) **No heuristic engine algorithms.** If information is missing or ambiguous, prefer hard errors and explicit tool/schema inputs rather than “guess intent” fallbacks.
 2) **Agent-driven orchestration.** The LLM chooses tools; the engine executes tools deterministically and records observable artifacts.
 
+Context window / token budget policy (must hold throughout):
+
+- Each agent step/tool call should be solvable from a compact, bounded “working set” prompt (state summary + last error + recent tool results).
+- Large history must be pulled on demand from artifacts via bounded read/search tools; do not embed long logs/JSONs in every prompt.
+- Prefer diffs and transaction logs over resending full plan/draft JSON repeatedly.
+- Cap images per request and prefer low-res renders during iteration; send original photos only when needed.
+- Avoid treating provider-side conversation continuation (`previous_response_id` / chat history) as the primary memory mechanism; prefer explicit, inspectable memory in run artifacts.
+
 ## Progress
 
 - [x] (2026-03-07) Record roadmap decisions and tool ideas in `docs/gen3d/next_actions.md`.
@@ -225,4 +233,3 @@ When adding tools, add focused `cargo test` coverage for parsing/apply logic whe
 
 - Every milestone should be repeatable: if a feature is partially implemented, keep it behind a tool id or UI gate rather than leaving half-wired UI paths.
 - Prefer adding new tool IDs rather than changing semantics of existing ones unless the milestone explicitly calls for it.
-
