@@ -49,6 +49,60 @@ Implementation sketch (later):
 - Otherwise, accept `done` unconditionally and end the run.
 - Optional (recommended): auto-run a single composed QA tool (`qa_v1`, below) at stop time and attach its results to the final status/artifacts (but do not block stop).
 
+## Decision (TODO): remove runtime motion mapping from the Gen3D loop
+
+Decision: the Gen3D agent loop should NOT rely on engine-injected runtime motion algorithms for
+“units look animated when moving”.
+
+- Keep the runtime motion algorithms in the codebase (they may still be used by other workflows
+  or reintroduced later).
+- Remove “motion mapping” as a required Gen3D step:
+  - the agent should not be required to produce `motion_roles_v1` / `motion_rig_v1`,
+  - the run should be allowed to finish with zero authored animation clips.
+- If the player wants animations, treat that as an explicit *edit* operation (agent generates/edits
+  animation clips as authored data, not as a mapping to a pre-existing runtime algorithm).
+
+Rationale:
+- “Any animation” is fundamentally open-ended; mapping into a small set of predefined runtime rigs
+  can become a hidden constraint.
+- Keeping Gen3D’s default loop focused on geometry + structure reduces assumptions.
+
+Non-goals:
+- Do not delete runtime algorithms; do not forbid them in the product forever.
+
+Implementation sketch (later):
+- Remove/soften motion-related `done` guardrails; instead only *surface* motion/animation status.
+- Update the agent prompt to treat animation authoring as optional and explicitly user-driven.
+
+## Decision (TODO): Gen3D sessions are resumable + editable after stop/save
+
+Decision: “Stop” ends the current background loop, but the *session* (draft + context + artifacts)
+remains available so the agent (and user) can continue later.
+
+User-visible outcomes:
+- A “Continue” action should resume the agent loop on the existing draft.
+- A saved prefab should be editable: from the Meta panel, a player can click **Edit** to open a
+  Gen3D edit session seeded from that prefab and issue prompts like:
+  - “regenerate animation for move/attack”
+  - “regenerate component X”
+  - “regenerate the whole model but keep silhouette”
+
+Key constraints (no heuristics):
+- “Editing” must be explicit, schema/tool driven:
+  - exact component IDs/names/indices, explicit anchors/edges, explicit animation channels.
+- Any conversion from an existing prefab → Gen3D editable draft must be deterministic and not rely
+  on intent-guessing decomposition.
+
+Implementation sketch (later):
+- Add “edit session” entry points:
+  - `start_edit_session_from_prefab_v1` (seed draft from existing prefab defs + descriptor),
+  - `resume_session_v1` (continue the agent loop after stop).
+- Persist minimal provenance in prefab descriptors so edit sessions can recover stable component
+  names and structure without depending on a local cache folder.
+- Decide save semantics:
+  - **Fork by default** (produce a new prefab id + replace the selected instance), or
+  - overwrite in place (fast, but updates all instances of that prefab).
+
 ## Tooling roadmap (agent-facing)
 
 ### 1) `qa_v1` (composed tool)
@@ -102,4 +156,5 @@ Candidate additions:
 - [ ] Design `qa_v1` output schema + artifact names and update the agent prompt to prefer it.
 - [ ] Design artifact inspection tools with strict scoping and bounded reads.
 - [ ] Design a generic async task API and migrate existing ad-hoc async flows toward it.
-
+- [ ] Specify “no runtime motion mapping” changes to the agent prompt + QA gating.
+- [ ] Specify resumable sessions + “Edit prefab” workflow + save semantics (fork vs overwrite).
