@@ -125,11 +125,11 @@ token = "YOUR_OPENAI_API_KEY_HERE"
 [gemini]
 
 # Gemini API base URL.
-# Right Codes proxy example: "https://right.codes/gemini/v1beta"
-base_url = "https://right.codes/gemini/v1beta"
+# Official endpoint:
+base_url = "https://generativelanguage.googleapis.com/v1beta"
 
-# Any Gemini model id. See: https://docs.right.codes/docs/rc_extension/curl.html#gemini
-model = "gemini-3-pro-preview"
+# Any Gemini model id (example below). See: https://ai.google.dev/gemini-api/docs/models
+model = "gemini-1.5-pro"
 
 # API token (sent as `x-goog-api-key`). Can also be provided via env `X_GOOG_API_KEY` / `GEMINI_API_KEY`.
 token = "YOUR_GEMINI_API_KEY_HERE"
@@ -137,11 +137,11 @@ token = "YOUR_GEMINI_API_KEY_HERE"
 [claude]
 
 # Claude Messages API base URL.
-# Right Codes proxy example: "https://right.codes/claude/v1"
-base_url = "https://right.codes/claude/v1"
+# Official endpoint:
+base_url = "https://api.anthropic.com/v1"
 
-# Any Claude model id. See: https://docs.right.codes/docs/rc_extension/curl.html#claude
-model = "claude-sonnet-4-5-20250929"
+# Any Claude model id (example below). See: https://docs.anthropic.com/claude/docs/models-overview
+model = "claude-3-5-sonnet-20241022"
 
 # API token (sent as `x-api-key`). Can also be provided via env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`.
 token = "YOUR_CLAUDE_API_KEY_HERE"

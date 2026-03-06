@@ -2441,7 +2441,7 @@ fn parse_gemini_config(text: &str) -> Result<GeminiConfig, String> {
         }
     }
 
-    let base_url = base_url.unwrap_or_else(|| "https://right.codes/gemini/v1beta".into());
+    let base_url = base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".into());
     let model = model.ok_or_else(|| "config.toml: missing `gemini.model`".to_string())?;
     let api_key = api_key.unwrap_or_default();
 
@@ -2493,7 +2493,7 @@ fn parse_claude_config(text: &str) -> Result<ClaudeConfig, String> {
         }
     }
 
-    let base_url = base_url.unwrap_or_else(|| "https://right.codes/claude/v1".into());
+    let base_url = base_url.unwrap_or_else(|| "https://api.anthropic.com/v1".into());
     let model = model.ok_or_else(|| "config.toml: missing `claude.model`".to_string())?;
     let api_key = api_key.unwrap_or_default();
 
