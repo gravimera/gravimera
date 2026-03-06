@@ -23,13 +23,17 @@ Last updated: 2026-03-07
 ## Current implementation snapshot (orientation)
 
 - Build is a tool-driven agent loop (`gen3d_agent_step_v1` → tool calls/results → next step).
-- “QA” today is split across tools:
+- QA is available as both primitives and a composed tool:
   - `validate_v1` (structural consistency checks),
   - `smoke_check_v1` (behavioral checks + motion validation summary),
+  - `qa_v1` (composed `validate_v1` + `smoke_check_v1`),
   - `render_preview_v1` + `llm_review_delta_v1` (optional appearance loop).
-- Today the engine may **ignore** an agent `done` request in some cases (e.g. QA not run, review pending, motion validation failed, etc.). (We intend to change this; see next section.)
+- The engine respects agent `done` by default (except empty draft). Any unfinished QA/review/motion state is surfaced as warnings/status (no hidden auto-fixes).
+- “Stop” cancels in-flight work but preserves the session context, so the run can be resumed (“Continue”) without resetting the draft.
 
-## Decision (TODO): respect `done` by default
+## Decision: respect `done` by default (Implemented)
+
+Status: Implemented (2026-03-07).
 
 Decision: when the agent outputs `{"kind":"done"}`, and the draft is non-empty, the engine should
 stop the run **even if** there are outstanding issues.
@@ -78,6 +82,8 @@ Implementation sketch (later):
 
 Decision: “Stop” ends the current background loop, but the *session* (draft + context + artifacts)
 remains available so the agent (and user) can continue later.
+
+Status: “Stop/Continue” is implemented (2026-03-07). “Edit prefab / Fork prefab” is planned.
 
 User-visible outcomes:
 - A “Continue” action should resume the agent loop on the existing draft.

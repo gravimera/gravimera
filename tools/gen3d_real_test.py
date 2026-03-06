@@ -171,6 +171,9 @@ def run_one(
     api_base: str,
     prompt: str,
     build_timeout_secs: float,
+    stop_resume: bool,
+    stop_resume_after_secs: float,
+    stop_resume_pause_secs: float,
     save_early: bool,
     world_move_offset: tuple[float, float],
     frames_per_capture: int,
@@ -206,6 +209,7 @@ def run_one(
     last_pass = None
     last_status = None
     run_dir: Path | None = None
+    stop_resume_done = False
 
     while True:
         # Drive progress by stepping frames.
@@ -249,6 +253,53 @@ def run_one(
             print(f"pass={cur_pass} running={running} complete={build_complete}/{draft_ready} status={msg}")
             last_pass = cur_pass
             last_status = cur_status
+
+        if stop_resume and not stop_resume_done and running and not build_complete:
+            elapsed = time.monotonic() - t0
+            if elapsed >= stop_resume_after_secs:
+                print(
+                    f"info: stop+resume test: requesting /v1/gen3d/stop at t={elapsed:.2f}s, then /v1/gen3d/resume"
+                )
+
+                post("/v1/gen3d/stop", {})
+
+                # Wait for running=false (step frames to drive the transition).
+                stop_t0 = time.monotonic()
+                while time.monotonic() - stop_t0 < 10.0:
+                    post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
+                    status = get("/v1/gen3d/status")
+                    status_log.append({"t": round(time.monotonic() - t0, 3), **status})
+                    if not bool(status.get("running")):
+                        break
+                if bool(status.get("running")):
+                    raise RuntimeError(f"Stop did not stop the build. Last status: {status}")
+
+                if not bool(status.get("can_resume")):
+                    raise RuntimeError(f"Expected can_resume=true after stop, got: {status}")
+
+                # Pause briefly while stopped (still stepping frames so the game stays responsive).
+                pause_t0 = time.monotonic()
+                while time.monotonic() - pause_t0 < stop_resume_pause_secs:
+                    post("/v1/step", {"frames": 2, "dt_secs": dt_secs})
+                    time.sleep(0.05)
+
+                post("/v1/gen3d/resume", {})
+
+                # Wait for running=true again.
+                resume_t0 = time.monotonic()
+                while time.monotonic() - resume_t0 < 10.0:
+                    post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
+                    status = get("/v1/gen3d/status")
+                    status_log.append({"t": round(time.monotonic() - t0, 3), **status})
+                    if bool(status.get("running")):
+                        break
+                if not bool(status.get("running")):
+                    raise RuntimeError(f"Resume did not start the build. Last status: {status}")
+
+                stop_resume_done = True
+                last_pass = None
+                last_status = None
+                continue
 
         if save_early:
             # A "usable draft" is enough (root + at least one non-projectile primitive part).
@@ -460,6 +511,23 @@ def main() -> int:
     ap.add_argument("--workdir", default=None, help="Working directory for the game process (default: config dir)")
     ap.add_argument("--build-timeout-secs", type=float, default=3600.0, help="Timeout for Gen3D build")
     ap.add_argument(
+        "--stop-resume",
+        action="store_true",
+        help="Stop mid-build, then resume once to validate resumable sessions.",
+    )
+    ap.add_argument(
+        "--stop-resume-after-secs",
+        type=float,
+        default=1.5,
+        help="When --stop-resume, elapsed build time before requesting Stop.",
+    )
+    ap.add_argument(
+        "--stop-resume-pause-secs",
+        type=float,
+        default=0.5,
+        help="When --stop-resume, how long to remain stopped before Resume.",
+    )
+    ap.add_argument(
         "--save-early",
         action="store_true",
         help="Save once draft_ready=true (faster but can yield incomplete models). Default waits for build_complete=true.",
@@ -579,6 +647,9 @@ def main() -> int:
                     api_base=api_base,
                     prompt=prompt,
                     build_timeout_secs=args.build_timeout_secs,
+                    stop_resume=bool(args.stop_resume),
+                    stop_resume_after_secs=float(args.stop_resume_after_secs),
+                    stop_resume_pause_secs=float(args.stop_resume_pause_secs),
                     save_early=args.save_early,
                     world_move_offset=(dx, dz),
                     frames_per_capture=args.frames_per_capture,
@@ -606,6 +677,9 @@ def main() -> int:
                     api_base=api_base,
                     prompt=prompt,
                     build_timeout_secs=args.build_timeout_secs,
+                    stop_resume=bool(args.stop_resume),
+                    stop_resume_after_secs=float(args.stop_resume_after_secs),
+                    stop_resume_pause_secs=float(args.stop_resume_pause_secs),
                     save_early=args.save_early,
                     world_move_offset=(args.move_dx, args.move_dz),
                     frames_per_capture=args.frames_per_capture,

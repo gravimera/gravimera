@@ -496,6 +496,15 @@ impl Gen3dAiJob {
         self.build_complete
     }
 
+    pub(crate) fn can_resume(&self) -> bool {
+        !self.running
+            && !self.build_complete
+            && self.ai.is_some()
+            && self.run_id.is_some()
+            && self.run_dir.is_some()
+            && self.pass_dir.is_some()
+    }
+
     pub(crate) fn is_capturing_motion_sheets(&self) -> bool {
         self.motion_capture.is_some()
     }
@@ -566,8 +575,11 @@ impl Gen3dAiJob {
     }
 
     pub(crate) fn run_elapsed(&self) -> Option<std::time::Duration> {
+        let previous = self.last_run_elapsed.unwrap_or_default();
         if self.running {
-            self.run_started_at.map(|start| start.elapsed())
+            self.run_started_at
+                .map(|start| previous.saturating_add(start.elapsed()))
+                .or_else(|| self.last_run_elapsed)
         } else {
             self.last_run_elapsed
         }
@@ -611,9 +623,15 @@ impl Gen3dAiJob {
         self.last_run_elapsed = None;
     }
 
+    pub(super) fn resume_run_metrics(&mut self) {
+        self.run_started_at = Some(std::time::Instant::now());
+    }
+
     pub(super) fn finish_run_metrics(&mut self) {
         if let Some(start) = self.run_started_at.take() {
-            self.last_run_elapsed = Some(start.elapsed());
+            let elapsed = start.elapsed();
+            let total = self.last_run_elapsed.unwrap_or_default().saturating_add(elapsed);
+            self.last_run_elapsed = Some(total);
         }
 
         self.metrics.finish_current_pass();

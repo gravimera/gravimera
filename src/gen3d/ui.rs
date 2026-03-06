@@ -1050,6 +1050,33 @@ pub(crate) fn enter_gen3d_mode(
                                 border: UiRect::all(Val::Px(1.0)),
                                 ..default()
                             },
+                            BackgroundColor(Color::srgba(0.06, 0.11, 0.08, 0.80)),
+                            BorderColor::all(Color::srgb(0.20, 0.65, 0.35)),
+                            Gen3dContinueButton,
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                Text::new("Continue"),
+                                TextFont {
+                                    font_size: 16.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.70, 1.0, 0.82)),
+                                Gen3dContinueButtonText,
+                            ));
+                        });
+
+                    column
+                        .spawn((
+                            Button,
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(42.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
                             BackgroundColor(Color::srgba(0.06, 0.10, 0.16, 0.80)),
                             BorderColor::all(Color::srgb(0.30, 0.55, 0.95)),
                             Gen3dSaveButton,
@@ -1915,6 +1942,7 @@ pub(crate) fn gen3d_update_ui_text(
     preview_state: Res<Gen3dPreview>,
     draft: Res<Gen3dDraft>,
     job: Res<Gen3dAiJob>,
+    mut continue_buttons: Query<(&mut Node, &mut Visibility), With<Gen3dContinueButton>>,
     mut texts: ParamSet<(
         Query<&mut Text, With<Gen3dPromptText>>,
         Query<&mut Text, With<Gen3dStatusText>>,
@@ -1985,6 +2013,18 @@ pub(crate) fn gen3d_update_ui_text(
         let mut button = texts.p2();
         for mut text in &mut button {
             **text = label.into();
+        }
+    }
+
+    let show_continue = job.can_resume();
+    for (mut node, mut vis) in &mut continue_buttons {
+        if show_continue {
+            node.display = Display::Flex;
+            *vis = Visibility::Visible;
+        } else {
+            // `Visibility::Hidden` keeps the element in the layout, so also disable it via `Display::None`.
+            node.display = Display::None;
+            *vis = Visibility::Hidden;
         }
     }
 

@@ -46,7 +46,7 @@ Pre-implementation contracts (must be written down before coding):
 - [x] (2026-03-07) Record roadmap decisions and tool ideas in `docs/gen3d/next_actions.md`.
 - [x] (2026-03-07) Milestone A (Foundation): add `qa_v1` and run-artifact read tools (list/read/search) for the current run dir.
 - [x] (2026-03-07) Milestone B (“Stop means stop”): accept agent `done` by default (keep only empty-draft guard) and surface QA/review state as machine-observable status.
-- [ ] Milestone C (Resumable sessions): add “Continue” for a stopped/cancelled session without resetting the draft.
+- [x] (2026-03-07) Milestone C (Resumable sessions): add “Continue” for a stopped/cancelled session without resetting the draft.
 - [ ] Milestone D (Edit-from-prefab entry points): implement deterministic “seed Gen3D from Gen3D-saved prefab” APIs (Edit and Fork semantics).
 - [ ] Milestone E (Meta panel wiring): add Meta panel buttons Copy/Edit/Fork (gated to Gen3D-saved prefabs) and connect them to the entry points.
 - [ ] Milestone F (Deterministic patch ops): add an engine “apply_patch-like” tool (`apply_draft_ops_v1`) with explicit IDs and a structured diff.
@@ -83,6 +83,10 @@ Pre-implementation contracts (must be written down before coding):
   Rationale: “Stop means stop” is required for agent autonomy and resumable sessions; visibility beats silent override.
   Date/Author: 2026-03-07 / agent
 
+- Decision: Stop is a pause (keeps draft + artifacts), and Resume continues the same `run_id` on a new `pass` (budgets accumulate across resumes).
+  Rationale: Enables iterative work without losing context while keeping artifacts append-only and budgets enforceable.
+  Date/Author: 2026-03-07 / agent
+
 ## Outcomes & Retrospective
 
 - Milestone A delivered:
@@ -96,6 +100,11 @@ Pre-implementation contracts (must be written down before coding):
   - Agent `done` now ends the run immediately when a usable draft exists (empty draft remains a hard guardrail).
   - Instead of continuing the run, the UI status message includes best-effort “unfinished checks” warnings (missing QA/review, motion validation failure, missing motion path).
   - Updated the agent prompt to prefer running `qa_v1` before `done`.
+
+- Milestone C delivered:
+  - Stop no longer resets the Gen3D session state, so the draft and artifacts remain available for continuation.
+  - Added “Continue” in the Gen3D UI and `POST /v1/gen3d/resume` in the Automation HTTP API.
+  - Verified Stop → Continue works in a rendered run via `tools/gen3d_real_test.py --stop-resume` using `mock://gen3d`.
 
 ## Context and Orientation
 

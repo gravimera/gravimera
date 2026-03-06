@@ -1122,6 +1122,7 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 "ok": true,
                 "running": job.is_running(),
                 "build_complete": job.is_build_complete(),
+                "can_resume": job.can_resume(),
                 "draft_ready": draft_ready,
                 "run_id": job.run_id().map(|id| id.to_string()),
                 "attempt": job.attempt(),
@@ -1192,6 +1193,51 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
             let body = serde_json::json!({
                 "ok": true,
                 "run_id": job.run_id().map(|id| id.to_string()),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/resume") => {
+            let Some(mode) = mode else {
+                return Some(json_error(501, "Gen3D resume requires rendered mode."));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(501, "Gen3D resume requires rendered mode."));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(workshop) = gen3d_workshop.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(job) = gen3d_job.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            if job.is_running() {
+                return Some(json_error(409, "Gen3D build is already running."));
+            }
+
+            let sinks = log_sinks.cloned();
+            if let Err(err) = crate::gen3d::gen3d_resume_build_from_api(
+                build_scene,
+                config,
+                sinks,
+                workshop,
+                job,
+            ) {
+                return Some(json_error(400, err));
+            }
+
+            let body = serde_json::json!({
+                "ok": true,
+                "run_id": job.run_id().map(|id| id.to_string()),
+                "pass": job.pass(),
             })
             .to_string();
             Some(AutomationReply {

@@ -348,6 +348,9 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_generate_button
                     .after(crate::gen3d::gen3d_prompt_box_focus)
                     .run_if(crate::automation::local_input_enabled),
+                crate::gen3d::gen3d_continue_button
+                    .after(crate::gen3d::gen3d_prompt_box_focus)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_save_button
                     .after(crate::gen3d::gen3d_poll_ai_job)
                     .run_if(crate::automation::local_input_enabled),

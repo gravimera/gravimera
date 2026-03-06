@@ -48,8 +48,10 @@ fn gen3d_draft_projectile_object_id() -> u128 {
     builtin_object_id(GEN3D_DRAFT_PROJECTILE_KEY)
 }
 
-pub(crate) use ai::{gen3d_cancel_build_from_api, gen3d_start_build_from_api};
-pub(crate) use ai::{gen3d_generate_button, gen3d_poll_ai_job, Gen3dAiJob};
+pub(crate) use ai::{
+    gen3d_cancel_build_from_api, gen3d_resume_build_from_api, gen3d_start_build_from_api,
+};
+pub(crate) use ai::{gen3d_continue_button, gen3d_generate_button, gen3d_poll_ai_job, Gen3dAiJob};
 #[allow(unused_imports)]
 pub(crate) use ai::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 pub(crate) use images::{

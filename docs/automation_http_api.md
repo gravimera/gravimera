@@ -714,6 +714,7 @@ Response (shape):
   "ok": true,
   "running": true,
   "build_complete": false,
+  "can_resume": false,
   "draft_ready": false,
   "run_id": "1e973ac3-ce48-4319-9582-cabf9c929598",
   "attempt": 0,
@@ -757,11 +758,12 @@ Response (shape):
 Notes:
 
 - Returns `409` if a build is already running.
+- Starting a build resets the Gen3D session (new `run_id`, fresh draft).
 - Poll `/v1/gen3d/status` while stepping frames to drive progress.
 
 ### `POST /v1/gen3d/stop`
 
-Cancel the current build.
+Stop (pause) the current build.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/gen3d/stop \
@@ -774,6 +776,32 @@ Response:
 ```json
 {"ok":true}
 ```
+
+Notes:
+
+- Stop cancels in-flight work but preserves the session context (draft + artifacts) so it can be resumed.
+- Use `/v1/gen3d/resume` to continue the same `run_id`.
+
+### `POST /v1/gen3d/resume`
+
+Resume a stopped Gen3D session (same `run_id`, new `pass`).
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen3d/resume \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Response (shape):
+
+```json
+{"ok":true,"run_id":"1e973ac3-ce48-4319-9582-cabf9c929598","pass":4}
+```
+
+Notes:
+
+- Returns `409` if a build is already running.
+- Returns `400` if there is no prior Gen3D session to resume.
 
 ### `POST /v1/gen3d/save`
 

@@ -40,8 +40,8 @@ use super::parse;
 use super::reuse_groups;
 
 use super::super::state::{
-    Gen3dDraft, Gen3dGenerateButton, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera,
-    Gen3dSideTab, Gen3dSpeedMode, Gen3dWorkshop,
+    Gen3dContinueButton, Gen3dDraft, Gen3dGenerateButton, Gen3dPreview, Gen3dPreviewModelRoot,
+    Gen3dReviewCaptureCamera, Gen3dSideTab, Gen3dSpeedMode, Gen3dWorkshop,
 };
 use super::super::tool_feedback::{
     append_gen3d_tool_feedback_entry, gen3d_tool_feedback_history_path, Gen3dToolFeedbackEntry,
@@ -103,17 +103,69 @@ pub(crate) fn gen3d_generate_button(
     }
 }
 
+pub(crate) fn gen3d_continue_button(
+    build_scene: Res<State<BuildScene>>,
+    config: Res<AppConfig>,
+    log_sinks: Option<Res<crate::app::Gen3dLogSinks>>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut job: ResMut<Gen3dAiJob>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Gen3dContinueButton>),
+    >,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+
+    let log_sinks = log_sinks.map(|sinks| sinks.into_inner().clone());
+
+    for (interaction, mut bg) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.06, 0.11, 0.08, 0.80));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.08, 0.15, 0.10, 0.88));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.18, 0.12, 0.95));
+                if job.is_running() {
+                    workshop.error = Some("Cannot Continue while building. Click Stop first.".into());
+                    continue;
+                }
+                if !job.can_resume() {
+                    workshop.error =
+                        Some("No resumable Gen3D session yet. Click Build first.".into());
+                    continue;
+                }
+                if let Err(err) = gen3d_resume_build_from_api(
+                    build_scene.as_ref(),
+                    &config,
+                    log_sinks.clone(),
+                    &mut workshop,
+                    &mut job,
+                ) {
+                    workshop.error = Some(err);
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {
     if !job.running {
         return;
     }
 
-    // Cancel the current build. Any in-flight AI request thread stops as soon as it observes
-    // the cancel flag; we also ignore its eventual result and stop updating UI state.
+    // Stop the current build, but keep the session context so it can be resumed.
+    // Any in-flight AI request thread stops as soon as it observes the cancel flag; we also ignore
+    // its eventual result and stop updating UI state.
     if let Some(flag) = job.cancel_flag.as_ref() {
         flag.store(true, Ordering::Relaxed);
     }
     job.cancel_flag = None;
+    abort_pending_agent_tool_call(job, "Stopped by user.".into());
     job.finish_run_metrics();
     job.running = false;
     job.build_complete = false;
@@ -125,6 +177,7 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.review_static_paths.clear();
     job.motion_capture = None;
     job.capture_previews_only = false;
+    job.pending_plan = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.component_attempts.clear();
@@ -132,13 +185,87 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
-    job.agent = Gen3dAgentState::default();
-    job.save_seq = 0;
-    job.motion_roles = None;
-    job.motion_authoring = None;
+
+    // Clear in-flight agent execution state, but keep workspaces + tool history.
+    job.agent.step_actions.clear();
+    job.agent.step_action_idx = 0;
+    job.agent.step_repair_attempt = 0;
+    job.agent.step_request_retry_attempt = 0;
+    job.agent.pending_tool_call = None;
+    job.agent.pending_llm_tool = None;
+    job.agent.pending_llm_repair_attempt = 0;
+    job.agent.pending_component_batch = None;
+    job.agent.pending_render = None;
+    job.agent.pending_pass_snapshot = None;
+    job.agent.pending_after_pass_snapshot = None;
+    job.agent.pending_regen_component_indices.clear();
+    job.agent.pending_regen_component_indices_skipped_due_to_budget.clear();
 
     workshop.error = None;
-    workshop.status = "Build cancelled. Click Build to start a new run.".to_string();
+    workshop.status = "Build stopped. Click Continue to resume, or Build to start a new run."
+        .to_string();
+}
+
+pub(crate) fn gen3d_resume_build_from_api(
+    build_scene: &State<BuildScene>,
+    config: &AppConfig,
+    log_sinks: Option<crate::app::Gen3dLogSinks>,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+) -> Result<(), String> {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return Err("Gen3D resume requires Build Preview scene.".into());
+    }
+    if job.running {
+        return Err("Gen3D build is already running (stop it first).".into());
+    }
+    if job.ai.is_none() {
+        return Err("Cannot resume: missing AI config (start a new Build).".into());
+    }
+    if job.run_id.is_none() || job.run_dir.is_none() || job.pass_dir.is_none() {
+        return Err("Cannot resume: no prior Gen3D session (start a new Build).".into());
+    }
+
+    job.log_sinks = log_sinks;
+    job.resume_run_metrics();
+    if let Some(flag) = job.cancel_flag.take() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    job.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
+    job.running = true;
+    job.build_complete = false;
+    job.mode = Gen3dAiMode::Agent;
+    job.phase = Gen3dAiPhase::AgentWaitingStep;
+    job.shared_progress = None;
+    job.shared_result = None;
+    job.review_capture = None;
+    job.capture_previews_only = false;
+
+    // Resume always starts a fresh pass to keep artifacts append-only.
+    gen3d_advance_pass(job)?;
+    let pass_dir = job
+        .pass_dir
+        .clone()
+        .ok_or_else(|| "Internal error: missing Gen3D pass dir.".to_string())?;
+
+    workshop.error = None;
+    workshop.status = format!(
+        "Continuing…\nService: {}\nModel: {}\nImages: {}",
+        job.ai.as_ref().map(|c| c.service_label()).unwrap_or(""),
+        job.ai.as_ref().map(|c| c.model()).unwrap_or(""),
+        job.user_images.len()
+    );
+
+    if let Err(err) = agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir.clone())
+    {
+        job.finish_run_metrics();
+        job.running = false;
+        job.build_complete = false;
+        job.phase = Gen3dAiPhase::Idle;
+        return Err(err);
+    }
+
+    Ok(())
 }
 
 pub(crate) fn gen3d_start_build_from_api(
