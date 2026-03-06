@@ -114,6 +114,68 @@ Implementation sketch (later):
 
 ## Tooling roadmap (agent-facing)
 
+## Codex-like JSON editing toolbox (ideas)
+
+Goal: make Gen3D feel like “Codex editing a JSON codebase”: the agent can inspect state/history,
+apply deterministic patches, branch/compare alternatives, and resume work with full context.
+
+### Phase 1: observability (read the “repo”)
+
+- Artifact index + bounded reads:
+  - `list_run_artifacts_v1`: enumerate artifacts for the current run/pass (JSON/JSONL/TXT/PNG) with sizes + timestamps.
+  - `read_artifact_v1`: bounded reads (`max_bytes`, `tail_lines`, `json_pointer`, `jsonl_range`), scoped to the current run dir only.
+  - `search_artifacts_v1`: bounded substring search across run artifacts (scoped) to find errors/issue kinds quickly.
+- Structured queries over the current draft (avoid forcing the agent to parse huge JSON blobs):
+  - `query_components_v1` (filter by name/id/generated/missing),
+  - `query_anchors_v1` (filter by component + anchor name),
+  - `query_attachments_v1` (edges, joints, offsets, channels),
+  - `query_animation_slots_v1` (by channel/driver/clip kind).
+
+### Phase 2: deterministic patching (the “apply_patch” equivalent)
+
+- Apply explicit, validated edit operations and return a structured diff:
+  - `apply_draft_ops_v1`: primitive/anchor/attachment edits on the current draft.
+  - `apply_plan_ops_v1`: planned-component edits when you want plan+draft to stay aligned.
+- Operations should be explicit and unambiguous (no selection heuristics):
+  - set/tweak anchor transform,
+  - set/tweak attachment offset (with explicit rotation frame),
+  - add/remove primitive part by stable id or index,
+  - replace a component’s geometry from a provided JSON draft (strict schema),
+  - add/remove animation slot on a specific attachment edge + channel.
+- Return:
+  - `{ ok, applied_ops, rejected_ops, diff_summary, changed_component_ids, new_assembly_rev }`.
+
+### Phase 3: snapshots + time travel (commit log)
+
+- First-class snapshots for safe iteration:
+  - `snapshot_v1` → `{ snapshot_id }` (captures draft + planned_components + key job state)
+  - `diff_snapshots_v1` (structured diff)
+  - `restore_snapshot_v1`
+  - `undo_last_ops_v1` (only if ops are guaranteed reversible)
+- Prefer replayability:
+  - store applied ops as JSONL (“transaction log”) and ensure deterministic replay.
+
+### Phase 4: branching + merging (workspaces as git branches)
+
+Build on existing `create_workspace_v1` / `set_active_workspace_v1` / `delete_workspace_v1`:
+
+- `diff_workspaces_v1`: stable, structured diff across drafts/plans/attachments/animations.
+- `merge_workspace_v1`: no “auto resolve”; return explicit conflicts and require the agent to choose.
+- `copy_from_workspace_v1`: explicit cherry-picks (component or subtree) from another workspace.
+
+### Phase 5: instrumentation + debugging renders (not heuristics)
+
+- Debug visual tools to make correctness observable without engine “auto-fixes”:
+  - `render_debug_overlay_v1` (anchors/joint axes/contact points/frame glyphs)
+  - render presets for consistent backgrounds/overlays so diffs are meaningful
+
+### Phase 6: uniform async tasks + monitoring
+
+- Generic async API for long tasks (beyond today’s ad-hoc parallel component waves):
+  - `start_task_v1` / `poll_task_v1` / `cancel_task_v1`
+- Tasks must be deterministic in application:
+  - parallelize *generation/rendering*, but apply results in a declared order and record every apply as an op.
+
 ### 1) `qa_v1` (composed tool)
 
 Goal: one call that returns a combined, compact QA verdict.
