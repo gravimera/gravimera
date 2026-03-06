@@ -15,7 +15,7 @@ Scope (minimum):
 - Any code that affects Gen3D runtime assembly/animation/visuals, especially `src/object/**` (attachments, PartAnimation runtime), and other obvious shared modules if referenced by Gen3D.
 
 What to produce:
-- Update or create a single TODO doc at `docs/gen3d_assumptions_heuristics_todo.md`.
+- Update or create a single TODO doc at `docs/gen3d/assumptions_heuristics_todo.md`.
 - The doc must be a checkbox TODO list grouped into sections:
   - “Heuristic decisions (engine guesses intent)”
   - “Silent defaults / hidden assumptions”
@@ -36,9 +36,9 @@ Constraints:
 Repo requirements (must follow):
 - After changing anything, run a rendered (UI) smoke test (isolated data dir; no `--headless`):
     tmpdir=$(mktemp -d)
-    GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2 --headless-seconds 2
+    GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2
 - Commit the doc update with a clear message.
 
 Deliverable:
-- Reply with a short summary of what changed and reference `docs/gen3d_assumptions_heuristics_todo.md`.
+- Reply with a short summary of what changed and reference `docs/gen3d/assumptions_heuristics_todo.md`.
 ```
