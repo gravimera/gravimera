@@ -15,7 +15,7 @@ After this change:
 
 1) The engine prevents non-convergent thrash by treating `tweak_contact stance:null` as invalid for ground contacts (except the existing wheel case where `move` is a pure `spin` and stance validation is skipped).
 
-2) When `motion_validation.ok == false` due to **contact errors**, the engine applies a deterministic, generic auto-repair that “locks” planted contacts during stance by adding translation deltas to `move` clips on the relevant attachment edges. This runs only when errors exist; if a future model produces valid motion, the guardrail does nothing.
+2) When `motion_validation.ok == false` due to **contact errors**, the engine applies a deterministic, generic auto-repair that adjusts contact stance schedules (e.g. shrinking/retargeting `duty_factor_01`) so the declared planted window is consistent with the sampled motion. This runs only when errors exist; if a future model produces valid motion, the guardrail does nothing.
 
 User-visible outcome: the Gen3D agent reaches a stable state where `smoke_check_v1.ok == true` for contact-related motion validation errors, instead of oscillating between `contact_slip` and `contact_stance_missing`.
 
@@ -50,8 +50,8 @@ User-visible outcome: the Gen3D agent reaches a stable state where `smoke_check_
   Rationale: This makes the fix a convergence fallback. It avoids constraining future models that already satisfy validation (no “best-effort override” when the output is already valid).
   Date/Author: 2026-03-05 / Codex
 
-- Decision: Auto-repair uses a generic “contact lock” that cancels measured anchor drift during stance by authoring translation deltas in the attachment join-frame.
-  Rationale: This is object-agnostic and depends only on declared contacts + stance schedules + the engine’s existing sampling model, not on heuristics like “legs”, “octopus”, or “horse”.
+- Decision: Auto-repair only adjusts contact stance schedules; it does not inject translations into `move` clips.
+  Rationale: Injected translations on constrained joints can create visible “blinks”/teleports; stance-only repair is still generic and lets the LLM author proper motion when needed.
   Date/Author: 2026-03-05 / Codex
 
 - Decision: Trigger auto-repair from `smoke_check_v1` without bumping `assembly_rev`.
@@ -110,18 +110,17 @@ Implement a deterministic repair in `src/gen3d/ai/motion_validation.rs` (same mo
      - Sort contacts by `(component_name, contact_name)` and assign `phase_01 = i / N`.
      - Use a conservative generic `duty_factor_01 = 0.5`.
 
-   - For contacts with slip/lift errors, build a per-sample translation correction that cancels drift during stance:
+   - For contacts with slip/lift errors, deterministically adjust the stance schedule to match the sampled motion:
      - Use the existing `SAMPLE_COUNT` and `phase_in_stance()` logic.
-     - For each contact, compute the “baseline” anchor world position at mid-stance (same as validator).
-     - For each sample inside stance, compute `world_error = baseline - current_position_world`.
-     - Apply this as a translation delta on a deterministic attachment edge:
-       - Choose the deepest ancestor in the contact’s parent chain that has a non-spin `move` slot; if none exists, use the contact component’s own attachment edge (if it has a parent).
-     - Convert `world_error` into join-frame translation using the parent/join rotation at that sample:
-       - `join_rot_world = parent_world_rot * parent_anchor_rot * base_offset_rot`
-       - `delta_translation_join = join_rot_world.inverse() * world_error`
-     - Author a replacement `move` clip (loop) on that edge with keyframes at sample times:
-       - Keep the sampled rotation/scale from the existing clip (bake time offsets), but override/add translation so stance samples lock.
-       - Use duration `cycle_m` (so one loop per cycle) and `driver=move_phase` with `speed_scale=1`, `time_offset_units=0` for simplicity and determinism.
+     - Sample the contact anchor’s world-space positions across the move cycle (same model as validation, including assumed root translation).
+     - Search stance candidates on the sample grid:
+       - `phase_01` candidates: one per sample (`i / SAMPLE_COUNT`).
+       - `duty_factor_01` candidates: `k / SAMPLE_COUNT` for `k=1..SAMPLE_COUNT`, preferring larger `k`.
+     - Pick the candidate that removes hard slip/lift errors (or yields fewer than 2 stance samples), preferring:
+       1) larger `duty_factor_01`,
+       2) minimal circular distance from the original stance mid-phase,
+       3) smaller max slip/lift during stance.
+     - This edits only `contacts[].stance` and does not modify animation clips.
 
 3) Re-run `motion_validation` after repair and record whether contact errors were resolved (for debug artifacts and tests).
 
@@ -174,7 +173,7 @@ Acceptance is met when:
 
 ## Idempotence and Recovery
 
-- The auto-repair is designed to be safe to re-run: it replaces the `move` clip for selected edges deterministically from the current state and declared contacts.
+- The auto-repair is designed to be safe to re-run: it edits contact stance schedules deterministically from the current state and declared contacts.
 - If a repair yields undesirable visuals, a safe rollback is to remove the auto-repair hook from `smoke_check_v1` (Milestone 3) while keeping the stance-null guardrail (Milestone 1) to prevent thrash.
 
 ## Artifacts and Notes

@@ -606,6 +606,44 @@ fn children_by_attachment_edge_key(
     Ok(out)
 }
 
+fn subtree_contains_anchor_named(
+    components: &[Gen3dPlannedComponent],
+    children: &[Vec<usize>],
+    root_idx: usize,
+    anchor_name: &str,
+) -> bool {
+    if root_idx >= components.len() || root_idx >= children.len() {
+        return false;
+    }
+
+    let mut visited = vec![false; components.len()];
+    let mut stack = vec![root_idx];
+    while let Some(idx) = stack.pop() {
+        if idx >= components.len() {
+            continue;
+        }
+        if visited[idx] {
+            continue;
+        }
+        visited[idx] = true;
+
+        if components[idx]
+            .anchors
+            .iter()
+            .any(|a| a.name.as_ref() == anchor_name)
+        {
+            return true;
+        }
+        if let Some(child_indices) = children.get(idx) {
+            for &child_idx in child_indices {
+                stack.push(child_idx);
+            }
+        }
+    }
+
+    false
+}
+
 fn map_subtree_pairs(
     components: &[Gen3dPlannedComponent],
     children: &[Vec<usize>],
@@ -663,6 +701,12 @@ fn map_subtree_pairs(
         ordered_source.sort_by(|(a, _), (b, _)| a.cmp(b));
         for (key, s_child) in ordered_source {
             let Some(&t_child) = target_by_key.get(&key) else {
+                // Allow subtree copy to ignore missing weapon-like branches. These are typically
+                // optional equipment and cloning them during symmetry reuse can create
+                // non-functional duplicates when the root attack supports only one muzzle.
+                if subtree_contains_anchor_named(components, children, s_child, "muzzle") {
+                    continue;
+                }
                 return Err(format!(
                     "copy_component_subtree: subtree shape mismatch at `{}`: target `{}` missing child attachment {:?} (present in source `{}`)",
                     components[source_idx].name,
@@ -997,6 +1041,10 @@ fn ensure_target_subtree_shape(
             if target_by_key.contains_key(key) {
                 continue;
             }
+            if subtree_contains_anchor_named(components.as_slice(), &source_children_map, *s_child, "muzzle")
+            {
+                continue;
+            }
             let new_child_idx = clone_missing_subtree(
                 components,
                 draft,
@@ -1013,6 +1061,10 @@ fn ensure_target_subtree_shape(
         // Recurse into matched children (including newly cloned ones).
         for (key, s_child) in ordered_source {
             let Some(&t_child) = target_by_key.get(&key) else {
+                if subtree_contains_anchor_named(components.as_slice(), &source_children_map, s_child, "muzzle")
+                {
+                    continue;
+                }
                 return Err(format!(
                     "copy_component_subtree: internal error: missing cloned child for attachment key {:?} under `{}`",
                     key, components[target_idx].name
@@ -1566,6 +1618,108 @@ mod tests {
         assert_eq!(
             grip_after, grip_before.transform,
             "expected target grip anchor transform to be preserved"
+        );
+    }
+
+    #[test]
+    fn subtree_copy_does_not_clone_missing_muzzle_subtrees() {
+        let mut components = vec![
+            stub_component("hand_l"),
+            stub_component("hand_r"),
+            stub_component("gun_core"),
+            stub_component("gun_barrel"),
+        ];
+
+        components[0]
+            .anchors
+            .push(anchor_named_forward("grip", Vec3::X));
+        components[1]
+            .anchors
+            .push(anchor_named_forward("grip", Vec3::X));
+        components[2]
+            .anchors
+            .push(anchor_named_forward("mount", Vec3::Z));
+        components[3]
+            .anchors
+            .push(anchor_named_forward("mount", Vec3::Z));
+        components[3]
+            .anchors
+            .push(anchor_named_forward("muzzle", Vec3::Z));
+
+        components[2].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "hand_r".into(),
+            parent_anchor: "grip".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[3].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "gun_core".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        // Source subtree is generated.
+        components[1].actual_size = Some(Vec3::ONE);
+        components[2].actual_size = Some(Vec3::ONE);
+        components[3].actual_size = Some(Vec3::ONE);
+
+        let hand_l_id = component_object_id("hand_l");
+        let hand_r_id = component_object_id("hand_r");
+        let gun_core_id = component_object_id("gun_core");
+        let gun_barrel_id = component_object_id("gun_barrel");
+
+        let mut hand_l_def = stub_def(hand_l_id, "hand_l");
+        hand_l_def.anchors = components[0].anchors.clone();
+        hand_l_def.parts.clear();
+
+        let mut hand_r_def = stub_def(hand_r_id, "hand_r");
+        hand_r_def.anchors = components[1].anchors.clone();
+
+        let mut gun_core_def = stub_def(gun_core_id, "gun_core");
+        gun_core_def.anchors = components[2].anchors.clone();
+
+        let mut gun_barrel_def = stub_def(gun_barrel_id, "gun_barrel");
+        gun_barrel_def.anchors = components[3].anchors.clone();
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![hand_l_def, hand_r_def, gun_core_def, gun_barrel_def];
+
+        let before_len = components.len();
+        copy_component_subtree_into(
+            &mut components,
+            &mut draft,
+            1,
+            0,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
+            Transform::IDENTITY,
+        )
+        .expect("subtree copy ok");
+
+        assert_eq!(
+            components.len(),
+            before_len,
+            "expected subtree copy to not clone muzzle-bearing branches"
+        );
+        assert!(
+            !components.iter().any(|c| c.name.starts_with("hand_l__")),
+            "expected no cloned `hand_l__*` components, got {:?}",
+            components.iter().map(|c| c.name.as_str()).collect::<Vec<_>>()
+        );
+
+        let hand_l_after = draft.defs.iter().find(|d| d.object_id == hand_l_id).unwrap();
+        assert!(
+            hand_l_after
+                .parts
+                .iter()
+                .any(|p| matches!(p.kind, ObjectPartKind::Primitive { .. })),
+            "expected subtree copy to materialize primitives into hand_l"
         );
     }
 
