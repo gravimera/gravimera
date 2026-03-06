@@ -141,6 +141,92 @@ Implementation implications (later):
 - Make `get_state_summary_v1` the canonical compact “working set” input for the agent.
 - Add `list_run_artifacts_v1` / `read_artifact_v1` / `search_artifacts_v1` (bounded, run-dir scoped).
 
+## Pre-implementation contracts (write down before coding)
+
+These are the “make it unambiguous” contracts that reduce implementation thrash later and keep
+Gen3D deterministic and debuggable.
+
+### Contract: observable run/session status flags
+
+Define a single, versioned status struct that is surfaced to:
+- the agent (via `get_state_summary_v1`),
+- the UI (status panel),
+- artifacts (as a JSON snapshot per pass).
+
+Minimum fields (names TBD, but semantics should be stable):
+
+- `stop_reason`: `running` | `user_stop` | `agent_done` | `budget_exhausted` | `no_progress` | `fatal_error`
+- `unfinished`: an explicit set of machine-readable reasons, e.g.:
+  - `qa_never_run`
+  - `qa_failed`
+  - `review_pending`
+  - `motion_validation_failed` (may become warn-only once motion mapping is removed)
+  - `async_tasks_in_flight`
+  - `draft_empty` (no primitives)
+- `qa`: `{ last_run_pass, ok, error_count, warning_count, artifact_ref }`
+- `review`: `{ last_run_pass, pending, last_ok, artifact_ref }` (if review is used)
+- `motion_validation`: `{ last_run_pass, ok, artifact_ref }` (if smoke-check includes it)
+
+Rule: the engine must *never* infer intent from these flags. They are purely for visibility and
+tool-driven decisions by the agent/human.
+
+### Contract: `done` / QA policy (engine vs agent responsibilities)
+
+Policy (already decided, but write down as a strict contract for implementation):
+
+- Engine: respects agent `done` by default (except “empty draft”).
+- Engine: surfaces incomplete QA/review/motion status via the status flags above.
+- Agent prompt: strongly recommends running `qa_v1` before `done`, but the engine does not enforce it.
+
+### Contract: Stop / Continue semantics
+
+Define (explicitly) which state is:
+- cancelled on Stop (in-flight async tool work),
+- persisted for Continue (draft, planned components, last errors, artifacts pointers, budgets),
+- reset only on “New Build” / “Start new session”.
+
+Also define whether Continue:
+- keeps the same `run_id` (recommended for artifact continuity), or
+- creates a new `run_id` that points at a prior “base run” (recommended if you want smaller run dirs).
+
+### Contract: Edit/Fork seed data (“source bundle” vs “reconstruct from prefab”)
+
+We need deterministic, non-heuristic seeding for Edit/Fork. Write down which strategy we use:
+
+- Preferred: save a Gen3D “source bundle” alongside the prefab:
+  - the exact Gen3D draft/plan/component naming/IDs needed for further edits,
+  - an ops log / snapshots (optional),
+  - enough to resume without reverse engineering.
+  This mirrors “editing source code” vs “editing compiled output”.
+
+- Fallback: reconstruct a draft from the saved prefab defs + descriptor provenance (must be strictly
+  deterministic, and may be lossy).
+
+If we adopt the “source bundle” approach, define:
+- where it is stored (descriptor field vs depot sidecar file),
+- size limits / compression policy,
+- versioning and migration rules (`gen3d_source_v1`, etc.).
+
+### Contract: artifact tools (security + bounds)
+
+For `list_run_artifacts_v1` / `read_artifact_v1` / `search_artifacts_v1`, define:
+- run-dir scoping rules (no arbitrary paths; reject `..`),
+- default caps (bytes/lines/results),
+- stable “artifact_ref” format returned by tools and stored in status (relative path? opaque id?).
+
+Suggested default caps (tune later):
+- `read_artifact_v1.max_bytes`: 64 KiB (hard cap)
+- `read_artifact_v1.tail_lines`: 200
+- `search_artifacts_v1.max_matches`: 200
+- `list_run_artifacts_v1.max_items`: 500
+
+### Contract: deterministic async + parallelism
+
+If we introduce `start_task_v1` / `poll_task_v1` / `cancel_task_v1`, define:
+- which tasks are allowed to run concurrently,
+- how results are applied deterministically (declared order; op log),
+- what happens when Stop cancels tasks (artifact + status updates).
+
 ### Phase 1: observability (read the “repo”)
 
 - Artifact index + bounded reads:

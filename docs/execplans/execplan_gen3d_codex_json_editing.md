@@ -30,6 +30,17 @@ Context window / token budget policy (must hold throughout):
 - Cap images per request and prefer low-res renders during iteration; send original photos only when needed.
 - Avoid treating provider-side conversation continuation (`previous_response_id` / chat history) as the primary memory mechanism; prefer explicit, inspectable memory in run artifacts.
 
+Pre-implementation contracts (must be written down before coding):
+
+- Define a versioned, machine-readable run/session status contract (QA/review/motion/task flags) that is surfaced to both agent and UI.
+- Define strict `done` vs QA policy: engine respects `done` by default (except empty draft), while making incomplete QA visible and easy to query.
+- Define Stop/Continue semantics precisely (what is cancelled vs persisted; run_id behavior).
+- Decide how Edit/Fork seeds data deterministically:
+  - preferred: persist a Gen3D “source bundle” alongside saved prefabs (source vs compiled),
+  - fallback: deterministic reconstruction from prefab defs + provenance (lossy but non-heuristic).
+- Define artifact tools security + bounds (run-dir scoping, max bytes/lines, stable artifact refs).
+- Define deterministic async/parallel semantics (declared apply order + transaction log).
+
 ## Progress
 
 - [x] (2026-03-07) Record roadmap decisions and tool ideas in `docs/gen3d/next_actions.md`.
@@ -155,10 +166,21 @@ Acceptance:
 
 Goal: open Gen3D with a draft derived deterministically from a saved Gen3D prefab.
 
-1) Implement a deterministic conversion from “saved prefab defs” → “Gen3D editable draft”:
+Preferred approach (recommended): treat prefabs like “compiled output” and store Gen3D “source” so Edit/Fork is exact.
+
+1) Extend Gen3D save to persist a compact “source bundle” alongside any Gen3D-saved prefab, sufficient to reopen the session later without reverse engineering:
+   - minimum: draft object graph + stable IDs + attachment edges + anchors/offsets + planned component names
+   - optional: applied ops log / snapshots
+   - include a version tag (e.g. `gen3d_source_v1`) and a size cap
+2) Implement Edit/Fork seeding by loading this source bundle into a new Gen3D session deterministically.
+
+Fallback approach (only if needed): deterministic reconstruction from prefab defs + provenance.
+
+3) If we cannot load a source bundle (older saves), reconstruct a “best effort” editable draft from “saved prefab defs” → “Gen3D editable draft”:
    - extract component names from `ObjectDef.label` (`gen3d_component_<name>`) and/or descriptor provenance extra,
    - reconstruct attachment edges from `ObjectRef` parts with attachments,
-   - carry over primitives, anchors, and attachment offsets exactly (no inference).
+   - carry over primitives, anchors, and attachment offsets exactly (no inference),
+   - if required info is missing, return a hard error (no heuristics).
 2) Add entry points:
    - start edit (overwrite) for a given prefab id,
    - start fork (new prefab id) for a given prefab id.
