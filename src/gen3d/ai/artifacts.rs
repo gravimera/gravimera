@@ -299,8 +299,8 @@ fn read_file_head_bytes(path: &Path, max_bytes: usize) -> Result<(Vec<u8>, bool)
         return Err(format!("Artifact is not a file: {}", path.display()));
     }
 
-    let mut file =
-        std::fs::File::open(path).map_err(|err| format!("Failed to open {}: {err}", path.display()))?;
+    let mut file = std::fs::File::open(path)
+        .map_err(|err| format!("Failed to open {}: {err}", path.display()))?;
     let limit = meta.len().min(max_bytes as u64) as usize;
     let mut buf = vec![0u8; limit];
     file.read_exact(&mut buf)
@@ -319,8 +319,8 @@ fn read_file_tail_bytes(path: &Path, max_bytes: usize) -> Result<(Vec<u8>, bool)
     let read_len = (max_bytes as u64).min(size) as usize;
     let truncated = size > read_len as u64;
 
-    let mut file =
-        std::fs::File::open(path).map_err(|err| format!("Failed to open {}: {err}", path.display()))?;
+    let mut file = std::fs::File::open(path)
+        .map_err(|err| format!("Failed to open {}: {err}", path.display()))?;
     if size > read_len as u64 {
         file.seek(SeekFrom::End(-(read_len as i64)))
             .map_err(|err| format!("Failed to seek {}: {err}", path.display()))?;
@@ -368,8 +368,8 @@ pub(super) fn read_artifact_v1(
         return Err(format!("Artifact is not a file: {}", artifact_ref.trim()));
     }
 
-    let meta =
-        std::fs::metadata(&path).map_err(|err| format!("Failed to stat {}: {err}", path.display()))?;
+    let meta = std::fs::metadata(&path)
+        .map_err(|err| format!("Failed to stat {}: {err}", path.display()))?;
     let size_bytes = meta.len();
     let content_type = match artifact_kind_from_path(&path) {
         "json" => "application/json",
@@ -399,9 +399,7 @@ pub(super) fn read_artifact_v1(
     if kind == "json" {
         let text = String::from_utf8_lossy(&buf);
         let json = serde_json::from_str::<serde_json::Value>(&text).map_err(|err| {
-            format!(
-                "Failed to parse JSON (use tail_lines for logs or adjust max_bytes): {err}"
-            )
+            format!("Failed to parse JSON (use tail_lines for logs or adjust max_bytes): {err}")
         })?;
         if let Some(ptr) = json_pointer.map(|s| s.trim()).filter(|s| !s.is_empty()) {
             let Some(selected) = json.pointer(ptr) else {
@@ -439,7 +437,10 @@ pub(super) fn read_artifact_v1(
 }
 
 fn is_searchable_artifact(path: &Path) -> bool {
-    matches!(artifact_kind_from_path(path), "json" | "jsonl" | "log" | "txt")
+    matches!(
+        artifact_kind_from_path(path),
+        "json" | "jsonl" | "log" | "txt"
+    )
 }
 
 fn truncate_line_for_search(line: &str) -> String {
@@ -619,10 +620,8 @@ mod tests {
     use super::*;
 
     fn make_temp_dir(prefix: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "{prefix}_{}",
-            uuid::Uuid::new_v4().to_string()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("{prefix}_{}", uuid::Uuid::new_v4().to_string()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }

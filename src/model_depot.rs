@@ -39,7 +39,51 @@ pub(crate) fn save_model_prefab_defs_to_depot(
 ) -> Result<PathBuf, String> {
     let dir = ensure_depot_model_prefabs_dir(model_id)?;
     crate::realm_prefabs::save_prefab_defs_to_dir(&dir, root_prefab_id, defs)?;
+    prune_stale_prefab_def_json_files(&dir, defs)?;
     Ok(dir)
+}
+
+fn prune_stale_prefab_def_json_files(dir: &Path, defs: &[ObjectDef]) -> Result<(), String> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    let mut keep: std::collections::HashSet<u128> = std::collections::HashSet::new();
+    for def in defs {
+        keep.insert(def.object_id);
+    }
+
+    let entries =
+        std::fs::read_dir(dir).map_err(|err| format!("Failed to list {}: {err}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("Failed to read dir entry: {err}"))?;
+        let path = entry.path();
+        if path.is_dir() {
+            continue;
+        }
+        let file_name = path.file_name().and_then(|v| v.to_str()).unwrap_or("");
+        if !file_name.ends_with(".json") || file_name.ends_with(".desc.json") {
+            continue;
+        }
+        let Some(stem) = file_name.strip_suffix(".json") else {
+            continue;
+        };
+        let Ok(uuid) = uuid::Uuid::parse_str(stem.trim()) else {
+            continue;
+        };
+        let id = uuid.as_u128();
+        if keep.contains(&id) {
+            continue;
+        }
+        std::fs::remove_file(&path).map_err(|err| {
+            format!(
+                "Failed to delete stale prefab def {}: {err}",
+                path.display()
+            )
+        })?;
+    }
+
+    Ok(())
 }
 
 pub(crate) fn load_depot_prefabs_into_library(

@@ -246,8 +246,8 @@ fn populate_openai_config(out: &mut AppConfig, text: &str) {
 
     match parse_openai_config(text) {
         Ok(mut cfg) => {
-            let allow_empty_key_for_mock =
-                cfg.base_url.trim().starts_with("mock://gen3d") && cfg!(any(test, debug_assertions));
+            let allow_empty_key_for_mock = cfg.base_url.trim().starts_with("mock://gen3d")
+                && cfg!(any(test, debug_assertions));
             // Allow env override for convenience (keeps secrets out of files if desired).
             if cfg.api_key.trim().is_empty() {
                 if let Ok(key) = std::env::var("OPENAI_API_KEY") {
@@ -283,8 +283,8 @@ fn populate_gemini_config(out: &mut AppConfig, text: &str) {
 
     match parse_gemini_config(text) {
         Ok(mut cfg) => {
-            let allow_empty_key_for_mock =
-                cfg.base_url.trim().starts_with("mock://gen3d") && cfg!(any(test, debug_assertions));
+            let allow_empty_key_for_mock = cfg.base_url.trim().starts_with("mock://gen3d")
+                && cfg!(any(test, debug_assertions));
             // Allow env override for convenience (keeps secrets out of files if desired).
             if cfg.api_key.trim().is_empty() {
                 if let Ok(key) = std::env::var("X_GOOG_API_KEY") {
@@ -325,8 +325,8 @@ fn populate_claude_config(out: &mut AppConfig, text: &str) {
 
     match parse_claude_config(text) {
         Ok(mut cfg) => {
-            let allow_empty_key_for_mock =
-                cfg.base_url.trim().starts_with("mock://gen3d") && cfg!(any(test, debug_assertions));
+            let allow_empty_key_for_mock = cfg.base_url.trim().starts_with("mock://gen3d")
+                && cfg!(any(test, debug_assertions));
             // Allow env override for convenience (keeps secrets out of files if desired).
             if cfg.api_key.trim().is_empty() {
                 if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
@@ -2459,7 +2459,8 @@ fn parse_gemini_config(text: &str) -> Result<GeminiConfig, String> {
         }
     }
 
-    let base_url = base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".into());
+    let base_url =
+        base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".into());
     let model = model.ok_or_else(|| "config.toml: missing `gemini.model`".to_string())?;
     let api_key = api_key.unwrap_or_default();
 

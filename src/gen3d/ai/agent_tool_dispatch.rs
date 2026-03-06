@@ -49,7 +49,10 @@ fn run_validate_v1(job: &mut Gen3dAiJob, draft: &Gen3dDraft) -> serde_json::Valu
     json
 }
 
-fn run_smoke_check_v1(job: &mut Gen3dAiJob, draft: &mut Gen3dDraft) -> Result<serde_json::Value, String> {
+fn run_smoke_check_v1(
+    job: &mut Gen3dAiJob,
+    draft: &mut Gen3dDraft,
+) -> Result<serde_json::Value, String> {
     let mut json = super::build_gen3d_smoke_results(
         &job.user_prompt_raw,
         !job.user_images.is_empty(),
@@ -83,9 +86,8 @@ fn run_smoke_check_v1(job: &mut Gen3dAiJob, draft: &mut Gen3dDraft) -> Result<se
                 write_gen3d_json_artifact(Some(dir), "smoke_results_pre_repair.json", &json);
             }
 
-            super::convert::sync_attachment_tree_to_defs(&job.planned_components, draft).map_err(
-                |err| format!("motion auto-repair failed to sync attachments: {err}"),
-            )?;
+            super::convert::sync_attachment_tree_to_defs(&job.planned_components, draft)
+                .map_err(|err| format!("motion auto-repair failed to sync attachments: {err}"))?;
 
             write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
 
@@ -227,7 +229,10 @@ pub(super) fn execute_tool_call(
                 }
             };
 
-            let validate_ok = validate.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let validate_ok = validate
+                .get("ok")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let smoke_ok = smoke.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
 
             let mut errors: Vec<serde_json::Value> = Vec::new();
@@ -240,7 +245,10 @@ pub(super) fn execute_tool_call(
             ) {
                 if let serde_json::Value::Object(map) = issue {
                     let mut merged = map.clone();
-                    merged.insert("source".to_string(), serde_json::Value::String(source.into()));
+                    merged.insert(
+                        "source".to_string(),
+                        serde_json::Value::String(source.into()),
+                    );
                     out.push(serde_json::Value::Object(merged));
                 } else {
                     out.push(serde_json::json!({ "source": source, "issue": issue }));
@@ -319,20 +327,17 @@ pub(super) fn execute_tool_call(
                 .unwrap_or(500)
                 .clamp(1, 500) as usize;
 
-            let (items, truncated) = match list_run_artifacts_v1(
-                run_dir,
-                path_prefix.as_deref(),
-                max_items,
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
+            let (items, truncated) =
+                match list_run_artifacts_v1(run_dir, path_prefix.as_deref(), max_items) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call.call_id,
+                            call.tool_id,
+                            err,
+                        ));
+                    }
+                };
 
             let json = serde_json::json!({
                 "ok": true,

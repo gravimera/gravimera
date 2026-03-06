@@ -579,7 +579,8 @@ mod tests {
         let draft = Gen3dDraft {
             defs: vec![root_def, body_root_def, torso_def],
         };
-        let (saved_root_id, saved_defs) = draft_to_saved_defs(&draft, false).expect("save ok");
+        let (saved_root_id, saved_defs) =
+            draft_to_saved_defs(&draft, false, None).expect("save ok");
         let saved_root = saved_defs
             .iter()
             .find(|def| def.object_id == saved_root_id)
@@ -650,7 +651,7 @@ mod tests {
         };
 
         assert!(
-            draft_to_saved_defs(&draft, false)
+            draft_to_saved_defs(&draft, false, None)
                 .ok()
                 .and_then(|(saved_root_id, saved_defs)| {
                     saved_defs
@@ -663,7 +664,7 @@ mod tests {
             "expected collision-disabled Gen3D building roots to not block movement",
         );
 
-        let saved_root_movement_block = draft_to_saved_defs(&draft, true)
+        let saved_root_movement_block = draft_to_saved_defs(&draft, true, None)
             .ok()
             .and_then(|(saved_root_id, saved_defs)| {
                 saved_defs
@@ -688,6 +689,7 @@ mod tests {
 pub(super) fn draft_to_saved_defs(
     draft: &Gen3dDraft,
     collision_enabled: bool,
+    root_prefab_id_override: Option<u128>,
 ) -> Result<(u128, Vec<ObjectDef>), String> {
     let root_id = super::gen3d_draft_object_id();
     let Some(root_def) = draft.defs.iter().find(|d| d.object_id == root_id) else {
@@ -738,7 +740,11 @@ pub(super) fn draft_to_saved_defs(
 
     let mut id_map = std::collections::HashMap::<u128, u128>::new();
     for def in &draft.defs {
-        let new_id = Uuid::new_v4().as_u128();
+        let new_id = if def.object_id == root_id {
+            root_prefab_id_override.unwrap_or_else(|| Uuid::new_v4().as_u128())
+        } else {
+            Uuid::new_v4().as_u128()
+        };
         id_map.insert(def.object_id, new_id);
     }
     let saved_root_id = *id_map
@@ -955,9 +961,16 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     let snapshot = Gen3dDraft {
         defs: draft.defs.clone(),
     };
-    let (saved_root_id, defs) = draft_to_saved_defs(&snapshot, collision_enabled)?;
+    let (saved_root_id, defs) =
+        draft_to_saved_defs(&snapshot, collision_enabled, job.save_overwrite_prefab_id())?;
     let depot_prefabs_dir =
         crate::model_depot::save_model_prefab_defs_to_depot(saved_root_id, saved_root_id, &defs)?;
+
+    save_gen3d_source_bundle_best_effort(
+        &crate::model_depot::depot_model_dir(saved_root_id),
+        &snapshot,
+    );
+
     for def in defs {
         library.upsert(def);
     }
@@ -1105,6 +1118,36 @@ pub(crate) fn gen3d_save_current_draft_from_api(
         mobility,
         position: pos,
     })
+}
+
+fn save_gen3d_source_bundle_best_effort(model_dir: &std::path::Path, draft: &Gen3dDraft) {
+    let bundle_dir = model_dir.join("gen3d_source_v1");
+    if bundle_dir.exists() {
+        if let Err(err) = std::fs::remove_dir_all(&bundle_dir) {
+            warn!(
+                "Gen3D: failed to clear existing source bundle dir {}: {err}",
+                bundle_dir.display()
+            );
+        }
+    }
+    if let Err(err) = std::fs::create_dir_all(&bundle_dir) {
+        warn!(
+            "Gen3D: failed to create source bundle dir {}: {err}",
+            bundle_dir.display()
+        );
+        return;
+    }
+
+    if let Err(err) = crate::realm_prefabs::save_prefab_defs_to_dir(
+        &bundle_dir,
+        super::gen3d_draft_object_id(),
+        &draft.defs,
+    ) {
+        warn!(
+            "Gen3D: failed to write source bundle prefabs to {}: {err}",
+            bundle_dir.display()
+        );
+    }
 }
 
 fn save_generated_prefab_descriptor_best_effort(
@@ -2026,6 +2069,10 @@ fn save_generated_prefab_descriptor_best_effort(
     gen3d_extra.insert(
         "assembly_rev".to_string(),
         serde_json::json!(job.assembly_rev()),
+    );
+    gen3d_extra.insert(
+        "source_bundle_v1".to_string(),
+        serde_json::json!({"dir": "gen3d_source_v1"}),
     );
 
     let plan_extracted_value = job

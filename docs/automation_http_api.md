@@ -715,6 +715,8 @@ Response (shape):
   "running": true,
   "build_complete": false,
   "can_resume": false,
+  "edit_base_prefab_id": null,
+  "save_overwrite_prefab_id": null,
   "draft_ready": false,
   "run_id": "1e973ac3-ce48-4319-9582-cabf9c929598",
   "attempt": 0,
@@ -724,6 +726,13 @@ Response (shape):
   "run_dir": "/abs/path/to/.gravimera/cache/gen3d/<run_id>"
 }
 ```
+
+Notes:
+
+- `edit_base_prefab_id` / `save_overwrite_prefab_id` are present when the current Gen3D session was
+  seeded from a saved prefab via `/v1/gen3d/edit_from_prefab` or `/v1/gen3d/fork_from_prefab`.
+- When `save_overwrite_prefab_id` is non-null, `POST /v1/gen3d/save` overwrites that prefab id
+  instead of generating a new root prefab id.
 
 ### `POST /v1/gen3d/prompt`
 
@@ -760,6 +769,63 @@ Notes:
 - Returns `409` if a build is already running.
 - Starting a build resets the Gen3D session (new `run_id`, fresh draft).
 - Poll `/v1/gen3d/status` while stepping frames to drive progress.
+
+### `POST /v1/gen3d/edit_from_prefab`
+
+Seed a Gen3D edit session from a **Gen3D-saved** prefab id.
+
+Save semantics:
+
+- `POST /v1/gen3d/save` overwrites the same `prefab_id_uuid` (all instances referencing it update).
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen3d/edit_from_prefab \
+  -H 'Content-Type: application/json' \
+  -d '{"prefab_id_uuid":"41d2d0fb-24ff-498f-ad05-c0884aa620ba"}'
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "run_id": "1e973ac3-ce48-4319-9582-cabf9c929598",
+  "can_resume": true,
+  "edit_base_prefab_id": "41d2d0fb-24ff-498f-ad05-c0884aa620ba",
+  "save_overwrite_prefab_id": "41d2d0fb-24ff-498f-ad05-c0884aa620ba"
+}
+```
+
+Notes:
+
+- Returns `400` if the prefab is not Gen3D-saved (descriptor provenance gate) or cannot be seeded.
+- After seeding, use `/v1/gen3d/resume` to continue generation, or `/v1/gen3d/save` to save immediately.
+
+### `POST /v1/gen3d/fork_from_prefab`
+
+Seed a Gen3D fork session from a **Gen3D-saved** prefab id.
+
+Save semantics:
+
+- `POST /v1/gen3d/save` writes a new `prefab_id_uuid` (different from the base).
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen3d/fork_from_prefab \
+  -H 'Content-Type: application/json' \
+  -d '{"prefab_id_uuid":"41d2d0fb-24ff-498f-ad05-c0884aa620ba"}'
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "run_id": "1e973ac3-ce48-4319-9582-cabf9c929598",
+  "can_resume": true,
+  "edit_base_prefab_id": "41d2d0fb-24ff-498f-ad05-c0884aa620ba",
+  "save_overwrite_prefab_id": null
+}
+```
 
 ### `POST /v1/gen3d/stop`
 

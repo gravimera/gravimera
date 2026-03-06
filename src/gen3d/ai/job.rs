@@ -475,6 +475,8 @@ pub(crate) struct Gen3dAiJob {
     pub(super) chat_fallbacks_this_run: u32,
     pub(super) agent: Gen3dAgentState,
     pub(super) save_seq: u32,
+    pub(super) edit_base_prefab_id: Option<u128>,
+    pub(super) save_overwrite_prefab_id: Option<u128>,
     pub(super) metrics: Gen3dRunMetrics,
 }
 
@@ -507,6 +509,14 @@ impl Gen3dAiJob {
 
     pub(crate) fn is_capturing_motion_sheets(&self) -> bool {
         self.motion_capture.is_some()
+    }
+
+    pub(crate) fn edit_base_prefab_id(&self) -> Option<u128> {
+        self.edit_base_prefab_id
+    }
+
+    pub(crate) fn save_overwrite_prefab_id(&self) -> Option<u128> {
+        self.save_overwrite_prefab_id
     }
 
     pub(crate) fn run_dir_path(&self) -> Option<&Path> {
@@ -630,7 +640,10 @@ impl Gen3dAiJob {
     pub(super) fn finish_run_metrics(&mut self) {
         if let Some(start) = self.run_started_at.take() {
             let elapsed = start.elapsed();
-            let total = self.last_run_elapsed.unwrap_or_default().saturating_add(elapsed);
+            let total = self
+                .last_run_elapsed
+                .unwrap_or_default()
+                .saturating_add(elapsed);
             self.last_run_elapsed = Some(total);
         }
 

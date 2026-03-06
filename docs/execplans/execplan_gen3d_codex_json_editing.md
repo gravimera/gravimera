@@ -47,7 +47,7 @@ Pre-implementation contracts (must be written down before coding):
 - [x] (2026-03-07) Milestone A (Foundation): add `qa_v1` and run-artifact read tools (list/read/search) for the current run dir.
 - [x] (2026-03-07) Milestone B (“Stop means stop”): accept agent `done` by default (keep only empty-draft guard) and surface QA/review state as machine-observable status.
 - [x] (2026-03-07) Milestone C (Resumable sessions): add “Continue” for a stopped/cancelled session without resetting the draft.
-- [ ] Milestone D (Edit-from-prefab entry points): implement deterministic “seed Gen3D from Gen3D-saved prefab” APIs (Edit and Fork semantics).
+- [x] (2026-03-07) Milestone D (Edit-from-prefab entry points): implement deterministic “seed Gen3D from Gen3D-saved prefab” APIs (Edit and Fork semantics).
 - [ ] Milestone E (Meta panel wiring): add Meta panel buttons Copy/Edit/Fork (gated to Gen3D-saved prefabs) and connect them to the entry points.
 - [ ] Milestone F (Deterministic patch ops): add an engine “apply_patch-like” tool (`apply_draft_ops_v1`) with explicit IDs and a structured diff.
 - [ ] Milestone G (Snapshots + branching): add snapshot/diff/restore and workspace diff/merge/copy tools so the agent can branch and compare alternatives safely.
@@ -87,6 +87,10 @@ Pre-implementation contracts (must be written down before coding):
   Rationale: Enables iterative work without losing context while keeping artifacts append-only and budgets enforceable.
   Date/Author: 2026-03-07 / agent
 
+- Decision: Persist a Gen3D “source bundle” alongside Gen3D-saved prefabs and load it for Edit/Fork seeding; fall back to deterministic reconstruction from saved prefab defs when missing.
+  Rationale: “Editing source code” beats heuristic reverse-engineering of “compiled output”, but older saves must remain editable best-effort without guessing.
+  Date/Author: 2026-03-07 / agent
+
 ## Outcomes & Retrospective
 
 - Milestone A delivered:
@@ -105,6 +109,12 @@ Pre-implementation contracts (must be written down before coding):
   - Stop no longer resets the Gen3D session state, so the draft and artifacts remain available for continuation.
   - Added “Continue” in the Gen3D UI and `POST /v1/gen3d/resume` in the Automation HTTP API.
   - Verified Stop → Continue works in a rendered run via `tools/gen3d_real_test.py --stop-resume` using `mock://gen3d`.
+
+- Milestone D delivered:
+  - Added Automation HTTP APIs: `POST /v1/gen3d/edit_from_prefab` and `POST /v1/gen3d/fork_from_prefab` (Gen3D-saved prefabs only).
+  - Extended Gen3D Save to persist `gen3d_source_v1/` alongside saved prefabs and to record `provenance.gen3d.extra.source_bundle_v1` in the prefab descriptor.
+  - Implemented Edit (overwrite) Save semantics by allowing the Save path to keep the same root prefab id; prunes stale prefab-def JSON files on overwrite.
+  - Verified Edit overwrite + Fork new-id via a rendered regression: `tools/gen3d_real_test.py --edit-fork-regression` using `mock://gen3d` (no key).
 
 ## Context and Orientation
 

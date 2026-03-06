@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::object::registry::{
-    builtin_object_id, ObjectPartDef, ObjectPartKind, PartAnimationDef, PartAnimationDriver,
+    builtin_object_id, ObjectDef, ObjectLibrary, ObjectPartDef, ObjectPartKind, PartAnimationDef,
+    PartAnimationDriver, UnitAttackKind,
 };
 use crate::threaded_result::{
     new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
@@ -131,7 +132,8 @@ pub(crate) fn gen3d_continue_button(
             Interaction::Pressed => {
                 *bg = BackgroundColor(Color::srgba(0.10, 0.18, 0.12, 0.95));
                 if job.is_running() {
-                    workshop.error = Some("Cannot Continue while building. Click Stop first.".into());
+                    workshop.error =
+                        Some("Cannot Continue while building. Click Stop first.".into());
                     continue;
                 }
                 if !job.can_resume() {
@@ -199,11 +201,13 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.agent.pending_pass_snapshot = None;
     job.agent.pending_after_pass_snapshot = None;
     job.agent.pending_regen_component_indices.clear();
-    job.agent.pending_regen_component_indices_skipped_due_to_budget.clear();
+    job.agent
+        .pending_regen_component_indices_skipped_due_to_budget
+        .clear();
 
     workshop.error = None;
-    workshop.status = "Build stopped. Click Continue to resume, or Build to start a new run."
-        .to_string();
+    workshop.status =
+        "Build stopped. Click Continue to resume, or Build to start a new run.".to_string();
 }
 
 pub(crate) fn gen3d_resume_build_from_api(
@@ -224,6 +228,10 @@ pub(crate) fn gen3d_resume_build_from_api(
     }
     if job.run_id.is_none() || job.run_dir.is_none() || job.pass_dir.is_none() {
         return Err("Cannot resume: no prior Gen3D session (start a new Build).".into());
+    }
+
+    if !workshop.prompt.trim().is_empty() {
+        job.user_prompt_raw = workshop.prompt.clone();
     }
 
     job.log_sinks = log_sinks;
@@ -268,6 +276,504 @@ pub(crate) fn gen3d_resume_build_from_api(
     Ok(())
 }
 
+fn resolve_gen3d_ai_service_config(config: &AppConfig) -> Result<Gen3dAiServiceConfig, String> {
+    match config.gen3d_ai_service {
+        crate::config::Gen3dAiService::OpenAi => match config.openai.clone() {
+            Some(openai) => Ok(Gen3dAiServiceConfig::OpenAi(openai)),
+            None => {
+                let details = if config.errors.is_empty() {
+                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                } else {
+                    config.errors.join("\n")
+                };
+                Err(details)
+            }
+        },
+        crate::config::Gen3dAiService::Gemini => match config.gemini.clone() {
+            Some(gemini) => Ok(Gen3dAiServiceConfig::Gemini(gemini)),
+            None => {
+                let details = if config.errors.is_empty() {
+                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                } else {
+                    config.errors.join("\n")
+                };
+                Err(details)
+            }
+        },
+        crate::config::Gen3dAiService::Claude => match config.claude.clone() {
+            Some(claude) => Ok(Gen3dAiServiceConfig::Claude(claude)),
+            None => {
+                let details = if config.errors.is_empty() {
+                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                } else {
+                    config.errors.join("\n")
+                };
+                Err(details)
+            }
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gen3dSeededSessionMode {
+    EditOverwrite,
+    Fork,
+}
+
+pub(crate) fn gen3d_start_edit_session_from_prefab_id_from_api(
+    build_scene: &State<BuildScene>,
+    config: &AppConfig,
+    log_sinks: Option<crate::app::Gen3dLogSinks>,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &mut Gen3dDraft,
+    prefab_id: u128,
+) -> Result<(), String> {
+    gen3d_start_seeded_session_from_prefab_id_from_api(
+        build_scene,
+        config,
+        log_sinks,
+        workshop,
+        job,
+        draft,
+        prefab_id,
+        Gen3dSeededSessionMode::EditOverwrite,
+    )
+}
+
+pub(crate) fn gen3d_start_fork_session_from_prefab_id_from_api(
+    build_scene: &State<BuildScene>,
+    config: &AppConfig,
+    log_sinks: Option<crate::app::Gen3dLogSinks>,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &mut Gen3dDraft,
+    prefab_id: u128,
+) -> Result<(), String> {
+    gen3d_start_seeded_session_from_prefab_id_from_api(
+        build_scene,
+        config,
+        log_sinks,
+        workshop,
+        job,
+        draft,
+        prefab_id,
+        Gen3dSeededSessionMode::Fork,
+    )
+}
+
+fn gen3d_start_seeded_session_from_prefab_id_from_api(
+    build_scene: &State<BuildScene>,
+    config: &AppConfig,
+    log_sinks: Option<crate::app::Gen3dLogSinks>,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &mut Gen3dDraft,
+    prefab_id: u128,
+    mode: Gen3dSeededSessionMode,
+) -> Result<(), String> {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return Err("Gen3D edit/fork requires Build Preview scene.".into());
+    }
+    if job.running {
+        return Err("Gen3D build is already running (stop it first).".into());
+    }
+
+    let ai = resolve_gen3d_ai_service_config(config)?;
+
+    let model_dir = crate::model_depot::depot_model_dir(prefab_id);
+    let source_dir = model_dir.join("gen3d_source_v1");
+    let has_source_bundle = source_dir.exists();
+
+    let (descriptor, descriptor_error) = match load_prefab_descriptor_from_depot(prefab_id) {
+        Ok(descriptor) => (Some(descriptor), None),
+        Err(err) => (None, Some(err)),
+    };
+
+    let provenance_source = descriptor
+        .as_ref()
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.source.as_deref())
+        .unwrap_or("");
+    if provenance_source.trim() != "gen3d" && !has_source_bundle {
+        if let Some(err) = descriptor_error {
+            return Err(format!(
+                "Edit/Fork is supported only for Gen3D-saved prefabs. {err}"
+            ));
+        }
+        return Err("Edit/Fork is supported only for Gen3D-saved prefabs.".into());
+    }
+
+    let prompt_from_descriptor = descriptor
+        .as_ref()
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.gen3d.as_ref())
+        .and_then(|g| g.prompt.as_ref())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(prompt) = prompt_from_descriptor.as_ref() {
+        workshop.prompt = prompt.clone();
+    }
+
+    let seeded_defs = load_gen3d_draft_defs_from_depot_or_fallback(prefab_id)?;
+    if seeded_defs
+        .iter()
+        .all(|d| d.object_id != gen3d_draft_object_id())
+    {
+        return Err("Internal error: seeded draft is missing the Gen3D draft root def.".into());
+    }
+    draft.defs = seeded_defs;
+
+    // New run dir for the edit/fork session (artifacts append-only).
+    let (run_id, run_dir) = gen3d_make_run_dir(config);
+    std::fs::create_dir_all(&run_dir).map_err(|err| {
+        format!(
+            "Failed to create Gen3D cache dir {}: {err}",
+            run_dir.display()
+        )
+    })?;
+
+    // Reset job state but keep the seeded draft.
+    job.log_sinks = log_sinks;
+    job.metrics = Gen3dRunMetrics::default();
+    job.reset_session();
+    job.running = false;
+    job.cancel_flag = None;
+    job.build_complete = false;
+    job.mode = Gen3dAiMode::Agent;
+    job.phase = Gen3dAiPhase::Idle;
+    job.shared_progress = None;
+    job.shared_result = None;
+    job.review_capture = None;
+    job.review_static_paths.clear();
+    job.motion_capture = None;
+    job.capture_previews_only = false;
+    job.plan_attempt = 0;
+    job.max_parallel_components = config.gen3d_max_parallel_components.max(1);
+    job.pending_plan = None;
+    job.component_queue.clear();
+    job.component_queue_pos = 0;
+    job.component_attempts.clear();
+    job.component_in_flight.clear();
+    job.review_kind = Gen3dAutoReviewKind::EndOfRun;
+    job.review_appearance = config.gen3d_review_appearance;
+    job.review_component_idx = None;
+    job.auto_refine_passes_done = 0;
+    job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
+    job.per_component_refine_passes_remaining = 0;
+    job.per_component_refine_passes_done = 0;
+    job.per_component_resume = None;
+    job.replan_attempts = 0;
+    job.last_review_inputs.clear();
+    job.last_review_user_text.clear();
+    job.review_delta_repair_attempt = 0;
+    job.agent = Gen3dAgentState::default();
+    job.run_started_at = None;
+    job.last_run_elapsed = None;
+    job.current_run_tokens = 0;
+    job.chat_fallbacks_this_run = 0;
+
+    job.ai = Some(ai);
+    job.run_id = Some(run_id);
+    job.run_dir = Some(run_dir.clone());
+
+    job.attempt = 0;
+    job.pass = 0;
+    job.plan_hash.clear();
+    job.assembly_rev = 0;
+    job.user_prompt_raw = prompt_from_descriptor.unwrap_or_default();
+    job.user_images.clear();
+    job.planned_components.clear();
+    job.assembly_notes.clear();
+    job.plan_collider = None;
+    job.rig_move_cycle_m = None;
+    job.motion_roles = None;
+    job.motion_authoring = None;
+    job.reuse_groups.clear();
+    job.reuse_group_warnings.clear();
+    job.regen_total = 0;
+    job.regen_per_component.clear();
+    job.save_seq = 0;
+
+    job.edit_base_prefab_id = Some(prefab_id);
+    job.save_overwrite_prefab_id = match mode {
+        Gen3dSeededSessionMode::EditOverwrite => Some(prefab_id),
+        Gen3dSeededSessionMode::Fork => None,
+    };
+
+    // Create pass_0 to record the seed action and to enable Continue.
+    gen3d_set_current_attempt_pass(job, &run_dir, 0, 0)?;
+    let pass_dir = job
+        .pass_dir
+        .clone()
+        .ok_or_else(|| "Internal error: missing Gen3D pass dir.".to_string())?;
+
+    write_gen3d_json_artifact(
+        Some(&run_dir),
+        "run.json",
+        &serde_json::json!({
+            "version": 1,
+            "run_id": run_id.to_string(),
+            "created_at_ms": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0),
+            "seed": {
+                "kind": match mode { Gen3dSeededSessionMode::EditOverwrite => "edit_overwrite", Gen3dSeededSessionMode::Fork => "fork" },
+                "prefab_id": uuid::Uuid::from_u128(prefab_id).to_string(),
+            },
+            "ai": {
+                "service": job.ai.as_ref().map(|c| c.service_label()).unwrap_or(""),
+                "model": job.ai.as_ref().map(|c| c.model()).unwrap_or(""),
+                "base_url": job.ai.as_ref().map(|c| c.base_url()).unwrap_or(""),
+            },
+        }),
+    );
+    append_gen3d_run_log(
+        Some(&pass_dir),
+        format!(
+            "seed_from_prefab kind={} prefab_id={}",
+            match mode {
+                Gen3dSeededSessionMode::EditOverwrite => "edit_overwrite",
+                Gen3dSeededSessionMode::Fork => "fork",
+            },
+            uuid::Uuid::from_u128(prefab_id),
+        ),
+    );
+
+    workshop.error = None;
+    workshop.status = match mode {
+        Gen3dSeededSessionMode::EditOverwrite => {
+            "Edit session loaded. Click Continue to resume generation; Save overwrites the same prefab id.".into()
+        }
+        Gen3dSeededSessionMode::Fork => {
+            "Fork session loaded. Click Continue to resume generation; Save writes a new prefab id.".into()
+        }
+    };
+
+    Ok(())
+}
+
+fn load_prefab_descriptor_from_depot(
+    prefab_id: u128,
+) -> Result<crate::prefab_descriptors::PrefabDescriptorFileV1, String> {
+    let prefabs_dir = crate::model_depot::depot_model_prefabs_dir(prefab_id);
+    let uuid = uuid::Uuid::from_u128(prefab_id).to_string();
+    let prefab_json = prefabs_dir.join(format!("{uuid}.json"));
+    let descriptor_path =
+        crate::prefab_descriptors::prefab_descriptor_path_for_prefab_json(&prefab_json);
+    let bytes = std::fs::read(&descriptor_path).map_err(|err| {
+        format!(
+            "Failed to read prefab descriptor {}: {err}",
+            descriptor_path.display()
+        )
+    })?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|err| format!("Invalid JSON: {err}"))?;
+    let descriptor: crate::prefab_descriptors::PrefabDescriptorFileV1 =
+        serde_json::from_value(value)
+            .map_err(|err| format!("Descriptor schema mismatch: {err}"))?;
+    Ok(descriptor)
+}
+
+fn load_gen3d_draft_defs_from_depot_or_fallback(prefab_id: u128) -> Result<Vec<ObjectDef>, String> {
+    let model_dir = crate::model_depot::depot_model_dir(prefab_id);
+    let source_dir = model_dir.join("gen3d_source_v1");
+    if source_dir.exists() {
+        return load_prefab_defs_from_dir(&source_dir, true);
+    }
+
+    let prefabs_dir = crate::model_depot::depot_model_prefabs_dir(prefab_id);
+    reconstruct_gen3d_draft_defs_from_saved_prefabs(&prefabs_dir, prefab_id)
+}
+
+fn load_prefab_defs_from_dir(
+    dir: &Path,
+    expect_gen3d_root: bool,
+) -> Result<Vec<ObjectDef>, String> {
+    if !dir.exists() {
+        return Err(format!("Missing prefab dir: {}", dir.display()));
+    }
+
+    let mut ids: Vec<u128> = Vec::new();
+    let entries =
+        std::fs::read_dir(dir).map_err(|err| format!("Failed to list {}: {err}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("Failed to read dir entry: {err}"))?;
+        let path = entry.path();
+        if path.is_dir() {
+            continue;
+        }
+        let file_name = path.file_name().and_then(|v| v.to_str()).unwrap_or("");
+        if !file_name.ends_with(".json") {
+            continue;
+        }
+        if file_name.ends_with(".desc.json") {
+            continue;
+        }
+        let Some(stem) = file_name.strip_suffix(".json") else {
+            continue;
+        };
+        if let Ok(uuid) = uuid::Uuid::parse_str(stem.trim()) {
+            ids.push(uuid.as_u128());
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return Err(format!("No prefab defs found under {}", dir.display()));
+    }
+
+    let mut library = ObjectLibrary::default();
+    crate::realm_prefabs::load_prefabs_into_library_from_dir(dir, &mut library)?;
+
+    let mut defs: Vec<ObjectDef> = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let Some(def) = library.get(*id) else {
+            return Err(format!(
+                "Internal error: missing loaded prefab def for id {} from {}",
+                uuid::Uuid::from_u128(*id),
+                dir.display()
+            ));
+        };
+        defs.push(def.clone());
+    }
+
+    if expect_gen3d_root && defs.iter().all(|d| d.object_id != gen3d_draft_object_id()) {
+        return Err("Missing Gen3D draft root in source bundle (expected gen3d_source_v1).".into());
+    }
+
+    Ok(defs)
+}
+
+fn reconstruct_gen3d_draft_defs_from_saved_prefabs(
+    prefabs_dir: &Path,
+    saved_root_prefab_id: u128,
+) -> Result<Vec<ObjectDef>, String> {
+    let mut library = ObjectLibrary::default();
+    crate::realm_prefabs::load_prefabs_into_library_from_dir(prefabs_dir, &mut library)?;
+
+    let Some(root_def) = library.get(saved_root_prefab_id).cloned() else {
+        return Err(format!(
+            "Missing root prefab def {} in {}",
+            uuid::Uuid::from_u128(saved_root_prefab_id),
+            prefabs_dir.display()
+        ));
+    };
+
+    let mut stack: Vec<u128> = vec![saved_root_prefab_id];
+    if let Some(attack) = root_def.attack.as_ref() {
+        if matches!(attack.kind, UnitAttackKind::RangedProjectile) {
+            if let Some(ranged) = attack.ranged.as_ref() {
+                if ranged.projectile_prefab != 0 {
+                    stack.push(ranged.projectile_prefab);
+                }
+                if ranged.muzzle.object_id != 0 {
+                    stack.push(ranged.muzzle.object_id);
+                }
+            }
+        }
+    }
+    if let Some(aim) = root_def.aim.as_ref() {
+        for id in &aim.components {
+            if *id != 0 {
+                stack.push(*id);
+            }
+        }
+    }
+
+    let mut keep: std::collections::BTreeSet<u128> = std::collections::BTreeSet::new();
+    while let Some(next) = stack.pop() {
+        if keep.contains(&next) {
+            continue;
+        }
+        let Some(def) = library.get(next) else {
+            return Err(format!(
+                "Missing prefab def {} referenced by {}",
+                uuid::Uuid::from_u128(next),
+                prefabs_dir.display()
+            ));
+        };
+        keep.insert(next);
+        for part in def.parts.iter() {
+            if let ObjectPartKind::ObjectRef { object_id } = part.kind {
+                if object_id != 0 {
+                    stack.push(object_id);
+                }
+            }
+        }
+    }
+
+    let mut defs: Vec<ObjectDef> = Vec::with_capacity(keep.len());
+    for id in &keep {
+        let Some(def) = library.get(*id) else {
+            return Err(format!(
+                "Missing prefab def {} referenced by {}",
+                uuid::Uuid::from_u128(*id),
+                prefabs_dir.display()
+            ));
+        };
+        defs.push(def.clone());
+    }
+
+    let draft_root_id = gen3d_draft_object_id();
+    let saved_projectile_id = root_def
+        .attack
+        .as_ref()
+        .and_then(|a| a.ranged.as_ref())
+        .map(|r| r.projectile_prefab);
+    let draft_projectile_id =
+        saved_projectile_id.map(|_| super::super::gen3d_draft_projectile_object_id());
+
+    let mut remap: std::collections::HashMap<u128, u128> = std::collections::HashMap::new();
+    remap.insert(saved_root_prefab_id, draft_root_id);
+    if let (Some(saved_projectile_id), Some(draft_projectile_id)) =
+        (saved_projectile_id, draft_projectile_id)
+    {
+        remap.insert(saved_projectile_id, draft_projectile_id);
+    }
+
+    for def in &mut defs {
+        if let Some(mapped) = remap.get(&def.object_id).copied() {
+            def.object_id = mapped;
+        }
+
+        for part in &mut def.parts {
+            if let ObjectPartKind::ObjectRef { object_id } = &mut part.kind {
+                if let Some(mapped) = remap.get(object_id).copied() {
+                    *object_id = mapped;
+                }
+            }
+        }
+
+        if let Some(attack) = def.attack.as_mut() {
+            if matches!(attack.kind, UnitAttackKind::RangedProjectile) {
+                if let Some(ranged) = attack.ranged.as_mut() {
+                    if let Some(mapped) = remap.get(&ranged.projectile_prefab).copied() {
+                        ranged.projectile_prefab = mapped;
+                    }
+                    if let Some(mapped) = remap.get(&ranged.muzzle.object_id).copied() {
+                        ranged.muzzle.object_id = mapped;
+                    }
+                }
+            }
+        }
+
+        if let Some(aim) = def.aim.as_mut() {
+            for component_id in aim.components.iter_mut() {
+                if let Some(mapped) = remap.get(component_id).copied() {
+                    *component_id = mapped;
+                }
+            }
+        }
+    }
+
+    if defs.iter().all(|d| d.object_id != draft_root_id) {
+        return Err("Internal error: reconstructed draft is missing root def.".into());
+    }
+    Ok(defs)
+}
+
 pub(crate) fn gen3d_start_build_from_api(
     build_scene: &State<BuildScene>,
     config: &AppConfig,
@@ -286,41 +792,7 @@ pub(crate) fn gen3d_start_build_from_api(
         return Err("Provide at least 1 image or a text prompt.".into());
     }
 
-    let ai = match config.gen3d_ai_service {
-        crate::config::Gen3dAiService::OpenAi => match config.openai.clone() {
-            Some(openai) => Gen3dAiServiceConfig::OpenAi(openai),
-            None => {
-                let details = if config.errors.is_empty() {
-                    "Missing config.toml. See gen_3d.md for setup.".to_string()
-                } else {
-                    config.errors.join("\n")
-                };
-                return Err(details);
-            }
-        },
-        crate::config::Gen3dAiService::Gemini => match config.gemini.clone() {
-            Some(gemini) => Gen3dAiServiceConfig::Gemini(gemini),
-            None => {
-                let details = if config.errors.is_empty() {
-                    "Missing config.toml. See gen_3d.md for setup.".to_string()
-                } else {
-                    config.errors.join("\n")
-                };
-                return Err(details);
-            }
-        },
-        crate::config::Gen3dAiService::Claude => match config.claude.clone() {
-            Some(claude) => Gen3dAiServiceConfig::Claude(claude),
-            None => {
-                let details = if config.errors.is_empty() {
-                    "Missing config.toml. See gen_3d.md for setup.".to_string()
-                } else {
-                    config.errors.join("\n")
-                };
-                return Err(details);
-            }
-        },
-    };
+    let ai = resolve_gen3d_ai_service_config(config)?;
 
     job.log_sinks = log_sinks;
     job.metrics = Gen3dRunMetrics::default();
@@ -441,6 +913,8 @@ pub(crate) fn gen3d_start_build_from_api(
     job.review_delta_repair_attempt = 0;
     job.agent = Gen3dAgentState::default();
     job.save_seq = 0;
+    job.edit_base_prefab_id = None;
+    job.save_overwrite_prefab_id = None;
     draft.defs.clear();
 
     workshop.status = format!(

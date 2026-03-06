@@ -50,6 +50,8 @@ pub(crate) use job::Gen3dAiJob;
 pub(crate) use orchestration::{
     gen3d_cancel_build_from_api, gen3d_continue_button, gen3d_generate_button, gen3d_poll_ai_job,
     gen3d_resume_build_from_api, gen3d_start_build_from_api,
+    gen3d_start_edit_session_from_prefab_id_from_api,
+    gen3d_start_fork_session_from_prefab_id_from_api,
 };
 pub(crate) use schema::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1};
 

@@ -106,6 +106,7 @@ class RunResult:
     run_id: str
     run_dir: Path
     instance_id_uuid: str
+    prefab_id_uuid: str
 
 
 class GameProcess:
@@ -371,6 +372,9 @@ def run_one(
     instance_id = str(save.get("instance_id_uuid") or "").strip()
     if not instance_id:
         raise RuntimeError(f"gen3d/save returned no instance_id_uuid: {save}")
+    prefab_id_uuid = str(save.get("prefab_id_uuid") or "").strip()
+    if not prefab_id_uuid:
+        raise RuntimeError(f"gen3d/save returned no prefab_id_uuid: {save}")
 
     # Stop the agent after saving so the test doesn't keep consuming time/tokens.
     try:
@@ -501,7 +505,68 @@ def run_one(
                 check=False,
             )
 
-    return RunResult(run_id=run_id, run_dir=run_dir, instance_id_uuid=instance_id)
+    return RunResult(
+        run_id=run_id, run_dir=run_dir, instance_id_uuid=instance_id, prefab_id_uuid=prefab_id_uuid
+    )
+
+
+def run_edit_fork_regression(
+    *,
+    api_base: str,
+    prefab_id_uuid: str,
+    dt_secs: float,
+) -> None:
+    def post(path: str, body: dict[str, Any]) -> dict[str, Any]:
+        if path in ("/v1/step", "/v1/gen3d/save"):
+            timeout = 300.0
+        else:
+            timeout = 30.0
+        return _http_json("POST", f"{api_base}{path}", body, timeout=timeout)
+
+    def get(path: str) -> dict[str, Any]:
+        return _http_json("GET", f"{api_base}{path}", None, timeout=30.0)
+
+    print(f"=== Gen3D edit/fork regression: prefab_id_uuid={prefab_id_uuid} ===")
+
+    # Enter Gen3D workshop.
+    post("/v1/mode", {"mode": "gen3d"})
+    post("/v1/step", {"frames": 3, "dt_secs": dt_secs})
+
+    # Edit (overwrite).
+    post("/v1/gen3d/edit_from_prefab", {"prefab_id_uuid": prefab_id_uuid})
+    post("/v1/step", {"frames": 2, "dt_secs": dt_secs})
+    status = get("/v1/gen3d/status")
+    if not bool(status.get("can_resume")):
+        raise RuntimeError(f"Expected can_resume=true after edit_from_prefab, got: {status}")
+
+    # Best-effort resume a frame or two (exercises Stop/Continue with a seeded draft).
+    post("/v1/gen3d/resume", {})
+    post("/v1/step", {"frames": 10, "dt_secs": dt_secs})
+    post("/v1/gen3d/stop", {})
+    post("/v1/step", {"frames": 2, "dt_secs": dt_secs})
+
+    saved = post("/v1/gen3d/save", {})
+    edited_prefab_id = str(saved.get("prefab_id_uuid") or "").strip()
+    if edited_prefab_id != prefab_id_uuid:
+        raise RuntimeError(
+            f"Edit overwrite expected prefab_id_uuid={prefab_id_uuid}, got {edited_prefab_id}. resp={saved}"
+        )
+
+    # Fork (new id).
+    post("/v1/gen3d/fork_from_prefab", {"prefab_id_uuid": prefab_id_uuid})
+    post("/v1/step", {"frames": 2, "dt_secs": dt_secs})
+    status = get("/v1/gen3d/status")
+    if not bool(status.get("can_resume")):
+        raise RuntimeError(f"Expected can_resume=true after fork_from_prefab, got: {status}")
+
+    fork_saved = post("/v1/gen3d/save", {})
+    fork_prefab_id = str(fork_saved.get("prefab_id_uuid") or "").strip()
+    if not fork_prefab_id or fork_prefab_id == prefab_id_uuid:
+        raise RuntimeError(
+            f"Fork expected a new prefab_id_uuid (different from {prefab_id_uuid}), got {fork_prefab_id}. resp={fork_saved}"
+        )
+
+    print(f"OK: edit overwrote {edited_prefab_id}, fork created {fork_prefab_id}")
 
 
 def main() -> int:
@@ -526,6 +591,11 @@ def main() -> int:
         type=float,
         default=0.5,
         help="When --stop-resume, how long to remain stopped before Resume.",
+    )
+    ap.add_argument(
+        "--edit-fork-regression",
+        action="store_true",
+        help="After Save, seed an Edit (overwrite) and Fork (new prefab id) Gen3D session from the saved prefab.",
     )
     ap.add_argument(
         "--save-early",
@@ -659,6 +729,12 @@ def main() -> int:
                 print(
                     f"OK: run_id={result.run_id} run_dir={result.run_dir} instance_id_uuid={result.instance_id_uuid}"
                 )
+                if args.edit_fork_regression:
+                    run_edit_fork_regression(
+                        api_base=api_base,
+                        prefab_id_uuid=result.prefab_id_uuid,
+                        dt_secs=args.dt_secs,
+                    )
         finally:
             shutdown_game(game)
     else:
@@ -689,6 +765,12 @@ def main() -> int:
                 print(
                     f"OK: run_id={result.run_id} run_dir={result.run_dir} instance_id_uuid={result.instance_id_uuid}"
                 )
+                if args.edit_fork_regression:
+                    run_edit_fork_regression(
+                        api_base=api_base,
+                        prefab_id_uuid=result.prefab_id_uuid,
+                        dt_secs=args.dt_secs,
+                    )
             finally:
                 shutdown_game(game)
 

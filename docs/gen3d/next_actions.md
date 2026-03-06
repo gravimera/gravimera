@@ -83,7 +83,7 @@ Implementation sketch (later):
 Decision: “Stop” ends the current background loop, but the *session* (draft + context + artifacts)
 remains available so the agent (and user) can continue later.
 
-Status: “Stop/Continue” is implemented (2026-03-07). “Edit prefab / Fork prefab” is planned.
+Status: “Stop/Continue” is implemented (2026-03-07). “Edit/Fork seed-from-prefab” is implemented via internal + Automation APIs (2026-03-07); Meta panel buttons are planned.
 
 User-visible outcomes:
 - A “Continue” action should resume the agent loop on the existing draft.
@@ -342,5 +342,5 @@ Candidate additions:
 - [x] (2026-03-07) Design artifact inspection tools with strict scoping and bounded reads.
 - [ ] Design a generic async task API and migrate existing ad-hoc async flows toward it.
 - [ ] Specify “no runtime motion mapping” changes to the agent prompt + QA gating.
-- [ ] Specify resumable sessions + “Edit prefab” workflow + save semantics (fork vs overwrite).
+- [x] (2026-03-07) Specify resumable sessions + “Edit prefab” workflow + save semantics (fork vs overwrite).
 - [ ] Add Meta panel buttons: Copy / Edit / Fork (Gen3D-prefab-gated).
