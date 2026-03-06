@@ -35,7 +35,7 @@ This ExecPlan focuses on **generic improvements with a low regression risk**:
 - [x] (2026-02-11) Update Gen3D prompts + docs to teach “inherit geometry, override offsets/animation is OK” and document `time_offset_units`.
 - [x] (2026-02-11) Add/adjust unit tests (animation offset sampling + scene.dat round-trip; subtree copy partial fill).
 - [x] (2026-02-11) Run `cargo test` and a headless smoke start.
-- [ ] Run a real rendered Gen3D regression (generate → save → move/fire → screenshots) and record run id + findings here (blocked locally without `OPENAI_API_KEY`).
+- [ ] Run a real rendered Gen3D regression (generate → save → move/fire → screenshots) and record run id + findings here (requires a real provider token; `mock://gen3d` can be used for offline debug runs).
 - [x] (2026-02-11) Update docs + `README.md`; commit.
 
 ## Surprises & Discoveries
@@ -49,8 +49,8 @@ This ExecPlan focuses on **generic improvements with a low regression risk**:
 - Observation: Users perceive “copy should work” even when per-target differences exist (angles, mount offsets, per-leg animations).
   Evidence: Reported expectation: “legs are mostly the same (3D model), only angles/animations differ; copy should still help”.
 
-- Observation: Rendered end-to-end Gen3D regressions require `OPENAI_API_KEY`.
-  Evidence: `tools/gen3d_real_test.py` returns HTTP 400 from Automation `/v1/gen3d/build` when the key is missing: `config.toml: missing openai.token / openai.OPENAI_API_KEY (or env OPENAI_API_KEY)`.
+- Observation: Real (non-mock) rendered Gen3D regressions require provider tokens, but debug/test builds can run end-to-end rendered regressions with `mock://gen3d` and no secrets.
+  Evidence: `tools/gen3d_real_test.py` returns HTTP 400 from Automation `/v1/gen3d/build` when the key is missing for real providers; mock runs use `base_url = "mock://gen3d"`.
 
 ## Decision Log
 
@@ -80,7 +80,7 @@ This ExecPlan focuses on **generic improvements with a low regression risk**:
 
 Remaining:
 
-- Run a rendered end-to-end Gen3D regression with a real OpenAI key and record run id(s) + findings here (locally blocked without `OPENAI_API_KEY`).
+- Run a rendered end-to-end Gen3D regression with a real provider key and record run id(s) + findings here (for offline checks, use `mock://gen3d`).
 
 ## Context and Orientation
 

@@ -1459,14 +1459,8 @@ fn mock_generate_text_via_openai(
             }));
             actions.push(serde_json::json!({
                 "kind": "tool_call",
-                "call_id": "call_9_validate",
-                "tool_id": "validate_v1",
-                "args": {}
-            }));
-            actions.push(serde_json::json!({
-                "kind": "tool_call",
-                "call_id": "call_10_smoke",
-                "tool_id": "smoke_check_v1",
+                "call_id": "call_9_qa",
+                "tool_id": "qa_v1",
                 "args": {}
             }));
             actions.push(serde_json::json!({

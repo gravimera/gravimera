@@ -6,10 +6,11 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_CREATE_WORKSPACE,
     TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
-    TOOL_ID_LIST, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_MOTION_ROLES,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
-    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SET_ACTIVE_WORKSPACE,
+    TOOL_ID_LIST, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT,
+    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA, TOOL_ID_READ_ARTIFACT,
+    TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE,
     TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
@@ -31,12 +32,87 @@ use super::agent_review_images::{
 use super::agent_step::ToolCallOutcome;
 use super::agent_utils::{build_component_subset_workspace_defs, sanitize_prefix};
 use super::artifacts::{
-    append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact,
+    append_gen3d_run_log, list_run_artifacts_v1, read_artifact_v1, search_artifacts_v1,
+    write_gen3d_assembly_snapshot, write_gen3d_json_artifact,
 };
 use super::{
     set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
     Gen3dAiTextResponse,
 };
+
+fn run_validate_v1(job: &mut Gen3dAiJob, draft: &Gen3dDraft) -> serde_json::Value {
+    let json = super::build_gen3d_validate_results(&job.planned_components, draft);
+    if let Some(dir) = job.pass_dir.as_deref() {
+        write_gen3d_json_artifact(Some(dir), "validate.json", &json);
+    }
+    job.agent.ever_validated = true;
+    json
+}
+
+fn run_smoke_check_v1(job: &mut Gen3dAiJob, draft: &mut Gen3dDraft) -> Result<serde_json::Value, String> {
+    let mut json = super::build_gen3d_smoke_results(
+        &job.user_prompt_raw,
+        !job.user_images.is_empty(),
+        job.rig_move_cycle_m,
+        &job.planned_components,
+        draft,
+    );
+
+    let has_contact_error = json
+        .get("motion_validation")
+        .and_then(|v| v.get("issues"))
+        .and_then(|v| v.as_array())
+        .is_some_and(|issues| {
+            issues.iter().any(|i| {
+                i.get("severity").and_then(|v| v.as_str()) == Some("error")
+                    && matches!(
+                        i.get("kind").and_then(|v| v.as_str()),
+                        Some("contact_stance_missing" | "contact_slip" | "contact_lift")
+                    )
+            })
+        });
+
+    if has_contact_error {
+        let repair = super::motion_validation::apply_contact_lock_auto_repair_if_needed(
+            job.rig_move_cycle_m,
+            &mut job.planned_components,
+        );
+        if repair.applied {
+            if let Some(dir) = job.pass_dir.as_deref() {
+                write_gen3d_json_artifact(Some(dir), "motion_auto_repair.json", &repair.to_json());
+                write_gen3d_json_artifact(Some(dir), "smoke_results_pre_repair.json", &json);
+            }
+
+            super::convert::sync_attachment_tree_to_defs(&job.planned_components, draft).map_err(
+                |err| format!("motion auto-repair failed to sync attachments: {err}"),
+            )?;
+
+            write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
+
+            json = super::build_gen3d_smoke_results(
+                &job.user_prompt_raw,
+                !job.user_images.is_empty(),
+                job.rig_move_cycle_m,
+                &job.planned_components,
+                draft,
+            );
+            if let serde_json::Value::Object(ref mut map) = json {
+                map.insert("motion_auto_repair".to_string(), repair.to_json());
+            }
+        }
+    }
+
+    job.agent.last_smoke_ok = json.get("ok").and_then(|v| v.as_bool());
+    job.agent.last_motion_ok = json
+        .get("motion_validation")
+        .and_then(|v| v.get("ok"))
+        .and_then(|v| v.as_bool());
+    if let Some(dir) = job.pass_dir.as_deref() {
+        write_gen3d_json_artifact(Some(dir), "smoke_results.json", &json);
+    }
+    job.agent.ever_smoke_checked = true;
+    Ok(json)
+}
 
 pub(super) fn execute_tool_call(
     config: &AppConfig,
@@ -122,88 +198,261 @@ pub(super) fn execute_tool_call(
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_VALIDATE => {
-            let json = super::build_gen3d_validate_results(&job.planned_components, draft);
-            if let Some(dir) = job.pass_dir.as_deref() {
-                write_gen3d_json_artifact(Some(dir), "validate.json", &json);
-            }
-            job.agent.ever_validated = true;
+            let json = run_validate_v1(job, draft);
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_SMOKE_CHECK => {
-            let mut json = super::build_gen3d_smoke_results(
-                &job.user_prompt_raw,
-                !job.user_images.is_empty(),
-                job.rig_move_cycle_m,
-                &job.planned_components,
-                draft,
-            );
+            let json = match run_smoke_check_v1(job, draft) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+        }
+        TOOL_ID_QA => {
+            let validate = run_validate_v1(job, draft);
+            let smoke = match run_smoke_check_v1(job, draft) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
 
-            let has_contact_error = json
-                .get("motion_validation")
-                .and_then(|v| v.get("issues"))
-                .and_then(|v| v.as_array())
-                .is_some_and(|issues| {
-                    issues.iter().any(|i| {
-                        i.get("severity").and_then(|v| v.as_str()) == Some("error")
-                            && matches!(
-                                i.get("kind").and_then(|v| v.as_str()),
-                                Some("contact_stance_missing" | "contact_slip" | "contact_lift")
-                            )
-                    })
-                });
+            let validate_ok = validate.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let smoke_ok = smoke.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            if has_contact_error {
-                let repair = super::motion_validation::apply_contact_lock_auto_repair_if_needed(
-                    job.rig_move_cycle_m,
-                    &mut job.planned_components,
-                );
-                if repair.applied {
-                    if let Some(dir) = job.pass_dir.as_deref() {
-                        write_gen3d_json_artifact(
-                            Some(dir),
-                            "motion_auto_repair.json",
-                            &repair.to_json(),
-                        );
-                        write_gen3d_json_artifact(
-                            Some(dir),
-                            "smoke_results_pre_repair.json",
-                            &json,
-                        );
-                    }
+            let mut errors: Vec<serde_json::Value> = Vec::new();
+            let mut warnings: Vec<serde_json::Value> = Vec::new();
 
-                    if let Err(err) =
-                        super::convert::sync_attachment_tree_to_defs(&job.planned_components, draft)
-                    {
-                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                            call.call_id,
-                            call.tool_id,
-                            format!("motion auto-repair failed to sync attachments: {err}"),
-                        ));
-                    }
-                    write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
+            fn push_issue(
+                out: &mut Vec<serde_json::Value>,
+                source: &'static str,
+                issue: &serde_json::Value,
+            ) {
+                if let serde_json::Value::Object(map) = issue {
+                    let mut merged = map.clone();
+                    merged.insert("source".to_string(), serde_json::Value::String(source.into()));
+                    out.push(serde_json::Value::Object(merged));
+                } else {
+                    out.push(serde_json::json!({ "source": source, "issue": issue }));
+                }
+            }
 
-                    json = super::build_gen3d_smoke_results(
-                        &job.user_prompt_raw,
-                        !job.user_images.is_empty(),
-                        job.rig_move_cycle_m,
-                        &job.planned_components,
-                        draft,
-                    );
-                    if let serde_json::Value::Object(ref mut map) = json {
-                        map.insert("motion_auto_repair".to_string(), repair.to_json());
+            fn collect(
+                source: &'static str,
+                issues: Option<&serde_json::Value>,
+                errors: &mut Vec<serde_json::Value>,
+                warnings: &mut Vec<serde_json::Value>,
+            ) {
+                let Some(issues) = issues else {
+                    return;
+                };
+                let Some(items) = issues.as_array() else {
+                    return;
+                };
+                for item in items {
+                    match item.get("severity").and_then(|v| v.as_str()) {
+                        Some("error") => push_issue(errors, source, item),
+                        Some("warn" | "warning") => push_issue(warnings, source, item),
+                        Some(_) | None => push_issue(warnings, source, item),
                     }
                 }
             }
 
-            job.agent.last_smoke_ok = json.get("ok").and_then(|v| v.as_bool());
-            job.agent.last_motion_ok = json
-                .get("motion_validation")
-                .and_then(|v| v.get("ok"))
-                .and_then(|v| v.as_bool());
+            collect(
+                "validate",
+                validate.get("issues"),
+                &mut errors,
+                &mut warnings,
+            );
+            collect("smoke", smoke.get("issues"), &mut errors, &mut warnings);
+            collect(
+                "motion_validation",
+                smoke.get("motion_validation").and_then(|v| v.get("issues")),
+                &mut errors,
+                &mut warnings,
+            );
+
+            let ok = validate_ok && smoke_ok;
+            let json = serde_json::json!({
+                "ok": ok,
+                "validate": validate,
+                "smoke": smoke,
+                "errors": errors,
+                "warnings": warnings,
+            });
+
             if let Some(dir) = job.pass_dir.as_deref() {
-                write_gen3d_json_artifact(Some(dir), "smoke_results.json", &json);
+                write_gen3d_json_artifact(Some(dir), "qa.json", &json);
             }
-            job.agent.ever_smoke_checked = true;
+
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+        }
+        TOOL_ID_LIST_RUN_ARTIFACTS => {
+            let Some(run_dir) = job.run_dir.as_deref() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "No active Gen3D run (missing run_dir).".into(),
+                ));
+            };
+
+            let path_prefix = call
+                .args
+                .get("path_prefix")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            let max_items = call
+                .args
+                .get("max_items")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(500)
+                .clamp(1, 500) as usize;
+
+            let (items, truncated) = match list_run_artifacts_v1(
+                run_dir,
+                path_prefix.as_deref(),
+                max_items,
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
+
+            let json = serde_json::json!({
+                "ok": true,
+                "run_dir": run_dir.display().to_string(),
+                "path_prefix": path_prefix,
+                "items": items,
+                "truncated": truncated,
+            });
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+        }
+        TOOL_ID_READ_ARTIFACT => {
+            let Some(run_dir) = job.run_dir.as_deref() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "No active Gen3D run (missing run_dir).".into(),
+                ));
+            };
+
+            let Some(artifact_ref) = call.args.get("artifact_ref").and_then(|v| v.as_str()) else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing args.artifact_ref".into(),
+                ));
+            };
+
+            let max_bytes = call
+                .args
+                .get("max_bytes")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(64 * 1024) as usize;
+            let tail_lines = call
+                .args
+                .get("tail_lines")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let json_pointer = call
+                .args
+                .get("json_pointer")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+
+            let json = match read_artifact_v1(
+                run_dir,
+                artifact_ref,
+                max_bytes,
+                tail_lines,
+                json_pointer.as_deref(),
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+        }
+        TOOL_ID_SEARCH_ARTIFACTS => {
+            let Some(run_dir) = job.run_dir.as_deref() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "No active Gen3D run (missing run_dir).".into(),
+                ));
+            };
+
+            let Some(query) = call.args.get("query").and_then(|v| v.as_str()) else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing args.query".into(),
+                ));
+            };
+
+            let path_prefix = call
+                .args
+                .get("path_prefix")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            let max_matches = call
+                .args
+                .get("max_matches")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(200) as usize;
+            let max_bytes_per_file = call
+                .args
+                .get("max_bytes_per_file")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(64 * 1024) as usize;
+
+            let (matches_out, truncated) = match search_artifacts_v1(
+                run_dir,
+                query,
+                path_prefix.as_deref(),
+                max_matches,
+                max_bytes_per_file,
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
+
+            let json = serde_json::json!({
+                "ok": true,
+                "query": query.trim(),
+                "path_prefix": path_prefix,
+                "matches": matches_out,
+                "truncated": truncated,
+            });
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_COPY_COMPONENT | TOOL_ID_MIRROR_COMPONENT => {

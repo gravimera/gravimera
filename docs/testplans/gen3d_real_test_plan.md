@@ -33,6 +33,7 @@ Config notes:
   - OpenAI: `OPENAI_API_KEY`
   - Gemini: `X_GOOG_API_KEY` (or `GEMINI_API_KEY`)
   - Claude: `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`)
+- For offline/deterministic debug runs, you can use the built-in mock backend by setting `base_url = "mock://gen3d"` and omitting the token (debug/test builds only).
 - Reference fixtures: `tests/gen3d/config.toml` (OpenAI), `tests/gen3d/config_gemini.toml` (Gemini), and `tests/gen3d/config_claude.toml` (Claude).
 
 Start from `config.example.toml` (it is safe to copy; `config.toml` is gitignored).
@@ -121,8 +122,10 @@ For each run id, review:
 
 - `attempt_0/pass_*/smoke_results.json`:
   - pay attention to spin-axis warnings (`suggested_component_local_axis` can fix wheels/props/turrets).
-- `attempt_0/pass_*/validate_results.json`:
+- `attempt_0/pass_*/validate.json`:
   - ensure there are no schema/anchor/reference errors.
+- `attempt_0/pass_*/qa.json` (if `qa_v1` was used):
+  - combined `{ ok, validate, smoke, errors, warnings }` summary for the pass.
 
 ## Logging issues
 

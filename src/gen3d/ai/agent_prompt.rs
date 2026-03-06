@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DESCRIBE,
-    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_MOTION_ROLES,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
-    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK,
-    TOOL_ID_VALIDATE,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_QA,
+    TOOL_ID_READ_ARTIFACT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 
@@ -45,7 +45,8 @@ Rules:\n\
   - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if runtime motion is available.\n\
 - Visual QA / appearance review:\n\
   - The state summary includes `review_appearance` (bool).\n\
-  - If review_appearance=false (default): STRUCTURE-ONLY. Prefer validate_v1 + smoke_check_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
+  - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
+    - qa_v1 runs validate_v1 + smoke_check_v1 and returns a combined summary.\n\
   - If review_appearance=true: do visual QA in WAVES to reduce LLM wall time.\n\
     - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\
   - IMPORTANT: planning must be its OWN step.\n\
@@ -74,14 +75,15 @@ Rules:\n\
 - IMPORTANT: If the state summary contains `pending_regen_component_indices` (non-empty), APPLY THEM NEXT:\n\
   - Call llm_generate_components_v1 with component_indices set to that list and force=true (regen is expected).\n\
   - Then run QA and confirm:\n\
-    - Always: smoke_check_v1\n\
+    - Always: qa_v1\n\
     - If review_appearance=true: render_preview_v1\n\
     - Then: llm_review_delta_v1\n\
-  - Do NOT call llm_review_delta_v1 repeatedly without applying the pending regen or rerunning smoke_check/validate (and render_preview_v1 if review_appearance=true).\n\
+  - Do NOT call llm_review_delta_v1 repeatedly without applying the pending regen or rerunning qa_v1 (and render_preview_v1 if review_appearance=true).\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
-- If you need tool schemas, call list_tools_v1 / describe_tool_v1.\n"
+- If you need tool schemas, call list_tools_v1 / describe_tool_v1.\n\
+- To inspect past artifacts/logs for this run, use list_run_artifacts_v1 / read_artifact_v1 / search_artifacts_v1.\n"
         .to_string()
 }
 
@@ -286,6 +288,27 @@ pub(super) fn build_agent_user_text(
                     out.push_str(&format!(" issues={issues}"));
                 }
             }
+            TOOL_ID_QA => {
+                let ok = value.get("ok").and_then(|v| v.as_bool());
+                let errors = value
+                    .get("errors")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
+                let warnings = value
+                    .get("warnings")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
+                out.push_str("ok");
+                if let Some(ok) = ok {
+                    out.push_str(&format!(" ok={ok}"));
+                }
+                if let Some(errors) = errors {
+                    out.push_str(&format!(" errors={errors}"));
+                }
+                if let Some(warnings) = warnings {
+                    out.push_str(&format!(" warnings={warnings}"));
+                }
+            }
             TOOL_ID_SMOKE_CHECK => {
                 let ok = value.get("ok").and_then(|v| v.as_bool());
                 let issues = value
@@ -298,6 +321,48 @@ pub(super) fn build_agent_user_text(
                 }
                 if let Some(issues) = issues {
                     out.push_str(&format!(" issues={issues}"));
+                }
+            }
+            TOOL_ID_LIST_RUN_ARTIFACTS => {
+                let items = value
+                    .get("items")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
+                let truncated = value.get("truncated").and_then(|v| v.as_bool());
+                out.push_str("ok");
+                if let Some(items) = items {
+                    out.push_str(&format!(" items={items}"));
+                }
+                if let Some(truncated) = truncated {
+                    out.push_str(&format!(" truncated={truncated}"));
+                }
+            }
+            TOOL_ID_READ_ARTIFACT => {
+                let artifact_ref = value.get("artifact_ref").and_then(|v| v.as_str());
+                let truncated = value.get("truncated").and_then(|v| v.as_bool());
+                out.push_str("ok");
+                if let Some(artifact_ref) = artifact_ref {
+                    out.push_str(&format!(
+                        " artifact_ref={}",
+                        truncate_for_prompt(artifact_ref, 120)
+                    ));
+                }
+                if let Some(truncated) = truncated {
+                    out.push_str(&format!(" truncated={truncated}"));
+                }
+            }
+            TOOL_ID_SEARCH_ARTIFACTS => {
+                let matches_len = value
+                    .get("matches")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
+                let truncated = value.get("truncated").and_then(|v| v.as_bool());
+                out.push_str("ok");
+                if let Some(matches_len) = matches_len {
+                    out.push_str(&format!(" matches={matches_len}"));
+                }
+                if let Some(truncated) = truncated {
+                    out.push_str(&format!(" truncated={truncated}"));
                 }
             }
             TOOL_ID_DESCRIBE => {

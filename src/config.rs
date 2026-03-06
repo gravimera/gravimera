@@ -246,6 +246,8 @@ fn populate_openai_config(out: &mut AppConfig, text: &str) {
 
     match parse_openai_config(text) {
         Ok(mut cfg) => {
+            let allow_empty_key_for_mock =
+                cfg.base_url.trim().starts_with("mock://gen3d") && cfg!(any(test, debug_assertions));
             // Allow env override for convenience (keeps secrets out of files if desired).
             if cfg.api_key.trim().is_empty() {
                 if let Ok(key) = std::env::var("OPENAI_API_KEY") {
@@ -253,9 +255,13 @@ fn populate_openai_config(out: &mut AppConfig, text: &str) {
                 }
             }
             if cfg.api_key.trim().is_empty() {
-                out.errors.push(
-                    "config.toml: missing `openai.token` / `openai.OPENAI_API_KEY` (or env `OPENAI_API_KEY`)".into(),
-                );
+                if allow_empty_key_for_mock {
+                    out.openai = Some(cfg);
+                } else {
+                    out.errors.push(
+                        "config.toml: missing `openai.token` / `openai.OPENAI_API_KEY` (or env `OPENAI_API_KEY`)".into(),
+                    );
+                }
             } else {
                 out.openai = Some(cfg);
             }
@@ -277,6 +283,8 @@ fn populate_gemini_config(out: &mut AppConfig, text: &str) {
 
     match parse_gemini_config(text) {
         Ok(mut cfg) => {
+            let allow_empty_key_for_mock =
+                cfg.base_url.trim().starts_with("mock://gen3d") && cfg!(any(test, debug_assertions));
             // Allow env override for convenience (keeps secrets out of files if desired).
             if cfg.api_key.trim().is_empty() {
                 if let Ok(key) = std::env::var("X_GOOG_API_KEY") {
@@ -289,9 +297,13 @@ fn populate_gemini_config(out: &mut AppConfig, text: &str) {
                 }
             }
             if cfg.api_key.trim().is_empty() {
-                out.errors.push(
-                    "config.toml: missing `gemini.token` / `gemini.X_GOOG_API_KEY` (or env `X_GOOG_API_KEY` / `GEMINI_API_KEY`)".into(),
-                );
+                if allow_empty_key_for_mock {
+                    out.gemini = Some(cfg);
+                } else {
+                    out.errors.push(
+                        "config.toml: missing `gemini.token` / `gemini.X_GOOG_API_KEY` (or env `X_GOOG_API_KEY` / `GEMINI_API_KEY`)".into(),
+                    );
+                }
             } else {
                 out.gemini = Some(cfg);
             }
@@ -313,6 +325,8 @@ fn populate_claude_config(out: &mut AppConfig, text: &str) {
 
     match parse_claude_config(text) {
         Ok(mut cfg) => {
+            let allow_empty_key_for_mock =
+                cfg.base_url.trim().starts_with("mock://gen3d") && cfg!(any(test, debug_assertions));
             // Allow env override for convenience (keeps secrets out of files if desired).
             if cfg.api_key.trim().is_empty() {
                 if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
@@ -325,9 +339,13 @@ fn populate_claude_config(out: &mut AppConfig, text: &str) {
                 }
             }
             if cfg.api_key.trim().is_empty() {
-                out.errors.push(
-                    "config.toml: missing `claude.token` / `claude.ANTHROPIC_API_KEY` (or env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`)".into(),
-                );
+                if allow_empty_key_for_mock {
+                    out.claude = Some(cfg);
+                } else {
+                    out.errors.push(
+                        "config.toml: missing `claude.token` / `claude.ANTHROPIC_API_KEY` (or env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`)".into(),
+                    );
+                }
             } else {
                 out.claude = Some(cfg);
             }
@@ -2618,6 +2636,28 @@ mod tests {
         assert!(cfg.openai.is_some());
         assert!(cfg.gemini.is_none());
         assert!(cfg.claude.is_none());
+        assert!(
+            cfg.errors.is_empty(),
+            "unexpected config errors: {:?}",
+            cfg.errors
+        );
+    }
+
+    #[test]
+    fn allows_mock_openai_without_token() {
+        let text = r#"
+        [gen3d]
+        ai_service = "openai"
+
+        [openai]
+        base_url = "mock://gen3d"
+        model = "mock"
+        "#;
+
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert_eq!(cfg.gen3d_ai_service, Gen3dAiService::OpenAi);
+        assert!(cfg.openai.is_some());
         assert!(
             cfg.errors.is_empty(),
             "unexpected config errors: {:?}",

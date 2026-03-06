@@ -332,8 +332,8 @@ Candidate additions:
 ## Next actions checklist (docs + design)
 
 - [ ] Document the “respect `done` by default” policy (including UI messaging and artifacts).
-- [ ] Design `qa_v1` output schema + artifact names and update the agent prompt to prefer it.
-- [ ] Design artifact inspection tools with strict scoping and bounded reads.
+- [x] (2026-03-07) Design `qa_v1` output schema + artifact names and update the agent prompt to prefer it.
+- [x] (2026-03-07) Design artifact inspection tools with strict scoping and bounded reads.
 - [ ] Design a generic async task API and migrate existing ad-hoc async flows toward it.
 - [ ] Specify “no runtime motion mapping” changes to the agent prompt + QA gating.
 - [ ] Specify resumable sessions + “Edit prefab” workflow + save semantics (fork vs overwrite).

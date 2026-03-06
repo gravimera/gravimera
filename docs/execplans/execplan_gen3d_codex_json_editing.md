@@ -44,7 +44,7 @@ Pre-implementation contracts (must be written down before coding):
 ## Progress
 
 - [x] (2026-03-07) Record roadmap decisions and tool ideas in `docs/gen3d/next_actions.md`.
-- [ ] Milestone A (Foundation): add `qa_v1` and run-artifact read tools (list/read/search) for the current run dir.
+- [x] (2026-03-07) Milestone A (Foundation): add `qa_v1` and run-artifact read tools (list/read/search) for the current run dir.
 - [ ] Milestone B (“Stop means stop”): accept agent `done` by default (keep only empty-draft guard) and surface QA/review state as machine-observable status.
 - [ ] Milestone C (Resumable sessions): add “Continue” for a stopped/cancelled session without resetting the draft.
 - [ ] Milestone D (Edit-from-prefab entry points): implement deterministic “seed Gen3D from Gen3D-saved prefab” APIs (Edit and Fork semantics).
@@ -54,8 +54,8 @@ Pre-implementation contracts (must be written down before coding):
 
 ## Surprises & Discoveries
 
-- Observation: (to fill)
-  Evidence: (to fill)
+- Observation: The config loader rejected empty API keys even when using `mock://gen3d`, which blocked rendered Gen3D regressions without secrets.
+  Evidence: `tools/gen3d_real_test.py` failed with HTTP 400 from `/v1/gen3d/build`: `config.toml: missing openai.token / openai.OPENAI_API_KEY (or env OPENAI_API_KEY)`.
 
 ## Decision Log
 
@@ -75,9 +75,18 @@ Pre-implementation contracts (must be written down before coding):
   Rationale: “Any animation” should not be constrained by pre-existing runtime rig taxonomies; keep Gen3D loop focused and assumption-minimal.
   Date/Author: 2026-03-07 / flow + agent
 
+- Decision: Allow empty provider tokens when `base_url` starts with `mock://gen3d` (debug/test builds only).
+  Rationale: Enables deterministic, rendered end-to-end Gen3D tests without requiring secrets (the mock backend never calls the network).
+  Date/Author: 2026-03-07 / agent
+
 ## Outcomes & Retrospective
 
-(To fill as milestones complete.)
+- Milestone A delivered:
+  - Added `qa_v1` (composed `validate_v1` + `smoke_check_v1`) with a compact `{ ok, validate, smoke, errors, warnings }` summary and a `qa.json` artifact.
+  - Added run-dir-scoped artifact tools: `list_run_artifacts_v1`, `read_artifact_v1`, `search_artifacts_v1` (bounded; rejects traversal; no arbitrary paths).
+  - Updated the agent prompt to prefer `qa_v1` and to mention artifact tools.
+  - Updated `mock://gen3d` agent flow to call `qa_v1` so QA composition is exercised in offline runs.
+  - Ran the required rendered smoke test and a rendered `tools/gen3d_real_test.py` run using `mock://gen3d` (no key).
 
 ## Context and Orientation
 

@@ -8,6 +8,10 @@ pub(crate) const TOOL_ID_GET_STATE_SUMMARY: &str = "get_state_summary_v1";
 pub(crate) const TOOL_ID_GET_SCENE_GRAPH_SUMMARY: &str = "get_scene_graph_summary_v1";
 pub(crate) const TOOL_ID_VALIDATE: &str = "validate_v1";
 pub(crate) const TOOL_ID_SMOKE_CHECK: &str = "smoke_check_v1";
+pub(crate) const TOOL_ID_QA: &str = "qa_v1";
+pub(crate) const TOOL_ID_LIST_RUN_ARTIFACTS: &str = "list_run_artifacts_v1";
+pub(crate) const TOOL_ID_READ_ARTIFACT: &str = "read_artifact_v1";
+pub(crate) const TOOL_ID_SEARCH_ARTIFACTS: &str = "search_artifacts_v1";
 pub(crate) const TOOL_ID_COPY_COMPONENT: &str = "copy_component_v1";
 pub(crate) const TOOL_ID_MIRROR_COMPONENT: &str = "mirror_component_v1";
 pub(crate) const TOOL_ID_COPY_COMPONENT_SUBTREE: &str = "copy_component_subtree_v1";
@@ -86,6 +90,30 @@ impl Gen3dToolRegistryV1 {
                 tool_id: TOOL_ID_SMOKE_CHECK,
                 title: "Smoke check",
                 one_line_summary: "Runs lightweight behavioral checks based on prompt and current draft.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_QA,
+                title: "QA",
+                one_line_summary:
+                    "Runs validate_v1 + smoke_check_v1 and returns a combined summary.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_LIST_RUN_ARTIFACTS,
+                title: "List run artifacts",
+                one_line_summary:
+                    "Lists bounded artifacts under the current run dir (scoped; no arbitrary paths).",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_READ_ARTIFACT,
+                title: "Read artifact",
+                one_line_summary:
+                    "Reads a bounded slice of a run artifact (scoped; rejects path traversal).",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_SEARCH_ARTIFACTS,
+                title: "Search artifacts",
+                one_line_summary:
+                    "Searches run artifacts for a substring (scoped, bounded; for debugging).",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT,
@@ -269,6 +297,91 @@ impl Gen3dToolRegistryV1 {
                 result_example: serde_json::json!({
                     "ok": true,
                     "issues": [],
+                }),
+            }),
+            TOOL_ID_QA => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_QA,
+                title: "QA",
+                one_line_summary: "Runs validate_v1 + smoke_check_v1 and returns a combined summary.",
+                description:
+                    "Composed QA tool that runs `validate_v1` and `smoke_check_v1` (in that order) and returns a compact combined verdict.\n\
+                     This tool writes the same artifacts as its underlying tools (`validate.json`, `smoke_results.json`).",
+                args_example: serde_json::json!({}),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "validate": { "ok": true, "issues": [] },
+                    "smoke": { "ok": true, "issues": [] },
+                    "errors": [],
+                    "warnings": [],
+                }),
+            }),
+            TOOL_ID_LIST_RUN_ARTIFACTS => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_LIST_RUN_ARTIFACTS,
+                title: "List run artifacts",
+                one_line_summary:
+                    "Lists bounded artifacts under the current run dir (scoped; no arbitrary paths).",
+                description:
+                    "Enumerates artifacts produced by this Gen3D run (JSON/JSONL/TXT/PNG/etc).\n\
+                     The tool is strictly scoped to the current Gen3D run dir and rejects path traversal.",
+                args_example: serde_json::json!({
+                    "max_items": 200,
+                    "path_prefix": "attempt_0/pass_3",
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "items": [
+                        {
+                            "artifact_ref": "attempt_0/pass_3/validate.json",
+                            "kind": "json",
+                            "size_bytes": 1234,
+                            "modified_at_ms": 1700000000000u64
+                        }
+                    ],
+                    "truncated": false,
+                }),
+            }),
+            TOOL_ID_READ_ARTIFACT => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_READ_ARTIFACT,
+                title: "Read artifact",
+                one_line_summary:
+                    "Reads a bounded slice of a run artifact (scoped; rejects path traversal).",
+                description:
+                    "Reads a bounded slice of a single artifact under the current Gen3D run dir.\n\
+                     Use `tail_lines` for logs/JSONL; use `max_bytes` to cap output.\n\
+                     This tool is scoped to the current Gen3D run dir and rejects `..` and absolute paths.",
+                args_example: serde_json::json!({
+                    "artifact_ref": "attempt_0/pass_3/gen3d_run.log",
+                    "tail_lines": 120,
+                    "max_bytes": 65536,
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "artifact_ref": "attempt_0/pass_3/gen3d_run.log",
+                    "content_type": "text/plain",
+                    "truncated": true,
+                    "text": "[...]"
+                }),
+            }),
+            TOOL_ID_SEARCH_ARTIFACTS => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_SEARCH_ARTIFACTS,
+                title: "Search artifacts",
+                one_line_summary:
+                    "Searches run artifacts for a substring (scoped, bounded; for debugging).",
+                description:
+                    "Searches text artifacts under the current Gen3D run dir for a substring.\n\
+                     This is bounded (max matches, max bytes per file) and scoped (no arbitrary filesystem paths).",
+                args_example: serde_json::json!({
+                    "query": "ERROR",
+                    "max_matches": 50,
+                    "path_prefix": "attempt_0",
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "query": "ERROR",
+                    "matches": [
+                        {"artifact_ref":"attempt_0/pass_3/gen3d_run.log","where":"tail","line":"...ERROR..."}
+                    ],
+                    "truncated": false,
                 }),
             }),
             TOOL_ID_COPY_COMPONENT => Some(Gen3dToolDescriptionV1 {
