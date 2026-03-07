@@ -50,7 +50,7 @@ Pre-implementation contracts (must be written down before coding):
 - [x] (2026-03-07) Milestone D (Edit-from-prefab entry points): implement deterministic “seed Gen3D from Gen3D-saved prefab” APIs (Edit and Fork semantics).
 - [x] (2026-03-07) Milestone E (Meta panel wiring): add Meta panel buttons Copy/Edit/Fork (gated to Gen3D-saved prefabs) and connect them to the entry points.
 - [x] (2026-03-07) Milestone F (Deterministic patch ops): add an engine “apply_patch-like” tool (`apply_draft_ops_v1`) with explicit IDs, stable part IDs, and a structured diff.
-- [ ] Milestone G (Snapshots + branching): add snapshot/diff/restore and workspace diff/merge/copy tools so the agent can branch and compare alternatives safely.
+- [x] (2026-03-07) Milestone G (Snapshots + branching): add snapshot/diff/restore and workspace diff/merge/copy tools so the agent can branch and compare alternatives safely.
 
 ## Surprises & Discoveries
 
@@ -134,6 +134,20 @@ Pre-implementation contracts (must be written down before coding):
   - `apply_draft_ops_v1` writes a JSONL transaction log (`draft_ops.jsonl`) and a summary snapshot (`apply_draft_ops_last.json`) under the current pass dir.
   - Added an Automation API hook for rendered tests: `POST /v1/gen3d/apply_draft_ops`.
   - Verified via rendered regressions: `tools/gen3d_real_test.py --apply-draft-ops-regression` using `mock://gen3d` (no key).
+
+- Milestone G delivered:
+  - Workspaces now capture the full “editable session state” needed for safe branching (not just `draft.defs`): `planned_components`, `plan_hash`, `assembly_rev`, motion authoring state, reuse groups/warnings.
+  - Added snapshot tools:
+    - `snapshot_v1`, `list_snapshots_v1`
+    - `diff_snapshots_v1` (structured per-component diff)
+    - `restore_snapshot_v1` (blocked while running; workspace-scoped restore)
+    - snapshot events are logged to `snapshots.jsonl` under the run dir.
+  - Added workspace branching tools:
+    - `diff_workspaces_v1` (structured diff)
+    - `copy_from_workspace_v1` (explicit cherry-picks into the active workspace)
+    - `merge_workspace_v1` (deterministic 3-way merge; conflicts returned; no auto-resolve).
+  - Added Automation HTTP APIs for rendered tests: `/v1/gen3d/*snapshots*` and `/v1/gen3d/*workspace*`.
+  - Verified in rendered runs via `tools/gen3d_real_test.py --snapshots-regression` and `--workspace-regression` using `tests/gen3d_real_test/config.toml` + `mock://gen3d` (no key).
 
 ## Context and Orientation
 

@@ -344,3 +344,4 @@ Candidate additions:
 - [ ] Specify “no runtime motion mapping” changes to the agent prompt + QA gating.
 - [x] (2026-03-07) Specify resumable sessions + “Edit prefab” workflow + save semantics (fork vs overwrite).
 - [x] (2026-03-07) Add Meta panel buttons: Copy / Edit / Fork (Gen3D-prefab-gated).
+- [x] (2026-03-07) Implement snapshots + branching tools (snapshots + workspace diff/copy/merge) and validate via rendered `tools/gen3d_real_test.py` regressions.
