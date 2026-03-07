@@ -23,10 +23,6 @@ impl Plugin for RenderedStartupPlugin {
         app.add_systems(Startup, setup::setup_rendered);
         app.add_systems(
             Startup,
-            crate::build::setup_game_mode_toggle_ui.after(setup::setup_rendered),
-        );
-        app.add_systems(
-            Startup,
             crate::workspace_ui::setup_workspace_ui.after(setup::setup_rendered),
         );
         app.add_systems(
@@ -67,11 +63,7 @@ impl Plugin for RenderedSceneRuntimePlugin {
             Update,
             crate::scene_instance_visuals::ensure_scene_instance_visuals_spawned,
         );
-        app.add_systems(
-            Update,
-            scene_store::apply_pending_workspace_switch
-                .after(crate::workspace_ui::workspace_ui_dropdown_option_buttons),
-        );
+        app.add_systems(Update, scene_store::apply_pending_workspace_switch);
         app.add_systems(
             Update,
             (
@@ -161,24 +153,20 @@ impl Plugin for RenderedUiPlugin {
                 crate::build::update_game_mode_toggle_button_label,
                 crate::action_log_ui::update_action_log_ui.after(crate::rts::execute_move_orders),
                 crate::workspace_ui::workspace_ui_update_visibility,
-                crate::workspace_ui::workspace_ui_dropdown_list_visibility
+                crate::workspace_ui::workspace_toolbar_update_visibility
                     .after(crate::workspace_ui::workspace_ui_update_visibility),
-                crate::workspace_ui::workspace_ui_update_labels
-                    .after(crate::workspace_ui::workspace_ui_dropdown_list_visibility),
-                crate::workspace_ui::workspace_ui_models_toggle_button_ui
-                    .after(crate::workspace_ui::workspace_ui_update_labels),
+                crate::workspace_ui::workspace_toolbar_sync_model_library_open
+                    .after(crate::workspace_ui::workspace_toolbar_update_visibility),
+                crate::workspace_ui::workspace_toolbar_update_toggle_button_styles
+                    .after(crate::workspace_ui::workspace_toolbar_sync_model_library_open),
+                crate::workspace_ui::workspace_toolbar_update_scenes_panel_visibility
+                    .after(crate::workspace_ui::workspace_toolbar_update_toggle_button_styles),
             ),
         );
         app.add_systems(
             Update,
             (
-                crate::workspace_ui::workspace_ui_dropdown_button,
-                crate::workspace_ui::workspace_ui_dropdown_option_buttons
-                    .after(crate::workspace_ui::workspace_ui_dropdown_button),
-                crate::workspace_ui::workspace_ui_action_button
-                    .after(crate::workspace_ui::workspace_ui_dropdown_option_buttons),
-                crate::workspace_ui::workspace_ui_models_toggle_button
-                    .after(crate::workspace_ui::workspace_ui_action_button),
+                crate::workspace_ui::workspace_toolbar_toggle_buttons,
                 crate::build::handle_game_mode_toggle_button,
                 crate::action_log_ui::handle_action_log_toggle_button,
             )
@@ -189,7 +177,8 @@ impl Plugin for RenderedUiPlugin {
         app.add_systems(
             Update,
             (
-                crate::model_library_ui::model_library_update_visibility,
+                crate::model_library_ui::model_library_update_visibility
+                    .after(crate::workspace_ui::workspace_toolbar_sync_model_library_open),
                 crate::model_library_ui::model_library_rebuild_list_ui
                     .after(crate::model_library_ui::model_library_update_visibility),
             ),
@@ -197,6 +186,8 @@ impl Plugin for RenderedUiPlugin {
         app.add_systems(
             Update,
             (
+                crate::model_library_ui::model_library_gen3d_button_interactions
+                    .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_item_button_interactions
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_scroll_wheel

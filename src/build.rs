@@ -386,45 +386,6 @@ pub(crate) struct GameModeToggleButton;
 #[derive(Component)]
 pub(crate) struct GameModeToggleButtonText;
 
-pub(crate) fn setup_game_mode_toggle_ui(mut commands: Commands) {
-    commands
-        .spawn((
-            Button,
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(8.0),
-                left: Val::Px(10.0),
-                width: Val::Px(92.0),
-                height: Val::Px(34.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60)),
-            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-            Outline {
-                width: Val::Px(1.0),
-                color: Color::srgba(0.25, 0.25, 0.30, 0.65),
-                offset: Val::Px(0.0),
-            },
-            ZIndex(965),
-            GameModeToggleButton,
-        ))
-        .with_children(|b| {
-            b.spawn((
-                Text::new("Play"),
-                TextFont {
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                GameModeToggleButtonText,
-            ));
-        });
-}
-
 pub(crate) fn toggle_game_mode(
     keys: Res<ButtonInput<KeyCode>>,
     build_scene: Res<State<BuildScene>>,
@@ -480,34 +441,15 @@ pub(crate) fn handle_game_mode_toggle_button(
 pub(crate) fn update_game_mode_toggle_button_label(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
-    workspace: Res<crate::workspace_ui::WorkspaceUiState>,
-    mut buttons: Query<(&mut Visibility, &mut Node), With<GameModeToggleButton>>,
+    mut buttons: Query<&mut Visibility, With<GameModeToggleButton>>,
     mut texts: Query<&mut Text, With<GameModeToggleButtonText>>,
 ) {
     let visible = matches!(build_scene.get(), BuildScene::Realm);
-    for (mut visibility, mut node) in &mut buttons {
+    for mut visibility in &mut buttons {
         *visibility = if visible {
             Visibility::Visible
         } else {
             Visibility::Hidden
-        };
-
-        // Keep the mode toggle button adjacent to the workspace controls in Build mode,
-        // and flush-left in Play mode.
-        node.left = match mode.get() {
-            GameMode::Build => {
-                let mut offset_px = 10.0 + 170.0 + 8.0 + 132.0 + 8.0;
-                let show_models_toggle = matches!(build_scene.get(), BuildScene::Realm)
-                    && matches!(
-                        workspace.tab,
-                        crate::workspace_ui::WorkspaceTab::ObjectPreview
-                    );
-                if show_models_toggle {
-                    offset_px += 132.0 + 8.0;
-                }
-                Val::Px(offset_px)
-            }
-            GameMode::Play => Val::Px(10.0),
         };
     }
 

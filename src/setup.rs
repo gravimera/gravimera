@@ -16,7 +16,7 @@ pub(crate) fn setup_rendered(
 ) {
     info!(
          "Controls: LMB selects (click/drag), RMB issues move orders.\n\
-         F1 toggles Build/Play (or top-left button).\n\
+         F1 toggles Build/Play (or the Play/Build button in the top bar).\n\
          Forms: Tab cycles forms (selected), hold C to copy source current form (release to confirm; Esc cancels).\n\
          Build/Play: hold Space to fire toward the cursor (ground or an enemy).\n\
          Build: Delete remove, M duplicate unit, Ctrl/Cmd+D duplicate build.\n\

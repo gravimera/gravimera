@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 
-use crate::scene_authoring_ui::SceneAuthoringUiState;
 use crate::types::{BuildScene, GameMode};
 
 const WORKSPACE_UI_Z_INDEX: i32 = 960;
-const DROPDOWN_WIDTH_PX: f32 = 170.0;
-const BUTTON_HEIGHT_PX: f32 = 34.0;
-const DROPDOWN_LIST_TOP_PX: f32 = 40.0;
+const SIDE_PANEL_Z_INDEX: i32 = 930;
+const TOOLBAR_BUTTON_WIDTH_PX: f32 = 132.0;
+const TOOLBAR_BUTTON_HEIGHT_PX: f32 = 34.0;
+const SIDE_PANEL_WIDTH_PX: f32 = 260.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkspaceTab {
@@ -21,27 +21,47 @@ impl WorkspaceTab {
             WorkspaceTab::SceneBuild => "Scene Build",
         }
     }
-
-    fn action_label(self) -> &'static str {
-        match self {
-            WorkspaceTab::ObjectPreview => "Gen3D",
-            WorkspaceTab::SceneBuild => "Scene Build",
-        }
-    }
 }
 
 #[derive(Resource, Debug)]
 pub(crate) struct WorkspaceUiState {
     pub(crate) tab: WorkspaceTab,
-    dropdown_open: bool,
 }
 
 impl Default for WorkspaceUiState {
     fn default() -> Self {
         Self {
             tab: WorkspaceTab::ObjectPreview,
-            dropdown_open: false,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TopPanelTab {
+    Scenes,
+    Models,
+}
+
+#[derive(Resource, Debug)]
+pub(crate) struct TopPanelUiState {
+    pub(crate) selected: Option<TopPanelTab>,
+}
+
+impl Default for TopPanelUiState {
+    fn default() -> Self {
+        Self {
+            selected: Some(TopPanelTab::Models),
+        }
+    }
+}
+
+impl TopPanelUiState {
+    pub(crate) fn toggle(&mut self, tab: TopPanelTab) {
+        self.selected = if self.selected == Some(tab) {
+            None
+        } else {
+            Some(tab)
+        };
     }
 }
 
@@ -124,36 +144,19 @@ impl PendingWorkspaceSwitch {
 pub(crate) struct WorkspaceUiRoot;
 
 #[derive(Component)]
-pub(crate) struct WorkspaceDropdownButton;
+pub(crate) struct WorkspaceScenesToggleButton;
 
 #[derive(Component)]
-pub(crate) struct WorkspaceDropdownButtonText;
-
-#[derive(Component)]
-pub(crate) struct WorkspaceDropdownList;
-
-#[derive(Component)]
-pub(crate) struct WorkspaceDropdownOptionButton {
-    tab: WorkspaceTab,
-}
-
-impl WorkspaceDropdownOptionButton {
-    fn new(tab: WorkspaceTab) -> Self {
-        Self { tab }
-    }
-}
-
-#[derive(Component)]
-pub(crate) struct WorkspaceActionButton;
-
-#[derive(Component)]
-pub(crate) struct WorkspaceActionButtonText;
+pub(crate) struct WorkspaceScenesToggleButtonText;
 
 #[derive(Component)]
 pub(crate) struct WorkspaceModelsToggleButton;
 
 #[derive(Component)]
 pub(crate) struct WorkspaceModelsToggleButtonText;
+
+#[derive(Component)]
+pub(crate) struct ScenesPanelRoot;
 
 pub(crate) fn setup_workspace_ui(mut commands: Commands) {
     commands
@@ -174,8 +177,8 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
             root.spawn((
                 Button,
                 Node {
-                    width: Val::Px(DROPDOWN_WIDTH_PX),
-                    height: Val::Px(BUTTON_HEIGHT_PX),
+                    width: Val::Px(TOOLBAR_BUTTON_WIDTH_PX),
+                    height: Val::Px(TOOLBAR_BUTTON_HEIGHT_PX),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
@@ -189,57 +192,25 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
                     color: Color::srgba(0.25, 0.25, 0.30, 0.65),
                     offset: Val::Px(0.0),
                 },
-                WorkspaceDropdownButton,
+                WorkspaceScenesToggleButton,
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new("Object Preview v"),
+                    Text::new("Scenes"),
                     TextFont {
                         font_size: 16.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                    WorkspaceDropdownButtonText,
+                    WorkspaceScenesToggleButtonText,
                 ));
             });
 
             root.spawn((
                 Button,
                 Node {
-                    width: Val::Px(132.0),
-                    height: Val::Px(BUTTON_HEIGHT_PX),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60)),
-                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                Outline {
-                    width: Val::Px(1.0),
-                    color: Color::srgba(0.25, 0.25, 0.30, 0.65),
-                    offset: Val::Px(0.0),
-                },
-                WorkspaceActionButton,
-            ))
-            .with_children(|b| {
-                b.spawn((
-                    Text::new("Gen3D"),
-                    TextFont {
-                        font_size: 16.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                    WorkspaceActionButtonText,
-                ));
-            });
-
-            root.spawn((
-                Button,
-                Node {
-                    width: Val::Px(132.0),
-                    height: Val::Px(BUTTON_HEIGHT_PX),
+                    width: Val::Px(TOOLBAR_BUTTON_WIDTH_PX),
+                    height: Val::Px(TOOLBAR_BUTTON_HEIGHT_PX),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
@@ -257,7 +228,7 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new("Hide Models"),
+                    Text::new("Models"),
                     TextFont {
                         font_size: 16.0,
                         ..default()
@@ -268,66 +239,90 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
             });
 
             root.spawn((
+                Button,
                 Node {
-                    position_type: PositionType::Absolute,
-                    top: Val::Px(DROPDOWN_LIST_TOP_PX),
-                    left: Val::Px(0.0),
-                    width: Val::Px(DROPDOWN_WIDTH_PX),
-                    flex_direction: FlexDirection::Column,
-                    padding: UiRect::all(Val::Px(6.0)),
+                    width: Val::Px(92.0),
+                    height: Val::Px(TOOLBAR_BUTTON_HEIGHT_PX),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                     border: UiRect::all(Val::Px(1.0)),
-                    row_gap: Val::Px(6.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.92)),
-                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75)),
+                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
                 Outline {
                     width: Val::Px(1.0),
-                    color: Color::srgba(0.25, 0.25, 0.30, 0.75),
+                    color: Color::srgba(0.25, 0.25, 0.30, 0.65),
                     offset: Val::Px(0.0),
                 },
-                ZIndex(WORKSPACE_UI_Z_INDEX + 1),
-                Visibility::Hidden,
-                WorkspaceDropdownList,
+                crate::build::GameModeToggleButton,
             ))
-            .with_children(|list| {
-                for tab in [WorkspaceTab::ObjectPreview, WorkspaceTab::SceneBuild] {
-                    list.spawn((
-                        Button,
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(30.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                            border: UiRect::all(Val::Px(1.0)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.82)),
-                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                        WorkspaceDropdownOptionButton::new(tab),
-                    ))
-                    .with_children(|b| {
-                        b.spawn((
-                            Text::new(tab.label()),
-                            TextFont {
-                                font_size: 14.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                        ));
-                    });
-                }
+            .with_children(|b| {
+                b.spawn((
+                    Text::new("Play"),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    crate::build::GameModeToggleButtonText,
+                ));
             });
+        });
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(44.0),
+                left: Val::Px(10.0),
+                width: Val::Px(SIDE_PANEL_WIDTH_PX),
+                height: Val::Px(680.0),
+                max_height: Val::Px(680.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(10.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.88)),
+            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75)),
+            Outline {
+                width: Val::Px(1.0),
+                color: Color::srgba(0.25, 0.25, 0.30, 0.75),
+                offset: Val::Px(0.0),
+            },
+            ZIndex(SIDE_PANEL_Z_INDEX),
+            Visibility::Hidden,
+            ScenesPanelRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Text::new("Scenes"),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.95, 0.95, 0.97)),
+            ));
+
+            root.spawn((
+                Text::new("No scenes yet."),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.80, 0.80, 0.86)),
+            ));
         });
 }
 
 pub(crate) fn workspace_ui_update_visibility(
-    mode: Res<State<GameMode>>,
-    mut state: ResMut<WorkspaceUiState>,
+    build_scene: Res<State<BuildScene>>,
     mut roots: Query<&mut Visibility, With<WorkspaceUiRoot>>,
 ) {
-    let visible = matches!(mode.get(), GameMode::Build);
+    let visible = matches!(build_scene.get(), BuildScene::Realm);
     for mut v in &mut roots {
         *v = if visible {
             Visibility::Visible
@@ -335,124 +330,62 @@ pub(crate) fn workspace_ui_update_visibility(
             Visibility::Hidden
         };
     }
-    if !visible {
-        state.dropdown_open = false;
-    }
 }
 
-pub(crate) fn workspace_ui_dropdown_button(
-    mut state: ResMut<WorkspaceUiState>,
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<WorkspaceDropdownButton>),
-    >,
-) {
-    for (interaction, mut bg) in &mut buttons {
-        match *interaction {
-            Interaction::Pressed => {
-                state.dropdown_open = !state.dropdown_open;
-                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.85));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.75));
-            }
-            Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
-            }
-        }
-    }
-}
-
-pub(crate) fn workspace_ui_dropdown_list_visibility(
-    state: Res<WorkspaceUiState>,
-    mut lists: Query<(&mut Node, &mut Visibility), With<WorkspaceDropdownList>>,
-) {
-    for (mut node, mut vis) in &mut lists {
-        let open = state.dropdown_open;
-        node.display = if open { Display::Flex } else { Display::None };
-        *vis = if open {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-}
-
-pub(crate) fn workspace_ui_dropdown_option_buttons(
-    mut ui_state: ResMut<WorkspaceUiState>,
-    mut pending_switch: ResMut<PendingWorkspaceSwitch>,
-    build_scene: Res<State<BuildScene>>,
-    mut next_build_scene: ResMut<NextState<BuildScene>>,
-    mut scene_ui: ResMut<SceneAuthoringUiState>,
+pub(crate) fn workspace_toolbar_toggle_buttons(
+    mut state: ResMut<TopPanelUiState>,
     mut buttons: Query<
         (
             &Interaction,
-            &WorkspaceDropdownOptionButton,
-            &mut BackgroundColor,
+            Option<&WorkspaceScenesToggleButton>,
+            Option<&WorkspaceModelsToggleButton>,
         ),
-        Changed<Interaction>,
+        (
+            Changed<Interaction>,
+            Or<(
+                With<WorkspaceScenesToggleButton>,
+                With<WorkspaceModelsToggleButton>,
+            )>,
+        ),
     >,
 ) {
-    for (interaction, button, mut bg) in &mut buttons {
-        match *interaction {
-            Interaction::Pressed => {
-                let from = ui_state.tab;
-                let to = button.tab;
-                if to != from {
-                    pending_switch.request(from, to);
-                    ui_state.tab = to;
-                }
-                ui_state.dropdown_open = false;
-
-                // Switching tabs should always return to the main realm view.
-                if matches!(build_scene.get(), BuildScene::Preview) {
-                    next_build_scene.set(BuildScene::Realm);
-                }
-
-                // Scene Build panel should not stay open in Object Preview.
-                if matches!(button.tab, WorkspaceTab::ObjectPreview) {
-                    scene_ui.set_open(false);
-                }
-
-                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.88));
-            }
-            Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.82));
-            }
+    for (interaction, scenes, models) in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if scenes.is_some() {
+            state.toggle(TopPanelTab::Scenes);
+        } else if models.is_some() {
+            state.toggle(TopPanelTab::Models);
         }
     }
 }
 
-pub(crate) fn workspace_ui_update_labels(
-    state: Res<WorkspaceUiState>,
-    mut texts: ParamSet<(
-        Query<&mut Text, With<WorkspaceDropdownButtonText>>,
-        Query<&mut Text, With<WorkspaceActionButtonText>>,
-    )>,
-) {
-    let dropdown_label = format!("{} v", state.tab.label());
-    for mut text in &mut texts.p0() {
-        **text = dropdown_label.clone();
-    }
-    for mut text in &mut texts.p1() {
-        **text = state.tab.action_label().into();
-    }
-}
-
-pub(crate) fn workspace_ui_models_toggle_button_ui(
+pub(crate) fn workspace_toolbar_sync_model_library_open(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
-    state: Res<WorkspaceUiState>,
-    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
-    mut buttons: Query<(&mut Node, &mut Visibility), With<WorkspaceModelsToggleButton>>,
-    mut texts: Query<&mut Text, With<WorkspaceModelsToggleButtonText>>,
+    state: Res<TopPanelUiState>,
+    mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
 ) {
-    let visible = matches!(mode.get(), GameMode::Build)
+    let open = matches!(mode.get(), GameMode::Build)
         && matches!(build_scene.get(), BuildScene::Realm)
-        && matches!(state.tab, WorkspaceTab::ObjectPreview);
+        && state.selected == Some(TopPanelTab::Models);
+    model_library.set_open(open);
+}
+
+pub(crate) fn workspace_toolbar_update_visibility(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    mut buttons: Query<
+        (&mut Node, &mut Visibility),
+        Or<(
+            With<WorkspaceScenesToggleButton>,
+            With<WorkspaceModelsToggleButton>,
+        )>,
+    >,
+) {
+    let visible =
+        matches!(mode.get(), GameMode::Build) && matches!(build_scene.get(), BuildScene::Realm);
     for (mut node, mut vis) in &mut buttons {
         node.display = if visible {
             Display::Flex
@@ -465,82 +398,74 @@ pub(crate) fn workspace_ui_models_toggle_button_ui(
             Visibility::Hidden
         };
     }
-
-    let label = if model_library.is_open() {
-        "Hide Models"
-    } else {
-        "Show Models"
-    };
-    for mut text in &mut texts {
-        **text = label.into();
-    }
 }
 
-pub(crate) fn workspace_ui_models_toggle_button(
-    state: Res<WorkspaceUiState>,
-    build_scene: Res<State<BuildScene>>,
-    mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
+pub(crate) fn workspace_toolbar_update_toggle_button_styles(
+    state: Res<TopPanelUiState>,
     mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<WorkspaceModelsToggleButton>),
+        (
+            &Interaction,
+            Option<&WorkspaceScenesToggleButton>,
+            Option<&WorkspaceModelsToggleButton>,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        Or<(
+            With<WorkspaceScenesToggleButton>,
+            With<WorkspaceModelsToggleButton>,
+        )>,
     >,
 ) {
-    for (interaction, mut bg) in &mut buttons {
+    for (interaction, scenes, models, mut bg, mut border) in &mut buttons {
+        let selected = if scenes.is_some() {
+            state.selected == Some(TopPanelTab::Scenes)
+        } else if models.is_some() {
+            state.selected == Some(TopPanelTab::Models)
+        } else {
+            false
+        };
+
         match *interaction {
             Interaction::Pressed => {
-                if matches!(state.tab, WorkspaceTab::ObjectPreview)
-                    && matches!(build_scene.get(), BuildScene::Realm)
-                {
-                    let next_open = !model_library.is_open();
-                    model_library.set_open(next_open);
-                }
-                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.85));
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
             }
             Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.75));
+                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.80));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
             }
             Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
+                if selected {
+                    *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.85));
+                    *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+                } else {
+                    *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
+                    *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+                }
             }
         }
     }
 }
 
-pub(crate) fn workspace_ui_action_button(
-    mut ui_state: ResMut<WorkspaceUiState>,
+pub(crate) fn workspace_toolbar_update_scenes_panel_visibility(
+    mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
-    mut next_build_scene: ResMut<NextState<BuildScene>>,
-    mut scene_ui: ResMut<SceneAuthoringUiState>,
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<WorkspaceActionButton>),
-    >,
+    state: Res<TopPanelUiState>,
+    mut roots: Query<(&mut Node, &mut Visibility), With<ScenesPanelRoot>>,
 ) {
-    for (interaction, mut bg) in &mut buttons {
-        match *interaction {
-            Interaction::Pressed => {
-                match ui_state.tab {
-                    WorkspaceTab::ObjectPreview => {
-                        scene_ui.set_open(false);
-                        if matches!(build_scene.get(), BuildScene::Preview) {
-                            next_build_scene.set(BuildScene::Realm);
-                        } else {
-                            next_build_scene.set(BuildScene::Preview);
-                        }
-                    }
-                    WorkspaceTab::SceneBuild => {
-                        ui_state.dropdown_open = false;
-                        scene_ui.toggle_open();
-                    }
-                }
-                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.85));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.75));
-            }
-            Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
-            }
-        }
+    let visible = matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm)
+        && state.selected == Some(TopPanelTab::Scenes);
+    for (mut node, mut vis) in &mut roots {
+        node.display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        *vis = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }

@@ -129,6 +129,42 @@ pub(crate) fn enter_gen3d_mode(
         ))
         .with_children(|root| {
             root.spawn((
+                Button,
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(12.0),
+                    left: Val::Px(12.0),
+                    width: Val::Px(92.0),
+                    height: Val::Px(34.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                Outline {
+                    width: Val::Px(1.0),
+                    color: Color::srgba(0.25, 0.25, 0.30, 0.65),
+                    offset: Val::Px(0.0),
+                },
+                ZIndex(910),
+                Gen3dToggleButton,
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new("Realm"),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    Gen3dToggleButtonText,
+                ));
+            });
+
+            root.spawn((
                 Node {
                     flex_grow: 1.0,
                     flex_direction: FlexDirection::Row,

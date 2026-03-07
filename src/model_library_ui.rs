@@ -45,7 +45,7 @@ impl Default for ModelLibraryUiState {
     fn default() -> Self {
         Self {
             models_dirty: true,
-            open: false,
+            open: true,
             drag: None,
             spawn_seq: 0,
             scrollbar_drag: None,
@@ -101,6 +101,12 @@ pub(crate) struct ModelLibraryItemButton {
     pub(crate) model_id: u128,
 }
 
+#[derive(Component)]
+pub(crate) struct ModelLibraryGen3dButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryGen3dButtonText;
+
 pub(crate) fn setup_model_library_ui(mut commands: Commands) {
     commands
         .spawn((
@@ -129,13 +135,48 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
         ))
         .with_children(|root| {
             root.spawn((
-                Text::new("Models"),
-                TextFont {
-                    font_size: 18.0,
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
                     ..default()
                 },
-                TextColor(Color::srgb(0.95, 0.95, 0.97)),
-            ));
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|row| {
+                row.spawn((
+                    Text::new("Models"),
+                    TextFont {
+                        font_size: 18.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.95, 0.95, 0.97)),
+                ));
+
+                row.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ModelLibraryGen3dButton,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("Gen3D"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                        ModelLibraryGen3dButtonText,
+                    ));
+                });
+            });
 
             root.spawn((
                 Node {
@@ -209,16 +250,11 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
 pub(crate) fn model_library_update_visibility(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
-    workspace: Res<crate::workspace_ui::WorkspaceUiState>,
     state: Res<ModelLibraryUiState>,
     mut roots: Query<&mut Visibility, With<ModelLibraryRoot>>,
 ) {
     let visible = state.is_open()
         && matches!(mode.get(), GameMode::Build)
-        && matches!(
-            workspace.tab,
-            crate::workspace_ui::WorkspaceTab::ObjectPreview
-        )
         && matches!(build_scene.get(), crate::types::BuildScene::Realm);
     for mut visibility in &mut roots {
         *visibility = if visible {
@@ -347,7 +383,6 @@ pub(crate) fn model_library_update_scrollbar_ui(
 pub(crate) fn model_library_scroll_wheel(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
-    workspace: Res<crate::workspace_ui::WorkspaceUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<MouseWheel>,
     state: Res<ModelLibraryUiState>,
@@ -357,10 +392,6 @@ pub(crate) fn model_library_scroll_wheel(
     if !state.is_open()
         || !matches!(mode.get(), GameMode::Build)
         || !matches!(build_scene.get(), crate::types::BuildScene::Realm)
-        || !matches!(
-            workspace.tab,
-            crate::workspace_ui::WorkspaceTab::ObjectPreview
-        )
         || state.scrollbar_drag.is_some()
     {
         for _ in mouse_wheel.read() {}
@@ -419,7 +450,6 @@ pub(crate) fn model_library_scroll_wheel(
 pub(crate) fn model_library_scrollbar_drag(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
-    workspace: Res<crate::workspace_ui::WorkspaceUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut state: ResMut<ModelLibraryUiState>,
@@ -432,11 +462,7 @@ pub(crate) fn model_library_scrollbar_drag(
 ) {
     let active = state.is_open()
         && matches!(mode.get(), GameMode::Build)
-        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
-        && matches!(
-            workspace.tab,
-            crate::workspace_ui::WorkspaceTab::ObjectPreview
-        );
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
     if !active {
         state.scrollbar_drag = None;
         return;
@@ -519,6 +545,46 @@ pub(crate) fn model_library_scrollbar_drag(
     scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
 }
 
+pub(crate) fn model_library_gen3d_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    mut next_build_scene: ResMut<NextState<crate::types::BuildScene>>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ModelLibraryGen3dButton>),
+    >,
+) {
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if !matches!(mode.get(), GameMode::Build) {
+                    continue;
+                }
+
+                match build_scene.get() {
+                    crate::types::BuildScene::Realm => {
+                        next_build_scene.set(crate::types::BuildScene::Preview);
+                    }
+                    crate::types::BuildScene::Preview => {
+                        next_build_scene.set(crate::types::BuildScene::Realm);
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn model_library_item_button_interactions(
     mut state: ResMut<ModelLibraryUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -567,7 +633,7 @@ pub(crate) fn model_library_item_button_interactions(
 pub(crate) fn model_library_drag_update(
     mut commands: Commands,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
-    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<crate::types::MainCamera>>,
     player_q: Query<(&Transform, &Collider), With<Player>>,
@@ -585,6 +651,11 @@ pub(crate) fn model_library_drag_update(
     mut scene_saves: bevy::ecs::message::MessageWriter<SceneSaveRequest>,
     mut state: ResMut<ModelLibraryUiState>,
 ) {
+    if !state.is_open() || !matches!(build_scene.get(), crate::types::BuildScene::Realm) {
+        state.drag = None;
+        return;
+    }
+
     let Some(mut drag) = state.drag else {
         return;
     };
@@ -592,10 +663,7 @@ pub(crate) fn model_library_drag_update(
     if !mouse_buttons.pressed(MouseButton::Left) {
         // Mouse was released; treat as either click-spawn (near hero) or drag-spawn.
         let prefab_id = drag.model_id;
-        let spawn_translation = if drag.is_dragging
-            && matches!(mode.get(), GameMode::Build)
-            && drag.preview_translation.is_some()
-        {
+        let spawn_translation = if drag.is_dragging && drag.preview_translation.is_some() {
             drag.preview_translation.unwrap()
         } else {
             let Ok((player_transform, player_collider)) = player_q.single() else {
@@ -641,7 +709,7 @@ pub(crate) fn model_library_drag_update(
             drag.is_dragging = true;
         }
 
-        if drag.is_dragging && matches!(mode.get(), GameMode::Build) {
+        if drag.is_dragging {
             let Ok((camera, camera_transform)) = camera_q.single() else {
                 drag.preview_translation = None;
                 state.drag = Some(drag);
