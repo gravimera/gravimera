@@ -62,6 +62,10 @@ impl Default for SceneAuthoringUiState {
 }
 
 impl SceneAuthoringUiState {
+    pub(crate) fn is_open(&self) -> bool {
+        self.open
+    }
+
     pub(crate) fn set_open(&mut self, open: bool) {
         if open {
             if self.open {

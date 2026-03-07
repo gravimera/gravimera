@@ -56,6 +56,7 @@ mod types;
 mod ui;
 mod unit_health;
 mod workspace_ui;
+mod workspace_scenes_ui;
 mod world_drag;
 
 pub fn run() {

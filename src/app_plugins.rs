@@ -143,6 +143,9 @@ impl Plugin for RenderedUiPlugin {
                 crate::scene_authoring_ui::scene_ui_text_input,
                 crate::scene_authoring_ui::scene_ui_clear_keyboard_state_when_captured
                     .after(crate::scene_authoring_ui::scene_ui_text_input),
+                crate::workspace_scenes_ui::scenes_panel_text_input,
+                crate::workspace_scenes_ui::scenes_panel_clear_keyboard_state_when_captured
+                    .after(crate::workspace_scenes_ui::scenes_panel_text_input),
             )
                 .after(bevy::input::InputSystems),
         );
@@ -161,6 +164,25 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::workspace_ui::workspace_toolbar_sync_model_library_open),
                 crate::workspace_ui::workspace_toolbar_update_scenes_panel_visibility
                     .after(crate::workspace_ui::workspace_toolbar_update_toggle_button_styles),
+            ),
+        );
+
+        app.add_systems(
+            Update,
+            (
+                crate::workspace_scenes_ui::scenes_panel_sync_active_realm
+                    .after(crate::workspace_ui::workspace_toolbar_update_scenes_panel_visibility),
+                crate::workspace_scenes_ui::scenes_panel_set_add_panel_visibility
+                    .after(crate::workspace_scenes_ui::scenes_panel_sync_active_realm)
+                    .after(crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions)
+                    .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons),
+                crate::workspace_scenes_ui::scenes_panel_rebuild_list_ui
+                    .after(crate::workspace_scenes_ui::scenes_panel_sync_active_realm)
+                    .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons),
+                crate::workspace_scenes_ui::scenes_panel_update_texts
+                    .after(crate::workspace_scenes_ui::scenes_panel_set_add_panel_visibility),
+                crate::workspace_scenes_ui::scenes_panel_update_styles
+                    .after(crate::workspace_scenes_ui::scenes_panel_update_texts),
             ),
         );
         app.add_systems(
@@ -203,6 +225,29 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::model_library_ui::model_library_drag_update),
             )
                 .run_if(console::console_closed)
+                .run_if(crate::scene_authoring_ui::scene_ui_closed),
+        );
+
+        app.add_systems(
+            Update,
+            (
+                crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_scene_select_button_actions
+                    .after(crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_add_panel_buttons
+                    .after(crate::workspace_scenes_ui::scenes_panel_scene_select_button_actions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_name_field_focus
+                    .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_scroll_wheel
+                    .after(crate::workspace_scenes_ui::scenes_panel_name_field_focus)
+                    .run_if(crate::automation::local_input_enabled),
+            )
+                .run_if(console::console_closed)
+                .run_if(in_state(BuildScene::Realm))
                 .run_if(crate::scene_authoring_ui::scene_ui_closed),
         );
 

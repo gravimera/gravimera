@@ -1,6 +1,11 @@
 use bevy::prelude::*;
 
 use crate::types::{BuildScene, GameMode};
+use crate::workspace_scenes_ui::{
+    AddSceneAddButton, AddSceneCancelButton, AddSceneErrorText, AddSceneNameField,
+    AddSceneNameFieldText, AddScenePanelRoot, ScenesAddSceneButton, ScenesAddSceneButtonText,
+    ScenesList, ScenesListScrollPanel,
+};
 
 const WORKSPACE_UI_Z_INDEX: i32 = 960;
 const SIDE_PANEL_Z_INDEX: i32 = 930;
@@ -298,23 +303,221 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
             ScenesPanelRoot,
         ))
         .with_children(|root| {
+            // Header row.
             root.spawn((
-                Text::new("Scenes"),
-                TextFont {
-                    font_size: 18.0,
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
                     ..default()
                 },
-                TextColor(Color::srgb(0.95, 0.95, 0.97)),
-            ));
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|row| {
+                row.spawn((
+                    Text::new("Scenes"),
+                    TextFont {
+                        font_size: 18.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.95, 0.95, 0.97)),
+                ));
 
+                row.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ScenesAddSceneButton,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("Add Scene"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                        ScenesAddSceneButtonText,
+                    ));
+                });
+            });
+
+            // Add Scene panel (hidden by default).
             root.spawn((
-                Text::new("No scenes yet."),
-                TextFont {
-                    font_size: 14.0,
+                Node {
+                    width: Val::Percent(100.0),
+                    display: Display::None,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(8.0),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
-                TextColor(Color::srgb(0.80, 0.80, 0.86)),
-            ));
+                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                AddScenePanelRoot,
+            ))
+            .with_children(|panel| {
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                    ))
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new("Name:"),
+                            TextFont {
+                                font_size: 14.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                        ));
+
+                        row.spawn((
+                            Button,
+                            Node {
+                                flex_grow: 1.0,
+                                flex_basis: Val::Px(0.0),
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            AddSceneNameField,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new(""),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                AddSceneNameFieldText,
+                            ));
+                        });
+                    });
+
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::FlexEnd,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                    ))
+                    .with_children(|row| {
+                        row.spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.06, 0.10, 0.07, 0.78)),
+                            BorderColor::all(Color::srgb(0.25, 0.80, 0.45)),
+                            AddSceneAddButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Add"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ));
+                        });
+
+                        row.spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            AddSceneCancelButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Cancel"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ));
+                        });
+                    });
+
+                panel.spawn((
+                    Text::new(""),
+                    TextFont {
+                        font_size: 14.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.95, 0.55, 0.45)),
+                    AddSceneErrorText,
+                ));
+            });
+
+            // Scenes list.
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.0),
+                    min_height: Val::Px(0.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|row| {
+                row.spawn((
+                    Node {
+                        flex_grow: 1.0,
+                        flex_basis: Val::Px(0.0),
+                        min_height: Val::Px(0.0),
+                        overflow: Overflow::scroll_y(),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                    ScrollPosition::default(),
+                    ScenesListScrollPanel,
+                ))
+                .with_children(|scroll| {
+                    scroll.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(6.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                        ScenesList,
+                    ));
+                });
+            });
         });
 }
 
