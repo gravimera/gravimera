@@ -83,7 +83,7 @@ Implementation sketch (later):
 Decision: “Stop” ends the current background loop, but the *session* (draft + context + artifacts)
 remains available so the agent (and user) can continue later.
 
-Status: “Stop/Continue” is implemented (2026-03-07). “Edit/Fork seed-from-prefab” is implemented via internal + Automation APIs (2026-03-07); Meta panel buttons are planned.
+Status: “Stop/Continue” is implemented (2026-03-07). “Edit/Fork seed-from-prefab” is implemented via internal + Automation APIs (2026-03-07). Meta panel buttons (Copy/Edit/Fork) are implemented (2026-03-07).
 
 User-visible outcomes:
 - A “Continue” action should resume the agent loop on the existing draft.
@@ -97,7 +97,7 @@ Scope constraint:
 - Editing is supported **only for Gen3D-saved prefabs** (prefabs whose descriptor includes
   `provenance.source="gen3d"` and `provenance.gen3d`).
 
-Meta panel UX (planned):
+Meta panel UX:
 - **Copy**: duplicate/spawn a new instance that references the same prefab id (no Gen3D).
 - **Edit**: open Gen3D seeded from this prefab and **overwrite the same prefab id** on save.
   - This affects all instances that reference that prefab id.
@@ -343,4 +343,4 @@ Candidate additions:
 - [ ] Design a generic async task API and migrate existing ad-hoc async flows toward it.
 - [ ] Specify “no runtime motion mapping” changes to the agent prompt + QA gating.
 - [x] (2026-03-07) Specify resumable sessions + “Edit prefab” workflow + save semantics (fork vs overwrite).
-- [ ] Add Meta panel buttons: Copy / Edit / Fork (Gen3D-prefab-gated).
+- [x] (2026-03-07) Add Meta panel buttons: Copy / Edit / Fork (Gen3D-prefab-gated).

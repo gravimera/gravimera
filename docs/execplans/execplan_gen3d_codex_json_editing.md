@@ -49,7 +49,7 @@ Pre-implementation contracts (must be written down before coding):
 - [x] (2026-03-07) Milestone C (Resumable sessions): add “Continue” for a stopped/cancelled session without resetting the draft.
 - [x] (2026-03-07) Milestone D (Edit-from-prefab entry points): implement deterministic “seed Gen3D from Gen3D-saved prefab” APIs (Edit and Fork semantics).
 - [x] (2026-03-07) Milestone E (Meta panel wiring): add Meta panel buttons Copy/Edit/Fork (gated to Gen3D-saved prefabs) and connect them to the entry points.
-- [ ] Milestone F (Deterministic patch ops): add an engine “apply_patch-like” tool (`apply_draft_ops_v1`) with explicit IDs and a structured diff.
+- [x] (2026-03-07) Milestone F (Deterministic patch ops): add an engine “apply_patch-like” tool (`apply_draft_ops_v1`) with explicit IDs, stable part IDs, and a structured diff.
 - [ ] Milestone G (Snapshots + branching): add snapshot/diff/restore and workspace diff/merge/copy tools so the agent can branch and compare alternatives safely.
 
 ## Surprises & Discoveries
@@ -122,6 +122,18 @@ Pre-implementation contracts (must be written down before coding):
   - Save is now seed-aware: Edit refreshes all instances of the overwritten prefab id; Fork rebinds only the selected instance to the new prefab id.
   - Added Automation HTTP APIs: `POST /v1/meta/gen3d/copy`, `POST /v1/meta/gen3d/edit`, `POST /v1/meta/gen3d/fork`.
   - Verified via a rendered regression: `tools/gen3d_real_test.py --meta-edit-fork-regression` using `mock://gen3d` (no key).
+
+- Milestone F delivered:
+  - Introduced stable `part_id` for Gen3D-generated primitive parts (deterministic UUIDv5; key: `gravimera/gen3d/part/<component>/<part_idx>`).
+  - Added `query_component_parts_v1` (bounded) so the agent can inspect component parts and obtain stable `part_id_uuid` targets.
+  - Added `apply_draft_ops_v1`, a deterministic “apply_patch-like” tool with strict validation, explicit targets, and a structured diff:
+    - anchor transforms (by component + anchor),
+    - attachment offsets (by child component),
+    - primitive part add/remove/update (by component + `part_id_uuid`),
+    - animation slot upsert/remove (by child component + channel).
+  - `apply_draft_ops_v1` writes a JSONL transaction log (`draft_ops.jsonl`) and a summary snapshot (`apply_draft_ops_last.json`) under the current pass dir.
+  - Added an Automation API hook for rendered tests: `POST /v1/gen3d/apply_draft_ops`.
+  - Verified via rendered regressions: `tools/gen3d_real_test.py --apply-draft-ops-regression` using `mock://gen3d` (no key).
 
 ## Context and Orientation
 
