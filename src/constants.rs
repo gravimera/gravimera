@@ -244,11 +244,6 @@ pub(crate) const EDGE_SCROLL_INDICATOR_PULSE_RADS_PER_SEC: f32 = 4.0;
 pub(crate) const EDGE_SCROLL_INDICATOR_ALPHA_MIN: f32 = 0.35;
 pub(crate) const EDGE_SCROLL_INDICATOR_ALPHA_MAX: f32 = 0.95;
 
-pub(crate) const HEALTH_BAR_WIDTH: f32 = 1.4;
-pub(crate) const HEALTH_BAR_HEIGHT: f32 = 0.10;
-pub(crate) const HEALTH_BAR_DEPTH: f32 = 0.14;
-pub(crate) const HEALTH_BAR_FILL_SCALE: f32 = 0.88;
-pub(crate) const HEALTH_BAR_Z_OFFSET: f32 = 0.05;
 pub(crate) const PLAYER_HEALTH_BAR_OFFSET_Y: f32 = PLAYER_TORSO_HEIGHT + PLAYER_HEAD_SIZE + 0.55;
 pub(crate) const DOG_HEALTH_BAR_OFFSET_Y: f32 = DOG_BODY_HEIGHT + DOG_HEAD_SIZE + 0.45;
 pub(crate) const GUNDAM_HEALTH_BAR_OFFSET_Y: f32 = GUNDAM_TORSO_HEIGHT + GUNDAM_HEAD_SIZE + 0.70;

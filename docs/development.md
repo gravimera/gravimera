@@ -36,7 +36,7 @@ Note: PAC/WPAD auto-config proxies are not evaluated; in those setups, set the p
 - `src/config.rs`: config loading (`GRAVIMERA_CONFIG`, `~/.gravimera/config.toml` default)
 - `src/paths.rs`: default paths (`GRAVIMERA_HOME`, `~/.gravimera/`)
 - `src/setup.rs`: scene + initial entities
-- `src/ui.rs`: window title, UI overlays, health bars, minimap
+- `src/ui.rs`: window title, UI overlays, minimap, health change popups
 - `src/automation/*`: local Automation HTTP API (for tooling/tests)
 - `src/gen3d/*`: Gen3D workshop UI + rendered preview world
 - `src/gen3d/ai/*`: Gen3D AI orchestration (OpenAI calls, schemas, cache artifacts)

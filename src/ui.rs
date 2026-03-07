@@ -116,66 +116,6 @@ pub(crate) fn update_fps_counter(
     }
 }
 
-pub(crate) fn update_health_bars(
-    mut commands: Commands,
-    camera_q: Query<&Transform, With<MainCamera>>,
-    units_q: Query<(Entity, &Transform, &Health, &HealthBar), With<HealthBar>>,
-    mut bar_roots_q: Query<
-        &mut Transform,
-        (
-            Without<HealthBarFill>,
-            Without<HealthBar>,
-            Without<MainCamera>,
-        ),
-    >,
-    mut fills_q: Query<
-        &mut Transform,
-        (
-            With<HealthBarFill>,
-            Without<HealthBar>,
-            Without<Player>,
-            Without<Enemy>,
-            Without<MainCamera>,
-        ),
-    >,
-) {
-    let desired_global_rotation = camera_q
-        .single()
-        .ok()
-        .and_then(|camera_transform| {
-            let mut forward = camera_transform.rotation * Vec3::NEG_Z;
-            forward.y = 0.0;
-            if forward.length_squared() <= 0.0001 {
-                None
-            } else {
-                forward = forward.normalize();
-                Some(Quat::from_rotation_y(forward.x.atan2(forward.z)))
-            }
-        })
-        .unwrap_or(Quat::IDENTITY);
-
-    for (unit_entity, unit_transform, health, bar) in &units_q {
-        let frac = health.fraction();
-
-        if let Ok(mut root_transform) = bar_roots_q.get_mut(bar.root) {
-            root_transform.rotation = unit_transform.rotation.inverse() * desired_global_rotation;
-        }
-
-        if let Ok(mut fill_transform) = fills_q.get_mut(bar.fill) {
-            update_health_bar_fill_transform(&mut fill_transform, frac);
-        } else if let Ok(mut entity_commands) = commands.get_entity(unit_entity) {
-            entity_commands.try_remove::<HealthBar>();
-        }
-    }
-}
-
-fn update_health_bar_fill_transform(transform: &mut Transform, frac: f32) {
-    let frac = frac.clamp(0.0, 1.0);
-    let width = HEALTH_BAR_WIDTH * frac;
-    transform.scale.x = width;
-    transform.translation.x = -HEALTH_BAR_WIDTH * 0.5 + width * 0.5;
-}
-
 pub(crate) fn spawn_health_change_popups(
     mut commands: Commands,
     mut events: MessageReader<HealthChangeEvent>,

@@ -149,19 +149,6 @@ pub(crate) fn setup_rendered(
         ..default()
     });
 
-    let health_bar_bg_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.15, 0.06, 0.06, 0.85),
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
-    let health_bar_fg_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.20, 0.95, 0.40),
-        emissive: Color::linear_rgb(0.4, 0.9, 0.5).into(),
-        unlit: true,
-        ..default()
-    });
-
     let bullet_mesh = meshes.add(Cuboid::new(0.22, 0.22, BULLET_MESH_LENGTH));
     let bullet_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.95, 0.85, 0.25),
@@ -316,8 +303,6 @@ pub(crate) fn setup_rendered(
         gundam_energy_impact_material: gundam_energy_impact_material.clone(),
         explosion_material: explosion_material.clone(),
         blood_material: blood_material.clone(),
-        health_bar_bg_material: health_bar_bg_material.clone(),
-        health_bar_fg_material: health_bar_fg_material.clone(),
         bullet_mesh: bullet_mesh.clone(),
         bullet_material: bullet_material.clone(),
         shotgun_pellet_mesh: shotgun_pellet_mesh.clone(),
@@ -377,8 +362,6 @@ pub(crate) fn setup_rendered(
     selection.selected.clear();
     selection.selected.insert(player_entity);
 
-    let mut player_health_root = None;
-    let mut player_health_fill = None;
     commands.entity(player_entity).with_children(|parent| {
         parent.spawn((
             Mesh3d(player_torso_mesh.clone()),
@@ -477,48 +460,7 @@ pub(crate) fn setup_rendered(
                     Visibility::Inherited,
                 ));
             });
-
-        let bar_root = parent
-            .spawn((
-                Transform::from_xyz(0.0, PLAYER_HEALTH_BAR_OFFSET_Y, 0.0),
-                Visibility::Inherited,
-            ))
-            .with_children(|bar| {
-                bar.spawn((
-                    Mesh3d(unit_cube_mesh.clone()),
-                    MeshMaterial3d(health_bar_bg_material.clone()),
-                    Transform::from_scale(Vec3::new(
-                        HEALTH_BAR_WIDTH,
-                        HEALTH_BAR_HEIGHT,
-                        HEALTH_BAR_DEPTH,
-                    )),
-                    Visibility::Inherited,
-                ));
-
-                player_health_fill = Some(
-                    bar.spawn((
-                        Mesh3d(unit_cube_mesh.clone()),
-                        MeshMaterial3d(health_bar_fg_material.clone()),
-                        Transform::from_translation(Vec3::new(0.0, 0.0, HEALTH_BAR_Z_OFFSET))
-                            .with_scale(Vec3::new(
-                                HEALTH_BAR_WIDTH,
-                                HEALTH_BAR_HEIGHT * HEALTH_BAR_FILL_SCALE,
-                                HEALTH_BAR_DEPTH * HEALTH_BAR_FILL_SCALE,
-                            )),
-                        Visibility::Inherited,
-                        HealthBarFill,
-                    ))
-                    .id(),
-                );
-            })
-            .id();
-        player_health_root = Some(bar_root);
     });
-    if let (Some(root), Some(fill)) = (player_health_root, player_health_fill) {
-        commands
-            .entity(player_entity)
-            .try_insert(HealthBar { root, fill });
-    }
 
     commands.spawn((
         DirectionalLight {

@@ -26,8 +26,6 @@ pub(crate) struct SceneAssets {
     pub(crate) gundam_energy_impact_material: Handle<StandardMaterial>,
     pub(crate) explosion_material: Handle<StandardMaterial>,
     pub(crate) blood_material: Handle<StandardMaterial>,
-    pub(crate) health_bar_bg_material: Handle<StandardMaterial>,
-    pub(crate) health_bar_fg_material: Handle<StandardMaterial>,
     pub(crate) bullet_mesh: Handle<Mesh>,
     pub(crate) bullet_material: Handle<StandardMaterial>,
     pub(crate) shotgun_pellet_mesh: Handle<Mesh>,

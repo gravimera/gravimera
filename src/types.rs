@@ -247,15 +247,6 @@ pub(crate) struct CommandConsoleRoot;
 pub(crate) struct CommandConsoleText;
 
 #[derive(Component)]
-pub(crate) struct HealthBar {
-    pub(crate) root: Entity,
-    pub(crate) fill: Entity,
-}
-
-#[derive(Component)]
-pub(crate) struct HealthBarFill;
-
-#[derive(Component)]
 pub(crate) struct FpsCounterText;
 
 #[derive(Component)]

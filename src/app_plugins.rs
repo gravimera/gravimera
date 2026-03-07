@@ -485,8 +485,6 @@ impl Plugin for RenderedGameplayPlugin {
                 unit_health::ensure_health_for_commandables,
                 unit_health::ensure_laser_damage_accum_for_units
                     .after(unit_health::ensure_health_for_commandables),
-                unit_health::ensure_health_bars_for_units
-                    .after(unit_health::ensure_health_for_commandables),
                 unit_health::update_die_motions,
             )
                 .run_if(in_state(BuildScene::Realm)),
@@ -630,9 +628,6 @@ impl Plugin for RenderedGameplayPlugin {
             (
                 crate::ui::update_window_title,
                 crate::ui::update_fps_counter,
-                crate::ui::update_health_bars
-                    .after(rts::execute_move_orders)
-                    .after(combat::update_lasers),
                 crate::ui::update_minimap
                     .after(player::camera_follow)
                     .after(rts::execute_move_orders)

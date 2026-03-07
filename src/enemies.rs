@@ -170,8 +170,6 @@ fn spawn_enemy_rendered(
         return;
     };
 
-    let mut health_root = None;
-    let mut health_fill = None;
     commands.entity(entity).with_children(|parent| {
         match profile.visual {
             EnemyVisualProfile::Dog => {
@@ -184,51 +182,7 @@ fn spawn_enemy_rendered(
                 spawn_gundam_model(parent, assets);
             }
         }
-
-        let offset_y = library
-            .health_bar_offset_y(enemy_prefab_id)
-            .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
-
-        let bar_root = parent
-            .spawn((
-                Transform::from_xyz(0.0, offset_y, 0.0),
-                Visibility::Inherited,
-            ))
-            .with_children(|bar| {
-                bar.spawn((
-                    Mesh3d(assets.unit_cube_mesh.clone()),
-                    MeshMaterial3d(assets.health_bar_bg_material.clone()),
-                    Transform::from_scale(Vec3::new(
-                        HEALTH_BAR_WIDTH,
-                        HEALTH_BAR_HEIGHT,
-                        HEALTH_BAR_DEPTH,
-                    )),
-                    Visibility::Inherited,
-                ));
-
-                health_fill = Some(
-                    bar.spawn((
-                        Mesh3d(assets.unit_cube_mesh.clone()),
-                        MeshMaterial3d(assets.health_bar_fg_material.clone()),
-                        Transform::from_translation(Vec3::new(0.0, 0.0, HEALTH_BAR_Z_OFFSET))
-                            .with_scale(Vec3::new(
-                                HEALTH_BAR_WIDTH,
-                                HEALTH_BAR_HEIGHT * HEALTH_BAR_FILL_SCALE,
-                                HEALTH_BAR_DEPTH * HEALTH_BAR_FILL_SCALE,
-                            )),
-                        Visibility::Inherited,
-                        HealthBarFill,
-                    ))
-                    .id(),
-                );
-            })
-            .id();
-        health_root = Some(bar_root);
     });
-
-    if let (Some(root), Some(fill)) = (health_root, health_fill) {
-        commands.entity(entity).try_insert(HealthBar { root, fill });
-    }
 }
 
 fn spawn_enemy_headless(

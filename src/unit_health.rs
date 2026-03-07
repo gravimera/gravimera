@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 
-use crate::assets::SceneAssets;
 use crate::constants::*;
 use crate::object::registry::ObjectLibrary;
 use crate::types::*;
@@ -67,72 +66,6 @@ pub(crate) fn ensure_laser_damage_accum_for_units(
 ) {
     for entity in &q {
         commands.entity(entity).insert(LaserDamageAccum::default());
-    }
-}
-
-pub(crate) fn ensure_health_bars_for_units(
-    mut commands: Commands,
-    assets: Res<SceneAssets>,
-    library: Res<ObjectLibrary>,
-    units: Query<
-        (Entity, &ObjectPrefabId),
-        (
-            With<Health>,
-            Without<HealthBar>,
-            Or<(With<Commandable>, With<Enemy>)>,
-        ),
-    >,
-) {
-    for (entity, prefab_id) in &units {
-        let offset_y = library
-            .health_bar_offset_y(prefab_id.0)
-            .unwrap_or(PLAYER_HEALTH_BAR_OFFSET_Y);
-
-        let mut root = None;
-        let mut fill = None;
-
-        commands.entity(entity).with_children(|parent| {
-            let bar_root = parent
-                .spawn((
-                    Transform::from_xyz(0.0, offset_y, 0.0),
-                    Visibility::Inherited,
-                ))
-                .with_children(|bar| {
-                    bar.spawn((
-                        Mesh3d(assets.unit_cube_mesh.clone()),
-                        MeshMaterial3d(assets.health_bar_bg_material.clone()),
-                        Transform::from_scale(Vec3::new(
-                            HEALTH_BAR_WIDTH,
-                            HEALTH_BAR_HEIGHT,
-                            HEALTH_BAR_DEPTH,
-                        )),
-                        Visibility::Inherited,
-                    ));
-
-                    fill = Some(
-                        bar.spawn((
-                            Mesh3d(assets.unit_cube_mesh.clone()),
-                            MeshMaterial3d(assets.health_bar_fg_material.clone()),
-                            Transform::from_translation(Vec3::new(0.0, 0.0, HEALTH_BAR_Z_OFFSET))
-                                .with_scale(Vec3::new(
-                                    HEALTH_BAR_WIDTH,
-                                    HEALTH_BAR_HEIGHT * HEALTH_BAR_FILL_SCALE,
-                                    HEALTH_BAR_DEPTH * HEALTH_BAR_FILL_SCALE,
-                                )),
-                            Visibility::Inherited,
-                            HealthBarFill,
-                        ))
-                        .id(),
-                    );
-                })
-                .id();
-
-            root = Some(bar_root);
-        });
-
-        if let (Some(root), Some(fill)) = (root, fill) {
-            commands.entity(entity).insert(HealthBar { root, fill });
-        }
     }
 }
 
