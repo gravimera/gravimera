@@ -177,6 +177,8 @@ def run_one(
     stop_resume_pause_secs: float,
     save_early: bool,
     apply_draft_ops_regression: bool,
+    snapshots_regression: bool,
+    workspace_regression: bool,
     world_move_offset: tuple[float, float],
     frames_per_capture: int,
     capture_count: int,
@@ -368,11 +370,8 @@ def run_one(
     if run_dir is None:
         raise RuntimeError("Missing run_dir from gen3d/status")
 
-    if apply_draft_ops_regression:
+    if apply_draft_ops_regression or snapshots_regression or workspace_regression:
         import uuid
-
-        ops_dir = run_dir / "external_screenshots_draft_ops"
-        ops_dir.mkdir(parents=True, exist_ok=True)
 
         def mock_kind_from_text(text: str) -> str:
             t = text.lower()
@@ -388,96 +387,288 @@ def run_one(
 
         kind = mock_kind_from_text(prompt)
 
-        # Capture draft before patch.
-        post("/v1/screenshot", {"path": str(ops_dir / "before_apply.png")})
-
-        # Deterministic part_id_uuid: UUIDv5(NAMESPACE_URL, "gravimera/gen3d/part/<component>/<part_idx>")
         def part_id_uuid(component: str, part_idx: int) -> str:
             key = f"gravimera/gen3d/part/{component}/{part_idx}"
             return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
 
-        if kind == "warcar":
-            apply_args = {
-                "version": 1,
-                "atomic": True,
-                "ops": [
-                    {
-                        "kind": "set_attachment_offset",
-                        "child_component": "wheels",
-                        "set": {"pos": [0.0, -0.9, 0.0]},
-                    },
-                    {
-                        "kind": "update_primitive_part",
-                        "component": "cannon",
-                        "part_id_uuid": part_id_uuid("cannon", 1),
-                        "set_transform": {"pos": [0.65, -0.5, 0.9]},
-                    },
-                ],
-            }
-        elif kind == "snake":
-            apply_args = {
-                "version": 1,
-                "atomic": True,
-                "ops": [
-                    {
-                        "kind": "upsert_animation_slot",
-                        "child_component": "seg_0",
-                        "channel": "move",
-                        "slot": {
-                            "driver": "move_phase",
-                            "speed_scale": 1.15,
-                            "time_offset_units": 0.0,
-                            "clip": {
-                                "kind": "loop",
-                                "duration_units": 1.0,
-                                "keyframes": [
-                                    {
-                                        "t_units": 0.0,
-                                        "delta": {
-                                            "pos": [0.0, 0.0, 0.0],
-                                            "rot_quat_xyzw": None,
-                                            "scale": None,
+        def apply_ops(args: dict[str, Any]) -> dict[str, Any]:
+            resp = post("/v1/gen3d/apply_draft_ops", args)
+            if not bool(resp.get("ok")) or not bool(resp.get("committed")):
+                raise RuntimeError(f"apply_draft_ops failed: {resp}")
+            return resp
+
+        if snapshots_regression:
+            snap_dir = run_dir / "external_screenshots_snapshots"
+            snap_dir.mkdir(parents=True, exist_ok=True)
+
+            post("/v1/screenshot", {"path": str(snap_dir / "before.png")})
+            snap_before = post("/v1/gen3d/snapshot", {"version": 1, "label": "before_snapshots_regression"})
+            before_id = str(snap_before.get("snapshot_id") or "").strip()
+            if not before_id:
+                raise RuntimeError(f"snapshot returned no snapshot_id: {snap_before}")
+
+            if kind == "warcar":
+                patch_args = {
+                    "version": 1,
+                    "atomic": True,
+                    "ops": [
+                        {
+                            "kind": "update_primitive_part",
+                            "component": "cannon",
+                            "part_id_uuid": part_id_uuid("cannon", 1),
+                            "set_transform": {"pos": [0.65, -0.5, 0.9]},
+                        }
+                    ],
+                }
+            elif kind == "snake":
+                patch_args = {
+                    "version": 1,
+                    "atomic": True,
+                    "ops": [
+                        {
+                            "kind": "upsert_animation_slot",
+                            "child_component": "seg_0",
+                            "channel": "move",
+                            "slot": {
+                                "driver": "move_phase",
+                                "speed_scale": 1.15,
+                                "time_offset_units": 0.0,
+                                "clip": {
+                                    "kind": "loop",
+                                    "duration_units": 1.0,
+                                    "keyframes": [
+                                        {
+                                            "t_units": 0.0,
+                                            "delta": {
+                                                "pos": [0.0, 0.0, 0.0],
+                                                "rot_quat_xyzw": None,
+                                                "scale": None,
+                                            },
                                         },
-                                    },
-                                    {
-                                        "t_units": 0.5,
-                                        "delta": {
-                                            "pos": [0.02, 0.0, 0.0],
-                                            "rot_quat_xyzw": None,
-                                            "scale": None,
+                                        {
+                                            "t_units": 0.5,
+                                            "delta": {
+                                                "pos": [0.02, 0.0, 0.0],
+                                                "rot_quat_xyzw": None,
+                                                "scale": None,
+                                            },
                                         },
-                                    },
-                                    {
-                                        "t_units": 1.0,
-                                        "delta": {
-                                            "pos": [0.0, 0.0, 0.0],
-                                            "rot_quat_xyzw": None,
-                                            "scale": None,
+                                        {
+                                            "t_units": 1.0,
+                                            "delta": {
+                                                "pos": [0.0, 0.0, 0.0],
+                                                "rot_quat_xyzw": None,
+                                                "scale": None,
+                                            },
                                         },
-                                    },
-                                ],
+                                    ],
+                                },
                             },
-                        },
-                    }
-                ],
-            }
-        else:
-            raise RuntimeError(
-                f"--apply-draft-ops-regression is only implemented for mock kinds warcar/snake; got kind={kind!r} prompt={prompt!r}"
+                        }
+                    ],
+                }
+            else:
+                raise RuntimeError(
+                    f"--snapshots-regression is only implemented for mock kinds warcar/snake; got kind={kind!r} prompt={prompt!r}"
+                )
+
+            apply_ops(patch_args)
+            post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
+            post("/v1/screenshot", {"path": str(snap_dir / "after_apply.png")})
+
+            snap_after = post("/v1/gen3d/snapshot", {"version": 1, "label": "after_snapshots_regression"})
+            after_id = str(snap_after.get("snapshot_id") or "").strip()
+            if not after_id:
+                raise RuntimeError(f"snapshot returned no snapshot_id: {snap_after}")
+
+            diff = post("/v1/gen3d/diff_snapshots", {"version": 1, "a": before_id, "b": after_id})
+            changed = int(diff.get("diff_summary", {}).get("components_changed") or 0)
+            if changed <= 0:
+                raise RuntimeError(f"Expected snapshot diff to change at least one component: {diff}")
+
+            post("/v1/gen3d/restore_snapshot", {"version": 1, "snapshot_id": before_id})
+            post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
+            post("/v1/screenshot", {"path": str(snap_dir / "after_restore.png")})
+
+            snap_restored = post(
+                "/v1/gen3d/snapshot", {"version": 1, "label": "restored_snapshots_regression"}
             )
+            restored_id = str(snap_restored.get("snapshot_id") or "").strip()
+            if not restored_id:
+                raise RuntimeError(f"snapshot returned no snapshot_id: {snap_restored}")
+            diff_restored = post(
+                "/v1/gen3d/diff_snapshots", {"version": 1, "a": before_id, "b": restored_id}
+            )
+            restored_changed = int(diff_restored.get("diff_summary", {}).get("components_changed") or 0)
+            if restored_changed != 0:
+                raise RuntimeError(f"Expected restored snapshot to match before snapshot: {diff_restored}")
 
-        apply_resp = post("/v1/gen3d/apply_draft_ops", apply_args)
-        if not bool(apply_resp.get("ok")) or not bool(apply_resp.get("committed")):
-            raise RuntimeError(f"apply_draft_ops failed: {apply_resp}")
+        if workspace_regression:
+            ws_dir = run_dir / "external_screenshots_workspaces"
+            ws_dir.mkdir(parents=True, exist_ok=True)
 
-        # Give the preview a moment to rebuild.
-        post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
-        post("/v1/screenshot", {"path": str(ops_dir / "after_apply.png")})
+            if kind != "warcar":
+                raise RuntimeError(
+                    f"--workspace-regression is only implemented for mock kind 'warcar' for now; got kind={kind!r} prompt={prompt!r}"
+                )
 
-        # Ensure the transaction log exists somewhere under the run dir.
-        logs = list(run_dir.rglob("draft_ops.jsonl"))
-        if not logs:
-            raise RuntimeError(f"Expected draft_ops.jsonl under run_dir={run_dir}")
+            # Base (main) screenshot.
+            post("/v1/screenshot", {"path": str(ws_dir / "main_before.png")})
+
+            # Branch A: cannon-only edit.
+            post("/v1/gen3d/create_workspace", {"workspace_id": "alt_cannon"})
+            post("/v1/gen3d/set_active_workspace", {"workspace_id": "alt_cannon"})
+            apply_ops(
+                {
+                    "version": 1,
+                    "atomic": True,
+                    "ops": [
+                        {
+                            "kind": "update_primitive_part",
+                            "component": "cannon",
+                            "part_id_uuid": part_id_uuid("cannon", 1),
+                            "set_transform": {"pos": [0.65, -0.5, 0.9]},
+                        }
+                    ],
+                }
+            )
+            post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
+            post("/v1/screenshot", {"path": str(ws_dir / "alt_cannon_after.png")})
+
+            # Back to base (main).
+            post("/v1/gen3d/set_active_workspace", {"workspace_id": "main"})
+
+            # Branch B: wheels-only edit.
+            post("/v1/gen3d/create_workspace", {"workspace_id": "alt_wheels"})
+            post("/v1/gen3d/set_active_workspace", {"workspace_id": "alt_wheels"})
+            apply_ops(
+                {
+                    "version": 1,
+                    "atomic": True,
+                    "ops": [
+                        {
+                            "kind": "set_attachment_offset",
+                            "child_component": "wheels",
+                            "set": {"pos": [0.0, -0.9, 0.0]},
+                        }
+                    ],
+                }
+            )
+            post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
+            post("/v1/screenshot", {"path": str(ws_dir / "alt_wheels_after.png")})
+
+            # Back to base (main).
+            post("/v1/gen3d/set_active_workspace", {"workspace_id": "main"})
+
+            # Diff branches (sanity).
+            diff_ws = post("/v1/gen3d/diff_workspaces", {"version": 1, "a": "alt_cannon", "b": "alt_wheels"})
+            if not bool(diff_ws.get("ok")):
+                raise RuntimeError(f"diff_workspaces failed: {diff_ws}")
+
+            # Merge into a new workspace.
+            merge = post(
+                "/v1/gen3d/merge_workspace",
+                {"version": 1, "base": "main", "a": "alt_cannon", "b": "alt_wheels", "output_workspace_id": "merge_ok"},
+            )
+            if not bool(merge.get("ok")):
+                raise RuntimeError(f"merge_workspace failed: {merge}")
+            if merge.get("conflicts"):
+                raise RuntimeError(f"Expected conflict-free merge: {merge}")
+            merged_id = str(merge.get("workspace_id") or "").strip()
+            if not merged_id:
+                raise RuntimeError(f"merge_workspace returned no workspace_id: {merge}")
+
+            post("/v1/gen3d/set_active_workspace", {"workspace_id": merged_id})
+            post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
+            post("/v1/screenshot", {"path": str(ws_dir / "merge_after.png")})
+
+        if apply_draft_ops_regression and not workspace_regression:
+            ops_dir = run_dir / "external_screenshots_draft_ops"
+            ops_dir.mkdir(parents=True, exist_ok=True)
+
+            # Capture draft before patch.
+            post("/v1/screenshot", {"path": str(ops_dir / "before_apply.png")})
+
+            if kind == "warcar":
+                apply_args = {
+                    "version": 1,
+                    "atomic": True,
+                    "ops": [
+                        {
+                            "kind": "set_attachment_offset",
+                            "child_component": "wheels",
+                            "set": {"pos": [0.0, -0.9, 0.0]},
+                        },
+                        {
+                            "kind": "update_primitive_part",
+                            "component": "cannon",
+                            "part_id_uuid": part_id_uuid("cannon", 1),
+                            "set_transform": {"pos": [0.65, -0.5, 0.9]},
+                        },
+                    ],
+                }
+            elif kind == "snake":
+                apply_args = {
+                    "version": 1,
+                    "atomic": True,
+                    "ops": [
+                        {
+                            "kind": "upsert_animation_slot",
+                            "child_component": "seg_0",
+                            "channel": "move",
+                            "slot": {
+                                "driver": "move_phase",
+                                "speed_scale": 1.15,
+                                "time_offset_units": 0.0,
+                                "clip": {
+                                    "kind": "loop",
+                                    "duration_units": 1.0,
+                                    "keyframes": [
+                                        {
+                                            "t_units": 0.0,
+                                            "delta": {
+                                                "pos": [0.0, 0.0, 0.0],
+                                                "rot_quat_xyzw": None,
+                                                "scale": None,
+                                            },
+                                        },
+                                        {
+                                            "t_units": 0.5,
+                                            "delta": {
+                                                "pos": [0.02, 0.0, 0.0],
+                                                "rot_quat_xyzw": None,
+                                                "scale": None,
+                                            },
+                                        },
+                                        {
+                                            "t_units": 1.0,
+                                            "delta": {
+                                                "pos": [0.0, 0.0, 0.0],
+                                                "rot_quat_xyzw": None,
+                                                "scale": None,
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        }
+                    ],
+                }
+            else:
+                raise RuntimeError(
+                    f"--apply-draft-ops-regression is only implemented for mock kinds warcar/snake; got kind={kind!r} prompt={prompt!r}"
+                )
+
+            apply_ops(apply_args)
+
+            # Give the preview a moment to rebuild.
+            post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
+            post("/v1/screenshot", {"path": str(ops_dir / "after_apply.png")})
+
+            # Ensure the transaction log exists somewhere under the run dir.
+            logs = list(run_dir.rglob("draft_ops.jsonl"))
+            if not logs:
+                raise RuntimeError(f"Expected draft_ops.jsonl under run_dir={run_dir}")
 
     # Save into world.
     save = post("/v1/gen3d/save", {})
@@ -846,6 +1037,16 @@ def main() -> int:
         action="store_true",
         help="Before Save, apply deterministic patch ops via /v1/gen3d/apply_draft_ops and verify draft_ops.jsonl is written (mock://gen3d kinds: warcar or snake).",
     )
+    ap.add_argument(
+        "--snapshots-regression",
+        action="store_true",
+        help="Before Save, exercise snapshot/diff/restore via /v1/gen3d/*snapshots* (mock://gen3d kinds: warcar or snake).",
+    )
+    ap.add_argument(
+        "--workspace-regression",
+        action="store_true",
+        help="Before Save, exercise workspace branching + merge via /v1/gen3d/*workspace* (currently mock://gen3d kind: warcar).",
+    )
     ap.add_argument("--dt-secs", type=float, default=1.0 / 60.0, help="Fixed dt for /v1/step")
     ap.add_argument("--prompt", action="append", default=[], help="Prompt text (repeatable). If omitted, read from stdin.")
     ap.add_argument(
@@ -966,6 +1167,8 @@ def main() -> int:
                     stop_resume_pause_secs=float(args.stop_resume_pause_secs),
                     save_early=args.save_early,
                     apply_draft_ops_regression=args.apply_draft_ops_regression,
+                    snapshots_regression=args.snapshots_regression,
+                    workspace_regression=args.workspace_regression,
                     world_move_offset=(dx, dz),
                     frames_per_capture=args.frames_per_capture,
                     capture_count=args.capture_count,
@@ -1011,6 +1214,8 @@ def main() -> int:
                     stop_resume_pause_secs=float(args.stop_resume_pause_secs),
                     save_early=args.save_early,
                     apply_draft_ops_regression=args.apply_draft_ops_regression,
+                    snapshots_regression=args.snapshots_regression,
+                    workspace_regression=args.workspace_regression,
                     world_move_offset=(args.move_dx, args.move_dz),
                     frames_per_capture=args.frames_per_capture,
                     capture_count=args.capture_count,

@@ -8,7 +8,7 @@ pub(crate) fn builtin_object_id(key: &str) -> u128 {
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, key.as_bytes()).as_u128()
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum MeshKey {
     UnitCube,
     UnitCylinder,

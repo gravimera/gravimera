@@ -5,13 +5,20 @@ use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
     TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
+    TOOL_ID_DIFF_SNAPSHOTS,
+    TOOL_ID_DIFF_WORKSPACES,
+    TOOL_ID_COPY_FROM_WORKSPACE,
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
+    TOOL_ID_LIST_SNAPSHOTS,
     TOOL_ID_LIST, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT,
     TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
     TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_MERGE_WORKSPACE,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_RESTORE_SNAPSHOT,
     TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK,
+    TOOL_ID_SNAPSHOT,
     TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
@@ -483,6 +490,58 @@ pub(super) fn execute_tool_call(
                 Some(call_id.as_str()),
                 call.args,
             ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
+        }
+        TOOL_ID_SNAPSHOT => {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            let json = match super::snapshots::snapshot_v1(job, draft, call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
+        }
+        TOOL_ID_LIST_SNAPSHOTS => {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            let json = match super::snapshots::list_snapshots_v1(job, call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
+        }
+        TOOL_ID_DIFF_SNAPSHOTS => {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            let json = match super::snapshots::diff_snapshots_v1(job, call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
+        }
+        TOOL_ID_RESTORE_SNAPSHOT => {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            let json = match super::snapshots::restore_snapshot_v1(job, draft, call.args) {
                 Ok(v) => v,
                 Err(err) => {
                     return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -1965,10 +2024,46 @@ pub(super) fn execute_tool_call(
                 })
                 .unwrap_or_default();
 
-            let source_defs = if from == job.agent.active_workspace_id {
-                draft.defs.clone()
+            let (
+                source_defs,
+                source_planned_components,
+                source_plan_hash,
+                source_assembly_rev,
+                source_assembly_notes,
+                source_plan_collider,
+                source_rig_move_cycle_m,
+                source_motion_roles,
+                source_motion_authoring,
+                source_reuse_groups,
+                source_reuse_group_warnings,
+            ) = if from == job.agent.active_workspace_id {
+                (
+                    draft.defs.clone(),
+                    job.planned_components.clone(),
+                    job.plan_hash.clone(),
+                    job.assembly_rev,
+                    job.assembly_notes.clone(),
+                    job.plan_collider.clone(),
+                    job.rig_move_cycle_m,
+                    job.motion_roles.clone(),
+                    job.motion_authoring.clone(),
+                    job.reuse_groups.clone(),
+                    job.reuse_group_warnings.clone(),
+                )
             } else if let Some(ws) = job.agent.workspaces.get(&from) {
-                ws.defs.clone()
+                (
+                    ws.defs.clone(),
+                    ws.planned_components.clone(),
+                    ws.plan_hash.clone(),
+                    ws.assembly_rev,
+                    ws.assembly_notes.clone(),
+                    ws.plan_collider.clone(),
+                    ws.rig_move_cycle_m,
+                    ws.motion_roles.clone(),
+                    ws.motion_authoring.clone(),
+                    ws.reuse_groups.clone(),
+                    ws.reuse_group_warnings.clone(),
+                )
             } else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
@@ -2037,6 +2132,16 @@ pub(super) fn execute_tool_call(
                         name
                     },
                     defs: new_defs,
+                    planned_components: source_planned_components,
+                    plan_hash: source_plan_hash,
+                    assembly_rev: source_assembly_rev,
+                    assembly_notes: source_assembly_notes,
+                    plan_collider: source_plan_collider,
+                    rig_move_cycle_m: source_rig_move_cycle_m,
+                    motion_roles: source_motion_roles,
+                    motion_authoring: source_motion_authoring,
+                    reuse_groups: source_reuse_groups,
+                    reuse_group_warnings: source_reuse_group_warnings,
                 },
             );
 
@@ -2103,24 +2208,45 @@ pub(super) fn execute_tool_call(
 
             // Save current active workspace back into the map.
             let prev = job.agent.active_workspace_id.clone();
-            if prev != "main" || !draft.defs.is_empty() {
+            if prev != "main" || !draft.defs.is_empty() || !job.planned_components.is_empty() {
                 job.agent.workspaces.insert(
                     prev.clone(),
                     super::Gen3dAgentWorkspace {
                         name: prev.clone(),
                         defs: draft.defs.clone(),
+                        planned_components: job.planned_components.clone(),
+                        plan_hash: job.plan_hash.clone(),
+                        assembly_rev: job.assembly_rev,
+                        assembly_notes: job.assembly_notes.clone(),
+                        plan_collider: job.plan_collider.clone(),
+                        rig_move_cycle_m: job.rig_move_cycle_m,
+                        motion_roles: job.motion_roles.clone(),
+                        motion_authoring: job.motion_authoring.clone(),
+                        reuse_groups: job.reuse_groups.clone(),
+                        reuse_group_warnings: job.reuse_group_warnings.clone(),
                     },
                 );
             }
 
-            let next_defs = if workspace_id == "main" {
-                job.agent
-                    .workspaces
-                    .get("main")
-                    .map(|ws| ws.defs.clone())
-                    .unwrap_or_default()
+            let next = if workspace_id == "main" {
+                job.agent.workspaces.get("main").cloned().unwrap_or_else(|| {
+                    super::Gen3dAgentWorkspace {
+                        name: "main".into(),
+                        defs: Vec::new(),
+                        planned_components: Vec::new(),
+                        plan_hash: String::new(),
+                        assembly_rev: 0,
+                        assembly_notes: String::new(),
+                        plan_collider: None,
+                        rig_move_cycle_m: None,
+                        motion_roles: None,
+                        motion_authoring: None,
+                        reuse_groups: Vec::new(),
+                        reuse_group_warnings: Vec::new(),
+                    }
+                })
             } else if let Some(ws) = job.agent.workspaces.get(&workspace_id) {
-                ws.defs.clone()
+                ws.clone()
             } else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
@@ -2129,7 +2255,21 @@ pub(super) fn execute_tool_call(
                 ));
             };
 
-            draft.defs = next_defs;
+            draft.defs = next.defs;
+            job.planned_components = next.planned_components;
+            job.plan_hash = next.plan_hash;
+            job.assembly_rev = next.assembly_rev;
+            job.assembly_notes = next.assembly_notes;
+            job.plan_collider = next.plan_collider;
+            job.rig_move_cycle_m = next.rig_move_cycle_m;
+            job.motion_roles = next.motion_roles;
+            job.motion_authoring = next.motion_authoring;
+            job.reuse_groups = next.reuse_groups;
+            job.reuse_group_warnings = next.reuse_group_warnings;
+
+            let component_count = job.planned_components.len();
+            job.regen_per_component.resize(component_count, 0);
+            job.component_attempts.resize(component_count, 0);
             job.agent.active_workspace_id = workspace_id;
 
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
@@ -2137,6 +2277,45 @@ pub(super) fn execute_tool_call(
                 call.tool_id,
                 serde_json::json!({ "ok": true }),
             ))
+        }
+        TOOL_ID_DIFF_WORKSPACES => {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            let json = match super::workspaces::diff_workspaces_v1(job, draft, call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
+        }
+        TOOL_ID_COPY_FROM_WORKSPACE => {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            let json = match super::workspaces::copy_from_workspace_v1(job, draft, call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
+        }
+        TOOL_ID_MERGE_WORKSPACE => {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            let json = match super::workspaces::merge_workspace_v1(job, draft, call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
         }
         TOOL_ID_SUBMIT_TOOLING_FEEDBACK => {
             const MAX_SUBMISSIONS_PER_RUN: u32 = 8;

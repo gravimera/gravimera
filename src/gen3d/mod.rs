@@ -50,8 +50,12 @@ fn gen3d_draft_projectile_object_id() -> u128 {
 
 pub(crate) use ai::{
     gen3d_apply_draft_ops_from_api, gen3d_apply_pending_seed_from_prefab,
-    gen3d_cancel_build_from_api, gen3d_resume_build_from_api, gen3d_start_build_from_api,
-    gen3d_start_edit_session_from_prefab_id_from_api,
+    gen3d_cancel_build_from_api, gen3d_copy_from_workspace_from_api,
+    gen3d_create_workspace_from_api, gen3d_delete_workspace_from_api,
+    gen3d_diff_snapshots_from_api, gen3d_diff_workspaces_from_api, gen3d_list_snapshots_from_api,
+    gen3d_merge_workspace_from_api, gen3d_restore_snapshot_from_api,
+    gen3d_resume_build_from_api, gen3d_set_active_workspace_from_api, gen3d_snapshot_from_api,
+    gen3d_start_build_from_api, gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };
 pub(crate) use ai::{gen3d_continue_button, gen3d_generate_button, gen3d_poll_ai_job, Gen3dAiJob};

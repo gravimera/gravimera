@@ -1453,6 +1453,441 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 content_type: "application/json",
             })
         }
+        ("POST", "/v1/gen3d/snapshot") => {
+            let Some(mode) = mode else {
+                return Some(json_error(501, "Gen3D snapshot requires rendered mode."));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(501, "Gen3D snapshot requires rendered mode."));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_snapshot_from_api(job, draft, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/list_snapshots") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D list_snapshots requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D list_snapshots requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_list_snapshots_from_api(job, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/diff_snapshots") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D diff_snapshots requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D diff_snapshots requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_diff_snapshots_from_api(job, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/restore_snapshot") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D restore_snapshot requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D restore_snapshot requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_restore_snapshot_from_api(job, draft, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/create_workspace") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D create_workspace requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D create_workspace requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_create_workspace_from_api(job, draft, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/delete_workspace") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D delete_workspace requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D delete_workspace requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_delete_workspace_from_api(job, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/set_active_workspace") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D set_active_workspace requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D set_active_workspace requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_set_active_workspace_from_api(job, draft, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/diff_workspaces") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D diff_workspaces requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D diff_workspaces requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_diff_workspaces_from_api(job, draft, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/copy_from_workspace") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D copy_from_workspace requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D copy_from_workspace requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_copy_from_workspace_from_api(job, draft, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/merge_workspace") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D merge_workspace requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D merge_workspace requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = if msg.body.is_empty() {
+                serde_json::json!({})
+            } else {
+                match serde_json::from_slice(&msg.body) {
+                    Ok(v) => v,
+                    Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+                }
+            };
+
+            let result = match crate::gen3d::gen3d_merge_workspace_from_api(job, draft, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
         ("POST", "/v1/gen3d/save") => {
             let Some(mode) = mode else {
                 return Some(json_error(501, "Gen3D save requires rendered mode."));

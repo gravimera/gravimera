@@ -14,6 +14,10 @@ pub(crate) const TOOL_ID_LIST_RUN_ARTIFACTS: &str = "list_run_artifacts_v1";
 pub(crate) const TOOL_ID_READ_ARTIFACT: &str = "read_artifact_v1";
 pub(crate) const TOOL_ID_SEARCH_ARTIFACTS: &str = "search_artifacts_v1";
 pub(crate) const TOOL_ID_APPLY_DRAFT_OPS: &str = "apply_draft_ops_v1";
+pub(crate) const TOOL_ID_SNAPSHOT: &str = "snapshot_v1";
+pub(crate) const TOOL_ID_LIST_SNAPSHOTS: &str = "list_snapshots_v1";
+pub(crate) const TOOL_ID_DIFF_SNAPSHOTS: &str = "diff_snapshots_v1";
+pub(crate) const TOOL_ID_RESTORE_SNAPSHOT: &str = "restore_snapshot_v1";
 pub(crate) const TOOL_ID_COPY_COMPONENT: &str = "copy_component_v1";
 pub(crate) const TOOL_ID_MIRROR_COMPONENT: &str = "mirror_component_v1";
 pub(crate) const TOOL_ID_COPY_COMPONENT_SUBTREE: &str = "copy_component_subtree_v1";
@@ -31,6 +35,9 @@ pub(crate) const TOOL_ID_RENDER_PREVIEW: &str = "render_preview_v1";
 pub(crate) const TOOL_ID_CREATE_WORKSPACE: &str = "create_workspace_v1";
 pub(crate) const TOOL_ID_DELETE_WORKSPACE: &str = "delete_workspace_v1";
 pub(crate) const TOOL_ID_SET_ACTIVE_WORKSPACE: &str = "set_active_workspace_v1";
+pub(crate) const TOOL_ID_DIFF_WORKSPACES: &str = "diff_workspaces_v1";
+pub(crate) const TOOL_ID_COPY_FROM_WORKSPACE: &str = "copy_from_workspace_v1";
+pub(crate) const TOOL_ID_MERGE_WORKSPACE: &str = "merge_workspace_v1";
 pub(crate) const TOOL_ID_SUBMIT_TOOLING_FEEDBACK: &str = "submit_tooling_feedback_v1";
 
 #[derive(Clone, Debug, Serialize)]
@@ -130,6 +137,26 @@ impl Gen3dToolRegistryV1 {
                     "Applies explicit, validated patch ops to the current draft and returns a structured diff (transaction-logged).",
             },
             Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_SNAPSHOT,
+                title: "Snapshot",
+                one_line_summary: "Captures a named snapshot of the current Gen3D session state.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_LIST_SNAPSHOTS,
+                title: "List snapshots",
+                one_line_summary: "Lists available in-session snapshots.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_DIFF_SNAPSHOTS,
+                title: "Diff snapshots",
+                one_line_summary: "Returns a structured diff between two snapshots.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_RESTORE_SNAPSHOT,
+                title: "Restore snapshot",
+                one_line_summary: "Restores the current session state from a snapshot (not allowed while running).",
+            },
+            Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT,
                 title: "Copy component",
                 one_line_summary:
@@ -209,6 +236,23 @@ impl Gen3dToolRegistryV1 {
                 tool_id: TOOL_ID_SET_ACTIVE_WORKSPACE,
                 title: "Set active workspace",
                 one_line_summary: "Switches which workspace is shown in the preview panel.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_DIFF_WORKSPACES,
+                title: "Diff workspaces",
+                one_line_summary: "Returns a structured diff between two workspaces.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_COPY_FROM_WORKSPACE,
+                title: "Copy from workspace",
+                one_line_summary:
+                    "Cherry-picks component(s) or subtrees from another workspace into the active workspace.",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_MERGE_WORKSPACE,
+                title: "Merge workspaces",
+                one_line_summary:
+                    "Performs a deterministic 3-way merge into a new workspace (no auto-resolve conflicts).",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
@@ -472,6 +516,119 @@ impl Gen3dToolRegistryV1 {
                     "rejected_ops": [],
                     "diff_summary": { "primitive_parts": {"added":0,"removed":0,"updated":1} },
                     "changed_component_ids": ["uuid"],
+                }),
+            }),
+            TOOL_ID_SNAPSHOT => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_SNAPSHOT,
+                title: "Snapshot",
+                one_line_summary: "Captures a named snapshot of the current Gen3D session state.",
+                description:
+                    "Captures a snapshot of the current Gen3D session state (draft defs + planned components + key job state).\n\
+                     Snapshots are associated with the *current workspace* and are stored for the lifetime of the session.\n\
+                     The engine appends a `snapshots.jsonl` artifact under the run dir for observability.\n\
+                     Notes:\n\
+                     - `snapshot_id` is optional; if omitted, the engine assigns a deterministic `snapN` within the session.\n\
+                     - `restore_snapshot_v1` requires the active workspace to match the snapshot's workspace_id.",
+                args_example: serde_json::json!({
+                    "version": 1,
+                    "snapshot_id": "before_patch",
+                    "label": "before apply_draft_ops",
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "version": 1,
+                    "snapshot_id": "before_patch",
+                    "label": "before apply_draft_ops",
+                    "created_at_ms": 1710000000000u64,
+                    "active_workspace": "main",
+                    "workspace_id": "main",
+                    "plan_hash": "sha256:...",
+                    "assembly_rev": 3,
+                    "defs": 12,
+                    "components": 8,
+                }),
+            }),
+            TOOL_ID_LIST_SNAPSHOTS => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_LIST_SNAPSHOTS,
+                title: "List snapshots",
+                one_line_summary: "Lists available in-session snapshots.",
+                description:
+                    "Lists snapshots captured via `snapshot_v1` (bounded).\n\
+                     Snapshots are in-memory and scoped to the current Gen3D session/run.",
+                args_example: serde_json::json!({
+                    "version": 1,
+                    "max_items": 50,
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "version": 1,
+                    "snapshots": [
+                        {
+                            "snapshot_id": "snap1",
+                            "workspace_id": "main",
+                            "label": "snap1",
+                            "created_at_ms": 1710000000000u64,
+                            "plan_hash": "sha256:...",
+                            "assembly_rev": 3,
+                            "defs": 12,
+                            "components": 8,
+                        }
+                    ],
+                    "truncated": false,
+                }),
+            }),
+            TOOL_ID_DIFF_SNAPSHOTS => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_DIFF_SNAPSHOTS,
+                title: "Diff snapshots",
+                one_line_summary: "Returns a structured diff between two snapshots.",
+                description:
+                    "Computes a structured diff between two snapshots (bounded per-component output).\n\
+                     The diff is component-name keyed and focuses on:\n\
+                     - primitive geometry (stable part_id driven),\n\
+                     - anchors,\n\
+                     - attachment offsets/joints,\n\
+                     - per-edge animation slots (as a subset of attachment diff).",
+                args_example: serde_json::json!({
+                    "version": 1,
+                    "a": "snap1",
+                    "b": "snap2",
+                    "max_components": 128,
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "version": 1,
+                    "a": { "snapshot_id":"snap1", "label":"snap1", "workspace_id":"main", "plan_hash":"sha256:...", "assembly_rev":3, "components":8, "defs":12 },
+                    "b": { "snapshot_id":"snap2", "label":"snap2", "workspace_id":"main", "plan_hash":"sha256:...", "assembly_rev":4, "components":8, "defs":12 },
+                    "diff_summary": { "components_changed": 1, "geometry_changed": 1, "anchors_changed": 0, "attachments_changed": 0, "animations_changed": 0 },
+                    "components": [
+                        { "name":"cannon", "component_id_uuid":"uuid", "only_in_a":false, "only_in_b":false, "geometry_changed":true, "anchors_changed":false, "attachment_changed":false, "animations_changed":false }
+                    ],
+                    "truncated": false,
+                }),
+            }),
+            TOOL_ID_RESTORE_SNAPSHOT => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_RESTORE_SNAPSHOT,
+                title: "Restore snapshot",
+                one_line_summary:
+                    "Restores the current session state from a snapshot (not allowed while running).",
+                description:
+                    "Restores the current Gen3D session state from a snapshot.\n\
+                     Constraints:\n\
+                     - Not allowed while the run is running.\n\
+                     - The active workspace must match the snapshot's workspace_id.",
+                args_example: serde_json::json!({
+                    "version": 1,
+                    "snapshot_id": "snap1",
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "version": 1,
+                    "snapshot_id": "snap1",
+                    "assembly_rev_before": 4,
+                    "assembly_rev_after": 3,
+                    "plan_hash": "sha256:...",
+                    "defs": 12,
+                    "components": 8,
                 }),
             }),
             TOOL_ID_COPY_COMPONENT => Some(Gen3dToolDescriptionV1 {
@@ -748,6 +905,101 @@ impl Gen3dToolRegistryV1 {
                 description: "Switches the preview panel to show a specific workspace draft.",
                 args_example: serde_json::json!({ "workspace_id": "main" }),
                 result_example: serde_json::json!({ "ok": true }),
+            }),
+            TOOL_ID_DIFF_WORKSPACES => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_DIFF_WORKSPACES,
+                title: "Diff workspaces",
+                one_line_summary: "Returns a structured diff between two workspaces.",
+                description:
+                    "Computes a structured diff between two workspaces (bounded per-component output).\n\
+                     Defaults:\n\
+                     - If `a` is omitted/empty, it defaults to the active workspace.\n\
+                     - If `b` is omitted/empty, it defaults to `main`.\n\
+                     Diff focuses on:\n\
+                     - primitive geometry (stable part_id driven),\n\
+                     - anchors,\n\
+                     - attachment offsets/joints,\n\
+                     - per-edge animation slots.",
+                args_example: serde_json::json!({
+                    "version": 1,
+                    "a": "main",
+                    "b": "alt",
+                    "max_components": 128,
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "version": 1,
+                    "a": { "workspace_id":"main", "plan_hash":"sha256:...", "assembly_rev":3, "components":8, "defs":12 },
+                    "b": { "workspace_id":"alt", "plan_hash":"sha256:...", "assembly_rev":4, "components":8, "defs":12 },
+                    "diff_summary": { "components_changed": 2, "geometry_changed": 1, "anchors_changed": 1, "attachments_changed": 0, "animations_changed": 0 },
+                    "components": [
+                        { "name":"cannon", "component_id_uuid":"uuid", "only_in_a":false, "only_in_b":false, "geometry_changed":true, "anchors_changed":false, "attachment_changed":false, "animations_changed":false }
+                    ],
+                    "truncated": false,
+                }),
+            }),
+            TOOL_ID_COPY_FROM_WORKSPACE => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_COPY_FROM_WORKSPACE,
+                title: "Copy from workspace",
+                one_line_summary:
+                    "Cherry-picks component(s) or subtrees from another workspace into the active workspace.",
+                description:
+                    "Copies component state from another workspace into the active workspace.\n\
+                     This is a deterministic cherry-pick tool for branching workflows.\n\
+                     Constraints:\n\
+                     - No selection heuristics: you must pass explicit component names.\n\
+                     - Applies to the active workspace only.\n\
+                     Modes:\n\
+                     - `component`: copies exactly the named components.\n\
+                     - `subtree`: copies each named root component plus all descendants (as defined by the source workspace's attach_to tree).\n\
+                     Attachments:\n\
+                     - When `include_attachment=true`, copies each component's attach_to (including animations), then rebuilds the attachment tree in defs.\n\
+                     - When `include_attachment=false`, copies only geometry/anchors (does not change the assembly tree).",
+                args_example: serde_json::json!({
+                    "version": 1,
+                    "from": "alt",
+                    "mode": "component",
+                    "components": ["cannon"],
+                    "include_attachment": false,
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "version": 1,
+                    "from": "alt",
+                    "into": "main",
+                    "assembly_rev_before": 3,
+                    "assembly_rev_after": 4,
+                    "copied_components": ["cannon"],
+                }),
+            }),
+            TOOL_ID_MERGE_WORKSPACE => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_MERGE_WORKSPACE,
+                title: "Merge workspaces",
+                one_line_summary:
+                    "Performs a deterministic 3-way merge into a new workspace (no auto-resolve conflicts).",
+                description:
+                    "Performs a deterministic 3-way merge (base, a, b) and writes the merged result into a new workspace.\n\
+                     Non-conflicting changes are merged automatically.\n\
+                     Conflicts are returned explicitly and are NOT auto-resolved.\n\
+                     Notes:\n\
+                     - Merge requires the same plan_hash and component set across base/a/b.\n\
+                     - The output workspace is created; the active workspace is unchanged.",
+                args_example: serde_json::json!({
+                    "version": 1,
+                    "base": "main",
+                    "a": "alt_a",
+                    "b": "alt_b",
+                    "output_workspace_id": "merge_ab",
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "version": 1,
+                    "workspace_id": "merge_ab",
+                    "conflicts": [
+                        { "component": "cannon", "geometry": true, "anchors": false, "attachment": false, "animations": false }
+                    ],
+                    "applied": { "geometry": 1, "anchors": 0, "attachment": 0, "animations": 0 },
+                }),
             }),
             TOOL_ID_SUBMIT_TOOLING_FEEDBACK => Some(Gen3dToolDescriptionV1 {
                 tool_id: TOOL_ID_SUBMIT_TOOLING_FEEDBACK,

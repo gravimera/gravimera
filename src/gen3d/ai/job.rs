@@ -52,6 +52,34 @@ pub(super) struct Gen3dComponentBatchFailure {
 pub(super) struct Gen3dAgentWorkspace {
     pub(super) name: String,
     pub(super) defs: Vec<crate::object::registry::ObjectDef>,
+    pub(super) planned_components: Vec<Gen3dPlannedComponent>,
+    pub(super) plan_hash: String,
+    pub(super) assembly_rev: u32,
+    pub(super) assembly_notes: String,
+    pub(super) plan_collider: Option<AiColliderJson>,
+    pub(super) rig_move_cycle_m: Option<f32>,
+    pub(super) motion_roles: Option<AiMotionRolesJsonV1>,
+    pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
+    pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
+    pub(super) reuse_group_warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct Gen3dAgentSnapshot {
+    pub(super) workspace_id: String,
+    pub(super) label: String,
+    pub(super) created_at_ms: u64,
+    pub(super) defs: Vec<crate::object::registry::ObjectDef>,
+    pub(super) planned_components: Vec<Gen3dPlannedComponent>,
+    pub(super) plan_hash: String,
+    pub(super) assembly_rev: u32,
+    pub(super) assembly_notes: String,
+    pub(super) plan_collider: Option<AiColliderJson>,
+    pub(super) rig_move_cycle_m: Option<f32>,
+    pub(super) motion_roles: Option<AiMotionRolesJsonV1>,
+    pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
+    pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
+    pub(super) reuse_group_warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -85,6 +113,8 @@ pub(super) struct Gen3dAgentState {
     pub(super) active_workspace_id: String,
     pub(super) workspaces: std::collections::HashMap<String, Gen3dAgentWorkspace>,
     pub(super) next_workspace_seq: u32,
+    pub(super) snapshots: std::collections::HashMap<String, Gen3dAgentSnapshot>,
+    pub(super) next_snapshot_seq: u32,
     pub(super) pending_tool_call: Option<crate::gen3d::agent::Gen3dToolCallJsonV1>,
     pub(super) pending_llm_tool: Option<Gen3dAgentLlmToolKind>,
     pub(super) pending_llm_repair_attempt: u8,
@@ -121,6 +151,8 @@ impl Default for Gen3dAgentState {
             active_workspace_id: "main".to_string(),
             workspaces: std::collections::HashMap::new(),
             next_workspace_seq: 1,
+            snapshots: std::collections::HashMap::new(),
+            next_snapshot_seq: 1,
             pending_tool_call: None,
             pending_llm_tool: None,
             pending_llm_repair_attempt: 0,

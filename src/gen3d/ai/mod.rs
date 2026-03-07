@@ -28,7 +28,9 @@ mod parse;
 mod prompts;
 mod reuse_groups;
 mod schema;
+mod snapshots;
 mod structured_outputs;
+mod workspaces;
 
 #[cfg(test)]
 mod regression_tests;
@@ -54,6 +56,15 @@ pub(crate) use orchestration::{
     gen3d_generate_button, gen3d_poll_ai_job, gen3d_resume_build_from_api,
     gen3d_start_build_from_api, gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
+};
+pub(crate) use snapshots::{
+    gen3d_diff_snapshots_from_api, gen3d_list_snapshots_from_api, gen3d_restore_snapshot_from_api,
+    gen3d_snapshot_from_api,
+};
+pub(crate) use workspaces::{
+    gen3d_copy_from_workspace_from_api, gen3d_create_workspace_from_api,
+    gen3d_delete_workspace_from_api, gen3d_diff_workspaces_from_api,
+    gen3d_merge_workspace_from_api, gen3d_set_active_workspace_from_api,
 };
 pub(crate) use schema::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1};
 
