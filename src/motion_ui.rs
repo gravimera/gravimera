@@ -5,7 +5,9 @@ use serde_json::json;
 
 use crate::assets::SceneAssets;
 use crate::constants::{BUILD_GRID_SIZE, BUILD_UNIT_SIZE};
-use crate::gen3d::{Gen3dPendingSeedFromPrefab, Gen3dSeedFromPrefabMode, Gen3dSeedFromPrefabRequest};
+use crate::gen3d::{
+    Gen3dPendingSeedFromPrefab, Gen3dSeedFromPrefabMode, Gen3dSeedFromPrefabRequest,
+};
 use crate::geometry::{clamp_world_xz, snap_to_grid};
 use crate::intelligence::host_plugin::{IntelligenceHostRuntime, StandaloneBrain};
 use crate::intelligence::protocol::{DespawnBrainInstanceRequest, PROTOCOL_VERSION};

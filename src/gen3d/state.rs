@@ -95,7 +95,7 @@ pub(crate) struct Gen3dPreview {
     pub(crate) animation_dropdown_open: bool,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub(crate) struct Gen3dDraft {
     pub(crate) defs: Vec<ObjectDef>,
 }

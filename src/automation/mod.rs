@@ -1412,6 +1412,47 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 content_type: "application/json",
             })
         }
+        ("POST", "/v1/gen3d/apply_draft_ops") => {
+            let Some(mode) = mode else {
+                return Some(json_error(
+                    501,
+                    "Gen3D apply_draft_ops requires rendered mode.",
+                ));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(
+                    501,
+                    "Gen3D apply_draft_ops requires rendered mode.",
+                ));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::Preview)
+            {
+                return Some(json_error(409, "Switch to Build Preview scene first."));
+            }
+            let Some(job) = gen3d_job.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let args: serde_json::Value = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let result = match crate::gen3d::gen3d_apply_draft_ops_from_api(job, draft, args) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            Some(AutomationReply {
+                status: 200,
+                body: result.to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
         ("POST", "/v1/gen3d/save") => {
             let Some(mode) = mode else {
                 return Some(json_error(501, "Gen3D save requires rendered mode."));

@@ -6,12 +6,14 @@ pub(crate) const TOOL_ID_DESCRIBE: &str = "describe_tool_v1";
 pub(crate) const TOOL_ID_GET_USER_INPUTS: &str = "get_user_inputs_v1";
 pub(crate) const TOOL_ID_GET_STATE_SUMMARY: &str = "get_state_summary_v1";
 pub(crate) const TOOL_ID_GET_SCENE_GRAPH_SUMMARY: &str = "get_scene_graph_summary_v1";
+pub(crate) const TOOL_ID_QUERY_COMPONENT_PARTS: &str = "query_component_parts_v1";
 pub(crate) const TOOL_ID_VALIDATE: &str = "validate_v1";
 pub(crate) const TOOL_ID_SMOKE_CHECK: &str = "smoke_check_v1";
 pub(crate) const TOOL_ID_QA: &str = "qa_v1";
 pub(crate) const TOOL_ID_LIST_RUN_ARTIFACTS: &str = "list_run_artifacts_v1";
 pub(crate) const TOOL_ID_READ_ARTIFACT: &str = "read_artifact_v1";
 pub(crate) const TOOL_ID_SEARCH_ARTIFACTS: &str = "search_artifacts_v1";
+pub(crate) const TOOL_ID_APPLY_DRAFT_OPS: &str = "apply_draft_ops_v1";
 pub(crate) const TOOL_ID_COPY_COMPONENT: &str = "copy_component_v1";
 pub(crate) const TOOL_ID_MIRROR_COMPONENT: &str = "mirror_component_v1";
 pub(crate) const TOOL_ID_COPY_COMPONENT_SUBTREE: &str = "copy_component_subtree_v1";
@@ -82,6 +84,12 @@ impl Gen3dToolRegistryV1 {
                 one_line_summary: "Returns a structured summary of the current Gen3D draft scene graph.",
             },
             Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_QUERY_COMPONENT_PARTS,
+                title: "Query component parts",
+                one_line_summary:
+                    "Lists part_id_uuid + transforms for parts on a component (bounded; for deterministic patch ops).",
+            },
+            Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_VALIDATE,
                 title: "Validate draft",
                 one_line_summary: "Runs structural validations and returns issues.",
@@ -114,6 +122,12 @@ impl Gen3dToolRegistryV1 {
                 title: "Search artifacts",
                 one_line_summary:
                     "Searches run artifacts for a substring (scoped, bounded; for debugging).",
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_APPLY_DRAFT_OPS,
+                title: "Apply draft ops",
+                one_line_summary:
+                    "Applies explicit, validated patch ops to the current draft and returns a structured diff (transaction-logged).",
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT,
@@ -277,6 +291,34 @@ impl Gen3dToolRegistryV1 {
                     "components": [{"name":"body","generated":true}],
                 }),
             }),
+            TOOL_ID_QUERY_COMPONENT_PARTS => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_QUERY_COMPONENT_PARTS,
+                title: "Query component parts",
+                one_line_summary:
+                    "Lists part_id_uuid + transforms for parts on a component (bounded; for deterministic patch ops).",
+                description:
+                    "Returns a bounded list of parts for a single component, including stable `part_id_uuid` for primitive parts.\n\
+                     Use this to target parts explicitly when calling `apply_draft_ops_v1`.\n\
+                     Notes:\n\
+                     - This is a read-only tool.\n\
+                     - By default it returns only primitive parts (not attachment object refs).",
+                args_example: serde_json::json!({
+                    "version": 1,
+                    "component": "cannon",
+                    "include_non_primitives": false,
+                    "max_parts": 128,
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "version": 1,
+                    "component": "cannon",
+                    "component_id_uuid": "uuid",
+                    "parts": [
+                        { "part_index": 0, "part_id_uuid": "uuid", "kind": "primitive", "transform": {"pos":[0,0,0], "rot_quat_xyzw":[0,0,0,1], "scale":[1,1,1]} }
+                    ],
+                    "truncated": false,
+                }),
+            }),
             TOOL_ID_VALIDATE => Some(Gen3dToolDescriptionV1 {
                 tool_id: TOOL_ID_VALIDATE,
                 title: "Validate draft",
@@ -382,6 +424,54 @@ impl Gen3dToolRegistryV1 {
                         {"artifact_ref":"attempt_0/pass_3/gen3d_run.log","where":"tail","line":"...ERROR..."}
                     ],
                     "truncated": false,
+                }),
+            }),
+            TOOL_ID_APPLY_DRAFT_OPS => Some(Gen3dToolDescriptionV1 {
+                tool_id: TOOL_ID_APPLY_DRAFT_OPS,
+                title: "Apply draft ops",
+                one_line_summary:
+                    "Applies explicit, validated patch ops to the current draft and returns a structured diff (transaction-logged).",
+                description:
+                    "Applies a list of explicit draft edit operations (anchors, attachment offsets, primitive parts, and per-edge animation slots).\n\
+                     Constraints:\n\
+                     - No selection heuristics: all targets must be explicit (component name, anchor name, part_id_uuid, channel).\n\
+                     - Deterministic apply order: ops are processed in input order.\n\
+                     - Strict validation: invalid ops are rejected with structured errors.\n\
+                     - Transaction log: writes a JSONL artifact (`draft_ops.jsonl`) under the current pass dir.\n\
+                     Atomic mode:\n\
+                     - When `atomic=true` (default), either all ops apply or none are committed.\n\
+                     - When `atomic=false`, valid ops apply and invalid ops are rejected (partial apply).",
+                args_example: serde_json::json!({
+                    "version": 1,
+                    "atomic": true,
+                    "if_assembly_rev": 3,
+                    "ops": [
+                        {
+                            "kind": "set_attachment_offset",
+                            "child_component": "wheels",
+                            "set": { "pos": [0.0, -0.9, 0.0] }
+                        },
+                        {
+                            "kind": "update_primitive_part",
+                            "component": "cannon",
+                            "part_id_uuid": "uuid",
+                            "set_transform": { "pos": [0.65, -0.5, 0.9] }
+                        }
+                    ]
+                }),
+                result_example: serde_json::json!({
+                    "ok": true,
+                    "version": 1,
+                    "atomic": true,
+                    "committed": true,
+                    "assembly_rev_before": 3,
+                    "new_assembly_rev": 4,
+                    "applied_ops": [
+                        { "index": 0, "kind": "set_attachment_offset", "diff": {"pos": {"before":[0,0,0], "after":[0,-0.9,0]}} }
+                    ],
+                    "rejected_ops": [],
+                    "diff_summary": { "primitive_parts": {"added":0,"removed":0,"updated":1} },
+                    "changed_component_ids": ["uuid"],
                 }),
             }),
             TOOL_ID_COPY_COMPONENT => Some(Gen3dToolDescriptionV1 {

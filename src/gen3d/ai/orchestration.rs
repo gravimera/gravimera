@@ -41,8 +41,8 @@ use super::parse;
 use super::reuse_groups;
 
 use super::super::state::{
-    Gen3dContinueButton, Gen3dDraft, Gen3dGenerateButton, Gen3dPreview, Gen3dPreviewModelRoot,
-    Gen3dPendingSeedFromPrefab, Gen3dReviewCaptureCamera, Gen3dSeedFromPrefabMode, Gen3dSideTab,
+    Gen3dContinueButton, Gen3dDraft, Gen3dGenerateButton, Gen3dPendingSeedFromPrefab, Gen3dPreview,
+    Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dSeedFromPrefabMode, Gen3dSideTab,
     Gen3dSpeedMode, Gen3dWorkshop,
 };
 use super::super::tool_feedback::{

@@ -176,6 +176,7 @@ def run_one(
     stop_resume_after_secs: float,
     stop_resume_pause_secs: float,
     save_early: bool,
+    apply_draft_ops_regression: bool,
     world_move_offset: tuple[float, float],
     frames_per_capture: int,
     capture_count: int,
@@ -366,6 +367,117 @@ def run_one(
 
     if run_dir is None:
         raise RuntimeError("Missing run_dir from gen3d/status")
+
+    if apply_draft_ops_regression:
+        import uuid
+
+        ops_dir = run_dir / "external_screenshots_draft_ops"
+        ops_dir.mkdir(parents=True, exist_ok=True)
+
+        def mock_kind_from_text(text: str) -> str:
+            t = text.lower()
+            if "octopus" in t:
+                return "octopus"
+            if "mantis" in t:
+                return "mantis"
+            if "snake" in t:
+                return "snake"
+            if "warcar" in t or "cannon" in t or "tank" in t:
+                return "warcar"
+            return "warcar"
+
+        kind = mock_kind_from_text(prompt)
+
+        # Capture draft before patch.
+        post("/v1/screenshot", {"path": str(ops_dir / "before_apply.png")})
+
+        # Deterministic part_id_uuid: UUIDv5(NAMESPACE_URL, "gravimera/gen3d/part/<component>/<part_idx>")
+        def part_id_uuid(component: str, part_idx: int) -> str:
+            key = f"gravimera/gen3d/part/{component}/{part_idx}"
+            return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
+
+        if kind == "warcar":
+            apply_args = {
+                "version": 1,
+                "atomic": True,
+                "ops": [
+                    {
+                        "kind": "set_attachment_offset",
+                        "child_component": "wheels",
+                        "set": {"pos": [0.0, -0.9, 0.0]},
+                    },
+                    {
+                        "kind": "update_primitive_part",
+                        "component": "cannon",
+                        "part_id_uuid": part_id_uuid("cannon", 1),
+                        "set_transform": {"pos": [0.65, -0.5, 0.9]},
+                    },
+                ],
+            }
+        elif kind == "snake":
+            apply_args = {
+                "version": 1,
+                "atomic": True,
+                "ops": [
+                    {
+                        "kind": "upsert_animation_slot",
+                        "child_component": "seg_0",
+                        "channel": "move",
+                        "slot": {
+                            "driver": "move_phase",
+                            "speed_scale": 1.15,
+                            "time_offset_units": 0.0,
+                            "clip": {
+                                "kind": "loop",
+                                "duration_units": 1.0,
+                                "keyframes": [
+                                    {
+                                        "t_units": 0.0,
+                                        "delta": {
+                                            "pos": [0.0, 0.0, 0.0],
+                                            "rot_quat_xyzw": None,
+                                            "scale": None,
+                                        },
+                                    },
+                                    {
+                                        "t_units": 0.5,
+                                        "delta": {
+                                            "pos": [0.02, 0.0, 0.0],
+                                            "rot_quat_xyzw": None,
+                                            "scale": None,
+                                        },
+                                    },
+                                    {
+                                        "t_units": 1.0,
+                                        "delta": {
+                                            "pos": [0.0, 0.0, 0.0],
+                                            "rot_quat_xyzw": None,
+                                            "scale": None,
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                    }
+                ],
+            }
+        else:
+            raise RuntimeError(
+                f"--apply-draft-ops-regression is only implemented for mock kinds warcar/snake; got kind={kind!r} prompt={prompt!r}"
+            )
+
+        apply_resp = post("/v1/gen3d/apply_draft_ops", apply_args)
+        if not bool(apply_resp.get("ok")) or not bool(apply_resp.get("committed")):
+            raise RuntimeError(f"apply_draft_ops failed: {apply_resp}")
+
+        # Give the preview a moment to rebuild.
+        post("/v1/step", {"frames": 5, "dt_secs": dt_secs})
+        post("/v1/screenshot", {"path": str(ops_dir / "after_apply.png")})
+
+        # Ensure the transaction log exists somewhere under the run dir.
+        logs = list(run_dir.rglob("draft_ops.jsonl"))
+        if not logs:
+            raise RuntimeError(f"Expected draft_ops.jsonl under run_dir={run_dir}")
 
     # Save into world.
     save = post("/v1/gen3d/save", {})
@@ -729,6 +841,11 @@ def main() -> int:
         action="store_true",
         help="Save once draft_ready=true (faster but can yield incomplete models). Default waits for build_complete=true.",
     )
+    ap.add_argument(
+        "--apply-draft-ops-regression",
+        action="store_true",
+        help="Before Save, apply deterministic patch ops via /v1/gen3d/apply_draft_ops and verify draft_ops.jsonl is written (mock://gen3d kinds: warcar or snake).",
+    )
     ap.add_argument("--dt-secs", type=float, default=1.0 / 60.0, help="Fixed dt for /v1/step")
     ap.add_argument("--prompt", action="append", default=[], help="Prompt text (repeatable). If omitted, read from stdin.")
     ap.add_argument(
@@ -848,6 +965,7 @@ def main() -> int:
                     stop_resume_after_secs=float(args.stop_resume_after_secs),
                     stop_resume_pause_secs=float(args.stop_resume_pause_secs),
                     save_early=args.save_early,
+                    apply_draft_ops_regression=args.apply_draft_ops_regression,
                     world_move_offset=(dx, dz),
                     frames_per_capture=args.frames_per_capture,
                     capture_count=args.capture_count,
@@ -892,6 +1010,7 @@ def main() -> int:
                     stop_resume_after_secs=float(args.stop_resume_after_secs),
                     stop_resume_pause_secs=float(args.stop_resume_pause_secs),
                     save_early=args.save_early,
+                    apply_draft_ops_regression=args.apply_draft_ops_regression,
                     world_move_offset=(args.move_dx, args.move_dz),
                     frames_per_capture=args.frames_per_capture,
                     capture_count=args.capture_count,

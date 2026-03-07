@@ -2415,6 +2415,10 @@ pub(super) fn ai_to_component_def(
                 .with_rotation(rot)
                 .with_scale(Vec3::new(part.scale[0], part.scale[1], part.scale[2])),
         );
+        part_def.part_id = Some(builtin_object_id(&format!(
+            "gravimera/gen3d/part/{}/{}",
+            component_name, part_idx
+        )));
         part_def.render_priority = part.render_priority;
         parts.push(part_def);
     }
@@ -2734,7 +2738,7 @@ fn primitive_parts_aabb(parts: &[ObjectPartDef]) -> Option<(Vec3, Vec3)> {
     any.then_some((min, max))
 }
 
-fn size_from_primitive_parts(parts: &[ObjectPartDef]) -> Vec3 {
+pub(super) fn size_from_primitive_parts(parts: &[ObjectPartDef]) -> Vec3 {
     let Some((min, max)) = primitive_parts_aabb(parts) else {
         return Vec3::ONE;
     };

@@ -3,15 +3,16 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_CREATE_WORKSPACE,
-    TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
+    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
+    TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
     TOOL_ID_LIST, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT,
     TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
     TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA, TOOL_ID_READ_ARTIFACT,
-    TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE,
-    TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA,
+    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK,
+    TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -197,6 +198,19 @@ pub(super) fn execute_tool_call(
             if let Some(dir) = job.pass_dir.as_deref() {
                 write_gen3d_json_artifact(Some(dir), "scene_graph_summary.json", &json);
             }
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+        }
+        TOOL_ID_QUERY_COMPONENT_PARTS => {
+            let json = match super::draft_ops::query_component_parts_v1(job, draft, call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_VALIDATE => {
@@ -459,6 +473,24 @@ pub(super) fn execute_tool_call(
                 "truncated": truncated,
             });
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+        }
+        TOOL_ID_APPLY_DRAFT_OPS => {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            let json = match super::draft_ops::apply_draft_ops_v1(
+                job,
+                draft,
+                Some(call_id.as_str()),
+                call.args,
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
         }
         TOOL_ID_COPY_COMPONENT | TOOL_ID_MIRROR_COMPONENT => {
             let source_name = call

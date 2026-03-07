@@ -949,7 +949,13 @@ fn gen3d_save_seeded_session_in_place(
     collision_enabled: bool,
     target_entity: Entity,
     world_objects: &Query<
-        (Entity, &ObjectId, &Transform, &ObjectPrefabId, Option<&ObjectTint>),
+        (
+            Entity,
+            &ObjectId,
+            &Transform,
+            &ObjectPrefabId,
+            Option<&ObjectTint>,
+        ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
     children_q: &Query<&Children>,
@@ -1010,12 +1016,14 @@ fn gen3d_save_seeded_session_in_place(
                 children_q,
             );
             if mobility {
-                commands
-                    .entity(entity)
-                    .insert(Collider { radius: object_radius });
+                commands.entity(entity).insert(Collider {
+                    radius: object_radius,
+                });
             } else {
                 commands.entity(entity).insert(BuildDimensions { size });
-                commands.entity(entity).insert(AabbCollider { half_extents: half_xz });
+                commands.entity(entity).insert(AabbCollider {
+                    half_extents: half_xz,
+                });
             }
             updated_instances += 1;
         }
@@ -1035,9 +1043,9 @@ fn gen3d_save_seeded_session_in_place(
         commands
             .entity(target_entity)
             .insert(ObjectForms::new_single(saved_root_id));
-        commands
-            .entity(target_entity)
-            .insert(Collider { radius: object_radius });
+        commands.entity(target_entity).insert(Collider {
+            radius: object_radius,
+        });
 
         refresh_object_visuals_for_root(
             commands,
@@ -1125,7 +1133,13 @@ pub(crate) fn gen3d_save_button(
     preview: Res<Gen3dPreview>,
     player_q: Query<(&Transform, &Collider), With<Player>>,
     world_objects: Query<
-        (Entity, &ObjectId, &Transform, &ObjectPrefabId, Option<&ObjectTint>),
+        (
+            Entity,
+            &ObjectId,
+            &Transform,
+            &ObjectPrefabId,
+            Option<&ObjectTint>,
+        ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
     children_q: Query<&Children>,
@@ -1227,7 +1241,13 @@ pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
     player_transform: &Transform,
     player_collider: &Collider,
     world_objects: &Query<
-        (Entity, &ObjectId, &Transform, &ObjectPrefabId, Option<&ObjectTint>),
+        (
+            Entity,
+            &ObjectId,
+            &Transform,
+            &ObjectPrefabId,
+            Option<&ObjectTint>,
+        ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
     children_q: &Query<&Children>,

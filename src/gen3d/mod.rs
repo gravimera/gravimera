@@ -49,8 +49,8 @@ fn gen3d_draft_projectile_object_id() -> u128 {
 }
 
 pub(crate) use ai::{
-    gen3d_apply_pending_seed_from_prefab, gen3d_cancel_build_from_api,
-    gen3d_resume_build_from_api, gen3d_start_build_from_api,
+    gen3d_apply_draft_ops_from_api, gen3d_apply_pending_seed_from_prefab,
+    gen3d_cancel_build_from_api, gen3d_resume_build_from_api, gen3d_start_build_from_api,
     gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };

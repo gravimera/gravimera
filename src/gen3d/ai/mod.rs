@@ -17,6 +17,7 @@ mod artifacts;
 mod claude;
 mod convert;
 mod copy_component;
+mod draft_ops;
 mod gemini;
 mod headless_prefab;
 mod job;
@@ -45,13 +46,13 @@ use orchestration::{
     set_progress, spawn_gen3d_ai_text_thread, start_gen3d_review_capture, truncate_for_ui,
 };
 
+pub(crate) use draft_ops::gen3d_apply_draft_ops_from_api;
 pub(crate) use headless_prefab::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 pub(crate) use job::Gen3dAiJob;
 pub(crate) use orchestration::{
     gen3d_apply_pending_seed_from_prefab, gen3d_cancel_build_from_api, gen3d_continue_button,
     gen3d_generate_button, gen3d_poll_ai_job, gen3d_resume_build_from_api,
-    gen3d_start_build_from_api,
-    gen3d_start_edit_session_from_prefab_id_from_api,
+    gen3d_start_build_from_api, gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };
 pub(crate) use schema::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1};
