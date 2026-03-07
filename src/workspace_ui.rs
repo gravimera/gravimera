@@ -11,6 +11,7 @@ const WORKSPACE_UI_Z_INDEX: i32 = 960;
 const SIDE_PANEL_Z_INDEX: i32 = 930;
 const TOOLBAR_BUTTON_WIDTH_PX: f32 = 132.0;
 const TOOLBAR_BUTTON_HEIGHT_PX: f32 = 34.0;
+const SCENE_BUILDER_BUTTON_WIDTH_PX: f32 = 168.0;
 const SIDE_PANEL_WIDTH_PX: f32 = 260.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,7 +189,7 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
             root.spawn((
                 Button,
                 Node {
-                    width: Val::Px(TOOLBAR_BUTTON_WIDTH_PX),
+                    width: Val::Px(SCENE_BUILDER_BUTTON_WIDTH_PX),
                     height: Val::Px(TOOLBAR_BUTTON_HEIGHT_PX),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -272,6 +273,7 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
             .with_children(|b| {
                 b.spawn((
                     Text::new("Scene Builder"),
+                    TextLayout::new_with_no_wrap(),
                     TextFont {
                         font_size: 16.0,
                         ..default()
