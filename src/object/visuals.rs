@@ -623,6 +623,28 @@ fn resolve_attachment_transform_with_offset(
     crate::geometry::mat4_to_transform_allow_degenerate_scale(composed)
 }
 
+fn apply_child_local_delta_to_attachment_offset(
+    base_offset: Transform,
+    child_anchor: Transform,
+    delta_child_local: Transform,
+) -> Transform {
+    let child_anchor_mat = child_anchor.to_matrix();
+    let inv_child_anchor = child_anchor_mat.inverse();
+    if !inv_child_anchor.is_finite() {
+        return mul_transform(&base_offset, &delta_child_local);
+    }
+
+    // `offset` is applied as: parent_anchor * offset * inv(child_anchor).
+    // If we want a delta in the CHILD's local frame, the desired composition is:
+    //   parent_anchor * offset * inv(child_anchor) * delta_child_local
+    // Rebase into the offset slot:
+    //   offset' = offset * inv(child_anchor) * delta * child_anchor
+    let rebased_mat = inv_child_anchor * delta_child_local.to_matrix() * child_anchor_mat;
+    let rebased = crate::geometry::mat4_to_transform_allow_degenerate_scale(rebased_mat)
+        .unwrap_or(delta_child_local);
+    mul_transform(&base_offset, &rebased)
+}
+
 fn anchor_transform(def: &crate::object::registry::ObjectDef, name: &str) -> Option<Transform> {
     if name == "origin" {
         return Some(Transform::IDENTITY);
@@ -977,7 +999,17 @@ pub(crate) fn update_part_animations(
         } else {
             Transform::IDENTITY
         };
-        let animated_base = mul_transform(&base, &delta);
+        let animated_base = match (spec, player.attachment.as_ref()) {
+            (Some(spec), Some(attachment)) if matches!(spec.clip, PartAnimationDef::Spin { .. }) => {
+                let child_anchor = player
+                    .child_object_id
+                    .and_then(|object_id| library.get(object_id))
+                    .and_then(|def| anchor_transform(def, attachment.child_anchor.as_ref()))
+                    .unwrap_or(Transform::IDENTITY);
+                apply_child_local_delta_to_attachment_offset(base, child_anchor, delta)
+            }
+            _ => mul_transform(&base, &delta),
+        };
 
         if let Some(attachment) = player.attachment.as_ref() {
             let Some(parent_def) = library.get(player.parent_object_id) else {
@@ -1244,6 +1276,145 @@ mod tests {
         assert_eq!(
             move_distance_units_for_clip(&loop_clip, &clock),
             clock.distance_m
+        );
+    }
+
+    #[test]
+    fn spin_applies_in_child_local_for_attachments() {
+        use crate::object::registry::{
+            AnchorDef, ColliderProfile, ObjectDef, ObjectInteraction, PartAnimationDef,
+            PartAnimationDriver, PartAnimationSlot, PartAnimationSpec,
+        };
+        use std::time::Duration;
+
+        // A rotated anchor frame where +Z points up (common for rotor mounts).
+        let child_anchor_rot =
+            Quat::from_mat3(&Mat3::from_cols(Vec3::NEG_X, Vec3::Z, Vec3::Y)).normalize();
+
+        let parent_id = 0x1234_5678_u128;
+        let child_id = 0xdead_beef_u128;
+
+        let mut library = ObjectLibrary::default();
+        library.upsert(ObjectDef {
+            object_id: parent_id,
+            label: "parent".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![AnchorDef {
+                name: "mount".into(),
+                transform: Transform::IDENTITY,
+            }],
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+        library.upsert(ObjectDef {
+            object_id: child_id,
+            label: "child".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![AnchorDef {
+                name: "arm_mount".into(),
+                transform: Transform::from_rotation(child_anchor_rot),
+            }],
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(library);
+        app.add_systems(Update, update_part_animations);
+
+        let root = app
+            .world_mut()
+            .spawn(AnimationChannelsActive {
+                moving: false,
+                attacking_primary: false,
+            })
+            .id();
+
+        let slot = PartAnimationSlot {
+            channel: "idle".into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::Always,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Spin {
+                    axis: Vec3::Y,
+                    radians_per_unit: 1.0,
+                },
+            },
+        };
+        let part = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                PartAnimationPlayer {
+                    root_entity: root,
+                    parent_object_id: parent_id,
+                    child_object_id: Some(child_id),
+                    attachment: Some(AttachmentDef {
+                        parent_anchor: "mount".into(),
+                        child_anchor: "arm_mount".into(),
+                    }),
+                    base_transform: Transform::IDENTITY,
+                    animations: vec![slot],
+                    apply_aim_yaw: false,
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(1.0));
+        app.update();
+
+        let transform = app
+            .world()
+            .get::<Transform>(part)
+            .copied()
+            .expect("part entity has Transform");
+
+        let got = if transform.rotation.is_finite() {
+            transform.rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        let delta = Quat::from_axis_angle(Vec3::Y, 1.0);
+        let expected = (child_anchor_rot.inverse() * delta).normalize();
+        assert!(
+            got.angle_between(expected) < 1e-3,
+            "expected spin to apply in child-local frame: got={:?} expected={:?}",
+            got,
+            expected,
+        );
+
+        // Before the fix, spin deltas were applied in the child ANCHOR frame:
+        // `delta * inv(child_anchor)`.
+        let old = (delta * child_anchor_rot.inverse()).normalize();
+        assert!(
+            got.angle_between(old) > 1e-2,
+            "expected fix to differ from anchor-local spin: got={:?} old={:?}",
+            got,
+            old,
         );
     }
 

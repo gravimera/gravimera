@@ -263,12 +263,51 @@ pub(super) fn copy_component_into(
                 return Ok(None);
             }
 
+            // Align in the canonical JOIN frame, not directly from child_anchor→child_anchor.
+            //
+            // In Gen3D plans, child anchor bases are often adjusted to satisfy the engine's strict
+            // "same-hemisphere" constraint (dot(parent.forward, child.forward) > 0, etc), while
+            // an `attach_to.offset` rotation is used to compensate so the component's modeled
+            // geometry still faces the intended direction.
+            //
+            // When we reuse geometry via copy, naively aligning by child anchors alone can apply a
+            // second flip (baking it into the copied geometry/anchors) on top of the existing
+            // attachment offset rotation, producing mirrored/doubled assemblies (e.g. a back arm's
+            // rotor mount ends up on the wrong end).
+            //
+            // The offset is authored in the JOIN frame (parent anchor frame) and thus comparable
+            // across attachments. Use it to compute an alignment that preserves the component's
+            // effective join presentation:
+            //   join -> child_local is (child_anchor * inv(offset)).
+            // The source->target mapping through JOIN becomes:
+            //   delta = child_anchor_target * inv(offset_target) * offset_source * inv(child_anchor_source)
+            let source_offset = components[source_idx]
+                .attach_to
+                .as_ref()
+                .map(|att| att.offset)
+                .unwrap_or(Transform::IDENTITY);
+            let target_offset = components[target_idx]
+                .attach_to
+                .as_ref()
+                .map(|att| att.offset)
+                .unwrap_or(Transform::IDENTITY);
+
+            let source_offset_mat = source_offset.to_matrix();
+            if !source_offset_mat.is_finite() {
+                return Ok(None);
+            }
+            let inv_target_offset = target_offset.to_matrix().inverse();
+            if !inv_target_offset.is_finite() {
+                return Ok(None);
+            }
+
             let target_mat = target_anchor.to_matrix();
-            let rot_mat = target_mat * inv_source_anchor;
+            let rot_mat = target_mat * inv_target_offset * source_offset_mat * inv_source_anchor;
             // Optional mirrored alignment: flip the mount-local right axis (X) to preserve
             // the forward/up join convention while mirroring handedness (common for L/R reuse).
             let mirror_local = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
-            let mirror_mat = target_mat * mirror_local * inv_source_anchor;
+            let mirror_mat =
+                target_mat * mirror_local * inv_target_offset * source_offset_mat * inv_source_anchor;
 
             let chosen = match alignment {
                 Gen3dCopyAlignmentMode::Rotation => rot_mat,
@@ -1516,6 +1555,98 @@ mod tests {
                 .iter()
                 .any(|p| matches!(p.kind, ObjectPartKind::Primitive { .. })),
             "expected subtree copy to materialize primitives into foot_b"
+        );
+    }
+
+    #[test]
+    fn copy_alignment_accounts_for_attachment_offset_rotation() {
+        // Regression test for a common Gen3D plan pattern:
+        // - child anchors are flipped to satisfy the engine's join hemisphere guard
+        // - attach_to.offset rotation compensates so the modeled geometry still points outward
+        //
+        // When reusing geometry, alignment must consider BOTH the child anchor and the offset, or
+        // we can accidentally bake an extra 180° into internal anchors (double-flip).
+        let mut components = vec![stub_component("arm_0"), stub_component("arm_2")];
+        components[0].actual_size = Some(Vec3::ONE);
+
+        components[0].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "arm_mount_front".into(),
+            child_anchor: "body_mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "body".into(),
+            parent_anchor: "arm_mount_back".into(),
+            child_anchor: "body_mount".into(),
+            offset: Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        let arm_0_id = component_object_id("arm_0");
+        let arm_2_id = component_object_id("arm_2");
+
+        let mut arm_0_def = stub_def(arm_0_id, "arm_0");
+        arm_0_def.anchors = vec![
+            AnchorDef {
+                name: "origin".into(),
+                transform: Transform::IDENTITY,
+            },
+            anchor_named("body_mount", Vec3::ZERO, Vec3::Z, Vec3::Y),
+            anchor_named(
+                "rotor_mount",
+                Vec3::new(0.0, 0.02, 0.22),
+                Vec3::Y,
+                Vec3::Z,
+            ),
+        ];
+
+        let mut arm_2_def = stub_def(arm_2_id, "arm_2");
+        arm_2_def.anchors = vec![
+            AnchorDef {
+                name: "origin".into(),
+                transform: Transform::IDENTITY,
+            },
+            // The mount anchor is flipped (dot-guard), but the offset rotates back in JOIN.
+            anchor_named("body_mount", Vec3::ZERO, Vec3::NEG_Z, Vec3::Y),
+            // Include the internal anchor so PreserveInterfaceAnchors will overwrite it.
+            anchor_named(
+                "rotor_mount",
+                Vec3::new(0.0, 0.02, 0.22),
+                Vec3::Y,
+                Vec3::Z,
+            ),
+        ];
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![arm_0_def, arm_2_def];
+
+        copy_component_into(
+            &mut components,
+            &mut draft,
+            0,
+            1,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
+            Transform::IDENTITY,
+            None,
+        )
+        .expect("copy ok");
+
+        let arm_2_after = draft.defs.iter().find(|d| d.object_id == arm_2_id).unwrap();
+        let rotor_mount = arm_2_after
+            .anchors
+            .iter()
+            .find(|a| a.name.as_ref() == "rotor_mount")
+            .expect("rotor_mount anchor present");
+        assert!(
+            (rotor_mount.transform.translation.z - 0.22).abs() < 1e-4,
+            "expected rotor_mount to stay at +Z tip, got {:?}",
+            rotor_mount.transform.translation
         );
     }
 
