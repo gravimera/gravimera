@@ -77,6 +77,10 @@ Rules:\n\
   - Default: use llm_generate_components_v1 with explicit component_indices/names for the unique set.\n\
   - If `state_summary.preserve_existing_components_mode` is true: prefer generating ONLY missing components (omit component_indices/names and omit force) so you don't accidentally regenerate already-generated components.\n\
   - To explicitly regenerate already-generated components in preserve mode, pass force=true (regen budgets still apply).\n\
+  - IMPORTANT: `force=true` regeneration is ONLY allowed when the latest QA indicates errors.\n\
+    - The engine refuses force-regeneration unless `state_summary.qa.last_validate_ok=false` OR `state_summary.qa.last_smoke_ok=false`.\n\
+    - If `state_summary.qa.last_validate_ok`/`last_smoke_ok` is null or true, do NOT use force-regeneration.\n\
+      Run `qa_v1`, then fix assembly/placement with `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry.\n\
   - If the plan declares `reuse_groups`, the engine will skip reuse targets in missing_only batches and auto-copy them after sources are generated.\n\
 - IMPORTANT: If the state summary contains `pending_regen_component_indices` (non-empty), APPLY THEM NEXT:\n\
   - Call llm_generate_components_v1 with component_indices set to that list and force=true (regen is expected).\n\
@@ -896,6 +900,9 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
             "ever_reviewed": job.agent.ever_reviewed,
             "ever_validated": job.agent.ever_validated,
             "ever_smoke_checked": job.agent.ever_smoke_checked,
+            "last_validate_ok": job.agent.last_validate_ok,
+            "last_smoke_ok": job.agent.last_smoke_ok,
+            "last_motion_ok": job.agent.last_motion_ok,
         },
         "budgets": {
             "regen": {

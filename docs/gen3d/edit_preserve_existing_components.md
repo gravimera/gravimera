@@ -35,6 +35,7 @@ When this flag is true:
 - `llm_generate_components_v1` behaves as **missing-only** unless `force=true` is provided (prevents accidental regeneration of already-generated components).
 - `llm_generate_component_v1` will skip already-generated components unless `force=true`.
 - Regen budgets still apply when `force=true` is used.
+- `force=true` regeneration is additionally **QA-gated**: the engine refuses force-regeneration unless the latest `qa_v1` reports errors (`validate.ok=false` or `smoke.ok=false`). If QA is clean (or has not been run), fix placement/assembly via `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry.
 
 ## Tool Note: Querying Parts by Index
 

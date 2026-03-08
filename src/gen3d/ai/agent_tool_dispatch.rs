@@ -1294,11 +1294,16 @@ pub(super) fn execute_tool_call(
                         .get(idx)
                         .map(|c| c.name.as_str())
                         .unwrap_or("<unknown>");
+                    let reason = if validate_ok.is_none() || smoke_ok.is_none() {
+                        "qa_v1 has not been run (or is incomplete)"
+                    } else {
+                        "qa_v1 reports no errors"
+                    };
                     return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                         call.call_id,
                         call.tool_id,
                         format!(
-                            "Refusing force:true regeneration for component `{name}` because validate_v1/smoke_check_v1 have no errors (or have not been run). validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors."
+                            "Refusing force:true regeneration for component `{name}` because {reason}. validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors. For placement/assembly fixes, prefer `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry."
                         ),
                     ));
                 }
@@ -1533,11 +1538,16 @@ pub(super) fn execute_tool_call(
                     let smoke_ok = job.agent.last_smoke_ok;
                     let has_errors = validate_ok == Some(false) || smoke_ok == Some(false);
                     if !has_errors {
+                        let reason = if validate_ok.is_none() || smoke_ok.is_none() {
+                            "qa_v1 has not been run (or is incomplete)"
+                        } else {
+                            "qa_v1 reports no errors"
+                        };
                         return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                             call.call_id,
                             call.tool_id,
                             format!(
-                                "Refusing force:true regeneration because validate_v1/smoke_check_v1 have no errors (or have not been run). validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors."
+                                "Refusing force:true regeneration because {reason}. validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors. For placement/assembly fixes, prefer `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry."
                             ),
                         ));
                     }

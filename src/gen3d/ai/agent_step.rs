@@ -592,12 +592,18 @@ pub(super) fn execute_agent_actions(
                                     .unwrap_or_else(|| "<none>".into())
                             );
                         } else {
-                            warn!(
-                                "Gen3D tool call failed: call_id={} tool_id={} error={}",
-                                result.call_id,
-                                result.tool_id,
-                                result.error.as_deref().unwrap_or("<none>")
-                            );
+                            let err = result.error.as_deref().unwrap_or("<none>");
+                            if err.starts_with("Refusing force:true regeneration") {
+                                debug!(
+                                    "Gen3D tool call refused: call_id={} tool_id={} error={}",
+                                    result.call_id, result.tool_id, err
+                                );
+                            } else {
+                                warn!(
+                                    "Gen3D tool call failed: call_id={} tool_id={} error={}",
+                                    result.call_id, result.tool_id, err
+                                );
+                            }
                         }
                         append_agent_trace_event_v1(
                             job.run_dir.as_deref(),
