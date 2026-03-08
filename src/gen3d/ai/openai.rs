@@ -1284,38 +1284,6 @@ fn mock_generate_text_via_openai(
         prompt_lines.join("\n").trim().to_string()
     }
 
-    fn parse_child_components_from_motion_roles_user_text(user_text: &str) -> Vec<String> {
-        let mut out: Vec<String> = Vec::new();
-        for line in user_text.lines().map(|l| l.trim()) {
-            let Some(rest) = line.strip_prefix("- name=") else {
-                continue;
-            };
-            let mut name: Option<&str> = None;
-            let mut parent: Option<&str> = None;
-            for token in rest.split_whitespace() {
-                if let Some(v) = token.strip_prefix("parent=") {
-                    parent = Some(v);
-                } else if name.is_none() {
-                    name = Some(token);
-                }
-            }
-            let (Some(name), Some(parent)) = (name, parent) else {
-                continue;
-            };
-            if parent == "<root>" {
-                continue;
-            }
-            let name = name.trim();
-            if name.is_empty() {
-                continue;
-            }
-            out.push(name.to_string());
-        }
-        out.sort();
-        out.dedup();
-        out
-    }
-
     fn parse_child_components_from_motion_authoring_user_text(user_text: &str) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for line in user_text.lines().map(|l| l.trim()) {
@@ -1403,7 +1371,6 @@ fn mock_generate_text_via_openai(
         let prompt = extract_agent_user_prompt(user_text);
         let kind = mock_kind_from_text(&prompt);
         let component_names = components_for_kind(kind);
-        let needs_motion_authoring = kind != MockKind::Warcar;
 
         // Intentionally uses some common “wrong” arg spellings (name/component_id/base) to
         // regression-test tool-call tolerance.
@@ -1468,25 +1435,17 @@ fn mock_generate_text_via_openai(
             }));
             actions.push(serde_json::json!({
                 "kind": "tool_call",
-                "call_id": "call_11_motion_roles",
-                "tool_id": "llm_generate_motion_roles_v1",
+                "call_id": "call_11_motion_authoring",
+                "tool_id": "llm_generate_motion_authoring_v1",
                 "args": {}
             }));
-            if needs_motion_authoring {
-                actions.push(serde_json::json!({
-                    "kind": "tool_call",
-                    "call_id": "call_12_motion_authoring",
-                    "tool_id": "llm_generate_motion_authoring_v1",
-                    "args": {}
-                }));
-            }
             actions.push(serde_json::json!({
                 "kind": "done",
                 "reason": "Mock Gen3D build completed."
             }));
             serde_json::json!({
                 "version": 1,
-                "status_summary": format!("Mock: generate components ({:?}) and run QA.", kind),
+                "status_summary": format!("Mock: generate components ({:?}), author motion, and run QA.", kind),
                 "actions": actions
             })
             .to_string()
@@ -1532,58 +1491,6 @@ fn mock_generate_text_via_openai(
                     "scale": [0.35, 0.35, 0.35]
                 }
             ]
-        })
-        .to_string()
-    } else if artifact_prefix.starts_with("tool_motion_roles_") {
-        let (run_id, attempt, plan_hash, assembly_rev) = parse_applies_to_from_user_text(user_text)
-            .ok_or_else(|| {
-                "mock://gen3d failed to parse applies_to values from motion-roles user_text"
-                    .to_string()
-            })?;
-
-        let kind = mock_kind_from_text(user_text);
-        let move_effectors: Vec<serde_json::Value> = match kind {
-            MockKind::Warcar => {
-                let child = if user_text.contains("wheels") {
-                    "wheels".to_string()
-                } else {
-                    parse_child_components_from_motion_roles_user_text(user_text)
-                        .into_iter()
-                        .next()
-                        .unwrap_or_else(|| "wheels".into())
-                };
-                vec![
-                    serde_json::json!({"component": child, "role": "wheel", "phase_group": null, "spin_axis_local": [1.0, 0.0, 0.0]}),
-                ]
-            }
-            MockKind::Mantis => {
-                let children = parse_child_components_from_motion_roles_user_text(user_text);
-                let mut legs: Vec<String> = children
-                    .into_iter()
-                    .filter(|name| name.starts_with("leg_"))
-                    .collect();
-                legs.sort();
-                legs.into_iter()
-                    .take(12)
-                    .enumerate()
-                    .map(|(idx, name)| {
-                        serde_json::json!({
-                            "component": name,
-                            "role": "leg",
-                            "phase_group": (idx as u32) % 2,
-                            "spin_axis_local": null
-                        })
-                    })
-                    .collect()
-            }
-            MockKind::Snake | MockKind::Octopus => Vec::new(),
-        };
-
-        serde_json::json!({
-          "version": 1,
-          "applies_to": { "run_id": run_id, "attempt": attempt, "plan_hash": plan_hash, "assembly_rev": assembly_rev },
-          "move_effectors": move_effectors,
-          "notes": format!("Mock motion roles ({:?})", kind)
         })
         .to_string()
     } else if artifact_prefix.starts_with("tool_motion_authoring_") {

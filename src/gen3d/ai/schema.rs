@@ -582,45 +582,7 @@ pub(crate) struct AiDescriptorMetaJsonV1 {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AiMoveEffectorRoleJsonV1 {
-    Leg,
-    Wheel,
-    Arm,
-    Head,
-    Ear,
-    Tail,
-    Wing,
-    Propeller,
-    Rotor,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AiMoveEffectorJsonV1 {
-    pub(crate) component: String,
-    pub(crate) role: AiMoveEffectorRoleJsonV1,
-    #[serde(default)]
-    pub(crate) phase_group: Option<u32>,
-    #[serde(default)]
-    pub(crate) spin_axis_local: Option<[f32; 3]>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AiMotionRolesJsonV1 {
-    #[serde(default)]
-    pub(crate) version: u32,
-    pub(crate) applies_to: AiReviewDeltaAppliesToJsonV1,
-    #[serde(default)]
-    pub(crate) move_effectors: Vec<AiMoveEffectorJsonV1>,
-    #[serde(default)]
-    pub(crate) notes: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub(crate) enum AiMotionAuthoringDecisionJsonV1 {
-    RuntimeOk,
     AuthorClips,
     RegenGeometryRequired,
     #[serde(other)]

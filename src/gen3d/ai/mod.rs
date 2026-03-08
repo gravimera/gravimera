@@ -62,7 +62,6 @@ pub(crate) use orchestration::{
     gen3d_start_build_from_api, gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };
-pub(crate) use schema::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1};
 pub(crate) use snapshots::{
     gen3d_diff_snapshots_from_api, gen3d_list_snapshots_from_api, gen3d_restore_snapshot_from_api,
     gen3d_snapshot_from_api,

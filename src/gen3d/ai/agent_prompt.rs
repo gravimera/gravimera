@@ -2,12 +2,11 @@ use std::path::PathBuf;
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DESCRIBE,
-    TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_MOTION_ROLES,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
-    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA, TOOL_ID_READ_ARTIFACT, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
+    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_LIST_RUN_ARTIFACTS,
+    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA, TOOL_ID_READ_ARTIFACT,
+    TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 
@@ -31,7 +30,7 @@ Schema:\n\
   \"status_summary\": \"short, user-facing summary\",\n\
   \"actions\": [\n\
     {\"kind\":\"tool_call\",\"call_id\":\"call_1\",\"tool_id\":\"list_tools_v1\",\"args\":{}},\n\
-    {\"kind\":\"tool_call\",\"call_id\":\"call_2\",\"tool_id\":\"describe_tool_v1\",\"args\":{\"tool_id\":\"qa_v1\"}}\n\
+    {\"kind\":\"tool_call\",\"call_id\":\"call_2\",\"tool_id\":\"qa_v1\",\"args\":{}}\n\
   ]\n\
 }\n\n\
 Example done:\n\
@@ -45,13 +44,10 @@ Rules:\n\
   - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
   - If budgets prevent further improvement (regen budgets, time, tokens), output a \"done\" action with a best-effort reason.\n\
   - `qa_v1` may report warnings (non-fatal). If warnings>0, either take corrective action OR mention the remaining warnings explicitly in \"done.reason\" (do not claim \"no warnings\").\n\
-- Runtime motion roles (recommended for movable units):\n\
-  - If the draft is a movable unit (mobility is ground/air) and `state_summary.motion_roles.applies_to_current` is false, call `llm_generate_motion_roles_v1` before finishing.\n\
-  - This produces an explicit, non-heuristic mapping of locomotion effectors (legs/wheels) so the engine can inject generic `move` algorithms at runtime.\n\
-- Motion authoring fallback (required when runtime motion cannot be used):\n\
-  - If the draft is a movable unit AND `state_summary.motion_runtime_candidate` is null AND `state_summary.motion_coverage.has_move` is false, call `llm_generate_motion_authoring_v1`.\n\
-  - This tool can author explicit per-edge animation clips (idle/move/attack) so the unit will not end up with zero animation.\n\
-  - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if runtime motion is available.\n\
+- Motion authoring (required for movable units):\n\
+  - If the draft is a movable unit (mobility is ground/air) and `state_summary.motion_coverage.has_move` is false, call `llm_generate_motion_authoring_v1` before finishing.\n\
+  - This tool authors explicit per-edge animation clips (idle/move/attack) baked into the prefab; the engine does not provide runtime motion algorithms.\n\
+  - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if move slots already exist.\n\
 - Visual QA / appearance review:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
@@ -92,7 +88,7 @@ Rules:\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
-- If you need tool schemas, call list_tools_v1 / describe_tool_v1.\n\
+- If you need to confirm available tools, call list_tools_v1.\n\
 - To inspect past artifacts/logs for this run, use list_run_artifacts_v1 / read_artifact_v1 / search_artifacts_v1.\n"
         .to_string()
 }
@@ -209,13 +205,6 @@ pub(super) fn build_agent_user_text(
                     if total > 0 {
                         out.push_str(&format!(" reuse_skipped={total}"));
                     }
-                }
-            }
-            TOOL_ID_LLM_GENERATE_MOTION_ROLES => {
-                let move_effectors = value.get("move_effectors").and_then(|v| v.as_u64());
-                out.push_str("ok");
-                if let Some(move_effectors) = move_effectors {
-                    out.push_str(&format!(" move_effectors={move_effectors}"));
                 }
             }
             TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => {
@@ -400,28 +389,6 @@ pub(super) fn build_agent_user_text(
                 }
                 if let Some(truncated) = truncated {
                     out.push_str(&format!(" truncated={truncated}"));
-                }
-            }
-            TOOL_ID_DESCRIBE => {
-                let tool_id = value.get("tool_id").and_then(|v| v.as_str());
-                let one_line = value.get("one_line_summary").and_then(|v| v.as_str());
-                let args_example = value.get("args_example");
-                let description = value.get("description").and_then(|v| v.as_str());
-                out.push_str("ok");
-                if let Some(tool_id) = tool_id {
-                    out.push_str(&format!(" tool={tool_id}"));
-                }
-                if let Some(one_line) = one_line {
-                    out.push_str(&format!(" summary={}", truncate_for_prompt(one_line, 120)));
-                }
-                if let Some(args_example) = args_example {
-                    out.push_str(&format!(
-                        " args_example={}",
-                        truncate_for_prompt(&args_example.to_string(), 200)
-                    ));
-                }
-                if let Some(description) = description {
-                    out.push_str(&format!(" desc={}", truncate_for_prompt(description, 260)));
                 }
             }
             TOOL_ID_COPY_COMPONENT
@@ -823,27 +790,11 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         )
     };
 
-    let motion_roles_status = {
-        match job.motion_roles.as_ref() {
-            Some(roles) => serde_json::json!({
-                "present": true,
-                "applies_to_current": job.motion_roles_for_current_draft().is_some(),
-                "move_effectors": roles.move_effectors.len(),
-            }),
-            None => serde_json::json!({
-                "present": false,
-                "applies_to_current": false,
-                "move_effectors": 0,
-            }),
-        }
-    };
-
     let motion_authoring_status = {
         match job.motion_authoring.as_ref() {
             Some(authored) => {
                 let applies_to_current = job.motion_authoring_for_current_draft().is_some();
                 let decision = match authored.decision {
-                    super::schema::AiMotionAuthoringDecisionJsonV1::RuntimeOk => "runtime_ok",
                     super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips => "author_clips",
                     super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => {
                         "regen_geometry_required"
@@ -864,11 +815,6 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
                 "edges": 0,
             }),
         }
-    };
-
-    let motion_runtime_candidate = {
-        let roles = job.motion_roles_for_current_draft();
-        super::agent_utils::motion_runtime_candidate_kind(roles, &job.planned_components, None)
     };
 
     let motion_coverage = {
@@ -932,9 +878,7 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         "plan_hash": job.plan_hash,
         "preserve_existing_components_mode": job.preserve_existing_components_mode,
         "assembly_rev": job.assembly_rev,
-        "motion_roles": motion_roles_status,
         "motion_authoring": motion_authoring_status,
-        "motion_runtime_candidate": motion_runtime_candidate,
         "motion_coverage": motion_coverage,
         "review_appearance": job.review_appearance,
         "needs_review": job.agent.rendered_since_last_review,

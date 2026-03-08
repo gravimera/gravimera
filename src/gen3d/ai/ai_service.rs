@@ -63,7 +63,6 @@ fn expected_version_for_schema(kind: Gen3dAiJsonSchemaKind) -> u64 {
         Gen3dAiJsonSchemaKind::ComponentDraftV1 => 2,
         Gen3dAiJsonSchemaKind::ReviewDeltaV1 => 1,
         Gen3dAiJsonSchemaKind::DescriptorMetaV1 => 1,
-        Gen3dAiJsonSchemaKind::MotionRolesV1 => 1,
         Gen3dAiJsonSchemaKind::MotionAuthoringV1 => 1,
     }
 }

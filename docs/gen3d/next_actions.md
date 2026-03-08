@@ -3,7 +3,7 @@
 This document records Gen3D process decisions and forward-looking next actions.
 It may describe behavior that is **not implemented yet**.
 
-Last updated: 2026-03-07
+Last updated: 2026-03-09
 
 ## Non‑negotiable constraints
 
@@ -53,18 +53,19 @@ Implementation sketch (later):
 - Otherwise, accept `done` unconditionally and end the run.
 - Optional (recommended): auto-run a single composed QA tool (`qa_v1`, below) at stop time and attach its results to the final status/artifacts (but do not block stop).
 
-## Decision (TODO): remove runtime motion mapping from the Gen3D loop
+## Decision: no runtime motion algorithms or motion mapping (Implemented)
 
-Decision: the Gen3D agent loop should NOT rely on engine-injected runtime motion algorithms for
-“units look animated when moving”.
+Status: Implemented (2026-03-09).
 
-- Keep the runtime motion algorithms in the codebase (they may still be used by other workflows
-  or reintroduced later).
-- Remove “motion mapping” as a required Gen3D step:
-  - the agent should not be required to produce `motion_roles_v1` / `motion_rig_v1`,
-  - the run should be allowed to finish with zero authored animation clips.
-- If the player wants animations, treat that as an explicit *edit* operation (agent generates/edits
-  animation clips as authored data, not as a mapping to a pre-existing runtime algorithm).
+Decision: the Gen3D loop does not rely on engine-injected runtime motion algorithms. Motion is
+authored as explicit animation clips baked onto prefab attachment edges.
+
+Outcomes:
+
+- Remove `motion_roles_v1` / `motion_rig_v1` mapping and the `llm_generate_motion_roles_v1` tool.
+- For movable units, the agent is expected to call `llm_generate_motion_authoring_v1` and bake at
+  least a usable `move` channel (and typically `idle`; plus `attack_primary` if applicable).
+- The Meta panel no longer offers animation selection UI; it only shows a read-only summary.
 
 Rationale:
 - “Any animation” is fundamentally open-ended; mapping into a small set of predefined runtime rigs
@@ -72,11 +73,7 @@ Rationale:
 - Keeping Gen3D’s default loop focused on geometry + structure reduces assumptions.
 
 Non-goals:
-- Do not delete runtime algorithms; do not forbid them in the product forever.
-
-Implementation sketch (later):
-- Remove/soften motion-related `done` guardrails; instead only *surface* motion/animation status.
-- Update the agent prompt to treat animation authoring as optional and explicitly user-driven.
+- N/A.
 
 ## Decision (TODO): Gen3D sessions are resumable + editable after stop/save
 
@@ -342,7 +339,7 @@ Candidate additions:
 - [x] (2026-03-07) Design `qa_v1` output schema + artifact names and update the agent prompt to prefer it.
 - [x] (2026-03-07) Design artifact inspection tools with strict scoping and bounded reads.
 - [ ] Design a generic async task API and migrate existing ad-hoc async flows toward it.
-- [ ] Specify “no runtime motion mapping” changes to the agent prompt + QA gating.
+- [x] (2026-03-09) Specify “no runtime motion mapping” changes to the agent prompt + QA gating.
 - [x] (2026-03-07) Specify resumable sessions + “Edit prefab” workflow + save semantics (fork vs overwrite).
 - [x] (2026-03-07) Add Meta panel buttons: Copy / Edit / Fork (Gen3D-prefab-gated).
 - [x] (2026-03-07) Implement snapshots + branching tools (snapshots + workspace diff/copy/merge) and validate via rendered `tools/gen3d_real_test.py` regressions.

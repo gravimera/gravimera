@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn agent_step_uses_last_non_done_step_if_multiple_tool_steps_present() {
-        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"list_tools_v1","args":{}}]}{"version":1,"status_summary":"second","actions":[{"kind":"tool_call","call_id":"call_2","tool_id":"describe_tool_v1","args":{"tool_id":"qa_v1"}}]}"#;
+        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"list_tools_v1","args":{}}]}{"version":1,"status_summary":"second","actions":[{"kind":"tool_call","call_id":"call_2","tool_id":"qa_v1","args":{}}]}"#;
         let step = parse_agent_step(text).expect("parse");
         assert_eq!(step.status_summary, "second");
         assert_eq!(step.actions.len(), 1);

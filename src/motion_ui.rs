@@ -15,10 +15,6 @@ use crate::intelligence::host_plugin::{IntelligenceHostRuntime, StandaloneBrain}
 use crate::intelligence::protocol::{DespawnBrainInstanceRequest, PROTOCOL_VERSION};
 use crate::intelligence::sidecar_client::SidecarClient;
 use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, MetaSpeakVoice};
-use crate::motion::{
-    motion_rig_v1_for_prefab, AttackPrimaryMotionAlgorithm, IdleMotionAlgorithm,
-    MotionAlgorithmController, MoveMotionAlgorithm,
-};
 use crate::object::registry::ObjectLibrary;
 use crate::object::visuals;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
@@ -164,19 +160,6 @@ pub(crate) struct MotionAlgorithmUiScrollbarTrack;
 
 #[derive(Component)]
 pub(crate) struct MotionAlgorithmUiScrollbarThumb;
-
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MotionAlgorithmUiChannel {
-    Idle,
-    Move,
-    AttackPrimary,
-}
-
-#[derive(Component, Clone, Copy, Debug)]
-pub(crate) struct MotionAlgorithmUiButton {
-    pub(crate) channel: MotionAlgorithmUiChannel,
-    pub(crate) algorithm_id: &'static str,
-}
 
 #[derive(Component, Clone, Debug)]
 pub(crate) struct MetaBrainUiButton {
@@ -357,11 +340,7 @@ pub(crate) fn motion_algorithm_ui_update(
     emoji_atlas: Res<EmojiAtlas>,
     asset_server: Res<AssetServer>,
     mut state: ResMut<MotionAlgorithmUiState>,
-    roots: Query<(
-        Option<&ObjectPrefabId>,
-        Option<&MotionAlgorithmController>,
-        Option<&StandaloneBrain>,
-    )>,
+    roots: Query<(Option<&ObjectPrefabId>, Option<&StandaloneBrain>)>,
     mut roots_ui: Query<&mut Visibility, With<MotionAlgorithmUiRoot>>,
     mut subtitle: Query<&mut Text, With<MotionAlgorithmUiSubtitle>>,
     list: Query<Entity, With<MotionAlgorithmUiList>>,
@@ -391,7 +370,7 @@ pub(crate) fn motion_algorithm_ui_update(
         return;
     }
 
-    let Ok((prefab_id, controller, brain)) = roots.get(target) else {
+    let Ok((prefab_id, brain)) = roots.get(target) else {
         if let Some(entity) = state.speak_target.or(Some(target)) {
             speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
             state.speak_target = None;
@@ -432,22 +411,14 @@ pub(crate) fn motion_algorithm_ui_update(
         }
     }
 
-    let current_idle = controller
-        .map(|c| c.idle_algorithm)
-        .unwrap_or(IdleMotionAlgorithm::None);
-    let current_move = controller
-        .map(|c| c.move_algorithm)
-        .unwrap_or(MoveMotionAlgorithm::None);
-    let current_attack = controller
-        .map(|c| c.attack_primary_algorithm)
-        .unwrap_or(AttackPrimaryMotionAlgorithm::None);
-    let rig = motion_rig_v1_for_prefab(prefab_id.0, &descriptors)
-        .ok()
-        .flatten();
     let attack_kind = library
         .get(prefab_id.0)
         .and_then(|def| def.attack.as_ref())
         .map(|a| a.kind);
+    let mobility_mode = library
+        .get(prefab_id.0)
+        .and_then(|def| def.mobility.as_ref())
+        .map(|m| m.mode);
     let descriptor = descriptors.get(prefab_id.0);
     let is_gen3d_saved = descriptor
         .and_then(|d| d.provenance.as_ref())
@@ -463,15 +434,7 @@ pub(crate) fn motion_algorithm_ui_update(
             .and_then(|d| d.provenance.as_ref())
             .and_then(|p| p.gen3d.as_ref())
             .and_then(|g| g.run_id.as_deref());
-        let gen3d_run_id = gen3d_run_id.or_else(|| {
-            descriptor
-                .and_then(|d| d.interfaces.as_ref())
-                .and_then(|i| i.extra.get("motion_roles_v1"))
-                .and_then(|v| v.get("applies_to"))
-                .and_then(|v| v.get("run_id"))
-                .and_then(|v| v.as_str())
-        });
-        let rig_kind = rig.as_ref().map(|r| r.kind_str()).unwrap_or("<none>");
+        let anim_channels = library.animation_channels_ordered_top10(prefab_id.0);
         let brain_label = match brain {
             Some(brain) => brain.module_id.as_str(),
             None => "fallback",
@@ -484,11 +447,18 @@ pub(crate) fn motion_algorithm_ui_update(
         let gen3d_line = gen3d_run_id
             .map(|run_id| format!("\nGen3D run: {run_id}"))
             .unwrap_or_default();
+        let mobility_str = match mobility_mode {
+            Some(crate::object::registry::MobilityMode::Ground) => "ground",
+            Some(crate::object::registry::MobilityMode::Air) => "air",
+            None => "static",
+        };
+        let attack_str = match attack_kind {
+            Some(crate::object::registry::UnitAttackKind::Melee) => "melee",
+            Some(crate::object::registry::UnitAttackKind::RangedProjectile) => "ranged_projectile",
+            None => "none",
+        };
         *subtitle = Text::new(format!(
-            "Target: {label}{gen3d_line}\nBrain: {brain_label}{brain_error}\nRig: {rig_kind}\nIdle: {}\nMove: {}\nAttack: {}",
-            current_idle.id_str(),
-            current_move.id_str(),
-            current_attack.id_str(),
+            "Target: {label}{gen3d_line}\nBrain: {brain_label}{brain_error}\nMobility: {mobility_str}\nAttack: {attack_str}\nAnimations: {anim_channels:?}",
         ));
     }
 
@@ -595,19 +565,6 @@ pub(crate) fn motion_algorithm_ui_update(
     for entity in &existing_items {
         commands.entity(entity).try_despawn();
     }
-
-    let idle_algorithms = rig
-        .as_ref()
-        .map(|r| r.applicable_idle_algorithms())
-        .unwrap_or_else(|| vec![IdleMotionAlgorithm::None]);
-    let move_algorithms = rig
-        .as_ref()
-        .map(|r| r.applicable_move_algorithms())
-        .unwrap_or_else(|| vec![MoveMotionAlgorithm::None]);
-    let attack_algorithms = rig
-        .as_ref()
-        .map(|r| r.applicable_attack_primary_algorithms(attack_kind))
-        .unwrap_or_else(|| vec![AttackPrimaryMotionAlgorithm::None]);
 
     let brain_remote_enabled = runtime.enabled;
     let brain_modules_loading = state.brain_modules_loading;
@@ -882,102 +839,6 @@ pub(crate) fn motion_algorithm_ui_update(
                 TextColor(Color::srgb(0.86, 0.70, 0.70)),
                 MotionAlgorithmUiListItem,
             ));
-        }
-
-        list.spawn((
-            Text::new("Idle"),
-            section_font.clone(),
-            section_color,
-            MotionAlgorithmUiListItem,
-        ));
-        for algorithm in idle_algorithms {
-            list.spawn((
-                Button,
-                Node {
-                    width: Val::Percent(100.0),
-                    padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                button_bg,
-                button_border,
-                MotionAlgorithmUiListItem,
-                MotionAlgorithmUiButton {
-                    channel: MotionAlgorithmUiChannel::Idle,
-                    algorithm_id: algorithm.id_str(),
-                },
-            ))
-            .with_children(|b| {
-                b.spawn((
-                    Text::new(algorithm.label()),
-                    button_font.clone(),
-                    button_color,
-                ));
-            });
-        }
-
-        list.spawn((
-            Text::new("Move"),
-            section_font.clone(),
-            section_color,
-            MotionAlgorithmUiListItem,
-        ));
-        for algorithm in move_algorithms {
-            list.spawn((
-                Button,
-                Node {
-                    width: Val::Percent(100.0),
-                    padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                button_bg,
-                button_border,
-                MotionAlgorithmUiListItem,
-                MotionAlgorithmUiButton {
-                    channel: MotionAlgorithmUiChannel::Move,
-                    algorithm_id: algorithm.id_str(),
-                },
-            ))
-            .with_children(|b| {
-                b.spawn((
-                    Text::new(algorithm.label()),
-                    button_font.clone(),
-                    button_color,
-                ));
-            });
-        }
-
-        list.spawn((
-            Text::new("Attack"),
-            section_font,
-            section_color,
-            MotionAlgorithmUiListItem,
-        ));
-        for algorithm in attack_algorithms {
-            list.spawn((
-                Button,
-                Node {
-                    width: Val::Percent(100.0),
-                    padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                button_bg,
-                button_border,
-                MotionAlgorithmUiListItem,
-                MotionAlgorithmUiButton {
-                    channel: MotionAlgorithmUiChannel::AttackPrimary,
-                    algorithm_id: algorithm.id_str(),
-                },
-            ))
-            .with_children(|b| {
-                b.spawn((
-                    Text::new(algorithm.label()),
-                    button_font.clone(),
-                    button_color,
-                ));
-            });
         }
     });
 }
@@ -1332,104 +1193,6 @@ pub(crate) fn meta_speak_ui_clear_keyboard_state_when_captured(
         }
     }
 }
-
-pub(crate) fn motion_algorithm_ui_button_styles(
-    state: Res<MotionAlgorithmUiState>,
-    roots: Query<Option<&MotionAlgorithmController>>,
-    mut buttons: Query<
-        (
-            &Interaction,
-            &MotionAlgorithmUiButton,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
-        With<Button>,
-    >,
-) {
-    let Some(target) = state.target else {
-        return;
-    };
-    if !state.open {
-        return;
-    }
-
-    let selected_idle = roots
-        .get(target)
-        .ok()
-        .flatten()
-        .map(|c| c.idle_algorithm)
-        .unwrap_or(IdleMotionAlgorithm::None)
-        .id_str();
-    let selected_move = roots
-        .get(target)
-        .ok()
-        .flatten()
-        .map(|c| c.move_algorithm)
-        .unwrap_or(MoveMotionAlgorithm::None)
-        .id_str();
-    let selected_attack = roots
-        .get(target)
-        .ok()
-        .flatten()
-        .map(|c| c.attack_primary_algorithm)
-        .unwrap_or(AttackPrimaryMotionAlgorithm::None)
-        .id_str();
-
-    for (interaction, button, mut bg, mut border) in &mut buttons {
-        let selected_id = match button.channel {
-            MotionAlgorithmUiChannel::Idle => selected_idle,
-            MotionAlgorithmUiChannel::Move => selected_move,
-            MotionAlgorithmUiChannel::AttackPrimary => selected_attack,
-        };
-        let is_selected = button.algorithm_id == selected_id;
-        let (base_bg, base_border) = if is_selected {
-            (
-                Color::srgba(0.10, 0.10, 0.14, 0.88),
-                Color::srgba(0.45, 0.45, 0.60, 0.85),
-            )
-        } else {
-            (
-                Color::srgba(0.05, 0.05, 0.06, 0.75),
-                Color::srgba(0.25, 0.25, 0.30, 0.65),
-            )
-        };
-        match *interaction {
-            Interaction::None => {
-                *bg = BackgroundColor(base_bg);
-                *border = BorderColor::all(base_border);
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(
-                    (base_bg.to_srgba().red + 0.02).min(1.0),
-                    (base_bg.to_srgba().green + 0.02).min(1.0),
-                    (base_bg.to_srgba().blue + 0.03).min(1.0),
-                    base_bg.to_srgba().alpha,
-                ));
-                *border = BorderColor::all(Color::srgba(
-                    (base_border.to_srgba().red + 0.08).min(1.0),
-                    (base_border.to_srgba().green + 0.08).min(1.0),
-                    (base_border.to_srgba().blue + 0.10).min(1.0),
-                    base_border.to_srgba().alpha,
-                ));
-            }
-            Interaction::Pressed => {
-                *bg = BackgroundColor(Color::srgba(
-                    (base_bg.to_srgba().red + 0.05).min(1.0),
-                    (base_bg.to_srgba().green + 0.05).min(1.0),
-                    (base_bg.to_srgba().blue + 0.07).min(1.0),
-                    base_bg.to_srgba().alpha,
-                ));
-                *border = BorderColor::all(Color::srgba(
-                    (base_border.to_srgba().red + 0.12).min(1.0),
-                    (base_border.to_srgba().green + 0.12).min(1.0),
-                    (base_border.to_srgba().blue + 0.14).min(1.0),
-                    base_border.to_srgba().alpha,
-                ));
-            }
-        }
-    }
-}
-
 pub(crate) fn meta_brain_ui_button_styles(
     state: Res<MotionAlgorithmUiState>,
     brains: Query<Option<&StandaloneBrain>>,
@@ -1681,89 +1444,6 @@ pub(crate) fn meta_speak_ui_button_styles(
         }
     }
 }
-
-pub(crate) fn motion_algorithm_ui_button_clicks(
-    mut commands: Commands,
-    mut state: ResMut<MotionAlgorithmUiState>,
-    selection: Res<SelectionState>,
-    roots: Query<(&ObjectPrefabId, Option<&MotionAlgorithmController>), With<Commandable>>,
-    mut buttons: Query<(&Interaction, &MotionAlgorithmUiButton), Changed<Interaction>>,
-) {
-    if !state.open {
-        return;
-    }
-    let Some(target) = state.target else {
-        return;
-    };
-    let Ok((target_prefab, _)) = roots.get(target) else {
-        return;
-    };
-
-    for (interaction, button) in &mut buttons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-
-        let channel = button.channel;
-        let alg_label = match channel {
-            MotionAlgorithmUiChannel::Idle => button.algorithm_id,
-            MotionAlgorithmUiChannel::Move => button.algorithm_id,
-            MotionAlgorithmUiChannel::AttackPrimary => button.algorithm_id,
-        };
-
-        let mut updated = 0usize;
-        let mut targets: Vec<Entity> = selection.selected.iter().copied().collect();
-        if !selection.selected.contains(&target) {
-            targets.push(target);
-        }
-
-        for entity in targets {
-            let Ok((prefab_id, controller)) = roots.get(entity) else {
-                continue;
-            };
-            if prefab_id.0 != target_prefab.0 {
-                continue;
-            }
-
-            let mut next = controller.copied().unwrap_or_default();
-            match channel {
-                MotionAlgorithmUiChannel::Idle => {
-                    let Some(parsed) = IdleMotionAlgorithm::parse(button.algorithm_id) else {
-                        continue;
-                    };
-                    next.idle_algorithm = parsed;
-                }
-                MotionAlgorithmUiChannel::Move => {
-                    let Some(parsed) = MoveMotionAlgorithm::parse(button.algorithm_id) else {
-                        continue;
-                    };
-                    next.move_algorithm = parsed;
-                }
-                MotionAlgorithmUiChannel::AttackPrimary => {
-                    let Some(parsed) = AttackPrimaryMotionAlgorithm::parse(button.algorithm_id)
-                    else {
-                        continue;
-                    };
-                    next.attack_primary_algorithm = parsed;
-                }
-            }
-
-            commands.entity(entity).insert(next);
-            updated += 1;
-        }
-
-        info!(
-            "Motion: set {:?}={} for {} unit(s) of prefab {}",
-            channel,
-            alg_label,
-            updated,
-            uuid::Uuid::from_u128(target_prefab.0)
-        );
-
-        state.needs_rebuild = true;
-    }
-}
-
 pub(crate) fn meta_brain_ui_button_clicks(
     mut commands: Commands,
     mut state: ResMut<MotionAlgorithmUiState>,

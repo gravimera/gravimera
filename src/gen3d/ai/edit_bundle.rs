@@ -8,9 +8,7 @@ use crate::object::registry::{
     PartAnimationSpec,
 };
 
-use super::schema::{
-    AiColliderJson, AiContactJson, AiJointJson, AiMotionAuthoringJsonV1, AiMotionRolesJsonV1,
-};
+use super::schema::{AiColliderJson, AiContactJson, AiJointJson, AiMotionAuthoringJsonV1};
 use super::{Gen3dAgentWorkspace, Gen3dAiJob, Gen3dPlannedAttachment, Gen3dPlannedComponent};
 
 const GEN3D_EDIT_BUNDLE_FORMAT_VERSION: u32 = 1;
@@ -35,8 +33,6 @@ pub(crate) struct Gen3dEditBundleV1 {
     pub(crate) planned_components: Vec<Gen3dPlannedComponentBundleV1>,
     #[serde(default)]
     pub(crate) rig_move_cycle_m: Option<f32>,
-    #[serde(default)]
-    pub(crate) motion_roles: Option<AiMotionRolesJsonV1>,
     #[serde(default)]
     pub(crate) motion_authoring: Option<AiMotionAuthoringJsonV1>,
     #[serde(default)]
@@ -201,7 +197,6 @@ pub(crate) fn gen3d_build_edit_bundle_v1(
             .map(Gen3dPlannedComponentBundleV1::from_component)
             .collect(),
         rig_move_cycle_m: job.rig_move_cycle_m,
-        motion_roles: job.motion_roles.clone(),
         motion_authoring: job.motion_authoring.clone(),
         reuse_group_warnings: job.reuse_group_warnings.clone(),
     }
@@ -252,7 +247,6 @@ pub(crate) fn gen3d_hydrate_seeded_job_from_edit_bundle_v1(
     job.assembly_notes = bundle.assembly_notes.clone();
     job.plan_collider = bundle.plan_collider.clone();
     job.rig_move_cycle_m = bundle.rig_move_cycle_m;
-    job.motion_roles = bundle.motion_roles.clone();
     job.motion_authoring = bundle.motion_authoring.clone();
     job.reuse_group_warnings = bundle.reuse_group_warnings.clone();
 
@@ -271,7 +265,6 @@ pub(crate) fn gen3d_hydrate_seeded_job_from_edit_bundle_v1(
             assembly_notes: job.assembly_notes.clone(),
             plan_collider: job.plan_collider.clone(),
             rig_move_cycle_m: job.rig_move_cycle_m,
-            motion_roles: job.motion_roles.clone(),
             motion_authoring: job.motion_authoring.clone(),
             reuse_groups: Vec::new(),
             reuse_group_warnings: job.reuse_group_warnings.clone(),

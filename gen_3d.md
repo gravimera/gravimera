@@ -89,52 +89,25 @@ Gen3D uses the prefab-based object system:
 
 ---
 
-## Runtime Motion Algorithms (Rig Contracts)
+## Motion Animations (AI-authored)
 
-Gravimera supports **engine-injected motion algorithms** (idle/walk/wheels/attacks) that can be
-applied to many different Gen3D models, as long as the model declares an explicit rig contract.
+Gravimera does not provide runtime motion algorithms. Motion is authored as explicit animation
+slots baked onto prefab attachment edges.
 
 How it works:
 
 - Gen3D models are saved as prefab defs (`*.json`) plus prefab descriptors (`*.desc.json`).
-- A descriptor may include:
-  - `interfaces.extra.motion_roles_v1` (semantic locomotion mapping; see `docs/gamedesign/35_prefab_descriptors_v1.md`)
-  - `interfaces.extra.motion_rig_v1` (explicit runtime rig contract; see `docs/gamedesign/35_prefab_descriptors_v1.md`)
-- When `motion_rig_v1` is present, the engine can inject generic motion algorithms by generating
-  per-edge animation slots at runtime for canonical channels (`idle`, `move`, `attack_primary`)
-  with no heuristic “leg detection”.
-- Gen3D derives `motion_rig_v1` from `motion_roles_v1` (preferred; avoids brittle naming).
-  There is no name-based auto-rigging fallback: motion algorithms are applied only when the model
-  explicitly declares the required rig contract.
+- The engine writes a derived summary into descriptors:
+  - `interfaces.extra.motion_summary` (structured summary of available channels, drivers, clip kinds, etc).
+- For movable units (mobility `ground` / `air`), the Gen3D agent should call
+  `llm_generate_motion_authoring_v1` to author at least `move` (and usually `idle`; plus
+  `attack_primary` if applicable).
 
 In-game UX (Realm):
 
 - Double-click a unit’s **selection circle** to open the **Meta** panel.
-- Pick algorithms per channel (selection persists in `scene.dat`):
-  - `Idle`:
-    - `None` (use prefab-authored clips)
-    - `Biped idle (v1)` / `Quadruped idle (v1)` / `Car idle (v1)` / `Airplane idle (v1)` (when the rig kind matches)
-  - `Move`:
-    - `None` (use prefab-authored clips)
-    - `Biped walk (v1)` / `Quadruped walk (v1)` / `Car wheels (v1)` / `Airplane props/rotors (v1)` (when the rig kind matches)
-  - `Attack`:
-    - `None` (use prefab-authored clips)
-    - `Biped melee swing (v1)` (melee bipeds)
-    - `Quadruped bite (v1)` (melee quadrupeds)
-    - `Ranged recoil (v1)` (ranged units; uses the rig `body` edge when available)
-- The selection updates the unit instance immediately (and applies to all selected units of the
-  same prefab).
-
-Notes:
-
-- This is designed to reduce “AI-authored per-model animations” and replace them with a small set
-  of reusable, deterministic motion generators.
-- The Gen3D agent may call `llm_generate_motion_roles_v1` to label locomotion effectors
-  (legs/wheels/propellers/rotors, etc).
-- If runtime motion mapping is not possible (no compatible rig candidate; e.g. snake/octopus/hexapod),
-  the agent can call `llm_generate_motion_authoring_v1` to author explicit per-edge animation clips
-  that are baked onto attachment edges (no engine inference).
-- Algorithms are applied only when the descriptor declares the required `motion_rig_v1` edges.
+- The Meta panel shows a read-only animation summary plus Brain and Gen3D actions.
+  (There is no animation/algorithm selection UI.)
 
 ## Cache / Debugging Artifacts
 
@@ -262,7 +235,7 @@ Notes:
   - For intermediate chain links with exactly 2 joint anchors (one parent, one child), the vector from the proximal joint anchor to the distal joint anchor should be aligned with the proximal anchor's +Z (forward) axis in component-local space; otherwise motion validation may report `chain_axis_mismatch`.
   Then `attach_to.offset.pos[2]` becomes a reliable in/out control along the attachment direction.
 - Animation policy: Gen3D plans do **not** include animation clips (`attach_to.animations` is not part of the plan schema).
-  - For locomotion, prefer runtime injected motion algorithms via `motion_roles_v1` → `motion_rig_v1` (see “Runtime Motion Algorithms” above).
+  - For movable units, motion is authored via `llm_generate_motion_authoring_v1` and baked onto attachment edges.
 
 Motion metadata (optional):
 

@@ -68,7 +68,6 @@ fn capture_active_workspace(job: &Gen3dAiJob, draft: &Gen3dDraft) -> Gen3dAgentW
         assembly_notes: job.assembly_notes.clone(),
         plan_collider: job.plan_collider.clone(),
         rig_move_cycle_m: job.rig_move_cycle_m,
-        motion_roles: job.motion_roles.clone(),
         motion_authoring: job.motion_authoring.clone(),
         reuse_groups: job.reuse_groups.clone(),
         reuse_group_warnings: job.reuse_group_warnings.clone(),
@@ -420,7 +419,6 @@ pub(super) fn set_active_workspace_v1(
                 assembly_notes: String::new(),
                 plan_collider: None,
                 rig_move_cycle_m: None,
-                motion_roles: None,
                 motion_authoring: None,
                 reuse_groups: Vec::new(),
                 reuse_group_warnings: Vec::new(),
@@ -440,7 +438,6 @@ pub(super) fn set_active_workspace_v1(
     job.assembly_notes = next.assembly_notes;
     job.plan_collider = next.plan_collider;
     job.rig_move_cycle_m = next.rig_move_cycle_m;
-    job.motion_roles = next.motion_roles;
     job.motion_authoring = next.motion_authoring;
     job.reuse_groups = next.reuse_groups;
     job.reuse_group_warnings = next.reuse_group_warnings;

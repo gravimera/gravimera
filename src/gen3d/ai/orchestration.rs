@@ -577,7 +577,6 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
-    job.motion_roles = None;
     job.motion_authoring = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
@@ -999,7 +998,6 @@ pub(crate) fn gen3d_start_build_from_api(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
-    job.motion_roles = None;
     job.motion_authoring = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
@@ -2534,7 +2532,6 @@ fn retry_gen3d_plan(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
-    job.motion_roles = None;
     job.motion_authoring = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
@@ -3165,7 +3162,6 @@ fn try_start_gen3d_replan(
     job.assembly_notes.clear();
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
-    job.motion_roles = None;
     job.motion_authoring = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();

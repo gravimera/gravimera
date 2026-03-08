@@ -71,9 +71,9 @@ Pre-implementation contracts (must be written down before coding):
   Rationale: Agent autonomy; explicit “best effort / unfinished” is better than the engine silently overriding intent.
   Date/Author: 2026-03-07 / flow + agent
 
-- Decision: Remove runtime motion mapping as a required Gen3D step (keep algorithms, but don’t require mapping for Gen3D completion).
+- Decision: Do not rely on runtime motion algorithms/mapping for Gen3D completion (motion is AI-authored via `llm_generate_motion_authoring_v1`).
   Rationale: “Any animation” should not be constrained by pre-existing runtime rig taxonomies; keep Gen3D loop focused and assumption-minimal.
-  Date/Author: 2026-03-07 / flow + agent
+  Date/Author: 2026-03-09 / agent
 
 - Decision: Allow empty provider tokens when `base_url` starts with `mock://gen3d` (debug/test builds only).
   Rationale: Enables deterministic, rendered end-to-end Gen3D tests without requiring secrets (the mock backend never calls the network).

@@ -3,10 +3,9 @@ use sha2::{Digest, Sha256};
 
 use crate::gen3d::agent::tools::{TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE};
 use crate::gen3d::agent::Gen3dToolResultJsonV1;
-use crate::object::registry::MobilityMode;
 
 use super::super::state::Gen3dDraft;
-use super::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1, Gen3dAiJob, Gen3dPlannedComponent};
+use super::Gen3dAiJob;
 
 pub(super) fn note_observable_tool_result(job: &mut Gen3dAiJob, result: &Gen3dToolResultJsonV1) {
     if !result.ok {
@@ -40,60 +39,6 @@ pub(super) fn compute_agent_state_hash(job: &Gen3dAiJob, draft: &Gen3dDraft) -> 
         hex.push_str(&format!("{:02x}", b));
     }
     format!("sha256:{hex}")
-}
-
-pub(super) fn motion_runtime_candidate_kind(
-    roles: Option<&AiMotionRolesJsonV1>,
-    planned_components: &[Gen3dPlannedComponent],
-    mobility_mode: Option<MobilityMode>,
-) -> Option<&'static str> {
-    let roles = roles?;
-
-    let mut attached_children: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for comp in planned_components.iter() {
-        if comp.attach_to.is_some() {
-            attached_children.insert(comp.name.as_str());
-        }
-    }
-
-    let mut legs = 0usize;
-    let mut wheels = 0usize;
-    let mut propellers = 0usize;
-    let mut rotors = 0usize;
-    let mut wings = 0usize;
-    for effector in roles.move_effectors.iter() {
-        let name = effector.component.trim();
-        if name.is_empty() || !attached_children.contains(name) {
-            continue;
-        }
-        match effector.role {
-            AiMoveEffectorRoleJsonV1::Leg => legs += 1,
-            AiMoveEffectorRoleJsonV1::Wheel => wheels += 1,
-            AiMoveEffectorRoleJsonV1::Wing => wings += 1,
-            AiMoveEffectorRoleJsonV1::Propeller => propellers += 1,
-            AiMoveEffectorRoleJsonV1::Rotor => rotors += 1,
-            _ => {}
-        }
-    }
-
-    let airplane_allowed = match mobility_mode {
-        Some(MobilityMode::Air) | None => true,
-        Some(MobilityMode::Ground) => false,
-    };
-    if airplane_allowed && propellers + rotors + wings >= 1 {
-        return Some("airplane_v1");
-    }
-    if wheels >= 1 {
-        return Some("car_v1");
-    }
-    if legs == 2 {
-        return Some("biped_v1");
-    }
-    if legs == 4 {
-        return Some("quadruped_v1");
-    }
-
-    None
 }
 
 pub(super) fn build_component_subset_workspace_defs(

@@ -97,7 +97,6 @@ If `gen3d_edit_bundle_v1.json` is missing, the prefab is considered **not editab
   - rebuild the attachment tree in defs, and
   - allow `apply_draft_ops_v1` to operate on anchors/attachments/parts after restart.
 - `rig_move_cycle_m`: optional float (meters). If present, informs motion authoring.
-- `motion_roles`: optional JSON (same shape as `AiMotionRolesJsonV1`).
 - `motion_authoring`: optional JSON (same shape as `AiMotionAuthoringJsonV1`).
 - `reuse_group_warnings`: optional array of strings.
 

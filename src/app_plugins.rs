@@ -64,19 +64,6 @@ impl Plugin for RenderedSceneRuntimePlugin {
             crate::scene_instance_visuals::ensure_scene_instance_visuals_spawned,
         );
         app.add_systems(Update, scene_store::apply_pending_workspace_switch);
-        app.add_systems(
-            Update,
-            (
-                crate::motion::ensure_default_motion_algorithm_controllers,
-                crate::motion::apply_motion_algorithms_on_controller_change
-                    .after(crate::motion::ensure_default_motion_algorithm_controllers),
-                crate::motion::apply_motion_algorithms_on_new_bindings
-                    .after(crate::motion::apply_motion_algorithms_on_controller_change),
-            )
-                .after(crate::scene_instance_visuals::ensure_scene_instance_visuals_spawned)
-                .before(crate::object::visuals::update_part_animations)
-                .run_if(in_state(BuildScene::Realm)),
-        );
         app.add_systems(Update, crate::object_forms::ensure_object_forms_component);
         app.add_systems(
             Update,
@@ -613,9 +600,6 @@ impl Plugin for RenderedGameplayPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::motion_algorithm_ui_update
                     .after(crate::motion_ui::motion_algorithm_ui_keyboard),
-                crate::motion_ui::motion_algorithm_ui_button_clicks
-                    .after(crate::motion_ui::motion_algorithm_ui_update)
-                    .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::meta_brain_ui_button_clicks
                     .after(crate::motion_ui::motion_algorithm_ui_update)
                     .run_if(crate::automation::local_input_enabled),
@@ -628,8 +612,6 @@ impl Plugin for RenderedGameplayPlugin {
                 crate::motion_ui::meta_speak_ui_button_clicks
                     .after(crate::motion_ui::meta_speak_ui_content_field_focus)
                     .run_if(crate::automation::local_input_enabled),
-                crate::motion_ui::motion_algorithm_ui_button_styles
-                    .after(crate::motion_ui::motion_algorithm_ui_button_clicks),
                 crate::motion_ui::meta_brain_ui_button_styles
                     .after(crate::motion_ui::meta_brain_ui_button_clicks),
                 crate::motion_ui::meta_gen3d_ui_button_styles
@@ -637,7 +619,6 @@ impl Plugin for RenderedGameplayPlugin {
                 crate::motion_ui::meta_speak_ui_button_styles
                     .after(crate::motion_ui::meta_speak_ui_button_clicks),
                 crate::motion_ui::motion_algorithm_ui_scroll_wheel
-                    .after(crate::motion_ui::motion_algorithm_ui_button_styles)
                     .after(crate::motion_ui::meta_brain_ui_button_styles)
                     .after(crate::motion_ui::meta_gen3d_ui_button_styles)
                     .after(crate::motion_ui::meta_speak_ui_button_styles)

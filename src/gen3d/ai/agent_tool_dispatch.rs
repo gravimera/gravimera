@@ -5,14 +5,13 @@ use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
     TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE,
-    TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_DIFF_WORKSPACES,
+    TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_DIFF_WORKSPACES,
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
     TOOL_ID_LIST, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LIST_SNAPSHOTS,
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_MOTION_ROLES,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MERGE_WORKSPACE,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA,
-    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
+    TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RENDER_PREVIEW,
     TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE,
     TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
@@ -147,33 +146,6 @@ pub(super) fn execute_tool_call(
             call.tool_id,
             serde_json::json!({ "tools": registry.list() }),
         )),
-        TOOL_ID_DESCRIBE => {
-            let tool_id = call
-                .args
-                .get("tool_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if tool_id.trim().is_empty() {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    "Missing args.tool_id".into(),
-                ));
-            }
-            let Some(desc) = registry.describe(&tool_id) else {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    format!("Unknown tool_id: {tool_id}"),
-                ));
-            };
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
-                call.call_id,
-                call.tool_id,
-                serde_json::to_value(desc).unwrap(),
-            ))
-        }
         TOOL_ID_GET_USER_INPUTS => ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
             call.call_id,
             call.tool_id,
@@ -1676,72 +1648,6 @@ pub(super) fn execute_tool_call(
             workshop.status = "Generating components (batch)…".into();
             ToolCallOutcome::StartedAsync
         }
-        TOOL_ID_LLM_GENERATE_MOTION_ROLES => {
-            if job.planned_components.is_empty() {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    "No planned components yet. Generate a plan first.".into(),
-                ));
-            }
-            let Some(ai) = job.ai.clone() else {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    "Missing AI config".into(),
-                ));
-            };
-            let Some(pass_dir) = job.pass_dir.clone() else {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    "Missing pass dir".into(),
-                ));
-            };
-            let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
-
-            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
-            job.shared_result = Some(shared.clone());
-            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
-                message: "Mapping motion roles…".into(),
-            }));
-            job.shared_progress = Some(progress.clone());
-            set_progress(&progress, "Calling model for motion roles…");
-            job.agent.pending_llm_repair_attempt = 0;
-
-            let system = super::prompts::build_gen3d_motion_roles_system_instructions();
-            let user_text = super::prompts::build_gen3d_motion_roles_user_text(
-                &job.user_prompt_raw,
-                !job.user_images.is_empty(),
-                &run_id,
-                job.attempt,
-                &job.plan_hash,
-                job.assembly_rev,
-                &job.planned_components,
-            );
-            let reasoning_effort =
-                super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
-            spawn_gen3d_ai_text_thread(
-                shared,
-                progress,
-                job.cancel_flag.clone(),
-                job.session.clone(),
-                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionRolesV1),
-                config.gen3d_require_structured_outputs,
-                ai,
-                reasoning_effort,
-                system,
-                user_text,
-                Vec::new(),
-                pass_dir,
-                sanitize_prefix(&format!("tool_motion_roles_{}", &call.call_id)),
-            );
-            job.agent.pending_tool_call = Some(call);
-            job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::GenerateMotionRoles);
-            job.phase = Gen3dAiPhase::AgentWaitingTool;
-            workshop.status = "Mapping motion roles…".into();
-            ToolCallOutcome::StartedAsync
-        }
         TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => {
             if job.planned_components.is_empty() {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -1775,16 +1681,6 @@ pub(super) fn execute_tool_call(
             set_progress(&progress, "Calling model for motion authoring…");
             job.agent.pending_llm_repair_attempt = 0;
 
-            let roles = job.motion_roles_for_current_draft();
-            let mobility_mode = draft
-                .root_def()
-                .and_then(|def| def.mobility.as_ref())
-                .map(|m| m.mode);
-            let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
-                roles,
-                &job.planned_components,
-                mobility_mode,
-            );
             let (mut has_idle_slot, mut has_move_slot) = (false, false);
             for comp in job.planned_components.iter() {
                 let Some(att) = comp.attach_to.as_ref() else {
@@ -1808,8 +1704,6 @@ pub(super) fn execute_tool_call(
                 &job.plan_hash,
                 job.assembly_rev,
                 job.rig_move_cycle_m,
-                roles.is_some(),
-                runtime_candidate,
                 has_idle_slot,
                 has_move_slot,
                 &job.planned_components,
@@ -2118,7 +2012,6 @@ pub(super) fn execute_tool_call(
                 source_assembly_notes,
                 source_plan_collider,
                 source_rig_move_cycle_m,
-                source_motion_roles,
                 source_motion_authoring,
                 source_reuse_groups,
                 source_reuse_group_warnings,
@@ -2131,7 +2024,6 @@ pub(super) fn execute_tool_call(
                     job.assembly_notes.clone(),
                     job.plan_collider.clone(),
                     job.rig_move_cycle_m,
-                    job.motion_roles.clone(),
                     job.motion_authoring.clone(),
                     job.reuse_groups.clone(),
                     job.reuse_group_warnings.clone(),
@@ -2145,7 +2037,6 @@ pub(super) fn execute_tool_call(
                     ws.assembly_notes.clone(),
                     ws.plan_collider.clone(),
                     ws.rig_move_cycle_m,
-                    ws.motion_roles.clone(),
                     ws.motion_authoring.clone(),
                     ws.reuse_groups.clone(),
                     ws.reuse_group_warnings.clone(),
@@ -2224,7 +2115,6 @@ pub(super) fn execute_tool_call(
                     assembly_notes: source_assembly_notes,
                     plan_collider: source_plan_collider,
                     rig_move_cycle_m: source_rig_move_cycle_m,
-                    motion_roles: source_motion_roles,
                     motion_authoring: source_motion_authoring,
                     reuse_groups: source_reuse_groups,
                     reuse_group_warnings: source_reuse_group_warnings,
@@ -2306,7 +2196,6 @@ pub(super) fn execute_tool_call(
                         assembly_notes: job.assembly_notes.clone(),
                         plan_collider: job.plan_collider.clone(),
                         rig_move_cycle_m: job.rig_move_cycle_m,
-                        motion_roles: job.motion_roles.clone(),
                         motion_authoring: job.motion_authoring.clone(),
                         reuse_groups: job.reuse_groups.clone(),
                         reuse_group_warnings: job.reuse_group_warnings.clone(),
@@ -2328,7 +2217,6 @@ pub(super) fn execute_tool_call(
                         assembly_notes: String::new(),
                         plan_collider: None,
                         rig_move_cycle_m: None,
-                        motion_roles: None,
                         motion_authoring: None,
                         reuse_groups: Vec::new(),
                         reuse_group_warnings: Vec::new(),
@@ -2350,7 +2238,6 @@ pub(super) fn execute_tool_call(
             job.assembly_notes = next.assembly_notes;
             job.plan_collider = next.plan_collider;
             job.rig_move_cycle_m = next.rig_move_cycle_m;
-            job.motion_roles = next.motion_roles;
             job.motion_authoring = next.motion_authoring;
             job.reuse_groups = next.reuse_groups;
             job.reuse_group_warnings = next.reuse_group_warnings;

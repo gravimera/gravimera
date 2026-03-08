@@ -218,9 +218,6 @@ pub(super) fn poll_agent_tool(
             | super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1)
             }
-            super::Gen3dAgentLlmToolKind::GenerateMotionRoles => {
-                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionRolesV1)
-            }
             super::Gen3dAgentLlmToolKind::GenerateMotionAuthoring => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1)
             }
@@ -926,201 +923,6 @@ pub(super) fn poll_agent_tool(
                         },
                     }
                 }
-                super::Gen3dAgentLlmToolKind::GenerateMotionRoles => {
-                    let text = resp.text;
-                    if let Some(dir) = job.pass_dir.as_deref() {
-                        write_gen3d_text_artifact(Some(dir), "motion_roles_raw.txt", text.trim());
-                    }
-
-                    match super::parse::parse_ai_motion_roles_from_text(&text) {
-                        Ok(mut roles) => {
-                            let expected_run_id =
-                                job.run_id.map(|id| id.to_string()).unwrap_or_default();
-                            let mut issues: Vec<String> = Vec::new();
-                            if !expected_run_id.trim().is_empty()
-                                && roles.applies_to.run_id.trim() != expected_run_id.trim()
-                            {
-                                issues.push(format!(
-                                    "applies_to.run_id mismatch (got {}, expected {})",
-                                    roles.applies_to.run_id.trim(),
-                                    expected_run_id.trim()
-                                ));
-                            }
-                            if roles.applies_to.attempt != job.attempt
-                                || roles.applies_to.plan_hash.trim() != job.plan_hash.trim()
-                                || roles.applies_to.assembly_rev != job.assembly_rev
-                            {
-                                issues.push(format!(
-                                    "applies_to mismatch (got attempt={} plan_hash={} assembly_rev={}, expected attempt={} plan_hash={} assembly_rev={})",
-                                    roles.applies_to.attempt,
-                                    roles.applies_to.plan_hash.trim(),
-                                    roles.applies_to.assembly_rev,
-                                    job.attempt,
-                                    job.plan_hash.trim(),
-                                    job.assembly_rev,
-                                ));
-                            }
-                            for effector in roles.move_effectors.iter() {
-                                let name = effector.component.trim();
-                                let Some(component) = job
-                                    .planned_components
-                                    .iter()
-                                    .find(|c| c.name == name)
-                                else {
-                                    issues.push(format!("Unknown component: {name}"));
-                                    continue;
-                                };
-                                if component.attach_to.is_none() {
-                                    issues.push(format!(
-                                        "Component {name} is the root (no attach_to); cannot be a move effector"
-                                    ));
-                                }
-                                match effector.role {
-                                    super::schema::AiMoveEffectorRoleJsonV1::Leg => {
-                                        if !matches!(effector.phase_group, Some(0) | Some(1)) {
-                                            issues.push(format!(
-                                                "Component {name} role=leg must have phase_group=0 or 1"
-                                            ));
-                                        }
-                                        if effector.spin_axis_local.is_some() {
-                                            issues.push(format!(
-                                                "Component {name} role=leg must have spin_axis_local=null"
-                                            ));
-                                        }
-                                    }
-                                    super::schema::AiMoveEffectorRoleJsonV1::Arm => {
-                                        if effector.phase_group.is_some()
-                                            && !matches!(effector.phase_group, Some(0) | Some(1))
-                                        {
-                                            issues.push(format!(
-                                                "Component {name} role=arm phase_group must be 0 or 1 (or null)"
-                                            ));
-                                        }
-                                        if effector.spin_axis_local.is_some() {
-                                            issues.push(format!(
-                                                "Component {name} role=arm must have spin_axis_local=null"
-                                            ));
-                                        }
-                                    }
-                                    super::schema::AiMoveEffectorRoleJsonV1::Wheel => {
-                                        if effector.phase_group.is_some() {
-                                            issues.push(format!(
-                                                "Component {name} role=wheel must have phase_group=null"
-                                            ));
-                                        }
-                                    }
-                                    super::schema::AiMoveEffectorRoleJsonV1::Propeller
-                                    | super::schema::AiMoveEffectorRoleJsonV1::Rotor => {
-                                        if effector.phase_group.is_some() {
-                                            issues.push(format!(
-                                                "Component {name} role={:?} must have phase_group=null",
-                                                effector.role
-                                            ));
-                                        }
-                                    }
-                                    super::schema::AiMoveEffectorRoleJsonV1::Head
-                                    | super::schema::AiMoveEffectorRoleJsonV1::Ear
-                                    | super::schema::AiMoveEffectorRoleJsonV1::Tail
-                                    | super::schema::AiMoveEffectorRoleJsonV1::Wing => {
-                                        if effector.phase_group.is_some() {
-                                            issues.push(format!(
-                                                "Component {name} role={:?} must have phase_group=null",
-                                                effector.role
-                                            ));
-                                        }
-                                        if effector.spin_axis_local.is_some() {
-                                            issues.push(format!(
-                                                "Component {name} role={:?} must have spin_axis_local=null",
-                                                effector.role
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                            if !issues.is_empty() {
-                                issues.sort();
-                                issues.dedup();
-                                Gen3dToolResultJsonV1::err(
-                                    call.call_id,
-                                    call.tool_id,
-                                    format!(
-                                        "motion-roles validation failed:\n- {}",
-                                        issues.join("\n- ")
-                                    ),
-                                )
-                            } else {
-                                roles.move_effectors.retain(|e| {
-                                    job.planned_components
-                                        .iter()
-                                        .any(|c| c.name == e.component.trim())
-                                });
-
-                                if let Some(dir) = job.pass_dir.as_deref() {
-                                    write_gen3d_json_artifact(
-                                        Some(dir),
-                                        "motion_roles.json",
-                                        &serde_json::to_value(&roles)
-                                            .unwrap_or(serde_json::Value::Null),
-                                    );
-                                }
-
-                                job.motion_roles = Some(roles.clone());
-                                job.agent.pending_llm_repair_attempt = 0;
-
-                                Gen3dToolResultJsonV1::ok(
-                                    call.call_id,
-                                    call.tool_id,
-                                    serde_json::json!({
-                                        "ok": true,
-                                        "move_effectors": roles.move_effectors.len(),
-                                    }),
-                                )
-                            }
-                        }
-                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
-                            (Some(ai), Some(pass_dir)) => {
-                                let system = super::prompts::build_gen3d_motion_roles_system_instructions();
-                                let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
-                                let user_text = super::prompts::build_gen3d_motion_roles_user_text(
-                                    &job.user_prompt_raw,
-                                    !job.user_images.is_empty(),
-                                    &run_id,
-                                    job.attempt,
-                                    &job.plan_hash,
-                                    job.assembly_rev,
-                                    &job.planned_components,
-                                );
-                                if schedule_llm_tool_schema_repair(
-                                    job,
-                                    workshop,
-                                    &call,
-                                    kind,
-                                    ai,
-                                    &config.gen3d_reasoning_effort_repair,
-                                    pass_dir,
-                                    system,
-                                    user_text,
-                                    Vec::new(),
-                                    &err,
-                                    &text,
-                                    &format!("tool_motion_roles_{}", call.call_id),
-                                ) {
-                                    return;
-                                }
-                                Gen3dToolResultJsonV1::err(
-                                    call.call_id.clone(),
-                                    call.tool_id.clone(),
-                                    err,
-                                )
-                            }
-                            _ => Gen3dToolResultJsonV1::err(
-                                call.call_id.clone(),
-                                call.tool_id.clone(),
-                                err,
-                            ),
-                        },
-                    }
-                }
                 super::Gen3dAgentLlmToolKind::GenerateMotionAuthoring => {
                     use crate::object::registry::{
                         PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
@@ -1165,35 +967,8 @@ pub(super) fn poll_agent_tool(
                                 ));
                             }
 
-                            let mobility_mode = draft
-                                .root_def()
-                                .and_then(|def| def.mobility.as_ref())
-                                .map(|m| m.mode);
-                            let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
-                                job.motion_roles_for_current_draft(),
-                                &job.planned_components,
-                                mobility_mode,
-                            );
-                            let has_move_existing = job.planned_components.iter().any(|c| {
-                                c.attach_to.as_ref().is_some_and(|att| {
-                                    att.animations
-                                        .iter()
-                                        .any(|slot| slot.channel.as_ref() == "move")
-                                })
-                            });
-
                             if issues.is_empty() {
                                 match authored.decision {
-                                    super::schema::AiMotionAuthoringDecisionJsonV1::RuntimeOk => {
-                                        if !authored.replace_channels.is_empty()
-                                            || !authored.edges.is_empty()
-                                        {
-                                            issues.push("decision=runtime_ok must set replace_channels=[] and edges=[] (do not author clips).".to_string());
-                                        }
-                                        if runtime_candidate.is_none() && !has_move_existing {
-                                            issues.push("decision=runtime_ok is invalid because there is no runtime motion rig candidate and no authored `move` slots. Use decision=author_clips or decision=regen_geometry_required.".to_string());
-                                        }
-                                    }
                                     super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => {
                                         if !authored.replace_channels.is_empty()
                                             || !authored.edges.is_empty()
@@ -1218,8 +993,8 @@ pub(super) fn poll_agent_tool(
                                             );
                                         }
                                     }
-                                    super::schema::AiMotionAuthoringDecisionJsonV1::Unknown => {
-                                        issues.push("AI motion-authoring has unknown `decision` value.".to_string());
+                                    _ => {
+                                        issues.push("AI motion-authoring has invalid `decision` value (expected `author_clips` or `regen_geometry_required`).".to_string());
                                     }
                                 }
                             }
@@ -1484,10 +1259,9 @@ pub(super) fn poll_agent_tool(
                                     serde_json::json!({
                                         "ok": true,
                                         "decision": match authored.decision {
-                                            super::schema::AiMotionAuthoringDecisionJsonV1::RuntimeOk => "runtime_ok",
                                             super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips => "author_clips",
                                             super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => "regen_geometry_required",
-                                            super::schema::AiMotionAuthoringDecisionJsonV1::Unknown => "unknown",
+                                            _ => "unknown",
                                         },
                                         "edges": authored.edges.len(),
                                     }),
@@ -1498,16 +1272,6 @@ pub(super) fn poll_agent_tool(
 	                            (Some(ai), Some(pass_dir)) => {
 	                                let system = super::prompts::build_gen3d_motion_authoring_system_instructions();
 	                                let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
-	                                let roles = job.motion_roles_for_current_draft();
-	                                let mobility_mode = draft
-	                                    .root_def()
-	                                    .and_then(|def| def.mobility.as_ref())
-	                                    .map(|m| m.mode);
-	                                let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
-	                                    roles,
-	                                    &job.planned_components,
-	                                    mobility_mode,
-	                                );
 	                                let (mut has_idle_slot, mut has_move_slot) = (false, false);
 	                                for comp in job.planned_components.iter() {
 	                                    let Some(att) = comp.attach_to.as_ref() else {
@@ -1529,8 +1293,6 @@ pub(super) fn poll_agent_tool(
 	                                    &job.plan_hash,
 	                                    job.assembly_rev,
 	                                    job.rig_move_cycle_m,
-	                                    roles.is_some(),
-	                                    runtime_candidate,
 	                                    has_idle_slot,
 	                                    has_move_slot,
 	                                    &job.planned_components,

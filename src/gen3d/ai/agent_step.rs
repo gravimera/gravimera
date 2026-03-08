@@ -77,17 +77,6 @@ fn run_complete_enough_for_auto_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> 
         .and_then(|def| def.mobility.as_ref())
         .is_some();
     if movable {
-        let roles = job.motion_roles_for_current_draft();
-        let mobility_mode = draft
-            .root_def()
-            .and_then(|def| def.mobility.as_ref())
-            .map(|m| m.mode);
-        let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
-            roles,
-            &job.planned_components,
-            mobility_mode,
-        );
-
         let has_move = job.planned_components.iter().any(|c| {
             c.attach_to.as_ref().is_some_and(|att| {
                 att.animations
@@ -96,7 +85,7 @@ fn run_complete_enough_for_auto_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> 
             })
         });
 
-        if runtime_candidate.is_none() && !has_move {
+        if !has_move {
             return false;
         }
     }
@@ -448,17 +437,6 @@ pub(super) fn execute_agent_actions(
                     .and_then(|def| def.mobility.as_ref())
                     .is_some();
                 if movable {
-                    let roles = job.motion_roles_for_current_draft();
-                    let mobility_mode = draft
-                        .root_def()
-                        .and_then(|def| def.mobility.as_ref())
-                        .map(|m| m.mode);
-                    let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
-                        roles,
-                        &job.planned_components,
-                        mobility_mode,
-                    );
-
                     let has_move = job.planned_components.iter().any(|c| {
                         c.attach_to.as_ref().is_some_and(|att| {
                             att.animations
@@ -467,9 +445,9 @@ pub(super) fn execute_agent_actions(
                         })
                     });
 
-                    if runtime_candidate.is_none() && !has_move {
+                    if !has_move {
                         unfinished.push(format!(
-                            "Movable unit has no runtime motion rig candidate and no authored `move` slots (suggestion: `{TOOL_ID_LLM_GENERATE_MOTION_AUTHORING}` then `{TOOL_ID_SMOKE_CHECK}`)."
+                            "Movable unit has no authored `move` slots (suggestion: `{TOOL_ID_LLM_GENERATE_MOTION_AUTHORING}` then `{TOOL_ID_SMOKE_CHECK}`)."
                         ));
                     }
                 }

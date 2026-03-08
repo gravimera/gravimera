@@ -26,7 +26,6 @@ pub(super) enum Gen3dAgentLlmToolKind {
     GeneratePlan,
     GenerateComponent { component_idx: usize },
     GenerateComponentsBatch,
-    GenerateMotionRoles,
     GenerateMotionAuthoring,
     ReviewDelta,
 }
@@ -58,7 +57,6 @@ pub(super) struct Gen3dAgentWorkspace {
     pub(super) assembly_notes: String,
     pub(super) plan_collider: Option<AiColliderJson>,
     pub(super) rig_move_cycle_m: Option<f32>,
-    pub(super) motion_roles: Option<AiMotionRolesJsonV1>,
     pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
     pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     pub(super) reuse_group_warnings: Vec<String>,
@@ -76,7 +74,6 @@ pub(super) struct Gen3dAgentSnapshot {
     pub(super) assembly_notes: String,
     pub(super) plan_collider: Option<AiColliderJson>,
     pub(super) rig_move_cycle_m: Option<f32>,
-    pub(super) motion_roles: Option<AiMotionRolesJsonV1>,
     pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
     pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     pub(super) reuse_group_warnings: Vec<String>,
@@ -485,7 +482,6 @@ pub(crate) struct Gen3dAiJob {
     pub(super) assembly_notes: String,
     pub(super) plan_collider: Option<AiColliderJson>,
     pub(super) rig_move_cycle_m: Option<f32>,
-    pub(super) motion_roles: Option<AiMotionRolesJsonV1>,
     pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
     pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     pub(super) reuse_group_warnings: Vec<String>,
@@ -604,19 +600,11 @@ impl Gen3dAiJob {
         self.assembly_rev
     }
 
-    pub(crate) fn motion_roles_for_current_draft(&self) -> Option<&AiMotionRolesJsonV1> {
-        let roles = self.motion_roles.as_ref()?;
-        // NOTE: `gen3d_edit_bundle_v1.json` persists motion metadata so Edit/Fork remains
-        // restart-safe. A resumed session will typically have a NEW run_id (fresh cache dir),
-        // so treat run_id/attempt as provenance-only and gate freshness on plan_hash+assembly_rev.
-        (roles.applies_to.plan_hash.trim() == self.plan_hash.trim()
-            && roles.applies_to.assembly_rev == self.assembly_rev)
-            .then_some(roles)
-    }
-
     pub(crate) fn motion_authoring_for_current_draft(&self) -> Option<&AiMotionAuthoringJsonV1> {
         let authored = self.motion_authoring.as_ref()?;
-        // See `motion_roles_for_current_draft` comment: allow restart-safe reuse across new run_id.
+        // `gen3d_edit_bundle_v1.json` persists motion metadata so Edit/Fork remains restart-safe.
+        // A resumed session will typically have a NEW run_id (fresh cache dir), so treat
+        // run_id/attempt as provenance-only and gate freshness on plan_hash+assembly_rev.
         (authored.applies_to.plan_hash.trim() == self.plan_hash.trim()
             && authored.applies_to.assembly_rev == self.assembly_rev)
             .then_some(authored)
@@ -740,7 +728,7 @@ impl Gen3dAiJob {
                 TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DETACH_COMPONENT,
                 TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY,
                 TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-                TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN,
+                TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
                 TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
                 TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK,
                 TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
@@ -751,7 +739,7 @@ impl Gen3dAiJob {
                 TOOL_ID_LLM_GENERATE_COMPONENT | TOOL_ID_LLM_GENERATE_COMPONENTS => {
                     "Generate".into()
                 }
-                TOOL_ID_LLM_GENERATE_MOTION_ROLES => "Rig".into(),
+                TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => "Motion".into(),
                 TOOL_ID_LLM_REVIEW_DELTA => "Review".into(),
                 TOOL_ID_RENDER_PREVIEW => "Render".into(),
                 TOOL_ID_VALIDATE => "Validate".into(),

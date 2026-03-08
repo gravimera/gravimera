@@ -1088,53 +1088,16 @@ Rules:\n\
         .to_string()
 }
 
-pub(super) fn build_gen3d_motion_roles_system_instructions() -> String {
-    "You are the Gravimera Gen3D motion roles mapper.\n\
-You will be given a generated component graph (names + attachments + transforms) and must label motion effectors for generic runtime animation.\n\
-Return ONLY a single JSON object for gen3d_motion_roles_v1 (no markdown, no prose).\n\n\
-Schema:\n\
-{\n\
-  \"version\": 1,\n\
-  \"applies_to\": {\"run_id\":\"uuid\",\"attempt\":0,\"plan_hash\":\"sha256:...\",\"assembly_rev\":0},\n\
-  \"move_effectors\": [\n\
-    {\"component\":\"left_thigh\",\"role\":\"leg\",\"phase_group\":0,\"spin_axis_local\":null},\n\
-    {\"component\":\"wheel_fl\",\"role\":\"wheel\",\"phase_group\":null,\"spin_axis_local\":[1,0,0]},\n\
-    {\"component\":\"left_arm\",\"role\":\"arm\",\"phase_group\":0,\"spin_axis_local\":null},\n\
-    {\"component\":\"head\",\"role\":\"head\",\"phase_group\":null,\"spin_axis_local\":null},\n\
-    {\"component\":\"ear_l\",\"role\":\"ear\",\"phase_group\":null,\"spin_axis_local\":null},\n\
-    {\"component\":\"propeller\",\"role\":\"propeller\",\"phase_group\":null,\"spin_axis_local\":[0,0,1]}\n\
-  ],\n\
-  \"notes\": \"...\" | null\n\
-}\n\n\
-Rules:\n\
-- You MUST copy the provided applies_to values exactly.\n\
-- `move_effectors` targets attachment edges by naming the CHILD component (`component`).\n\
-  - Only output component names that appear in the provided component list.\n\
-  - Do NOT output the root component (it has no parent edge).\n\
-- Allowed `role` values:\n\
-  - `leg`, `wheel`, `arm`, `head`, `ear`, `tail`, `wing`, `propeller`, `rotor`.\n\
-- When the prompt implies a tool-like melee action (e.g. digging), include the articulated tool-arm joints as `role=\"arm\"`.\n\
-- `phase_group`:\n\
-  - For `leg`, set to 0 or 1 (two-phase gait: group 0 swings opposite group 1).\n\
-  - For `arm`, set to 0 or 1 when it is part of a walking gait; otherwise it may be null.\n\
-  - For `wheel`/`propeller`/`rotor`, MUST be null.\n\
-- `spin_axis_local`:\n\
-  - For `wheel`/`propeller`/`rotor`, may be null or a unit-ish axis like [1,0,0].\n\
-  - For other roles, MUST be null.\n\
-- If you cannot confidently identify any effectors, return an EMPTY `move_effectors` list.\n"
-        .to_string()
-}
-
 pub(super) fn build_gen3d_motion_authoring_system_instructions() -> String {
     "You are the Gravimera Gen3D motion authoring assistant.\n\
 You will be given a generated component graph (components + attachments + anchors + current base offsets).\n\
-Your job is to decide whether existing runtime motion is sufficient, or to author explicit per-edge animation clips.\n\
+Your job is to author explicit per-edge animation clips.\n\
 Return ONLY a single JSON object for gen3d_motion_authoring_v1 (no markdown, no prose).\n\n\
 Schema:\n\
 {\n\
   \"version\": 1,\n\
   \"applies_to\": {\"run_id\":\"uuid\",\"attempt\":0,\"plan_hash\":\"sha256:...\",\"assembly_rev\":0},\n\
-  \"decision\": \"runtime_ok\" | \"author_clips\" | \"regen_geometry_required\",\n\
+  \"decision\": \"author_clips\" | \"regen_geometry_required\",\n\
   \"reason\": \"short reason\",\n\
   \"replace_channels\": [\"idle\",\"move\",\"attack_primary\"],\n\
   \"edges\": [\n\
@@ -1177,65 +1140,11 @@ Rules:\n\
   - The engine applies: animated_offset = base_offset * delta(t).\n\
 - `replace_channels`:\n\
   - If decision=author_clips, list the channels you want the engine to REPLACE on targeted edges before adding your slots.\n\
-  - If decision=runtime_ok, set replace_channels=[] and edges=[] (do not author clips).\n\
+  - If decision=regen_geometry_required, set replace_channels=[] and edges=[] (do not author clips).\n\
 - For movable units, prefer authoring at least `idle` + `move` (and `attack_primary` if the unit has an attack).\n\
 - If the prompt implies motion that cannot be achieved with the existing articulation (for example: a snake with only one rigid body component), use decision=regen_geometry_required.\n\
   - In that case, do NOT author clips. Explain what articulation is missing in `reason`/`notes`.\n"
         .to_string()
-}
-
-pub(super) fn build_gen3d_motion_roles_user_text(
-    raw_prompt: &str,
-    has_images: bool,
-    run_id: &str,
-    attempt: u32,
-    plan_hash: &str,
-    assembly_rev: u32,
-    components: &[Gen3dPlannedComponent],
-) -> String {
-    fn fmt_vec3(v: Vec3) -> String {
-        format!("[{:.3},{:.3},{:.3}]", v.x, v.y, v.z)
-    }
-
-    let mut out = String::new();
-    out.push_str(
-        "Goal: label motion roles so the engine can inject generic move + attack animations.\n",
-    );
-    if !has_images {
-        out.push_str("No photos are provided for this run.\n");
-    }
-    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
-    out.push('\n');
-
-    out.push_str("You MUST copy these values into `applies_to` exactly:\n");
-    out.push_str(&format!("- run_id: {run_id}\n"));
-    out.push_str(&format!("- attempt: {attempt}\n"));
-    out.push_str(&format!("- plan_hash: {plan_hash}\n"));
-    out.push_str(&format!("- assembly_rev: {assembly_rev}\n\n"));
-
-    out.push_str("Components (resolved transforms in root frame):\n");
-    for c in components {
-        let forward = c.rot * Vec3::Z;
-        let up = c.rot * Vec3::Y;
-        let parent = c
-            .attach_to
-            .as_ref()
-            .map(|att| att.parent.as_str())
-            .unwrap_or("<root>");
-        let size = c.actual_size.unwrap_or(c.planned_size);
-        out.push_str(&format!(
-            "- name={} parent={} pos={} forward={} up={} size={} contacts={}\n",
-            c.name.trim(),
-            parent.trim(),
-            fmt_vec3(c.pos),
-            fmt_vec3(forward),
-            fmt_vec3(up),
-            fmt_vec3(size),
-            c.contacts.len()
-        ));
-    }
-
-    out
 }
 
 pub(super) fn build_gen3d_motion_authoring_user_text(
@@ -1246,8 +1155,6 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     plan_hash: &str,
     assembly_rev: u32,
     rig_move_cycle_m: Option<f32>,
-    motion_roles_present: bool,
-    motion_runtime_candidate: Option<&str>,
     has_idle_slot: bool,
     has_move_slot: bool,
     components: &[Gen3dPlannedComponent],
@@ -1327,7 +1234,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     }
 
     let mut out = String::new();
-    out.push_str("Goal: decide if runtime motion is sufficient, or author explicit per-edge animation clips.\n");
+    out.push_str("Goal: author explicit per-edge animation clips.\n");
     if !has_images {
         out.push_str("No photos are provided for this run.\n");
     }
@@ -1350,21 +1257,16 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     let mobility_present = draft.root_def().and_then(|r| r.mobility.as_ref()).is_some();
     let attack_present = draft.root_def().and_then(|r| r.attack.as_ref()).is_some();
     out.push_str(&format!(
-        "Draft summary: mobility_present={} attack_present={} rig_move_cycle_m={} motion_roles_present={} motion_runtime_candidate={} has_idle_slot={} has_move_slot={}\n",
+        "Draft summary: mobility_present={} attack_present={} rig_move_cycle_m={} has_idle_slot={} has_move_slot={}\n",
         mobility_present,
         attack_present,
         rig_move_cycle_m
             .filter(|v| v.is_finite())
             .map(|v| format!("{v:.3}"))
             .unwrap_or_else(|| "null".into()),
-        motion_roles_present,
-        motion_runtime_candidate.unwrap_or("null"),
         has_idle_slot,
         has_move_slot,
     ));
-    if mobility_present && motion_runtime_candidate.is_none() && !has_move_slot {
-        out.push_str("NOTE: runtime motion is NOT available for this draft (no runtime rig candidate). Do NOT return decision=runtime_ok; you MUST either author clips or request geometry regeneration.\n");
-    }
     out.push('\n');
 
     let mut name_to_idx: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();

@@ -94,165 +94,32 @@ Fields:
   - `required`: optional bool (default false)
 - `animation_channels`: optional array of strings (e.g. `"idle"`, `"move"`, `"attack"`).
 - `notes`: optional string (general contract notes).
+- `extra`: optional object. Best-effort structured extensions (string → JSON).
 
-#### `interfaces.extra.motion_roles_v1` (semantic motion mapping; Gen3D)
+#### `interfaces.extra.motion_summary` (derived animation summary)
 
-`interfaces.extra` may include an optional `motion_roles_v1` object that captures a **small,
-stable vocabulary** of motion roles (e.g. legs/wheels/arms) for a generated Gen3D model.
-
-This is intended to keep LLM outputs stable over time: the model labels **what parts do**
-(`leg`, `wheel`, `arm`) rather than picking from an ever-growing list of engine algorithms.
+`interfaces.extra.motion_summary` is an optional, derived object written by the engine for
+Gen3D-saved prefabs. It summarizes which animation channels exist across the prefab graph.
 
 Notes:
 
-- This mapping is typically produced by the Gen3D tool `llm_generate_motion_roles_v1`.
-- The engine may use `motion_roles_v1` to **derive** a compatible `motion_rig_v1` at save time.
-- Effectors are identified by **child component name**; the engine resolves the actual attachment
-  edge via the saved prefab graph.
-- Runtime motion injection still relies on an explicit, non-heuristic rig contract
-  (see `motion_rig_v1` below).
-- `role="arm"` is not limited to biped limbs; it may also represent an articulated tool arm
-  chain (e.g. excavator boom/stick/bucket) so melee `attack_primary` algorithms can target those
-  joints via `motion_rig_v1`.
+- This data is best-effort and does not affect runtime behavior.
+- Tools should ignore unknown fields and tolerate missing/null values.
 
-Top-level fields:
+Top-level fields (v1):
 
 - `version`: integer. Must be `1`.
-- `applies_to`: object (provenance / freshness guard for the Gen3D draft):
-  - `run_id`: string (Gen3D run UUID)
-  - `attempt`: integer
-  - `plan_hash`: string
-  - `assembly_rev`: integer
-- `move_effectors`: array of effector entries:
-  - `component`: string (Gen3D component name; matches labels like `gen3d_component_<name>`)
-  - `role`: string. One of:
-    - `"leg"`
-    - `"wheel"`
-    - `"arm"`
-    - `"head"`
-    - `"ear"`
-    - `"tail"`
-    - `"wing"`
-    - `"propeller"`
-    - `"rotor"`
-  - `phase_group`: optional integer or null. When `role="leg"`, use `0` or `1` for a simple
-    two-phase gait (group 0 swings opposite group 1). When `role="arm"`, `phase_group` may be
-    `0` or `1` (or null if unknown). For `wheel`/`propeller`/`rotor`, `phase_group` must be null.
-    For `head`/`ear`/`tail`/`wing`, `phase_group` must be null.
-  - `spin_axis_local`: optional `[x, y, z]` array or null. When `role="wheel"`, this may specify
-    the spin axis in the component’s local frame (defaults vary by rig/algorithm when null).
-    This may also be used for `propeller` / `rotor`. For all other roles, `spin_axis_local` must
-    be null.
-- `notes`: optional string or null.
-
-#### `interfaces.extra.motion_rig_v1` (runtime motion rig contract)
-
-`interfaces.extra` may include an optional `motion_rig_v1` object that declares an explicit,
-non-heuristic **motion rig contract** for applying **engine-provided, generic motion algorithms**
-at runtime.
-
-Key properties:
-
-- The engine **does not** infer “this model has two legs” from names/shape/geometry.
-- Motion algorithms are applied only when the prefab declares a compatible `motion_rig_v1`.
-- Algorithms may inject runtime slots for canonical channels (`idle`, `move`, `attack_primary`) by
-  overriding prefab-authored slots for those channels on the declared attachment edges.
-- The contract targets **attachment edges** (parent component → child component) via
-  `(parent_object_id, child_object_id, parent_anchor, child_anchor)`.
-
-Top-level fields:
-
-- `version`: integer. Must be `1`.
-- `kind`: string. One of:
-  - `"biped_v1"`
-  - `"quadruped_v1"`
-  - `"car_v1"`
-  - `"airplane_v1"`
-- `default_move_algorithm`: optional string. If present, must be one of:
-  - `"none"` (use prefab-authored clips)
-  - `"biped_walk_v1"`
-  - `"quadruped_walk_v1"`
-  - `"car_wheels_v1"`
-  - `"airplane_prop_v1"`
-  - If omitted, the engine uses a rig-kind default:
-    - `biped_v1`: `"biped_walk_v1"`
-    - `quadruped_v1`: `"quadruped_walk_v1"`
-    - `car_v1`: `"none"`
-    - `airplane_v1`: `"airplane_prop_v1"`
-- `move_cycle_m`: optional number (defaults to `1.0`). Used by walk rigs as the cycle length in
-  **meters traveled** (driven by `MovePhase`).
-- `walk_swing_degrees`: optional number (defaults vary by rig kind). Used by walk rigs as the
-  swing amplitude (degrees) around the join’s local +X axis.
-- `body`: optional `MotionEdgeRefV1` identifying the “main body” edge. When present, motion
-  algorithms may use it for whole-body bob/lean.
-
-Edge reference object (`MotionEdgeRefV1`):
-
-- `parent_object_id`: UUID string (the parent component prefab id).
-- `child_object_id`: UUID string (the child component prefab id).
-- `parent_anchor`: string (anchor name on the parent; `"origin"` allowed).
-- `child_anchor`: string (anchor name on the child; `"origin"` allowed).
-
-##### `kind = "biped_v1"`
-
-Requires a `biped` object:
-
-- `left_leg`: `MotionEdgeRefV1`
-- `right_leg`: `MotionEdgeRefV1`
-- Optional additional edges (used by some algorithms when present):
-  - `left_arm`: `MotionEdgeRefV1`
-  - `right_arm`: `MotionEdgeRefV1`
-  - `head`: `MotionEdgeRefV1`
-  - `tail`: `MotionEdgeRefV1`
-  - `ears`: array of `MotionEdgeRefV1`
-
-##### `kind = "quadruped_v1"`
-
-Requires a `quadruped` object:
-
-- `front_left_leg`: `MotionEdgeRefV1`
-- `front_right_leg`: `MotionEdgeRefV1`
-- `back_left_leg`: `MotionEdgeRefV1`
-- `back_right_leg`: `MotionEdgeRefV1`
-- Optional additional edges (used by some algorithms when present):
-  - `head`: `MotionEdgeRefV1`
-  - `tail`: `MotionEdgeRefV1`
-  - `ears`: array of `MotionEdgeRefV1`
-
-##### `kind = "car_v1"`
-
-Requires a `car` object:
-
-- `wheels`: array of wheel objects:
-  - `edge`: `MotionEdgeRefV1`
-  - `spin_axis_local`: optional `[x, y, z]` array (defaults to `[1, 0, 0]`)
-- `tool_arms`: optional array of tool arm rigs:
-  - `joints`: array of `MotionEdgeRefV1` (proximal → distal) identifying an articulated arm chain
-    that may be animated by `attack_primary` algorithms.
-- `wheel_radius_m`: optional number. If present, the engine uses `radians_per_meter = 1 / wheel_radius_m`.
-- `radians_per_meter`: optional number. If present, overrides wheel spin rate directly.
-
-Notes:
-
-- If neither `wheel_radius_m` nor `radians_per_meter` is present, the engine derives wheel radius
-  from the wheel component’s AABB size (including mount scale) and uses the rolling relation
-  `angle = distance / radius`.
-
-##### `kind = "airplane_v1"`
-
-Requires an `airplane` object:
-
-- `propellers`: array of spinner objects:
-  - `edge`: `MotionEdgeRefV1`
-  - `spin_axis_local`: optional `[x, y, z]` array
-- `rotors`: array of spinner objects:
-  - `edge`: `MotionEdgeRefV1`
-  - `spin_axis_local`: optional `[x, y, z]` array
-- `wings`: optional array of `MotionEdgeRefV1` (used by some algorithms when present)
-
-Notes:
-
-- The engine may estimate spin rate from the component’s AABB size if no explicit rate is present.
+- `channels`: array of channel entries:
+  - `channel`: string (e.g. `"idle"`, `"move"`, `"attack_primary"`).
+  - `slots`: integer (total slot count for this channel).
+  - `animated_parts`: integer (parts that contain at least one slot for this channel).
+  - `drivers`: array of strings (e.g. `"always"`, `"move_phase"`, `"move_distance"`, `"attack_time"`).
+  - `clip_kinds`: array of strings (e.g. `"loop"`, `"once"`, `"ping_pong"`, `"spin"`).
+  - `loop_duration_secs_min`: optional number or null.
+  - `loop_duration_secs_max`: optional number or null.
+  - `speed_scale_min`: optional number or null.
+  - `speed_scale_max`: optional number or null.
+  - `has_time_offsets`: bool.
 
 ### `provenance`
 
@@ -311,7 +178,5 @@ Gen3D writes descriptor files for saved models. In addition to filling standard 
 
 - Populate `text.long` with a compact summary including derived facts, an AI plan extract (when available), and a derived motion summary.
 - Populate `interfaces.extra.motion_summary` with a structured summary of available animation channels (drivers/clip kinds/counts).
-- Populate `interfaces.extra.motion_roles_v1` with a semantic mapping of motion effectors (legs/wheels/arms/etc) when available (typically via `llm_generate_motion_roles_v1`).
-- Populate `interfaces.extra.motion_rig_v1` when the model declares explicit rig edges for runtime motion algorithms (walk/wheels, etc.).
 - Populate `extra.facts` with a structured set of derived facts (size, mobility/attack presence, grounding, etc.).
 - Populate `text.short` and `tags` via a best-effort AI call (when AI config is available). Tools should treat these as suggestions and preserve human edits.

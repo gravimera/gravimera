@@ -14,7 +14,7 @@ use super::{
     Gen3dAiTextResponse,
 };
 #[cfg(test)]
-use crate::gen3d::agent::tools::TOOL_ID_DESCRIBE;
+use crate::gen3d::agent::tools::TOOL_ID_QA;
 use crate::threaded_result::{new_shared_result, SharedResult};
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
@@ -457,42 +457,6 @@ mod tests {
     }
 
     #[test]
-    fn gen3d_motion_roles_apply_to_current_ignores_run_id_and_attempt_for_restart_safety() {
-        let config = AppConfig::default();
-
-        let mut job = Gen3dAiJob::default();
-        job.plan_hash = "sha256:abc123".into();
-        job.assembly_rev = 7;
-        job.attempt = 0;
-        job.run_id = Some(Uuid::from_u128(123));
-
-        job.motion_roles = Some(super::super::schema::AiMotionRolesJsonV1 {
-            version: 1,
-            applies_to: super::super::schema::AiReviewDeltaAppliesToJsonV1 {
-                run_id: "some_prior_run".into(),
-                attempt: 999,
-                plan_hash: job.plan_hash.clone(),
-                assembly_rev: job.assembly_rev,
-            },
-            move_effectors: Vec::new(),
-            notes: None,
-        });
-
-        assert!(
-            job.motion_roles_for_current_draft().is_some(),
-            "expected persisted motion_roles to apply when plan_hash+assembly_rev match"
-        );
-
-        let summary = draft_summary(&config, &job);
-        let applies = summary
-            .get("motion_roles")
-            .and_then(|v| v.get("applies_to_current"))
-            .and_then(|v| v.as_bool())
-            .expect("expected motion_roles.applies_to_current bool");
-        assert!(applies);
-    }
-
-    #[test]
     fn gen3d_motion_authoring_apply_to_current_ignores_run_id_and_attempt_for_restart_safety() {
         let config = AppConfig::default();
 
@@ -510,7 +474,7 @@ mod tests {
                 plan_hash: job.plan_hash.clone(),
                 assembly_rev: job.assembly_rev,
             },
-            decision: super::super::schema::AiMotionAuthoringDecisionJsonV1::RuntimeOk,
+            decision: super::super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips,
             reason: String::new(),
             replace_channels: Vec::new(),
             edges: Vec::new(),
@@ -542,16 +506,7 @@ mod tests {
         let registry = crate::gen3d::agent::tools::Gen3dToolRegistryV1::default();
 
         let huge = "x".repeat(50_000);
-        let tool_result = Gen3dToolResultJsonV1::ok(
-            "call_0".into(),
-            TOOL_ID_DESCRIBE.into(),
-            serde_json::json!({
-                "tool_id": "render_preview_v1",
-                "one_line_summary": huge,
-                "args_example": {"foo": huge},
-                "description": huge,
-            }),
-        );
+        let tool_result = Gen3dToolResultJsonV1::err("call_0".into(), TOOL_ID_QA.into(), huge);
 
         let prompt = build_agent_user_text(
             &config,

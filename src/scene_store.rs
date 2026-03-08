@@ -9,10 +9,6 @@ use std::path::{Path, PathBuf};
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
-use crate::motion::{
-    AttackPrimaryMotionAlgorithm, IdleMotionAlgorithm, MotionAlgorithmController,
-    MoveMotionAlgorithm,
-};
 use crate::object::registry::{
     AnchorDef, AnchorRef, AttachmentDef, ColliderProfile, MaterialKey, MeleeAttackProfile, MeshKey,
     MobilityDef, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction, ObjectLibrary,
@@ -199,43 +195,6 @@ struct SceneDatObjectInstance {
     forms: Vec<Uuid128Dat>,
     #[prost(uint32, tag = "15")]
     active_form: u32,
-    #[prost(enumeration = "SceneDatMoveMotionAlgorithm", tag = "16")]
-    move_motion_algorithm: i32,
-    #[prost(enumeration = "SceneDatIdleMotionAlgorithm", tag = "17")]
-    idle_motion_algorithm: i32,
-    #[prost(enumeration = "SceneDatAttackPrimaryMotionAlgorithm", tag = "18")]
-    attack_primary_motion_algorithm: i32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
-enum SceneDatMoveMotionAlgorithm {
-    Unspecified = 0,
-    None = 1,
-    BipedWalkV1 = 2,
-    QuadrupedWalkV1 = 3,
-    CarWheelsV1 = 4,
-    AirplanePropV1 = 5,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
-enum SceneDatIdleMotionAlgorithm {
-    Unspecified = 0,
-    None = 1,
-    BipedIdleV1 = 2,
-    QuadrupedIdleV1 = 3,
-    CarIdleV1 = 4,
-    AirplaneIdleV1 = 5,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
-enum SceneDatAttackPrimaryMotionAlgorithm {
-    Unspecified = 0,
-    None = 1,
-    BipedMeleeSwingV1 = 2,
-    QuadrupedBiteV1 = 3,
-    RangedRecoilV1 = 4,
-    ToolArmDigV1 = 5,
-    BipedKickV1 = 6,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1667,7 +1626,6 @@ fn save_scene_dat_internal(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
-            Option<&MotionAlgorithmController>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
@@ -1679,65 +1637,7 @@ fn save_scene_dat_internal(
     let mut instances: Vec<SceneDatObjectInstance> = Vec::with_capacity(objects.iter().len());
     let mut root_defs: Vec<u128> = Vec::with_capacity(objects.iter().len());
 
-    fn move_motion_algorithm_to_dat(value: Option<&MotionAlgorithmController>) -> i32 {
-        let Some(value) = value else {
-            return SceneDatMoveMotionAlgorithm::Unspecified as i32;
-        };
-        match value.move_algorithm {
-            MoveMotionAlgorithm::None => SceneDatMoveMotionAlgorithm::None as i32,
-            MoveMotionAlgorithm::BipedWalkV1 => SceneDatMoveMotionAlgorithm::BipedWalkV1 as i32,
-            MoveMotionAlgorithm::QuadrupedWalkV1 => {
-                SceneDatMoveMotionAlgorithm::QuadrupedWalkV1 as i32
-            }
-            MoveMotionAlgorithm::CarWheelsV1 => SceneDatMoveMotionAlgorithm::CarWheelsV1 as i32,
-            MoveMotionAlgorithm::AirplanePropV1 => {
-                SceneDatMoveMotionAlgorithm::AirplanePropV1 as i32
-            }
-        }
-    }
-
-    fn idle_motion_algorithm_to_dat(value: Option<&MotionAlgorithmController>) -> i32 {
-        let Some(value) = value else {
-            return SceneDatIdleMotionAlgorithm::Unspecified as i32;
-        };
-        match value.idle_algorithm {
-            IdleMotionAlgorithm::None => SceneDatIdleMotionAlgorithm::None as i32,
-            IdleMotionAlgorithm::BipedIdleV1 => SceneDatIdleMotionAlgorithm::BipedIdleV1 as i32,
-            IdleMotionAlgorithm::QuadrupedIdleV1 => {
-                SceneDatIdleMotionAlgorithm::QuadrupedIdleV1 as i32
-            }
-            IdleMotionAlgorithm::CarIdleV1 => SceneDatIdleMotionAlgorithm::CarIdleV1 as i32,
-            IdleMotionAlgorithm::AirplaneIdleV1 => {
-                SceneDatIdleMotionAlgorithm::AirplaneIdleV1 as i32
-            }
-        }
-    }
-
-    fn attack_primary_motion_algorithm_to_dat(value: Option<&MotionAlgorithmController>) -> i32 {
-        let Some(value) = value else {
-            return SceneDatAttackPrimaryMotionAlgorithm::Unspecified as i32;
-        };
-        match value.attack_primary_algorithm {
-            AttackPrimaryMotionAlgorithm::None => SceneDatAttackPrimaryMotionAlgorithm::None as i32,
-            AttackPrimaryMotionAlgorithm::BipedKickV1 => {
-                SceneDatAttackPrimaryMotionAlgorithm::BipedKickV1 as i32
-            }
-            AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1 => {
-                SceneDatAttackPrimaryMotionAlgorithm::BipedMeleeSwingV1 as i32
-            }
-            AttackPrimaryMotionAlgorithm::QuadrupedBiteV1 => {
-                SceneDatAttackPrimaryMotionAlgorithm::QuadrupedBiteV1 as i32
-            }
-            AttackPrimaryMotionAlgorithm::RangedRecoilV1 => {
-                SceneDatAttackPrimaryMotionAlgorithm::RangedRecoilV1 as i32
-            }
-            AttackPrimaryMotionAlgorithm::ToolArmDigV1 => {
-                SceneDatAttackPrimaryMotionAlgorithm::ToolArmDigV1 as i32
-            }
-        }
-    }
-
-    for (transform, instance_id, prefab_id, tint, forms, motion_controller) in objects {
+    for (transform, instance_id, prefab_id, tint, forms) in objects {
         let pos = transform.translation;
         let scale = transform.scale;
 
@@ -1779,11 +1679,6 @@ fn save_scene_dat_internal(
             scale_z: pack_non_default_scale(scale.z),
             forms: forms.into_iter().map(u128_to_uuid).collect(),
             active_form: active as u32,
-            move_motion_algorithm: move_motion_algorithm_to_dat(motion_controller),
-            idle_motion_algorithm: idle_motion_algorithm_to_dat(motion_controller),
-            attack_primary_motion_algorithm: attack_primary_motion_algorithm_to_dat(
-                motion_controller,
-            ),
         });
     }
 
@@ -2111,7 +2006,6 @@ pub(crate) fn apply_pending_workspace_switch(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
-            Option<&MotionAlgorithmController>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
@@ -2320,73 +2214,6 @@ fn load_scene_dat_from_path(
         return Ok(0);
     }
 
-    fn move_motion_algorithm_from_dat(value: i32) -> Option<MoveMotionAlgorithm> {
-        match value {
-            x if x == SceneDatMoveMotionAlgorithm::Unspecified as i32 => None,
-            x if x == SceneDatMoveMotionAlgorithm::None as i32 => Some(MoveMotionAlgorithm::None),
-            x if x == SceneDatMoveMotionAlgorithm::BipedWalkV1 as i32 => {
-                Some(MoveMotionAlgorithm::BipedWalkV1)
-            }
-            x if x == SceneDatMoveMotionAlgorithm::QuadrupedWalkV1 as i32 => {
-                Some(MoveMotionAlgorithm::QuadrupedWalkV1)
-            }
-            x if x == SceneDatMoveMotionAlgorithm::CarWheelsV1 as i32 => {
-                Some(MoveMotionAlgorithm::CarWheelsV1)
-            }
-            x if x == SceneDatMoveMotionAlgorithm::AirplanePropV1 as i32 => {
-                Some(MoveMotionAlgorithm::AirplanePropV1)
-            }
-            _ => None,
-        }
-    }
-
-    fn idle_motion_algorithm_from_dat(value: i32) -> Option<IdleMotionAlgorithm> {
-        match value {
-            x if x == SceneDatIdleMotionAlgorithm::Unspecified as i32 => None,
-            x if x == SceneDatIdleMotionAlgorithm::None as i32 => Some(IdleMotionAlgorithm::None),
-            x if x == SceneDatIdleMotionAlgorithm::BipedIdleV1 as i32 => {
-                Some(IdleMotionAlgorithm::BipedIdleV1)
-            }
-            x if x == SceneDatIdleMotionAlgorithm::QuadrupedIdleV1 as i32 => {
-                Some(IdleMotionAlgorithm::QuadrupedIdleV1)
-            }
-            x if x == SceneDatIdleMotionAlgorithm::CarIdleV1 as i32 => {
-                Some(IdleMotionAlgorithm::CarIdleV1)
-            }
-            x if x == SceneDatIdleMotionAlgorithm::AirplaneIdleV1 as i32 => {
-                Some(IdleMotionAlgorithm::AirplaneIdleV1)
-            }
-            _ => None,
-        }
-    }
-
-    fn attack_primary_motion_algorithm_from_dat(
-        value: i32,
-    ) -> Option<AttackPrimaryMotionAlgorithm> {
-        match value {
-            x if x == SceneDatAttackPrimaryMotionAlgorithm::Unspecified as i32 => None,
-            x if x == SceneDatAttackPrimaryMotionAlgorithm::None as i32 => {
-                Some(AttackPrimaryMotionAlgorithm::None)
-            }
-            x if x == SceneDatAttackPrimaryMotionAlgorithm::BipedKickV1 as i32 => {
-                Some(AttackPrimaryMotionAlgorithm::BipedKickV1)
-            }
-            x if x == SceneDatAttackPrimaryMotionAlgorithm::BipedMeleeSwingV1 as i32 => {
-                Some(AttackPrimaryMotionAlgorithm::BipedMeleeSwingV1)
-            }
-            x if x == SceneDatAttackPrimaryMotionAlgorithm::QuadrupedBiteV1 as i32 => {
-                Some(AttackPrimaryMotionAlgorithm::QuadrupedBiteV1)
-            }
-            x if x == SceneDatAttackPrimaryMotionAlgorithm::RangedRecoilV1 as i32 => {
-                Some(AttackPrimaryMotionAlgorithm::RangedRecoilV1)
-            }
-            x if x == SceneDatAttackPrimaryMotionAlgorithm::ToolArmDigV1 as i32 => {
-                Some(AttackPrimaryMotionAlgorithm::ToolArmDigV1)
-            }
-            _ => None,
-        }
-    }
-
     for def in &scene.defs {
         match def_from_dat(def) {
             Ok(def) => library.upsert(def),
@@ -2463,21 +2290,6 @@ fn load_scene_dat_from_path(
         commands
             .entity(entity)
             .insert(ObjectForms { forms, active });
-        let idle_algorithm = idle_motion_algorithm_from_dat(instance.idle_motion_algorithm);
-        let move_algorithm = move_motion_algorithm_from_dat(instance.move_motion_algorithm);
-        let attack_primary_algorithm =
-            attack_primary_motion_algorithm_from_dat(instance.attack_primary_motion_algorithm);
-        if idle_algorithm.is_some()
-            || move_algorithm.is_some()
-            || attack_primary_algorithm.is_some()
-        {
-            commands.entity(entity).insert(MotionAlgorithmController {
-                idle_algorithm: idle_algorithm.unwrap_or(IdleMotionAlgorithm::None),
-                move_algorithm: move_algorithm.unwrap_or(MoveMotionAlgorithm::None),
-                attack_primary_algorithm: attack_primary_algorithm
-                    .unwrap_or(AttackPrimaryMotionAlgorithm::None),
-            });
-        }
         spawned += 1;
     }
 
@@ -2506,14 +2318,6 @@ pub(crate) fn scene_autosave_detect_changes(
     changed_unit_forms: Query<Entity, (With<Commandable>, Without<Player>, Changed<ObjectForms>)>,
     changed_building_tints: Query<Entity, (With<BuildObject>, Changed<ObjectTint>)>,
     changed_unit_tints: Query<Entity, (With<Commandable>, Without<Player>, Changed<ObjectTint>)>,
-    changed_unit_motion_algorithms: Query<
-        Entity,
-        (
-            With<Commandable>,
-            Without<Player>,
-            Changed<MotionAlgorithmController>,
-        ),
-    >,
     mut removed: RemovedComponents<BuildObject>,
     mut removed_units: RemovedComponents<Commandable>,
 ) {
@@ -2528,7 +2332,6 @@ pub(crate) fn scene_autosave_detect_changes(
         || changed_unit_forms.iter().next().is_some();
     let tint_any = changed_building_tints.iter().next().is_some()
         || changed_unit_tints.iter().next().is_some();
-    let motion_any = changed_unit_motion_algorithms.iter().next().is_some();
 
     if !autosave.primed {
         autosave.primed = true;
@@ -2543,7 +2346,6 @@ pub(crate) fn scene_autosave_detect_changes(
         || prefab_any
         || forms_any
         || tint_any
-        || motion_any
     {
         autosave.dirty = true;
     }
@@ -2558,7 +2360,6 @@ pub(crate) fn scene_save_requests(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
-            Option<&MotionAlgorithmController>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
@@ -2602,7 +2403,6 @@ pub(crate) fn scene_autosave_tick(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
-            Option<&MotionAlgorithmController>,
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
