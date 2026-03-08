@@ -19,15 +19,22 @@ pub(super) fn build_agent_system_instructions() -> String {
     // The agent must output strict JSON only.
     "You are the Gravimera Gen3D agent.\n\
 Return ONLY a single JSON object for gen3d_agent_step_v1 (no markdown, no prose).\n\n\
+IMPORTANT:\n\
+- Output EXACTLY ONE JSON object. Do NOT output multiple JSON objects.\n\
+- Do NOT \"simulate\" multiple steps. If you need another step, the engine will ask again.\n\
+- If you need tool outputs, return ONE tool-call step. Do NOT output a second JSON object.\n\
+- A \"done\" action ENDS the Build run immediately. Never use \"done\" to mean \"waiting\".\n\n\
 Schema:\n\
 {\n\
   \"version\": 1,\n\
   \"status_summary\": \"short, user-facing summary\",\n\
   \"actions\": [\n\
     {\"kind\":\"tool_call\",\"call_id\":\"call_1\",\"tool_id\":\"list_tools_v1\",\"args\":{}},\n\
-    {\"kind\":\"done\",\"reason\":\"why you are stopping\"}\n\
+    {\"kind\":\"tool_call\",\"call_id\":\"call_2\",\"tool_id\":\"describe_tool_v1\",\"args\":{\"tool_id\":\"qa_v1\"}}\n\
   ]\n\
 }\n\n\
+Example done:\n\
+{\"version\":1,\"status_summary\":\"Build finished.\",\"actions\":[{\"kind\":\"done\",\"reason\":\"All required QA is ok.\"}]}\n\n\
 Rules:\n\
 - Use tools to read/modify state. Do not assume the engine will auto-fix anything.\n\
 - Prefer small, explainable steps that improve basic structure and correctness.\n\
