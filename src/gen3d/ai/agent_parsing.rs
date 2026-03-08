@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::parse::extract_json_object;
+use super::parse::{extract_json_object, extract_json_objects};
 use super::Gen3dPlannedComponent;
 use crate::gen3d::agent::Gen3dAgentStepJsonV1;
 
@@ -172,10 +172,52 @@ pub(super) fn parse_delta_transform(value: Option<&serde_json::Value>) -> Transf
 }
 
 pub(super) fn parse_agent_step(text: &str) -> Result<Gen3dAgentStepJsonV1, String> {
-    let json_text = extract_json_object(text).unwrap_or_else(|| text.to_string());
-    let json_text = json_text.trim();
-    let mut step: Gen3dAgentStepJsonV1 =
-        serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
+    let candidates = extract_json_objects(text, 16);
+
+    // When the model outputs multiple JSON objects, it is often "simulating" multiple steps
+    // (and sometimes hallucinating tool results). Prefer the *last* parsed step that does NOT
+    // include a `done` action so we don't accidentally terminate the run early.
+    let mut last_step: Option<Gen3dAgentStepJsonV1> = None;
+    let mut last_non_done_step: Option<Gen3dAgentStepJsonV1> = None;
+
+    for json_text in candidates.iter() {
+        let json_text = json_text.trim();
+        let Ok(mut step) = serde_json::from_str::<Gen3dAgentStepJsonV1>(json_text) else {
+            continue;
+        };
+
+        if step.version == 0 {
+            step.version = 1;
+        }
+        if step.version != 1 {
+            continue;
+        }
+        if step.actions.len() > 32 {
+            step.actions.truncate(32);
+        }
+
+        let has_done = step
+            .actions
+            .iter()
+            .any(|a| matches!(a, crate::gen3d::agent::Gen3dAgentActionJsonV1::Done { .. }));
+
+        if !step.actions.is_empty() && !has_done {
+            last_non_done_step = Some(step.clone());
+        }
+        last_step = Some(step);
+    }
+
+    let mut step = if let Some(step) = last_non_done_step {
+        step
+    } else if let Some(step) = last_step {
+        step
+    } else {
+        let json_text = extract_json_object(text).unwrap_or_else(|| text.to_string());
+        let json_text = json_text.trim();
+        serde_json::from_str::<Gen3dAgentStepJsonV1>(json_text)
+            .map_err(|err| format!("Failed to parse JSON: {err}"))?
+    };
+
     if step.version == 0 {
         step.version = 1;
     }
@@ -209,4 +251,34 @@ pub(super) fn is_transient_ai_error_message(err: &str) -> bool {
         || lower.contains("failed to connect")
         || lower.contains("econnreset")
         || lower.contains("econnrefused")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gen3d::agent::Gen3dAgentActionJsonV1;
+
+    #[test]
+    fn agent_step_prefers_non_done_step_when_multiple_present() {
+        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"list_tools_v1","args":{}}]}{"version":1,"status_summary":"second","actions":[{"kind":"done","reason":"stop"}]}"#;
+        let step = parse_agent_step(text).expect("parse");
+        assert_eq!(step.status_summary, "first");
+        assert_eq!(step.actions.len(), 1);
+        assert!(matches!(
+            step.actions[0],
+            Gen3dAgentActionJsonV1::ToolCall { .. }
+        ));
+    }
+
+    #[test]
+    fn agent_step_uses_last_non_done_step_if_multiple_tool_steps_present() {
+        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"list_tools_v1","args":{}}]}{"version":1,"status_summary":"second","actions":[{"kind":"tool_call","call_id":"call_2","tool_id":"describe_tool_v1","args":{"tool_id":"qa_v1"}}]}"#;
+        let step = parse_agent_step(text).expect("parse");
+        assert_eq!(step.status_summary, "second");
+        assert_eq!(step.actions.len(), 1);
+        assert!(matches!(
+            step.actions[0],
+            Gen3dAgentActionJsonV1::ToolCall { .. }
+        ));
+    }
 }

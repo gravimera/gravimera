@@ -523,6 +523,40 @@ pub(super) fn extract_json_object(text: &str) -> Option<String> {
     last.map(|(s, e)| text[s..e].to_string())
 }
 
+pub(super) fn extract_json_objects(text: &str, max_objects: usize) -> Vec<String> {
+    let max_objects = max_objects.max(1);
+    let mut depth = 0i32;
+    let mut start: Option<usize> = None;
+    let mut out: Vec<String> = Vec::new();
+
+    for (idx, ch) in text.char_indices() {
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    start = Some(idx);
+                }
+                depth = depth.saturating_add(1);
+            }
+            '}' => {
+                if depth > 0 {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        if let Some(s) = start.take() {
+                            out.push(text[s..idx + 1].to_string());
+                            if out.len() >= max_objects {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,6 +567,19 @@ mod tests {
         let extracted = extract_json_object(text).expect("should extract JSON object");
         let v: serde_json::Value = serde_json::from_str(&extracted).expect("extracted JSON parses");
         assert_eq!(v.get("a").and_then(|v| v.as_i64()), Some(2));
+    }
+
+    #[test]
+    fn extracts_multiple_json_objects_in_order() {
+        let text = r#"{"a":1} noise {"a":2}{"a":3}"#;
+        let extracted = extract_json_objects(text, 16);
+        assert_eq!(extracted.len(), 3);
+        let vals: Vec<i64> = extracted
+            .iter()
+            .map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap())
+            .filter_map(|v| v.get("a").and_then(|v| v.as_i64()))
+            .collect();
+        assert_eq!(vals, vec![1, 2, 3]);
     }
 
     #[test]
