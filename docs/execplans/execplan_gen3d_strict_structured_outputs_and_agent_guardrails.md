@@ -31,7 +31,7 @@ User-visible success is: a small edit like “add a red hat on top” finishes i
 - [x] (2026-03-08) Implement “auto-finish when complete enough” and reduce default no-progress max steps to 3; update docs/config example accordingly.
 - [x] (2026-03-08) Add unit tests for the new parsing/guardrail behavior.
 - [x] (2026-03-08) Run `cargo test` and the rendered smoke start.
-- [ ] (2026-03-08) Commit changes.
+- [x] (2026-03-08) Commit changes.
 
 ## Surprises & Discoveries
 
