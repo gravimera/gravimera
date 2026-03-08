@@ -343,6 +343,8 @@ impl Gen3dToolRegistryV1 {
                 description:
                     "Returns a bounded list of parts for a single component, including stable `part_id_uuid` for primitive parts.\n\
                      Use this to target parts explicitly when calling `apply_draft_ops_v1`.\n\
+                     Args:\n\
+                     - Use `component` (component name), OR `component_index` (0-based index into the current planned components list).\n\
                      Notes:\n\
                      - This is a read-only tool.\n\
                      - By default it returns only primitive parts (not attachment object refs).",
@@ -356,6 +358,7 @@ impl Gen3dToolRegistryV1 {
                     "ok": true,
                     "version": 1,
                     "component": "cannon",
+                    "component_index": 0,
                     "component_id_uuid": "uuid",
                     "parts": [
                         { "part_index": 0, "part_id_uuid": "uuid", "kind": "primitive", "transform": {"pos":[0,0,0], "rot_quat_xyzw":[0,0,0,1], "scale":[1,1,1]} }

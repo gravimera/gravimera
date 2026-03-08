@@ -109,6 +109,7 @@ Key constraints (no heuristics):
   - exact component IDs/names/indices, explicit anchors/edges, explicit animation channels.
 - Any conversion from an existing prefab → Gen3D editable draft must be deterministic and not rely
   on intent-guessing decomposition.
+- Preserve-mode replanning is supported via `llm_generate_plan_v1.constraints.preserve_existing_components` (implemented); see `docs/gen3d/edit_preserve_existing_components.md`.
 
 Implementation sketch (later):
 - Add “edit session” entry points:

@@ -151,7 +151,10 @@ struct ApplyDraftOpsArgsJsonV1 {
 struct QueryComponentPartsArgsJsonV1 {
     #[serde(default)]
     version: u32,
-    component: String,
+    #[serde(default, alias = "component_name", alias = "name")]
+    component: Option<String>,
+    #[serde(default, alias = "component_idx", alias = "index")]
+    component_index: Option<usize>,
     #[serde(default)]
     include_non_primitives: bool,
     #[serde(default)]
@@ -999,12 +1002,29 @@ pub(super) fn query_component_parts_v1(
         ));
     }
 
-    let component = args.component.trim();
+    let mut component = args.component.unwrap_or_default();
+    component = component.trim().to_string();
     if component.is_empty() {
-        return Err("Missing args.component".into());
+        let Some(idx) = args.component_index else {
+            return Err("Missing args.component or args.component_index".into());
+        };
+        let Some(name) = job.planned_components.get(idx).map(|c| c.name.as_str()) else {
+            let components_total = job.planned_components.len();
+            let available: Vec<String> = job
+                .planned_components
+                .iter()
+                .take(24)
+                .map(|c| c.name.clone())
+                .collect();
+            return Err(format!(
+                "Invalid args.component_index={idx} (components_total={components_total}). Available (first {}): {available:?}",
+                available.len()
+            ));
+        };
+        component = name.to_string();
     }
 
-    let object_id = component_object_id_for_name(component);
+    let object_id = component_object_id_for_name(component.as_str());
     let def = draft
         .defs
         .iter()
@@ -1151,10 +1171,17 @@ pub(super) fn query_component_parts_v1(
         out_parts.push(serde_json::Value::Object(json));
     }
 
+    let component_index = job
+        .planned_components
+        .iter()
+        .position(|c| c.name == component)
+        .map(|idx| idx as u32);
+
     let result = serde_json::json!({
         "ok": true,
         "version": 1,
-        "component": component,
+        "component": component.as_str(),
+        "component_index": component_index,
         "component_id_uuid": Uuid::from_u128(object_id).to_string(),
         "active_workspace": job.active_workspace_id(),
         "parts": out_parts,

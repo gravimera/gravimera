@@ -562,6 +562,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.attempt = 0;
     job.pass = 0;
     job.plan_hash.clear();
+    job.preserve_existing_components_mode = false;
     job.assembly_rev = 0;
     job.user_prompt_raw = prompt_from_descriptor.unwrap_or_default();
     job.user_images.clear();
@@ -966,6 +967,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.attempt = 0;
     job.pass = 0;
     job.plan_hash.clear();
+    job.preserve_existing_components_mode = false;
     job.assembly_rev = 0;
     job.user_prompt_raw = workshop.prompt.clone();
     job.user_images = cached_image_paths.clone();
@@ -3157,6 +3159,7 @@ fn try_start_gen3d_replan(
     job.review_static_paths.clear();
     job.motion_capture = None;
     job.plan_hash.clear();
+    job.preserve_existing_components_mode = false;
     job.assembly_rev = 0;
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();

@@ -263,34 +263,275 @@ pub(super) fn poll_agent_tool(
             match kind {
                 super::Gen3dAgentLlmToolKind::GeneratePlan => {
                     let text = resp.text;
+                    let preserve_existing_components = call
+                        .args
+                        .get("constraints")
+                        .and_then(|v| v.get("preserve_existing_components"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     match parse::parse_ai_plan_from_text(&text) {
                         Ok(plan) => {
                             let plan_reuse_groups = plan.reuse_groups.clone();
                             match super::convert::ai_plan_to_initial_draft_defs(plan.clone()) {
                                 Ok((planned, notes, defs)) => {
-                                    job.planned_components = planned;
-                                    job.assembly_notes = notes;
-                                    let (validated, warnings) = super::reuse_groups::validate_reuse_groups(
-                                        &plan_reuse_groups,
-                                        &job.planned_components,
-                                    );
-                                    job.reuse_groups = validated;
-                                    job.reuse_group_warnings = warnings;
-                                    job.plan_hash = super::compute_gen3d_plan_hash(
-                                        &job.assembly_notes,
-                                        job.rig_move_cycle_m,
-                                        &job.planned_components,
-                                    );
-                                    job.assembly_rev = 0;
-                                    job.rig_move_cycle_m = plan
+                                    let old_components = job.planned_components.clone();
+                                    let old_root_name = old_components
+                                        .iter()
+                                        .find(|c| c.attach_to.is_none())
+                                        .map(|c| c.name.clone());
+
+                                    let rig_move_cycle_m = plan
                                         .rig
                                         .as_ref()
                                         .and_then(|r| r.move_cycle_m)
                                         .filter(|v| v.is_finite())
                                         .map(f32::abs)
                                         .filter(|v| *v > 1e-3);
-                                    job.plan_collider = plan.collider;
-                                    draft.defs = defs;
+                                    let plan_collider = plan.collider;
+
+                                    let (validated, warnings) =
+                                        super::reuse_groups::validate_reuse_groups(
+                                            &plan_reuse_groups,
+                                            &planned,
+                                        );
+
+                                    let can_preserve_geometry = preserve_existing_components
+                                        && !old_components.is_empty()
+                                        && draft.total_non_projectile_primitive_parts() > 0;
+
+                                    let preserve_error = if can_preserve_geometry {
+                                        let old_names: std::collections::HashSet<String> =
+                                            old_components
+                                                .iter()
+                                                .map(|c| c.name.clone())
+                                                .collect();
+                                        let new_names: std::collections::HashSet<String> = planned
+                                            .iter()
+                                            .map(|c| c.name.clone())
+                                            .collect();
+                                        let mut missing: Vec<String> = old_names
+                                            .difference(&new_names)
+                                            .cloned()
+                                            .collect::<Vec<_>>();
+                                        missing.sort();
+                                        if !missing.is_empty() {
+                                            Some(format!(
+                                                "llm_generate_plan_v1 preserve_existing_components=true requires the plan to include ALL existing component names. Missing: {missing:?}"
+                                            ))
+                                        } else if let Some(old_root_name) = old_root_name.as_ref()
+                                        {
+                                            let new_root_name = planned
+                                                .iter()
+                                                .find(|c| c.attach_to.is_none())
+                                                .map(|c| c.name.as_str())
+                                                .unwrap_or("");
+                                            (new_root_name != old_root_name.as_str()).then(|| {
+                                                format!(
+                                                    "llm_generate_plan_v1 preserve_existing_components=true must keep the same root component. Old root=`{}`, new root=`{}`",
+                                                    old_root_name, new_root_name
+                                                )
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    };
+
+                                    if let Some(err) = preserve_error {
+                                        Gen3dToolResultJsonV1::err(
+                                            call.call_id.clone(),
+                                            call.tool_id.clone(),
+                                            err,
+                                        )
+                                    } else {
+                                        let mut planned_components = planned;
+                                        let mut apply_err: Option<String> = None;
+                                        if can_preserve_geometry {
+                                            // Preserve existing component generation status and motion metadata.
+                                            let mut old_by_name: std::collections::HashMap<
+                                                &str,
+                                                &super::Gen3dPlannedComponent,
+                                            > = std::collections::HashMap::new();
+                                            let mut old_component_ids: std::collections::HashSet<u128> =
+                                                std::collections::HashSet::new();
+                                            for comp in old_components.iter() {
+                                                old_by_name.insert(comp.name.as_str(), comp);
+                                                old_component_ids.insert(
+                                                    crate::object::registry::builtin_object_id(
+                                                        &format!(
+                                                            "gravimera/gen3d/component/{}",
+                                                            comp.name
+                                                        ),
+                                                    ),
+                                                );
+                                            }
+                                            for comp in planned_components.iter_mut() {
+                                                let Some(old) = old_by_name.get(comp.name.as_str())
+                                                else {
+                                                    continue;
+                                                };
+                                                comp.actual_size = old.actual_size;
+                                                comp.contacts = old.contacts.clone();
+
+                                                // Preserve anchor frames for existing anchors; allow the plan to add
+                                                // new anchors without shifting existing attachments.
+                                                let mut merged_anchors = old.anchors.clone();
+                                                let mut seen_anchor_names: std::collections::HashSet<
+                                                    String,
+                                                > = merged_anchors
+                                                    .iter()
+                                                    .map(|a| a.name.as_ref().to_string())
+                                                    .collect();
+                                                for a in comp.anchors.iter() {
+                                                    if seen_anchor_names
+                                                        .insert(a.name.as_ref().to_string())
+                                                    {
+                                                        merged_anchors.push(a.clone());
+                                                    }
+                                                }
+                                                comp.anchors = merged_anchors;
+
+                                                if let (Some(new_att), Some(old_att)) =
+                                                    (comp.attach_to.as_mut(), old.attach_to.as_ref())
+                                                {
+                                                    let same_interface = new_att.parent.trim()
+                                                        == old_att.parent.trim()
+                                                        && new_att.parent_anchor.trim()
+                                                            == old_att.parent_anchor.trim()
+                                                        && new_att.child_anchor.trim()
+                                                            == old_att.child_anchor.trim();
+                                                    if same_interface {
+                                                        new_att.animations =
+                                                            old_att.animations.clone();
+                                                    }
+                                                }
+                                            }
+
+                                            // Preserve existing geometry: merge plan defs into the draft without
+                                            // overwriting primitive/model parts.
+                                            let mut idx_by_id: std::collections::HashMap<u128, usize> =
+                                                std::collections::HashMap::new();
+                                            for (idx, def) in draft.defs.iter().enumerate() {
+                                                idx_by_id.insert(def.object_id, idx);
+                                            }
+                                            for next in defs {
+                                                if let Some(idx) = idx_by_id.get(&next.object_id).copied()
+                                                {
+                                                    let def = &mut draft.defs[idx];
+                                                    let preserve_size_and_anchors =
+                                                        old_component_ids.contains(&def.object_id)
+                                                            && def.parts.iter().any(|p| {
+                                                                matches!(
+                                                                    p.kind,
+                                                                    crate::object::registry::ObjectPartKind::Primitive { .. }
+                                                                        | crate::object::registry::ObjectPartKind::Model { .. }
+                                                                )
+                                                            });
+
+                                                    let parts = std::mem::take(&mut def.parts);
+                                                    let old_size = def.size;
+                                                    let old_anchors = std::mem::take(&mut def.anchors);
+                                                    let next_size = next.size;
+                                                    let next_anchors = next.anchors;
+
+                                                    def.label = next.label;
+                                                    def.ground_origin_y = next.ground_origin_y;
+                                                    def.collider = next.collider;
+                                                    def.interaction = next.interaction;
+                                                    def.aim = next.aim;
+                                                    def.mobility = next.mobility;
+                                                    def.minimap_color = next.minimap_color;
+                                                    def.health_bar_offset_y = next.health_bar_offset_y;
+                                                    def.enemy = next.enemy;
+                                                    def.muzzle = next.muzzle;
+                                                    def.projectile = next.projectile;
+                                                    def.attack = next.attack;
+
+                                                    if preserve_size_and_anchors {
+                                                        def.size = old_size;
+                                                        let mut merged_anchors = old_anchors;
+                                                        let mut seen_anchor_names: std::collections::HashSet<
+                                                            String,
+                                                        > = merged_anchors
+                                                            .iter()
+                                                            .map(|a| a.name.as_ref().to_string())
+                                                            .collect();
+                                                        for a in next_anchors.iter() {
+                                                            if seen_anchor_names.insert(
+                                                                a.name.as_ref().to_string(),
+                                                            ) {
+                                                                merged_anchors.push(a.clone());
+                                                            }
+                                                        }
+                                                        def.anchors = merged_anchors;
+                                                    } else {
+                                                        def.size = next_size;
+                                                        def.anchors = next_anchors;
+                                                    }
+
+                                                    def.parts = parts;
+                                                } else {
+                                                    draft.defs.push(next);
+                                                }
+                                            }
+
+                                        job.planned_components = planned_components;
+                                        job.assembly_notes = notes;
+                                        job.rig_move_cycle_m = rig_move_cycle_m;
+                                        job.plan_collider = plan_collider;
+                                        job.reuse_groups = validated;
+                                        job.reuse_group_warnings = warnings;
+                                        job.plan_hash = super::compute_gen3d_plan_hash(
+                                            &job.assembly_notes,
+                                            job.rig_move_cycle_m,
+                                            &job.planned_components,
+                                        );
+
+                                        job.component_queue.clear();
+                                        job.component_queue_pos = 0;
+                                        job.component_attempts
+                                            .resize(job.planned_components.len(), 0);
+                                        job.component_in_flight.clear();
+                                        ensure_agent_regen_budget_len(job);
+
+                                        if let Err(err) = super::convert::sync_attachment_tree_to_defs(
+                                            &job.planned_components,
+                                            draft,
+                                        ) {
+                                            apply_err = Some(format!(
+                                                "Failed to sync attachments after plan merge: {err}"
+                                            ));
+                                        } else {
+                                            super::convert::update_root_def_from_planned_components(
+                                                &job.planned_components,
+                                                &job.plan_collider,
+                                                draft,
+                                            );
+                                            write_gen3d_assembly_snapshot(
+                                                job.pass_dir.as_deref(),
+                                                &job.planned_components,
+                                            );
+                                            job.assembly_rev = job.assembly_rev.saturating_add(1);
+                                        }
+                                    } else {
+                                        job.planned_components = planned_components;
+                                        job.assembly_notes = notes;
+                                        job.rig_move_cycle_m = rig_move_cycle_m;
+                                        job.plan_collider = plan_collider;
+                                        job.reuse_groups = validated;
+                                        job.reuse_group_warnings = warnings;
+                                        job.plan_hash = super::compute_gen3d_plan_hash(
+                                            &job.assembly_notes,
+                                            job.rig_move_cycle_m,
+                                            &job.planned_components,
+                                        );
+                                        job.assembly_rev = 0;
+                                        draft.defs = defs;
+                                    }
+
+                                    job.preserve_existing_components_mode =
+                                        preserve_existing_components;
                                     job.agent.workspaces.clear();
                                     job.agent.active_workspace_id = "main".to_string();
                                     job.agent.next_workspace_seq = 1;
@@ -351,15 +592,24 @@ pub(super) fn poll_agent_tool(
                                         );
                                     }
 
-                                    Gen3dToolResultJsonV1::ok(
-                                        call.call_id,
-                                        call.tool_id,
-                                        serde_json::json!({
-                                            "ok": true,
-                                            "components_total": job.planned_components.len(),
-                                            "plan_hash": job.plan_hash,
-                                        }),
-                                    )
+                                    if let Some(err) = apply_err {
+                                        Gen3dToolResultJsonV1::err(
+                                            call.call_id.clone(),
+                                            call.tool_id.clone(),
+                                            err,
+                                        )
+                                    } else {
+                                        Gen3dToolResultJsonV1::ok(
+                                            call.call_id.clone(),
+                                            call.tool_id.clone(),
+                                            serde_json::json!({
+                                                "ok": true,
+                                                "components_total": job.planned_components.len(),
+                                                "plan_hash": job.plan_hash,
+                                            }),
+                                        )
+                                    }
+                                    }
                                 }
                                 Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
                                     (Some(ai), Some(pass_dir)) => {

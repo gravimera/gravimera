@@ -178,6 +178,85 @@ Required component names (in order):\n",
     out
 }
 
+pub(super) fn build_gen3d_plan_user_text_preserve_existing_components(
+    raw_prompt: &str,
+    has_images: bool,
+    speed: Gen3dSpeedMode,
+    style_hint: Option<&str>,
+    existing_components: &[Gen3dPlannedComponent],
+    existing_assembly_notes: &str,
+) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "EDIT MODE (preserve existing components): You are planning changes to an ALREADY-GENERATED Gen3D draft.\n\
+Hard requirements:\n\
+- Keep ALL existing component names; do NOT rename or delete existing components.\n\
+- Preserve existing geometry: avoid requiring regeneration of existing components unless strictly necessary.\n\
+- Prefer \"no-regeneration\" strategies when possible:\n\
+  - If the request can be fulfilled by adding/modifying primitive parts on an existing component via `apply_draft_ops_v1`, do NOT add new components.\n\
+  - If a new component is necessary, attach it to existing components using existing anchors (or implicit `origin`) and explicit `attach_to.offset`.\n\
+- Keep mobility/attack/aim/collider unchanged unless the user request requires changing behavior.\n\
+",
+    );
+
+    if !existing_assembly_notes.trim().is_empty() {
+        out.push_str("\nExisting assembly_notes (context; keep consistent unless needed):\n");
+        out.push_str(existing_assembly_notes.trim());
+        out.push('\n');
+    }
+
+    out.push_str("\nExisting component snapshot (names + interfaces):\n");
+    if existing_components.is_empty() {
+        out.push_str("- (none)\n");
+    } else {
+        for comp in existing_components.iter().take(GEN3D_MAX_COMPONENTS.min(64)) {
+            let is_root = comp.attach_to.is_none();
+            out.push_str("- ");
+            out.push_str(comp.name.as_str());
+            if is_root {
+                out.push_str(" (root)");
+            } else if let Some(att) = comp.attach_to.as_ref() {
+                out.push_str(&format!(
+                    " attach_to parent={} parent_anchor={} child_anchor={}",
+                    att.parent, att.parent_anchor, att.child_anchor
+                ));
+            }
+            out.push('\n');
+
+            // List anchor names only; keep this compact to preserve context budget.
+            if !comp.anchors.is_empty() {
+                out.push_str("  anchors: [");
+                let mut first = true;
+                for a in comp.anchors.iter().take(24) {
+                    let name = a.name.as_ref().trim();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    if !first {
+                        out.push_str(", ");
+                    }
+                    first = false;
+                    out.push_str(name);
+                }
+                if comp.anchors.len() > 24 {
+                    out.push_str(", …");
+                }
+                out.push_str("]\n");
+            }
+        }
+    }
+
+    out.push_str("\n---\n\n");
+    out.push_str(&build_gen3d_plan_user_text_with_hints(
+        raw_prompt,
+        has_images,
+        speed,
+        style_hint,
+        &[],
+    ));
+    out
+}
+
 pub(super) fn build_gen3d_component_user_text(
     raw_prompt: &str,
     has_images: bool,

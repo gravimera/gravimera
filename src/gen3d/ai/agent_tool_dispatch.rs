@@ -1162,6 +1162,12 @@ pub(super) fn execute_tool_call(
             let system = super::prompts::build_gen3d_plan_system_instructions();
             let prompt_override = call.args.get("prompt").and_then(|v| v.as_str());
             let style_hint = call.args.get("style").and_then(|v| v.as_str());
+            let preserve_existing_components = call
+                .args
+                .get("constraints")
+                .and_then(|v| v.get("preserve_existing_components"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let mut required_component_names: Vec<String> = call
                 .args
                 .get("components")
@@ -1185,13 +1191,24 @@ pub(super) fn execute_tool_call(
                 .filter(|s| !s.is_empty())
                 .unwrap_or(job.user_prompt_raw.as_str());
 
-            let user_text = super::prompts::build_gen3d_plan_user_text_with_hints(
-                prompt_text,
-                !job.user_images.is_empty(),
-                workshop.speed_mode,
-                style_hint,
-                &required_component_names,
-            );
+            let user_text = if preserve_existing_components && !job.planned_components.is_empty() {
+                super::prompts::build_gen3d_plan_user_text_preserve_existing_components(
+                    prompt_text,
+                    !job.user_images.is_empty(),
+                    workshop.speed_mode,
+                    style_hint,
+                    &job.planned_components,
+                    &job.assembly_notes,
+                )
+            } else {
+                super::prompts::build_gen3d_plan_user_text_with_hints(
+                    prompt_text,
+                    !job.user_images.is_empty(),
+                    workshop.speed_mode,
+                    style_hint,
+                    &required_component_names,
+                )
+            };
             let reasoning_effort = super::openai::cap_reasoning_effort(
                 ai.model_reasoning_effort(),
                 &config.gen3d_reasoning_effort_plan,
@@ -1274,6 +1291,30 @@ pub(super) fn execute_tool_call(
                 .get(idx)
                 .map(|c| c.actual_size.is_some())
                 .unwrap_or(false);
+            let force = call
+                .args
+                .get("force")
+                .or_else(|| call.args.get("regen"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if job.preserve_existing_components_mode && is_regen && !force {
+                let name = job
+                    .planned_components
+                    .get(idx)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("<unknown>");
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
+                    call.call_id,
+                    call.tool_id,
+                    serde_json::json!({
+                        "ok": true,
+                        "skipped_due_to_preserve_existing_components": true,
+                        "note": "This run is in preserve-existing-components mode. Pass {\"force\":true} to explicitly regenerate an already-generated component.",
+                        "component_index": idx,
+                        "component_name": name,
+                    }),
+                ));
+            }
             if is_regen && !consume_regen_budget(config, job, idx) {
                 let name = job
                     .planned_components
@@ -1440,7 +1481,10 @@ pub(super) fn execute_tool_call(
             }
 
             let missing_only_arg = call.args.get("missing_only").and_then(|v| v.as_bool());
-            let missing_only = missing_only_arg.unwrap_or(requested_indices.is_empty());
+            let mut missing_only = missing_only_arg.unwrap_or(requested_indices.is_empty());
+            if job.preserve_existing_components_mode && !force {
+                missing_only = true;
+            }
             let mut optimized_by_reuse_groups = false;
             let mut skipped_due_to_reuse_groups: Vec<usize> = Vec::new();
 

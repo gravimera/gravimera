@@ -457,6 +457,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) attempt: u32,
     pub(super) pass: u32,
     pub(super) plan_hash: String,
+    pub(super) preserve_existing_components_mode: bool,
     pub(super) assembly_rev: u32,
     pub(super) plan_attempt: u8,
     pub(super) max_parallel_components: usize,

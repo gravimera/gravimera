@@ -36,6 +36,7 @@ Rules:\n\
   - If the latest review delta accepts the model / has no actionable fixes (and `qa_v1` has been run), output a \"done\" action.\n\
   - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
   - If budgets prevent further improvement (regen budgets, time, tokens), output a \"done\" action with a best-effort reason.\n\
+  - `qa_v1` may report warnings (non-fatal). If warnings>0, either take corrective action OR mention the remaining warnings explicitly in \"done.reason\" (do not claim \"no warnings\").\n\
 - Runtime motion roles (recommended for movable units):\n\
   - If the draft is a movable unit (mobility is ground/air) and `state_summary.motion_roles.applies_to_current` is false, call `llm_generate_motion_roles_v1` before finishing.\n\
   - This produces an explicit, non-heuristic mapping of locomotion effectors (legs/wheels) so the engine can inject generic `move` algorithms at runtime.\n\
@@ -69,9 +70,10 @@ Rules:\n\
   - Prefer mode=linked when copying many LEAF components; call detach_component_v1 if any copy must diverge later.\n\
   - The state summary may include `reuse_suggestions` with ready-to-use tool args; use them when appropriate.\n\
 - When you DO need LLM generation, prefer batching UNIQUE components in parallel:\n\
-  - Use llm_generate_components_v1 with explicit component_indices/names for the unique set.\n\
-  - Use missing_only=true ONLY when you truly want ALL missing components.\n\
-    - If the plan declares `reuse_groups`, the engine will skip reuse targets in missing_only batches and auto-copy them after sources are generated.\n\
+  - Default: use llm_generate_components_v1 with explicit component_indices/names for the unique set.\n\
+  - If `state_summary.preserve_existing_components_mode` is true: prefer generating ONLY missing components (omit component_indices/names and omit force) so you don't accidentally regenerate already-generated components.\n\
+  - To explicitly regenerate already-generated components in preserve mode, pass force=true (regen budgets still apply).\n\
+  - If the plan declares `reuse_groups`, the engine will skip reuse targets in missing_only batches and auto-copy them after sources are generated.\n\
 - IMPORTANT: If the state summary contains `pending_regen_component_indices` (non-empty), APPLY THEM NEXT:\n\
   - Call llm_generate_components_v1 with component_indices set to that list and force=true (regen is expected).\n\
   - Then run QA and confirm:\n\
@@ -305,8 +307,33 @@ pub(super) fn build_agent_user_text(
                 if let Some(errors) = errors {
                     out.push_str(&format!(" errors={errors}"));
                 }
-                if let Some(warnings) = warnings {
-                    out.push_str(&format!(" warnings={warnings}"));
+                let warnings_count = warnings.unwrap_or(0);
+                out.push_str(&format!(" warnings={warnings_count}"));
+                if warnings_count > 0 {
+                    if let Some(first) = value
+                        .get("warnings")
+                        .and_then(|v| v.as_array())
+                        .and_then(|a| a.first())
+                    {
+                        let component_name =
+                            first.get("component_name").and_then(|v| v.as_str()).unwrap_or("");
+                        let kind = first.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                        let message = first.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                        let mut example = String::new();
+                        if !component_name.trim().is_empty() {
+                            example.push_str(component_name.trim());
+                            example.push(' ');
+                        }
+                        if !kind.trim().is_empty() {
+                            example.push_str(kind.trim());
+                            example.push_str(": ");
+                        }
+                        example.push_str(message.trim());
+                        let example = truncate_for_prompt(example.trim(), 160);
+                        if !example.is_empty() {
+                            out.push_str(&format!(" warn_example={example}"));
+                        }
+                    }
                 }
             }
             TOOL_ID_SMOKE_CHECK => {
@@ -897,6 +924,7 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         "attempt": job.attempt,
         "pass": job.pass,
         "plan_hash": job.plan_hash,
+        "preserve_existing_components_mode": job.preserve_existing_components_mode,
         "assembly_rev": job.assembly_rev,
         "motion_roles": motion_roles_status,
         "motion_authoring": motion_authoring_status,
