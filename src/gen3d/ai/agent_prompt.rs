@@ -24,6 +24,7 @@ IMPORTANT:\n\
 - Do NOT \"simulate\" multiple steps. If you need another step, the engine will ask again.\n\
 - If you need tool outputs, return ONE tool-call step. Do NOT output a second JSON object.\n\
 - A \"done\" action ENDS the Build run immediately. Never use \"done\" to mean \"waiting\".\n\n\
+- Self-check: your entire response must parse as a single JSON object (no extra prose).\n\n\
 Schema:\n\
 {\n\
   \"version\": 1,\n\
