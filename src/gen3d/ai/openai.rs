@@ -1339,6 +1339,37 @@ fn mock_generate_text_via_openai(
         out
     }
 
+    fn maybe_truncate_mock_response_once(
+        artifact_prefix: &str,
+        user_text: &str,
+        text: String,
+    ) -> String {
+        const MARKER: &str = "__MOCK_TRUNCATE_ONCE__";
+        if !user_text.contains(MARKER) {
+            return text;
+        }
+
+        use std::collections::HashSet;
+        use std::hash::{Hash, Hasher};
+        use std::sync::{Mutex, OnceLock};
+
+        static TRUNCATED_KEYS: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        artifact_prefix.hash(&mut hasher);
+        user_text.hash(&mut hasher);
+        let key = hasher.finish();
+
+        let lock = TRUNCATED_KEYS.get_or_init(|| Mutex::new(HashSet::new()));
+        if let Ok(mut guard) = lock.lock() {
+            if guard.insert(key) {
+                return text.chars().take(64).collect();
+            }
+        }
+
+        text
+    }
+
     let text = if artifact_prefix == "agent_step" {
         fn attempt_dir_for_pass_dir(pass_dir: &Path) -> Option<&Path> {
             // Expected layout: <run_dir>/attempt_0/pass_N
@@ -1569,6 +1600,8 @@ fn mock_generate_text_via_openai(
             "mock://gen3d has no response for artifact_prefix `{artifact_prefix}`"
         ));
     };
+
+    let text = maybe_truncate_mock_response_once(artifact_prefix, user_text, text);
 
     if let Some(dir) = run_dir {
         write_gen3d_text_artifact(Some(dir), format!("{artifact_prefix}_mock.txt"), &text);

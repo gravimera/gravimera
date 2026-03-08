@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use bevy::log::warn;
 
@@ -213,6 +215,127 @@ fn parse_json_value_lenient(text: &str) -> Result<(serde_json::Value, LenientJso
     Err("Failed to parse after repair".into())
 }
 
+fn sleep_with_cancel(duration: Duration, cancel: Option<&Arc<AtomicBool>>) -> bool {
+    if duration.is_zero() {
+        return cancel.is_some_and(|flag| flag.load(Ordering::Relaxed));
+    }
+
+    let start = std::time::Instant::now();
+    let step = Duration::from_millis(50);
+    loop {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return true;
+        }
+
+        let elapsed = start.elapsed();
+        if elapsed >= duration {
+            return false;
+        }
+        let remaining = duration.saturating_sub(elapsed);
+        std::thread::sleep(step.min(remaining));
+    }
+}
+
+fn enforce_structured_outputs_json_object(
+    resp: &mut Gen3dAiTextResponse,
+    kind: Gen3dAiJsonSchemaKind,
+    ai: &Gen3dAiServiceConfig,
+    run_dir: Option<&Path>,
+    artifact_prefix: &str,
+) -> Result<(), String> {
+    let trimmed = resp.text.trim();
+    let parsed: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(value) => value,
+        Err(err) => {
+            let hint = parse::extract_json_objects(trimmed, 3);
+
+            if let Ok((value, mode)) = parse_json_value_lenient(trimmed) {
+                if let Ok(canonical) = serde_json::to_string(&value) {
+                    warn!(
+                        "Gen3D: backend did not enforce structured outputs (parsed via {mode:?}); continuing best-effort. service={} base_url={} schema={kind:?} hint_objects={} err={}",
+                        ai.service_label(),
+                        ai.base_url(),
+                        hint.len(),
+                        err
+                    );
+                    artifacts::append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "structured_outputs_violation prefix={} schema={kind:?} service={} base_url={} mode={mode:?} hint_objects={} err={}",
+                            artifact_prefix,
+                            ai.service_label(),
+                            ai.base_url(),
+                            hint.len(),
+                            err
+                        ),
+                    );
+                    resp.text = canonical;
+                    value
+                } else {
+                    value
+                }
+            } else if let Some(coerced) = coerce_single_json_object_best_effort(kind, trimmed) {
+                warn!(
+                    "Gen3D: backend did not enforce structured outputs; continuing best-effort. service={} base_url={} schema={kind:?} hint_objects={} err={}",
+                    ai.service_label(),
+                    ai.base_url(),
+                    hint.len(),
+                    err
+                );
+                artifacts::append_gen3d_run_log(
+                    run_dir,
+                    format!(
+                        "structured_outputs_violation prefix={} schema={kind:?} service={} base_url={} hint_objects={} err={}",
+                        artifact_prefix,
+                        ai.service_label(),
+                        ai.base_url(),
+                        hint.len(),
+                        err
+                    ),
+                );
+                resp.text = coerced;
+                serde_json::from_str(resp.text.trim()).map_err(|err2| {
+                    format!(
+                        "Gen3D: backend did not enforce structured outputs (response could not be coerced into a single JSON object). service={} base_url={} err={err2}",
+                        ai.service_label(),
+                        ai.base_url(),
+                    )
+                })?
+            } else if hint.len() > 1 {
+                return Err(format!(
+                    "Gen3D: backend did not enforce structured outputs (multiple JSON objects detected). service={} base_url={} err={err}",
+                    ai.service_label(),
+                    ai.base_url(),
+                ));
+            } else {
+                return Err(format!(
+                    "Gen3D: backend did not enforce structured outputs (response is not a single JSON object). service={} base_url={} err={err}",
+                    ai.service_label(),
+                    ai.base_url(),
+                ));
+            }
+        }
+    };
+
+    if !parsed.is_object() {
+        return Err(format!(
+            "Gen3D: backend did not enforce structured outputs (expected a JSON object, got {}). service={} base_url={}",
+            match parsed {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "bool",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Array(_) => "array",
+                serde_json::Value::Object(_) => "object",
+            },
+            ai.service_label(),
+            ai.base_url(),
+        ));
+    }
+
+    Ok(())
+}
+
 pub(super) fn generate_text_via_ai_service(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: Gen3dAiSessionState,
@@ -227,148 +350,126 @@ pub(super) fn generate_text_via_ai_service(
     run_dir: Option<&Path>,
     artifact_prefix: &str,
 ) -> Result<Gen3dAiTextResponse, String> {
-    let mut resp = match ai {
-        Gen3dAiServiceConfig::OpenAi(openai) => super::openai::generate_text_via_openai(
-            progress,
-            session,
-            cancel,
-            expected_schema,
-            require_structured_outputs,
-            &openai.base_url,
-            &openai.api_key,
-            &openai.model,
-            reasoning_effort,
-            system_instructions,
-            user_text,
-            image_paths,
-            run_dir,
-            artifact_prefix,
-        ),
-        Gen3dAiServiceConfig::Gemini(gemini) => super::gemini::generate_text_via_gemini(
-            progress,
-            session,
-            cancel,
-            expected_schema,
-            require_structured_outputs,
-            &gemini.base_url,
-            &gemini.api_key,
-            &gemini.model,
-            system_instructions,
-            user_text,
-            image_paths,
-            run_dir,
-            artifact_prefix,
-        ),
-        Gen3dAiServiceConfig::Claude(claude) => super::claude::generate_text_via_claude(
-            progress,
-            session,
-            cancel,
-            expected_schema,
-            require_structured_outputs,
-            &claude.base_url,
-            &claude.api_key,
-            &claude.model,
-            system_instructions,
-            user_text,
-            image_paths,
-            run_dir,
-            artifact_prefix,
-        ),
-    }?;
+    // Some OpenAI-compatible providers can return truncated SSE streams (e.g. missing
+    // `response.output_text.done`) while still returning HTTP 200. When structured outputs are
+    // required, retry a few times before failing the entire Gen3D run.
+    const MAX_STRUCTURED_OUTPUT_RETRIES: usize = 2;
 
-    if require_structured_outputs && expected_schema.is_some() {
-        let trimmed = resp.text.trim();
-        let parsed: serde_json::Value = match serde_json::from_str(trimmed) {
-            Ok(value) => value,
-            Err(err) => {
-                let kind = expected_schema.unwrap();
-                let hint = parse::extract_json_objects(trimmed, 3);
+    let mut session = session;
+    let max_attempts = 1 + MAX_STRUCTURED_OUTPUT_RETRIES;
+    let mut attempt = 0usize;
+    let mut retry_delay = Duration::from_millis(200);
 
-                if let Ok((value, mode)) = parse_json_value_lenient(trimmed) {
-                    if let Ok(canonical) = serde_json::to_string(&value) {
-                        warn!(
-                            "Gen3D: backend did not enforce structured outputs (parsed via {mode:?}); continuing best-effort. service={} base_url={} schema={kind:?} hint_objects={} err={}",
-                            ai.service_label(),
-                            ai.base_url(),
-                            hint.len(),
-                            err
-                        );
-                        artifacts::append_gen3d_run_log(
-                            run_dir,
-                            format!(
-                                "structured_outputs_violation prefix={} schema={kind:?} service={} base_url={} mode={mode:?} hint_objects={} err={}",
-                                artifact_prefix,
-                                ai.service_label(),
-                                ai.base_url(),
-                                hint.len(),
-                                err
-                            ),
-                        );
-                        resp.text = canonical;
-                        value
-                    } else {
-                        value
-                    }
-                } else if let Some(coerced) = coerce_single_json_object_best_effort(kind, trimmed) {
+    loop {
+        attempt = attempt.saturating_add(1);
+
+        let call_session = if attempt > 1 && require_structured_outputs && expected_schema.is_some()
+        {
+            // Avoid `/responses` continuation while retrying; if the previous response was
+            // truncated, continuing it may produce multiple concatenated objects.
+            let mut session = session.clone();
+            session.responses_previous_id = None;
+            session
+        } else {
+            session.clone()
+        };
+
+        let mut resp = match ai {
+            Gen3dAiServiceConfig::OpenAi(openai) => super::openai::generate_text_via_openai(
+                progress,
+                call_session,
+                cancel.clone(),
+                expected_schema,
+                require_structured_outputs,
+                &openai.base_url,
+                &openai.api_key,
+                &openai.model,
+                reasoning_effort,
+                system_instructions,
+                user_text,
+                image_paths,
+                run_dir,
+                artifact_prefix,
+            ),
+            Gen3dAiServiceConfig::Gemini(gemini) => super::gemini::generate_text_via_gemini(
+                progress,
+                call_session,
+                cancel.clone(),
+                expected_schema,
+                require_structured_outputs,
+                &gemini.base_url,
+                &gemini.api_key,
+                &gemini.model,
+                system_instructions,
+                user_text,
+                image_paths,
+                run_dir,
+                artifact_prefix,
+            ),
+            Gen3dAiServiceConfig::Claude(claude) => super::claude::generate_text_via_claude(
+                progress,
+                call_session,
+                cancel.clone(),
+                expected_schema,
+                require_structured_outputs,
+                &claude.base_url,
+                &claude.api_key,
+                &claude.model,
+                system_instructions,
+                user_text,
+                image_paths,
+                run_dir,
+                artifact_prefix,
+            ),
+        }?;
+
+        session = resp.session.clone();
+
+        if require_structured_outputs && expected_schema.is_some() {
+            let kind = expected_schema.unwrap();
+            if let Err(err) = enforce_structured_outputs_json_object(
+                &mut resp,
+                kind,
+                ai,
+                run_dir,
+                artifact_prefix,
+            ) {
+                if attempt < max_attempts {
                     warn!(
-                        "Gen3D: backend did not enforce structured outputs; continuing best-effort. service={} base_url={} schema={kind:?} hint_objects={} err={}",
+                        "Gen3D: structured outputs invalid; retrying (attempt {}/{}) service={} base_url={} schema={kind:?} err={}",
+                        attempt,
+                        max_attempts,
                         ai.service_label(),
                         ai.base_url(),
-                        hint.len(),
                         err
                     );
                     artifacts::append_gen3d_run_log(
                         run_dir,
                         format!(
-                            "structured_outputs_violation prefix={} schema={kind:?} service={} base_url={} hint_objects={} err={}",
+                            "structured_outputs_retry prefix={} schema={kind:?} service={} base_url={} attempt={}/{} delay_ms={} err={}",
                             artifact_prefix,
                             ai.service_label(),
                             ai.base_url(),
-                            hint.len(),
+                            attempt,
+                            max_attempts,
+                            retry_delay.as_millis(),
                             err
                         ),
                     );
-                    resp.text = coerced;
-                    serde_json::from_str(resp.text.trim()).map_err(|err2| {
-                        format!(
-                            "Gen3D: backend did not enforce structured outputs (response could not be coerced into a single JSON object). service={} base_url={} err={err2}",
-                            ai.service_label(),
-                            ai.base_url(),
-                        )
-                    })?
-                } else if hint.len() > 1 {
-                    return Err(format!(
-                        "Gen3D: backend did not enforce structured outputs (multiple JSON objects detected). service={} base_url={} err={err}",
-                        ai.service_label(),
-                        ai.base_url(),
-                    ));
-                } else {
-                    return Err(format!(
-                        "Gen3D: backend did not enforce structured outputs (response is not a single JSON object). service={} base_url={} err={err}",
-                        ai.service_label(),
-                        ai.base_url(),
-                    ));
-                }
-            }
-        };
-        if !parsed.is_object() {
-            return Err(format!(
-                "Gen3D: backend did not enforce structured outputs (expected a JSON object, got {}). service={} base_url={}",
-                match parsed {
-                    serde_json::Value::Null => "null",
-                    serde_json::Value::Bool(_) => "bool",
-                    serde_json::Value::Number(_) => "number",
-                    serde_json::Value::String(_) => "string",
-                    serde_json::Value::Array(_) => "array",
-                    serde_json::Value::Object(_) => "object",
-                },
-                ai.service_label(),
-                ai.base_url(),
-            ));
-        }
-    }
 
-    Ok(resp)
+                    if sleep_with_cancel(retry_delay, cancel.as_ref()) {
+                        return Err("Cancelled".into());
+                    }
+                    retry_delay = (retry_delay * 2).min(Duration::from_secs(2));
+                    continue;
+                }
+
+                return Err(err);
+            }
+        }
+
+        return Ok(resp);
+    }
 }
 
 #[cfg(test)]
@@ -430,5 +531,38 @@ mod tests {
                 .and_then(|v| v.as_u64()),
             Some(2)
         );
+    }
+
+    #[test]
+    fn structured_outputs_retry_recovers_from_truncated_json() {
+        let progress = Arc::new(Mutex::new(Gen3dAiProgress::default()));
+        let ai = Gen3dAiServiceConfig::OpenAi(OpenAiConfig {
+            base_url: "mock://gen3d".into(),
+            model: "gpt-mock".into(),
+            model_reasoning_effort: "high".into(),
+            api_key: "test".into(),
+        });
+
+        let user_text = "__MOCK_TRUNCATE_ONCE__ test_id=structured_outputs_retry_recovers_from_truncated_json\nUser prompt:\nA warcar with a cannon.\nInput images:\n";
+
+        let resp = generate_text_via_ai_service(
+            &progress,
+            Gen3dAiSessionState::default(),
+            None,
+            Some(Gen3dAiJsonSchemaKind::AgentStepV1),
+            true,
+            &ai,
+            "high",
+            "test system",
+            user_text,
+            &[],
+            None,
+            "agent_step",
+        )
+        .expect("should recover via retry");
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(resp.text.trim()).expect("valid JSON after retry");
+        assert!(parsed.is_object());
     }
 }
