@@ -209,7 +209,10 @@ Hard requirements:\n\
     if existing_components.is_empty() {
         out.push_str("- (none)\n");
     } else {
-        for comp in existing_components.iter().take(GEN3D_MAX_COMPONENTS.min(64)) {
+        for comp in existing_components
+            .iter()
+            .take(GEN3D_MAX_COMPONENTS.min(64))
+        {
             let is_root = comp.attach_to.is_none();
             out.push_str("- ");
             out.push_str(comp.name.as_str());

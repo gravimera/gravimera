@@ -1000,7 +1000,9 @@ pub(crate) fn update_part_animations(
             Transform::IDENTITY
         };
         let animated_base = match (spec, player.attachment.as_ref()) {
-            (Some(spec), Some(attachment)) if matches!(spec.clip, PartAnimationDef::Spin { .. }) => {
+            (Some(spec), Some(attachment))
+                if matches!(spec.clip, PartAnimationDef::Spin { .. }) =>
+            {
                 let child_anchor = player
                     .child_object_id
                     .and_then(|object_id| library.get(object_id))

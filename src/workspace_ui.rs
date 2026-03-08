@@ -712,11 +712,7 @@ pub(crate) fn workspace_toolbar_scene_builder_button_interactions(
 pub(crate) fn workspace_toolbar_update_scene_builder_button_styles(
     scene_ui: Res<crate::scene_authoring_ui::SceneAuthoringUiState>,
     mut buttons: Query<
-        (
-            &Interaction,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
         With<WorkspaceSceneBuilderButton>,
     >,
 ) {

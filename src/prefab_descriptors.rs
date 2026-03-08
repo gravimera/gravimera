@@ -400,7 +400,10 @@ fn load_prefab_descriptors_from_packs_dir(
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(err) => {
-                    warn!("Prefab descriptors: failed to read {}: {err}", path.display());
+                    warn!(
+                        "Prefab descriptors: failed to read {}: {err}",
+                        path.display()
+                    );
                     continue;
                 }
             };
@@ -414,7 +417,10 @@ fn load_prefab_descriptors_from_packs_dir(
             let mut doc: PrefabDescriptorFileV1 = match serde_json::from_value(json) {
                 Ok(v) => v,
                 Err(err) => {
-                    warn!("Prefab descriptors: schema mismatch {}: {err}", path.display());
+                    warn!(
+                        "Prefab descriptors: schema mismatch {}: {err}",
+                        path.display()
+                    );
                     continue;
                 }
             };

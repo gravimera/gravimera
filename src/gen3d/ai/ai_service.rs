@@ -58,6 +58,7 @@ pub(super) fn generate_text_via_ai_service(
     session: Gen3dAiSessionState,
     cancel: Option<Arc<AtomicBool>>,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    require_structured_outputs: bool,
     ai: &Gen3dAiServiceConfig,
     reasoning_effort: &str,
     system_instructions: &str,
@@ -66,12 +67,13 @@ pub(super) fn generate_text_via_ai_service(
     run_dir: Option<&Path>,
     artifact_prefix: &str,
 ) -> Result<Gen3dAiTextResponse, String> {
-    match ai {
+    let resp = match ai {
         Gen3dAiServiceConfig::OpenAi(openai) => super::openai::generate_text_via_openai(
             progress,
             session,
             cancel,
             expected_schema,
+            require_structured_outputs,
             &openai.base_url,
             &openai.api_key,
             &openai.model,
@@ -87,6 +89,7 @@ pub(super) fn generate_text_via_ai_service(
             session,
             cancel,
             expected_schema,
+            require_structured_outputs,
             &gemini.base_url,
             &gemini.api_key,
             &gemini.model,
@@ -101,6 +104,7 @@ pub(super) fn generate_text_via_ai_service(
             session,
             cancel,
             expected_schema,
+            require_structured_outputs,
             &claude.base_url,
             &claude.api_key,
             &claude.model,
@@ -110,5 +114,42 @@ pub(super) fn generate_text_via_ai_service(
             run_dir,
             artifact_prefix,
         ),
+    }?;
+
+    if require_structured_outputs && expected_schema.is_some() {
+        let trimmed = resp.text.trim();
+        let parsed: serde_json::Value = serde_json::from_str(trimmed).map_err(|err| {
+            let hint = super::parse::extract_json_objects(trimmed, 3);
+            if hint.len() > 1 {
+                format!(
+                    "Gen3D: backend did not enforce structured outputs (multiple JSON objects detected). service={} base_url={} err={err}",
+                    ai.service_label(),
+                    ai.base_url(),
+                )
+            } else {
+                format!(
+                    "Gen3D: backend did not enforce structured outputs (response is not a single JSON object). service={} base_url={} err={err}",
+                    ai.service_label(),
+                    ai.base_url(),
+                )
+            }
+        })?;
+        if !parsed.is_object() {
+            return Err(format!(
+                "Gen3D: backend did not enforce structured outputs (expected a JSON object, got {}). service={} base_url={}",
+                match parsed {
+                    serde_json::Value::Null => "null",
+                    serde_json::Value::Bool(_) => "bool",
+                    serde_json::Value::Number(_) => "number",
+                    serde_json::Value::String(_) => "string",
+                    serde_json::Value::Array(_) => "array",
+                    serde_json::Value::Object(_) => "object",
+                },
+                ai.service_label(),
+                ai.base_url(),
+            ));
+        }
     }
+
+    Ok(resp)
 }

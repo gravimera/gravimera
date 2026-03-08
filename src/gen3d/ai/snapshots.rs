@@ -82,7 +82,11 @@ fn next_snapshot_id(job: &mut Gen3dAiJob, requested: Option<String>) -> String {
     }
 }
 
-fn capture_snapshot_state(job: &Gen3dAiJob, draft: &Gen3dDraft, label: String) -> Gen3dAgentSnapshot {
+fn capture_snapshot_state(
+    job: &Gen3dAiJob,
+    draft: &Gen3dDraft,
+    label: String,
+) -> Gen3dAgentSnapshot {
     Gen3dAgentSnapshot {
         workspace_id: job.active_workspace_id().to_string(),
         label,
@@ -144,7 +148,9 @@ pub(super) fn snapshot_v1(
         .to_string();
 
     let snap = capture_snapshot_state(job, draft, label.clone());
-    job.agent.snapshots.insert(snapshot_id.clone(), snap.clone());
+    job.agent
+        .snapshots
+        .insert(snapshot_id.clone(), snap.clone());
 
     if let Some(run_dir) = job.run_dir_path() {
         append_gen3d_jsonl_artifact(
@@ -238,7 +244,9 @@ pub(super) fn restore_snapshot_v1(
     args_json: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     if job.is_running() {
-        return Err("restore_snapshot_v1 is only allowed when the Gen3D run is not running.".into());
+        return Err(
+            "restore_snapshot_v1 is only allowed when the Gen3D run is not running.".into(),
+        );
     }
 
     let mut args: RestoreSnapshotArgsJsonV1 = serde_json::from_value(args_json)

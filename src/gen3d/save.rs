@@ -1060,9 +1060,7 @@ fn gen3d_save_seeded_session_in_place(
         workshop.status = format!(
             "Saved prefab to the scene (overwrote prefab). Updated {updated_instances} instance(s) in the world. Exit Gen3D to inspect."
         );
-        scene_saves.write(SceneSaveRequest::new(
-            "Gen3D saved prefab (edit overwrite)",
-        ));
+        scene_saves.write(SceneSaveRequest::new("Gen3D saved prefab (edit overwrite)"));
     } else {
         // Fork: bind only the selected instance to the new prefab id.
         if !mobility {

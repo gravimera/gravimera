@@ -306,8 +306,11 @@ pub(super) fn copy_component_into(
             // Optional mirrored alignment: flip the mount-local right axis (X) to preserve
             // the forward/up join convention while mirroring handedness (common for L/R reuse).
             let mirror_local = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
-            let mirror_mat =
-                target_mat * mirror_local * inv_target_offset * source_offset_mat * inv_source_anchor;
+            let mirror_mat = target_mat
+                * mirror_local
+                * inv_target_offset
+                * source_offset_mat
+                * inv_source_anchor;
 
             let chosen = match alignment {
                 Gen3dCopyAlignmentMode::Rotation => rot_mat,
@@ -1596,12 +1599,7 @@ mod tests {
                 transform: Transform::IDENTITY,
             },
             anchor_named("body_mount", Vec3::ZERO, Vec3::Z, Vec3::Y),
-            anchor_named(
-                "rotor_mount",
-                Vec3::new(0.0, 0.02, 0.22),
-                Vec3::Y,
-                Vec3::Z,
-            ),
+            anchor_named("rotor_mount", Vec3::new(0.0, 0.02, 0.22), Vec3::Y, Vec3::Z),
         ];
 
         let mut arm_2_def = stub_def(arm_2_id, "arm_2");
@@ -1613,12 +1611,7 @@ mod tests {
             // The mount anchor is flipped (dot-guard), but the offset rotates back in JOIN.
             anchor_named("body_mount", Vec3::ZERO, Vec3::NEG_Z, Vec3::Y),
             // Include the internal anchor so PreserveInterfaceAnchors will overwrite it.
-            anchor_named(
-                "rotor_mount",
-                Vec3::new(0.0, 0.02, 0.22),
-                Vec3::Y,
-                Vec3::Z,
-            ),
+            anchor_named("rotor_mount", Vec3::new(0.0, 0.02, 0.22), Vec3::Y, Vec3::Z),
         ];
 
         let mut draft = Gen3dDraft::default();

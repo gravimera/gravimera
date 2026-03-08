@@ -174,11 +174,74 @@ pub(super) fn parse_delta_transform(value: Option<&serde_json::Value>) -> Transf
 pub(super) fn parse_agent_step(text: &str) -> Result<Gen3dAgentStepJsonV1, String> {
     let candidates = extract_json_objects(text, 16);
 
+    fn is_done_action(action: &crate::gen3d::agent::Gen3dAgentActionJsonV1) -> bool {
+        matches!(
+            action,
+            crate::gen3d::agent::Gen3dAgentActionJsonV1::Done { .. }
+        )
+    }
+
+    fn has_done(step: &Gen3dAgentStepJsonV1) -> bool {
+        step.actions.iter().any(is_done_action)
+    }
+
+    fn action_eq(
+        a: &crate::gen3d::agent::Gen3dAgentActionJsonV1,
+        b: &crate::gen3d::agent::Gen3dAgentActionJsonV1,
+    ) -> bool {
+        use crate::gen3d::agent::Gen3dAgentActionJsonV1;
+        match (a, b) {
+            (
+                Gen3dAgentActionJsonV1::ToolCall {
+                    call_id: a_call_id,
+                    tool_id: a_tool_id,
+                    args: a_args,
+                },
+                Gen3dAgentActionJsonV1::ToolCall {
+                    call_id: b_call_id,
+                    tool_id: b_tool_id,
+                    args: b_args,
+                },
+            ) => a_call_id == b_call_id && a_tool_id == b_tool_id && a_args == b_args,
+            (Gen3dAgentActionJsonV1::Done { .. }, Gen3dAgentActionJsonV1::Done { .. }) => true,
+            _ => false,
+        }
+    }
+
+    fn is_done_superset_of_non_done(
+        done_step: &Gen3dAgentStepJsonV1,
+        non_done_step: &Gen3dAgentStepJsonV1,
+    ) -> bool {
+        if done_step.actions.len() != non_done_step.actions.len().saturating_add(1) {
+            return false;
+        }
+        if !matches!(done_step.actions.last(), Some(a) if is_done_action(a)) {
+            return false;
+        }
+        if done_step.actions[..done_step.actions.len().saturating_sub(1)]
+            .iter()
+            .any(is_done_action)
+        {
+            return false;
+        }
+
+        for (a, b) in done_step
+            .actions
+            .iter()
+            .take(non_done_step.actions.len())
+            .zip(non_done_step.actions.iter())
+        {
+            if !action_eq(a, b) {
+                return false;
+            }
+        }
+        true
+    }
+
     // When the model outputs multiple JSON objects, it is often "simulating" multiple steps
     // (and sometimes hallucinating tool results). Prefer the *last* parsed step that does NOT
     // include a `done` action so we don't accidentally terminate the run early.
-    let mut last_step: Option<Gen3dAgentStepJsonV1> = None;
-    let mut last_non_done_step: Option<Gen3dAgentStepJsonV1> = None;
+    let mut parsed_steps: Vec<Gen3dAgentStepJsonV1> = Vec::new();
 
     for json_text in candidates.iter() {
         let json_text = json_text.trim();
@@ -196,26 +259,36 @@ pub(super) fn parse_agent_step(text: &str) -> Result<Gen3dAgentStepJsonV1, Strin
             step.actions.truncate(32);
         }
 
-        let has_done = step
-            .actions
-            .iter()
-            .any(|a| matches!(a, crate::gen3d::agent::Gen3dAgentActionJsonV1::Done { .. }));
-
-        if !step.actions.is_empty() && !has_done {
-            last_non_done_step = Some(step.clone());
-        }
-        last_step = Some(step);
+        parsed_steps.push(step);
     }
 
-    let mut step = if let Some(step) = last_non_done_step {
-        step
-    } else if let Some(step) = last_step {
-        step
-    } else {
+    let mut step = if parsed_steps.is_empty() {
         let json_text = extract_json_object(text).unwrap_or_else(|| text.to_string());
         let json_text = json_text.trim();
         serde_json::from_str::<Gen3dAgentStepJsonV1>(json_text)
             .map_err(|err| format!("Failed to parse JSON: {err}"))?
+    } else {
+        let last_step = parsed_steps.last().cloned();
+        let last_non_done_step = parsed_steps
+            .iter()
+            .rev()
+            .find(|s| !s.actions.is_empty() && !has_done(s))
+            .cloned();
+
+        if let Some(non_done_step) = last_non_done_step.as_ref() {
+            if let Some(done_superset) = parsed_steps
+                .iter()
+                .rev()
+                .find(|s| has_done(s) && is_done_superset_of_non_done(s, non_done_step))
+                .cloned()
+            {
+                done_superset
+            } else {
+                last_non_done_step.or(last_step).unwrap()
+            }
+        } else {
+            last_step.unwrap()
+        }
     };
 
     if step.version == 0 {
@@ -279,6 +352,18 @@ mod tests {
         assert!(matches!(
             step.actions[0],
             Gen3dAgentActionJsonV1::ToolCall { .. }
+        ));
+    }
+
+    #[test]
+    fn agent_step_prefers_done_step_when_it_is_a_strict_superset() {
+        let text = r#"{"version":1,"status_summary":"with_done","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"list_tools_v1","args":{}},{"kind":"tool_call","call_id":"call_2","tool_id":"qa_v1","args":{}},{"kind":"done","reason":"stop"}]}{"version":1,"status_summary":"without_done","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"list_tools_v1","args":{}},{"kind":"tool_call","call_id":"call_2","tool_id":"qa_v1","args":{}}]}"#;
+        let step = parse_agent_step(text).expect("parse");
+        assert_eq!(step.status_summary, "with_done");
+        assert_eq!(step.actions.len(), 3);
+        assert!(matches!(
+            step.actions[2],
+            Gen3dAgentActionJsonV1::Done { .. }
         ));
     }
 }

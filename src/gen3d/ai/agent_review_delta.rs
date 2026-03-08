@@ -122,6 +122,7 @@ pub(super) fn start_agent_llm_review_delta_call(
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1),
+        config.gen3d_require_structured_outputs,
         ai,
         reasoning_effort,
         system,

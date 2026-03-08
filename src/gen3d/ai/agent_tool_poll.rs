@@ -234,6 +234,7 @@ pub(super) fn poll_agent_tool(
             job.cancel_flag.clone(),
             job.session.clone(),
             expected_schema,
+            job.require_structured_outputs,
             ai,
             reasoning_effort,
             system,

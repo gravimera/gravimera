@@ -32,7 +32,10 @@ const SCENE_DAT_VERSION: u32 = 8;
 const DEFAULT_UNITS_PER_METER: u32 = 100;
 const SCENE_AUTOSAVE_INTERVAL_SECS: f32 = 60.0;
 
-pub(crate) fn ensure_default_scene_dat_exists(realm_id: &str, scene_id: &str) -> Result<(), String> {
+pub(crate) fn ensure_default_scene_dat_exists(
+    realm_id: &str,
+    scene_id: &str,
+) -> Result<(), String> {
     if realm_id.trim().is_empty() || scene_id.trim().is_empty() {
         return Err("realm_id/scene_id must be non-empty".to_string());
     }

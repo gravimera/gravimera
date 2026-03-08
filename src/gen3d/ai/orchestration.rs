@@ -543,6 +543,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.component_in_flight.clear();
     job.review_kind = Gen3dAutoReviewKind::EndOfRun;
     job.review_appearance = config.gen3d_review_appearance;
+    job.require_structured_outputs = config.gen3d_require_structured_outputs;
     job.review_component_idx = None;
     job.auto_refine_passes_done = 0;
     job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
@@ -984,6 +985,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.pass_dir = Some(pass_dir.clone());
     job.review_kind = Gen3dAutoReviewKind::EndOfRun;
     job.review_appearance = config.gen3d_review_appearance;
+    job.require_structured_outputs = config.gen3d_require_structured_outputs;
     job.review_component_idx = None;
     job.auto_refine_passes_done = 0;
     job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
@@ -1443,6 +1445,7 @@ pub(crate) fn gen3d_poll_ai_job(
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
+                config.gen3d_require_structured_outputs,
                 ai,
                 reasoning_effort,
                 system,
@@ -2006,6 +2009,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         job.cancel_flag.clone(),
                         job.session.clone(),
                         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+                        config.gen3d_require_structured_outputs,
                         ai,
                         reasoning_effort,
                         system,
@@ -2399,6 +2403,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         job.cancel_flag.clone(),
                         job.session.clone(),
                         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+                        config.gen3d_require_structured_outputs,
                         ai,
                         reasoning_effort,
                         system,
@@ -2492,6 +2497,7 @@ fn retry_gen3d_review_delta(
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
+        job.require_structured_outputs,
         ai,
         reasoning_effort,
         system,
@@ -2575,6 +2581,7 @@ fn retry_gen3d_plan(
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::PlanV1),
+        job.require_structured_outputs,
         ai,
         reasoning_effort,
         system,
@@ -2830,6 +2837,7 @@ fn poll_gen3d_parallel_components(
             job.cancel_flag.clone(),
             job.session.clone(),
             Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+            job.require_structured_outputs,
             ai,
             reasoning_effort,
             system,
@@ -3097,6 +3105,7 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+        job.require_structured_outputs,
         ai,
         reasoning_effort,
         system,
@@ -3215,6 +3224,7 @@ fn try_start_gen3d_replan(
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::PlanV1),
+        job.require_structured_outputs,
         ai,
         reasoning_effort,
         system,
@@ -4590,6 +4600,7 @@ pub(super) fn spawn_gen3d_ai_text_thread(
     cancel: Option<Arc<AtomicBool>>,
     session: Gen3dAiSessionState,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    require_structured_outputs: bool,
     ai: Gen3dAiServiceConfig,
     reasoning_effort: String,
     system_instructions: String,
@@ -4639,6 +4650,7 @@ pub(super) fn spawn_gen3d_ai_text_thread(
                 session,
                 cancel,
                 expected_schema,
+                require_structured_outputs,
                 &ai,
                 &reasoning_effort,
                 &system_instructions,
@@ -4722,6 +4734,7 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
     let session = job.session.clone();
     let pass_dir = job.pass_dir.clone();
     let user_prompt = job.user_prompt_raw.clone();
+    let require_structured_outputs = job.require_structured_outputs;
 
     std::thread::spawn(move || {
         let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
@@ -4748,6 +4761,7 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
             session,
             None,
             Some(Gen3dAiJsonSchemaKind::DescriptorMetaV1),
+            require_structured_outputs,
             &ai,
             &reasoning_effort,
             &system,

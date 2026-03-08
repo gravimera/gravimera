@@ -611,6 +611,7 @@ pub(super) fn generate_text_via_openai(
     mut session: Gen3dAiSessionState,
     cancel: Option<Arc<AtomicBool>>,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    require_structured_outputs: bool,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -775,6 +776,7 @@ pub(super) fn generate_text_via_openai(
         &mut session,
         cancel,
         expected_schema,
+        require_structured_outputs,
         base_url,
         api_key,
         model,
@@ -868,6 +870,7 @@ pub(super) fn generate_text_via_openai(
         &mut session,
         cancel,
         expected_schema,
+        require_structured_outputs,
         base_url,
         api_key,
         model,
@@ -1802,6 +1805,7 @@ fn openai_responses_flow(
     session: &mut Gen3dAiSessionState,
     cancel: Option<&AtomicBool>,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    require_structured_outputs: bool,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -1903,7 +1907,8 @@ fn openai_responses_flow(
         }
 
         let schema_for_request = if expected_schema.is_some()
-            && session.responses_structured_outputs_supported != Some(false)
+            && (require_structured_outputs
+                || session.responses_structured_outputs_supported != Some(false))
         {
             expected_schema
         } else {
@@ -1983,6 +1988,13 @@ fn openai_responses_flow(
                 }
 
                 if schema_for_request.is_some() && is_structured_outputs_rejected(&err) {
+                    session.responses_structured_outputs_supported = Some(false);
+                    if require_structured_outputs {
+                        return Err(OpenAiError::new(format!(
+                            "Structured outputs required, but provider rejected them: {}",
+                            err.short()
+                        )));
+                    }
                     warn!("Gen3D: /responses structured outputs rejected; retrying without structured outputs for this session.");
                     append_gen3d_run_log(
                         run_dir,
@@ -1992,7 +2004,6 @@ fn openai_responses_flow(
                             err.short()
                         ),
                     );
-                    session.responses_structured_outputs_supported = Some(false);
                     continue;
                 }
 
@@ -2074,7 +2085,8 @@ fn openai_responses_flow(
                     return Err(OpenAiError::cancelled(url.clone()));
                 }
                 let schema_for_request = if expected_schema.is_some()
-                    && session.responses_structured_outputs_supported != Some(false)
+                    && (require_structured_outputs
+                        || session.responses_structured_outputs_supported != Some(false))
                 {
                     expected_schema
                 } else {
@@ -2245,6 +2257,7 @@ fn openai_chat_completions_flow(
     session: &mut Gen3dAiSessionState,
     cancel: Option<&AtomicBool>,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    require_structured_outputs: bool,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -2294,7 +2307,8 @@ fn openai_chat_completions_flow(
         }
 
         let schema_for_request = if expected_schema.is_some()
-            && session.chat_structured_outputs_supported != Some(false)
+            && (require_structured_outputs
+                || session.chat_structured_outputs_supported != Some(false))
         {
             expected_schema
         } else {
@@ -2328,8 +2342,14 @@ fn openai_chat_completions_flow(
                     return Err(err);
                 }
                 if schema_for_request.is_some() && is_structured_outputs_rejected(&err) {
-                    warn!("Gen3D: /chat/completions structured outputs rejected; retrying without structured outputs for this session.");
                     session.chat_structured_outputs_supported = Some(false);
+                    if require_structured_outputs {
+                        return Err(OpenAiError::new(format!(
+                            "Structured outputs required, but provider rejected them: {}",
+                            err.short()
+                        )));
+                    }
+                    warn!("Gen3D: /chat/completions structured outputs rejected; retrying without structured outputs for this session.");
                     continue;
                 }
                 if attempt < max_attempts

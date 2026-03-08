@@ -401,15 +401,17 @@ pub(super) fn set_active_workspace_v1(
     // Save current active workspace back into the map.
     let prev = job.active_workspace_id().to_string();
     if prev != "main" || !draft.defs.is_empty() || !job.planned_components.is_empty() {
-        job.agent.workspaces.insert(
-            prev.clone(),
-            capture_active_workspace(job, draft),
-        );
+        job.agent
+            .workspaces
+            .insert(prev.clone(), capture_active_workspace(job, draft));
     }
 
     let next = if workspace_id == "main" {
-        job.agent.workspaces.get("main").cloned().unwrap_or_else(|| {
-            Gen3dAgentWorkspace {
+        job.agent
+            .workspaces
+            .get("main")
+            .cloned()
+            .unwrap_or_else(|| Gen3dAgentWorkspace {
                 name: "main".into(),
                 defs: Vec::new(),
                 planned_components: Vec::new(),
@@ -422,12 +424,13 @@ pub(super) fn set_active_workspace_v1(
                 motion_authoring: None,
                 reuse_groups: Vec::new(),
                 reuse_group_warnings: Vec::new(),
-            }
-        })
+            })
     } else if let Some(ws) = job.agent.workspaces.get(&workspace_id) {
         ws.clone()
     } else {
-        return Err(format!("set_active_workspace_v1: unknown workspace `{workspace_id}`"));
+        return Err(format!(
+            "set_active_workspace_v1: unknown workspace `{workspace_id}`"
+        ));
     };
 
     draft.defs = next.defs;
@@ -478,8 +481,16 @@ pub(super) fn diff_workspaces_v1(
         .unwrap_or_else(|| "main".to_string())
         .trim()
         .to_string();
-    let a_id = if a_id.is_empty() { active_id.clone() } else { a_id };
-    let b_id = if b_id.is_empty() { "main".to_string() } else { b_id };
+    let a_id = if a_id.is_empty() {
+        active_id.clone()
+    } else {
+        a_id
+    };
+    let b_id = if b_id.is_empty() {
+        "main".to_string()
+    } else {
+        b_id
+    };
 
     let a_ws = get_workspace_clone(job, draft, &a_id)?;
     let b_ws = get_workspace_clone(job, draft, &b_id)?;
@@ -702,7 +713,8 @@ pub(super) fn copy_from_workspace_v1(
         src_defs_by_id.insert(def.object_id, def);
     }
 
-    let mut dst_comp_idx: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut dst_comp_idx: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for (idx, comp) in job.planned_components.iter().enumerate() {
         dst_comp_idx.insert(comp.name.clone(), idx);
     }
@@ -759,7 +771,10 @@ pub(super) fn copy_from_workspace_v1(
         let Some(root_idx) = find_root_component_index(&job.planned_components) else {
             return Err("Internal error: no root component (missing attach_to=None).".into());
         };
-        super::convert::resolve_planned_component_transforms(&mut job.planned_components, root_idx)?;
+        super::convert::resolve_planned_component_transforms(
+            &mut job.planned_components,
+            root_idx,
+        )?;
         super::convert::sync_attachment_tree_to_defs(&job.planned_components, draft)?;
         super::convert::update_root_def_from_planned_components(
             &job.planned_components,
@@ -836,18 +851,25 @@ pub(super) fn merge_workspace_v1(
     let a_ws = get_workspace_clone(job, draft, &a_id)?;
     let b_ws = get_workspace_clone(job, draft, &b_id)?;
 
-    if base_ws.plan_hash.trim() != a_ws.plan_hash.trim() || base_ws.plan_hash.trim() != b_ws.plan_hash.trim() {
+    if base_ws.plan_hash.trim() != a_ws.plan_hash.trim()
+        || base_ws.plan_hash.trim() != b_ws.plan_hash.trim()
+    {
         return Err("merge_workspace_v1 requires base/a/b to have the same plan_hash".into());
     }
 
     let set_names = |ws: &Gen3dAgentWorkspace| -> std::collections::BTreeSet<String> {
-        ws.planned_components.iter().map(|c| c.name.clone()).collect()
+        ws.planned_components
+            .iter()
+            .map(|c| c.name.clone())
+            .collect()
     };
     let base_names = set_names(&base_ws);
     let a_names = set_names(&a_ws);
     let b_names = set_names(&b_ws);
     if base_names != a_names || base_names != b_names {
-        return Err("merge_workspace_v1 requires base/a/b to have the same planned component set".into());
+        return Err(
+            "merge_workspace_v1 requires base/a/b to have the same planned component set".into(),
+        );
     }
 
     let max_components = args.max_components.unwrap_or(128).max(1) as usize;
@@ -857,11 +879,13 @@ pub(super) fn merge_workspace_v1(
     for def in base_ws.defs.iter() {
         base_defs_by_id.insert(def.object_id, def);
     }
-    let mut a_defs_by_id: std::collections::HashMap<u128, &ObjectDef> = std::collections::HashMap::new();
+    let mut a_defs_by_id: std::collections::HashMap<u128, &ObjectDef> =
+        std::collections::HashMap::new();
     for def in a_ws.defs.iter() {
         a_defs_by_id.insert(def.object_id, def);
     }
-    let mut b_defs_by_id: std::collections::HashMap<u128, &ObjectDef> = std::collections::HashMap::new();
+    let mut b_defs_by_id: std::collections::HashMap<u128, &ObjectDef> =
+        std::collections::HashMap::new();
     for def in b_ws.defs.iter() {
         b_defs_by_id.insert(def.object_id, def);
     }
@@ -900,10 +924,12 @@ pub(super) fn merge_workspace_v1(
         processed += 1;
 
         let object_id = component_object_id_for_name(&name);
-        let base_def = base_defs_by_id
-            .get(&object_id)
-            .copied()
-            .ok_or_else(|| format!("Base workspace `{}` missing def for component `{}`", base_id, name))?;
+        let base_def = base_defs_by_id.get(&object_id).copied().ok_or_else(|| {
+            format!(
+                "Base workspace `{}` missing def for component `{}`",
+                base_id, name
+            )
+        })?;
         let a_def = a_defs_by_id
             .get(&object_id)
             .copied()
@@ -959,18 +985,12 @@ pub(super) fn merge_workspace_v1(
                 "geometry".into(),
                 serde_json::Value::Bool(geometry_conflict),
             );
-            conflict_obj.insert(
-                "anchors".into(),
-                serde_json::Value::Bool(anchors_conflict),
-            );
+            conflict_obj.insert("anchors".into(), serde_json::Value::Bool(anchors_conflict));
             conflict_obj.insert(
                 "attachment".into(),
                 serde_json::Value::Bool(attach_conflict),
             );
-            conflict_obj.insert(
-                "animations".into(),
-                serde_json::Value::Bool(anim_conflict),
-            );
+            conflict_obj.insert("animations".into(), serde_json::Value::Bool(anim_conflict));
         }
 
         let mut merged_def = base_def.clone();
@@ -1009,7 +1029,11 @@ pub(super) fn merge_workspace_v1(
             *def_out = merged_def.clone();
         }
 
-        if let Some(comp_out) = merged.planned_components.iter_mut().find(|c| c.name == name) {
+        if let Some(comp_out) = merged
+            .planned_components
+            .iter_mut()
+            .find(|c| c.name == name)
+        {
             comp_out.anchors = merged_def.anchors.clone();
 
             match attach_decision {
@@ -1067,7 +1091,10 @@ pub(super) fn merge_workspace_v1(
             &mut merged.planned_components,
             root_idx,
         )?;
-        super::convert::sync_attachment_tree_to_defs(&merged.planned_components, &mut merged_draft)?;
+        super::convert::sync_attachment_tree_to_defs(
+            &merged.planned_components,
+            &mut merged_draft,
+        )?;
         super::convert::update_root_def_from_planned_components(
             &merged.planned_components,
             &merged.plan_collider,
@@ -1094,10 +1121,14 @@ pub(super) fn merge_workspace_v1(
     job.agent.next_workspace_seq = job.agent.next_workspace_seq.saturating_add(1);
 
     if workspace_id.trim() == job.active_workspace_id().trim() {
-        return Err("merge_workspace_v1 output_workspace_id must not be the active workspace".into());
+        return Err(
+            "merge_workspace_v1 output_workspace_id must not be the active workspace".into(),
+        );
     }
     if job.agent.workspaces.contains_key(&workspace_id) {
-        return Err(format!("merge_workspace_v1 workspace_id already exists: `{workspace_id}`"));
+        return Err(format!(
+            "merge_workspace_v1 workspace_id already exists: `{workspace_id}`"
+        ));
     }
 
     let name = args

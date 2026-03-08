@@ -313,7 +313,8 @@ pub(super) fn generate_text_via_claude(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: Gen3dAiSessionState,
     cancel: Option<Arc<AtomicBool>>,
-    _expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    require_structured_outputs: bool,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -323,6 +324,10 @@ pub(super) fn generate_text_via_claude(
     run_dir: Option<&Path>,
     artifact_prefix: &str,
 ) -> Result<Gen3dAiTextResponse, String> {
+    if require_structured_outputs && expected_schema.is_some() {
+        return Err("Gen3D requires strict Structured Outputs, but the Claude backend does not yet support schema-enforced JSON outputs. Use the OpenAI backend or disable [gen3d].require_structured_outputs.".into());
+    }
+
     if image_paths.len() > GEN3D_MAX_REQUEST_IMAGES {
         return Err(format!(
             "Too many images: {} (max {GEN3D_MAX_REQUEST_IMAGES})",

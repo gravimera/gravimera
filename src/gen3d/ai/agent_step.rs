@@ -28,6 +28,82 @@ use super::artifacts::{
 use super::GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES;
 use super::{fail_job, gen3d_advance_pass, set_progress, Gen3dAiJob, Gen3dAiPhase};
 
+fn run_complete_enough_for_auto_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> bool {
+    if draft.total_non_projectile_primitive_parts() == 0 {
+        return false;
+    }
+
+    if job
+        .planned_components
+        .iter()
+        .any(|c| c.actual_size.is_none())
+    {
+        return false;
+    }
+
+    if !job.agent.pending_regen_component_indices.is_empty() {
+        return false;
+    }
+
+    if job.agent.last_validate_ok != Some(true) {
+        return false;
+    }
+
+    if job.agent.last_smoke_ok != Some(true) {
+        return false;
+    }
+
+    if job.agent.last_motion_ok == Some(false) {
+        return false;
+    }
+
+    let llm_available = job
+        .ai
+        .as_ref()
+        .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
+        .unwrap_or(true);
+    let appearance_review_enabled = llm_available && job.review_appearance;
+    if appearance_review_enabled {
+        if !job.agent.ever_rendered
+            || !job.agent.ever_reviewed
+            || job.agent.rendered_since_last_review
+        {
+            return false;
+        }
+    }
+
+    let movable = draft
+        .root_def()
+        .and_then(|def| def.mobility.as_ref())
+        .is_some();
+    if movable {
+        let roles = job.motion_roles_for_current_draft();
+        let mobility_mode = draft
+            .root_def()
+            .and_then(|def| def.mobility.as_ref())
+            .map(|m| m.mode);
+        let runtime_candidate = super::agent_utils::motion_runtime_candidate_kind(
+            roles,
+            &job.planned_components,
+            mobility_mode,
+        );
+
+        let has_move = job.planned_components.iter().any(|c| {
+            c.attach_to.as_ref().is_some_and(|att| {
+                att.animations
+                    .iter()
+                    .any(|slot| slot.channel.as_ref() == "move")
+            })
+        });
+
+        if runtime_candidate.is_none() && !has_move {
+            return false;
+        }
+    }
+
+    true
+}
+
 pub(super) fn poll_agent_step(
     config: &AppConfig,
     commands: &mut Commands,
@@ -236,17 +312,7 @@ pub(super) fn execute_agent_actions(
 
             let max_steps = config.gen3d_no_progress_max_steps;
             if max_steps > 0 && job.agent.no_progress_steps >= max_steps {
-                let llm_available = job
-                    .ai
-                    .as_ref()
-                    .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
-                    .unwrap_or(true);
-                let appearance_review_enabled = llm_available && job.review_appearance;
-                let qa_ok = job.agent.ever_validated
-                    && job.agent.ever_smoke_checked
-                    && (!appearance_review_enabled
-                        || (job.agent.ever_rendered && job.agent.ever_reviewed));
-                if !qa_ok {
+                if !run_complete_enough_for_auto_finish(job, draft) {
                     // Prefer continuing so the agent can run the required QA sequence.
                     // If it refuses, budgets will stop the run anyway.
                     job.agent.no_progress_steps = 0;

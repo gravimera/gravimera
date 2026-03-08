@@ -48,6 +48,7 @@ fn run_validate_v1(job: &mut Gen3dAiJob, draft: &Gen3dDraft) -> serde_json::Valu
     if let Some(dir) = job.pass_dir.as_deref() {
         write_gen3d_json_artifact(Some(dir), "validate.json", &json);
     }
+    job.agent.last_validate_ok = json.get("ok").and_then(|v| v.as_bool());
     job.agent.ever_validated = true;
     json
 }
@@ -1214,6 +1215,7 @@ pub(super) fn execute_tool_call(
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1),
+                config.gen3d_require_structured_outputs,
                 ai,
                 reasoning_effort,
                 system,
@@ -1310,6 +1312,25 @@ pub(super) fn execute_tool_call(
                     }),
                 ));
             }
+            if is_regen && force {
+                let validate_ok = job.agent.last_validate_ok;
+                let smoke_ok = job.agent.last_smoke_ok;
+                let has_errors = validate_ok == Some(false) || smoke_ok == Some(false);
+                if !has_errors {
+                    let name = job
+                        .planned_components
+                        .get(idx)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("<unknown>");
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!(
+                            "Refusing force:true regeneration for component `{name}` because validate_v1/smoke_check_v1 have no errors (or have not been run). validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors."
+                        ),
+                    ));
+                }
+            }
             if is_regen && !consume_regen_budget(config, job, idx) {
                 let name = job
                     .planned_components
@@ -1384,6 +1405,7 @@ pub(super) fn execute_tool_call(
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1),
+                config.gen3d_require_structured_outputs,
                 ai,
                 reasoning_effort,
                 system,
@@ -1525,6 +1547,29 @@ pub(super) fn execute_tool_call(
                         .map(|c| c.actual_size.is_none())
                         .unwrap_or(false)
                 });
+            }
+
+            if force {
+                let wants_regen = requested_indices.iter().any(|idx| {
+                    job.planned_components
+                        .get(*idx)
+                        .map(|c| c.actual_size.is_some())
+                        .unwrap_or(false)
+                });
+                if wants_regen {
+                    let validate_ok = job.agent.last_validate_ok;
+                    let smoke_ok = job.agent.last_smoke_ok;
+                    let has_errors = validate_ok == Some(false) || smoke_ok == Some(false);
+                    if !has_errors {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call.call_id,
+                            call.tool_id,
+                            format!(
+                                "Refusing force:true regeneration because validate_v1/smoke_check_v1 have no errors (or have not been run). validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors."
+                            ),
+                        ));
+                    }
+                }
             }
 
             if requested_indices.is_empty() {
@@ -1682,6 +1727,7 @@ pub(super) fn execute_tool_call(
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionRolesV1),
+                config.gen3d_require_structured_outputs,
                 ai,
                 reasoning_effort,
                 system,
@@ -1777,6 +1823,7 @@ pub(super) fn execute_tool_call(
                 job.cancel_flag.clone(),
                 job.session.clone(),
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1),
+                config.gen3d_require_structured_outputs,
                 ai,
                 reasoning_effort,
                 system,

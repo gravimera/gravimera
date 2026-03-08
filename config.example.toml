@@ -73,6 +73,12 @@
 # Default: false (structural-only review: fix validate/motion issues; avoid cosmetic regen/transform churn).
 # review_appearance = false
 
+# Optional: require a backend that truly enforces Structured Outputs (strict JSON schema) for
+# Gen3D schema-constrained calls (agent steps / plan / component drafts / review delta / etc).
+# Recommended: keep enabled to avoid long "inspection-only" tails caused by ambiguous multi-JSON outputs.
+# Default: true.
+# require_structured_outputs = true
+
 # Max number of component generation requests to run in parallel (default: 10).
 # Note: higher values can hit provider rate limits.
 max_parallel_components = 10
@@ -93,8 +99,8 @@ max_parallel_components = 10
 # max_tokens = 10000000
 
 # No-progress guard: stop a Build run if the agent makes no observable progress for N steps.
-# Set to 0 to disable the guard (default: 12).
-# no_progress_max_steps = 12
+# Set to 0 to disable the guard (default: 3).
+# no_progress_max_steps = 3
 
 # Budget: max number of replans per Build run (default: 1).
 # max_replans = 1

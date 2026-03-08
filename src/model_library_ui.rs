@@ -1,7 +1,7 @@
+use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use bevy::ecs::system::SystemParam;
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
@@ -304,10 +304,12 @@ pub(crate) fn model_library_rebuild_list_ui(
     }
 
     descriptors.clear();
-    let scene_prefabs_dir = crate::scene_prefabs::scene_prefabs_root_dir(&active.realm_id, &active.scene_id);
-    if let Err(err) =
-        crate::prefab_descriptors::load_prefab_descriptors_from_dir(&scene_prefabs_dir, &mut *descriptors)
-    {
+    let scene_prefabs_dir =
+        crate::scene_prefabs::scene_prefabs_root_dir(&active.realm_id, &active.scene_id);
+    if let Err(err) = crate::prefab_descriptors::load_prefab_descriptors_from_dir(
+        &scene_prefabs_dir,
+        &mut *descriptors,
+    ) {
         warn!("{err}");
     }
 
@@ -744,9 +746,7 @@ pub(crate) fn model_library_drag_update(
         }
 
         if drag.is_dragging {
-            if let Err(err) =
-                ensure_scene_prefab_loaded(&env.active, drag.model_id, &mut library)
-            {
+            if let Err(err) = ensure_scene_prefab_loaded(&env.active, drag.model_id, &mut library) {
                 warn!("{err}");
                 drag.preview_translation = None;
                 state.drag = Some(drag);

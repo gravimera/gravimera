@@ -476,7 +476,10 @@ pub(crate) fn scenes_panel_scroll_wheel(
     top: Res<TopPanelUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<MouseWheel>,
-    roots: Query<(&ComputedNode, &UiGlobalTransform, &Visibility), With<crate::workspace_ui::ScenesPanelRoot>>,
+    roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::workspace_ui::ScenesPanelRoot>,
+    >,
     mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<ScenesListScrollPanel>>,
 ) {
     if !scenes_panel_open(&mode, &build_scene, &top) {
@@ -557,20 +560,14 @@ pub(crate) fn scenes_panel_update_styles(
     state: Res<ScenesPanelUiState>,
     active: Res<ActiveRealmScene>,
     mut params: ParamSet<(
-        Query<
-            (&Interaction, &mut BackgroundColor, &mut BorderColor),
-            With<ScenesAddSceneButton>,
-        >,
+        Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<ScenesAddSceneButton>>,
         Query<(
             &Interaction,
             &SceneSelectButton,
             &mut BackgroundColor,
             &mut BorderColor,
         )>,
-        Query<
-            (&Interaction, &mut BackgroundColor, &mut BorderColor),
-            With<AddSceneNameField>,
-        >,
+        Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<AddSceneNameField>>,
         Query<
             (
                 &Interaction,
@@ -779,6 +776,8 @@ fn is_windows_reserved_name(name: &str) -> bool {
 #[allow(dead_code)]
 fn scene_build_scene_dat_path(realm_id: &str, scene_id: &str) -> PathBuf {
     let scene_dat = crate::paths::scene_dat_path(realm_id, scene_id);
-    let dir = scene_dat.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let dir = scene_dat
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
     dir.join("scene.build.dat")
 }

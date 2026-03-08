@@ -53,7 +53,10 @@ pub(crate) fn scene_prefab_package_gen3d_edit_bundle_path(
         .join(PACKAGE_GEN3D_EDIT_BUNDLE_FILE_NAME)
 }
 
-pub(crate) fn list_scene_prefab_packages(realm_id: &str, scene_id: &str) -> Result<Vec<u128>, String> {
+pub(crate) fn list_scene_prefab_packages(
+    realm_id: &str,
+    scene_id: &str,
+) -> Result<Vec<u128>, String> {
     list_scene_prefab_packages_in_dir(&scene_prefabs_root_dir(realm_id, scene_id))
 }
 
@@ -107,7 +110,8 @@ pub(crate) fn save_scene_prefab_package_defs(
     root_prefab_id: u128,
     defs: &[ObjectDef],
 ) -> Result<PathBuf, String> {
-    let (prefabs_dir, _materials_dir) = ensure_scene_prefab_package_dirs(realm_id, scene_id, root_prefab_id)?;
+    let (prefabs_dir, _materials_dir) =
+        ensure_scene_prefab_package_dirs(realm_id, scene_id, root_prefab_id)?;
     crate::realm_prefabs::save_prefab_defs_to_dir(&prefabs_dir, root_prefab_id, defs)?;
     prune_stale_prefab_def_json_files(&prefabs_dir, defs)?;
     Ok(prefabs_dir)
@@ -215,4 +219,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_root);
     }
 }
-

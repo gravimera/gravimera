@@ -62,6 +62,7 @@ pub(crate) use orchestration::{
     gen3d_start_build_from_api, gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };
+pub(crate) use schema::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1};
 pub(crate) use snapshots::{
     gen3d_diff_snapshots_from_api, gen3d_list_snapshots_from_api, gen3d_restore_snapshot_from_api,
     gen3d_snapshot_from_api,
@@ -71,7 +72,6 @@ pub(crate) use workspaces::{
     gen3d_delete_workspace_from_api, gen3d_diff_workspaces_from_api,
     gen3d_merge_workspace_from_api, gen3d_set_active_workspace_from_api,
 };
-pub(crate) use schema::{AiMotionRolesJsonV1, AiMoveEffectorRoleJsonV1};
 
 pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
     job: &Gen3dAiJob,

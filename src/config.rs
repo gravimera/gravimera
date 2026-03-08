@@ -33,6 +33,7 @@ pub(crate) struct AppConfig {
     pub(crate) gen3d_max_regen_per_component: u32,
     pub(crate) gen3d_save_pass_screenshots: bool,
     pub(crate) gen3d_review_appearance: bool,
+    pub(crate) gen3d_require_structured_outputs: bool,
     pub(crate) gen3d_reasoning_effort_plan: String,
     pub(crate) gen3d_reasoning_effort_agent_step: String,
     pub(crate) gen3d_reasoning_effort_component: String,
@@ -80,12 +81,13 @@ impl Default for AppConfig {
             gen3d_max_parallel_components: 10,
             gen3d_max_seconds: 60 * 60,
             gen3d_max_tokens: 10_000_000,
-            gen3d_no_progress_max_steps: 12,
+            gen3d_no_progress_max_steps: 3,
             gen3d_max_replans: 1,
             gen3d_max_regen_total: 16,
             gen3d_max_regen_per_component: 2,
             gen3d_save_pass_screenshots: !cfg!(test),
             gen3d_review_appearance: false,
+            gen3d_require_structured_outputs: true,
             gen3d_reasoning_effort_plan: "high".into(),
             gen3d_reasoning_effort_agent_step: "high".into(),
             gen3d_reasoning_effort_component: "high".into(),
@@ -223,6 +225,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_gen3d_max_regen_per_component_into_config(out, text);
     parse_gen3d_save_pass_screenshots_into_config(out, text);
     parse_gen3d_review_appearance_into_config(out, text);
+    parse_gen3d_require_structured_outputs_into_config(out, text);
     parse_gen3d_reasoning_effort_plan_into_config(out, text);
     parse_gen3d_reasoning_effort_agent_step_into_config(out, text);
     parse_gen3d_reasoning_effort_component_into_config(out, text);
@@ -578,6 +581,14 @@ fn parse_gen3d_save_pass_screenshots_into_config(out: &mut AppConfig, text: &str
 fn parse_gen3d_review_appearance_into_config(out: &mut AppConfig, text: &str) {
     match parse_gen3d_review_appearance(text) {
         Ok(Some(value)) => out.gen3d_review_appearance = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_gen3d_require_structured_outputs_into_config(out: &mut AppConfig, text: &str) {
+    match parse_gen3d_require_structured_outputs(text) {
+        Ok(Some(value)) => out.gen3d_require_structured_outputs = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -1735,6 +1746,58 @@ fn parse_gen3d_review_appearance(text: &str) -> Result<Option<bool>, String> {
     Ok(out)
 }
 
+fn parse_gen3d_require_structured_outputs(text: &str) -> Result<Option<bool>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<bool> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "require_structured_outputs" && key != "gen3d_require_structured_outputs" {
+            continue;
+        }
+
+        // Accept at top-level, or under `[gen3d]` / `[app]` for convenience.
+        if let Some(sec) = section.as_deref() {
+            if sec != "gen3d" && sec != "app" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let parsed = parse_toml_bool(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a boolean for `gen3d.require_structured_outputs` (example: [gen3d]\\nrequire_structured_outputs = true)"
+            )
+        })?;
+        out = Some(parsed);
+    }
+
+    Ok(out)
+}
+
 fn parse_gen3d_max_tokens(text: &str) -> Result<Option<u64>, String> {
     const MAX_ALLOWED: u64 = 100_000_000;
 
@@ -2525,6 +2588,7 @@ fn parse_claude_config(text: &str) -> Result<ClaudeConfig, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::parse_gen3d_require_structured_outputs;
     use super::parse_gen3d_review_appearance;
     use super::parse_gen3d_save_pass_screenshots;
     use super::{
@@ -2567,6 +2631,29 @@ mod tests {
         gen3d_review_appearance = false
         "#;
         assert_eq!(parse_gen3d_review_appearance(text).unwrap(), Some(false));
+    }
+
+    #[test]
+    fn parses_gen3d_require_structured_outputs_from_gen3d_section() {
+        let text = r#"
+        [gen3d]
+        require_structured_outputs = false
+        "#;
+        assert_eq!(
+            parse_gen3d_require_structured_outputs(text).unwrap(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn parses_gen3d_require_structured_outputs_from_top_level() {
+        let text = r#"
+        gen3d_require_structured_outputs = true
+        "#;
+        assert_eq!(
+            parse_gen3d_require_structured_outputs(text).unwrap(),
+            Some(true)
+        );
     }
 
     #[test]

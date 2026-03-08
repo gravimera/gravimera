@@ -170,8 +170,9 @@ fn spawn_enemy_rendered(
         return;
     };
 
-    commands.entity(entity).with_children(|parent| {
-        match profile.visual {
+    commands
+        .entity(entity)
+        .with_children(|parent| match profile.visual {
             EnemyVisualProfile::Dog => {
                 spawn_dog_model(parent, assets);
             }
@@ -181,8 +182,7 @@ fn spawn_enemy_rendered(
             EnemyVisualProfile::Gundam => {
                 spawn_gundam_model(parent, assets);
             }
-        }
-    });
+        });
 }
 
 fn spawn_enemy_headless(

@@ -188,6 +188,7 @@ pub(super) fn spawn_agent_step_request(
         job.cancel_flag.clone(),
         job.session.clone(),
         Some(super::structured_outputs::Gen3dAiJsonSchemaKind::AgentStepV1),
+        config.gen3d_require_structured_outputs,
         ai,
         reasoning_effort,
         system,
