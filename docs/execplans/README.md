@@ -7,6 +7,7 @@ This folder contains ExecPlans (execution plans) for larger features and refacto
 - Gen3D motion authoring prompt precision + join-frame constraints: `docs/execplans/execplan_gen3d_motion_authoring_prompt_precision_and_plan_join_frames.md`
 - Scene generation roadmap: `docs/execplans/execplan_scene_generation_pipeline.md`
 - Mechanical transform mapping v2 (grouped assignment for 200+ primitives): `docs/execplans/execplan_object_forms_mechanical_transform_mapping_v2.md`
+- Scene storage simplification (remove depot, scene-local prefabs, restart-safe Gen3D edit): `docs/execplans/execplan_scene_local_prefabs_and_self_contained_scene_dat.md`
 - Scene generation milestones (execute in order):
   - `docs/execplans/execplan_scene_01_sources_foundation.md`
   - `docs/execplans/execplan_scene_02_sources_roundtrip_automation.md`
