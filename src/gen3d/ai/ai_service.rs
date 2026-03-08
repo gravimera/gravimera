@@ -79,6 +79,20 @@ fn coerce_single_json_object_best_effort(
         }
     }
 
+    fn parse_value_lenient(text: &str) -> Option<serde_json::Value> {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+            return Some(value);
+        }
+        if let Ok(value) = json5::from_str::<serde_json::Value>(text) {
+            return Some(value);
+        }
+        let repaired = repair_over_escaped_quotes_outside_strings(text)?;
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(repaired.trim()) {
+            return Some(value);
+        }
+        json5::from_str::<serde_json::Value>(repaired.trim()).ok()
+    }
+
     let expected_version = expected_version_for_schema(kind);
     let candidates = parse::extract_json_objects(text, 32);
     if candidates.is_empty() {
@@ -89,20 +103,114 @@ fn coerce_single_json_object_best_effort(
     let mut last_version_match: Option<String> = None;
     for candidate in candidates.into_iter() {
         let candidate = candidate.trim();
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate) else {
+        let Some(value) = parse_value_lenient(candidate) else {
             continue;
         };
         if !value.is_object() {
             continue;
         }
 
-        last_object = Some(candidate.to_string());
+        let Ok(canonical) = serde_json::to_string(&value) else {
+            continue;
+        };
+        last_object = Some(canonical.clone());
         if value.get("version").and_then(|v| v.as_u64()) == Some(expected_version) {
-            last_version_match = Some(candidate.to_string());
+            last_version_match = Some(canonical);
         }
     }
 
     last_version_match.or(last_object)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LenientJsonMode {
+    Json5,
+    RepairStrict,
+    RepairJson5,
+}
+
+fn strip_backslash_quote_outside_strings(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut changed = false;
+
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    let mut escape = false;
+
+    while let Some(ch) = chars.next() {
+        if in_string {
+            out.push(ch);
+            if escape {
+                escape = false;
+                continue;
+            }
+            match ch {
+                '\\' => escape = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => {
+                in_string = true;
+                out.push(ch);
+            }
+            '\\' => {
+                // JSON does not allow backslashes outside string literals. A common LLM mistake is
+                // to output `\"key\"` in object key positions. If we see `\"` while we're not
+                // inside a string, drop the backslash.
+                if matches!(chars.peek(), Some('"')) {
+                    changed = true;
+                    out.push('"');
+                    let _ = chars.next();
+                } else {
+                    out.push(ch);
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+
+    changed.then_some(out)
+}
+
+fn repair_over_escaped_quotes_outside_strings(text: &str) -> Option<String> {
+    let mut current: Option<String> = None;
+    let mut candidate = text.to_string();
+
+    // Apply the repair multiple times to handle sequences like `\\\"key\\\"` (double-escaped)
+    // that require more than one pass to fully normalize.
+    for _ in 0..4 {
+        let Some(next) = strip_backslash_quote_outside_strings(&candidate) else {
+            break;
+        };
+        candidate = next;
+        current = Some(candidate.clone());
+    }
+
+    current
+}
+
+fn parse_json_value_lenient(text: &str) -> Result<(serde_json::Value, LenientJsonMode), String> {
+    let text = text.trim();
+
+    if let Ok(value) = json5::from_str::<serde_json::Value>(text) {
+        return Ok((value, LenientJsonMode::Json5));
+    }
+
+    let Some(repaired) = repair_over_escaped_quotes_outside_strings(text) else {
+        return Err("No lenient parse candidates".into());
+    };
+    let repaired = repaired.trim();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(repaired) {
+        return Ok((value, LenientJsonMode::RepairStrict));
+    }
+    if let Ok(value) = json5::from_str::<serde_json::Value>(repaired) {
+        return Ok((value, LenientJsonMode::RepairJson5));
+    }
+    Err("Failed to parse after repair".into())
 }
 
 pub(super) fn generate_text_via_ai_service(
@@ -175,7 +283,33 @@ pub(super) fn generate_text_via_ai_service(
             Err(err) => {
                 let kind = expected_schema.unwrap();
                 let hint = parse::extract_json_objects(trimmed, 3);
-                if let Some(coerced) = coerce_single_json_object_best_effort(kind, trimmed) {
+
+                if let Ok((value, mode)) = parse_json_value_lenient(trimmed) {
+                    if let Ok(canonical) = serde_json::to_string(&value) {
+                        warn!(
+                            "Gen3D: backend did not enforce structured outputs (parsed via {mode:?}); continuing best-effort. service={} base_url={} schema={kind:?} hint_objects={} err={}",
+                            ai.service_label(),
+                            ai.base_url(),
+                            hint.len(),
+                            err
+                        );
+                        artifacts::append_gen3d_run_log(
+                            run_dir,
+                            format!(
+                                "structured_outputs_violation prefix={} schema={kind:?} service={} base_url={} mode={mode:?} hint_objects={} err={}",
+                                artifact_prefix,
+                                ai.service_label(),
+                                ai.base_url(),
+                                hint.len(),
+                                err
+                            ),
+                        );
+                        resp.text = canonical;
+                        value
+                    } else {
+                        value
+                    }
+                } else if let Some(coerced) = coerce_single_json_object_best_effort(kind, trimmed) {
                     warn!(
                         "Gen3D: backend did not enforce structured outputs; continuing best-effort. service={} base_url={} schema={kind:?} hint_objects={} err={}",
                         ai.service_label(),
@@ -266,5 +400,35 @@ mod tests {
             .expect("coerce");
         let value: serde_json::Value = serde_json::from_str(&coerced).expect("parse coerced JSON");
         assert_eq!(value.get("version").and_then(|v| v.as_u64()), Some(8));
+    }
+
+    #[test]
+    fn lenient_parsing_accepts_json5_trailing_commas_and_canonicalizes() {
+        let text = r#"{version: 1, status_summary: "ok", actions: [],}"#;
+        let (value, mode) = parse_json_value_lenient(text).expect("lenient parse");
+        assert!(matches!(
+            mode,
+            LenientJsonMode::Json5 | LenientJsonMode::RepairJson5
+        ));
+        let canonical = serde_json::to_string(&value).expect("canonicalize");
+        let parsed: serde_json::Value = serde_json::from_str(&canonical).expect("strict JSON");
+        assert!(parsed.is_object());
+    }
+
+    #[test]
+    fn lenient_parsing_repairs_over_escaped_keys_outside_strings() {
+        let text = r#"{"a":1,"b":{\"c\":2}}"#;
+        let (value, mode) = parse_json_value_lenient(text).expect("lenient parse");
+        assert_eq!(mode, LenientJsonMode::RepairStrict);
+        let canonical = serde_json::to_string(&value).expect("canonicalize");
+        let parsed: serde_json::Value = serde_json::from_str(&canonical).expect("strict JSON");
+        assert_eq!(parsed.get("a").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(
+            parsed
+                .get("b")
+                .and_then(|v| v.get("c"))
+                .and_then(|v| v.as_u64()),
+            Some(2)
+        );
     }
 }
