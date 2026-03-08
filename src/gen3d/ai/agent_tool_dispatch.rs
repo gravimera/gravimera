@@ -4,22 +4,17 @@ use std::sync::{Arc, Mutex};
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
-    TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT,
-    TOOL_ID_DIFF_SNAPSHOTS,
-    TOOL_ID_DIFF_WORKSPACES,
-    TOOL_ID_COPY_FROM_WORKSPACE,
+    TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE,
+    TOOL_ID_DESCRIBE, TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_DIFF_WORKSPACES,
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
-    TOOL_ID_LIST_SNAPSHOTS,
-    TOOL_ID_LIST, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT,
-    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
-    TOOL_ID_LLM_GENERATE_MOTION_ROLES, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MERGE_WORKSPACE,
+    TOOL_ID_LIST, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LIST_SNAPSHOTS,
+    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_MOTION_ROLES,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MERGE_WORKSPACE,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_RESTORE_SNAPSHOT,
-    TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SMOKE_CHECK,
-    TOOL_ID_SNAPSHOT,
-    TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
+    TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -1167,7 +1162,7 @@ pub(super) fn execute_tool_call(
                 .get("constraints")
                 .and_then(|v| v.get("preserve_existing_components"))
                 .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+                .unwrap_or(job.preserve_existing_components_mode);
             let mut required_component_names: Vec<String> = call
                 .args
                 .get("components")
@@ -2273,8 +2268,11 @@ pub(super) fn execute_tool_call(
             }
 
             let next = if workspace_id == "main" {
-                job.agent.workspaces.get("main").cloned().unwrap_or_else(|| {
-                    super::Gen3dAgentWorkspace {
+                job.agent
+                    .workspaces
+                    .get("main")
+                    .cloned()
+                    .unwrap_or_else(|| super::Gen3dAgentWorkspace {
                         name: "main".into(),
                         defs: Vec::new(),
                         planned_components: Vec::new(),
@@ -2287,8 +2285,7 @@ pub(super) fn execute_tool_call(
                         motion_authoring: None,
                         reuse_groups: Vec::new(),
                         reuse_group_warnings: Vec::new(),
-                    }
-                })
+                    })
             } else if let Some(ws) = job.agent.workspaces.get(&workspace_id) {
                 ws.clone()
             } else {

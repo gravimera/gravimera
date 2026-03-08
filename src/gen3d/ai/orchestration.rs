@@ -459,11 +459,13 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
         return Err("Prefab package not found in the active scene. It may have been saved in a different scene.".into());
     }
 
-    let source_dir = crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(realm_id, scene_id, prefab_id);
+    let source_dir =
+        crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(realm_id, scene_id, prefab_id);
     let has_source_bundle = source_dir.exists();
 
-    let edit_bundle_path =
-        crate::scene_prefabs::scene_prefab_package_gen3d_edit_bundle_path(realm_id, scene_id, prefab_id);
+    let edit_bundle_path = crate::scene_prefabs::scene_prefab_package_gen3d_edit_bundle_path(
+        realm_id, scene_id, prefab_id,
+    );
     if !edit_bundle_path.exists() {
         return Err("This prefab can’t be edited because it’s missing Gen3D edit metadata (gen3d_edit_bundle_v1.json).".into());
     }
@@ -480,7 +482,8 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
         }
     }
 
-    let descriptor = load_prefab_descriptor_from_scene_prefab_package(realm_id, scene_id, prefab_id).ok();
+    let descriptor =
+        load_prefab_descriptor_from_scene_prefab_package(realm_id, scene_id, prefab_id).ok();
 
     let prompt_from_descriptor = descriptor
         .as_ref()
@@ -497,7 +500,8 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
         return Err("Edit/Fork is supported only for Gen3D-saved prefabs (missing source bundle and descriptor).".into());
     }
 
-    let seeded_defs = load_gen3d_draft_defs_from_scene_prefab_package_or_fallback(realm_id, scene_id, prefab_id)?;
+    let seeded_defs =
+        load_gen3d_draft_defs_from_scene_prefab_package_or_fallback(realm_id, scene_id, prefab_id)?;
     if seeded_defs
         .iter()
         .all(|d| d.object_id != gen3d_draft_object_id())
@@ -562,7 +566,9 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.attempt = 0;
     job.pass = 0;
     job.plan_hash.clear();
-    job.preserve_existing_components_mode = false;
+    // Seeded Edit/Fork sessions start from an already-generated draft; default to preserve mode so
+    // the agent doesn't accidentally regenerate existing components when making small edits.
+    job.preserve_existing_components_mode = true;
     job.assembly_rev = 0;
     job.user_prompt_raw = prompt_from_descriptor.unwrap_or_default();
     job.user_images.clear();
@@ -645,7 +651,8 @@ fn load_prefab_descriptor_from_scene_prefab_package(
     scene_id: &str,
     prefab_id: u128,
 ) -> Result<crate::prefab_descriptors::PrefabDescriptorFileV1, String> {
-    let prefabs_dir = crate::scene_prefabs::scene_prefab_package_prefabs_dir(realm_id, scene_id, prefab_id);
+    let prefabs_dir =
+        crate::scene_prefabs::scene_prefab_package_prefabs_dir(realm_id, scene_id, prefab_id);
     let uuid = uuid::Uuid::from_u128(prefab_id).to_string();
     let prefab_json = prefabs_dir.join(format!("{uuid}.json"));
     let descriptor_path =
@@ -669,12 +676,14 @@ fn load_gen3d_draft_defs_from_scene_prefab_package_or_fallback(
     scene_id: &str,
     prefab_id: u128,
 ) -> Result<Vec<ObjectDef>, String> {
-    let source_dir = crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(realm_id, scene_id, prefab_id);
+    let source_dir =
+        crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(realm_id, scene_id, prefab_id);
     if source_dir.exists() {
         return load_prefab_defs_from_dir(&source_dir, true);
     }
 
-    let prefabs_dir = crate::scene_prefabs::scene_prefab_package_prefabs_dir(realm_id, scene_id, prefab_id);
+    let prefabs_dir =
+        crate::scene_prefabs::scene_prefab_package_prefabs_dir(realm_id, scene_id, prefab_id);
     reconstruct_gen3d_draft_defs_from_saved_prefabs(&prefabs_dir, prefab_id)
 }
 

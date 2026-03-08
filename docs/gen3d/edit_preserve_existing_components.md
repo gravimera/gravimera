@@ -2,6 +2,13 @@
 
 This document describes the deterministic “preserve existing components” behavior used when editing/continuing a Gen3D draft seeded from an existing prefab.
 
+## Preserve Mode (Default for Edit/Fork Seeds)
+
+When a Gen3D session is seeded from an existing prefab (Edit/Fork), the engine enables preserve mode by default so small edits (e.g. “add a hat”) do not regenerate the entire object:
+
+- `get_state_summary_v1` includes `preserve_existing_components_mode: true`
+- `llm_generate_plan_v1` defaults to preserve behavior unless you explicitly pass `constraints.preserve_existing_components=false`
+
 ## Preserve Mode (Plan Tool)
 
 Preserve mode is requested by calling:
@@ -35,4 +42,3 @@ When this flag is true:
 
 - `component`: the component name, or
 - `component_index`: a **0-based** index into the current planned components list.
-

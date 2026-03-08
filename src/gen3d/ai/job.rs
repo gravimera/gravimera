@@ -603,20 +603,18 @@ impl Gen3dAiJob {
 
     pub(crate) fn motion_roles_for_current_draft(&self) -> Option<&AiMotionRolesJsonV1> {
         let roles = self.motion_roles.as_ref()?;
-        let run_id = self.run_id.map(|id| id.to_string()).unwrap_or_default();
-        (roles.applies_to.run_id.trim() == run_id.trim()
-            && roles.applies_to.attempt == self.attempt
-            && roles.applies_to.plan_hash.trim() == self.plan_hash.trim()
+        // NOTE: `gen3d_edit_bundle_v1.json` persists motion metadata so Edit/Fork remains
+        // restart-safe. A resumed session will typically have a NEW run_id (fresh cache dir),
+        // so treat run_id/attempt as provenance-only and gate freshness on plan_hash+assembly_rev.
+        (roles.applies_to.plan_hash.trim() == self.plan_hash.trim()
             && roles.applies_to.assembly_rev == self.assembly_rev)
             .then_some(roles)
     }
 
     pub(crate) fn motion_authoring_for_current_draft(&self) -> Option<&AiMotionAuthoringJsonV1> {
         let authored = self.motion_authoring.as_ref()?;
-        let run_id = self.run_id.map(|id| id.to_string()).unwrap_or_default();
-        (authored.applies_to.run_id.trim() == run_id.trim()
-            && authored.applies_to.attempt == self.attempt
-            && authored.applies_to.plan_hash.trim() == self.plan_hash.trim()
+        // See `motion_roles_for_current_draft` comment: allow restart-safe reuse across new run_id.
+        (authored.applies_to.plan_hash.trim() == self.plan_hash.trim()
             && authored.applies_to.assembly_rev == self.assembly_rev)
             .then_some(authored)
     }

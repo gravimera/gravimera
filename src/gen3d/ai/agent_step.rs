@@ -236,14 +236,15 @@ pub(super) fn execute_agent_actions(
 
             let max_steps = config.gen3d_no_progress_max_steps;
             if max_steps > 0 && job.agent.no_progress_steps >= max_steps {
-                let visual_qa_required = job
+                let llm_available = job
                     .ai
                     .as_ref()
                     .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
                     .unwrap_or(true);
+                let appearance_review_enabled = llm_available && job.review_appearance;
                 let qa_ok = job.agent.ever_validated
                     && job.agent.ever_smoke_checked
-                    && (!visual_qa_required
+                    && (!appearance_review_enabled
                         || (job.agent.ever_rendered && job.agent.ever_reviewed));
                 if !qa_ok {
                     // Prefer continuing so the agent can run the required QA sequence.

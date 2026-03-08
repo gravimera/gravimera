@@ -8,10 +8,10 @@ use crate::object::registry::{
     PartAnimationSpec,
 };
 
-use super::schema::{AiColliderJson, AiContactJson, AiJointJson, AiMotionAuthoringJsonV1, AiMotionRolesJsonV1};
-use super::{
-    Gen3dAgentWorkspace, Gen3dAiJob, Gen3dPlannedAttachment, Gen3dPlannedComponent,
+use super::schema::{
+    AiColliderJson, AiContactJson, AiJointJson, AiMotionAuthoringJsonV1, AiMotionRolesJsonV1,
 };
+use super::{Gen3dAgentWorkspace, Gen3dAiJob, Gen3dPlannedAttachment, Gen3dPlannedComponent};
 
 const GEN3D_EDIT_BUNDLE_FORMAT_VERSION: u32 = 1;
 
@@ -178,7 +178,10 @@ pub(crate) struct PartAnimationKeyframeDefBundleV1 {
     pub(crate) delta: TransformBundleV1,
 }
 
-pub(crate) fn gen3d_build_edit_bundle_v1(job: &Gen3dAiJob, root_prefab_id: u128) -> Gen3dEditBundleV1 {
+pub(crate) fn gen3d_build_edit_bundle_v1(
+    job: &Gen3dAiJob,
+    root_prefab_id: u128,
+) -> Gen3dEditBundleV1 {
     let created_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
@@ -204,7 +207,10 @@ pub(crate) fn gen3d_build_edit_bundle_v1(job: &Gen3dAiJob, root_prefab_id: u128)
     }
 }
 
-pub(crate) fn gen3d_write_edit_bundle_v1(path: &Path, bundle: &Gen3dEditBundleV1) -> Result<(), String> {
+pub(crate) fn gen3d_write_edit_bundle_v1(
+    path: &Path,
+    bundle: &Gen3dEditBundleV1,
+) -> Result<(), String> {
     let data = serde_json::to_string_pretty(bundle).map_err(|err| err.to_string())?;
     std::fs::write(path, data)
         .map_err(|err| format!("Failed to write {}: {err}", path.display()))?;
@@ -212,8 +218,8 @@ pub(crate) fn gen3d_write_edit_bundle_v1(path: &Path, bundle: &Gen3dEditBundleV1
 }
 
 pub(crate) fn gen3d_load_edit_bundle_v1(path: &Path) -> Result<Gen3dEditBundleV1, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
     let mut bundle: Gen3dEditBundleV1 =
         serde_json::from_slice(&bytes).map_err(|err| format!("Invalid JSON: {err}"))?;
     if bundle.version == 0 {
@@ -240,6 +246,7 @@ pub(crate) fn gen3d_hydrate_seeded_job_from_edit_bundle_v1(
         .collect::<Result<Vec<_>, _>>()?;
 
     job.planned_components = planned;
+    hydrate_planned_attachment_animations_from_defs(&mut job.planned_components, draft_defs);
     job.plan_hash = bundle.plan_hash.trim().to_string();
     job.assembly_rev = bundle.assembly_rev;
     job.assembly_notes = bundle.assembly_notes.clone();
@@ -274,6 +281,58 @@ pub(crate) fn gen3d_hydrate_seeded_job_from_edit_bundle_v1(
     Ok(())
 }
 
+fn hydrate_planned_attachment_animations_from_defs(
+    planned_components: &mut [Gen3dPlannedComponent],
+    draft_defs: &[crate::object::registry::ObjectDef],
+) {
+    use crate::object::registry::ObjectPartKind;
+
+    let mut defs_by_id: std::collections::HashMap<u128, &crate::object::registry::ObjectDef> =
+        std::collections::HashMap::new();
+    for def in draft_defs {
+        defs_by_id.insert(def.object_id, def);
+    }
+
+    for comp in planned_components.iter_mut() {
+        let Some(att) = comp.attach_to.as_mut() else {
+            continue;
+        };
+        if !att.animations.is_empty() {
+            continue;
+        }
+
+        let parent_object_id = crate::object::registry::builtin_object_id(&format!(
+            "gravimera/gen3d/component/{}",
+            att.parent.trim()
+        ));
+        let child_object_id = crate::object::registry::builtin_object_id(&format!(
+            "gravimera/gen3d/component/{}",
+            comp.name.trim()
+        ));
+
+        let Some(parent_def) = defs_by_id.get(&parent_object_id) else {
+            continue;
+        };
+
+        // If the draft already contains authored animation slots on the parent->child object_ref
+        // edge, copy them into the planned attachment so state summaries and subsequent plan merges
+        // see the existing motion (restart-safe).
+        for part in parent_def.parts.iter() {
+            let ObjectPartKind::ObjectRef { object_id } = part.kind else {
+                continue;
+            };
+            if object_id != child_object_id {
+                continue;
+            }
+            if part.animations.is_empty() {
+                continue;
+            }
+            att.animations = part.animations.clone();
+            break;
+        }
+    }
+}
+
 impl Gen3dPlannedComponentBundleV1 {
     fn from_component(c: &Gen3dPlannedComponent) -> Self {
         Self {
@@ -285,9 +344,16 @@ impl Gen3dPlannedComponentBundleV1 {
             rot_quat_xyzw: [c.rot.x, c.rot.y, c.rot.z, c.rot.w],
             planned_size: [c.planned_size.x, c.planned_size.y, c.planned_size.z],
             actual_size: c.actual_size.map(|v| [v.x, v.y, v.z]),
-            anchors: c.anchors.iter().map(AnchorDefBundleV1::from_anchor).collect(),
+            anchors: c
+                .anchors
+                .iter()
+                .map(AnchorDefBundleV1::from_anchor)
+                .collect(),
             contacts: c.contacts.clone(),
-            attach_to: c.attach_to.as_ref().map(Gen3dPlannedAttachmentBundleV1::from_attachment),
+            attach_to: c
+                .attach_to
+                .as_ref()
+                .map(Gen3dPlannedAttachmentBundleV1::from_attachment),
         }
     }
 
@@ -316,9 +382,7 @@ impl Gen3dPlannedComponentBundleV1 {
                 self.planned_size[1],
                 self.planned_size[2],
             ),
-            actual_size: self
-                .actual_size
-                .map(|v| Vec3::new(v[0], v[1], v[2])),
+            actual_size: self.actual_size.map(|v| Vec3::new(v[0], v[1], v[2])),
             anchors: self
                 .anchors
                 .iter()
@@ -331,6 +395,110 @@ impl Gen3dPlannedComponentBundleV1 {
                 .map(Gen3dPlannedAttachmentBundleV1::to_attachment)
                 .transpose()?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use super::*;
+    use crate::object::registry::{
+        builtin_object_id, ColliderProfile, ObjectDef, ObjectInteraction, ObjectPartDef,
+        PartAnimationDef, PartAnimationDriver, PartAnimationSlot, PartAnimationSpec,
+    };
+
+    #[test]
+    fn hydrate_planned_attachment_animations_from_defs_copies_object_ref_part_slots() {
+        let parent_name = "arm_fl";
+        let child_name = "rotor_fl";
+        let parent_object_id =
+            builtin_object_id(&format!("gravimera/gen3d/component/{parent_name}"));
+        let child_object_id = builtin_object_id(&format!("gravimera/gen3d/component/{child_name}"));
+
+        let mut object_ref = ObjectPartDef::object_ref(child_object_id, Transform::IDENTITY);
+        object_ref.animations.push(PartAnimationSlot {
+            channel: Cow::Borrowed("move"),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::MovePhase,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Spin {
+                    axis: Vec3::Y,
+                    radians_per_unit: 1.0,
+                },
+            },
+        });
+
+        let parent_def = ObjectDef {
+            object_id: parent_object_id,
+            label: Cow::Borrowed("parent"),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![object_ref],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+        let child_def = ObjectDef {
+            object_id: child_object_id,
+            label: Cow::Borrowed("child"),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let draft_defs = vec![parent_def, child_def];
+        let mut planned = vec![Gen3dPlannedComponent {
+            display_name: child_name.into(),
+            name: child_name.into(),
+            purpose: String::new(),
+            modeling_notes: String::new(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: Some(Vec3::ONE),
+            anchors: Vec::new(),
+            contacts: Vec::new(),
+            attach_to: Some(Gen3dPlannedAttachment {
+                parent: parent_name.into(),
+                parent_anchor: "rotor_mount".into(),
+                child_anchor: "arm_mount".into(),
+                offset: Transform::IDENTITY,
+                joint: None,
+                animations: Vec::new(),
+            }),
+        }];
+
+        hydrate_planned_attachment_animations_from_defs(&mut planned, &draft_defs);
+
+        let animations = planned[0]
+            .attach_to
+            .as_ref()
+            .expect("expected attach_to")
+            .animations
+            .as_slice();
+        assert_eq!(animations.len(), 1);
+        assert_eq!(animations[0].channel.as_ref(), "move");
     }
 }
 
@@ -365,7 +533,11 @@ impl TransformBundleV1 {
 
     fn to_transform(&self) -> Transform {
         Transform {
-            translation: Vec3::new(self.translation[0], self.translation[1], self.translation[2]),
+            translation: Vec3::new(
+                self.translation[0],
+                self.translation[1],
+                self.translation[2],
+            ),
             rotation: {
                 let q = Quat::from_xyzw(
                     self.rotation_quat_xyzw[0],

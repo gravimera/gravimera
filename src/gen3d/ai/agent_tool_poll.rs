@@ -268,7 +268,7 @@ pub(super) fn poll_agent_tool(
                         .get("constraints")
                         .and_then(|v| v.get("preserve_existing_components"))
                         .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
+                        .unwrap_or(job.preserve_existing_components_mode);
                     match parse::parse_ai_plan_from_text(&text) {
                         Ok(plan) => {
                             let plan_reuse_groups = plan.reuse_groups.clone();
@@ -1668,14 +1668,16 @@ pub(super) fn poll_agent_tool(
                                         && apply.replan_reason.is_none();
 
                                     if non_actionable_regen_only {
-                                        let visual_qa_required = job
+                                        let llm_available = job
                                             .ai
                                             .as_ref()
                                             .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
                                             .unwrap_or(true);
+                                        let appearance_review_enabled =
+                                            llm_available && job.review_appearance;
                                         let qa_ok = job.agent.ever_validated
                                             && job.agent.ever_smoke_checked
-                                            && (!visual_qa_required
+                                            && (!appearance_review_enabled
                                                 || (job.agent.ever_rendered
                                                     && job.agent.ever_reviewed));
                                         if qa_ok {

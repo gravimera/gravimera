@@ -315,8 +315,10 @@ pub(super) fn build_agent_user_text(
                         .and_then(|v| v.as_array())
                         .and_then(|a| a.first())
                     {
-                        let component_name =
-                            first.get("component_name").and_then(|v| v.as_str()).unwrap_or("");
+                        let component_name = first
+                            .get("component_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         let kind = first.get("kind").and_then(|v| v.as_str()).unwrap_or("");
                         let message = first.get("message").and_then(|v| v.as_str()).unwrap_or("");
                         let mut example = String::new();
@@ -814,14 +816,10 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
     };
 
     let motion_roles_status = {
-        let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
         match job.motion_roles.as_ref() {
             Some(roles) => serde_json::json!({
                 "present": true,
-                "applies_to_current": roles.applies_to.run_id.trim() == run_id.trim()
-                    && roles.applies_to.attempt == job.attempt
-                    && roles.applies_to.plan_hash.trim() == job.plan_hash.trim()
-                    && roles.applies_to.assembly_rev == job.assembly_rev,
+                "applies_to_current": job.motion_roles_for_current_draft().is_some(),
                 "move_effectors": roles.move_effectors.len(),
             }),
             None => serde_json::json!({

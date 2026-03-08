@@ -456,6 +456,81 @@ mod tests {
     }
 
     #[test]
+    fn gen3d_motion_roles_apply_to_current_ignores_run_id_and_attempt_for_restart_safety() {
+        let config = AppConfig::default();
+
+        let mut job = Gen3dAiJob::default();
+        job.plan_hash = "sha256:abc123".into();
+        job.assembly_rev = 7;
+        job.attempt = 0;
+        job.run_id = Some(Uuid::from_u128(123));
+
+        job.motion_roles = Some(super::super::schema::AiMotionRolesJsonV1 {
+            version: 1,
+            applies_to: super::super::schema::AiReviewDeltaAppliesToJsonV1 {
+                run_id: "some_prior_run".into(),
+                attempt: 999,
+                plan_hash: job.plan_hash.clone(),
+                assembly_rev: job.assembly_rev,
+            },
+            move_effectors: Vec::new(),
+            notes: None,
+        });
+
+        assert!(
+            job.motion_roles_for_current_draft().is_some(),
+            "expected persisted motion_roles to apply when plan_hash+assembly_rev match"
+        );
+
+        let summary = draft_summary(&config, &job);
+        let applies = summary
+            .get("motion_roles")
+            .and_then(|v| v.get("applies_to_current"))
+            .and_then(|v| v.as_bool())
+            .expect("expected motion_roles.applies_to_current bool");
+        assert!(applies);
+    }
+
+    #[test]
+    fn gen3d_motion_authoring_apply_to_current_ignores_run_id_and_attempt_for_restart_safety() {
+        let config = AppConfig::default();
+
+        let mut job = Gen3dAiJob::default();
+        job.plan_hash = "sha256:abc123".into();
+        job.assembly_rev = 7;
+        job.attempt = 0;
+        job.run_id = Some(Uuid::from_u128(123));
+
+        job.motion_authoring = Some(super::super::schema::AiMotionAuthoringJsonV1 {
+            version: 1,
+            applies_to: super::super::schema::AiReviewDeltaAppliesToJsonV1 {
+                run_id: "some_prior_run".into(),
+                attempt: 999,
+                plan_hash: job.plan_hash.clone(),
+                assembly_rev: job.assembly_rev,
+            },
+            decision: super::super::schema::AiMotionAuthoringDecisionJsonV1::RuntimeOk,
+            reason: String::new(),
+            replace_channels: Vec::new(),
+            edges: Vec::new(),
+            notes: None,
+        });
+
+        assert!(
+            job.motion_authoring_for_current_draft().is_some(),
+            "expected persisted motion_authoring to apply when plan_hash+assembly_rev match"
+        );
+
+        let summary = draft_summary(&config, &job);
+        let applies = summary
+            .get("motion_authoring")
+            .and_then(|v| v.get("applies_to_current"))
+            .and_then(|v| v.as_bool())
+            .expect("expected motion_authoring.applies_to_current bool");
+        assert!(applies);
+    }
+
+    #[test]
     fn gen3d_agent_step_prompt_compacts_large_tool_payloads() {
         let config = AppConfig::default();
         let mut job = Gen3dAiJob::default();
