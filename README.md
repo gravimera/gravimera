@@ -58,16 +58,10 @@ By default Gravimera stores runtime data under `~/.gravimera/`:
 
 - `~/.gravimera/config.toml` (settings, OpenAI/Gemini)
 - `~/.gravimera/openai_capabilities_cache.json` (cached OpenAI-compatible endpoint capabilities, keyed by `base_url` + `model`)
-- `~/.gravimera/depot/models/` (local 3D model depot; Gen3D saves generated models here; layout spec `docs/gamedesign/36_model_depot_v1.md`)
-  - `~/.gravimera/depot/models/<model_uuid>/prefabs/`
-    - `.../<prefab_uuid>.json` (structural prefab def; spec `docs/gamedesign/34_realm_prefabs_v1.md`)
-    - `.../<prefab_uuid>.desc.json` (semantic descriptor; spec `docs/gamedesign/35_prefab_descriptors_v1.md`)
 - `~/.gravimera/realm/` (realms + scenes)
 - `~/.gravimera/realm/active.json` (active realm/scene selection)
-  - `~/.gravimera/realm/<realm_id>/prefabs/packs/` (realm-shared prefab packs)
-    - `.../<prefab_uuid>.json` (structural prefab def; spec `docs/gamedesign/34_realm_prefabs_v1.md`)
-    - `.../<prefab_uuid>.desc.json` (semantic descriptor; spec `docs/gamedesign/35_prefab_descriptors_v1.md`)
-  - `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
+- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
+- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/` (scene-local prefab packages; Gen3D saves prefabs here; layout spec `docs/gamedesign/39_scene_local_prefab_packages_v1.md`)
 - `~/.gravimera/cache/` (Gen3D artifacts, logs, screenshots)
 
 Override the base directory with `GRAVIMERA_HOME=/path/to/dir`.

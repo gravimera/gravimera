@@ -1,6 +1,6 @@
 # Prefab Descriptors (v1)
 
-This spec defines a **realm-shared, text-based prefab description format** used by:
+This spec defines a **text-based prefab description format** used by:
 
 - AI agents (search/selection/planning),
 - humans (review/edit in git),
@@ -26,20 +26,15 @@ definition in `docs/gamedesign/34_realm_prefabs_v1.md`.
 
 Prefab descriptor files live **next to** their prefab definition JSON.
 
-They may be stored either:
+In the current storage model, prefab defs + descriptors live inside **scene-local prefab packages**:
 
-- in a realm prefab pack (portable/sharable), or
-- in the local model depot (realm-independent library).
-
-- `~/.gravimera/realm/<realm_id>/prefabs/packs/<pack_id>/prefabs/<prefab_uuid>.json`
-- `~/.gravimera/realm/<realm_id>/prefabs/packs/<pack_id>/prefabs/<prefab_uuid>.desc.json`
-- `~/.gravimera/depot/models/<model_uuid>/prefabs/<prefab_uuid>.json`
-- `~/.gravimera/depot/models/<model_uuid>/prefabs/<prefab_uuid>.desc.json`
+- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/<root_prefab_uuid>/prefabs/<prefab_uuid>.json`
+- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/<root_prefab_uuid>/prefabs/<prefab_uuid>.desc.json`
 
 Notes:
 
 - `<prefab_uuid>` is the prefab id (UUID). The filename should match the document’s `prefab_id`.
-- `generated` is the reserved pack id for engine/AI-generated prefabs stored inside a realm pack.
+- A prefab package may contain multiple prefab defs + descriptors (root prefab + internal components).
 
 ## Descriptor Document: `PrefabDescriptorFileV1`
 

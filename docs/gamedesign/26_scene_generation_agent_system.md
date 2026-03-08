@@ -139,6 +139,7 @@ ScenePlan does not contain “town rules”. It contains explicit structure and 
 Blueprints are the applied mutations:
 
 - register prefabs/packs (from Object agent)
+- register prefab defs (from Object agent)
 - define/modify procedural layers (from Architect/Dressing)
 - spawn/edit instances (from any agent)
 - attach brains and story content (Population/Story)

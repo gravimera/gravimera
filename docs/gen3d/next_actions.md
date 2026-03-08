@@ -209,7 +209,7 @@ We need deterministic, non-heuristic seeding for Edit/Fork. Write down which str
   deterministic, and may be lossy).
 
 If we adopt the “source bundle” approach, define:
-- where it is stored (descriptor field vs depot sidecar file),
+- where it is stored (descriptor field vs scene-local prefab package files),
 - size limits / compression policy,
 - versioning and migration rules (`gen3d_source_v1`, etc.).
 

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::object::registry::{
     AimProfile, AnchorDef, AnchorRef, AttachmentDef, ColliderProfile, MaterialKey,
@@ -12,11 +12,7 @@ use crate::object::registry::{
     UnitAttackKind, UnitAttackProfile,
 };
 
-pub(crate) const REALM_PREFAB_FORMAT_VERSION: u32 = 1;
-
-pub(crate) fn realm_prefabs_root_dir(realm_id: &str) -> PathBuf {
-    crate::paths::realm_dir(realm_id).join("prefabs")
-}
+pub(crate) const PREFAB_FILE_FORMAT_VERSION: u32 = 1;
 
 pub(crate) fn save_prefab_defs_to_dir(
     dir: &Path,
@@ -42,15 +38,6 @@ pub(crate) fn save_prefab_defs_to_dir(
     }
 
     Ok(())
-}
-
-pub(crate) fn load_realm_prefabs_into_library(
-    realm_id: &str,
-    library: &mut ObjectLibrary,
-) -> Result<usize, String> {
-    let root = realm_prefabs_root_dir(realm_id);
-    let packs_dir = root.join("packs");
-    load_prefabs_into_library_from_dir(&packs_dir, library)
 }
 
 pub(crate) fn load_prefabs_into_library_from_dir(
@@ -84,30 +71,30 @@ pub(crate) fn load_prefabs_into_library_from_dir(
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(err) => {
-                    warn!("Realm prefabs: failed to read {}: {err}", path.display());
+                    warn!("Prefab defs: failed to read {}: {err}", path.display());
                     continue;
                 }
             };
             let json: Value = match serde_json::from_slice(&bytes) {
                 Ok(v) => v,
                 Err(err) => {
-                    warn!("Realm prefabs: invalid JSON {}: {err}", path.display());
+                    warn!("Prefab defs: invalid JSON {}: {err}", path.display());
                     continue;
                 }
             };
             let doc: PrefabFileV1 = match serde_json::from_value(json) {
                 Ok(v) => v,
                 Err(err) => {
-                    warn!("Realm prefabs: schema mismatch {}: {err}", path.display());
+                    warn!("Prefab defs: schema mismatch {}: {err}", path.display());
                     continue;
                 }
             };
-            if doc.format_version != REALM_PREFAB_FORMAT_VERSION {
+            if doc.format_version != PREFAB_FILE_FORMAT_VERSION {
                 warn!(
-                    "Realm prefabs: ignoring {}: unsupported format_version {} (expected {}).",
+                    "Prefab defs: ignoring {}: unsupported format_version {} (expected {}).",
                     path.display(),
                     doc.format_version,
-                    REALM_PREFAB_FORMAT_VERSION
+                    PREFAB_FILE_FORMAT_VERSION
                 );
                 continue;
             }
@@ -117,7 +104,7 @@ pub(crate) fn load_prefabs_into_library_from_dir(
                     loaded += 1;
                 }
                 Err(err) => {
-                    warn!("Realm prefabs: skipping {}: {err}", path.display());
+                    warn!("Prefab defs: skipping {}: {err}", path.display());
                 }
             }
         }
@@ -156,7 +143,7 @@ struct PrefabFileV1 {
 impl PrefabFileV1 {
     fn from_object_def(def: &ObjectDef, role: PrefabRoleV1) -> Self {
         Self {
-            format_version: REALM_PREFAB_FORMAT_VERSION,
+            format_version: PREFAB_FILE_FORMAT_VERSION,
             prefab_id: uuid::Uuid::from_u128(def.object_id).to_string(),
             role,
             label: def.label.to_string(),

@@ -18,6 +18,7 @@ mod claude;
 mod convert;
 mod copy_component;
 mod draft_ops;
+mod edit_bundle;
 mod gemini;
 mod headless_prefab;
 mod job;
@@ -49,6 +50,10 @@ use orchestration::{
 };
 
 pub(crate) use draft_ops::gen3d_apply_draft_ops_from_api;
+pub(crate) use edit_bundle::{
+    gen3d_build_edit_bundle_v1, gen3d_hydrate_seeded_job_from_edit_bundle_v1,
+    gen3d_load_edit_bundle_v1, gen3d_write_edit_bundle_v1,
+};
 pub(crate) use headless_prefab::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 pub(crate) use job::Gen3dAiJob;
 pub(crate) use orchestration::{

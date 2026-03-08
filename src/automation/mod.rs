@@ -1117,6 +1117,8 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
 ) -> Option<AutomationReply> {
     let commands = &mut *ctx.commands;
     let config = ctx.config;
+    let active_realm_id = ctx.active_realm_id;
+    let active_scene_id = ctx.active_scene_id;
     let log_sinks = ctx.gen3d.log_sinks.as_deref();
     let library = &mut *ctx.library;
     let prefab_descriptors = &mut *ctx.prefab_descriptors;
@@ -1277,6 +1279,8 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 workshop,
                 job,
                 draft,
+                active_realm_id,
+                active_scene_id,
                 uuid.as_u128(),
             ) {
                 return Some(json_error(400, err));
@@ -1338,6 +1342,8 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 workshop,
                 job,
                 draft,
+                active_realm_id,
+                active_scene_id,
                 uuid.as_u128(),
             ) {
                 return Some(json_error(400, err));
@@ -1958,6 +1964,8 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 materials,
                 material_cache,
                 mesh_cache,
+                active_realm_id,
+                active_scene_id,
                 library,
                 prefab_descriptors,
                 workshop,

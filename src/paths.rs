@@ -3,8 +3,6 @@ use std::path::{Path, PathBuf};
 
 const GRAVIMERA_HOME_ENV: &str = "GRAVIMERA_HOME";
 const REALMS_DIR_NAME: &str = "realm";
-const DEPOT_DIR_NAME: &str = "depot";
-const DEPOT_MODELS_DIR_NAME: &str = "models";
 const DEFAULT_REALM_ID: &str = "default";
 const DEFAULT_SCENE_ID: &str = "default";
 
@@ -59,7 +57,6 @@ pub(crate) fn ensure_default_dirs() -> std::io::Result<()> {
     let base = gravimera_dir();
     std::fs::create_dir_all(&base)?;
     std::fs::create_dir_all(realms_dir())?;
-    std::fs::create_dir_all(depot_models_dir())?;
     std::fs::create_dir_all(default_cache_dir())?;
     std::fs::create_dir_all(default_gen3d_cache_dir())?;
     Ok(())
@@ -67,14 +64,6 @@ pub(crate) fn ensure_default_dirs() -> std::io::Result<()> {
 
 pub(crate) fn realms_dir() -> PathBuf {
     gravimera_dir().join(REALMS_DIR_NAME)
-}
-
-pub(crate) fn depot_dir() -> PathBuf {
-    gravimera_dir().join(DEPOT_DIR_NAME)
-}
-
-pub(crate) fn depot_models_dir() -> PathBuf {
-    depot_dir().join(DEPOT_MODELS_DIR_NAME)
 }
 
 pub(crate) fn default_realm_id() -> &'static str {
@@ -91,6 +80,19 @@ pub(crate) fn realm_dir(realm_id: &str) -> PathBuf {
 
 pub(crate) fn scene_dir(realm_id: &str, scene_id: &str) -> PathBuf {
     realm_dir(realm_id).join("scenes").join(scene_id)
+}
+
+pub(crate) fn scene_prefabs_dir(realm_id: &str, scene_id: &str) -> PathBuf {
+    scene_dir(realm_id, scene_id).join("prefabs")
+}
+
+pub(crate) fn scene_prefab_package_dir(
+    realm_id: &str,
+    scene_id: &str,
+    root_prefab_id: u128,
+) -> PathBuf {
+    let uuid = uuid::Uuid::from_u128(root_prefab_id).to_string();
+    scene_prefabs_dir(realm_id, scene_id).join(uuid)
 }
 
 pub(crate) fn scene_src_dir(realm_id: &str, scene_id: &str) -> PathBuf {

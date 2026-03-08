@@ -65,7 +65,7 @@ pub(crate) struct AiAnchorJson {
     pub(crate) up: [f32; 3],
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum AiColliderJson {
     None,
@@ -311,7 +311,7 @@ pub(crate) struct AiPlanComponentJson {
     pub(crate) attach_to: Option<AiPlanAttachmentJson>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AiJointKindJson {
     Fixed,
@@ -322,7 +322,7 @@ pub(crate) enum AiJointKindJson {
     Unknown,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiJointJson {
     pub(crate) kind: AiJointKindJson,
@@ -336,7 +336,7 @@ pub(crate) struct AiJointJson {
     pub(crate) twist_limits_degrees: Option<[f32; 2]>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AiContactKindJson {
     Ground,
@@ -344,14 +344,14 @@ pub(crate) enum AiContactKindJson {
     Unknown,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiContactStanceJson {
     pub(crate) phase_01: f32,
     pub(crate) duty_factor_01: f32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiContactJson {
     pub(crate) name: String,

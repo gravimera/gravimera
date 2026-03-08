@@ -873,7 +873,7 @@ Notes:
 
 Save the current draft into the world:
 
-- saves prefab defs (and an optional descriptor) into the local model depot under `~/.gravimera/depot/models/<model_uuid>/prefabs/`, and
+- saves prefab defs (and an optional descriptor) into the active scene’s local prefab store under `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/<prefab_uuid>/prefabs/` (and for Gen3D-saved prefabs also persists `gen3d_source_v1/` + `gen3d_edit_bundle_v1.json`), and
 - spawns an instance near the hero and persists to the Object Preview workspace (`scene.dat` under `~/.gravimera/realm/.../build/scene.dat`, unless overridden by `scene.scene_dat_path` in config).
 
 ```bash

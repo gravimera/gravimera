@@ -159,6 +159,7 @@ pub(crate) fn gen3d_continue_button(
 pub(crate) fn gen3d_apply_pending_seed_from_prefab(
     build_scene: Res<State<BuildScene>>,
     config: Res<AppConfig>,
+    active: Res<crate::realm::ActiveRealmScene>,
     log_sinks: Option<Res<crate::app::Gen3dLogSinks>>,
     mut pending: ResMut<Gen3dPendingSeedFromPrefab>,
     mut workshop: ResMut<Gen3dWorkshop>,
@@ -188,6 +189,8 @@ pub(crate) fn gen3d_apply_pending_seed_from_prefab(
             &mut workshop,
             &mut job,
             &mut draft,
+            &active.realm_id,
+            &active.scene_id,
             req.prefab_id,
         ),
         Gen3dSeedFromPrefabMode::Fork => gen3d_start_fork_session_from_prefab_id_from_api(
@@ -197,6 +200,8 @@ pub(crate) fn gen3d_apply_pending_seed_from_prefab(
             &mut workshop,
             &mut job,
             &mut draft,
+            &active.realm_id,
+            &active.scene_id,
             req.prefab_id,
         ),
     };
@@ -384,6 +389,8 @@ pub(crate) fn gen3d_start_edit_session_from_prefab_id_from_api(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
     draft: &mut Gen3dDraft,
+    realm_id: &str,
+    scene_id: &str,
     prefab_id: u128,
 ) -> Result<(), String> {
     gen3d_start_seeded_session_from_prefab_id_from_api(
@@ -393,6 +400,8 @@ pub(crate) fn gen3d_start_edit_session_from_prefab_id_from_api(
         workshop,
         job,
         draft,
+        realm_id,
+        scene_id,
         prefab_id,
         Gen3dSeededSessionMode::EditOverwrite,
     )
@@ -405,6 +414,8 @@ pub(crate) fn gen3d_start_fork_session_from_prefab_id_from_api(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
     draft: &mut Gen3dDraft,
+    realm_id: &str,
+    scene_id: &str,
     prefab_id: u128,
 ) -> Result<(), String> {
     gen3d_start_seeded_session_from_prefab_id_from_api(
@@ -414,6 +425,8 @@ pub(crate) fn gen3d_start_fork_session_from_prefab_id_from_api(
         workshop,
         job,
         draft,
+        realm_id,
+        scene_id,
         prefab_id,
         Gen3dSeededSessionMode::Fork,
     )
@@ -426,6 +439,8 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
     draft: &mut Gen3dDraft,
+    realm_id: &str,
+    scene_id: &str,
     prefab_id: u128,
     mode: Gen3dSeededSessionMode,
 ) -> Result<(), String> {
@@ -438,28 +453,34 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
 
     let ai = resolve_gen3d_ai_service_config(config)?;
 
-    let model_dir = crate::model_depot::depot_model_dir(prefab_id);
-    let source_dir = model_dir.join("gen3d_source_v1");
+    let package_dir = crate::scene_prefabs::scene_prefab_package_dir(realm_id, scene_id, prefab_id);
+    if !package_dir.exists() {
+        crate::scene_prefabs::debug_log_missing_prefab_package(realm_id, scene_id, prefab_id);
+        return Err("Prefab package not found in the active scene. It may have been saved in a different scene.".into());
+    }
+
+    let source_dir = crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(realm_id, scene_id, prefab_id);
     let has_source_bundle = source_dir.exists();
 
-    let (descriptor, descriptor_error) = match load_prefab_descriptor_from_depot(prefab_id) {
-        Ok(descriptor) => (Some(descriptor), None),
-        Err(err) => (None, Some(err)),
-    };
+    let edit_bundle_path =
+        crate::scene_prefabs::scene_prefab_package_gen3d_edit_bundle_path(realm_id, scene_id, prefab_id);
+    if !edit_bundle_path.exists() {
+        return Err("This prefab can’t be edited because it’s missing Gen3D edit metadata (gen3d_edit_bundle_v1.json).".into());
+    }
 
-    let provenance_source = descriptor
-        .as_ref()
-        .and_then(|d| d.provenance.as_ref())
-        .and_then(|p| p.source.as_deref())
-        .unwrap_or("");
-    if provenance_source.trim() != "gen3d" && !has_source_bundle {
-        if let Some(err) = descriptor_error {
+    let edit_bundle = crate::gen3d::ai::gen3d_load_edit_bundle_v1(&edit_bundle_path)?;
+
+    if let Ok(id) = Uuid::parse_str(edit_bundle.root_prefab_id_uuid.trim()) {
+        if id.as_u128() != prefab_id {
             return Err(format!(
-                "Edit/Fork is supported only for Gen3D-saved prefabs. {err}"
+                "Gen3D edit bundle root id mismatch (bundle={}, requested={}).",
+                edit_bundle.root_prefab_id_uuid.trim(),
+                Uuid::from_u128(prefab_id),
             ));
         }
-        return Err("Edit/Fork is supported only for Gen3D-saved prefabs.".into());
     }
+
+    let descriptor = load_prefab_descriptor_from_scene_prefab_package(realm_id, scene_id, prefab_id).ok();
 
     let prompt_from_descriptor = descriptor
         .as_ref()
@@ -472,7 +493,11 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
         workshop.prompt = prompt.clone();
     }
 
-    let seeded_defs = load_gen3d_draft_defs_from_depot_or_fallback(prefab_id)?;
+    if descriptor.is_none() && !has_source_bundle {
+        return Err("Edit/Fork is supported only for Gen3D-saved prefabs (missing source bundle and descriptor).".into());
+    }
+
+    let seeded_defs = load_gen3d_draft_defs_from_scene_prefab_package_or_fallback(realm_id, scene_id, prefab_id)?;
     if seeded_defs
         .iter()
         .all(|d| d.object_id != gen3d_draft_object_id())
@@ -552,6 +577,8 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.regen_per_component.clear();
     job.save_seq = 0;
 
+    crate::gen3d::ai::gen3d_hydrate_seeded_job_from_edit_bundle_v1(job, &edit_bundle, &draft.defs)?;
+
     job.edit_base_prefab_id = Some(prefab_id);
     job.save_overwrite_prefab_id = match mode {
         Gen3dSeededSessionMode::EditOverwrite => Some(prefab_id),
@@ -612,10 +639,12 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     Ok(())
 }
 
-fn load_prefab_descriptor_from_depot(
+fn load_prefab_descriptor_from_scene_prefab_package(
+    realm_id: &str,
+    scene_id: &str,
     prefab_id: u128,
 ) -> Result<crate::prefab_descriptors::PrefabDescriptorFileV1, String> {
-    let prefabs_dir = crate::model_depot::depot_model_prefabs_dir(prefab_id);
+    let prefabs_dir = crate::scene_prefabs::scene_prefab_package_prefabs_dir(realm_id, scene_id, prefab_id);
     let uuid = uuid::Uuid::from_u128(prefab_id).to_string();
     let prefab_json = prefabs_dir.join(format!("{uuid}.json"));
     let descriptor_path =
@@ -634,14 +663,17 @@ fn load_prefab_descriptor_from_depot(
     Ok(descriptor)
 }
 
-fn load_gen3d_draft_defs_from_depot_or_fallback(prefab_id: u128) -> Result<Vec<ObjectDef>, String> {
-    let model_dir = crate::model_depot::depot_model_dir(prefab_id);
-    let source_dir = model_dir.join("gen3d_source_v1");
+fn load_gen3d_draft_defs_from_scene_prefab_package_or_fallback(
+    realm_id: &str,
+    scene_id: &str,
+    prefab_id: u128,
+) -> Result<Vec<ObjectDef>, String> {
+    let source_dir = crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(realm_id, scene_id, prefab_id);
     if source_dir.exists() {
         return load_prefab_defs_from_dir(&source_dir, true);
     }
 
-    let prefabs_dir = crate::model_depot::depot_model_prefabs_dir(prefab_id);
+    let prefabs_dir = crate::scene_prefabs::scene_prefab_package_prefabs_dir(realm_id, scene_id, prefab_id);
     reconstruct_gen3d_draft_defs_from_saved_prefabs(&prefabs_dir, prefab_id)
 }
 

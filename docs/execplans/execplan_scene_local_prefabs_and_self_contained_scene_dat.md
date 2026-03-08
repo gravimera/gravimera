@@ -25,16 +25,17 @@ You can see this working by:
 ## Progress
 
 - [x] (2026-03-08 03:59Z) Draft this ExecPlan and inventory relevant code/docs.
-- [ ] Define the new on-disk scene layout (scene-local prefab packages, per-prefab materials) in `docs/gamedesign/` and update `docs/gamedesign/specs.md`.
-- [ ] Remove depot: delete/retire `src/model_depot.rs`, depot path helpers, depot loaders, and depot UI.
-- [ ] Remove realm-shared prefabs: stop loading `realm/<realm_id>/prefabs/packs/...` on scene load; implement scene-local prefab loading for edit tools only.
-- [ ] Implement scene-local prefab store module (read/write prefab defs + descriptors per scene).
-- [ ] Change Gen3D Save to write prefab packages into the current scene, including a persisted Gen3D edit bundle.
-- [ ] Change Gen3D Edit/Fork seeding to hydrate session state from the persisted edit bundle (no cache dependency).
-- [ ] Make “materials per prefab folder” concrete for any existing exported/imported asset flows (or explicitly define it as a reserved folder when only primitives are used).
-- [ ] Update UI/tooling surfaces to browse/copy scene-local prefabs (replacing the old depot model library panel).
-- [ ] Run `cargo test`, run the rendered smoke test, and perform the manual restart+edit scenario.
-- [ ] Commit a single “big change” commit (or a small series) with clear messages and doc updates.
+- [x] (2026-03-08 05:15Z) Define the new on-disk scene layout (scene-local prefab packages, per-prefab materials) in `docs/gamedesign/` and update `docs/gamedesign/specs.md`.
+- [x] (2026-03-08 05:15Z) Remove depot: delete/retire `src/model_depot.rs`, depot path helpers, depot loaders, and depot UI.
+- [x] (2026-03-08 05:15Z) Remove realm-shared prefabs: stop loading `realm/<realm_id>/prefabs/packs/...` on scene load; implement scene-local prefab loading for edit tools only.
+- [x] (2026-03-08 05:15Z) Implement scene-local prefab store module (read/write prefab defs + descriptors per scene).
+- [x] (2026-03-08 05:15Z) Change Gen3D Save to write prefab packages into the current scene, including a persisted Gen3D edit bundle.
+- [x] (2026-03-08 05:15Z) Change Gen3D Edit/Fork seeding to hydrate session state from the persisted edit bundle (no cache dependency).
+- [x] (2026-03-08 05:15Z) Make “materials per prefab folder” concrete (reserved empty `materials/` dir today; primitives-only models).
+- [x] (2026-03-08 05:15Z) Update UI/tooling surfaces to browse/spawn scene-local prefabs (replacing the old depot model library panel).
+- [x] (2026-03-08 05:15Z) Run `cargo test` and the rendered smoke test.
+- [ ] Perform the manual restart+edit scenario (Gen3D save → quit → delete `GRAVIMERA_HOME/cache/` → restart → edit/fork).
+- [x] (2026-03-08 05:15Z) Commit the “big change” with clear messages and doc updates.
 
 ## Surprises & Discoveries
 
@@ -44,6 +45,7 @@ You can see this working by:
   Evidence: `src/scene_store.rs` `save_scene_dat_internal` gathers `root_defs`, calls `gather_referenced_defs(library, root_defs)`, then encodes those defs into `SceneDat`.
 - Observation: The current Gen3D edit/fork seed path restores `draft.defs` but does not restore Gen3D session state (planned components, workspaces, etc.), which causes “empty workspace” behavior after restart even when the source bundle exists.
   Evidence: `src/gen3d/ai/orchestration.rs` `gen3d_start_seeded_session_from_prefab_id_from_api` sets `draft.defs = seeded_defs`, but then clears `job.planned_components` and resets `job.agent` to default; the agent prompt state summary is derived from `job.planned_components` and `job.agent.workspaces`, not from `draft.defs`.
+- Observation: After removing depot and realm packs from the scene load pipeline, the “prefab browser” UI must lazily load prefab defs into `ObjectLibrary` when spawning (runtime load stays “built-ins + scene.dat only”).
 
 ## Decision Log
 
@@ -59,7 +61,13 @@ You can see this working by:
 
 ## Outcomes & Retrospective
 
-(TBD once implemented.)
+- ✅ Completed: depot removed; runtime loads scenes using only built-ins + `scene.dat` defs/instances (no realm prefab packs, no global depot).
+- ✅ Completed: scene-local prefab packages under `realm/<realm_id>/scenes/<scene_id>/prefabs/<root_prefab_uuid>/...` (including reserved per-prefab `materials/`).
+- ✅ Completed: Gen3D Save writes published prefab defs + descriptor + `gen3d_source_v1/` + `gen3d_edit_bundle_v1.json` into the active scene’s prefab package.
+- ✅ Completed: Gen3D Edit/Fork seeding hydrates session state from `gen3d_edit_bundle_v1.json` (restart-safe without `GRAVIMERA_HOME/cache/`).
+- ✅ Completed: Models panel updated to a scene-local “Prefabs” browser (spawn supported; copy/export tooling deferred).
+- Validation: `cargo test` passed (2026-03-08), and rendered smoke start passed (`--rendered-seconds 2`) (2026-03-08).
+- Follow-ups: perform the full interactive “restart + edit” scenario with Gen3D enabled; add explicit prefab copy/export/import tooling if needed; implement real per-prefab external asset flows in `materials/` when/if non-primitive assets land.
 
 ## Context and Orientation
 

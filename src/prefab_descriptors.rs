@@ -364,15 +364,6 @@ pub(crate) fn save_prefab_descriptor_file(
     write_json_file_canonical(path, &value)
 }
 
-pub(crate) fn load_realm_prefab_descriptors_into_library(
-    realm_id: &str,
-    library: &mut PrefabDescriptorLibrary,
-) -> Result<usize, String> {
-    let root = crate::realm_prefabs::realm_prefabs_root_dir(realm_id);
-    let packs_dir = root.join("packs");
-    load_prefab_descriptors_from_packs_dir(&packs_dir, library)
-}
-
 pub(crate) fn load_prefab_descriptors_from_dir(
     root: &Path,
     library: &mut PrefabDescriptorLibrary,
@@ -409,36 +400,27 @@ fn load_prefab_descriptors_from_packs_dir(
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(err) => {
-                    warn!(
-                        "Realm prefab descriptors: failed to read {}: {err}",
-                        path.display()
-                    );
+                    warn!("Prefab descriptors: failed to read {}: {err}", path.display());
                     continue;
                 }
             };
             let json: Value = match serde_json::from_slice(&bytes) {
                 Ok(v) => v,
                 Err(err) => {
-                    warn!(
-                        "Realm prefab descriptors: invalid JSON {}: {err}",
-                        path.display()
-                    );
+                    warn!("Prefab descriptors: invalid JSON {}: {err}", path.display());
                     continue;
                 }
             };
             let mut doc: PrefabDescriptorFileV1 = match serde_json::from_value(json) {
                 Ok(v) => v,
                 Err(err) => {
-                    warn!(
-                        "Realm prefab descriptors: schema mismatch {}: {err}",
-                        path.display()
-                    );
+                    warn!("Prefab descriptors: schema mismatch {}: {err}", path.display());
                     continue;
                 }
             };
             if doc.format_version != PREFAB_DESCRIPTOR_FORMAT_VERSION {
                 warn!(
-                    "Realm prefab descriptors: ignoring {}: unsupported format_version {} (expected {}).",
+                    "Prefab descriptors: ignoring {}: unsupported format_version {} (expected {}).",
                     path.display(),
                     doc.format_version,
                     PREFAB_DESCRIPTOR_FORMAT_VERSION
@@ -448,10 +430,7 @@ fn load_prefab_descriptors_from_packs_dir(
             let prefab_id = match doc.prefab_id_u128() {
                 Ok(id) => id,
                 Err(err) => {
-                    warn!(
-                        "Realm prefab descriptors: skipping {}: {err}",
-                        path.display()
-                    );
+                    warn!("Prefab descriptors: skipping {}: {err}", path.display());
                     continue;
                 }
             };

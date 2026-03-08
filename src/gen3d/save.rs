@@ -31,6 +31,12 @@ pub(crate) struct Gen3dSaveRenderWorld<'w> {
     mesh_cache: ResMut<'w, visuals::PrimitiveMeshCache>,
 }
 
+#[derive(SystemParam)]
+pub(crate) struct Gen3dSaveEnv<'w> {
+    build_scene: Res<'w, State<crate::types::BuildScene>>,
+    active: Res<'w, crate::realm::ActiveRealmScene>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Gen3dSavedInstance {
     pub(crate) instance_id: ObjectId,
@@ -844,7 +850,9 @@ fn collider_half_xz(collider: ColliderProfile, size: Vec3) -> Vec2 {
     }
 }
 
-fn save_gen3d_snapshot_to_depot_and_library(
+fn save_gen3d_snapshot_to_scene_and_library(
+    realm_id: &str,
+    scene_id: &str,
     library: &mut ObjectLibrary,
     prefab_descriptors: Option<&mut crate::prefab_descriptors::PrefabDescriptorLibrary>,
     workshop: &mut Gen3dWorkshop,
@@ -854,12 +862,29 @@ fn save_gen3d_snapshot_to_depot_and_library(
 ) -> Result<(u128, ObjectDef), String> {
     let (saved_root_id, defs) =
         draft_to_saved_defs(snapshot, collision_enabled, job.save_overwrite_prefab_id())?;
-    let depot_prefabs_dir =
-        crate::model_depot::save_model_prefab_defs_to_depot(saved_root_id, saved_root_id, &defs)?;
+    let scene_prefabs_dir = crate::scene_prefabs::save_scene_prefab_package_defs(
+        realm_id,
+        scene_id,
+        saved_root_id,
+        &defs,
+    )?;
 
     save_gen3d_source_bundle_best_effort(
-        &crate::model_depot::depot_model_dir(saved_root_id),
+        &crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(
+            realm_id,
+            scene_id,
+            saved_root_id,
+        ),
         snapshot,
+    );
+    save_gen3d_edit_bundle_best_effort(
+        &crate::scene_prefabs::scene_prefab_package_gen3d_edit_bundle_path(
+            realm_id,
+            scene_id,
+            saved_root_id,
+        ),
+        job,
+        saved_root_id,
     );
 
     for def in defs {
@@ -871,7 +896,7 @@ fn save_gen3d_snapshot_to_depot_and_library(
     };
 
     let descriptor = save_generated_prefab_descriptor_best_effort(
-        &depot_prefabs_dir,
+        &scene_prefabs_dir,
         &root_def,
         library,
         job,
@@ -941,6 +966,8 @@ fn gen3d_save_seeded_session_in_place(
     materials: &mut Assets<StandardMaterial>,
     material_cache: &mut visuals::MaterialCache,
     mesh_cache: &mut visuals::PrimitiveMeshCache,
+    realm_id: &str,
+    scene_id: &str,
     library: &mut ObjectLibrary,
     prefab_descriptors: &mut crate::prefab_descriptors::PrefabDescriptorLibrary,
     workshop: &mut Gen3dWorkshop,
@@ -980,7 +1007,9 @@ fn gen3d_save_seeded_session_in_place(
         defs: draft.defs.clone(),
     };
     let overwrite_prefab_id = job.save_overwrite_prefab_id();
-    let (saved_root_id, root_def) = save_gen3d_snapshot_to_depot_and_library(
+    let (saved_root_id, root_def) = save_gen3d_snapshot_to_scene_and_library(
+        realm_id,
+        scene_id,
         library,
         Some(prefab_descriptors),
         workshop,
@@ -1029,8 +1058,11 @@ fn gen3d_save_seeded_session_in_place(
         }
 
         workshop.status = format!(
-            "Saved model to the depot (overwrote prefab). Updated {updated_instances} instance(s) in the world. Exit Gen3D to inspect."
+            "Saved prefab to the scene (overwrote prefab). Updated {updated_instances} instance(s) in the world. Exit Gen3D to inspect."
         );
+        scene_saves.write(SceneSaveRequest::new(
+            "Gen3D saved prefab (edit overwrite)",
+        ));
     } else {
         // Fork: bind only the selected instance to the new prefab id.
         if !mobility {
@@ -1068,7 +1100,7 @@ fn gen3d_save_seeded_session_in_place(
         job.set_save_overwrite_prefab_id(Some(saved_root_id));
 
         workshop.status =
-            "Saved forked model to the depot and updated the selected instance. Exit Gen3D to inspect."
+            "Saved forked prefab to the scene and updated the selected instance. Exit Gen3D to inspect."
                 .into();
         scene_saves.write(SceneSaveRequest::new("Gen3D forked model"));
     }
@@ -1121,7 +1153,7 @@ fn gen3d_save_seeded_session_in_place(
 }
 
 pub(crate) fn gen3d_save_button(
-    build_scene: Res<State<crate::types::BuildScene>>,
+    env: Gen3dSaveEnv,
     mut commands: Commands,
     mut render: Gen3dSaveRenderWorld,
     mut library: ResMut<ObjectLibrary>,
@@ -1150,7 +1182,7 @@ pub(crate) fn gen3d_save_button(
         With<Gen3dSaveButton>,
     >,
 ) {
-    if !matches!(build_scene.get(), crate::types::BuildScene::Preview) {
+    if !matches!(env.build_scene.get(), crate::types::BuildScene::Preview) {
         return;
     }
 
@@ -1200,6 +1232,8 @@ pub(crate) fn gen3d_save_button(
                 &mut *render.materials,
                 &mut *render.material_cache,
                 &mut *render.mesh_cache,
+                &env.active.realm_id,
+                &env.active.scene_id,
                 &mut library,
                 &mut *prefab_descriptors,
                 &mut workshop,
@@ -1232,6 +1266,8 @@ pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
     materials: &mut Assets<StandardMaterial>,
     material_cache: &mut visuals::MaterialCache,
     mesh_cache: &mut visuals::PrimitiveMeshCache,
+    realm_id: &str,
+    scene_id: &str,
     library: &mut ObjectLibrary,
     prefab_descriptors: &mut crate::prefab_descriptors::PrefabDescriptorLibrary,
     workshop: &mut Gen3dWorkshop,
@@ -1267,6 +1303,8 @@ pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
             materials,
             material_cache,
             mesh_cache,
+            realm_id,
+            scene_id,
             library,
             prefab_descriptors,
             workshop,
@@ -1287,6 +1325,8 @@ pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
             materials,
             material_cache,
             mesh_cache,
+            realm_id,
+            scene_id,
             library,
             Some(prefab_descriptors),
             workshop,
@@ -1308,6 +1348,8 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     materials: &mut Assets<StandardMaterial>,
     material_cache: &mut visuals::MaterialCache,
     mesh_cache: &mut visuals::PrimitiveMeshCache,
+    realm_id: &str,
+    scene_id: &str,
     library: &mut ObjectLibrary,
     prefab_descriptors: Option<&mut crate::prefab_descriptors::PrefabDescriptorLibrary>,
     workshop: &mut Gen3dWorkshop,
@@ -1326,7 +1368,9 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     let snapshot = Gen3dDraft {
         defs: draft.defs.clone(),
     };
-    let (saved_root_id, root_def) = save_gen3d_snapshot_to_depot_and_library(
+    let (saved_root_id, root_def) = save_gen3d_snapshot_to_scene_and_library(
+        realm_id,
+        scene_id,
         library,
         prefab_descriptors,
         workshop,
@@ -1414,14 +1458,14 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     );
 
     workshop.status = if mobility {
-        "Saved model to the depot and spawned it next to the hero. Exit Gen3D to select and move it."
+        "Saved prefab to the scene and spawned it next to the hero. Exit Gen3D to select and move it."
             .into()
     } else {
-        "Saved model to the depot and spawned it to the world. Exit Gen3D to move/rotate/scale it."
+        "Saved prefab to the scene and spawned it to the world. Exit Gen3D to move/rotate/scale it."
             .into()
     };
     workshop.error = None;
-    scene_saves.write(SceneSaveRequest::new("Gen3D saved model"));
+    scene_saves.write(SceneSaveRequest::new("Gen3D saved prefab"));
 
     // Persist a small save artifact for debugging / correlation with agent runs.
     let save_seq = job.bump_save_seq();
@@ -1465,8 +1509,7 @@ pub(crate) fn gen3d_save_current_draft_from_api(
     })
 }
 
-fn save_gen3d_source_bundle_best_effort(model_dir: &std::path::Path, draft: &Gen3dDraft) {
-    let bundle_dir = model_dir.join("gen3d_source_v1");
+fn save_gen3d_source_bundle_best_effort(bundle_dir: &std::path::Path, draft: &Gen3dDraft) {
     if bundle_dir.exists() {
         if let Err(err) = std::fs::remove_dir_all(&bundle_dir) {
             warn!(
@@ -1491,6 +1534,20 @@ fn save_gen3d_source_bundle_best_effort(model_dir: &std::path::Path, draft: &Gen
         warn!(
             "Gen3D: failed to write source bundle prefabs to {}: {err}",
             bundle_dir.display()
+        );
+    }
+}
+
+fn save_gen3d_edit_bundle_best_effort(
+    bundle_path: &std::path::Path,
+    job: &Gen3dAiJob,
+    saved_root_id: u128,
+) {
+    let bundle = crate::gen3d::ai::gen3d_build_edit_bundle_v1(job, saved_root_id);
+    if let Err(err) = crate::gen3d::ai::gen3d_write_edit_bundle_v1(bundle_path, &bundle) {
+        warn!(
+            "Gen3D: failed to write edit bundle {}: {err}",
+            bundle_path.display()
         );
     }
 }

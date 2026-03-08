@@ -1,6 +1,7 @@
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use bevy::ecs::system::SystemParam;
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
@@ -18,6 +19,12 @@ use crate::types::{
 const PANEL_Z_INDEX: i32 = 930;
 const PANEL_WIDTH_PX: f32 = 260.0;
 const DRAG_START_THRESHOLD_PX: f32 = 6.0;
+
+#[derive(SystemParam)]
+pub(crate) struct ModelLibraryEnv<'w> {
+    build_scene: Res<'w, State<crate::types::BuildScene>>,
+    active: Res<'w, crate::realm::ActiveRealmScene>,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct ModelLibraryDrag {
@@ -39,6 +46,7 @@ pub(crate) struct ModelLibraryUiState {
     drag: Option<ModelLibraryDrag>,
     spawn_seq: u32,
     scrollbar_drag: Option<ModelLibraryScrollbarDrag>,
+    last_rebuilt_scene: Option<(String, String)>,
 }
 
 impl Default for ModelLibraryUiState {
@@ -49,6 +57,7 @@ impl Default for ModelLibraryUiState {
             drag: None,
             spawn_seq: 0,
             scrollbar_drag: None,
+            last_rebuilt_scene: None,
         }
     }
 }
@@ -146,7 +155,7 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
             ))
             .with_children(|row| {
                 row.spawn((
-                    Text::new("Models"),
+                    Text::new("Prefabs"),
                     TextFont {
                         font_size: 18.0,
                         ..default()
@@ -267,28 +276,48 @@ pub(crate) fn model_library_update_visibility(
 
 pub(crate) fn model_library_rebuild_list_ui(
     mut commands: Commands,
+    active: Res<crate::realm::ActiveRealmScene>,
     library: Res<ObjectLibrary>,
-    descriptors: Res<PrefabDescriptorLibrary>,
+    mut descriptors: ResMut<PrefabDescriptorLibrary>,
     mut state: ResMut<ModelLibraryUiState>,
     lists: Query<Entity, With<ModelLibraryList>>,
     existing_items: Query<Entity, With<ModelLibraryListItem>>,
 ) {
+    let active_changed = match state.last_rebuilt_scene.as_ref() {
+        Some((realm_id, scene_id)) => realm_id != &active.realm_id || scene_id != &active.scene_id,
+        None => true,
+    };
+    if active_changed {
+        state.models_dirty = true;
+    }
+
     if !state.models_dirty {
         return;
     }
     let Ok(list_entity) = lists.single() else {
         return;
     };
+    state.last_rebuilt_scene = Some((active.realm_id.clone(), active.scene_id.clone()));
 
     for entity in &existing_items {
         commands.entity(entity).try_despawn();
     }
 
-    let model_ids = crate::model_depot::list_depot_models().unwrap_or_default();
+    descriptors.clear();
+    let scene_prefabs_dir = crate::scene_prefabs::scene_prefabs_root_dir(&active.realm_id, &active.scene_id);
+    if let Err(err) =
+        crate::prefab_descriptors::load_prefab_descriptors_from_dir(&scene_prefabs_dir, &mut *descriptors)
+    {
+        warn!("{err}");
+    }
+
+    let model_ids =
+        crate::scene_prefabs::list_scene_prefab_packages(&active.realm_id, &active.scene_id)
+            .unwrap_or_default();
     if model_ids.is_empty() {
         commands.entity(list_entity).with_children(|list| {
             list.spawn((
-                Text::new("No depot models yet.\nUse Gen3D to generate one."),
+                Text::new("No scene prefabs yet.\nUse Gen3D to generate one."),
                 TextFont {
                     font_size: 14.0,
                     ..default()
@@ -633,7 +662,7 @@ pub(crate) fn model_library_item_button_interactions(
 pub(crate) fn model_library_drag_update(
     mut commands: Commands,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
-    build_scene: Res<State<crate::types::BuildScene>>,
+    env: ModelLibraryEnv,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<crate::types::MainCamera>>,
     player_q: Query<(&Transform, &Collider), With<Player>>,
@@ -643,7 +672,7 @@ pub(crate) fn model_library_drag_update(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut material_cache: ResMut<visuals::MaterialCache>,
     mut mesh_cache: ResMut<visuals::PrimitiveMeshCache>,
-    library: Res<ObjectLibrary>,
+    mut library: ResMut<ObjectLibrary>,
     objects: Query<
         (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         With<BuildObject>,
@@ -651,7 +680,7 @@ pub(crate) fn model_library_drag_update(
     mut scene_saves: bevy::ecs::message::MessageWriter<SceneSaveRequest>,
     mut state: ResMut<ModelLibraryUiState>,
 ) {
-    if !state.is_open() || !matches!(build_scene.get(), crate::types::BuildScene::Realm) {
+    if !state.is_open() || !matches!(env.build_scene.get(), crate::types::BuildScene::Realm) {
         state.drag = None;
         return;
     }
@@ -663,6 +692,11 @@ pub(crate) fn model_library_drag_update(
     if !mouse_buttons.pressed(MouseButton::Left) {
         // Mouse was released; treat as either click-spawn (near hero) or drag-spawn.
         let prefab_id = drag.model_id;
+        if let Err(err) = ensure_scene_prefab_loaded(&env.active, prefab_id, &mut library) {
+            warn!("{err}");
+            state.drag = None;
+            return;
+        }
         let spawn_translation = if drag.is_dragging && drag.preview_translation.is_some() {
             drag.preview_translation.unwrap()
         } else {
@@ -693,7 +727,7 @@ pub(crate) fn model_library_drag_update(
         );
         if spawned.is_some() {
             state.spawn_seq = state.spawn_seq.wrapping_add(1);
-            scene_saves.write(SceneSaveRequest::new("spawned model from depot"));
+            scene_saves.write(SceneSaveRequest::new("spawned prefab from scene"));
         }
 
         state.drag = None;
@@ -710,6 +744,15 @@ pub(crate) fn model_library_drag_update(
         }
 
         if drag.is_dragging {
+            if let Err(err) =
+                ensure_scene_prefab_loaded(&env.active, drag.model_id, &mut library)
+            {
+                warn!("{err}");
+                drag.preview_translation = None;
+                state.drag = Some(drag);
+                return;
+            }
+
             let Ok((camera, camera_transform)) = camera_q.single() else {
                 drag.preview_translation = None;
                 state.drag = Some(drag);
@@ -806,6 +849,33 @@ fn model_label(
     }
 
     uuid::Uuid::from_u128(model_id).to_string()
+}
+
+fn ensure_scene_prefab_loaded(
+    active: &crate::realm::ActiveRealmScene,
+    prefab_id: u128,
+    library: &mut ObjectLibrary,
+) -> Result<(), String> {
+    if library.get(prefab_id).is_some() {
+        return Ok(());
+    }
+
+    let loaded = crate::scene_prefabs::load_scene_prefab_package_defs_into_library(
+        &active.realm_id,
+        &active.scene_id,
+        prefab_id,
+        library,
+    )?;
+    if loaded == 0 {
+        return Err(format!(
+            "Prefab {} is not loaded and no scene-local prefab package was found under {}/{}.",
+            uuid::Uuid::from_u128(prefab_id),
+            active.realm_id,
+            active.scene_id,
+        ));
+    }
+
+    Ok(())
 }
 
 fn prefab_bounds(library: &ObjectLibrary, prefab_id: u128, scale: Vec3) -> (Vec3, Vec2, f32) {
@@ -925,7 +995,7 @@ fn spawn_prefab_instance(
 ) -> Option<Entity> {
     if library.get(prefab_id).is_none() {
         warn!(
-            "Cannot spawn depot model {}: prefab is not loaded.",
+            "Cannot spawn prefab {}: prefab def is not loaded.",
             uuid::Uuid::from_u128(prefab_id)
         );
         return None;

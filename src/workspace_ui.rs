@@ -240,7 +240,7 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new("Models"),
+                    Text::new("Prefabs"),
                     TextFont {
                         font_size: 16.0,
                         ..default()

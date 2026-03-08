@@ -1,27 +1,25 @@
-# Realm Prefabs (v1)
+# Prefab Definitions (`PrefabFileV1`, v1)
 
-This spec defines the **realm-shared prefab pack** format: how prefab definitions are stored on disk so any scene in the same realm can reuse them.
+This spec defines the **prefab definition JSON** format (`PrefabFileV1`): how an object definition (a “prefab”) is stored as a stable, text-based JSON document.
 
-Note: Gen3D-generated prefabs are stored in the **local model depot** (realm-independent) by default, and can be spawned into a realm as ordinary instances. Realm prefab packs remain the portable, shareable on-disk format for realm-scoped prefab definitions.
+Prefab definition JSON is used in multiple places, but the primary on-disk home for user-created prefabs is the **scene-local prefab package** (see `docs/gamedesign/39_scene_local_prefab_packages_v1.md`).
 
 ## Goals
 
-- **Realm-scoped reuse:** prefabs are available to all scenes in the realm.
 - **Git/process friendly:** textual, stable, diffable.
 - **Versioned:** forward migrations are possible without corrupting the source.
+- **Generic:** no game-specific heuristics; supports “any object”.
 
 ## Directory Layout
 
-Realm prefabs live under the realm directory:
+Prefab definition JSON documents are stored under a prefab package’s `prefabs/` directory:
 
-- `~/.gravimera/realm/<realm_id>/prefabs/`
-  - `packs/<pack_id>/prefabs/<prefab_uuid>.json`
+- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/<root_prefab_uuid>/prefabs/<prefab_uuid>.json`
 
 Notes:
 
-- `<pack_id>` is a stable identifier for a prefab pack (recommended: `snake_case` / `[a-z0-9_-]+`).
-- `generated` is a **reserved** pack id for engine/AI-generated prefabs stored inside a realm package.
 - `<prefab_uuid>.json` filename **should match** the document’s `prefab_id`.
+- A prefab package may contain multiple prefab JSON files: the root prefab plus any internal component prefabs referenced by `object_ref`.
 
 ## Prefab Document: `PrefabFileV1`
 

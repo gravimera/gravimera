@@ -1,4 +1,14 @@
-# Local Model Depot (v1)
+# Local Model Depot (v1) — Removed
+
+Status: **removed as of 2026-03-08**.
+
+Gravimera no longer uses a global, realm-independent model depot under `~/.gravimera/depot/models/`.
+
+Gen3D-saved prefabs are stored **scene-locally** under the active scene directory (see `docs/gamedesign/39_scene_local_prefab_packages_v1.md`).
+
+This document is retained for **historical reference only**. New code must not read or write the depot.
+
+## Historical Spec (v1)
 
 This spec defines the **local model depot** format: how Gen3D-generated (or otherwise local) 3D models are stored on disk so they can be reused across realms.
 
@@ -45,4 +55,3 @@ On scene load, the engine may:
 
 - load all depot prefab defs first, then realm prefab defs, so realm packs can override/extend as needed, and
 - load any `.desc.json` descriptor files found alongside depot prefabs.
-
