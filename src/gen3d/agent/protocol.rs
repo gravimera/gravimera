@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Gen3dAgentStepJsonV1 {
     #[serde(default)]
@@ -11,7 +11,7 @@ pub(crate) struct Gen3dAgentStepJsonV1 {
     pub(crate) actions: Vec<Gen3dAgentActionJsonV1>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Gen3dAgentActionJsonV1 {
     ToolCall {

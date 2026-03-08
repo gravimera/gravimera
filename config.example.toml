@@ -73,9 +73,13 @@
 # Default: false (structural-only review: fix validate/motion issues; avoid cosmetic regen/transform churn).
 # review_appearance = false
 
-# Optional: require a backend that truly enforces Structured Outputs (strict JSON schema) for
-# Gen3D schema-constrained calls (agent steps / plan / component drafts / review delta / etc).
-# Recommended: keep enabled to avoid long "inspection-only" tails caused by ambiguous multi-JSON outputs.
+# Optional: request Structured Outputs (strict JSON schema) for Gen3D schema-constrained calls
+# (agent steps / plan / component drafts / review delta / etc).
+#
+# Notes:
+# - Recommended: keep enabled when your backend truly enforces schemas (best reliability).
+# - Some OpenAI-compatible gateways accept the schema fields but still emit multiple JSON objects;
+#   Gen3D will warn and attempt a best-effort coercion to a single JSON object.
 # Default: true.
 # require_structured_outputs = true
 

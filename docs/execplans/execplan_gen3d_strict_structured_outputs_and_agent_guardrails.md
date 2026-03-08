@@ -15,7 +15,7 @@ Gen3D runs should end promptly once the requested change is complete and the dra
 
 After this change:
 
-- Gen3D will be able to require a Structured-Outputs-capable backend for all schema-constrained calls (plan / component draft / agent step / review delta), failing fast (with a clear error) when the configured backend does not enforce strict structured outputs.
+- Gen3D will request strict Structured Outputs for all schema-constrained calls (plan / component draft / agent step / review delta). If a backend violates schema enforcement (for example returning multiple JSON objects), Gen3D will warn and attempt a best-effort coercion to a single JSON object; it only fails if it cannot recover.
 - When the model returns multiple `gen3d_agent_step_v1` JSON objects where the only meaningful difference is the presence of a trailing `done` action, Gen3D will accept the `done` step (ending the run promptly instead of continuing to “inspect”).
 - Gen3D will block `force:true` regenerations unless there are actual validate/smoke errors, preventing wasted regen budget and “thrashing” on already-OK drafts.
 - Gen3D will auto-finish runs that are “complete enough” (QA is OK, motion requirements satisfied, no pending work) instead of requesting additional agent steps; and the no-progress guard will stop after 3 no-progress steps by default.
@@ -25,7 +25,7 @@ User-visible success is: a small edit like “add a red hat on top” finishes i
 ## Progress
 
 - [x] (2026-03-08) Create this ExecPlan and check it in.
-- [x] (2026-03-08) Add a config switch to require strict structured outputs for Gen3D schema-constrained calls; enforce it in all AI backends (OpenAI/Gemini/Claude) with clear error messaging when unsupported or ignored.
+- [x] (2026-03-08) Add a config switch to require strict structured outputs for Gen3D schema-constrained calls; warn + recover when an OpenAI-compatible gateway ignores schema enforcement; fail with clear error messaging when the backend does not support schema-constrained outputs at all.
 - [x] (2026-03-08) Update `parse_agent_step()` to accept `done` when the only difference between candidates is the presence/absence of `done`.
 - [x] (2026-03-08) Track validate/smoke “last OK” state and block `force:true` regen unless validate/smoke has errors.
 - [x] (2026-03-08) Implement “auto-finish when complete enough” and reduce default no-progress max steps to 3; update docs/config example accordingly.
@@ -41,7 +41,7 @@ User-visible success is: a small edit like “add a red hat on top” finishes i
 ## Decision Log
 
 - Decision: Add an explicit “require structured outputs” config flag for Gen3D schema-constrained calls.
-  Rationale: “Best effort” fallback is helpful for compatibility, but it also hides misconfigured backends and can lead to long runs with ambiguous agent outputs. A strict mode makes reliability predictable and forces using a backend that actually enforces schemas.
+  Rationale: “Best effort” fallback is helpful for compatibility, but it can hide misconfigured backends and lead to long runs with ambiguous agent outputs. We still prefer strict schema enforcement, but for OpenAI-compatible gateways that accept schema fields yet emit multiple message outputs, we recover by coercing a single JSON object and logging a warning.
   Date/Author: 2026-03-08 / Codex
 
 - Decision: Accept `done` when it is a strict superset of a non-done candidate (same tool calls + trailing `done`).
@@ -58,7 +58,7 @@ User-visible success is: a small edit like “add a red hat on top” finishes i
 
 ## Outcomes & Retrospective
 
-- Added `gen3d.require_structured_outputs` (default true) and enforce it for all schema-constrained Gen3D calls.
+- Added `gen3d.require_structured_outputs` (default true). Gen3D requests strict schemas for all schema-constrained calls, warns when a backend violates enforcement, and attempts to coerce outputs back to a single JSON object.
 - Fixed `parse_agent_step()` to prefer a `done` step when it is a strict superset of the non-done candidate (same tool calls + trailing `done`).
 - Blocked `force:true` regen unless validate/smoke indicates errors (prevents churn after QA is clean).
 - Tightened the no-progress guard: default `no_progress_max_steps = 3`, and only auto-finishes when the run is objectively “complete enough”.
@@ -89,7 +89,10 @@ Terminology used in this plan:
 
 In `src/config.rs`, introduce a new `AppConfig` field under the existing Gen3D section. Parse it from `[gen3d]` in `config.toml`. Default should be enabled (true), since backwards compatibility is not required.
 
-Thread this flag into the Gen3D AI service calls so that when `expected_schema` is present and the backend rejects structured outputs (or appears to ignore it), the build errors immediately with a clear message that the configured backend is not suitable.
+Thread this flag into the Gen3D AI service calls so that when `expected_schema` is present:
+
+- if the backend rejects structured outputs entirely (unsupported parameters / unknown fields / not supported), the build errors immediately with a clear message that the configured backend is not suitable, and
+- if the backend appears to ignore enforcement (for example returning multiple JSON objects), Gen3D logs a warning and attempts to coerce a single JSON object; the build only errors if it cannot recover.
 
 Update `config.example.toml` with the new flag, explaining that it should remain enabled for reliable Gen3D.
 

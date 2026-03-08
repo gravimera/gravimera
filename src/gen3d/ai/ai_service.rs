@@ -2,9 +2,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+use bevy::log::warn;
+
 use crate::config::{ClaudeConfig, GeminiConfig, OpenAiConfig};
 
 use super::structured_outputs::Gen3dAiJsonSchemaKind;
+use super::{agent_parsing, artifacts, parse};
 use super::{Gen3dAiProgress, Gen3dAiSessionState, Gen3dAiTextResponse};
 
 #[derive(Clone, Debug)]
@@ -53,6 +56,56 @@ impl Gen3dAiServiceConfig {
     }
 }
 
+fn expected_version_for_schema(kind: Gen3dAiJsonSchemaKind) -> u64 {
+    match kind {
+        Gen3dAiJsonSchemaKind::AgentStepV1 => 1,
+        Gen3dAiJsonSchemaKind::PlanV1 => 8,
+        Gen3dAiJsonSchemaKind::ComponentDraftV1 => 2,
+        Gen3dAiJsonSchemaKind::ReviewDeltaV1 => 1,
+        Gen3dAiJsonSchemaKind::DescriptorMetaV1 => 1,
+        Gen3dAiJsonSchemaKind::MotionRolesV1 => 1,
+        Gen3dAiJsonSchemaKind::MotionAuthoringV1 => 1,
+    }
+}
+
+fn coerce_single_json_object_best_effort(
+    kind: Gen3dAiJsonSchemaKind,
+    text: &str,
+) -> Option<String> {
+    if matches!(kind, Gen3dAiJsonSchemaKind::AgentStepV1) {
+        if let Ok(step) = agent_parsing::parse_agent_step(text) {
+            if let Ok(out) = serde_json::to_string(&step) {
+                return Some(out);
+            }
+        }
+    }
+
+    let expected_version = expected_version_for_schema(kind);
+    let candidates = parse::extract_json_objects(text, 32);
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let mut last_object: Option<String> = None;
+    let mut last_version_match: Option<String> = None;
+    for candidate in candidates.into_iter() {
+        let candidate = candidate.trim();
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate) else {
+            continue;
+        };
+        if !value.is_object() {
+            continue;
+        }
+
+        last_object = Some(candidate.to_string());
+        if value.get("version").and_then(|v| v.as_u64()) == Some(expected_version) {
+            last_version_match = Some(candidate.to_string());
+        }
+    }
+
+    last_version_match.or(last_object)
+}
+
 pub(super) fn generate_text_via_ai_service(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: Gen3dAiSessionState,
@@ -67,7 +120,7 @@ pub(super) fn generate_text_via_ai_service(
     run_dir: Option<&Path>,
     artifact_prefix: &str,
 ) -> Result<Gen3dAiTextResponse, String> {
-    let resp = match ai {
+    let mut resp = match ai {
         Gen3dAiServiceConfig::OpenAi(openai) => super::openai::generate_text_via_openai(
             progress,
             session,
@@ -118,22 +171,53 @@ pub(super) fn generate_text_via_ai_service(
 
     if require_structured_outputs && expected_schema.is_some() {
         let trimmed = resp.text.trim();
-        let parsed: serde_json::Value = serde_json::from_str(trimmed).map_err(|err| {
-            let hint = super::parse::extract_json_objects(trimmed, 3);
-            if hint.len() > 1 {
-                format!(
-                    "Gen3D: backend did not enforce structured outputs (multiple JSON objects detected). service={} base_url={} err={err}",
-                    ai.service_label(),
-                    ai.base_url(),
-                )
-            } else {
-                format!(
-                    "Gen3D: backend did not enforce structured outputs (response is not a single JSON object). service={} base_url={} err={err}",
-                    ai.service_label(),
-                    ai.base_url(),
-                )
+        let parsed: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(err) => {
+                let kind = expected_schema.unwrap();
+                let hint = parse::extract_json_objects(trimmed, 3);
+                if let Some(coerced) = coerce_single_json_object_best_effort(kind, trimmed) {
+                    warn!(
+                        "Gen3D: backend did not enforce structured outputs; continuing best-effort. service={} base_url={} schema={kind:?} hint_objects={} err={}",
+                        ai.service_label(),
+                        ai.base_url(),
+                        hint.len(),
+                        err
+                    );
+                    artifacts::append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "structured_outputs_violation prefix={} schema={kind:?} service={} base_url={} hint_objects={} err={}",
+                            artifact_prefix,
+                            ai.service_label(),
+                            ai.base_url(),
+                            hint.len(),
+                            err
+                        ),
+                    );
+                    resp.text = coerced;
+                    serde_json::from_str(resp.text.trim()).map_err(|err2| {
+                        format!(
+                            "Gen3D: backend did not enforce structured outputs (response could not be coerced into a single JSON object). service={} base_url={} err={err2}",
+                            ai.service_label(),
+                            ai.base_url(),
+                        )
+                    })?
+                } else if hint.len() > 1 {
+                    return Err(format!(
+                        "Gen3D: backend did not enforce structured outputs (multiple JSON objects detected). service={} base_url={} err={err}",
+                        ai.service_label(),
+                        ai.base_url(),
+                    ));
+                } else {
+                    return Err(format!(
+                        "Gen3D: backend did not enforce structured outputs (response is not a single JSON object). service={} base_url={} err={err}",
+                        ai.service_label(),
+                        ai.base_url(),
+                    ));
+                }
             }
-        })?;
+        };
         if !parsed.is_object() {
             return Err(format!(
                 "Gen3D: backend did not enforce structured outputs (expected a JSON object, got {}). service={} base_url={}",
@@ -152,4 +236,36 @@ pub(super) fn generate_text_via_ai_service(
     }
 
     Ok(resp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gen3d::agent::Gen3dAgentActionJsonV1;
+
+    #[test]
+    fn coerce_agent_step_prefers_non_done_candidate() {
+        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"list_tools_v1","args":{}}]}{"version":1,"status_summary":"second","actions":[{"kind":"done","reason":"stop"}]}"#;
+        let coerced =
+            coerce_single_json_object_best_effort(Gen3dAiJsonSchemaKind::AgentStepV1, text)
+                .expect("coerce");
+        let step: crate::gen3d::agent::Gen3dAgentStepJsonV1 =
+            serde_json::from_str(&coerced).expect("parse coerced JSON");
+        assert_eq!(step.version, 1);
+        assert_eq!(step.status_summary, "first");
+        assert_eq!(step.actions.len(), 1);
+        assert!(matches!(
+            step.actions[0],
+            Gen3dAgentActionJsonV1::ToolCall { .. }
+        ));
+    }
+
+    #[test]
+    fn coerce_prefers_last_version_match_for_non_agent_schema() {
+        let text = r#"{"version":7} noise {"version":8}"#;
+        let coerced = coerce_single_json_object_best_effort(Gen3dAiJsonSchemaKind::PlanV1, text)
+            .expect("coerce");
+        let value: serde_json::Value = serde_json::from_str(&coerced).expect("parse coerced JSON");
+        assert_eq!(value.get("version").and_then(|v| v.as_u64()), Some(8));
+    }
 }
