@@ -37,6 +37,9 @@ Example done:\n\
 {\"version\":1,\"status_summary\":\"Build finished.\",\"actions\":[{\"kind\":\"done\",\"reason\":\"All required QA is ok.\"}]}\n\n\
 Rules:\n\
 - Use tools to read/modify state. Do not assume the engine will auto-fix anything.\n\
+- Tool args are strict JSON objects. Do NOT invent arg keys.\n\
+  - To get the authoritative arg keys, call `list_tools_v1` and follow each tool's `args_schema` + `args_example`.\n\
+  - Some tools reject unknown keys (hard error). Example: `snapshot_v1` uses `label` (NOT `name`).\n\
 - Prefer small, explainable steps that improve basic structure and correctness.\n\
 - Prioritize BASIC STRUCTURE over tiny details. This is a voxel/pixel-art game; do not chase micro-adjustments forever.\n\
 - STOP when the model is good enough:\n\
@@ -52,16 +55,16 @@ Rules:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
     - qa_v1 runs validate_v1 + smoke_check_v1 and returns a combined summary.\n\
-  - If review_appearance=true: do visual QA in WAVES to reduce LLM wall time.\n\
-    - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\
+- If review_appearance=true: do visual QA in WAVES to reduce LLM wall time.\n\
+  - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\
   - IMPORTANT: planning must be its OWN step.\n\
     - If you call llm_generate_plan_v1, DO NOT include llm_generate_components_v1/llm_generate_component_v1 in the same step.\n\
     - End the step after planning so you can observe `reuse_groups`/state before deciding what to generate.\n\
     - The engine will end the step after a successful llm_generate_plan_v1 even if you requested more actions.\n\
   - Avoid calling llm_review_delta_v1 after every single component if you can generate a batch first.\n\
   - If review_appearance=true: after any render_preview_v1, immediately call llm_review_delta_v1 using the rendered images.\n\
-  - Do NOT use placeholder paths like `$CALL_1.images[0]` in tool args; the engine does not substitute tool outputs into later tool calls.\n\
-    To review the latest render, call llm_review_delta_v1 with no `preview_images` (it will use the latest render cache), or pass `{ \"rendered_images_from_cache\": true }`.\n\
+- Do NOT use placeholder paths like `$CALL_1.images[0]` in tool args; the engine does not substitute tool outputs into later tool calls.\n\
+  To review the latest render, call llm_review_delta_v1 with no `preview_images` (it will use the latest render cache).\n\
   - If review_appearance=true: do not finish a run without reviewing the latest renders.\n\
   - For vehicles/wheeled objects, always include TOP and BOTTOM views (they reveal wheel/axle/undercarriage issues). A good default is: views=[\"front\",\"left_back\",\"right_back\",\"top\",\"bottom\"].\n\
   - For speed, prefer smaller preview renders during iteration (example: render_preview_v1 image_size=768). Only increase resolution if you truly need extra detail.\n\
@@ -435,7 +438,7 @@ pub(super) fn build_agent_user_text(
     out.push('\n');
     out.push_str(&format!("Input images: {}\n\n", job.user_images.len()));
 
-    out.push_str("Available tools (call list_tools_v1 to get the full JSON list):\n");
+    out.push_str("Available tools (call list_tools_v1 for args_schema + args_example):\n");
     for tool in registry.list() {
         out.push_str(&format!("- {}: {}\n", tool.tool_id, tool.one_line_summary));
     }

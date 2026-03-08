@@ -261,8 +261,13 @@ If we introduce `start_task_v1` / `poll_task_v1` / `cancel_task_v1`, define:
 
 - First-class snapshots for safe iteration:
   - `snapshot_v1` → `{ snapshot_id }` (captures draft + planned_components + key job state)
+    - Args: `{ "version"?: 1, "snapshot_id"?: string, "label"?: string }` (use `label`, not `name`).
+  - `list_snapshots_v1` → `{ snapshots: [...] }`
+    - Args: `{ "version"?: 1, "max_items"?: number }`.
   - `diff_snapshots_v1` (structured diff)
+    - Args: `{ "version"?: 1, "a": string, "b": string, "max_components"?: number }`.
   - `restore_snapshot_v1`
+    - Args: `{ "version"?: 1, "snapshot_id": string }`.
   - `undo_last_ops_v1` (only if ops are guaranteed reversible)
 - Prefer replayability:
   - store applied ops as JSONL (“transaction log”) and ensure deterministic replay.
