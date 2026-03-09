@@ -17,7 +17,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Console: `Enter` (commands: `/easy`, `/hard`, `/hell`; cheat: `who's your daddy` (+ optional amount) boosts all commandable units)
 - HUD stats (top-right): object count, primitive count, FPS
 - Zoom: mouse wheel (in/out; no orbit/rotation; scrolling over **Models**/**Meta** panels scrolls their lists instead)
-- Meta panel Speak: double-click a unit selection circle to open **Meta**, then use **Speak** (voice: `dog`/`cow`/`dragon`, `content` field, `Speak` button).
+- Meta panel Speak: double-click a unit selection circle to open **Meta**, then use **Speak** (voice: `dog`/`cow`/`dragon`, `content` field, `Speak` button). While speaking, a speech bubble appears above that model showing the spoken content.
 - Camera pan (mouse): move cursor near the window edge
 - Camera pan (keyboard): `W` / `A` / `S` / `D` when nothing is selected
 - Camera rotate: `Z` / `X` / `Q` / `E` (Up/Down/Left/Right)

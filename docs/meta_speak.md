@@ -18,6 +18,7 @@ Gravimera vendors `soundtest` inside this repository at `third_party/soundtest` 
 
 - Adapter module: `src/meta_speak.rs`
 - UI wiring: `src/motion_ui.rs`
+- Bubble command + rendering: `src/types.rs` (`ModelSpeechBubbleCommand`) and `src/ui.rs`
 
 Core abstraction:
 
@@ -26,6 +27,25 @@ Core abstraction:
 - `MetaSpeakRuntime` resource: stores adapter as `Arc<dyn MetaSpeakAdapter>`
 
 This keeps the Meta UI stable if we later swap the backend implementation.
+
+## Speech Bubble Channel (Trigger-Agnostic)
+
+Speech bubbles are not coupled to the Meta panel input widgets. The UI uses a command message channel:
+
+- `ModelSpeechBubbleCommand::Start { entity, text, source }`
+- `ModelSpeechBubbleCommand::Stop { entity }`
+
+Current producer:
+
+- Meta panel Speak button (`source = MetaUi`)
+
+Planned producer:
+
+- Network-triggered model speech (`source = Network`)
+
+Because rendering only consumes the command channel, future trigger/content changes do not require refactoring bubble rendering logic.
+
+When speech starts, a bubble appears above the speaking model; when speech finishes/fails/stops, the bubble is removed.
 
 ## Backend Resolution
 

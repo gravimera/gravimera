@@ -683,6 +683,25 @@ pub(crate) struct HealthChangeEvent {
     pub(crate) is_hero: bool,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModelSpeechSource {
+    MetaUi,
+    Network,
+}
+
+#[derive(Message, Debug, Clone)]
+pub(crate) enum ModelSpeechBubbleCommand {
+    Start {
+        entity: Entity,
+        text: String,
+        source: ModelSpeechSource,
+    },
+    Stop {
+        entity: Entity,
+    },
+}
+
 #[derive(Resource)]
 pub(crate) struct Aim {
     pub(crate) direction: Vec3,

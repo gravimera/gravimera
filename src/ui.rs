@@ -19,6 +19,9 @@ const HEALTH_POPUP_START_OFFSET_PX: Vec2 = Vec2::new(0.0, -14.0);
 const HEALTH_POPUP_JITTER_X_PX: f32 = 14.0;
 const HEALTH_POPUP_JITTER_Y_PX: f32 = 6.0;
 const HEALTH_POPUP_FADE_START_T: f32 = 0.55;
+const MODEL_SPEECH_BUBBLE_MAX_CHARS: usize = 120;
+const MODEL_SPEECH_BUBBLE_MIN_OFFSET_Y: f32 = 1.6;
+const MODEL_SPEECH_BUBBLE_BASE_OFFSET_PX: Vec2 = Vec2::new(0.0, -48.0);
 
 #[derive(Component)]
 pub(crate) struct HealthChangePopup {
@@ -29,6 +32,13 @@ pub(crate) struct HealthChangePopup {
     pub(crate) base_offset_px: Vec2,
     pub(crate) fade_start_t: f32,
     pub(crate) base_color: Color,
+}
+
+#[derive(Component, Debug, Clone)]
+pub(crate) struct ModelSpeechBubble {
+    pub(crate) target: Entity,
+    pub(crate) text: String,
+    pub(crate) source: ModelSpeechSource,
 }
 
 pub(crate) fn update_window_title(
@@ -271,6 +281,129 @@ pub(crate) fn update_health_change_popups(
             1.0 - fade_t
         };
         color.0 = popup.base_color.with_alpha(alpha);
+    }
+}
+
+pub(crate) fn apply_model_speech_bubble_commands(
+    mut commands: Commands,
+    mut cmd_events: MessageReader<ModelSpeechBubbleCommand>,
+    mut existing_bubbles: Query<(Entity, &mut ModelSpeechBubble, &mut Text, &mut Visibility)>,
+) {
+    for event in cmd_events.read() {
+        match event {
+            ModelSpeechBubbleCommand::Start {
+                entity,
+                text,
+                source,
+            } => {
+                let mut truncated = String::new();
+                let mut chars = text.trim().chars();
+                for _ in 0..MODEL_SPEECH_BUBBLE_MAX_CHARS {
+                    let Some(ch) = chars.next() else {
+                        break;
+                    };
+                    if ch.is_control() && ch != '\n' && ch != '\t' {
+                        continue;
+                    }
+                    truncated.push(ch);
+                }
+                if chars.next().is_some() {
+                    truncated.push_str("...");
+                }
+                if truncated.trim().is_empty() {
+                    continue;
+                }
+
+                if let Some((_, mut bubble, mut bubble_text, mut visibility)) = existing_bubbles
+                    .iter_mut()
+                    .find(|(_, bubble, _, _)| bubble.target == *entity)
+                {
+                    bubble.text = truncated.clone();
+                    bubble.source = *source;
+                    *bubble_text = Text::new(truncated);
+                    *visibility = Visibility::Inherited;
+                    continue;
+                }
+
+                commands.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        max_width: Val::Px(320.0),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(7.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(10.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.98, 0.98, 1.0, 0.90)),
+                    BorderColor::all(Color::srgba(0.12, 0.12, 0.14, 0.80)),
+                    ZIndex(220),
+                    Text::new(truncated.clone()),
+                    TextFont {
+                        font_size: 13.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.10, 0.10, 0.12)),
+                    TextLayout {
+                        justify: Justify::Center,
+                        linebreak: LineBreak::WordBoundary,
+                    },
+                    TextShadow {
+                        offset: Vec2::splat(1.0),
+                        color: Color::linear_rgba(0.0, 0.0, 0.0, 0.12),
+                    },
+                    ModelSpeechBubble {
+                        target: *entity,
+                        text: truncated,
+                        source: *source,
+                    },
+                ));
+            }
+            ModelSpeechBubbleCommand::Stop { entity } => {
+                for (bubble_entity, bubble, _, _) in &existing_bubbles {
+                    if bubble.target == *entity {
+                        commands.entity(bubble_entity).try_despawn();
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn update_model_speech_bubbles(
+    mut commands: Commands,
+    library: Res<ObjectLibrary>,
+    camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
+    targets: Query<(&Transform, &ObjectPrefabId)>,
+    mut bubbles: Query<(Entity, &mut Node, &mut Visibility, &ModelSpeechBubble)>,
+) {
+    let Ok((camera, camera_transform)) = camera_q.single() else {
+        return;
+    };
+    let camera_global = GlobalTransform::from(*camera_transform);
+
+    for (bubble_entity, mut node, mut visibility, bubble) in &mut bubbles {
+        let Ok((target_transform, prefab_id)) = targets.get(bubble.target) else {
+            commands.entity(bubble_entity).try_despawn();
+            continue;
+        };
+
+        let offset_y = library
+            .health_bar_offset_y(prefab_id.0)
+            .unwrap_or(MODEL_SPEECH_BUBBLE_MIN_OFFSET_Y)
+            .max(MODEL_SPEECH_BUBBLE_MIN_OFFSET_Y);
+        let anchor_world = target_transform.translation + Vec3::Y * offset_y;
+
+        let Ok(mut screen_pos) = camera.world_to_viewport(&camera_global, anchor_world) else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        screen_pos += MODEL_SPEECH_BUBBLE_BASE_OFFSET_PX;
+
+        node.left = Val::Px(screen_pos.x);
+        node.top = Val::Px(screen_pos.y);
+        *visibility = Visibility::Inherited;
     }
 }
 

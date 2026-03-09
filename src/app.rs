@@ -472,6 +472,7 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<SpawnRatios>();
     app.add_message::<AppExit>();
     app.add_message::<HealthChangeEvent>();
+    app.add_message::<ModelSpeechBubbleCommand>();
     app.add_message::<scene_store::SceneSaveRequest>();
     app.insert_resource(headless::HeadlessExit {
         timer: exit_after_seconds.map(|secs| Timer::from_seconds(secs, TimerMode::Once)),
@@ -573,6 +574,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.add_plugins(crate::automation::AutomationPlugin);
     app.add_message::<AppExit>();
     app.add_message::<HealthChangeEvent>();
+    app.add_message::<ModelSpeechBubbleCommand>();
     app.init_resource::<scene_store::SceneAutosaveState>();
     app.add_message::<scene_store::SceneSaveRequest>();
 

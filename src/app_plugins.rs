@@ -668,8 +668,14 @@ impl Plugin for RenderedGameplayPlugin {
             PostUpdate,
             (
                 crate::ui::spawn_health_change_popups.in_set(UiSystems::Content),
-                crate::ui::update_health_change_popups
+                crate::ui::apply_model_speech_bubble_commands
                     .after(crate::ui::spawn_health_change_popups)
+                    .in_set(UiSystems::Content),
+                crate::ui::update_model_speech_bubbles
+                    .after(crate::ui::apply_model_speech_bubble_commands)
+                    .in_set(UiSystems::Content),
+                crate::ui::update_health_change_popups
+                    .after(crate::ui::update_model_speech_bubbles)
                     .in_set(UiSystems::Content),
             ),
         );

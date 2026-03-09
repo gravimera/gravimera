@@ -25,8 +25,8 @@ use crate::threaded_result::{
     new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
 };
 use crate::types::{
-    BuildScene, Collider, Commandable, GameMode, MoveOrder, ObjectForms, ObjectId, ObjectPrefabId,
-    ObjectTint, SelectionState,
+    BuildScene, Collider, Commandable, GameMode, ModelSpeechBubbleCommand, ModelSpeechSource,
+    MoveOrder, ObjectForms, ObjectId, ObjectPrefabId, ObjectTint, SelectionState,
 };
 
 const PANEL_Z_INDEX: i32 = 940;
@@ -58,6 +58,7 @@ pub(crate) struct MotionAlgorithmUiState {
     speak_voice: MetaSpeakVoice,
     speak_content: String,
     speak_content_focused: bool,
+    speak_target: Option<Entity>,
     speak_job: Option<SharedResult<MetaSpeakOutcome, String>>,
     speak_running: bool,
     speak_status: Option<String>,
@@ -82,6 +83,7 @@ impl Default for MotionAlgorithmUiState {
             speak_voice: MetaSpeakVoice::Dog,
             speak_content: String::new(),
             speak_content_focused: false,
+            speak_target: None,
             speak_job: None,
             speak_running: false,
             speak_status: None,
@@ -112,8 +114,6 @@ impl MotionAlgorithmUiState {
         self.brain_modules_job = None;
         self.brain_modules.clear();
         self.speak_content_focused = false;
-        self.speak_job = None;
-        self.speak_running = false;
         self.speak_status = None;
         self.speak_error = None;
     }
@@ -134,6 +134,7 @@ impl MotionAlgorithmUiState {
         self.speak_running = false;
         self.speak_status = None;
         self.speak_error = None;
+        // Keep `speak_target` until a system with message writer emits Stop.
     }
 }
 
@@ -330,11 +331,16 @@ pub(crate) fn setup_motion_algorithm_ui(mut commands: Commands) {
 pub(crate) fn motion_algorithm_ui_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<MotionAlgorithmUiState>,
+    mut speech_events: MessageWriter<ModelSpeechBubbleCommand>,
 ) {
     if !state.open {
         return;
     }
     if keys.just_pressed(KeyCode::Escape) {
+        if let Some(entity) = state.speak_target.or(state.target) {
+            speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+            state.speak_target = None;
+        }
         state.close();
     }
 }
@@ -355,27 +361,44 @@ pub(crate) fn motion_algorithm_ui_update(
     list: Query<Entity, With<MotionAlgorithmUiList>>,
     existing_items: Query<Entity, With<MotionAlgorithmUiListItem>>,
     mut scroll_panels: Query<&mut ScrollPosition, With<MotionAlgorithmUiScrollPanel>>,
+    mut speech_events: MessageWriter<ModelSpeechBubbleCommand>,
 ) {
     let Ok(mut visibility) = roots_ui.single_mut() else {
         return;
     };
 
     let Some(target) = state.target else {
+        if let Some(entity) = state.speak_target {
+            speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+            state.speak_target = None;
+        }
         state.open = false;
         *visibility = Visibility::Hidden;
         return;
     };
     if !state.open {
+        if let Some(entity) = state.speak_target {
+            speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+            state.speak_target = None;
+        }
         *visibility = Visibility::Hidden;
         return;
     }
 
     let Ok((prefab_id, controller, brain)) = roots.get(target) else {
+        if let Some(entity) = state.speak_target.or(Some(target)) {
+            speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+            state.speak_target = None;
+        }
         state.close();
         *visibility = Visibility::Hidden;
         return;
     };
     let Some(prefab_id) = prefab_id else {
+        if let Some(entity) = state.speak_target.or(Some(target)) {
+            speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+            state.speak_target = None;
+        }
         state.close();
         *visibility = Visibility::Hidden;
         return;
@@ -385,6 +408,17 @@ pub(crate) fn motion_algorithm_ui_update(
 
     let target_changed = state.last_built_target != state.target;
     if target_changed {
+        if let Some(prev_target) = state.last_built_target {
+            if state.speak_running && state.speak_target == Some(prev_target) {
+                speech_events.write(ModelSpeechBubbleCommand::Stop {
+                    entity: prev_target,
+                });
+                state.speak_target = None;
+                state.speak_job = None;
+                state.speak_running = false;
+                state.speak_status = None;
+            }
+        }
         state.needs_rebuild = true;
         state.scrollbar_drag = None;
         if let Ok(mut scroll_pos) = scroll_panels.single_mut() {
@@ -519,6 +553,10 @@ pub(crate) fn motion_algorithm_ui_update(
             state.speak_running = false;
             match result {
                 Ok(outcome) => {
+                    if let Some(entity) = state.speak_target {
+                        speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+                        state.speak_target = None;
+                    }
                     state.speak_status = Some(format!(
                         "Spoken via {} ({})",
                         outcome.backend,
@@ -527,6 +565,10 @@ pub(crate) fn motion_algorithm_ui_update(
                     state.speak_error = None;
                 }
                 Err(err) => {
+                    if let Some(entity) = state.speak_target {
+                        speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+                        state.speak_target = None;
+                    }
                     state.speak_status = None;
                     state.speak_error = Some(err);
                 }
@@ -1773,6 +1815,7 @@ pub(crate) fn meta_brain_ui_button_clicks(
 pub(crate) fn meta_speak_ui_button_clicks(
     runtime: Res<MetaSpeakRuntime>,
     mut state: ResMut<MotionAlgorithmUiState>,
+    mut speech_events: MessageWriter<ModelSpeechBubbleCommand>,
     mut voice_buttons: Query<
         (&Interaction, &MetaSpeakUiVoiceButton),
         (
@@ -1813,6 +1856,9 @@ pub(crate) fn meta_speak_ui_button_clicks(
         if state.speak_running || state.speak_job.is_some() {
             continue;
         }
+        let Some(target) = state.target else {
+            continue;
+        };
         let content = state.speak_content.trim().to_string();
         if content.is_empty() {
             state.speak_error = Some("Please enter content first.".to_string());
@@ -1826,7 +1872,7 @@ pub(crate) fn meta_speak_ui_button_clicks(
         let adapter = runtime.adapter();
         let request = MetaSpeakRequest {
             voice,
-            content,
+            content: content.clone(),
             volume: 1.0,
         };
 
@@ -1841,7 +1887,13 @@ pub(crate) fn meta_speak_ui_button_clicks(
         state.speak_running = true;
         state.speak_error = None;
         state.speak_status = Some("Speaking...".to_string());
+        state.speak_target = Some(target);
         state.speak_job = Some(shared);
+        speech_events.write(ModelSpeechBubbleCommand::Start {
+            entity: target,
+            text: content,
+            source: ModelSpeechSource::MetaUi,
+        });
         state.needs_rebuild = true;
     }
 }
@@ -1860,6 +1912,7 @@ pub(crate) fn meta_gen3d_ui_button_clicks(
     mut next_mode: ResMut<NextState<GameMode>>,
     mut next_build_scene: ResMut<NextState<BuildScene>>,
     mut state: ResMut<MotionAlgorithmUiState>,
+    mut speech_events: MessageWriter<ModelSpeechBubbleCommand>,
     units: Query<
         (
             &Transform,
@@ -1956,6 +2009,10 @@ pub(crate) fn meta_gen3d_ui_button_clicks(
                 });
                 next_mode.set(GameMode::Build);
                 next_build_scene.set(BuildScene::Preview);
+                if let Some(entity) = state.speak_target.or(Some(target)) {
+                    speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+                    state.speak_target = None;
+                }
                 state.close();
             }
         }
