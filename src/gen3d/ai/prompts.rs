@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::schema::AiContactKindJson;
+use super::schema::{AiContactKindJson, AiJointKindJson};
 use super::Gen3dPlannedComponent;
 use crate::gen3d::state::{Gen3dDraft, Gen3dSpeedMode};
 
@@ -1230,6 +1230,9 @@ Rules:\n\
   - These authored keyframes animate the ATTACHMENT OFFSET for that edge.\n\
   - `delta` transforms are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
   - The engine applies: animated_offset = base_offset * delta(t).\n\
+- Hinge joints (IMPORTANT):\n\
+  - If an edge's attachment joint is `kind=hinge`, `axis_join` is expressed in the JOIN frame.\n\
+  - Any authored rotation MUST be a pure twist about `axis_join` (no off-axis swing), or motion validation will fail with `hinge_off_axis`.\n\
 - `replace_channels`:\n\
   - If decision=author_clips, list the channels you want the engine to REPLACE on targeted edges before adding your slots.\n\
   - If decision=regen_geometry_required, set replace_channels=[] and edges=[] (do not author clips).\n\
@@ -1483,6 +1486,44 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
         let join_up_world = join_rot_world * Vec3::Y;
         let join_forward_world = join_rot_world * Vec3::Z;
 
+        let joint_summary = att
+            .joint
+            .as_ref()
+            .map(|j| {
+                let kind = match j.kind {
+                    AiJointKindJson::Fixed => "fixed",
+                    AiJointKindJson::Hinge => "hinge",
+                    AiJointKindJson::Ball => "ball",
+                    AiJointKindJson::Free => "free",
+                    AiJointKindJson::Unknown => "unknown",
+                };
+                let mut out = format!("{{kind={kind}");
+                if let Some(axis) = j.axis_join {
+                    out.push_str(&format!(
+                        ",axis_join={}",
+                        fmt_vec3(Vec3::new(axis[0], axis[1], axis[2]))
+                    ));
+                } else {
+                    out.push_str(",axis_join=null");
+                }
+                if let Some([min_deg, max_deg]) = j.limits_degrees {
+                    out.push_str(&format!(",limits_degrees=[{min_deg:.1},{max_deg:.1}]"));
+                }
+                if let Some([min_deg, max_deg]) = j.swing_limits_degrees {
+                    out.push_str(&format!(
+                        ",swing_limits_degrees=[{min_deg:.1},{max_deg:.1}]"
+                    ));
+                }
+                if let Some([min_deg, max_deg]) = j.twist_limits_degrees {
+                    out.push_str(&format!(
+                        ",twist_limits_degrees=[{min_deg:.1},{max_deg:.1}]"
+                    ));
+                }
+                out.push('}');
+                out
+            })
+            .unwrap_or_else(|| "null".to_string());
+
         let slots: Vec<String> = att
             .animations
             .iter()
@@ -1503,13 +1544,14 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             .collect();
 
         out.push_str(&format!(
-            "- child={} parent={} parent_anchor={} child_anchor={} base_offset.pos(join)={} base_offset.rot_quat_xyzw(join)={} join_right_world={} join_up_world={} join_forward_world={} existing_slots={:?}",
+            "- child={} parent={} parent_anchor={} child_anchor={} base_offset.pos(join)={} base_offset.rot_quat_xyzw(join)={} joint={} join_right_world={} join_up_world={} join_forward_world={} existing_slots={:?}",
             child.name.trim(),
             att.parent.trim(),
             att.parent_anchor.trim(),
             att.child_anchor.trim(),
             fmt_vec3(att.offset.translation),
             fmt_quat_xyzw(att.offset.rotation),
+            joint_summary,
             fmt_vec3(join_right_world),
             fmt_vec3(join_up_world),
             fmt_vec3(join_forward_world),

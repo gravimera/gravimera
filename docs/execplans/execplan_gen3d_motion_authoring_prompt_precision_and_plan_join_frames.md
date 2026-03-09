@@ -24,6 +24,7 @@ User-visible verification is via cache artifacts: the new prompt text should app
 - [x] (2026-03-05) Tighten plan prompt join-frame wording to match engine validation (require positive dot for forward/up; explain how to fix when negative).
 - [x] (2026-03-05) Update docs index to include this ExecPlan (`docs/execplans/README.md`).
 - [x] (2026-03-05) Run rendered smoke test and commit.
+- [x] (2026-03-10) Include per-edge joint constraints (kind/axis/limits) in the motion-authoring prompt, add a hinge-axis rule to the motion-authoring system prompt, and guide the agent to re-author motion when QA reports `hinge_off_axis`.
 
 ## Surprises & Discoveries
 
@@ -49,6 +50,7 @@ This work narrows the gap between deterministic engine validation and what the L
 
 - Motion authoring is explicitly instructed to minimize output size (fewer edges, fewer keyframes, smaller `replace_channels`), so large “author everything” outputs should be rarer and faster.
 - Motion authoring sees the same “ground contact + stance schedule” facts that motion validation uses, including derived slip/lift tolerances tied to `rig.move_cycle_m`, improving convergence on planted-contact locomotion.
+- Motion authoring also sees per-edge joint constraints (including hinge `axis_join` and limits), and is explicitly instructed that hinge rotations must be a pure twist around `axis_join` (reducing `hinge_off_axis` QA failures).
 - Plan generation is less likely to trigger join-frame schema repair loops because the prompt states the exact engine guardrail (`dot(...) > 0` for forward and up, in component-local coordinates) and provides a concrete fix strategy.
 
 Remaining gap: cache artifacts like `tool_*_responses_raw.txt` can still be large because they store the streaming event log (SSE deltas). This plan did not change artifact logging.
