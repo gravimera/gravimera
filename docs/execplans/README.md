@@ -1,6 +1,7 @@
 This folder contains ExecPlans (execution plans) for larger features and refactors.
 
 - Active plan: `docs/execplans/execplan_gen3d_codex_json_editing.md`
+- Gen3D preserve-mode edit policies + plan diff validation (draft): `docs/execplans/execplan_gen3d_preserve_mode_edit_policies_and_plan_diff_validation.md`
 - Gen3D removal: runtime motion + motion mapping + describe tool (2026-03-09): `docs/execplans/execplan_gen3d_remove_motion_algorithms_mapping_and_describe_tool.md`
 - Previous Gen3D agent-loop plan (historical): `docs/execplans/execplan_gen3d_codex_style_agent.md`
 - Gen3D model export (glTF/GLB + editable bundles): `docs/execplans/execplan_gen3d_export_glb.md`
