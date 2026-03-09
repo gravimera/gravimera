@@ -19,10 +19,22 @@ When preserve mode is enabled **and** the current draft already contains generat
 
 - The new plan **must** include **all existing component names** (no renames/deletes).
 - The new plan **must** keep the same **root component** name.
+- The plan is validated against a **preserve edit policy** (selected via `constraints.preserve_edit_policy`):
+  - `additive` (default): existing components’ attachments are frozen; only additive changes are allowed (add components / add anchors).
+  - `allow_offsets`: keep the same attachment interfaces, but allow changing `attach_to.offset` for existing components.
+  - `allow_rewire`: allow rewiring only an explicit allow-list (`constraints.rewire_components`); all other existing components remain frozen.
 - The engine merges plan metadata into the existing draft **without overwriting existing primitive/model geometry** for already-generated components.
 - Existing anchor frames are preserved for existing anchor names; the plan may add new anchors (new names) deterministically.
 
-If the plan violates the guardrails, `llm_generate_plan_v1` returns a tool error and the draft is left unchanged.
+If the plan violates the guardrails (including the selected edit policy), `llm_generate_plan_v1` returns a tool error and the draft is left unchanged.
+
+Notes:
+
+- If you want to reposition parts without replanning, prefer `apply_draft_ops_v1`:
+  - `SetAttachmentOffset` (move an existing component along its attachment edge),
+  - `SetAnchorTransform` (adjust a join frame), and
+  - primitive part ops (add/remove/update geometry).
+- If you want to change animation clips, prefer `llm_generate_motion_authoring_v1` (or `apply_draft_ops_v1` animation slot ops).
 
 ## Preserve Mode (Generation Tools)
 

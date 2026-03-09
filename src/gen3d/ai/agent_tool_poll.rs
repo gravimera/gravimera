@@ -266,6 +266,27 @@ pub(super) fn poll_agent_tool(
                         .and_then(|v| v.get("preserve_existing_components"))
                         .and_then(|v| v.as_bool())
                         .unwrap_or(job.preserve_existing_components_mode);
+                    let preserve_edit_policy_raw = call
+                        .args
+                        .get("constraints")
+                        .and_then(|v| v.get("preserve_edit_policy"))
+                        .and_then(|v| v.as_str());
+                    let preserve_edit_policy = super::preserve_plan_policy::parse_preserve_edit_policy(
+                        preserve_edit_policy_raw,
+                    );
+                    let rewire_components: Vec<String> = call
+                        .args
+                        .get("constraints")
+                        .and_then(|v| v.get("rewire_components"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str())
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
                     match parse::parse_ai_plan_from_text(&text) {
                         Ok(plan) => {
                             let plan_reuse_groups = plan.reuse_groups.clone();
@@ -297,39 +318,81 @@ pub(super) fn poll_agent_tool(
                                         && draft.total_non_projectile_primitive_parts() > 0;
 
                                     let preserve_error = if can_preserve_geometry {
-                                        let old_names: std::collections::HashSet<String> =
-                                            old_components
+                                        if preserve_edit_policy.is_none() {
+                                            let raw = preserve_edit_policy_raw
+                                                .unwrap_or("<none>")
+                                                .trim();
+                                            Some(format!(
+                                                "Invalid constraints.preserve_edit_policy={raw:?}. Expected one of: \"additive\", \"allow_offsets\", \"allow_rewire\"."
+                                            ))
+                                        } else {
+                                            let preserve_edit_policy = preserve_edit_policy
+                                                .unwrap_or(super::preserve_plan_policy::PreserveEditPolicy::Additive);
+
+                                            let old_names: std::collections::HashSet<String> =
+                                                old_components
+                                                    .iter()
+                                                    .map(|c| c.name.clone())
+                                                    .collect();
+                                            let new_names: std::collections::HashSet<String> = planned
                                                 .iter()
                                                 .map(|c| c.name.clone())
                                                 .collect();
-                                        let new_names: std::collections::HashSet<String> = planned
-                                            .iter()
-                                            .map(|c| c.name.clone())
-                                            .collect();
-                                        let mut missing: Vec<String> = old_names
-                                            .difference(&new_names)
-                                            .cloned()
-                                            .collect::<Vec<_>>();
-                                        missing.sort();
-                                        if !missing.is_empty() {
-                                            Some(format!(
-                                                "llm_generate_plan_v1 preserve_existing_components=true requires the plan to include ALL existing component names. Missing: {missing:?}"
-                                            ))
-                                        } else if let Some(old_root_name) = old_root_name.as_ref()
-                                        {
-                                            let new_root_name = planned
-                                                .iter()
-                                                .find(|c| c.attach_to.is_none())
-                                                .map(|c| c.name.as_str())
-                                                .unwrap_or("");
-                                            (new_root_name != old_root_name.as_str()).then(|| {
-                                                format!(
-                                                    "llm_generate_plan_v1 preserve_existing_components=true must keep the same root component. Old root=`{}`, new root=`{}`",
-                                                    old_root_name, new_root_name
-                                                )
-                                            })
-                                        } else {
-                                            None
+                                            let mut missing: Vec<String> = old_names
+                                                .difference(&new_names)
+                                                .cloned()
+                                                .collect::<Vec<_>>();
+                                            missing.sort();
+                                            if !missing.is_empty() {
+                                                Some(format!(
+                                                    "llm_generate_plan_v1 preserve_existing_components=true requires the plan to include ALL existing component names. Missing: {missing:?}"
+                                                ))
+                                            } else if let Some(old_root_name) = old_root_name.as_ref()
+                                            {
+                                                let new_root_name = planned
+                                                    .iter()
+                                                    .find(|c| c.attach_to.is_none())
+                                                    .map(|c| c.name.as_str())
+                                                    .unwrap_or("");
+                                                (new_root_name != old_root_name.as_str()).then(|| {
+                                                    format!(
+                                                        "llm_generate_plan_v1 preserve_existing_components=true must keep the same root component. Old root=`{}`, new root=`{}`",
+                                                        old_root_name, new_root_name
+                                                    )
+                                                })
+                                            } else {
+                                                let violations = super::preserve_plan_policy::validate_preserve_mode_plan_diff(
+                                                    &old_components,
+                                                    &planned,
+                                                    preserve_edit_policy,
+                                                    &rewire_components,
+                                                );
+                                                if violations.is_empty() {
+                                                    None
+                                                } else {
+                                                    let mut lines: Vec<String> = Vec::new();
+                                                    lines.push(format!(
+                                                        "llm_generate_plan_v1 preserve_existing_components=true edit_policy={} rejected plan diff:",
+                                                        preserve_edit_policy.as_str()
+                                                    ));
+                                                    for v in violations.iter().take(24) {
+                                                        lines.push(format!(
+                                                            "- component={} kind={:?} field={} old={} new={}",
+                                                            v.component, v.kind, v.field, v.old, v.new
+                                                        ));
+                                                    }
+                                                    if violations.len() > 24 {
+                                                        lines.push(format!(
+                                                            "- … ({} more)",
+                                                            violations.len().saturating_sub(24)
+                                                        ));
+                                                    }
+                                                    lines.push(
+                                                        "Hint: Use `apply_draft_ops_v1` to adjust offsets/parts, or re-run `llm_generate_plan_v1` with a broader preserve_edit_policy (and explicit rewire_components for allow_rewire), or disable preserve mode for a full rebuild.".into(),
+                                                    );
+                                                    Some(lines.join("\n"))
+                                                }
+                                            }
                                         }
                                     } else {
                                         None

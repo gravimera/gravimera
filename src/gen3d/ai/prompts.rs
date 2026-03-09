@@ -185,6 +185,8 @@ pub(super) fn build_gen3d_plan_user_text_preserve_existing_components(
     style_hint: Option<&str>,
     existing_components: &[Gen3dPlannedComponent],
     existing_assembly_notes: &str,
+    preserve_edit_policy: &str,
+    rewire_components: &[String],
 ) -> String {
     let mut out = String::new();
     out.push_str(
@@ -198,6 +200,27 @@ Hard requirements:\n\
 - Keep mobility/attack/aim/collider unchanged unless the user request requires changing behavior.\n\
 ",
     );
+
+    out.push_str("\nPreserve-mode edit policy:\n- preserve_edit_policy: ");
+    out.push_str(preserve_edit_policy.trim());
+    out.push('\n');
+    if preserve_edit_policy.trim() == "allow_rewire" {
+        out.push_str("- rewire_components (explicit allow-list): ");
+        if rewire_components.is_empty() {
+            out.push_str("(none)\n");
+        } else {
+            for (idx, name) in rewire_components.iter().take(24).enumerate() {
+                if idx > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(name.trim());
+            }
+            if rewire_components.len() > 24 {
+                out.push_str(", …");
+            }
+            out.push('\n');
+        }
+    }
 
     if !existing_assembly_notes.trim().is_empty() {
         out.push_str("\nExisting assembly_notes (context; keep consistent unless needed):\n");
@@ -219,9 +242,24 @@ Hard requirements:\n\
             if is_root {
                 out.push_str(" (root)");
             } else if let Some(att) = comp.attach_to.as_ref() {
+                let t = att.offset.translation;
+                let r = att.offset.rotation;
+                let s = att.offset.scale;
                 out.push_str(&format!(
-                    " attach_to parent={} parent_anchor={} child_anchor={}",
-                    att.parent, att.parent_anchor, att.child_anchor
+                    " attach_to parent={} parent_anchor={} child_anchor={} offset.pos=[{:.6},{:.6},{:.6}] offset.rot_quat_xyzw=[{:.6},{:.6},{:.6},{:.6}] offset.scale=[{:.6},{:.6},{:.6}]",
+                    att.parent,
+                    att.parent_anchor,
+                    att.child_anchor,
+                    t.x,
+                    t.y,
+                    t.z,
+                    r.x,
+                    r.y,
+                    r.z,
+                    r.w,
+                    s.x,
+                    s.y,
+                    s.z
                 ));
             }
             out.push('\n');
@@ -250,13 +288,67 @@ Hard requirements:\n\
     }
 
     out.push_str("\n---\n\n");
-    out.push_str(&build_gen3d_plan_user_text_with_hints(
-        raw_prompt,
-        has_images,
-        speed,
-        style_hint,
-        &[],
+
+    out.push_str("Planning (preserve-mode patch):\n");
+    out.push_str(
+        "You are PATCHING an existing plan, not designing from scratch.\n\
+- Output a complete plan JSON that includes ALL existing component names.\n\
+- Unless the policy explicitly allows it, keep every existing component's `attach_to` (parent, anchors, offset) unchanged.\n\
+- Prefer adding new components and/or adding new anchors to existing components.\n\
+- Keep mobility/attack/aim/collider unchanged unless the user request requires changing behavior.\n\
+",
+    );
+    match preserve_edit_policy.trim() {
+        "additive" => {
+            out.push_str(
+                "Policy details (additive):\n\
+- Do NOT rewire existing components (do not change attach_to.parent / parent_anchor / child_anchor).\n\
+- Do NOT move existing components (do not change attach_to.offset).\n\
+- Only add new components and/or add new anchors.\n\
+- For repositioning, use `apply_draft_ops_v1` (SetAttachmentOffset / SetAnchorTransform) instead of replanning.\n",
+            );
+        }
+        "allow_offsets" => {
+            out.push_str(
+                "Policy details (allow_offsets):\n\
+- Do NOT rewire existing components (do not change attach_to.parent / parent_anchor / child_anchor).\n\
+- You MAY change attach_to.offset for existing components to adjust placement.\n\
+- Only add new components and/or add new anchors.\n",
+            );
+        }
+        "allow_rewire" => {
+            out.push_str(
+                "Policy details (allow_rewire):\n\
+- You MAY rewire ONLY the components named in `rewire_components` (explicit allow-list).\n\
+- For all other existing components, do NOT rewire and do NOT change offsets.\n\
+",
+            );
+        }
+        _ => {}
+    }
+
+    out.push_str(
+        "Join frame reminder:\n\
+- For EVERY attachment, the join anchor axes must be in the same hemisphere:\n\
+  dot(parent_anchor.forward, child_anchor.forward) > 0 AND dot(parent_anchor.up, child_anchor.up) > 0.\n\
+- If you need a flip, encode it via `attach_to.offset` rotation; do NOT rely on opposed anchors.\n",
+    );
+
+    out.push_str(&format!("Speed mode: {}.\n", speed.label()));
+    out.push_str(&format!(
+        "Hard cap: at most {} components.\n",
+        super::max_components_for_speed(speed)
     ));
+
+    if let Some(style) = style_hint.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        out.push_str("Additional style preference (use this unless the user notes forbid it): ");
+        out.push_str(style);
+        out.push('\n');
+    }
+    if !has_images {
+        out.push_str("No photos are provided for this run.\n");
+    }
+    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
     out
 }
 

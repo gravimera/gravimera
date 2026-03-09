@@ -1227,6 +1227,40 @@ pub(super) fn execute_tool_call(
                 .and_then(|v| v.get("preserve_existing_components"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(job.preserve_existing_components_mode);
+            let preserve_edit_policy = call
+                .args
+                .get("constraints")
+                .and_then(|v| v.get("preserve_edit_policy"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("additive");
+            let preserve_edit_policy_is_valid = matches!(
+                preserve_edit_policy,
+                "additive" | "allow_offsets" | "allow_rewire"
+            );
+            if preserve_existing_components && !preserve_edit_policy_is_valid {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "Invalid constraints.preserve_edit_policy={preserve_edit_policy:?}. Expected one of: \"additive\", \"allow_offsets\", \"allow_rewire\"."
+                    ),
+                ));
+            }
+            let rewire_components: Vec<String> = call
+                .args
+                .get("constraints")
+                .and_then(|v| v.get("rewire_components"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             let mut required_component_names: Vec<String> = call
                 .args
                 .get("components")
@@ -1258,6 +1292,8 @@ pub(super) fn execute_tool_call(
                     style_hint,
                     &job.planned_components,
                     &job.assembly_notes,
+                    preserve_edit_policy,
+                    &rewire_components,
                 )
             } else {
                 super::prompts::build_gen3d_plan_user_text_with_hints(
