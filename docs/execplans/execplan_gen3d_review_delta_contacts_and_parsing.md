@@ -6,7 +6,7 @@ This repository contains `PLANS.md` at the repo root. This document must be main
 
 ## Purpose / Big Picture
 
-Gen3D builds often fail to converge when motion validation reports `contact_slip` / `contact_lift` for “stance” contacts (usually feet). In theory, `llm_review_delta_v1` should repair these by tweaking animations, but in practice the review-delta output is frequently “almost correct JSON” that fails strict parsing (missing required fields like `spec.driver` or `loop.duration_secs`, or using slightly wrong enum spellings). When parsing fails, the engine cannot apply any repairs and the run wastes multiple review passes.
+Gen3D builds often fail to converge when motion validation reports contact-related errors like `contact_stance_missing` / `contact_lift` on ground contacts (usually feet). In theory, `llm_review_delta_v1` should repair these by tweaking animations, but in practice the review-delta output is frequently “almost correct JSON” that fails strict parsing (missing required fields like `spec.driver` or `loop.duration_secs`, or using slightly wrong enum spellings). When parsing fails, the engine cannot apply any repairs and the run wastes multiple review passes.
 
 After this change (original scope):
 
@@ -38,8 +38,8 @@ Status (2026-02-24):
 
 ## Surprises & Discoveries
 
-- Observation: Disabling a leg’s `move` animation does not automatically fix `contact_slip` when `stance` is present.
-  Evidence: Contact slip validation simulates forward root motion; for a planted foot, the limb animation must counteract root translation during stance. Therefore, if the stance contract cannot be satisfied, **clearing stance** is the minimal generic repair.
+- Observation: Disabling a leg’s `move` animation does not automatically fix `contact_lift` when `stance` is present.
+  Evidence: Contact lift is evaluated in world space during the declared stance window; motion elsewhere in the parent chain can still move the anchor. Therefore, if the stance contract cannot be satisfied, prefer adjusting the stance window (`phase_01` / `duty_factor_01`) instead of repeatedly tweaking unrelated clips.
 
 - Observation: Review-delta outputs frequently omit required fields even when the intent is clear.
   Evidence (historical): Common failures included missing `spec.driver` in `tweak_animation` and missing `loop.duration_secs` in `clip.kind=="loop"`, which caused strict schema parsing failures.
@@ -57,7 +57,7 @@ Status (2026-02-24):
 ## Outcomes & Retrospective
 
 - Implemented `review_delta_v1` improvements:
-  - New `tweak_contact` action can clear or set `contacts[].stance` (enables fixing `contact_slip`/`contact_lift` without regenerating geometry).
+  - New `tweak_contact` action can set `contacts[].stance` (enables fixing `contact_lift` without regenerating geometry).
   - Review-delta parser now also normalizes common near-misses for transform actions:
     - accepts nested `delta.offset.{pos,scale,quat_xyzw}` for `tweak_component_transform` and rewrites to the strict schema
     - accepts `delta.quat_xyzw` and rewrites to `delta.rot_quat_xyzw` (and similarly for `tweak_anchor.delta`)
@@ -75,7 +75,7 @@ Key files and concepts:
 - Review-delta schema: `src/gen3d/ai/schema.rs` (`AiReviewDeltaJsonV1`, `AiReviewDeltaActionJsonV1`).
 - Review-delta parsing: `src/gen3d/ai/parse.rs` (`parse_ai_review_delta_from_text`).
 - Applying review-delta actions: `src/gen3d/ai/convert.rs` (`apply_ai_review_delta_actions`).
-- Motion validation: `src/gen3d/ai/motion_validation.rs` (`validate_contacts` emits `contact_slip` / `contact_lift` only when a contact has `stance`).
+- Motion validation: `src/gen3d/ai/motion_validation.rs` (`validate_contacts` emits `contact_stance_missing` and `contact_lift`).
 - Prompting:
   - Plan prompt includes `contacts[].stance`: `src/gen3d/ai/prompts.rs` `build_gen3d_plan_system_instructions`.
   - Review-delta prompt schema: `src/gen3d/ai/prompts.rs` `build_gen3d_review_delta_system_instructions`.
@@ -84,7 +84,6 @@ Definitions (as used in this repo):
 
 - `contacts[]`: plan-level declaration of named contact points (usually ground contacts) by anchor name.
 - `stance`: optional schedule (`phase_01`, `duty_factor_01`) declaring when a contact is intended to be planted during the move cycle.
-- `contact_slip`: motion-validation issue indicating the declared contact moves too much in world XZ during stance.
 - `tweak_animation`: (historical; removed 2026-02-24) review-delta action that edited attachment animation specs for one component’s attachment to its parent.
 
 ## Plan of Work
@@ -123,7 +122,7 @@ Definitions (as used in this repo):
    - In `src/gen3d/ai/prompts.rs` `build_gen3d_review_delta_system_instructions`:
      - Document the new action kind + schema.
      - Add a motion-validation hint:
-       - If `contact_slip` / `contact_lift` persist and you cannot author a truly planted foot motion, clear stance for that contact instead of repeatedly tweaking animations.
+       - If `contact_lift` persists and you cannot author a truly planted contact, adjust the stance window (`phase_01` / `duty_factor_01`) instead of repeatedly tweaking unrelated animations.
 
    - In `build_gen3d_plan_system_instructions`, strengthen the guidance on `contacts[].stance`:
      - Only declare stance when the move animation is authored to keep the contact planted in world space during stance.

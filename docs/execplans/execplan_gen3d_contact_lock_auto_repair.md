@@ -1,5 +1,7 @@
 # Gen3D: Deterministic contact-lock auto-repair (make agent runs converge on motion validation)
 
+Status (2026-03-10): Archived. The engine no longer performs deterministic contact auto-repair in `smoke_check_v1`, and motion validation no longer checks for XZ contact drift. This document is retained for historical context only.
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 This repository includes `PLANS.md` at the repo root; this ExecPlan must be maintained in accordance with `PLANS.md`.
@@ -17,7 +19,7 @@ After this change:
 
 2) When `motion_validation.ok == false` due to **contact errors**, the engine applies a deterministic, generic auto-repair that adjusts contact stance schedules (e.g. shrinking/retargeting `duty_factor_01`) so the declared planted window is consistent with the sampled motion. This runs only when errors exist; if a future model produces valid motion, the guardrail does nothing.
 
-User-visible outcome: the Gen3D agent reaches a stable state where `smoke_check_v1.ok == true` for contact-related motion validation errors, instead of oscillating between `contact_slip` and `contact_stance_missing`.
+User-visible outcome: the Gen3D agent reaches a stable state where `smoke_check_v1.ok == true` for contact-related motion validation errors, instead of oscillating between `contact_lift` and `contact_stance_missing`.
 
 ## Progress
 
@@ -25,17 +27,17 @@ User-visible outcome: the Gen3D agent reaches a stable state where `smoke_check_
 - [x] (2026-03-05 13:00Z) Add review-delta guardrail: ignore `tweak_contact stance:null` for ground contacts (except `move`=`spin`).
 - [x] (2026-03-05 13:00Z) Implement deterministic contact-lock auto-repair for contact errors (stance missing, slip, lift).
 - [x] (2026-03-05 13:00Z) Integrate auto-repair into the agent loop’s `smoke_check_v1` so runs converge without extra LLM iterations.
-- [x] (2026-03-05 13:00Z) Add regression tests for (a) stance-null guardrail and (b) slip→repaired→ok.
+- [x] (2026-03-05 13:00Z) Add regression tests for (a) stance-null guardrail and (b) lift→repaired→ok.
 - [x] (2026-03-05 13:00Z) Run Rust tests and required rendered smoke test.
 - [ ] Commit.
 
 ## Surprises & Discoveries
 
 - Observation: Non-convergence can be a deterministic “policy oscillation”, not a modeling failure.
-  Evidence: A run can alternate between `contact_slip` (after motion authoring) and `contact_stance_missing` (after the LLM clears stances via review-delta). Once all stances are cleared, `motion_validation` can no longer evaluate slip/lift and hard-errors, so the LLM re-adds stance, re-triggering slip, and so on.
+  Evidence: A run can alternate between `contact_lift` (after motion authoring) and `contact_stance_missing` (after the LLM clears stances via review-delta). Once all stances are cleared, `motion_validation` can no longer evaluate lift and hard-errors, so the LLM re-adds stance, re-triggering lift, and so on.
 
-- Observation: Contact validation assumes forward locomotion even if the prompt is “wriggle”.
-  Evidence: `motion_validation` adds an assumed root translation (WORLD +Z) of `cycle_m` meters per cycle, and treats any declared ground contact stance as “planted” in world XZ/Y during stance. A purely rotational “wriggle” without compensating translation will necessarily fail `contact_slip` for planted stances.
+- Observation: Contact validation assumes declared ground stances are planted in world space during stance.
+  Evidence: `motion_validation` treats any declared ground contact stance as “planted” in world Y during stance. Motions that bob a planted contact up/down during stance will fail `contact_lift`.
 
 - Observation: The best place to make convergence deterministic is the quality gate itself.
   Evidence: Applying the repair inside `smoke_check_v1` makes the agent see post-repair results immediately (and avoids additional review-delta iterations), while keeping the behavior “no-op when already ok”.
@@ -72,16 +74,16 @@ Key files and what they do (paths are from repo root):
 
 - `src/gen3d/ai/motion_validation.rs`: Computes `motion_validation` by sampling the move cycle and reporting issues including:
   - `contact_stance_missing` (ground contacts without stance, except `move`=`spin`)
-  - `contact_slip` / `contact_lift` (contact anchor moves too much during stance)
+  - `contact_lift` (contact anchor lifts too much during stance)
 - `src/gen3d/ai/orchestration.rs`: Builds `smoke_results.json` via `build_gen3d_smoke_results()` which embeds `motion_validation`.
-- `src/gen3d/ai/convert.rs`: Applies `llm_review_delta_v1` actions via `apply_ai_review_delta_actions()`. This is where `tweak_contact stance:null` currently clears stances.
+- `src/gen3d/ai/convert.rs`: Applies `llm_review_delta_v1` actions via `apply_ai_review_delta_actions()`. This is where `tweak_contact stance:null` is ignored for ground contacts (except `move`=`spin`).
 - `src/gen3d/ai/agent_tool_dispatch.rs`: Executes agent tools, including `smoke_check_v1`.
 
 Definitions used here:
 
 - “Ground contact”: a `components[].contacts[]` entry with `kind: ground`, referencing an anchor by name.
 - “Stance schedule”: `{phase_01, duty_factor_01}` describing when a contact is considered planted within the move cycle.
-- “Contact lock”: a deterministic repair that adjusts `move` clips so the declared planted anchor stays near-constant in world XZ/Y during stance (as measured by `motion_validation`’s model).
+- “Contact lock”: a deterministic repair that adjusts `move` clips so the declared planted anchor stays near-constant in world Y during stance (as measured by `motion_validation`’s model).
 
 ## Plan of Work
 
@@ -145,8 +147,8 @@ Add/adjust tests to prove the behavior:
 - In `src/gen3d/ai/convert.rs`: update the existing test that currently expects `tweak_contact stance:null` to clear stance; it should now assert that stance remains set for a ground contact without a spin `move` clip, and that `apply.had_actions == false`.
 
 - In `src/gen3d/ai/motion_validation.rs` (or the new repair function’s test module):
-  - Construct a minimal root+limb assembly with a ground contact stance and a `move` loop that causes slip.
-  - Assert `motion_validation.ok == false` before repair (contains `contact_slip`).
+  - Construct a minimal root+limb assembly with a ground contact stance and a `move` loop that causes lift.
+  - Assert `motion_validation.ok == false` before repair (contains `contact_lift`).
   - Apply the contact-lock repair and assert `motion_validation.ok == true` after.
 
 ### Milestone 5 — Validation, smoke test, commit
@@ -168,8 +170,8 @@ From repo root:
 Acceptance is met when:
 
 - A review-delta that tries to clear `stance` for a ground contact does not clear it (except for `move`=`spin` components).
-- A minimal unit test demonstrating `contact_slip` becomes `motion_validation.ok == true` after the deterministic repair.
-- In an agent run that previously thrashed on `contact_slip`/`contact_stance_missing`, `smoke_check_v1` returns an `ok: true` result after the repair step instead of oscillating.
+- A minimal unit test demonstrating `contact_lift` becomes `motion_validation.ok == true` after the deterministic repair.
+- In an agent run that previously thrashed on `contact_lift`/`contact_stance_missing`, `smoke_check_v1` returns an `ok: true` result after the repair step instead of oscillating.
 
 ## Idempotence and Recovery
 

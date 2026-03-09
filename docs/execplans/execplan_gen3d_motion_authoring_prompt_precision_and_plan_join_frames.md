@@ -73,7 +73,7 @@ Engine-side join-frame validation that triggers plan schema repair lives in:
 
 - `src/gen3d/ai/convert.rs` (join forward/up dot checks; error if dot < 0)
 
-Motion validation that triggers `contact_stance_missing` and `contact_slip` lives in:
+Motion validation that triggers `contact_stance_missing` and `contact_lift` lives in:
 
 - `src/gen3d/ai/motion_validation.rs`
 
@@ -88,8 +88,8 @@ First, tighten the motion-authoring system prompt so the model is instructed to 
 Second, extend the motion-authoring user prompt so the model has the information motion validation uses:
 
 1. A list of ground contacts (component/contact/anchor) including stance windows.
-2. Derived slip/lift tolerances for the current `rig_move_cycle_m`.
-3. Guidance that the root is assumed to move forward (+Z) by `cycle_m` each cycle, and that planted contacts should remain stable in world XZ during stance.
+2. Derived lift tolerances for the current `rig_move_cycle_m`.
+3. Guidance that planted contacts should remain at near-constant ground height (world Y) during stance.
 4. A summary of which components are in the parent chains of ground-contact components, so the model can focus authored motion on those edges instead of animating everything.
 
 Third, tighten the plan prompt join-frame rules to match engine validation: the plan must ensure `dot(parent_anchor.forward, child_anchor.forward) > 0` and `dot(parent_anchor.up, child_anchor.up) > 0` for every attachment (in their component-local coordinates). If negative, the plan must fix the anchor bases (or use an explicit `attach_to.offset` rotation) rather than relying on opposed anchors.

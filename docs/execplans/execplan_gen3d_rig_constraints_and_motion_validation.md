@@ -255,12 +255,10 @@ For each `contact.kind == ground` with a stance schedule:
   - contact_world = root_translation_at_t + contact_pos
 
 - For the stance interval defined by `phase_01` and `duty_factor_01`:
-  - measure max XZ drift of `contact_world` within stance (`slip_m`)
   - measure max Y deviation within stance (`lift_m`), with an inferred “ground_y” from stance midpoint
 
 Return issues like:
 
-- `contact_slip` (warn): include `slip_m` and tolerance.
 - `contact_lift` (warn or error): include `lift_m`.
 
 4) Surface validation output where the AI can see it.

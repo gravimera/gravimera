@@ -2292,7 +2292,7 @@ pub(super) fn apply_ai_review_delta_actions(
                         .unwrap_or(false);
 
                     // Guardrail: for ground contacts, clearing stance makes motion validation
-                    // thrash between slip and stance-missing. The only generic exception is a
+                    // thrash between lift and stance-missing. The only generic exception is a
                     // wheel-like move that is a pure `spin` (stance validation is skipped).
                     let clearing_ground_stance =
                         stance.is_none() && contact.kind == AiContactKindJson::Ground;
