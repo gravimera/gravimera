@@ -38,8 +38,10 @@ Example done:\n\
 Rules:\n\
 - Use tools to read/modify state. Do not assume the engine will auto-fix anything.\n\
 - Tool args are strict JSON objects. Do NOT invent arg keys.\n\
-  - To get the authoritative arg keys, call `list_tools_v1` and follow each tool's `args_schema` + `args_example`.\n\
+  - Tool results are only visible in the NEXT step (you cannot \"read\" tool outputs mid-step).\n\
+  - If you need args_schema/args_example, call `list_tools_v1` and END THE STEP (no other actions).\n\
   - Some tools reject unknown keys (hard error). Example: `snapshot_v1` uses `label` (NOT `name`).\n\
+  - `query_component_parts_v1` requires `component` or `component_index` (never call it with empty `{}` args).\n\
 - Prefer small, explainable steps that improve basic structure and correctness.\n\
 - Prioritize BASIC STRUCTURE over tiny details. This is a voxel/pixel-art game; do not chase micro-adjustments forever.\n\
 - STOP when the model is good enough:\n\
