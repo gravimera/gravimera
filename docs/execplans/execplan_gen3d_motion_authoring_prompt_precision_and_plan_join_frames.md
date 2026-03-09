@@ -24,7 +24,7 @@ User-visible verification is via cache artifacts: the new prompt text should app
 - [x] (2026-03-05) Tighten plan prompt join-frame wording to match engine validation (require positive dot for forward/up; explain how to fix when negative).
 - [x] (2026-03-05) Update docs index to include this ExecPlan (`docs/execplans/README.md`).
 - [x] (2026-03-05) Run rendered smoke test and commit.
-- [x] (2026-03-10) Include per-edge joint constraints (kind/axis/limits) in the motion-authoring prompt, add a hinge-axis rule to the motion-authoring system prompt, and guide the agent to re-author motion when QA reports `hinge_off_axis`.
+- [x] (2026-03-10) Include per-edge joint constraints (kind/axis/limits) in the motion-authoring prompt, add a hinge-axis rule to the motion-authoring system prompt, and guide the agent to re-author motion when QA reports clip-related motion validation errors (e.g. `hinge_off_axis`).
 
 ## Surprises & Discoveries
 

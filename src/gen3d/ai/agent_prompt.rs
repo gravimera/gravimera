@@ -54,7 +54,9 @@ Rules:\n\
   - If the draft is a movable unit (mobility is ground/air) and `state_summary.motion_coverage.has_move` is false, call `llm_generate_motion_authoring_v1` before finishing.\n\
   - This tool authors explicit per-edge animation clips (idle/move/attack) baked into the prefab; the engine does not provide runtime motion algorithms.\n\
   - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if move slots already exist.\n\
-  - If `qa_v1` reports motion_validation errors of kind `hinge_off_axis`, prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for hinge_off_axis).\n\
+  - If `qa_v1` reports motion_validation errors that are primarily animation-delta problems (examples: `hinge_off_axis`, `hinge_limit_exceeded`, `time_offset_no_effect`, `joint_rest_bias_large`, `attack_self_intersection`), prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
+  - If `qa_v1` reports `contact_stance_missing`, prefer `llm_review_delta_v1` to add/fix `contacts[].stance` (motion authoring cannot create stance metadata).\n\
+  - If `qa_v1` reports `hinge_axis_missing` or `hinge_axis_invalid`, fix the joint axis in the plan (replan) before motion authoring.\n\
 - Visual QA / appearance review:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
