@@ -14,7 +14,7 @@ UI path:
 
 ## Architecture (B + Adapter Isolation)
 
-Gravimera links `../soundtest` directly and uses an adapter layer so UI code does not depend on `soundtest` internals.
+Gravimera vendors `soundtest` inside this repository at `third_party/soundtest` and uses an adapter layer so UI code does not depend on `soundtest` internals.
 
 - Adapter module: `src/meta_speak.rs`
 - UI wiring: `src/motion_ui.rs`
