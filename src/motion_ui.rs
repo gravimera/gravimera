@@ -1,3 +1,4 @@
+use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -12,6 +13,7 @@ use crate::geometry::{clamp_world_xz, snap_to_grid};
 use crate::intelligence::host_plugin::{IntelligenceHostRuntime, StandaloneBrain};
 use crate::intelligence::protocol::{DespawnBrainInstanceRequest, PROTOCOL_VERSION};
 use crate::intelligence::sidecar_client::SidecarClient;
+use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, MetaSpeakVoice};
 use crate::motion::{
     motion_rig_v1_for_prefab, AttackPrimaryMotionAlgorithm, IdleMotionAlgorithm,
     MotionAlgorithmController, MoveMotionAlgorithm,
@@ -32,6 +34,7 @@ const PANEL_WIDTH_PX: f32 = 300.0;
 const PANEL_MAX_HEIGHT_PX: f32 = 680.0;
 const PANEL_LIST_MIN_HEIGHT_PX: f32 = 260.0;
 const DOUBLE_CLICK_MAX_SECS: f32 = 0.35;
+const META_SPEAK_MAX_CHARS: usize = 512;
 
 #[derive(Debug, Clone, Copy)]
 struct MotionAlgorithmUiScrollbarDrag {
@@ -52,6 +55,13 @@ pub(crate) struct MotionAlgorithmUiState {
     brain_modules_error: Option<String>,
     brain_modules_job: Option<SharedResult<Vec<String>, String>>,
     brain_modules_fetch_requested: bool,
+    speak_voice: MetaSpeakVoice,
+    speak_content: String,
+    speak_content_focused: bool,
+    speak_job: Option<SharedResult<MetaSpeakOutcome, String>>,
+    speak_running: bool,
+    speak_status: Option<String>,
+    speak_error: Option<String>,
 }
 
 impl Default for MotionAlgorithmUiState {
@@ -69,6 +79,13 @@ impl Default for MotionAlgorithmUiState {
             brain_modules_error: None,
             brain_modules_job: None,
             brain_modules_fetch_requested: false,
+            speak_voice: MetaSpeakVoice::Dog,
+            speak_content: String::new(),
+            speak_content_focused: false,
+            speak_job: None,
+            speak_running: false,
+            speak_status: None,
+            speak_error: None,
         }
     }
 }
@@ -94,6 +111,11 @@ impl MotionAlgorithmUiState {
         self.brain_modules_error = None;
         self.brain_modules_job = None;
         self.brain_modules.clear();
+        self.speak_content_focused = false;
+        self.speak_job = None;
+        self.speak_running = false;
+        self.speak_status = None;
+        self.speak_error = None;
     }
 
     pub(crate) fn close(&mut self) {
@@ -107,6 +129,11 @@ impl MotionAlgorithmUiState {
         self.brain_modules_error = None;
         self.brain_modules_job = None;
         self.brain_modules.clear();
+        self.speak_content_focused = false;
+        self.speak_job = None;
+        self.speak_running = false;
+        self.speak_status = None;
+        self.speak_error = None;
     }
 }
 
@@ -163,6 +190,17 @@ pub(crate) enum MetaGen3dUiAction {
 pub(crate) struct MetaGen3dUiButton {
     pub(crate) action: MetaGen3dUiAction,
 }
+
+#[derive(Component, Clone, Copy, Debug)]
+pub(crate) struct MetaSpeakUiVoiceButton {
+    pub(crate) voice: MetaSpeakVoice,
+}
+
+#[derive(Component)]
+pub(crate) struct MetaSpeakUiContentField;
+
+#[derive(Component)]
+pub(crate) struct MetaSpeakUiSpeakButton;
 
 pub(crate) fn setup_motion_algorithm_ui(mut commands: Commands) {
     commands
@@ -475,6 +513,28 @@ pub(crate) fn motion_algorithm_ui_update(
         state.needs_rebuild = true;
     }
 
+    if let Some(job) = state.speak_job.as_ref() {
+        if let Some(result) = take_shared_result(job) {
+            state.speak_job = None;
+            state.speak_running = false;
+            match result {
+                Ok(outcome) => {
+                    state.speak_status = Some(format!(
+                        "Spoken via {} ({})",
+                        outcome.backend,
+                        state.speak_voice.id_str()
+                    ));
+                    state.speak_error = None;
+                }
+                Err(err) => {
+                    state.speak_status = None;
+                    state.speak_error = Some(err);
+                }
+            }
+            state.needs_rebuild = true;
+        }
+    }
+
     if !state.needs_rebuild {
         return;
     }
@@ -505,6 +565,11 @@ pub(crate) fn motion_algorithm_ui_update(
     let brain_modules_loading = state.brain_modules_loading;
     let brain_modules_error = state.brain_modules_error.clone();
     let brain_modules = state.brain_modules.clone();
+    let speak_content = state.speak_content.clone();
+    let speak_content_focused = state.speak_content_focused;
+    let speak_running = state.speak_running;
+    let speak_status = state.speak_status.clone();
+    let speak_error = state.speak_error.clone();
 
     commands.entity(list_entity).with_children(|list| {
         let section_font = TextFont {
@@ -643,6 +708,126 @@ pub(crate) fn motion_algorithm_ui_update(
                     b.spawn((Text::new(module_id.clone()), button_font.clone(), button_color));
                 });
             }
+        }
+
+        list.spawn((
+            Text::new("Speak"),
+            section_font.clone(),
+            section_color,
+            MotionAlgorithmUiListItem,
+        ));
+
+        list.spawn((
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(6.0),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            MotionAlgorithmUiListItem,
+        ))
+        .with_children(|row| {
+            for voice in MetaSpeakVoice::all() {
+                row.spawn((
+                    Button,
+                    Node {
+                        flex_grow: 1.0,
+                        flex_basis: Val::Px(0.0),
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    button_bg,
+                    button_border,
+                    MotionAlgorithmUiListItem,
+                    MetaSpeakUiVoiceButton { voice },
+                ))
+                .with_children(|b| {
+                    b.spawn((Text::new(voice.label()), button_font.clone(), button_color));
+                });
+            }
+        });
+
+        list.spawn((
+            Button,
+            Node {
+                width: Val::Percent(100.0),
+                min_height: Val::Px(68.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            button_bg,
+            button_border,
+            MotionAlgorithmUiListItem,
+            MetaSpeakUiContentField,
+        ))
+        .with_children(|b| {
+            let content_text = if speak_content.trim().is_empty() {
+                "content".to_string()
+            } else {
+                speak_content.clone()
+            };
+            let text_color = if speak_content.trim().is_empty() {
+                Color::srgb(0.60, 0.60, 0.66)
+            } else {
+                Color::srgb(0.90, 0.90, 0.95)
+            };
+            let focus_line = if speak_content_focused {
+                " (focused)"
+            } else {
+                ""
+            };
+            b.spawn((
+                Text::new(format!("content{focus_line}: {content_text}")),
+                TextFont {
+                    font_size: 13.0,
+                    ..default()
+                },
+                TextColor(text_color),
+            ));
+        });
+
+        list.spawn((
+            Button,
+            Node {
+                width: Val::Percent(100.0),
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            button_bg,
+            button_border,
+            MotionAlgorithmUiListItem,
+            MetaSpeakUiSpeakButton,
+        ))
+        .with_children(|b| {
+            let label = if speak_running { "Speaking..." } else { "Speak" };
+            b.spawn((Text::new(label), button_font.clone(), button_color));
+        });
+
+        if let Some(status) = speak_status.as_deref() {
+            list.spawn((
+                Text::new(status.to_string()),
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.68, 0.78, 0.68)),
+                MotionAlgorithmUiListItem,
+            ));
+        }
+        if let Some(err) = speak_error.as_deref() {
+            list.spawn((
+                Text::new(format!("Speak failed: {err}")),
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.86, 0.70, 0.70)),
+                MotionAlgorithmUiListItem,
+            ));
         }
 
         list.spawn((
@@ -946,6 +1131,132 @@ pub(crate) fn motion_algorithm_ui_scrollbar_drag(
     scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
 }
 
+pub(crate) fn meta_speak_ui_content_field_focus(
+    mut state: ResMut<MotionAlgorithmUiState>,
+    mut fields: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<MetaSpeakUiContentField>),
+    >,
+) {
+    if !state.open {
+        return;
+    }
+
+    for (interaction, mut bg) in &mut fields {
+        match *interaction {
+            Interaction::Pressed => {
+                state.speak_content_focused = true;
+                state.needs_rebuild = true;
+                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.78));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70));
+            }
+            Interaction::None => {
+                let alpha = if state.speak_content_focused {
+                    0.70
+                } else {
+                    0.65
+                };
+                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, alpha));
+            }
+        }
+    }
+}
+
+pub(crate) fn meta_speak_ui_text_input(
+    mut state: ResMut<MotionAlgorithmUiState>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut keyboard: bevy::ecs::message::MessageReader<KeyboardInput>,
+) {
+    if !state.open {
+        keyboard.clear();
+        return;
+    }
+    if !state.speak_content_focused {
+        return;
+    }
+
+    for event in keyboard.read() {
+        if event.state != bevy::input::ButtonState::Pressed {
+            continue;
+        }
+        match event.key_code {
+            KeyCode::Backspace => {
+                state.speak_content.pop();
+                state.needs_rebuild = true;
+            }
+            KeyCode::Escape => {
+                state.speak_content_focused = false;
+                state.needs_rebuild = true;
+            }
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                state.speak_content_focused = false;
+                state.needs_rebuild = true;
+            }
+            KeyCode::KeyV => {
+                let modifier = keys.pressed(KeyCode::ControlLeft)
+                    || keys.pressed(KeyCode::ControlRight)
+                    || keys.pressed(KeyCode::SuperLeft)
+                    || keys.pressed(KeyCode::SuperRight);
+                if modifier {
+                    if let Some(text) = crate::clipboard::read_text() {
+                        push_meta_speak_text(&mut state.speak_content, &text);
+                        state.needs_rebuild = true;
+                    }
+                    continue;
+                }
+                if let Some(text) = &event.text {
+                    push_meta_speak_text(&mut state.speak_content, text);
+                    state.needs_rebuild = true;
+                }
+            }
+            _ => {
+                let Some(text) = &event.text else {
+                    continue;
+                };
+                push_meta_speak_text(&mut state.speak_content, text);
+                state.needs_rebuild = true;
+            }
+        }
+    }
+}
+
+fn push_meta_speak_text(target: &mut String, text: &str) {
+    let remaining = META_SPEAK_MAX_CHARS.saturating_sub(target.chars().count());
+    if remaining == 0 {
+        return;
+    }
+    let mut inserted = 0usize;
+    for ch in text.replace("\r\n", "\n").replace('\r', "\n").chars() {
+        if ch.is_control() || ch == '\n' || ch == '\t' {
+            continue;
+        }
+        target.push(ch);
+        inserted += 1;
+        if inserted >= remaining {
+            break;
+        }
+    }
+}
+
+pub(crate) fn meta_speak_ui_clear_keyboard_state_when_captured(
+    state: Res<MotionAlgorithmUiState>,
+    mut keys: Option<ResMut<ButtonInput<KeyCode>>>,
+) {
+    if !state.open || !state.speak_content_focused {
+        return;
+    }
+    if let Some(keys) = keys.as_deref_mut() {
+        keys.clear();
+        let pressed_now: Vec<KeyCode> = keys.get_pressed().copied().collect();
+        for key in pressed_now {
+            keys.release(key);
+            let _ = keys.clear_just_released(key);
+        }
+    }
+}
+
 pub(crate) fn motion_algorithm_ui_button_styles(
     state: Res<MotionAlgorithmUiState>,
     roots: Query<Option<&MotionAlgorithmController>>,
@@ -1155,6 +1466,146 @@ pub(crate) fn meta_gen3d_ui_button_styles(
     }
 }
 
+pub(crate) fn meta_speak_ui_button_styles(
+    state: Res<MotionAlgorithmUiState>,
+    mut voice_buttons: Query<
+        (
+            &Interaction,
+            &MetaSpeakUiVoiceButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        (
+            With<Button>,
+            With<MetaSpeakUiVoiceButton>,
+            Without<MetaSpeakUiSpeakButton>,
+            Without<MetaSpeakUiContentField>,
+        ),
+    >,
+    mut speak_buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            With<Button>,
+            With<MetaSpeakUiSpeakButton>,
+            Without<MetaSpeakUiVoiceButton>,
+            Without<MetaSpeakUiContentField>,
+        ),
+    >,
+    mut content_fields: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            With<Button>,
+            With<MetaSpeakUiContentField>,
+            Without<MetaSpeakUiVoiceButton>,
+            Without<MetaSpeakUiSpeakButton>,
+        ),
+    >,
+) {
+    if !state.open {
+        return;
+    }
+
+    for (interaction, button, mut bg, mut border) in &mut voice_buttons {
+        let is_selected = button.voice == state.speak_voice;
+        let (base_bg, base_border) = if is_selected {
+            (
+                Color::srgba(0.10, 0.10, 0.14, 0.88),
+                Color::srgba(0.45, 0.45, 0.60, 0.85),
+            )
+        } else {
+            (
+                Color::srgba(0.05, 0.05, 0.06, 0.75),
+                Color::srgba(0.25, 0.25, 0.30, 0.65),
+            )
+        };
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(base_bg);
+                *border = BorderColor::all(base_border);
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(
+                    (base_bg.to_srgba().red + 0.02).min(1.0),
+                    (base_bg.to_srgba().green + 0.02).min(1.0),
+                    (base_bg.to_srgba().blue + 0.03).min(1.0),
+                    base_bg.to_srgba().alpha,
+                ));
+                *border = BorderColor::all(Color::srgba(
+                    (base_border.to_srgba().red + 0.08).min(1.0),
+                    (base_border.to_srgba().green + 0.08).min(1.0),
+                    (base_border.to_srgba().blue + 0.10).min(1.0),
+                    base_border.to_srgba().alpha,
+                ));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(
+                    (base_bg.to_srgba().red + 0.05).min(1.0),
+                    (base_bg.to_srgba().green + 0.05).min(1.0),
+                    (base_bg.to_srgba().blue + 0.07).min(1.0),
+                    base_bg.to_srgba().alpha,
+                ));
+                *border = BorderColor::all(Color::srgba(
+                    (base_border.to_srgba().red + 0.12).min(1.0),
+                    (base_border.to_srgba().green + 0.12).min(1.0),
+                    (base_border.to_srgba().blue + 0.14).min(1.0),
+                    base_border.to_srgba().alpha,
+                ));
+            }
+        }
+    }
+
+    for (interaction, mut bg, mut border) in &mut speak_buttons {
+        let mut base_bg = Color::srgba(0.05, 0.05, 0.06, 0.75);
+        let mut base_border = Color::srgba(0.25, 0.25, 0.30, 0.65);
+        if state.speak_running {
+            base_bg = Color::srgba(0.10, 0.10, 0.12, 0.88);
+            base_border = Color::srgba(0.38, 0.38, 0.46, 0.82);
+        }
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(base_bg);
+                *border = BorderColor::all(base_border);
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.82));
+                *border = BorderColor::all(Color::srgba(0.33, 0.33, 0.40, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.90));
+                *border = BorderColor::all(Color::srgba(0.38, 0.38, 0.46, 0.82));
+            }
+        }
+    }
+
+    for (interaction, mut bg, mut border) in &mut content_fields {
+        let (base_bg, base_border) = if state.speak_content_focused {
+            (
+                Color::srgba(0.03, 0.03, 0.04, 0.78),
+                Color::srgba(0.45, 0.45, 0.60, 0.85),
+            )
+        } else {
+            (
+                Color::srgba(0.02, 0.02, 0.03, 0.65),
+                Color::srgba(0.25, 0.25, 0.30, 0.65),
+            )
+        };
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(base_bg);
+                *border = BorderColor::all(base_border);
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70));
+                *border = BorderColor::all(Color::srgba(0.33, 0.33, 0.40, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.78));
+                *border = BorderColor::all(Color::srgba(0.38, 0.38, 0.46, 0.82));
+            }
+        }
+    }
+}
+
 pub(crate) fn motion_algorithm_ui_button_clicks(
     mut commands: Commands,
     mut state: ResMut<MotionAlgorithmUiState>,
@@ -1315,6 +1766,82 @@ pub(crate) fn meta_brain_ui_button_clicks(
             button.module_id, updated
         );
 
+        state.needs_rebuild = true;
+    }
+}
+
+pub(crate) fn meta_speak_ui_button_clicks(
+    runtime: Res<MetaSpeakRuntime>,
+    mut state: ResMut<MotionAlgorithmUiState>,
+    mut voice_buttons: Query<
+        (&Interaction, &MetaSpeakUiVoiceButton),
+        (
+            Changed<Interaction>,
+            With<MetaSpeakUiVoiceButton>,
+            Without<MetaSpeakUiSpeakButton>,
+            Without<MetaSpeakUiContentField>,
+        ),
+    >,
+    mut speak_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<MetaSpeakUiSpeakButton>,
+            Without<MetaSpeakUiVoiceButton>,
+            Without<MetaSpeakUiContentField>,
+        ),
+    >,
+) {
+    if !state.open {
+        return;
+    }
+
+    for (interaction, button) in &mut voice_buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        state.speak_voice = button.voice;
+        state.speak_error = None;
+        state.speak_status = None;
+        state.needs_rebuild = true;
+    }
+
+    for interaction in &mut speak_buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if state.speak_running || state.speak_job.is_some() {
+            continue;
+        }
+        let content = state.speak_content.trim().to_string();
+        if content.is_empty() {
+            state.speak_error = Some("Please enter content first.".to_string());
+            state.speak_status = None;
+            state.needs_rebuild = true;
+            continue;
+        }
+
+        let shared = new_shared_result::<MetaSpeakOutcome, String>();
+        let voice = state.speak_voice;
+        let adapter = runtime.adapter();
+        let request = MetaSpeakRequest {
+            voice,
+            content,
+            volume: 1.0,
+        };
+
+        let _ = spawn_worker_thread(
+            "gravimera_meta_speak".to_string(),
+            shared.clone(),
+            move || adapter.speak(request),
+            |_| {},
+        );
+
+        state.speak_content_focused = false;
+        state.speak_running = true;
+        state.speak_error = None;
+        state.speak_status = Some("Speaking...".to_string());
+        state.speak_job = Some(shared);
         state.needs_rebuild = true;
     }
 }

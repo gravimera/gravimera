@@ -560,6 +560,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
     app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();
     app.init_resource::<crate::motion_ui::MotionAlgorithmUiState>();
+    app.init_resource::<crate::meta_speak::MetaSpeakRuntime>();
     app.init_resource::<crate::workspace_ui::WorkspaceUiState>();
     app.init_resource::<crate::workspace_ui::TopPanelUiState>();
     app.init_resource::<crate::workspace_ui::PendingWorkspaceSwitch>();

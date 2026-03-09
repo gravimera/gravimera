@@ -1,0 +1,54 @@
+# Meta Speak (Soundtest Integration)
+
+The Meta panel includes a **Speak** section that lets a player type text and play AI voice output using one of three voice presets:
+
+- `dog`
+- `cow`
+- `dragon`
+
+UI path:
+
+1. Enter Build/Play rendered mode.
+2. Double-click a unit selection circle to open **Meta**.
+3. In **Speak**, select voice, click the `content` field, type text, then click `Speak`.
+
+## Architecture (B + Adapter Isolation)
+
+Gravimera links `../soundtest` directly and uses an adapter layer so UI code does not depend on `soundtest` internals.
+
+- Adapter module: `src/meta_speak.rs`
+- UI wiring: `src/motion_ui.rs`
+
+Core abstraction:
+
+- `MetaSpeakAdapter` trait: one method `speak(request)`
+- `SoundtestMetaSpeakAdapter`: default implementation backed by `soundtest`
+- `MetaSpeakRuntime` resource: stores adapter as `Arc<dyn MetaSpeakAdapter>`
+
+This keeps the Meta UI stable if we later swap the backend implementation.
+
+## Backend Resolution
+
+Speak uses offline flow (`no_ai`) and prefers backends in this order:
+
+1. ONNX TTS (if available)
+2. System TTS (if available)
+
+If neither is available, the UI shows an inline error.
+
+## Voice Mapping
+
+Voice presets are mapped to `soundtest` effects:
+
+- `dog` -> `preset=neutral` with slight high-pitch/fast tuning
+- `cow` -> `preset=giant` with lower pitch/slower tuning
+- `dragon` -> `preset=dragon`
+
+## Input Behavior
+
+- `content` field supports direct typing, `Backspace`, `Esc`, and paste (`Ctrl/Cmd+V`).
+- While `content` is focused, gameplay keyboard state is suppressed so typing does not trigger movement/shortcuts.
+
+## Build Dependency Notes
+
+`gravimera` now depends on `soundtest` and pins `ort` to `2.0.0-rc.11` to match `soundtest` compatibility.

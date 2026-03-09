@@ -24,6 +24,8 @@ uuid = { version = "1", features = ["v4", "v5"] }
 wgpu = { version = "27", default-features = false }
 tiny_http = "0.12"
 winit = "0.30"
+soundtest = { path = "../soundtest" }
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["load-dynamic", "ndarray", "std"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 x11rb = "0.13"

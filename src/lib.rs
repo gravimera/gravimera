@@ -20,6 +20,7 @@ mod geometry;
 mod headless;
 pub mod intelligence;
 mod locomotion;
+pub mod meta_speak;
 mod model_depot;
 mod model_library_ui;
 mod model_tool;
@@ -55,8 +56,8 @@ mod threaded_result;
 mod types;
 mod ui;
 mod unit_health;
-mod workspace_ui;
 mod workspace_scenes_ui;
+mod workspace_ui;
 mod world_drag;
 
 pub fn run() {

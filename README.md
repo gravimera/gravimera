@@ -102,6 +102,7 @@ Docs: `docs/intelligence_service.md` (spec: `docs/gamedesign/38_intelligence_ser
 - Scene Builder (rendered UI) + artifacts: `docs/controls.md` and `docs/gamedesign/30_scene_sources_and_build_artifacts.md`
 - Gen3D Workshop + schemas + cache layout: `gen_3d.md`
 - Local Automation HTTP API (tooling/tests): `docs/automation_http_api.md`
+- Meta panel Speak (soundtest integration): `docs/meta_speak.md`
 - Rendered Automation drivers (real-cycle): `python tools/gen3d_real_test.py` (Gen3D) and `python tools/scene_build_real_test.py` (Scene Builder)
 - Controls: `docs/controls.md`
 - Publishing builds: `docs/publishing.md`
