@@ -533,6 +533,12 @@ pub(crate) enum AiReviewDeltaActionJsonV1 {
         #[serde(default)]
         reason: String,
     },
+    TweakComponentResolvedRotWorld {
+        component_id: String,
+        rot: AiRotationJsonV1,
+        #[serde(default)]
+        reason: String,
+    },
     TweakAnchor {
         component_id: String,
         anchor_name: String,

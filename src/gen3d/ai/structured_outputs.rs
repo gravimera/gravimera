@@ -470,6 +470,12 @@ fn schema_review_delta_action() -> serde_json::Value {
         ("delta", schema_nullable(schema_transform_delta())),
         ("reason", schema_string()),
     ]);
+    let tweak_component_resolved_rot_world = schema_object(vec![
+        ("kind", schema_enum(&["tweak_component_resolved_rot_world"])),
+        ("component_id", schema_string()),
+        ("rot", schema_rotation()),
+        ("reason", schema_string()),
+    ]);
     let tweak_anchor = schema_object(vec![
         ("kind", schema_enum(&["tweak_anchor"])),
         ("component_id", schema_string()),
@@ -508,6 +514,7 @@ fn schema_review_delta_action() -> serde_json::Value {
         replan,
         regen_component,
         tweak_component_transform,
+        tweak_component_resolved_rot_world,
         tweak_anchor,
         tweak_attachment,
         tweak_contact,

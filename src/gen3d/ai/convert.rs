@@ -1820,6 +1820,152 @@ pub(super) fn apply_ai_review_delta_actions(
                 }
                 result.had_actions = true;
             }
+            AiReviewDeltaActionJsonV1::TweakComponentResolvedRotWorld {
+                component_id,
+                rot,
+                reason,
+            } => {
+                let Some(object_id) = parse_component_id_u128(&component_id) else {
+                    continue;
+                };
+                let Some(idx) = component_index_from_object_id(components, object_id) else {
+                    continue;
+                };
+                if components[idx].attach_to.is_none() {
+                    continue;
+                }
+
+                // Ensure resolved transforms reflect any prior delta edits before we solve for a
+                // world-space target rotation.
+                let Some(root_idx) = components.iter().position(|c| c.attach_to.is_none()) else {
+                    return Err(
+                        "review_delta_v1: tweak_component_resolved_rot_world requires a root component (attach_to=None).".into(),
+                    );
+                };
+                resolve_planned_component_transforms(components, root_idx)?;
+
+                let (parent_name, parent_anchor_name, child_anchor_name) = components[idx]
+                    .attach_to
+                    .as_ref()
+                    .map(|att| {
+                        (
+                            att.parent.clone(),
+                            att.parent_anchor.clone(),
+                            att.child_anchor.clone(),
+                        )
+                    })
+                    .unwrap_or_else(|| ("".to_string(), "".to_string(), "".to_string()));
+
+                let parent_name = parent_name.trim();
+                if parent_name.is_empty() {
+                    continue;
+                }
+                let Some(parent_idx) = components.iter().position(|c| c.name == parent_name) else {
+                    continue;
+                };
+
+                let parent_world_rot = components[parent_idx].rot;
+                if !parent_world_rot.is_finite() {
+                    return Err(format!(
+                        "review_delta_v1: tweak_component_resolved_rot_world {} ({}) parent `{}` has non-finite resolved rotation.",
+                        component_id, components[idx].name, components[parent_idx].name
+                    ));
+                }
+                let parent_world_rot = parent_world_rot.normalize();
+
+                let parent_anchor_name = parent_anchor_name.trim();
+                let parent_anchor_rot_local = if parent_anchor_name == "origin" {
+                    Quat::IDENTITY
+                } else {
+                    components[parent_idx]
+                        .anchors
+                        .iter()
+                        .find(|a| a.name.as_ref() == parent_anchor_name)
+                        .map(|a| a.transform.rotation)
+                        .ok_or_else(|| {
+                            format!(
+                                "review_delta_v1: tweak_component_resolved_rot_world {} ({}) references missing parent_anchor `{}` on parent component `{}`.",
+                                component_id, components[idx].name, parent_anchor_name, components[parent_idx].name
+                            )
+                        })?
+                };
+                if !parent_anchor_rot_local.is_finite() {
+                    return Err(format!(
+                        "review_delta_v1: tweak_component_resolved_rot_world {} ({}) parent_anchor `{}` has non-finite rotation.",
+                        component_id, components[idx].name, parent_anchor_name
+                    ));
+                }
+                let parent_anchor_rot_local = parent_anchor_rot_local.normalize();
+
+                let child_anchor_name = child_anchor_name.trim();
+                let child_anchor_rot_local = if child_anchor_name == "origin" {
+                    Quat::IDENTITY
+                } else {
+                    components[idx]
+                        .anchors
+                        .iter()
+                        .find(|a| a.name.as_ref() == child_anchor_name)
+                        .map(|a| a.transform.rotation)
+                        .ok_or_else(|| {
+                            format!(
+                                "review_delta_v1: tweak_component_resolved_rot_world {} ({}) references missing child_anchor `{}` on component `{}`.",
+                                component_id, components[idx].name, child_anchor_name, components[idx].name
+                            )
+                        })?
+                };
+                if !child_anchor_rot_local.is_finite() {
+                    return Err(format!(
+                        "review_delta_v1: tweak_component_resolved_rot_world {} ({}) child_anchor `{}` has non-finite rotation.",
+                        component_id, components[idx].name, child_anchor_name
+                    ));
+                }
+                let child_anchor_rot_local = child_anchor_rot_local.normalize();
+
+                let target_world = match rot {
+                    AiRotationJsonV1::Basis { forward, up } => {
+                        plan_rotation_from_forward_up_strict(
+                            Vec3::new(forward[0], forward[1], forward[2]),
+                            Vec3::new(up[0], up[1], up[2]),
+                        )
+                        .map_err(|err| {
+                            format!(
+                                "review_delta_v1: tweak_component_resolved_rot_world rot basis is invalid: {err}. Expected non-degenerate basis vectors in WORLD axes (+X right, +Y up, +Z forward)."
+                            )
+                        })?
+                    }
+                    AiRotationJsonV1::Quat { quat_xyzw } => Quat::from_xyzw(
+                        quat_xyzw[0],
+                        quat_xyzw[1],
+                        quat_xyzw[2],
+                        quat_xyzw[3],
+                    )
+                    .normalize(),
+                };
+                if !target_world.is_finite() {
+                    return Err(
+                        "review_delta_v1: tweak_component_resolved_rot_world rot must be a finite quaternion/basis.".into(),
+                    );
+                }
+
+                let join_world = (parent_world_rot * parent_anchor_rot_local).normalize();
+                let offset_rot =
+                    (join_world.inverse() * target_world * child_anchor_rot_local).normalize();
+                if offset_rot.is_finite() {
+                    if let Some(att) = components[idx].attach_to.as_mut() {
+                        att.offset.rotation = offset_rot;
+                    }
+                }
+
+                if !reason.trim().is_empty() {
+                    debug!(
+                        "Gen3D: review-delta tweak_component_resolved_rot_world {} ({}) reason={}",
+                        component_id,
+                        components[idx].name,
+                        reason.trim()
+                    );
+                }
+                result.had_actions = true;
+            }
             AiReviewDeltaActionJsonV1::TweakAnchor {
                 component_id,
                 anchor_name,
@@ -3718,6 +3864,139 @@ mod tests {
 
         let ds = (a.scale - b.scale).length();
         assert!(ds < 1e-4, "scale mismatch: a={:?} b={:?}", a.scale, b.scale);
+    }
+
+    #[test]
+    fn applies_review_delta_tweak_component_resolved_rot_world_sets_world_rotation() {
+        let plan_text = r##"{
+          "version": 8,
+          "mobility": { "kind": "static" },
+          "components": [
+            {
+              "name": "root",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "mid_socket", "pos": [0.0, 0.0, 0.0], "forward": [1.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0] }
+              ]
+            },
+            {
+              "name": "mid",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "parent_mount", "pos": [0.0, 0.0, 0.0], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] },
+                { "name": "child_socket", "pos": [0.0, 0.0, 1.0], "forward": [0.0, 1.0, 0.0], "up": [0.0, 0.0, -1.0] }
+              ],
+              "attach_to": {
+                "parent": "root",
+                "parent_anchor": "mid_socket",
+                "child_anchor": "parent_mount",
+                "offset": { "pos": [0.0, 0.0, 0.0] }
+              }
+            },
+            {
+              "name": "child",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "mount", "pos": [0.0, 0.0, 0.0], "forward": [0.5, 0.0, 0.8660254], "up": [0.0, 1.0, 0.0] }
+              ],
+              "attach_to": {
+                "parent": "mid",
+                "parent_anchor": "child_socket",
+                "child_anchor": "mount",
+                "offset": { "pos": [0.0, 0.0, 0.0] }
+              }
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let plan_collider = plan.collider.clone();
+        let (mut planned, _notes, defs) = ai_plan_to_initial_draft_defs(plan).expect("defs build");
+        let mut draft = Gen3dDraft { defs };
+
+        let target_world = (Quat::from_rotation_z(0.35) * Quat::from_rotation_x(-0.60)).normalize();
+        let component_id =
+            Uuid::from_u128(builtin_object_id("gravimera/gen3d/component/child")).to_string();
+        let delta = AiReviewDeltaJsonV1 {
+            version: 1,
+            applies_to: AiReviewDeltaAppliesToJsonV1 {
+                run_id: "test".into(),
+                attempt: 0,
+                plan_hash: "sha256:test".into(),
+                assembly_rev: 0,
+            },
+            actions: vec![AiReviewDeltaActionJsonV1::TweakComponentResolvedRotWorld {
+                component_id,
+                rot: AiRotationJsonV1::Quat {
+                    quat_xyzw: [
+                        target_world.x,
+                        target_world.y,
+                        target_world.z,
+                        target_world.w,
+                    ],
+                },
+                reason: "set explicit resolved world rotation".into(),
+            }],
+            summary: None,
+            notes: None,
+        };
+
+        let apply =
+            apply_ai_review_delta_actions(delta, &mut planned, &plan_collider, &mut draft, None)
+                .expect("apply should succeed");
+        assert!(apply.had_actions);
+
+        let child = planned
+            .iter()
+            .find(|c| c.name == "child")
+            .expect("child component should exist");
+        let got_world = child.rot.normalize();
+        let dot = got_world.dot(target_world).abs();
+        assert!(
+            dot > 1.0 - 1e-4,
+            "world rotation mismatch: got={:?} target={:?}",
+            got_world,
+            target_world
+        );
+
+        let mid = planned
+            .iter()
+            .find(|c| c.name == "mid")
+            .expect("mid component should exist");
+        let mid_world_rot = mid.rot.normalize();
+        let mid_anchor_rot_local = mid
+            .anchors
+            .iter()
+            .find(|a| a.name.as_ref() == "child_socket")
+            .expect("mid child_socket anchor")
+            .transform
+            .rotation
+            .normalize();
+        let child_anchor_rot_local = child
+            .anchors
+            .iter()
+            .find(|a| a.name.as_ref() == "mount")
+            .expect("child mount anchor")
+            .transform
+            .rotation
+            .normalize();
+        let join_world = (mid_world_rot * mid_anchor_rot_local).normalize();
+        let expected_offset =
+            (join_world.inverse() * target_world * child_anchor_rot_local).normalize();
+        let got_offset = child
+            .attach_to
+            .as_ref()
+            .expect("child attachment")
+            .offset
+            .rotation
+            .normalize();
+        let dot = got_offset.dot(expected_offset).abs();
+        assert!(
+            dot > 1.0 - 1e-4,
+            "offset rotation mismatch: got={:?} expected={:?}",
+            got_offset,
+            expected_offset
+        );
     }
 
     #[test]

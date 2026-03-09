@@ -719,6 +719,8 @@ Review mode:\n",
 	         - For `tweak_component_transform.set.rot`, use either:\n\
 	           - a basis: {\"forward\":[x,y,z],\"up\":[x,y,z]}\n\
 	           - or a quaternion: {\"quat_xyzw\":[x,y,z,w]}\n\
+	         - Prefer `tweak_component_resolved_rot_world` when the intent is to set a component's RESOLVED WORLD rotation (e.g. \"make the shin upright in world\").\n\
+	           - It takes a WORLD-space rotation basis/quaternion and the engine deterministically solves the required `attach_to.offset.rotation` using the known parent/child anchors.\n\
 	         - For `tweak_anchor.set`, DO NOT use `rot`. Set `forward` and `up` directly (and optionally `pos`).\n\
 	           Example: {\"set\":{\"forward\":[0,0,1],\"up\":[0,1,0]}}\n\
 	       - For deltas (`tweak_component_transform.delta` / `tweak_anchor.delta`), use `rot_quat_xyzw` (NOT `quat_xyzw`).\n\
@@ -765,6 +767,7 @@ Review mode:\n",
          {\"kind\":\"replan\",\"reason\":\"...\"},\n\
          {\"kind\":\"regen_component\",\"component_id\":\"<uuid>\",\"updated_modeling_notes\":\"...\" (optional),\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_component_transform\",\"component_id\":\"<uuid>\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
+         {\"kind\":\"tweak_component_resolved_rot_world\",\"component_id\":\"<uuid>\",\"rot\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_anchor\",\"component_id\":\"<uuid>\",\"anchor_name\":\"name\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_attachment\",\"component_id\":\"<uuid>\",\"set\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_contact\",\"component_id\":\"<uuid>\",\"contact_name\":\"name\",\"stance\": null (optional),\"reason\":\"...\" (optional)},\n\
@@ -774,6 +777,8 @@ Review mode:\n",
      }\n\n\
      Notes:\n\
      - `tweak_component_transform` edits the component's attachment OFFSET relative to its parent.\n\
+       - Its rotation fields (`set.rot` / `delta.rot_quat_xyzw`) rotate the ATTACHMENT OFFSET frame (join frame), not the component's local axes.\n\
+       - If you want a target component rotation in WORLD space, use `tweak_component_resolved_rot_world` instead.\n\
      - `tweak_contact` edits the component's declared contacts (most commonly `stance`).\n\
        - Set stance: `\"stance\": {\"phase_01\": number, \"duty_factor_01\": number}`\n\
        - Clear stance: `\"stance\": null`\n\
@@ -834,6 +839,19 @@ pub(super) fn build_gen3d_review_delta_user_text(
         Some((arr[0].as_f64()? as f32, arr[1].as_f64()? as f32))
     }
 
+    fn read_vec4(value: &serde_json::Value) -> Option<(f32, f32, f32, f32)> {
+        let arr = value.as_array()?;
+        if arr.len() != 4 {
+            return None;
+        }
+        Some((
+            arr[0].as_f64()? as f32,
+            arr[1].as_f64()? as f32,
+            arr[2].as_f64()? as f32,
+            arr[3].as_f64()? as f32,
+        ))
+    }
+
     fn fmt_vec3(value: Option<(f32, f32, f32)>) -> String {
         match value {
             Some((x, y, z)) => format!("[{:.2},{:.2},{:.2}]", x, y, z),
@@ -844,6 +862,13 @@ pub(super) fn build_gen3d_review_delta_user_text(
     fn fmt_vec2(value: Option<(f32, f32)>) -> String {
         match value {
             Some((x, y)) => format!("[{:.2},{:.2}]", x, y),
+            None => "null".into(),
+        }
+    }
+
+    fn fmt_vec4(value: Option<(f32, f32, f32, f32)>) -> String {
+        match value {
+            Some((x, y, z, w)) => format!("[{:.2},{:.2},{:.2},{:.2}]", x, y, z, w),
             None => "null".into(),
         }
     }
@@ -953,6 +978,11 @@ pub(super) fn build_gen3d_review_delta_user_text(
                 .and_then(|a| a.get("offset"))
                 .and_then(|o| o.get("pos"))
                 .and_then(read_vec3);
+            let offset_rot_quat_join = c
+                .get("attach_to")
+                .and_then(|a| a.get("offset"))
+                .and_then(|o| o.get("rot_quat_xyzw"))
+                .and_then(read_vec4);
             let joint_kind = c
                 .get("attach_to")
                 .and_then(|a| a.get("joint"))
@@ -985,6 +1015,26 @@ pub(super) fn build_gen3d_review_delta_user_text(
                         .zip(join_forward_world)
                         .and_then(|(u, f)| normalized_cross(u, f))
                 });
+            let parent_anchor_frame_forward = c
+                .get("attach_to")
+                .and_then(|a| a.get("parent_anchor_frame"))
+                .and_then(|f| f.get("forward"))
+                .and_then(read_vec3);
+            let parent_anchor_frame_up = c
+                .get("attach_to")
+                .and_then(|a| a.get("parent_anchor_frame"))
+                .and_then(|f| f.get("up"))
+                .and_then(read_vec3);
+            let child_anchor_frame_forward = c
+                .get("attach_to")
+                .and_then(|a| a.get("child_anchor_frame"))
+                .and_then(|f| f.get("forward"))
+                .and_then(read_vec3);
+            let child_anchor_frame_up = c
+                .get("attach_to")
+                .and_then(|a| a.get("child_anchor_frame"))
+                .and_then(|f| f.get("up"))
+                .and_then(read_vec3);
 
             let anchors: Vec<&str> = c
                 .get("anchors")
@@ -1031,11 +1081,16 @@ pub(super) fn build_gen3d_review_delta_user_text(
                     }
                 }
                 out.push_str(&format!(
-                    " offset.pos(join_frame)={} join_right_world={} join_up_world={} join_forward_world={}",
+                    " offset.pos(join_frame)={} offset.rot_quat_xyzw(join_frame)={} join_right_world={} join_up_world={} join_forward_world={} parent_anchor_frame.fwd/up(local)={}/{} child_anchor_frame.fwd/up(local)={}/{}",
                     fmt_vec3(offset_pos_join),
+                    fmt_vec4(offset_rot_quat_join),
                     fmt_vec3(join_right_world),
                     fmt_vec3(join_up_world),
                     fmt_vec3(join_forward_world),
+                    fmt_vec3(parent_anchor_frame_forward),
+                    fmt_vec3(parent_anchor_frame_up),
+                    fmt_vec3(child_anchor_frame_forward),
+                    fmt_vec3(child_anchor_frame_up),
                 ));
             }
 
