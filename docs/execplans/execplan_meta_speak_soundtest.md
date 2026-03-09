@@ -16,7 +16,7 @@ After this change, a player can open the Meta panel and use a new **Speak** sect
 - [x] (2026-03-09 16:15 +08:00) Added tests in `tests/meta_speak_adapter.rs` for voice contract and backend selection logic.
 - [x] (2026-03-09 16:18 +08:00) Updated docs: `docs/controls.md`, new `docs/meta_speak.md`, and README docs index link.
 - [x] (2026-03-09 15:54 +08:00) Ran validation commands: `cargo test --test meta_speak_adapter` (3 passed) and rendered smoke (`tmpdir=$(mktemp -d); GRAVIMERA_HOME=\"$tmpdir/.gravimera\" cargo run -- --rendered-seconds 2`) passed.
-- [ ] Commit all changes with a clear message.
+- [x] (2026-03-09 15:58 +08:00) Committed implementation as `0bb8633` with message `Add Meta panel Speak with soundtest adapter isolation`.
 
 ## Surprises & Discoveries
 
@@ -35,7 +35,7 @@ After this change, a player can open the Meta panel and use a new **Speak** sect
 
 ## Outcomes & Retrospective
 
-The feature implementation is complete in code, tests, and docs. Validation passed (new contract tests + required rendered smoke). Remaining work is final commit only.
+The feature implementation is complete in code, tests, docs, and commit history. Validation passed (new contract tests + required rendered smoke).
 
 ## Context and Orientation
 
@@ -67,7 +67,7 @@ Commands executed during implementation:
 
     cargo check
 
-Planned validation commands:
+Validation commands:
 
     cargo test --test meta_speak_adapter
     tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2
@@ -107,4 +107,4 @@ Dependency decision:
 
 ---
 
-Revision note (2026-03-09): Added implementation status, discovered ort resolution issue, and recorded the compatibility pin decision.
+Revision note (2026-03-09): Added implementation status, discovered ort resolution issue, recorded the compatibility pin decision, and marked completion after commit `0bb8633`.
