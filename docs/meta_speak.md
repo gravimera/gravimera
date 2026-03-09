@@ -45,7 +45,7 @@ Planned producer:
 
 Because rendering only consumes the command channel, future trigger/content changes do not require refactoring bubble rendering logic.
 
-When speech starts, a bubble appears centered above the speaking model with centered text. Horizontal anchoring uses the model center line while vertical anchoring uses the model top offset, so the bubble stays visually centered over the head. Positioning math normalizes UI node size into logical pixel space (matching viewport projection), avoiding consistent left/up drift on high-DPI displays. The bubble stays hidden until UI layout size stabilizes, so it does not flash or jump during first-frame/early-frame text reflow. When speech finishes/fails/stops, the bubble is removed.
+When speech starts, a bubble appears centered above the speaking model with centered text and a small bottom tail. Horizontal anchoring uses the model center line while vertical anchoring uses the model top offset, so the bubble stays visually centered over the head. Positioning math normalizes UI node size into logical pixel space (matching viewport projection), avoiding consistent left/up drift on high-DPI displays. The bubble stays hidden until UI layout size stabilizes, so it does not flash or jump during first-frame/early-frame text reflow. When speech finishes/fails/stops, the bubble is removed.
 
 ## Backend Resolution
 

@@ -296,6 +296,7 @@ pub(crate) fn update_health_change_popups(
 pub(crate) fn apply_model_speech_bubble_commands(
     mut commands: Commands,
     mut cmd_events: MessageReader<ModelSpeechBubbleCommand>,
+    icons: Res<MinimapIcons>,
     mut existing_bubbles: Query<(Entity, &mut ModelSpeechBubble, &Children, &mut Visibility)>,
     mut bubble_texts: Query<&mut Text, With<ModelSpeechBubbleText>>,
 ) {
@@ -344,6 +345,9 @@ pub(crate) fn apply_model_speech_bubble_commands(
                 }
 
                 let text_value = truncated.clone();
+                let tail_outer_size = Vec2::new(16.0, 10.0);
+                let tail_inner_size = Vec2::new(12.0, 8.0);
+                let tail_attach_top = -1.0;
                 commands
                     .spawn((
                         Node {
@@ -373,6 +377,42 @@ pub(crate) fn apply_model_speech_bubble_commands(
                         },
                     ))
                     .with_children(|parent| {
+                        parent.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(50.0),
+                                top: Val::Percent(100.0),
+                                width: Val::Px(tail_outer_size.x),
+                                height: Val::Px(tail_outer_size.y),
+                                ..default()
+                            },
+                            UiTransform {
+                                translation: Val2::px(-tail_outer_size.x * 0.5, tail_attach_top),
+                                rotation: Rot2::radians(std::f32::consts::PI),
+                                ..default()
+                            },
+                            ImageNode::new(icons.triangle.clone())
+                                .with_color(Color::srgba(0.12, 0.12, 0.14, 0.80)),
+                            ZIndex(219),
+                        ));
+                        parent.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(50.0),
+                                top: Val::Percent(100.0),
+                                width: Val::Px(tail_inner_size.x),
+                                height: Val::Px(tail_inner_size.y),
+                                ..default()
+                            },
+                            UiTransform {
+                                translation: Val2::px(-tail_inner_size.x * 0.5, tail_attach_top - 1.0),
+                                rotation: Rot2::radians(std::f32::consts::PI),
+                                ..default()
+                            },
+                            ImageNode::new(icons.triangle.clone())
+                                .with_color(Color::srgba(0.98, 0.98, 1.0, 0.90)),
+                            ZIndex(220),
+                        ));
                         parent.spawn((
                             Node {
                                 width: Val::Percent(100.0),
