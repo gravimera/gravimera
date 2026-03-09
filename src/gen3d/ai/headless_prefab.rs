@@ -144,14 +144,13 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
         .filter_map(|(comp, contact)| {
             let anchor_name = contact.anchor.trim();
             let anchor_local = if anchor_name == "origin" {
-                Vec3::ZERO
+                Some(Vec3::ZERO)
             } else {
                 comp.anchors
                     .iter()
                     .find(|a| a.name.as_ref() == anchor_name)
                     .map(|a| a.transform.translation)
-                    .unwrap_or(Vec3::ZERO)
-            };
+            }?;
             let pos = comp.pos;
             let rot = comp.rot;
             (pos.is_finite() && rot.is_finite()).then_some((pos + rot * anchor_local).y)

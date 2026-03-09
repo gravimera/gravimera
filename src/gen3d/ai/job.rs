@@ -613,13 +613,15 @@ impl Gen3dAiJob {
                 }
                 let anchor_name = contact.anchor.trim();
                 let anchor_local = if anchor_name == "origin" {
-                    Vec3::ZERO
+                    Some(Vec3::ZERO)
                 } else {
                     comp.anchors
                         .iter()
                         .find(|a| a.name.as_ref() == anchor_name)
                         .map(|a| a.transform.translation)
-                        .unwrap_or(Vec3::ZERO)
+                };
+                let Some(anchor_local) = anchor_local else {
+                    continue;
                 };
 
                 let p = comp.pos + comp.rot * anchor_local;
