@@ -1424,7 +1424,10 @@ pub(crate) fn gen3d_poll_ai_job(
             );
             write_gen3d_json_artifact(job.artifact_dir(), "smoke_results.json", &smoke_results);
 
-            let system = build_gen3d_review_delta_system_instructions(job.review_appearance);
+            let edit_session =
+                job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
+            let system =
+                build_gen3d_review_delta_system_instructions(job.review_appearance, edit_session);
             let user_text = build_gen3d_review_delta_user_text(
                 &run_id,
                 job.attempt,
@@ -2475,7 +2478,8 @@ fn retry_gen3d_review_delta(
     set_progress(&progress, "Repairing review-delta JSON…");
     job.phase = Gen3dAiPhase::WaitingReview;
 
-    let system = build_gen3d_review_delta_system_instructions(job.review_appearance);
+    let edit_session = job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
+    let system = build_gen3d_review_delta_system_instructions(job.review_appearance, edit_session);
     let mut user_text = job.last_review_user_text.clone();
     user_text.push_str("\n\nYour previous response was invalid.\nError:\n");
     user_text.push_str(reason.trim());

@@ -1510,7 +1510,12 @@ pub(super) fn poll_agent_tool(
                                                 draft,
                                             );
                                             let review_appearance = job.review_appearance;
-                                            let system = super::prompts::build_gen3d_review_delta_system_instructions(review_appearance);
+                                            let edit_session = job.edit_base_prefab_id.is_some()
+                                                && !job.user_prompt_raw.trim().is_empty();
+                                            let system = super::prompts::build_gen3d_review_delta_system_instructions(
+                                                review_appearance,
+                                                edit_session,
+                                            );
                                             let include_original_images = review_appearance
                                                 && call
                                                     .args
@@ -1621,7 +1626,12 @@ pub(super) fn poll_agent_tool(
                                     draft,
                                 );
                                 let review_appearance = job.review_appearance;
-                                let system = super::prompts::build_gen3d_review_delta_system_instructions(review_appearance);
+                                let edit_session = job.edit_base_prefab_id.is_some()
+                                    && !job.user_prompt_raw.trim().is_empty();
+                                let system = super::prompts::build_gen3d_review_delta_system_instructions(
+                                    review_appearance,
+                                    edit_session,
+                                );
                                 let include_original_images = review_appearance
                                     && call
                                         .args

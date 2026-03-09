@@ -9,6 +9,7 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
+use uuid::Uuid;
 
 use super::super::state::Gen3dWorkshop;
 use super::Gen3dAiJob;
@@ -56,6 +57,7 @@ Rules:\n\
 - Visual QA / appearance review:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
+    - If `state_summary.seed.kind` is `edit_overwrite` or `fork`: this is a seeded edit session. Even with `review_appearance=false`, you SHOULD apply machine-appliable alignment/attachment tweaks to satisfy the user notes (do not wait for QA errors).\n\
     - qa_v1 runs validate_v1 + smoke_check_v1 and returns a combined summary.\n\
 - If review_appearance=true: do visual QA in WAVES to reduce LLM wall time.\n\
   - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\
@@ -882,6 +884,21 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
 
     serde_json::json!({
         "run_id": job.run_id.map(|id| id.to_string()),
+        "seed": match (job.edit_base_prefab_id, job.save_overwrite_prefab_id) {
+            (Some(prefab_id), Some(_)) => serde_json::json!({
+                "kind": "edit_overwrite",
+                "prefab_id": Uuid::from_u128(prefab_id).to_string(),
+            }),
+            (Some(prefab_id), None) => serde_json::json!({
+                "kind": "fork",
+                "prefab_id": Uuid::from_u128(prefab_id).to_string(),
+            }),
+            (None, Some(prefab_id)) => serde_json::json!({
+                "kind": "edit_overwrite",
+                "prefab_id": Uuid::from_u128(prefab_id).to_string(),
+            }),
+            (None, None) => serde_json::Value::Null,
+        },
         "attempt": job.attempt,
         "pass": job.pass,
         "plan_hash": job.plan_hash,

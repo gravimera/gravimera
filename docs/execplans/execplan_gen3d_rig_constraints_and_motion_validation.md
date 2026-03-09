@@ -276,7 +276,7 @@ Include `component_id` in each issue to match `review_delta_v1` targeting rules.
 
 Goal: if validation fails, the engine requests repair; only if repair does not converge, disable the failing channels.
 
-1) Update `build_gen3d_review_delta_system_instructions(review_appearance: bool)`:
+1) Update `build_gen3d_review_delta_system_instructions(review_appearance: bool, edit_session: bool)`:
 
 - Explicitly state that validation issues are authoritative and should be addressed first.
 - Allow disabling any channel (not just `ambient`) via an identity loop as a last resort.

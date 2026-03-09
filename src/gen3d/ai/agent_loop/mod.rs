@@ -457,6 +457,48 @@ mod tests {
     }
 
     #[test]
+    fn gen3d_agent_state_summary_includes_seed_kind_for_seeded_sessions() {
+        let config = AppConfig::default();
+        let mut job = Gen3dAiJob::default();
+
+        let summary = draft_summary(&config, &job);
+        assert!(summary
+            .get("seed")
+            .expect("expected seed field in state summary")
+            .is_null());
+
+        let prefab_uuid = Uuid::from_u128(123);
+        let prefab_id_str = prefab_uuid.to_string();
+        job.set_edit_base_prefab_id(Some(prefab_uuid.as_u128()));
+        job.set_save_overwrite_prefab_id(Some(prefab_uuid.as_u128()));
+        let summary = draft_summary(&config, &job);
+        assert_eq!(
+            summary
+                .get("seed")
+                .and_then(|v| v.get("kind"))
+                .and_then(|v| v.as_str()),
+            Some("edit_overwrite")
+        );
+        assert_eq!(
+            summary
+                .get("seed")
+                .and_then(|v| v.get("prefab_id"))
+                .and_then(|v| v.as_str()),
+            Some(prefab_id_str.as_str())
+        );
+
+        job.set_save_overwrite_prefab_id(None);
+        let summary = draft_summary(&config, &job);
+        assert_eq!(
+            summary
+                .get("seed")
+                .and_then(|v| v.get("kind"))
+                .and_then(|v| v.as_str()),
+            Some("fork")
+        );
+    }
+
+    #[test]
     fn gen3d_motion_authoring_apply_to_current_ignores_run_id_and_attempt_for_restart_safety() {
         let config = AppConfig::default();
 

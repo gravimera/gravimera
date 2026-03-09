@@ -91,7 +91,11 @@ pub(super) fn start_agent_llm_review_delta_call(
         write_gen3d_json_artifact(Some(dir), "smoke_results.json", &smoke_results);
     }
 
-    let system = super::prompts::build_gen3d_review_delta_system_instructions(review_appearance);
+    let edit_session = job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
+    let system = super::prompts::build_gen3d_review_delta_system_instructions(
+        review_appearance,
+        edit_session,
+    );
     let user_text = super::prompts::build_gen3d_review_delta_user_text(
         &run_id,
         job.attempt,

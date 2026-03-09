@@ -479,6 +479,29 @@ mod tests {
             build_gen3d_plan_user_text_with_hints("test", false, Gen3dSpeedMode::Level3, None, &[]);
         assert!(prompt.contains("Placement sanity check"));
     }
+
+    #[test]
+    fn gen3d_review_delta_structural_only_mode_disallows_transform_nudges() {
+        let text = build_gen3d_review_delta_system_instructions(false, false);
+        assert!(text.contains("- appearance_review_enabled: false"));
+        assert!(text.contains("Only fix structural issues"));
+        assert!(text.contains(
+            "Do NOT propose cosmetic-only tweaks, aesthetic regens, or transform nudges."
+        ));
+        assert!(!text.contains("edit_session: true"));
+    }
+
+    #[test]
+    fn gen3d_review_delta_edit_session_mode_allows_alignment_tweaks_without_appearance_review() {
+        let text = build_gen3d_review_delta_system_instructions(false, true);
+        assert!(text.contains("- appearance_review_enabled: false"));
+        assert!(text.contains("- edit_session: true"));
+        assert!(text.contains("Goal: apply the user's requested edits"));
+        assert!(text.contains("You MAY propose minimal placement/alignment tweaks"));
+        assert!(!text.contains(
+            "Do NOT propose cosmetic-only tweaks, aesthetic regens, or transform nudges."
+        ));
+    }
 }
 
 pub(super) fn build_gen3d_plan_system_instructions() -> String {
@@ -681,7 +704,10 @@ pub(super) fn build_gen3d_component_system_instructions() -> String {
     )
 }
 
-pub(super) fn build_gen3d_review_delta_system_instructions(review_appearance: bool) -> String {
+pub(super) fn build_gen3d_review_delta_system_instructions(
+    review_appearance: bool,
+    edit_session: bool,
+) -> String {
     let mut out = String::new();
     out.push_str("You are a 3D modeling assistant.\n");
     out.push_str(
@@ -703,13 +729,24 @@ Review mode:\n",
         out.push_str("- appearance_review_enabled: true\n");
     } else {
         out.push_str("- appearance_review_enabled: false\n");
-        out.push_str(
-            "- Only fix structural issues:\n\
+        if edit_session {
+            out.push_str(
+                "- edit_session: true\n\
+- Goal: apply the user's requested edits to the existing draft.\n\
+- Treat user notes as authoritative. If the user says something is misaligned, assume it is and fix it.\n\
+- You MAY propose minimal placement/alignment tweaks (tweak_component_transform / tweak_component_resolved_rot_world / tweak_attachment / tweak_anchor / tweak_contact) even when smoke/validate report ok.\n\
+- Still prioritize objective errors first (if any).\n\
+- Do NOT propose cosmetic-only changes.\n",
+            );
+        } else {
+            out.push_str(
+                "- Only fix structural issues:\n\
   - smoke_results.motion_validation issues with severity=\"error\"\n\
   - other smoke_results issues with severity=\"error\" (if present)\n\
 - Do NOT propose cosmetic-only tweaks, aesthetic regens, or transform nudges.\n\
 - Ignore smoke severity=\"warn\" issues unless they imply a severity=\"error\".\n",
-        );
+            );
+        }
     }
     out.push_str(
 	        "\nIMPORTANT:\n\
