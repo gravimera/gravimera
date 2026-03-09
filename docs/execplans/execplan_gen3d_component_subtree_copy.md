@@ -143,7 +143,7 @@ This change is accepted when:
 
 1. `cargo test` passes.
 2. The headless smoke run exits without crash.
-3. The new tool appears in the agent tool list and is introspectable via `get_tools_detail_v1`.
+3. The new tool appears in the agent tool list and is introspectable via `get_tool_detail_v1`.
 4. The unit test proves subtree copy fills symmetric limbs without changing target anchors/attachments.
 
 ## Idempotence and Recovery

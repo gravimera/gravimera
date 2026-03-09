@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn agent_step_prefers_non_done_step_when_multiple_present() {
-        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tools_detail_v1","args":{"tool_ids":["qa_v1"]}}]}{"version":1,"status_summary":"second","actions":[{"kind":"done","reason":"stop"}]}"#;
+        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tool_detail_v1","args":{"tool_id":"qa_v1"}}]}{"version":1,"status_summary":"second","actions":[{"kind":"done","reason":"stop"}]}"#;
         let step = parse_agent_step(text).expect("parse");
         assert_eq!(step.status_summary, "first");
         assert_eq!(step.actions.len(), 1);
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn agent_step_uses_last_non_done_step_if_multiple_tool_steps_present() {
-        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tools_detail_v1","args":{"tool_ids":["qa_v1"]}}]}{"version":1,"status_summary":"second","actions":[{"kind":"tool_call","call_id":"call_2","tool_id":"qa_v1","args":{}}]}"#;
+        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tool_detail_v1","args":{"tool_id":"qa_v1"}}]}{"version":1,"status_summary":"second","actions":[{"kind":"tool_call","call_id":"call_2","tool_id":"qa_v1","args":{}}]}"#;
         let step = parse_agent_step(text).expect("parse");
         assert_eq!(step.status_summary, "second");
         assert_eq!(step.actions.len(), 1);
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn agent_step_prefers_done_step_when_it_is_a_strict_superset() {
-        let text = r#"{"version":1,"status_summary":"with_done","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tools_detail_v1","args":{"tool_ids":["qa_v1"]}},{"kind":"tool_call","call_id":"call_2","tool_id":"qa_v1","args":{}},{"kind":"done","reason":"stop"}]}{"version":1,"status_summary":"without_done","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tools_detail_v1","args":{"tool_ids":["qa_v1"]}},{"kind":"tool_call","call_id":"call_2","tool_id":"qa_v1","args":{}}]}"#;
+        let text = r#"{"version":1,"status_summary":"with_done","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tool_detail_v1","args":{"tool_id":"qa_v1"}},{"kind":"tool_call","call_id":"call_2","tool_id":"qa_v1","args":{}},{"kind":"done","reason":"stop"}]}{"version":1,"status_summary":"without_done","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tool_detail_v1","args":{"tool_id":"qa_v1"}},{"kind":"tool_call","call_id":"call_2","tool_id":"qa_v1","args":{}}]}"#;
         let step = parse_agent_step(text).expect("parse");
         assert_eq!(step.status_summary, "with_done");
         assert_eq!(step.actions.len(), 3);

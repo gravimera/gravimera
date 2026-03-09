@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_TOOLS_DETAIL,
+    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_TOOL_DETAIL,
     TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA, TOOL_ID_READ_ARTIFACT,
@@ -39,7 +39,8 @@ Rules:\n\
 - Use tools to read/modify state. Do not assume the engine will auto-fix anything.\n\
 - Tool args are strict JSON objects. Do NOT invent arg keys.\n\
   - Tool results are only visible in the NEXT step (you cannot \"read\" tool outputs mid-step).\n\
-  - If you need args_schema/args_example, call `get_tools_detail_v1` with `tool_ids` and END THE STEP (no other actions).\n\
+  - If you need args_schema/args_example, call `get_tool_detail_v1` with `tool_id` and END THE STEP (no other actions).\n\
+    - If you need details for multiple tools, call `get_tool_detail_v1` multiple times in the SAME step.\n\
   - Some tools reject unknown keys (hard error). Example: `snapshot_v1` uses `label` (NOT `name`).\n\
   - `query_component_parts_v1` requires `component` or `component_index` (never call it with empty `{}` args).\n\
 - Prefer small, explainable steps that improve basic structure and correctness.\n\
@@ -413,46 +414,30 @@ pub(super) fn build_agent_user_text(
                     out.push_str(&format!(" copies={copies}"));
                 }
             }
-            TOOL_ID_GET_TOOLS_DETAIL => {
-                let tools = value.get("tools").and_then(|v| v.as_array()).cloned();
-                let unknown = value
-                    .get("unknown_tool_ids")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len())
-                    .unwrap_or(0);
-
+            TOOL_ID_GET_TOOL_DETAIL => {
+                let tool = value.get("tool").and_then(|v| v.as_object());
                 out.push_str("ok");
-                if let Some(tools) = tools {
-                    out.push_str(&format!(" tools={}", tools.len()));
-                    if unknown > 0 {
-                        out.push_str(&format!(" unknown={unknown}"));
-                    }
-                    for t in tools {
-                        let tool_id = t.get("tool_id").and_then(|v| v.as_str()).unwrap_or("");
-                        if tool_id.trim().is_empty() {
-                            continue;
-                        }
-                        let args_schema = t
-                            .get("args_schema")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("{}");
-                        let args_example = t.get("args_example");
+                if let Some(tool) = tool {
+                    let tool_id = tool.get("tool_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let args_schema = tool
+                        .get("args_schema")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("{}");
+                    let args_example = tool.get("args_example");
 
-                        out.push('\n');
-                        out.push_str(&format!(
-                            "  - {tool_id} args_schema={}",
-                            truncate_for_prompt(args_schema, 240)
-                        ));
-                        if let Some(args_example) = args_example {
-                            out.push_str(&format!(
-                                " args_example={}",
-                                truncate_for_prompt(&args_example.to_string(), 240)
-                            ));
-                        }
+                    if !tool_id.trim().is_empty() {
+                        out.push_str(&format!(" tool_id={tool_id}"));
                     }
-                } else {
-                    if unknown > 0 {
-                        out.push_str(&format!(" unknown={unknown}"));
+
+                    out.push_str(&format!(
+                        " args_schema={}",
+                        truncate_for_prompt(args_schema, 240)
+                    ));
+                    if let Some(args_example) = args_example {
+                        out.push_str(&format!(
+                            " args_example={}",
+                            truncate_for_prompt(&args_example.to_string(), 240)
+                        ));
                     }
                 }
             }
@@ -483,7 +468,7 @@ pub(super) fn build_agent_user_text(
     out.push('\n');
     out.push_str(&format!("Input images: {}\n\n", job.user_images.len()));
 
-    out.push_str("Available tools (call get_tools_detail_v1 for args_schema + args_example):\n");
+    out.push_str("Available tools (call get_tool_detail_v1 for args_schema + args_example):\n");
     for tool in registry.list() {
         out.push_str(&format!("- {}: {}\n", tool.tool_id, tool.one_line_summary));
     }
