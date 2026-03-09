@@ -47,3 +47,13 @@ Note: Some prompts (e.g. “A horse”) may still exhaust the Gen3D time budget 
   - Cause: AI-authored loop keyframes repeated with a period equal to the configured `time_offset_units`, making the offset a no-op (e.g. `A,B,A,B,A`).
   - Repro: cache run `~/.gravimera/cache/gen3d/214755a0-e96e-499a-8e55-7710ec9ebd17`.
   - Fix: add a motion validation error (`time_offset_no_effect`) so the repair loop (`llm_review_delta_v1`) adjusts keyframes/offset instead of accepting the broken gait.
+
+## 2026-03-10
+
+- Gen3D unit grounding could be wrong when a component contains a large, nearly-invisible “scaffold” primitive.
+  - Symptom: the saved unit floats above the ground; review renders show a faint, oversized cuboid volume.
+  - Repro: cache run `~/.gravimera/cache/gen3d/88813978-03c2-4416-bf48-1bf0c3bbfb14`.
+  - Cause: grounding used bounds-derived `ground_origin_y` and the scaffold primitive extended the root bounds far below the intended foot contacts.
+  - Fix:
+    - Drop AI-authored primitives with near-zero alpha during component conversion (`src/gen3d/ai/convert.rs`).
+    - When saving unit roots, prefer grounding from declared ground contacts (min-Y of contact anchors) and prune near-invisible primitives from the root component before bounds/size calculations (`src/gen3d/save.rs`).

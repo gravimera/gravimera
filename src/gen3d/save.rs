@@ -310,6 +310,23 @@ fn bounds_of_primitive_parts_only(def: &ObjectDef) -> Bounds {
     bounds
 }
 
+fn prune_nearly_invisible_primitives(def: &mut ObjectDef, alpha_max: f32) -> usize {
+    use crate::object::registry::PrimitiveVisualDef;
+
+    let before = def.parts.len();
+    def.parts.retain(|part| {
+        let ObjectPartKind::Primitive { primitive } = &part.kind else {
+            return true;
+        };
+        let alpha = match primitive {
+            PrimitiveVisualDef::Primitive { color, .. } => color.to_srgba().alpha,
+            PrimitiveVisualDef::Mesh { .. } => 1.0,
+        };
+        alpha >= alpha_max
+    });
+    before.saturating_sub(def.parts.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,7 +603,7 @@ mod tests {
             defs: vec![root_def, body_root_def, torso_def],
         };
         let (saved_root_id, saved_defs) =
-            draft_to_saved_defs(&draft, false, None).expect("save ok");
+            draft_to_saved_defs(&draft, false, None, None).expect("save ok");
         let saved_root = saved_defs
             .iter()
             .find(|def| def.object_id == saved_root_id)
@@ -657,7 +674,7 @@ mod tests {
         };
 
         assert!(
-            draft_to_saved_defs(&draft, false, None)
+            draft_to_saved_defs(&draft, false, None, None)
                 .ok()
                 .and_then(|(saved_root_id, saved_defs)| {
                     saved_defs
@@ -670,7 +687,7 @@ mod tests {
             "expected collision-disabled Gen3D building roots to not block movement",
         );
 
-        let saved_root_movement_block = draft_to_saved_defs(&draft, true, None)
+        let saved_root_movement_block = draft_to_saved_defs(&draft, true, None, None)
             .ok()
             .and_then(|(saved_root_id, saved_defs)| {
                 saved_defs
@@ -690,12 +707,225 @@ mod tests {
             other => panic!("expected UpperBodyFraction movement_block, got {other:?}"),
         };
     }
+
+    #[test]
+    fn draft_to_saved_defs_unit_grounding_ignores_nearly_invisible_root_scaffold() {
+        use crate::object::registry::{MobilityDef, ObjectPartDef};
+
+        let root_id = super::super::gen3d_draft_object_id();
+        let root_component_id = 0x10u128;
+        let foot_id = 0x11u128;
+
+        let foot_def = ObjectDef {
+            object_id: foot_id,
+            label: "foot".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(1.0, 1.0, 1.0),
+                    unlit: false,
+                },
+                Transform::from_translation(Vec3::new(0.0, -0.1, 0.0))
+                    .with_scale(Vec3::new(0.4, 0.2, 0.4)),
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let root_component_def = ObjectDef {
+            object_id: root_component_id,
+            label: "root_component".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![
+                ObjectPartDef::primitive(
+                    PrimitiveVisualDef::Primitive {
+                        mesh: MeshKey::UnitCube,
+                        params: None,
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.01),
+                        unlit: true,
+                    },
+                    Transform::from_scale(Vec3::new(1.0, 2.0, 1.0)),
+                ),
+                ObjectPartDef::object_ref(foot_id, Transform::IDENTITY),
+            ],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let root_def = ObjectDef {
+            object_id: root_id,
+            label: "gen3d_draft".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::CircleXZ { radius: 0.5 },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::object_ref(
+                root_component_id,
+                Transform::IDENTITY,
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let draft = Gen3dDraft {
+            defs: vec![root_def, root_component_def, foot_def],
+        };
+
+        let (saved_root_id, saved_defs) =
+            draft_to_saved_defs(&draft, false, None, None).expect("save ok");
+        let saved_root = saved_defs
+            .iter()
+            .find(|def| def.object_id == saved_root_id)
+            .expect("saved root present");
+
+        let ground_origin_y = saved_root
+            .ground_origin_y
+            .expect("expected ground_origin_y for unit root");
+        assert!(
+            (ground_origin_y - 0.2).abs() < 1e-6,
+            "ground_origin_y={ground_origin_y}"
+        );
+    }
+
+    #[test]
+    fn draft_to_saved_defs_unit_grounding_prefers_contact_min_y_when_provided() {
+        use crate::object::registry::{MobilityDef, ObjectPartDef};
+
+        let root_id = super::super::gen3d_draft_object_id();
+        let root_component_id = 0x20u128;
+        let foot_id = 0x21u128;
+
+        let foot_def = ObjectDef {
+            object_id: foot_id,
+            label: "foot".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(1.0, 1.0, 1.0),
+                    unlit: false,
+                },
+                Transform::from_translation(Vec3::new(0.0, -0.1, 0.0))
+                    .with_scale(Vec3::new(0.4, 0.2, 0.4)),
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let root_component_def = ObjectDef {
+            object_id: root_component_id,
+            label: "root_component".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::object_ref(foot_id, Transform::IDENTITY)],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let root_def = ObjectDef {
+            object_id: root_id,
+            label: "gen3d_draft".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::CircleXZ { radius: 0.5 },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::object_ref(
+                root_component_id,
+                Transform::IDENTITY,
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let draft = Gen3dDraft {
+            defs: vec![root_def, root_component_def, foot_def],
+        };
+
+        let min_contact_y = -0.25;
+        let (saved_root_id, saved_defs) =
+            draft_to_saved_defs(&draft, false, None, Some(min_contact_y)).expect("save ok");
+        let saved_root = saved_defs
+            .iter()
+            .find(|def| def.object_id == saved_root_id)
+            .expect("saved root present");
+
+        let ground_origin_y = saved_root
+            .ground_origin_y
+            .expect("expected ground_origin_y for unit root");
+        assert!(
+            (ground_origin_y - 0.25).abs() < 1e-6,
+            "ground_origin_y={ground_origin_y}"
+        );
+    }
 }
 
 pub(super) fn draft_to_saved_defs(
     draft: &Gen3dDraft,
     collision_enabled: bool,
     root_prefab_id_override: Option<u128>,
+    min_ground_contact_y_in_root: Option<f32>,
 ) -> Result<(u128, Vec<ObjectDef>), String> {
     let root_id = super::gen3d_draft_object_id();
     let Some(root_def) = draft.defs.iter().find(|d| d.object_id == root_id) else {
@@ -703,11 +933,32 @@ pub(super) fn draft_to_saved_defs(
     };
     let root_is_unit = root_def.mobility.is_some();
 
-    let defs_map: std::collections::HashMap<u128, ObjectDef> = draft
+    let mut defs_map: std::collections::HashMap<u128, ObjectDef> = draft
         .defs
         .iter()
         .map(|d| (d.object_id, d.clone()))
         .collect();
+
+    if root_is_unit {
+        const SCAFFOLD_ALPHA_MAX: f32 = 0.05;
+
+        let root_component_id = root_def.parts.iter().find_map(|part| match &part.kind {
+            ObjectPartKind::ObjectRef { object_id } => Some(*object_id),
+            _ => None,
+        });
+        if let Some(root_component_id) = root_component_id {
+            if let Some(root_component_def) = defs_map.get_mut(&root_component_id) {
+                let has_children = root_component_def
+                    .parts
+                    .iter()
+                    .any(|part| matches!(part.kind, ObjectPartKind::ObjectRef { .. }));
+                if has_children {
+                    prune_nearly_invisible_primitives(root_component_def, SCAFFOLD_ALPHA_MAX);
+                }
+            }
+        }
+    }
+
     let mut memo = std::collections::HashMap::<u128, Bounds>::new();
     let mut stack = Vec::new();
     let root_bounds = bounds_of_object(root_id, &defs_map, &mut stack, &mut memo);
@@ -735,7 +986,9 @@ pub(super) fn draft_to_saved_defs(
             }
         }
 
-        if !root_bounds.is_empty() {
+        if let Some(min_contact_y) = min_ground_contact_y_in_root.filter(|y| y.is_finite()) {
+            root_ground_origin_y = Some((recenter.y - min_contact_y).max(0.0));
+        } else if !root_bounds.is_empty() {
             // After applying `recenter`, the new bounds are `root_bounds - recenter`, so:
             // `ground_origin_y = -min.y`.
             root_ground_origin_y = Some((recenter.y - root_bounds.min.y).max(0.0));
@@ -860,8 +1113,12 @@ fn save_gen3d_snapshot_to_scene_and_library(
     snapshot: &Gen3dDraft,
     collision_enabled: bool,
 ) -> Result<(u128, ObjectDef), String> {
-    let (saved_root_id, defs) =
-        draft_to_saved_defs(snapshot, collision_enabled, job.save_overwrite_prefab_id())?;
+    let (saved_root_id, defs) = draft_to_saved_defs(
+        snapshot,
+        collision_enabled,
+        job.save_overwrite_prefab_id(),
+        job.min_ground_contact_y_in_root(),
+    )?;
     let scene_prefabs_dir = crate::scene_prefabs::save_scene_prefab_package_defs(
         realm_id,
         scene_id,

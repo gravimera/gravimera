@@ -137,7 +137,30 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
         }
     }
 
-    let (root_prefab_id, defs) = super::super::save::draft_to_saved_defs(&draft, false, None)?;
+    let min_ground_contact_y_in_root = planned_components
+        .iter()
+        .flat_map(|comp| comp.contacts.iter().map(move |contact| (comp, contact)))
+        .filter(|(_comp, contact)| contact.kind == super::schema::AiContactKindJson::Ground)
+        .filter_map(|(comp, contact)| {
+            let anchor_name = contact.anchor.trim();
+            let anchor_local = if anchor_name == "origin" {
+                Vec3::ZERO
+            } else {
+                comp.anchors
+                    .iter()
+                    .find(|a| a.name.as_ref() == anchor_name)
+                    .map(|a| a.transform.translation)
+                    .unwrap_or(Vec3::ZERO)
+            };
+            let pos = comp.pos;
+            let rot = comp.rot;
+            (pos.is_finite() && rot.is_finite()).then_some((pos + rot * anchor_local).y)
+        })
+        .filter(|y| y.is_finite())
+        .reduce(f32::min);
+
+    let (root_prefab_id, defs) =
+        super::super::save::draft_to_saved_defs(&draft, false, None, min_ground_contact_y_in_root)?;
 
     Ok(Gen3dHeadlessPrefabResult {
         root_prefab_id,

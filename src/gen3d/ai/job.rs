@@ -600,6 +600,38 @@ impl Gen3dAiJob {
         self.assembly_rev
     }
 
+    pub(crate) fn min_ground_contact_y_in_root(&self) -> Option<f32> {
+        let mut min_y: Option<f32> = None;
+        for comp in &self.planned_components {
+            if !comp.pos.is_finite() || !comp.rot.is_finite() {
+                continue;
+            }
+
+            for contact in &comp.contacts {
+                if contact.kind != AiContactKindJson::Ground {
+                    continue;
+                }
+                let anchor_name = contact.anchor.trim();
+                let anchor_local = if anchor_name == "origin" {
+                    Vec3::ZERO
+                } else {
+                    comp.anchors
+                        .iter()
+                        .find(|a| a.name.as_ref() == anchor_name)
+                        .map(|a| a.transform.translation)
+                        .unwrap_or(Vec3::ZERO)
+                };
+
+                let p = comp.pos + comp.rot * anchor_local;
+                if !p.y.is_finite() {
+                    continue;
+                }
+                min_y = Some(min_y.map_or(p.y, |prev| prev.min(p.y)));
+            }
+        }
+        min_y
+    }
+
     pub(crate) fn motion_authoring_for_current_draft(&self) -> Option<&AiMotionAuthoringJsonV1> {
         let authored = self.motion_authoring.as_ref()?;
         // `gen3d_edit_bundle_v1.json` persists motion metadata so Edit/Fork remains restart-safe.

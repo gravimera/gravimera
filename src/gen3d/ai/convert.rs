@@ -2543,6 +2543,24 @@ pub(super) fn ai_to_component_def(
                 rgba[3].clamp(0.0, 1.0),
             )
         });
+        if let Some(color) = color.as_ref() {
+            const MIN_VISIBLE_ALPHA: f32 = 0.05;
+            let alpha = color.to_srgba().alpha;
+            if alpha < MIN_VISIBLE_ALPHA {
+                append_gen3d_jsonl_artifact(
+                    run_dir,
+                    "applied_defaults.jsonl",
+                    &serde_json::json!({
+                        "kind": "drop_nearly_invisible_part",
+                        "component": component_name,
+                        "part_index": part_idx,
+                        "alpha": alpha,
+                        "min_visible_alpha": MIN_VISIBLE_ALPHA,
+                    }),
+                );
+                continue;
+            }
+        }
 
         let rot = quat_from_forward_up_or_identity(
             &format!("AI draft: component `{component_name}` part[{part_idx}]"),
@@ -2954,6 +2972,48 @@ mod tests {
             .find(|a| a.name.as_ref() == "mount")
             .expect("anchor");
         assert!(anchor.transform.translation.length() < 1e-3);
+    }
+
+    #[test]
+    fn drops_nearly_invisible_parts() {
+        let planned = Gen3dPlannedComponent {
+            display_name: "1. test_component".into(),
+            name: "test_component".into(),
+            purpose: String::new(),
+            modeling_notes: String::new(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: None,
+            anchors: Vec::new(),
+            contacts: Vec::new(),
+            attach_to: None,
+        };
+
+        let ai = AiDraftJsonV1 {
+            version: 2,
+            collider: None,
+            anchors: Vec::new(),
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cuboid,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 0.01]),
+                render_priority: None,
+                pos: [0.0, 0.0, 0.0],
+                forward: None,
+                up: None,
+                scale: [1.0, 1.0, 1.0],
+            }],
+        };
+
+        let def = ai_to_component_def(&planned, ai, None).expect("component def should build");
+        assert!(
+            def.parts
+                .iter()
+                .all(|p| !matches!(p.kind, ObjectPartKind::Primitive { .. })),
+            "expected nearly invisible primitives to be dropped, got {:?}",
+            def.parts
+        );
     }
 
     #[test]
