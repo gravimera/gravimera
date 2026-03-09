@@ -16,7 +16,6 @@ use super::agent_review_images::{
     motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
     select_review_preview_images,
 };
-use super::agent_step::maybe_start_pass_snapshot_capture;
 use super::agent_utils::{note_observable_tool_result, sanitize_prefix, truncate_json_for_log};
 use super::artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
@@ -1774,15 +1773,15 @@ pub(super) fn poll_agent_tool(
             "Build finished (best effort).\nReason: {}",
             super::truncate_for_ui(reason.trim(), 600)
         );
-        if maybe_start_pass_snapshot_capture(
+        super::agent_step::start_finish_run_sequence(
             config,
             commands,
             images,
             workshop,
             job,
             draft,
-            super::Gen3dAgentAfterPassSnapshot::FinishRun {
-                workshop_status: status.clone(),
+            super::Gen3dPendingFinishRun {
+                workshop_status: status,
                 run_log: format!(
                     "budget_stop reason={}",
                     super::truncate_for_ui(reason.trim(), 600)
@@ -1792,29 +1791,7 @@ pub(super) fn poll_agent_tool(
                     reason.trim()
                 ),
             },
-        ) {
-            workshop.status = status;
-            return;
-        }
-
-        workshop.status = status;
-        append_gen3d_run_log(
-            job.pass_dir.as_deref(),
-            format!(
-                "budget_stop reason={}",
-                super::truncate_for_ui(reason.trim(), 600)
-            ),
         );
-        info!(
-            "Gen3D agent: best-effort stop (regen budget exhausted). reason={:?}",
-            reason.trim()
-        );
-        job.finish_run_metrics();
-        job.running = false;
-        job.build_complete = true;
-        job.phase = Gen3dAiPhase::Idle;
-        job.shared_progress = None;
-        job.shared_result = None;
         return;
     }
 

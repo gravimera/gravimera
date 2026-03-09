@@ -27,6 +27,7 @@ use super::agent_review_images::{
     motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
     review_capture_dimensions_for_max_dim, select_review_preview_images,
 };
+use super::agent_step::poll_agent_descriptor_meta;
 use super::agent_step::{execute_agent_actions, poll_agent_pass_snapshot_capture, poll_agent_step};
 use super::agent_tool_poll::poll_agent_tool;
 #[cfg(test)]
@@ -109,6 +110,9 @@ pub(super) fn poll_gen3d_agent(
             feedback_history,
             job,
         ),
+        Gen3dAiPhase::AgentWaitingDescriptorMeta => {
+            poll_agent_descriptor_meta(config, commands, images, workshop, job, draft)
+        }
         _ => fail_job(
             workshop,
             job,
@@ -748,5 +752,18 @@ mod tests {
         let root = draft.root_def().expect("expected Gen3D root def");
         assert!(root.mobility.is_some(), "expected mobility on root def");
         assert!(root.attack.is_some(), "expected attack on root def");
+
+        let job = app.world().resource::<Gen3dAiJob>();
+        let meta = job
+            .descriptor_meta_for_current_draft()
+            .expect("expected descriptor-meta cached before run completion");
+        assert!(
+            !meta.short.trim().is_empty(),
+            "expected descriptor-meta short to be non-empty"
+        );
+        assert!(
+            !meta.tags.is_empty(),
+            "expected descriptor-meta tags to be non-empty"
+        );
     }
 }

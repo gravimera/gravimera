@@ -1,5 +1,6 @@
 use bevy::log::{debug, warn};
 use bevy::prelude::*;
+use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
@@ -26,7 +27,11 @@ use super::artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_text_artifact,
 };
 use super::GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES;
-use super::{fail_job, gen3d_advance_pass, set_progress, Gen3dAiJob, Gen3dAiPhase};
+use super::{
+    fail_job, gen3d_advance_pass, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob,
+    Gen3dAiPhase, Gen3dAiProgress, Gen3dAiTextResponse, Gen3dPendingFinishRun,
+};
+use crate::threaded_result::{new_shared_result, take_shared_result};
 
 fn run_complete_enough_for_auto_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> bool {
     if draft.total_non_projectile_primitive_parts() == 0 {
@@ -91,6 +96,471 @@ fn run_complete_enough_for_auto_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> 
     }
 
     true
+}
+
+fn finalize_run_now(
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    finish: Gen3dPendingFinishRun,
+) {
+    workshop.status = finish.workshop_status;
+    append_gen3d_run_log(job.pass_dir.as_deref(), finish.run_log);
+    info!("{}", finish.info_log);
+    job.finish_run_metrics();
+    job.running = false;
+    job.build_complete = true;
+    job.phase = Gen3dAiPhase::Idle;
+    job.shared_progress = None;
+    job.shared_result = None;
+    job.pending_finish_run = None;
+}
+
+fn descriptor_meta_user_prompt(job: &Gen3dAiJob, workshop: &Gen3dWorkshop) -> String {
+    let raw = job.user_prompt_raw().trim();
+    if raw.is_empty() {
+        workshop.prompt.trim().to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
+fn descriptor_meta_animation_channels_ordered(draft: &Gen3dDraft) -> Vec<String> {
+    use crate::object::registry::ObjectPartKind;
+    use std::collections::HashSet;
+
+    let root_id = super::super::gen3d_draft_object_id();
+    let by_id: std::collections::HashMap<u128, &crate::object::registry::ObjectDef> =
+        draft.defs.iter().map(|d| (d.object_id, d)).collect();
+
+    fn visit(
+        by_id: &std::collections::HashMap<u128, &crate::object::registry::ObjectDef>,
+        object_id: u128,
+        visited: &mut HashSet<u128>,
+        channels: &mut HashSet<String>,
+    ) {
+        if !visited.insert(object_id) {
+            return;
+        }
+        let Some(def) = by_id.get(&object_id) else {
+            return;
+        };
+        for part in def.parts.iter() {
+            for slot in part.animations.iter() {
+                let ch = slot.channel.as_ref().trim();
+                if !ch.is_empty() {
+                    channels.insert(ch.to_string());
+                }
+            }
+            if let ObjectPartKind::ObjectRef { object_id: child } = &part.kind {
+                visit(by_id, *child, visited, channels);
+            }
+        }
+    }
+
+    let mut visited: HashSet<u128> = HashSet::new();
+    let mut channels: HashSet<String> = HashSet::new();
+    visit(&by_id, root_id, &mut visited, &mut channels);
+
+    if draft
+        .root_def()
+        .and_then(|def| def.attack.as_ref())
+        .is_some()
+    {
+        channels.insert("attack_primary".to_string());
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for key in ["idle", "move", "attack_primary"] {
+        if channels.remove(key) {
+            out.push(key.to_string());
+        }
+    }
+    let mut rest: Vec<String> = channels.into_iter().collect();
+    rest.sort();
+    out.extend(rest);
+    out
+}
+
+fn descriptor_meta_motion_summary_json(draft: &Gen3dDraft) -> serde_json::Value {
+    use crate::object::registry::{ObjectPartKind, PartAnimationDef, PartAnimationDriver};
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+    #[derive(Default)]
+    struct Summary {
+        slots: u32,
+        animated_parts: u32,
+        drivers: BTreeSet<String>,
+        clip_kinds: BTreeSet<String>,
+        loop_duration_min: Option<f32>,
+        loop_duration_max: Option<f32>,
+        speed_scale_min: Option<f32>,
+        speed_scale_max: Option<f32>,
+        has_time_offsets: bool,
+    }
+
+    fn driver_name(driver: PartAnimationDriver) -> &'static str {
+        match driver {
+            PartAnimationDriver::Always => "always",
+            PartAnimationDriver::MovePhase => "move_phase",
+            PartAnimationDriver::MoveDistance => "move_distance",
+            PartAnimationDriver::AttackTime => "attack_time",
+        }
+    }
+
+    let root_id = super::super::gen3d_draft_object_id();
+    let by_id: std::collections::HashMap<u128, &crate::object::registry::ObjectDef> =
+        draft.defs.iter().map(|d| (d.object_id, d)).collect();
+
+    fn visit(
+        by_id: &std::collections::HashMap<u128, &crate::object::registry::ObjectDef>,
+        object_id: u128,
+        visited: &mut HashSet<u128>,
+        summaries: &mut BTreeMap<String, Summary>,
+    ) {
+        if !visited.insert(object_id) {
+            return;
+        }
+        let Some(def) = by_id.get(&object_id) else {
+            return;
+        };
+        for part in def.parts.iter() {
+            let mut channels_in_part: BTreeSet<String> = BTreeSet::new();
+            for slot in part.animations.iter() {
+                let channel = slot.channel.as_ref().trim();
+                if channel.is_empty() {
+                    continue;
+                }
+                channels_in_part.insert(channel.to_string());
+                let entry = summaries.entry(channel.to_string()).or_default();
+                entry.slots = entry.slots.saturating_add(1);
+                entry
+                    .drivers
+                    .insert(driver_name(slot.spec.driver).to_string());
+                entry.speed_scale_min = Some(
+                    entry
+                        .speed_scale_min
+                        .map_or(slot.spec.speed_scale, |v| v.min(slot.spec.speed_scale)),
+                );
+                entry.speed_scale_max = Some(
+                    entry
+                        .speed_scale_max
+                        .map_or(slot.spec.speed_scale, |v| v.max(slot.spec.speed_scale)),
+                );
+                if slot.spec.time_offset_units.abs() > 1e-6 {
+                    entry.has_time_offsets = true;
+                }
+                match &slot.spec.clip {
+                    PartAnimationDef::Loop { duration_secs, .. }
+                    | PartAnimationDef::Once { duration_secs, .. }
+                    | PartAnimationDef::PingPong { duration_secs, .. } => {
+                        entry.clip_kinds.insert(
+                            match &slot.spec.clip {
+                                PartAnimationDef::Loop { .. } => "loop",
+                                PartAnimationDef::Once { .. } => "once",
+                                PartAnimationDef::PingPong { .. } => "ping_pong",
+                                PartAnimationDef::Spin { .. } => {
+                                    unreachable!("spin handled below")
+                                }
+                            }
+                            .to_string(),
+                        );
+                        if duration_secs.is_finite() && *duration_secs > 0.0 {
+                            entry.loop_duration_min = Some(
+                                entry
+                                    .loop_duration_min
+                                    .map_or(*duration_secs, |v| v.min(*duration_secs)),
+                            );
+                            entry.loop_duration_max = Some(
+                                entry
+                                    .loop_duration_max
+                                    .map_or(*duration_secs, |v| v.max(*duration_secs)),
+                            );
+                        }
+                    }
+                    PartAnimationDef::Spin { .. } => {
+                        entry.clip_kinds.insert("spin".to_string());
+                    }
+                }
+            }
+
+            for channel in channels_in_part {
+                if let Some(entry) = summaries.get_mut(&channel) {
+                    entry.animated_parts = entry.animated_parts.saturating_add(1);
+                }
+            }
+
+            if let ObjectPartKind::ObjectRef { object_id: child } = &part.kind {
+                visit(by_id, *child, visited, summaries);
+            }
+        }
+    }
+
+    let mut visited: HashSet<u128> = HashSet::new();
+    let mut summaries: BTreeMap<String, Summary> = BTreeMap::new();
+    visit(&by_id, root_id, &mut visited, &mut summaries);
+
+    let mut channels: Vec<serde_json::Value> = Vec::new();
+    for (channel, summary) in summaries {
+        let drivers: Vec<String> = summary.drivers.into_iter().collect();
+        let clip_kinds: Vec<String> = summary.clip_kinds.into_iter().collect();
+        channels.push(serde_json::json!({
+            "channel": channel,
+            "slots": summary.slots,
+            "animated_parts": summary.animated_parts,
+            "drivers": drivers,
+            "clip_kinds": clip_kinds,
+            "loop_duration_secs_min": summary.loop_duration_min,
+            "loop_duration_secs_max": summary.loop_duration_max,
+            "speed_scale_min": summary.speed_scale_min,
+            "speed_scale_max": summary.speed_scale_max,
+            "has_time_offsets": summary.has_time_offsets,
+        }));
+    }
+
+    serde_json::json!({
+        "version": 1,
+        "channels": channels,
+    })
+}
+
+fn maybe_start_descriptor_meta_request(
+    _config: &AppConfig,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+    finish: &Gen3dPendingFinishRun,
+) -> bool {
+    if job.ai.is_none() {
+        return false;
+    }
+    if job.pass_dir.is_none() {
+        return false;
+    }
+    if draft.total_non_projectile_primitive_parts() == 0 {
+        return false;
+    }
+    if job.descriptor_meta_for_current_draft().is_some() {
+        return false;
+    }
+    if job.shared_result.is_some() {
+        warn!("Gen3D: skipping descriptor-meta; unexpected in-flight shared_result.");
+        return false;
+    }
+
+    let Some(root_def) = draft.root_def() else {
+        return false;
+    };
+
+    let user_prompt = descriptor_meta_user_prompt(job, workshop);
+
+    let roles = vec![if root_def.mobility.is_some() {
+        "unit".to_string()
+    } else {
+        "building".to_string()
+    }];
+
+    let size_m = root_def.size;
+    let ground_origin_y_m = root_def
+        .ground_origin_y
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .unwrap_or_else(|| {
+            if size_m.y.is_finite() {
+                size_m.y.abs() * 0.5
+            } else {
+                0.0
+            }
+        });
+
+    let mobility_str = root_def.mobility.map(|m| match m.mode {
+        crate::object::registry::MobilityMode::Ground => "ground".to_string(),
+        crate::object::registry::MobilityMode::Air => "air".to_string(),
+    });
+    let attack_kind_str = root_def.attack.as_ref().map(|a| match a.kind {
+        crate::object::registry::UnitAttackKind::Melee => "melee".to_string(),
+        crate::object::registry::UnitAttackKind::RangedProjectile => {
+            "ranged_projectile".to_string()
+        }
+    });
+
+    let mut anchors: Vec<String> = root_def
+        .anchors
+        .iter()
+        .map(|a| a.name.as_ref().to_string())
+        .collect();
+    anchors.sort();
+    anchors.dedup();
+
+    let animation_channels = descriptor_meta_animation_channels_ordered(draft);
+    let motion_summary_json = descriptor_meta_motion_summary_json(draft);
+
+    let plan_extracted_text = job
+        .pass_dir_path()
+        .and_then(|dir| std::fs::read(dir.join("plan_extracted.json")).ok())
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| serde_json::to_string_pretty(&value).ok());
+
+    let system = super::prompts::build_gen3d_descriptor_meta_system_instructions();
+    let user_text = super::prompts::build_gen3d_descriptor_meta_user_text(
+        root_def.label.as_ref(),
+        &user_prompt,
+        &roles,
+        size_m,
+        ground_origin_y_m,
+        mobility_str.as_deref(),
+        attack_kind_str.as_deref(),
+        &anchors,
+        &animation_channels,
+        plan_extracted_text.as_deref(),
+        Some(&motion_summary_json),
+    );
+
+    let Some(ai) = job.ai.clone() else {
+        return false;
+    };
+    let Some(pass_dir) = job.pass_dir.clone() else {
+        return false;
+    };
+
+    let shared = new_shared_result::<Gen3dAiTextResponse, String>();
+    job.shared_result = Some(shared.clone());
+    let progress = job
+        .shared_progress
+        .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
+        .clone();
+
+    workshop.status = finish.workshop_status.clone();
+    set_progress(&progress, "Generating prefab metadata…");
+    append_gen3d_run_log(Some(&pass_dir), "descriptor_meta_start");
+
+    let reasoning_effort = super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+    spawn_gen3d_ai_text_thread(
+        shared,
+        progress,
+        job.cancel_flag.clone(),
+        job.session.clone(),
+        Some(super::structured_outputs::Gen3dAiJsonSchemaKind::DescriptorMetaV1),
+        job.require_structured_outputs,
+        ai,
+        reasoning_effort,
+        system,
+        user_text,
+        Vec::new(),
+        pass_dir,
+        "descriptor_meta".into(),
+    );
+
+    job.pending_finish_run = Some(finish.clone());
+    job.phase = Gen3dAiPhase::AgentWaitingDescriptorMeta;
+    true
+}
+
+pub(super) fn start_finish_run_sequence(
+    config: &AppConfig,
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+    finish: Gen3dPendingFinishRun,
+) {
+    if maybe_start_descriptor_meta_request(config, workshop, job, draft, &finish) {
+        return;
+    }
+
+    if maybe_start_pass_snapshot_capture(
+        config,
+        commands,
+        images,
+        workshop,
+        job,
+        draft,
+        super::Gen3dAgentAfterPassSnapshot::FinishRun {
+            workshop_status: finish.workshop_status.clone(),
+            run_log: finish.run_log.clone(),
+            info_log: finish.info_log.clone(),
+        },
+    ) {
+        workshop.status = finish.workshop_status;
+        return;
+    }
+
+    finalize_run_now(workshop, job, finish);
+}
+
+pub(super) fn poll_agent_descriptor_meta(
+    config: &AppConfig,
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+) {
+    let Some(shared) = job.shared_result.as_ref() else {
+        fail_job(
+            workshop,
+            job,
+            "Internal error: missing descriptor-meta shared_result.",
+        );
+        return;
+    };
+    let Some(result) = take_shared_result(shared) else {
+        return;
+    };
+    job.shared_result = None;
+
+    match result {
+        Ok(resp) => {
+            job.note_api_used(resp.api);
+            job.session = resp.session;
+            if let Some(tokens) = resp.total_tokens {
+                job.add_tokens(tokens);
+            }
+            match super::parse::parse_ai_descriptor_meta_from_text(&resp.text) {
+                Ok(meta) => {
+                    job.descriptor_meta_cache = Some(super::Gen3dDescriptorMetaCache {
+                        plan_hash: job.plan_hash.clone(),
+                        assembly_rev: job.assembly_rev,
+                        meta,
+                    });
+                }
+                Err(err) => {
+                    warn!("Gen3D: descriptor-meta parse failed: {err}");
+                }
+            }
+        }
+        Err(err) => {
+            warn!("Gen3D: descriptor-meta request failed: {err}");
+        }
+    }
+
+    let Some(finish) = job.pending_finish_run.take() else {
+        fail_job(
+            workshop,
+            job,
+            "Internal error: missing pending finish after descriptor-meta.",
+        );
+        return;
+    };
+
+    // After metadata, optionally capture pass screenshots, then finish.
+    if maybe_start_pass_snapshot_capture(
+        config,
+        commands,
+        images,
+        workshop,
+        job,
+        draft,
+        super::Gen3dAgentAfterPassSnapshot::FinishRun {
+            workshop_status: finish.workshop_status.clone(),
+            run_log: finish.run_log.clone(),
+            info_log: finish.info_log.clone(),
+        },
+    ) {
+        workshop.status = finish.workshop_status;
+        return;
+    }
+
+    finalize_run_now(workshop, job, finish);
 }
 
 pub(super) fn poll_agent_step(
@@ -312,15 +782,15 @@ pub(super) fn execute_agent_actions(
                         "Build finished (best effort).\nReason: No-progress guard triggered ({} step(s) without progress).",
                         job.agent.no_progress_steps
                     );
-                    if maybe_start_pass_snapshot_capture(
+                    start_finish_run_sequence(
                         config,
                         commands,
                         images,
                         workshop,
                         job,
                         draft,
-                        super::Gen3dAgentAfterPassSnapshot::FinishRun {
-                            workshop_status: status.clone(),
+                        Gen3dPendingFinishRun {
+                            workshop_status: status,
                             run_log: format!(
                                 "no_progress_guard_stop steps={}",
                                 job.agent.no_progress_steps
@@ -330,18 +800,7 @@ pub(super) fn execute_agent_actions(
                                 job.agent.no_progress_steps
                             ),
                         },
-                    ) {
-                        workshop.status = status;
-                        return;
-                    }
-
-                    workshop.status = status;
-                    job.finish_run_metrics();
-                    job.running = false;
-                    job.build_complete = true;
-                    job.phase = Gen3dAiPhase::Idle;
-                    job.shared_progress = None;
-                    job.shared_result = None;
+                    );
                     return;
                 }
             }
@@ -466,35 +925,19 @@ pub(super) fn execute_agent_actions(
                 }
 
                 workshop.error = None;
-                if maybe_start_pass_snapshot_capture(
+                start_finish_run_sequence(
                     config,
                     commands,
                     images,
                     workshop,
                     job,
                     draft,
-                    super::Gen3dAgentAfterPassSnapshot::FinishRun {
-                        workshop_status: status.clone(),
+                    Gen3dPendingFinishRun {
+                        workshop_status: status,
                         run_log: format!("agent_done reason={:?}", reason.trim()),
                         info_log: format!("Gen3D agent: done. reason={:?}", reason.trim()),
                     },
-                ) {
-                    workshop.status = status;
-                    return;
-                }
-
-                workshop.status = status;
-                append_gen3d_run_log(
-                    job.pass_dir.as_deref(),
-                    format!("agent_done reason={:?}", reason.trim()),
                 );
-                info!("Gen3D agent: done. reason={:?}", reason.trim());
-
-                job.finish_run_metrics();
-                job.running = false;
-                job.build_complete = true;
-                job.phase = Gen3dAiPhase::Idle;
-                job.shared_progress = None;
                 return;
             }
             Gen3dAgentActionJsonV1::ToolCall {

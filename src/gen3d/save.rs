@@ -2207,7 +2207,7 @@ fn save_generated_prefab_descriptor_best_effort(
     let mut top_extra: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
     top_extra.insert("facts".to_string(), facts);
 
-    let descriptor = crate::prefab_descriptors::PrefabDescriptorFileV1 {
+    let mut descriptor = crate::prefab_descriptors::PrefabDescriptorFileV1 {
         format_version: crate::prefab_descriptors::PREFAB_DESCRIPTOR_FORMAT_VERSION,
         prefab_id: prefab_uuid,
         label: Some(root_def.label.to_string()),
@@ -2244,6 +2244,26 @@ fn save_generated_prefab_descriptor_best_effort(
         extra: top_extra,
     };
 
+    if let Some(meta) = job.descriptor_meta_for_current_draft() {
+        let mut should_update_short = true;
+        if let Some(text) = descriptor.text.as_ref().and_then(|t| t.short.as_deref()) {
+            if !text.trim().is_empty() {
+                should_update_short = false;
+                if let Some(first_line) = prompt_used.lines().find(|l| !l.trim().is_empty()) {
+                    if text.trim() == first_line.trim() {
+                        should_update_short = true;
+                    }
+                }
+            }
+        }
+
+        if should_update_short && !meta.short.trim().is_empty() {
+            let text = descriptor.text.get_or_insert_with(Default::default);
+            text.short = Some(meta.short.trim().to_string());
+        }
+        descriptor.tags = meta.tags.clone();
+    }
+
     if let Err(err) =
         crate::prefab_descriptors::save_prefab_descriptor_file(&descriptor_path, &descriptor)
     {
@@ -2256,20 +2276,22 @@ fn save_generated_prefab_descriptor_best_effort(
     let plan_extracted_text = plan_extracted_value
         .as_ref()
         .and_then(|v| serde_json::to_string_pretty(v).ok());
-    super::ai::spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
-        job,
-        descriptor_path,
-        root_def.label.to_string(),
-        roles_for_ai,
-        root_def.size,
-        ground_origin_y_m,
-        mobility_str,
-        attack_kind_str,
-        anchors_for_ai,
-        animation_channels_for_ai,
-        plan_extracted_text,
-        Some(motion_summary),
-    );
+    if job.descriptor_meta_for_current_draft().is_none() {
+        super::ai::spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
+            job,
+            descriptor_path,
+            root_def.label.to_string(),
+            roles_for_ai,
+            root_def.size,
+            ground_origin_y_m,
+            mobility_str,
+            attack_kind_str,
+            anchors_for_ai,
+            animation_channels_for_ai,
+            plan_extracted_text,
+            Some(motion_summary),
+        );
+    }
 
     descriptor
 }

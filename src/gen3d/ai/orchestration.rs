@@ -308,6 +308,8 @@ pub(crate) fn gen3d_resume_build_from_api(
     job.phase = Gen3dAiPhase::AgentWaitingStep;
     job.shared_progress = None;
     job.shared_result = None;
+    job.descriptor_meta_cache = None;
+    job.pending_finish_run = None;
     job.review_capture = None;
     job.capture_previews_only = false;
 
@@ -999,6 +1001,8 @@ pub(crate) fn gen3d_start_build_from_api(
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
     job.motion_authoring = None;
+    job.descriptor_meta_cache = None;
+    job.pending_finish_run = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
     job.pending_plan = None;
@@ -1581,7 +1585,8 @@ pub(crate) fn gen3d_poll_ai_job(
                 | Gen3dAiPhase::AgentExecutingActions
                 | Gen3dAiPhase::AgentWaitingTool
                 | Gen3dAiPhase::AgentCapturingRender
-                | Gen3dAiPhase::AgentCapturingPassSnapshot => {
+                | Gen3dAiPhase::AgentCapturingPassSnapshot
+                | Gen3dAiPhase::AgentWaitingDescriptorMeta => {
                     // Agent mode is polled via `agent_loop::poll_gen3d_agent`. If we end up here,
                     // just ignore this legacy response path.
                     debug!("Gen3D: ignoring legacy AI result while in agent phase.");

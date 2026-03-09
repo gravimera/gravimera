@@ -90,6 +90,20 @@ pub(super) enum Gen3dAgentAfterPassSnapshot {
 }
 
 #[derive(Clone, Debug)]
+pub(super) struct Gen3dPendingFinishRun {
+    pub(super) workshop_status: String,
+    pub(super) run_log: String,
+    pub(super) info_log: String,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct Gen3dDescriptorMetaCache {
+    pub(super) plan_hash: String,
+    pub(super) assembly_rev: u32,
+    pub(super) meta: AiDescriptorMetaJsonV1,
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct Gen3dAgentState {
     pub(super) step_actions: Vec<crate::gen3d::agent::Gen3dAgentActionJsonV1>,
     pub(super) step_action_idx: usize,
@@ -483,6 +497,8 @@ pub(crate) struct Gen3dAiJob {
     pub(super) plan_collider: Option<AiColliderJson>,
     pub(super) rig_move_cycle_m: Option<f32>,
     pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
+    pub(super) descriptor_meta_cache: Option<Gen3dDescriptorMetaCache>,
+    pub(super) pending_finish_run: Option<Gen3dPendingFinishRun>,
     pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     pub(super) reuse_group_warnings: Vec<String>,
     pub(super) pending_plan: Option<AiPlanJsonV1>,
@@ -642,6 +658,13 @@ impl Gen3dAiJob {
         (authored.applies_to.plan_hash.trim() == self.plan_hash.trim()
             && authored.applies_to.assembly_rev == self.assembly_rev)
             .then_some(authored)
+    }
+
+    pub(crate) fn descriptor_meta_for_current_draft(&self) -> Option<&AiDescriptorMetaJsonV1> {
+        let cached = self.descriptor_meta_cache.as_ref()?;
+        (cached.plan_hash.trim() == self.plan_hash.trim()
+            && cached.assembly_rev == self.assembly_rev)
+            .then_some(&cached.meta)
     }
 
     pub(crate) fn active_workspace_id(&self) -> &str {
@@ -1005,6 +1028,7 @@ pub(super) enum Gen3dAiPhase {
     AgentWaitingTool,
     AgentCapturingRender,
     AgentCapturingPassSnapshot,
+    AgentWaitingDescriptorMeta,
     WaitingPlan,
     WaitingComponent,
     CapturingReview,
