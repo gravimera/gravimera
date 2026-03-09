@@ -22,7 +22,7 @@ The user-visible behavior stays the same (Build/Stop/Save workflow). The improve
 
 ## Surprises & Discoveries
 
-- Observation: In the warcar example run, most wall time was spent waiting on `/responses` (33 calls). `agent_step_user_text.txt` grew to ~90KB in later passes because it embedded pretty-printed “recent tool results”, including large `describe_tool_v1` descriptions.
+- Observation: In the warcar example run, most wall time was spent waiting on `/responses` (33 calls). `agent_step_user_text.txt` grew to ~90KB in later passes because it embedded pretty-printed “recent tool results”, including large tool-schema detail payloads.
   Evidence: `target/debug/gen3d_cache/983620c4-.../attempt_0/pass_6/agent_step_user_text.txt` is ~90KB; `agent_trace.jsonl` shows ~59 minutes in LLM waits.
 - Observation: The review prompt embedded `scene_graph_summary.json` pretty-printed (~71KB) which inflates review token usage and latency.
   Evidence: `target/debug/gen3d_cache/983620c4-.../attempt_0/pass_6/scene_graph_summary.json` is ~71KB; `tool_review_call_12_user_text.txt` is ~72KB.

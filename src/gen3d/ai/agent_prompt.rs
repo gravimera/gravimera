@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_LIST_RUN_ARTIFACTS,
-    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_TOOLS_DETAIL,
+    TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA, TOOL_ID_READ_ARTIFACT,
     TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
@@ -30,8 +30,7 @@ Schema:\n\
   \"version\": 1,\n\
   \"status_summary\": \"short, user-facing summary\",\n\
   \"actions\": [\n\
-    {\"kind\":\"tool_call\",\"call_id\":\"call_1\",\"tool_id\":\"list_tools_v1\",\"args\":{}},\n\
-    {\"kind\":\"tool_call\",\"call_id\":\"call_2\",\"tool_id\":\"qa_v1\",\"args\":{}}\n\
+    {\"kind\":\"tool_call\",\"call_id\":\"call_1\",\"tool_id\":\"qa_v1\",\"args\":{}}\n\
   ]\n\
 }\n\n\
 Example done:\n\
@@ -40,7 +39,7 @@ Rules:\n\
 - Use tools to read/modify state. Do not assume the engine will auto-fix anything.\n\
 - Tool args are strict JSON objects. Do NOT invent arg keys.\n\
   - Tool results are only visible in the NEXT step (you cannot \"read\" tool outputs mid-step).\n\
-  - If you need args_schema/args_example, call `list_tools_v1` and END THE STEP (no other actions).\n\
+  - If you need args_schema/args_example, call `get_tools_detail_v1` with `tool_ids` and END THE STEP (no other actions).\n\
   - Some tools reject unknown keys (hard error). Example: `snapshot_v1` uses `label` (NOT `name`).\n\
   - `query_component_parts_v1` requires `component` or `component_index` (never call it with empty `{}` args).\n\
 - Prefer small, explainable steps that improve basic structure and correctness.\n\
@@ -99,7 +98,6 @@ Rules:\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
-- If you need to confirm available tools, call list_tools_v1.\n\
 - To inspect past artifacts/logs for this run, use list_run_artifacts_v1 / read_artifact_v1 / search_artifacts_v1.\n"
         .to_string()
 }
@@ -415,6 +413,49 @@ pub(super) fn build_agent_user_text(
                     out.push_str(&format!(" copies={copies}"));
                 }
             }
+            TOOL_ID_GET_TOOLS_DETAIL => {
+                let tools = value.get("tools").and_then(|v| v.as_array()).cloned();
+                let unknown = value
+                    .get("unknown_tool_ids")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+
+                out.push_str("ok");
+                if let Some(tools) = tools {
+                    out.push_str(&format!(" tools={}", tools.len()));
+                    if unknown > 0 {
+                        out.push_str(&format!(" unknown={unknown}"));
+                    }
+                    for t in tools {
+                        let tool_id = t.get("tool_id").and_then(|v| v.as_str()).unwrap_or("");
+                        if tool_id.trim().is_empty() {
+                            continue;
+                        }
+                        let args_schema = t
+                            .get("args_schema")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("{}");
+                        let args_example = t.get("args_example");
+
+                        out.push('\n');
+                        out.push_str(&format!(
+                            "  - {tool_id} args_schema={}",
+                            truncate_for_prompt(args_schema, 240)
+                        ));
+                        if let Some(args_example) = args_example {
+                            out.push_str(&format!(
+                                " args_example={}",
+                                truncate_for_prompt(&args_example.to_string(), 240)
+                            ));
+                        }
+                    }
+                } else {
+                    if unknown > 0 {
+                        out.push_str(&format!(" unknown={unknown}"));
+                    }
+                }
+            }
             _ => {
                 // Generic fallback: list top-level keys so the agent knows what's available
                 // without embedding the full JSON blob.
@@ -442,7 +483,7 @@ pub(super) fn build_agent_user_text(
     out.push('\n');
     out.push_str(&format!("Input images: {}\n\n", job.user_images.len()));
 
-    out.push_str("Available tools (call list_tools_v1 for args_schema + args_example):\n");
+    out.push_str("Available tools (call get_tools_detail_v1 for args_schema + args_example):\n");
     for tool in registry.list() {
         out.push_str(&format!("- {}: {}\n", tool.tool_id, tool.one_line_summary));
     }

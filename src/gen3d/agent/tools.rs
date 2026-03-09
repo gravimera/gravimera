@@ -1,7 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-pub(crate) const TOOL_ID_LIST: &str = "list_tools_v1";
+pub(crate) const TOOL_ID_GET_TOOLS_DETAIL: &str = "get_tools_detail_v1";
 
 pub(crate) const TOOL_ID_GET_USER_INPUTS: &str = "get_user_inputs_v1";
 pub(crate) const TOOL_ID_GET_STATE_SUMMARY: &str = "get_state_summary_v1";
@@ -56,11 +56,11 @@ impl Gen3dToolRegistryV1 {
     pub(crate) fn list(&self) -> Vec<Gen3dToolDescriptorV1> {
         let mut out = vec![
             Gen3dToolDescriptorV1 {
-                tool_id: TOOL_ID_LIST,
-                title: "List tools",
-                one_line_summary: "Lists available Gen3D agent tools.",
-                args_schema: "{}",
-                args_example: serde_json::json!({}),
+                tool_id: TOOL_ID_GET_TOOLS_DETAIL,
+                title: "Get tools detail",
+                one_line_summary: "Returns args_schema/args_example for selected tools.",
+                args_schema: "{ tool_ids: string[] }",
+                args_example: serde_json::json!({ "tool_ids": ["apply_draft_ops_v1", "llm_review_delta_v1"] }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_GET_USER_INPUTS,

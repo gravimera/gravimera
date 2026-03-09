@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn coerce_agent_step_prefers_non_done_candidate() {
-        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"list_tools_v1","args":{}}]}{"version":1,"status_summary":"second","actions":[{"kind":"done","reason":"stop"}]}"#;
+        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tools_detail_v1","args":{"tool_ids":["qa_v1"]}}]}{"version":1,"status_summary":"second","actions":[{"kind":"done","reason":"stop"}]}"#;
         let coerced =
             coerce_single_json_object_best_effort(Gen3dAiJsonSchemaKind::AgentStepV1, text)
                 .expect("coerce");

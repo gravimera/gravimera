@@ -107,8 +107,8 @@ Add a new module `src/gen3d/agent/` containing:
 
 The protocol must be string-dispatched and introspectable:
 
-- `list_tools_v1()` returns a list of `{ tool_id, title, one_line_summary }`.
-- `describe_tool_v1(tool_id)` returns a detailed schema (description, args fields, result fields, error modes).
+- The engine provides the tool summary list in the agent prompt (`tool_id` + one-line summary).
+- `get_tools_detail_v1({tool_ids:[...]})` returns detailed tool descriptors including `args_schema` and `args_example` for those ids.
 
 The protocol must be additive and versioned:
 
@@ -257,7 +257,7 @@ This change is accepted when:
 
 - The user-facing UI remains **Build / Stop / Save** and works in Gen3D.
 - During a Build run, `gen3d_cache/<run_id>/agent_trace.jsonl` is created and grows with tool calls/results.
-- The AI can call `list_tools_v1` and `describe_tool_v1` successfully and those calls are logged.
+- The AI can call `get_tools_detail_v1` successfully and those calls are logged.
 - The AI can request renders with different angles/resolutions via tools, and those PNGs are stored in the cache folder and referenced by tool results.
 - Stop halts the run quickly without crashing, and the status panel shows a short summary.
 - Save is available after the first usable draft and can be clicked multiple times during a run to create multiple saved objects.
@@ -296,7 +296,7 @@ New internal interfaces to implement:
   - `Gen3dToolCallJsonV1`
   - `Gen3dToolResultJsonV1`
 - `crate::gen3d::agent::tools` must define:
-  - a registry that can answer `list_tools_v1` and `describe_tool_v1`
+  - a registry that can answer `get_tools_detail_v1`
   - a single executor function `execute_tool_call(call, state) -> tool_result`
 - `crate::gen3d::agent::trace` must define:
   - `append_trace_event(run_dir, event_json)` writing JSONL safely (best-effort).

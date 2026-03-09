@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
@@ -6,8 +7,8 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
     TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE,
     TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_DIFF_WORKSPACES,
-    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_USER_INPUTS,
-    TOOL_ID_LIST, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LIST_SNAPSHOTS,
+    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_TOOLS_DETAIL,
+    TOOL_ID_GET_USER_INPUTS, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LIST_SNAPSHOTS,
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
@@ -141,11 +142,63 @@ pub(super) fn execute_tool_call(
 ) -> ToolCallOutcome {
     let registry = Gen3dToolRegistryV1::default();
     match call.tool_id.as_str() {
-        TOOL_ID_LIST => ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
-            call.call_id,
-            call.tool_id,
-            serde_json::json!({ "tools": registry.list() }),
-        )),
+        TOOL_ID_GET_TOOLS_DETAIL => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct GetToolsDetailArgsV1 {
+                tool_ids: Vec<String>,
+            }
+
+            const MAX_TOOL_IDS: usize = 12;
+
+            let args: GetToolsDetailArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid args for `{TOOL_ID_GET_TOOLS_DETAIL}`: {err}"),
+                    ));
+                }
+            };
+            if args.tool_ids.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!("`{TOOL_ID_GET_TOOLS_DETAIL}` requires a non-empty `tool_ids` array."),
+                ));
+            }
+            if args.tool_ids.len() > MAX_TOOL_IDS {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "`{TOOL_ID_GET_TOOLS_DETAIL}` supports at most {MAX_TOOL_IDS} tool_ids per call."
+                    ),
+                ));
+            }
+
+            let all_tools = registry.list();
+            let mut tools = Vec::new();
+            let mut unknown_tool_ids = Vec::new();
+            for tool_id in args.tool_ids {
+                let tool_id = tool_id.trim();
+                if tool_id.is_empty() {
+                    continue;
+                }
+                if let Some(tool) = all_tools.iter().find(|t| t.tool_id == tool_id) {
+                    tools.push(tool.clone());
+                } else {
+                    unknown_tool_ids.push(tool_id.to_string());
+                }
+            }
+
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
+                call.call_id,
+                call.tool_id,
+                serde_json::json!({ "tools": tools, "unknown_tool_ids": unknown_tool_ids }),
+            ))
+        }
         TOOL_ID_GET_USER_INPUTS => ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
             call.call_id,
             call.tool_id,

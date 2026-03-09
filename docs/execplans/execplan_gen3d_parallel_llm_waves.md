@@ -128,7 +128,7 @@ This preserves quality (review exists) while reducing sequential LLM calls.
 Add/adjust tests (offline) to catch regressions:
 
 - Ensure `Gen3dToolRegistryV1::list()` includes the new tool id.
-- Ensure `describe_tool_v1` includes an args schema example that mentions indices/names.
+- Ensure `get_tools_detail_v1` returns `args_schema` and `args_example` for requested tool ids.
 - Ensure `summarize_tool_result()` prints a compact summary for the batch tool.
 
 Then run:

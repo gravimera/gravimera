@@ -44,7 +44,7 @@ After this change:
 
 - Runtime motion algorithms removed (no engine-injected idle/move/attack).
 - Motion mapping removed (`motion_roles_v1` / `motion_rig_v1`); movable units rely on authored clips (`llm_generate_motion_authoring_v1`).
-- `describe_tool_v1` removed; tool introspection is now `list_tools_v1` only.
+- `describe_tool_v1` removed; tool-schema introspection uses `get_tools_detail_v1`.
 - Meta panel no longer offers animation selection; it shows a read-only summary plus Brain + Gen3D actions.
 - Validation: `cargo test` passed; rendered smoke test ran successfully (`--rendered-seconds 2`).
 
@@ -59,7 +59,7 @@ Key current implementation points (paths are repo-root relative):
   - A read-only motion summary (mobility/attack/available channels). No animation selection UI.
 - Scene persistence no longer stores per-instance motion algorithm selections in `scene.dat`.
 - Gen3D edit bundles no longer contain `motion_roles_v1` / `motion_rig_v1` metadata; only authored clips (`motion_authoring`) remain.
-- The Gen3D agent tool registry no longer supports `describe_tool_v1`; `list_tools_v1` is the only tool-introspection surface.
+- The Gen3D agent tool registry supports `get_tools_detail_v1` for targeted tool-schema introspection.
 
 Docs that must match the new behavior:
 
@@ -140,5 +140,5 @@ Acceptance is confirmed when:
 ## Interfaces and Dependencies
 
 - Bevy UI: Meta panel remains a Bevy UI panel; only the motion algorithm selection portion is removed.
-- Gen3D agent tooling: `list_tools_v1` remains the only tool-introspection surface; `describe_tool_v1` is removed.
+- Gen3D agent tooling: tool-schema introspection uses `get_tools_detail_v1`; `describe_tool_v1` is removed.
 - Motion authoring: `llm_generate_motion_authoring_v1` remains the sole path to generate motion for movable units.
