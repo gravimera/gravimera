@@ -486,6 +486,16 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
 
     let descriptor =
         load_prefab_descriptor_from_scene_prefab_package(realm_id, scene_id, prefab_id).ok();
+    let seed_descriptor_meta = descriptor.as_ref().map(|descriptor| AiDescriptorMetaJsonV1 {
+        version: 1,
+        short: descriptor
+            .text
+            .as_ref()
+            .and_then(|t| t.short.as_ref())
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default(),
+        tags: descriptor.tags.clone(),
+    });
 
     let prompt_from_descriptor = descriptor
         .as_ref()
@@ -561,6 +571,10 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.last_run_elapsed = None;
     job.current_run_tokens = 0;
     job.chat_fallbacks_this_run = 0;
+    job.descriptor_meta_cache = None;
+    job.seed_descriptor_meta = seed_descriptor_meta;
+    job.descriptor_meta_override = None;
+    job.pending_finish_run = None;
 
     job.ai = Some(ai);
     job.run_id = Some(run_id);
@@ -1002,6 +1016,8 @@ pub(crate) fn gen3d_start_build_from_api(
     job.rig_move_cycle_m = None;
     job.motion_authoring = None;
     job.descriptor_meta_cache = None;
+    job.seed_descriptor_meta = None;
+    job.descriptor_meta_override = None;
     job.pending_finish_run = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();

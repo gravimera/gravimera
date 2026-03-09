@@ -18,7 +18,7 @@ use crate::types::{
     ObjectPrefabId, ObjectTint, Player,
 };
 
-use super::ai::Gen3dAiJob;
+use super::ai::{Gen3dAiJob, Gen3dDescriptorMetaPolicy};
 use super::state::{Gen3dDraft, Gen3dPreview, Gen3dSaveButton, Gen3dWorkshop};
 
 #[derive(SystemParam)]
@@ -2244,24 +2244,41 @@ fn save_generated_prefab_descriptor_best_effort(
         extra: top_extra,
     };
 
-    if let Some(meta) = job.descriptor_meta_for_current_draft() {
-        let mut should_update_short = true;
-        if let Some(text) = descriptor.text.as_ref().and_then(|t| t.short.as_deref()) {
-            if !text.trim().is_empty() {
-                should_update_short = false;
-                if let Some(first_line) = prompt_used.lines().find(|l| !l.trim().is_empty()) {
-                    if text.trim() == first_line.trim() {
-                        should_update_short = true;
+    if let Some((policy, meta)) = job.descriptor_meta_for_save() {
+        match policy {
+            Gen3dDescriptorMetaPolicy::Suggest => {
+                let mut should_update_short = true;
+                if let Some(text) = descriptor.text.as_ref().and_then(|t| t.short.as_deref()) {
+                    if !text.trim().is_empty() {
+                        should_update_short = false;
+                        if let Some(first_line) =
+                            prompt_used.lines().find(|l| !l.trim().is_empty())
+                        {
+                            if text.trim() == first_line.trim() {
+                                should_update_short = true;
+                            }
+                        }
                     }
                 }
+
+                if should_update_short && !meta.short.trim().is_empty() {
+                    let text = descriptor.text.get_or_insert_with(Default::default);
+                    text.short = Some(meta.short.trim().to_string());
+                }
+                descriptor.tags = meta.tags.clone();
+            }
+            Gen3dDescriptorMetaPolicy::Preserve => {
+                if meta.short.trim().is_empty() {
+                    if let Some(text) = descriptor.text.as_mut() {
+                        text.short = None;
+                    }
+                } else {
+                    let text = descriptor.text.get_or_insert_with(Default::default);
+                    text.short = Some(meta.short.trim().to_string());
+                }
+                descriptor.tags = meta.tags.clone();
             }
         }
-
-        if should_update_short && !meta.short.trim().is_empty() {
-            let text = descriptor.text.get_or_insert_with(Default::default);
-            text.short = Some(meta.short.trim().to_string());
-        }
-        descriptor.tags = meta.tags.clone();
     }
 
     if let Err(err) =
@@ -2276,7 +2293,7 @@ fn save_generated_prefab_descriptor_best_effort(
     let plan_extracted_text = plan_extracted_value
         .as_ref()
         .and_then(|v| serde_json::to_string_pretty(v).ok());
-    if job.descriptor_meta_for_current_draft().is_none() {
+    if job.descriptor_meta_for_save().is_none() {
         super::ai::spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
             job,
             descriptor_path,

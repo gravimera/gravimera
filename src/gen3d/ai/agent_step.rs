@@ -339,7 +339,7 @@ fn maybe_start_descriptor_meta_request(
     if draft.total_non_projectile_primitive_parts() == 0 {
         return false;
     }
-    if job.descriptor_meta_for_current_draft().is_some() {
+    if job.descriptor_meta_for_save().is_some() {
         return false;
     }
     if job.shared_result.is_some() {

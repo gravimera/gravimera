@@ -61,6 +61,7 @@ Rules:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
     - If `state_summary.seed.kind` is `edit_overwrite` or `fork`: this is a seeded edit session. Even with `review_appearance=false`, you SHOULD apply machine-appliable alignment/attachment tweaks to satisfy the user notes (do not wait for QA errors).\n\
+    - Descriptor meta (prefab descriptor `text.short` + `tags`): in seeded edit sessions, preserve existing values unless the user explicitly requests changes. If requested, call `set_descriptor_meta_v1` before finishing.\n\
     - qa_v1 runs validate_v1 + smoke_check_v1 and returns a combined summary.\n\
 - If review_appearance=true: do visual QA in WAVES to reduce LLM wall time.\n\
   - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\
@@ -911,6 +912,30 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         })
     };
 
+    let descriptor_meta_seeded = job
+        .seed_descriptor_meta
+        .as_ref()
+        .map(|meta| serde_json::json!({ "short": meta.short.as_str(), "tags": &meta.tags }))
+        .unwrap_or(serde_json::Value::Null);
+    let descriptor_meta_override = job
+        .descriptor_meta_override
+        .as_ref()
+        .map(|meta| serde_json::json!({ "short": meta.short.as_str(), "tags": &meta.tags }))
+        .unwrap_or(serde_json::Value::Null);
+    let descriptor_meta_effective = job
+        .descriptor_meta_for_save()
+        .map(|(policy, meta)| {
+            serde_json::json!({
+                "policy": match policy {
+                    super::Gen3dDescriptorMetaPolicy::Suggest => "suggest",
+                    super::Gen3dDescriptorMetaPolicy::Preserve => "preserve",
+                },
+                "short": meta.short.as_str(),
+                "tags": &meta.tags,
+            })
+        })
+        .unwrap_or(serde_json::Value::Null);
+
     serde_json::json!({
         "run_id": job.run_id.map(|id| id.to_string()),
         "seed": match (job.edit_base_prefab_id, job.save_overwrite_prefab_id) {
@@ -927,6 +952,11 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
                 "prefab_id": Uuid::from_u128(prefab_id).to_string(),
             }),
             (None, None) => serde_json::Value::Null,
+        },
+        "descriptor_meta": {
+            "seeded": descriptor_meta_seeded,
+            "override": descriptor_meta_override,
+            "effective": descriptor_meta_effective,
         },
         "attempt": job.attempt,
         "pass": job.pass,

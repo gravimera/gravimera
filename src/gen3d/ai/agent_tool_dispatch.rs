@@ -14,7 +14,8 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
     TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RENDER_PREVIEW,
     TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE,
-    TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
+    TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
+    TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -156,6 +157,99 @@ pub(super) fn execute_tool_call(
             call.tool_id,
             draft_summary(config, job),
         )),
+        TOOL_ID_SET_DESCRIPTOR_META => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct SetDescriptorMetaArgsV1 {
+                #[serde(default)]
+                version: u32,
+                #[serde(default)]
+                short: Option<String>,
+                #[serde(default)]
+                tags: Option<Vec<String>>,
+            }
+
+            fn canonicalize_tags(mut tags: Vec<String>) -> Vec<String> {
+                tags = tags
+                    .into_iter()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .collect();
+                tags.sort();
+                tags.dedup();
+                tags
+            }
+
+            let args: SetDescriptorMetaArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid args for `{TOOL_ID_SET_DESCRIPTOR_META}`: {err}"),
+                    ));
+                }
+            };
+
+            if args.version != 0 && args.version != 1 {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!("Unsupported `{TOOL_ID_SET_DESCRIPTOR_META}` version {}.", args.version),
+                ));
+            }
+
+            let mut meta = job
+                .descriptor_meta_for_save()
+                .map(|(_, meta)| meta.clone())
+                .unwrap_or_else(|| super::schema::AiDescriptorMetaJsonV1 {
+                    version: 1,
+                    short: String::new(),
+                    tags: Vec::new(),
+                });
+
+            if let Some(short) = args.short {
+                meta.short = short.trim().to_string();
+            }
+            if let Some(tags) = args.tags {
+                meta.tags = canonicalize_tags(tags);
+            }
+            meta.version = 1;
+
+            job.descriptor_meta_override = Some(meta.clone());
+
+            if let Some(dir) = job.pass_dir.as_deref() {
+                let short = meta.short.clone();
+                let tags = meta.tags.clone();
+                write_gen3d_json_artifact(
+                    Some(dir),
+                    "descriptor_meta_override.json",
+                    &serde_json::json!({
+                        "version": 1,
+                        "short": short,
+                        "tags": tags,
+                    }),
+                );
+            }
+            append_gen3d_run_log(
+                job.pass_dir.as_deref(),
+                format!(
+                    "descriptor_meta_override_set short_chars={} tags={}",
+                    meta.short.chars().count(),
+                    meta.tags.len()
+                ),
+            );
+
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
+                call.call_id,
+                call.tool_id,
+                serde_json::json!({
+                    "version": 1,
+                    "short": meta.short,
+                    "tags": meta.tags,
+                }),
+            ))
+        }
         TOOL_ID_GET_SCENE_GRAPH_SUMMARY => {
             let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
             let json = super::build_gen3d_scene_graph_summary(

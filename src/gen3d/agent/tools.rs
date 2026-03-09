@@ -6,6 +6,7 @@ pub(crate) const TOOL_ID_GET_TOOL_DETAIL: &str = "get_tool_detail_v1";
 pub(crate) const TOOL_ID_GET_USER_INPUTS: &str = "get_user_inputs_v1";
 pub(crate) const TOOL_ID_GET_STATE_SUMMARY: &str = "get_state_summary_v1";
 pub(crate) const TOOL_ID_GET_SCENE_GRAPH_SUMMARY: &str = "get_scene_graph_summary_v1";
+pub(crate) const TOOL_ID_SET_DESCRIPTOR_META: &str = "set_descriptor_meta_v1";
 pub(crate) const TOOL_ID_QUERY_COMPONENT_PARTS: &str = "query_component_parts_v1";
 pub(crate) const TOOL_ID_VALIDATE: &str = "validate_v1";
 pub(crate) const TOOL_ID_SMOKE_CHECK: &str = "smoke_check_v1";
@@ -76,6 +77,13 @@ impl Gen3dToolRegistryV1 {
                 one_line_summary: "Read-only: compact summary of plan/draft/QA/budgets (for decision-making).",
                 args_schema: "{}",
                 args_example: serde_json::json!({}),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_SET_DESCRIPTOR_META,
+                title: "Set descriptor meta",
+                one_line_summary: "Mutates session: sets prefab descriptor `text.short` + `tags` for the next Save (seeded edits preserve existing meta unless overridden).",
+                args_schema: "{ version?: 1, short?: string, tags?: string[] }",
+                args_example: serde_json::json!({ "short": "A wooden watchtower with a narrow staircase.", "tags": ["tower", "wood", "defensive"] }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_GET_SCENE_GRAPH_SUMMARY,

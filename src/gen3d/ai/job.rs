@@ -103,6 +103,12 @@ pub(super) struct Gen3dDescriptorMetaCache {
     pub(super) meta: AiDescriptorMetaJsonV1,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Gen3dDescriptorMetaPolicy {
+    Suggest,
+    Preserve,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Gen3dAgentState {
     pub(super) step_actions: Vec<crate::gen3d::agent::Gen3dAgentActionJsonV1>,
@@ -498,6 +504,8 @@ pub(crate) struct Gen3dAiJob {
     pub(super) rig_move_cycle_m: Option<f32>,
     pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
     pub(super) descriptor_meta_cache: Option<Gen3dDescriptorMetaCache>,
+    pub(super) seed_descriptor_meta: Option<AiDescriptorMetaJsonV1>,
+    pub(super) descriptor_meta_override: Option<AiDescriptorMetaJsonV1>,
     pub(super) pending_finish_run: Option<Gen3dPendingFinishRun>,
     pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     pub(super) reuse_group_warnings: Vec<String>,
@@ -665,6 +673,25 @@ impl Gen3dAiJob {
         (cached.plan_hash.trim() == self.plan_hash.trim()
             && cached.assembly_rev == self.assembly_rev)
             .then_some(&cached.meta)
+    }
+
+    pub(crate) fn descriptor_meta_for_save(
+        &self,
+    ) -> Option<(Gen3dDescriptorMetaPolicy, &AiDescriptorMetaJsonV1)> {
+        if let Some(meta) = self.descriptor_meta_override.as_ref() {
+            return Some((Gen3dDescriptorMetaPolicy::Preserve, meta));
+        }
+
+        // Seeded Edit/Fork sessions preserve existing `text.short` + `tags` by default, unless the
+        // agent explicitly overrides them.
+        if self.edit_base_prefab_id.is_some() {
+            if let Some(meta) = self.seed_descriptor_meta.as_ref() {
+                return Some((Gen3dDescriptorMetaPolicy::Preserve, meta));
+            }
+        }
+
+        self.descriptor_meta_for_current_draft()
+            .map(|meta| (Gen3dDescriptorMetaPolicy::Suggest, meta))
     }
 
     pub(crate) fn active_workspace_id(&self) -> &str {

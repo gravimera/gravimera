@@ -180,3 +180,4 @@ Gen3D writes descriptor files for saved models. In addition to filling standard 
 - Populate `interfaces.extra.motion_summary` with a structured summary of available animation channels (drivers/clip kinds/counts).
 - Populate `extra.facts` with a structured set of derived facts (size, mobility/attack presence, grounding, etc.).
 - Populate `text.short` and `tags` via a best-effort AI call (when AI config is available). Gen3D should do this **before reporting the run complete** so Save can write a descriptor that already includes these fields; falling back to blank/default values is acceptable. Tools should treat these as suggestions and preserve human edits.
+- For seeded Edit/Fork sessions, Save should preserve the previous `text.short` + `tags` by default. If the user explicitly requests changes, the Gen3D agent may override them.
