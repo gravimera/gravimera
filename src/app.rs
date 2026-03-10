@@ -521,9 +521,12 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
 fn bevy_log_filter(level: bevy::log::Level) -> String {
     let mut filter = bevy::log::DEFAULT_FILTER.to_string();
 
-    // Treat noisy engine-level debug logs as trace-only.
-    if level != bevy::log::Level::TRACE {
+    // Treat noisy engine-level debug logs as trace-only (i.e. suppress at `debug`).
+    if level == bevy::log::Level::DEBUG {
         filter.push_str("cosmic_text=info,");
+        filter.push_str("offset_allocator=info,");
+        filter.push_str("bevy_shader::shader_cache=info,");
+        filter.push_str("bevy_time::virt=info,");
     }
 
     filter
