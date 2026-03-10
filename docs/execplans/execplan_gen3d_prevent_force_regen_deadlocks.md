@@ -34,7 +34,7 @@ User-visible outcome: Gen3D edit runs stop burning minutes repeatedly “inspect
 - [x] (2026-03-11 01:32Z) Update documentation (`docs/gen3d/edit_preserve_existing_components.md`) to match the new semantics.
 - [x] (2026-03-11 01:32Z) Add deterministic unit tests (no LLM/network) that fail before and pass after.
 - [x] (2026-03-11 01:32Z) Run `cargo test` and the required rendered smoke test.
-- [ ] (2026-03-11 01:32Z) Commit.
+- [x] (2026-03-11 01:32Z) Commit.
 
 ## Surprises & Discoveries
 
@@ -203,3 +203,4 @@ At the end of implementation:
 Plan revision notes:
 
 - 2026-03-11 01:32Z: Updated `Progress` and `Outcomes & Retrospective` to reflect completed implementation work and validation evidence.
+- 2026-03-11 01:32Z: Marked the final “Commit” progress item complete after landing the changes on `main`.
