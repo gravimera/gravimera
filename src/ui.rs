@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use crate::constants::*;
 use crate::object::registry::ObjectLibrary;
 use crate::types::*;
+use crate::ui_text::{set_text_with_ui_fonts, spawn_text_with_ui_fonts};
 
 const HEALTH_POPUP_TTL_SECS_ENEMY: f32 = 0.85;
 const HEALTH_POPUP_TTL_SECS_HERO: f32 = 1.05;
@@ -297,9 +298,12 @@ pub(crate) fn apply_model_speech_bubble_commands(
     mut commands: Commands,
     mut cmd_events: MessageReader<ModelSpeechBubbleCommand>,
     icons: Res<MinimapIcons>,
+    ui_fonts: Res<UiFonts>,
     mut existing_bubbles: Query<(Entity, &mut ModelSpeechBubble, &Children, &mut Visibility)>,
-    mut bubble_texts: Query<&mut Text, With<ModelSpeechBubbleText>>,
+    bubble_texts: Query<Entity, With<ModelSpeechBubbleText>>,
 ) {
+    let bubble_text_color = Color::srgb(0.10, 0.10, 0.12);
+    let bubble_font_size = 13.0;
     for event in cmd_events.read() {
         match event {
             ModelSpeechBubbleCommand::Start {
@@ -335,8 +339,15 @@ pub(crate) fn apply_model_speech_bubble_commands(
                     bubble.stable_frames = 0;
                     bubble.last_size = Vec2::ZERO;
                     for child in children.iter() {
-                        if let Ok(mut bubble_text) = bubble_texts.get_mut(child) {
-                            *bubble_text = Text::new(truncated.clone());
+                        if let Ok(text_entity) = bubble_texts.get(child) {
+                            set_text_with_ui_fonts(
+                                &mut commands,
+                                text_entity,
+                                &truncated,
+                                &ui_fonts,
+                                bubble_font_size,
+                                bubble_text_color,
+                            );
                             break;
                         }
                     }
@@ -413,27 +424,28 @@ pub(crate) fn apply_model_speech_bubble_commands(
                                 .with_color(Color::srgba(0.98, 0.98, 1.0, 0.90)),
                             ZIndex(220),
                         ));
-                        parent.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                ..default()
-                            },
-                            Text::new(text_value),
-                            TextFont {
-                                font_size: 13.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.10, 0.10, 0.12)),
-                            TextLayout {
-                                justify: Justify::Center,
-                                linebreak: LineBreak::WordBoundary,
-                            },
-                            TextShadow {
-                                offset: Vec2::splat(1.0),
-                                color: Color::linear_rgba(0.0, 0.0, 0.0, 0.12),
-                            },
-                            ModelSpeechBubbleText,
-                        ));
+                        spawn_text_with_ui_fonts(
+                            parent,
+                            &text_value,
+                            &ui_fonts,
+                            bubble_font_size,
+                            bubble_text_color,
+                            (
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                TextLayout {
+                                    justify: Justify::Center,
+                                    linebreak: LineBreak::WordBoundary,
+                                },
+                                TextShadow {
+                                    offset: Vec2::splat(1.0),
+                                    color: Color::linear_rgba(0.0, 0.0, 0.0, 0.12),
+                                },
+                                ModelSpeechBubbleText,
+                            ),
+                        );
                     });
             }
             ModelSpeechBubbleCommand::Stop { entity } => {

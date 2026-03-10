@@ -55,6 +55,7 @@ mod system_proxy;
 mod threaded_result;
 mod types;
 mod ui;
+mod ui_text;
 mod unit_health;
 mod workspace_scenes_ui;
 mod workspace_ui;

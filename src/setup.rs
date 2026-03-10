@@ -12,6 +12,7 @@ pub(crate) fn setup_rendered(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
     mut selection: ResMut<SelectionState>,
 ) {
     info!(
@@ -319,6 +320,11 @@ pub(crate) fn setup_rendered(
         tree_crown_materials,
         move_target_mesh: move_target_mesh.clone(),
         move_target_material: move_target_material.clone(),
+    });
+
+    commands.insert_resource(UiFonts {
+        cjk: asset_server.load("fonts/NotoSansCJKsc-Regular.otf"),
+        emoji: asset_server.load("fonts/NotoColorEmoji.ttf"),
     });
 
     commands.insert_resource(BuildPreview::default());

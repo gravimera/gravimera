@@ -283,6 +283,12 @@ pub(crate) struct MinimapIcons {
     pub(crate) triangle: Handle<Image>,
 }
 
+#[derive(Resource, Clone)]
+pub(crate) struct UiFonts {
+    pub(crate) cjk: Handle<Font>,
+    pub(crate) emoji: Handle<Font>,
+}
+
 #[derive(Component)]
 pub(crate) struct LocomotionClock {
     pub(crate) t: f32,

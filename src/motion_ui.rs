@@ -27,8 +27,9 @@ use crate::threaded_result::{
 };
 use crate::types::{
     BuildScene, Collider, Commandable, GameMode, ModelSpeechBubbleCommand, ModelSpeechSource,
-    MoveOrder, ObjectForms, ObjectId, ObjectPrefabId, ObjectTint, SelectionState,
+    MoveOrder, ObjectForms, ObjectId, ObjectPrefabId, ObjectTint, SelectionState, UiFonts,
 };
+use crate::ui_text::spawn_text_with_ui_fonts;
 
 const PANEL_Z_INDEX: i32 = 940;
 const PANEL_WIDTH_PX: f32 = 300.0;
@@ -351,6 +352,7 @@ pub(crate) fn motion_algorithm_ui_update(
     library: Res<ObjectLibrary>,
     descriptors: Res<PrefabDescriptorLibrary>,
     runtime: Res<IntelligenceHostRuntime>,
+    ui_fonts: Res<UiFonts>,
     mut state: ResMut<MotionAlgorithmUiState>,
     roots: Query<(
         Option<&ObjectPrefabId>,
@@ -817,14 +819,7 @@ pub(crate) fn motion_algorithm_ui_update(
             } else {
                 Color::srgb(0.90, 0.90, 0.95)
             };
-            b.spawn((
-                Text::new(content_text),
-                TextFont {
-                    font_size: 13.0,
-                    ..default()
-                },
-                TextColor(text_color),
-            ));
+            spawn_text_with_ui_fonts(b, &content_text, &ui_fonts, 13.0, text_color, ());
         });
 
         list.spawn((
