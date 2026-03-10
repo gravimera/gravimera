@@ -229,6 +229,7 @@ Hard requirements:\n\
     }
 
     out.push_str("\nExisting component snapshot (names + interfaces):\n");
+    out.push_str("Note: some seeded components can have `actual_size` != `planned_size`. When adding new anchors/components, use `actual_size` for scale.\n");
     if existing_components.is_empty() {
         out.push_str("- (none)\n");
     } else {
@@ -260,6 +261,16 @@ Hard requirements:\n\
                     s.x,
                     s.y,
                     s.z
+                ));
+            }
+            out.push_str(&format!(
+                " planned_size=[{:.3},{:.3},{:.3}]",
+                comp.planned_size.x, comp.planned_size.y, comp.planned_size.z
+            ));
+            if let Some(actual) = comp.actual_size {
+                out.push_str(&format!(
+                    " actual_size=[{:.3},{:.3},{:.3}]",
+                    actual.x, actual.y, actual.z
                 ));
             }
             out.push('\n');
@@ -594,6 +605,58 @@ mod tests {
         assert!(!text.contains(
             "Do NOT propose cosmetic-only tweaks, aesthetic regens, or transform nudges."
         ));
+    }
+
+    #[test]
+    fn preserve_mode_plan_prompt_includes_planned_and_actual_sizes() {
+        let components = vec![
+            Gen3dPlannedComponent {
+                display_name: "1. torso".into(),
+                name: "torso".into(),
+                purpose: String::new(),
+                modeling_notes: String::new(),
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                planned_size: Vec3::new(1.0, 2.0, 3.0),
+                actual_size: Some(Vec3::new(4.0, 5.0, 6.0)),
+                anchors: vec![],
+                contacts: vec![],
+                attach_to: None,
+            },
+            Gen3dPlannedComponent {
+                display_name: "2. head".into(),
+                name: "head".into(),
+                purpose: String::new(),
+                modeling_notes: String::new(),
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                planned_size: Vec3::new(0.5, 0.5, 0.5),
+                actual_size: Some(Vec3::new(1.0, 1.2, 1.4)),
+                anchors: vec![],
+                contacts: vec![],
+                attach_to: Some(super::super::Gen3dPlannedAttachment {
+                    parent: "torso".into(),
+                    parent_anchor: "head_socket".into(),
+                    child_anchor: "torso_socket".into(),
+                    offset: Transform::IDENTITY,
+                    joint: None,
+                    animations: vec![],
+                }),
+            },
+        ];
+
+        let prompt = build_gen3d_plan_user_text_preserve_existing_components(
+            "test",
+            false,
+            Gen3dSpeedMode::Level3,
+            None,
+            &components,
+            "",
+            "additive",
+            &[],
+        );
+        assert!(prompt.contains("planned_size=[1.000,2.000,3.000]"));
+        assert!(prompt.contains("actual_size=[4.000,5.000,6.000]"));
     }
 }
 

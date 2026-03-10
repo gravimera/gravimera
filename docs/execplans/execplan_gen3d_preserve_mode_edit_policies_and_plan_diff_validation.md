@@ -59,7 +59,7 @@ User-visible outcome: seeded edits like “add a hat” stop breaking existing m
 This work is scoped to Gen3D planning and preserve-mode replanning. Relevant code and how it currently works (paths are from repo root):
 
 - `src/gen3d/ai/agent_tool_dispatch.rs`: starts `llm_generate_plan_v1` by building prompt text. In preserve mode it calls `build_gen3d_plan_user_text_preserve_existing_components(...)`.
-- `src/gen3d/ai/prompts.rs`: builds the plan prompt user text. Preserve-mode prompt currently includes a compact “existing component snapshot” (names + anchor names only), not numeric frames.
+- `src/gen3d/ai/prompts.rs`: builds the plan prompt user text. Preserve-mode prompt includes a compact “existing component snapshot” (names + interfaces + planned/actual sizes + anchor names), but not numeric anchor frames.
 - `src/gen3d/ai/agent_tool_poll.rs`: receives the LLM plan response, parses it, converts it to `planned_components`, and applies it.
   - Preserve-mode guardrails today: (a) must include all existing component names, (b) must keep the same root component name.
   - Preserve-mode merge today: preserves existing component generation status and preserves existing anchors by name; preserves primitive/model geometry parts; but applies the new attachment tree.
@@ -152,6 +152,7 @@ Concrete changes:
 - Remove or heavily rewrite the inherited “Step 1: Split the object into multiple components” section for preserve mode. Preserve-mode replanning must instead read as: “You are patching an existing plan; keep existing attachment interfaces stable unless explicitly allowed.”
 - Expand the “existing component snapshot” to include (bounded):
   - each component’s current `attach_to` interface (parent + anchors),
+  - each component’s `planned_size` and `actual_size` (when available),
   - the existing anchor name list (already done),
   - but still keep numeric frames out of the default prompt for token budget reasons.
 
@@ -258,4 +259,3 @@ At the end of implementation, these public/tool-facing interfaces must exist and
 - `llm_generate_plan_v1` accepts the new preserve-mode policy fields under `constraints` (schema and tool detail output updated).
 - `get_tool_detail_v1` for `llm_generate_plan_v1` reflects the new args schema.
 - Preserve-mode plan validation produces structured, machine-readable errors on policy violations.
-
