@@ -225,7 +225,8 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_LLM_GENERATE_PLAN,
                 title: "LLM: generate plan",
-                one_line_summary: "LLM+mutates: generate/replace the component plan, then apply it.",
+                one_line_summary:
+                    "LLM+mutates: generate/replace the component plan; preserve-mode diffs are policy-validated (constraints.preserve_edit_policy).",
                 args_schema:
                     "{ prompt?: string, style?: string, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, components?: string[] }",
                 args_example: serde_json::json!({

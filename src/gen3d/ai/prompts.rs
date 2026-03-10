@@ -331,7 +331,8 @@ Hard requirements:\n\
         "Join frame reminder:\n\
 - For EVERY attachment, the join anchor axes must be in the same hemisphere:\n\
   dot(parent_anchor.forward, child_anchor.forward) > 0 AND dot(parent_anchor.up, child_anchor.up) > 0.\n\
-- If you need a flip, encode it via `attach_to.offset` rotation; do NOT rely on opposed anchors.\n",
+- If you need a flip, encode it via `attach_to.offset` rotation; do NOT rely on opposed anchors.\n\
+- If you author any `attach_to.offset` rotation (`forward`/`up` or `rot_quat_xyzw`), you MUST set `attach_to.offset.rot_frame` explicitly (`join` or `parent`) or the engine will reject the plan.\n",
     );
 
     out.push_str(&format!("Speed mode: {}.\n", speed.label()));

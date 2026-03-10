@@ -28,6 +28,20 @@ When preserve mode is enabled **and** the current draft already contains generat
 
 If the plan violates the guardrails (including the selected edit policy), `llm_generate_plan_v1` returns a tool error and the draft is left unchanged.
 
+Examples (tool args):
+
+- Additive (default; safest for “add a hat”):
+
+  - `{"constraints":{"preserve_existing_components":true,"preserve_edit_policy":"additive"}}`
+
+- Allow offset changes without rewiring:
+
+  - `{"constraints":{"preserve_existing_components":true,"preserve_edit_policy":"allow_offsets"}}`
+
+- Allow rewiring a specific subset (explicit allow-list required):
+
+  - `{"constraints":{"preserve_existing_components":true,"preserve_edit_policy":"allow_rewire","rewire_components":["neck","head"]}}`
+
 Notes:
 
 - If you want to reposition parts without replanning, prefer `apply_draft_ops_v1`:

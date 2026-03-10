@@ -87,6 +87,10 @@ Rules:\n\
 - When you DO need LLM generation, prefer batching UNIQUE components in parallel:\n\
   - Default: use llm_generate_components_v1 with explicit component_indices/names for the unique set.\n\
   - If `state_summary.preserve_existing_components_mode` is true: prefer generating ONLY missing components (omit component_indices/names and omit force) so you don't accidentally regenerate already-generated components.\n\
+  - Preserve-mode replanning (`llm_generate_plan_v1` with `constraints.preserve_existing_components=true`) is plan-diff validated:\n\
+    - Default `constraints.preserve_edit_policy` is `additive` (no rewires; offsets frozen).\n\
+    - For moving existing parts without rewiring, prefer `apply_draft_ops_v1` or set `preserve_edit_policy` to `allow_offsets`.\n\
+    - For rewires, set `preserve_edit_policy` to `allow_rewire` and provide `constraints.rewire_components` as an explicit allow-list.\n\
   - To explicitly regenerate already-generated components in preserve mode, pass force=true (regen budgets still apply).\n\
   - IMPORTANT: `force=true` regeneration is ONLY allowed when the latest QA indicates errors.\n\
     - The engine refuses force-regeneration unless `state_summary.qa.last_validate_ok=false` OR `state_summary.qa.last_smoke_ok=false`.\n\
