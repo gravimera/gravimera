@@ -73,10 +73,10 @@ pub(crate) use preview::{
     gen3d_apply_draft_to_preview, gen3d_preview_orbit_controls,
     gen3d_preview_tick_selected_animation, gen3d_update_collision_overlay,
 };
+pub(crate) use save::gen3d_prefab_thumbnail_capture_poll;
+pub(crate) use save::gen3d_request_prefab_thumbnail_capture;
 pub(crate) use save::gen3d_save_button;
 pub(crate) use save::gen3d_save_current_draft_seed_aware_from_api;
-pub(crate) use save::gen3d_request_prefab_thumbnail_capture;
-pub(crate) use save::gen3d_prefab_thumbnail_capture_poll;
 pub(crate) use save::Gen3dPrefabThumbnailCaptureRuntime;
 pub(crate) use state::*;
 pub(crate) use status::{gen3d_status_scroll_wheel, gen3d_update_status_scrollbar_ui};
@@ -94,5 +94,5 @@ pub(crate) use ui::{
     gen3d_prompt_text_input, gen3d_rebuild_preview_animation_dropdown_options_ui,
     gen3d_side_panel_toggle_button, gen3d_update_preview_animation_dropdown_ui,
     gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
-    handle_gen3d_toggle_button, update_gen3d_toggle_button_label,
+    handle_gen3d_toggle_button, spawn_gen3d_preview_panel, update_gen3d_toggle_button_label,
 };

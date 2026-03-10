@@ -1083,6 +1083,7 @@ pub(crate) fn build_edit_selected_objects(
     time: Res<Time>,
     build: Res<BuildState>,
     keys: Res<ButtonInput<KeyCode>>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     mut selection: ResMut<SelectionState>,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
@@ -1112,6 +1113,11 @@ pub(crate) fn build_edit_selected_objects(
         return;
     }
     if selection.selected.is_empty() {
+        wasd_repeat.dir = Vec2::ZERO;
+        wasd_repeat.cooldown_secs = 0.0;
+        return;
+    }
+    if model_library.is_preview_open() {
         wasd_repeat.dir = Vec2::ZERO;
         wasd_repeat.cooldown_secs = 0.0;
         return;

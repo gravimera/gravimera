@@ -223,14 +223,23 @@ impl Plugin for RenderedUiPlugin {
                 crate::model_library_ui::model_library_scroll_wheel
                     .after(crate::model_library_ui::model_library_item_button_interactions)
                     .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_preview_info_scroll_wheel
+                    .after(crate::model_library_ui::model_library_scroll_wheel)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_scrollbar_drag
                     .after(crate::model_library_ui::model_library_scroll_wheel)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_preview_info_scrollbar_drag
+                    .after(crate::model_library_ui::model_library_preview_info_scroll_wheel)
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_drag_update
                     .after(crate::model_library_ui::model_library_item_button_interactions)
                     .run_if(crate::automation::local_input_enabled),
-                crate::model_library_ui::model_library_open_preview_panel
+                crate::model_library_ui::model_library_preview_keyboard_navigation
                     .after(crate::model_library_ui::model_library_drag_update)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_open_preview_panel
+                    .after(crate::model_library_ui::model_library_preview_keyboard_navigation)
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_preview_close_button_interactions
                     .after(crate::model_library_ui::model_library_open_preview_panel)
@@ -487,6 +496,7 @@ impl Plugin for RenderedGen3dPlugin {
             PostUpdate,
             (
                 crate::model_library_ui::model_library_update_scrollbar_ui,
+                crate::model_library_ui::model_library_update_preview_info_scrollbar_ui,
                 crate::motion_ui::motion_algorithm_ui_update_scrollbar_ui,
             )
                 .in_set(UiSystems::Content)
@@ -689,11 +699,9 @@ impl Plugin for RenderedGameplayPlugin {
         );
         app.add_systems(
             PostUpdate,
-            (
-                crate::ui::update_model_speech_bubbles
-                    .after(crate::ui::apply_model_speech_bubble_commands)
-                    .in_set(UiSystems::PostLayout),
-            ),
+            (crate::ui::update_model_speech_bubbles
+                .after(crate::ui::apply_model_speech_bubble_commands)
+                .in_set(UiSystems::PostLayout),),
         );
         app.add_systems(
             Update,

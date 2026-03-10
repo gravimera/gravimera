@@ -1,3 +1,4 @@
+use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::prelude::*;
 
 use crate::assets::SceneAssets;
@@ -6,6 +7,37 @@ use crate::types::{BuildScene, GameMode};
 use super::ai::Gen3dAiJob;
 use super::preview;
 use super::state::*;
+
+pub(crate) fn spawn_gen3d_preview_panel<F>(
+    parent: &mut ChildSpawnerCommands,
+    node: Node,
+    target: Handle<Image>,
+    extra_children: F,
+) -> Entity
+where
+    F: FnOnce(&mut ChildSpawnerCommands),
+{
+    parent
+        .spawn((
+            Button,
+            node,
+            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+            Gen3dPreviewPanel,
+        ))
+        .with_children(|preview| {
+            preview.spawn((
+                ImageNode::new(target),
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+            ));
+            extra_children(preview);
+        })
+        .id()
+}
 
 pub(crate) fn handle_gen3d_toggle_button(
     mut buttons: Query<
@@ -342,31 +374,19 @@ pub(crate) fn enter_gen3d_mode(
                         TextColor(Color::srgb(0.95, 0.85, 0.25)),
                     ));
 
-                    panel
-                        .spawn((
-                            Button,
-                            Node {
-                                flex_grow: 1.0,
-                                flex_basis: Val::Px(0.0),
-                                min_height: Val::Px(0.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(1.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
-                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                            Gen3dPreviewPanel,
-                        ))
-                        .with_children(|preview| {
-                            preview.spawn((
-                                ImageNode::new(target.clone()),
-                                Node {
-                                    width: Val::Percent(100.0),
-                                    height: Val::Percent(100.0),
-                                    ..default()
-                                },
-                            ));
+                    spawn_gen3d_preview_panel(
+                        panel,
+                        Node {
+                            flex_grow: 1.0,
+                            flex_basis: Val::Px(0.0),
+                            min_height: Val::Px(0.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        target.clone(),
+                        |preview| {
                             preview
                                 .spawn((
                                     Node {

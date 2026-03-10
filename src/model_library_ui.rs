@@ -1,9 +1,9 @@
 use bevy::camera::RenderTarget;
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::system::SystemParam;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
-use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
@@ -71,7 +71,9 @@ pub(crate) struct ModelLibraryUiState {
     drag: Option<ModelLibraryDrag>,
     spawn_seq: u32,
     scrollbar_drag: Option<ModelLibraryScrollbarDrag>,
+    preview_scrollbar_drag: Option<ModelLibraryScrollbarDrag>,
     thumbnail_cache: HashMap<u128, ModelLibraryThumbnailCacheEntry>,
+    listed_prefabs: Vec<u128>,
     pending_preview: Option<u128>,
     preview: Option<ModelLibraryPrefabPreview>,
     last_rebuilt_scene: Option<(String, String)>,
@@ -87,7 +89,9 @@ impl Default for ModelLibraryUiState {
             drag: None,
             spawn_seq: 0,
             scrollbar_drag: None,
+            preview_scrollbar_drag: None,
             thumbnail_cache: HashMap::new(),
+            listed_prefabs: Vec::new(),
             pending_preview: None,
             preview: None,
             last_rebuilt_scene: None,
@@ -112,6 +116,7 @@ impl ModelLibraryUiState {
         if !open {
             self.drag = None;
             self.scrollbar_drag = None;
+            self.preview_scrollbar_drag = None;
             self.search_focused = false;
             self.pending_preview = None;
         }
@@ -119,6 +124,10 @@ impl ModelLibraryUiState {
 
     pub(crate) fn is_drag_active(&self) -> bool {
         self.drag.is_some()
+    }
+
+    pub(crate) fn is_preview_open(&self) -> bool {
+        self.preview.is_some()
     }
 }
 
@@ -162,6 +171,15 @@ pub(crate) struct ModelLibraryPreviewOverlayRoot;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryPreviewCloseButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewInfoScrollPanel;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewInfoScrollbarTrack;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewInfoScrollbarThumb;
 
 #[derive(Component)]
 struct ModelLibraryPreviewSceneRoot;
@@ -352,6 +370,8 @@ pub(crate) fn model_library_update_visibility(
         state.drag = None;
         state.search_focused = false;
         state.pending_preview = None;
+        state.scrollbar_drag = None;
+        state.preview_scrollbar_drag = None;
         close_model_library_preview(&mut commands, &mut state);
     }
 }
@@ -491,15 +511,9 @@ pub(crate) fn model_library_update_search_field_ui(
 
     let query = state.search_query.trim();
     let (text_value, text_color) = if query.is_empty() {
-        (
-            "Search…".to_string(),
-            Color::srgba(0.80, 0.80, 0.86, 0.75),
-        )
+        ("Search…".to_string(), Color::srgba(0.80, 0.80, 0.86, 0.75))
     } else {
-        (
-            query.to_string(),
-            Color::srgba(0.92, 0.92, 0.96, 1.0),
-        )
+        (query.to_string(), Color::srgba(0.92, 0.92, 0.96, 1.0))
     };
 
     for (mut text, mut color) in &mut texts {
@@ -563,6 +577,7 @@ pub(crate) fn model_library_rebuild_list_ui(
                 ModelLibraryListItem,
             ));
         });
+        state.listed_prefabs.clear();
         state.models_dirty = false;
         return;
     }
@@ -573,9 +588,12 @@ pub(crate) fn model_library_rebuild_list_ui(
             .unwrap_or(0)
     }
 
-    fn load_png_ui_image(images: &mut Assets<Image>, path: &std::path::Path) -> Result<Handle<Image>, String> {
-        let bytes =
-            std::fs::read(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+    fn load_png_ui_image(
+        images: &mut Assets<Image>,
+        path: &std::path::Path,
+    ) -> Result<Handle<Image>, String> {
+        let bytes = std::fs::read(path)
+            .map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
         let image = Image::from_buffer(
             &bytes,
             ImageType::Extension("png"),
@@ -588,7 +606,13 @@ pub(crate) fn model_library_rebuild_list_ui(
         Ok(images.add(image))
     }
 
-    fn relevance_score(query: &str, name: &str, tags: &[String], summary: Option<&str>, id: &str) -> u32 {
+    fn relevance_score(
+        query: &str,
+        name: &str,
+        tags: &[String],
+        summary: Option<&str>,
+        id: &str,
+    ) -> u32 {
         let query = query.trim().to_lowercase();
         if query.is_empty() {
             return 0;
@@ -756,6 +780,8 @@ pub(crate) fn model_library_rebuild_list_ui(
         }
     });
 
+    state.listed_prefabs = rows.iter().map(|row| row.prefab_id).collect();
+
     commands.entity(list_entity).with_children(|list| {
         for row in rows {
             list.spawn((
@@ -795,8 +821,7 @@ pub(crate) fn model_library_rebuild_list_ui(
                                 height: Val::Percent(100.0),
                                 ..default()
                             },
-                            ImageNode::new(handle.clone())
-                                .with_mode(NodeImageMode::Stretch),
+                            ImageNode::new(handle.clone()).with_mode(NodeImageMode::Stretch),
                         ));
                     }
                 });
@@ -820,6 +845,7 @@ fn close_model_library_preview(commands: &mut Commands, state: &mut ModelLibrary
     let Some(preview) = state.preview.take() else {
         return;
     };
+    state.preview_scrollbar_drag = None;
     let target_id = preview.target.id();
     commands.entity(preview.ui_root).try_despawn();
     commands.entity(preview.scene_root).try_despawn();
@@ -862,8 +888,11 @@ fn spawn_model_library_preview_scene(
         Vec3::ZERO
     };
 
-    let target =
-        crate::orbit_capture::create_render_target(images, PREFAB_PREVIEW_WIDTH_PX, PREFAB_PREVIEW_HEIGHT_PX);
+    let target = crate::orbit_capture::create_render_target(
+        images,
+        PREFAB_PREVIEW_WIDTH_PX,
+        PREFAB_PREVIEW_HEIGHT_PX,
+    );
 
     let aspect = PREFAB_PREVIEW_WIDTH_PX.max(1) as f32 / PREFAB_PREVIEW_HEIGHT_PX.max(1) as f32;
     let mut projection = bevy::camera::PerspectiveProjection::default();
@@ -874,8 +903,14 @@ fn spawn_model_library_preview_scene(
     let yaw = std::f32::consts::FRAC_PI_6;
     let pitch = -0.45;
     let half_extents = size * 0.5;
-    let base_distance =
-        crate::orbit_capture::required_distance_for_view(half_extents, yaw, pitch, fov_y, aspect, near);
+    let base_distance = crate::orbit_capture::required_distance_for_view(
+        half_extents,
+        yaw,
+        pitch,
+        fov_y,
+        aspect,
+        near,
+    );
     let distance = (base_distance * 1.08).clamp(near + 0.2, 500.0);
     let camera_transform = crate::orbit_capture::orbit_transform(yaw, pitch, distance, focus);
 
@@ -996,7 +1031,11 @@ pub(crate) fn model_library_open_preview_panel(
     };
     state.search_focused = false;
 
-    if state.preview.as_ref().is_some_and(|p| p.prefab_id == prefab_id) {
+    if state
+        .preview
+        .as_ref()
+        .is_some_and(|p| p.prefab_id == prefab_id)
+    {
         return;
     }
     close_model_library_preview(&mut commands, &mut state);
@@ -1152,22 +1191,26 @@ pub(crate) fn model_library_open_preview_panel(
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
-                    height: Val::Px(360.0),
-                    border: UiRect::all(Val::Px(1.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.01, 0.01, 0.015, 0.96)),
-                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                BackgroundColor(Color::NONE),
             ))
-            .with_children(|img| {
-                img.spawn((
+            .with_children(|container| {
+                crate::gen3d::spawn_gen3d_preview_panel(
+                    container,
                     Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
+                        width: Val::Px(PREFAB_PREVIEW_WIDTH_PX as f32),
+                        height: Val::Px(PREFAB_PREVIEW_HEIGHT_PX as f32),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
-                    ImageNode::new(target.clone()).with_mode(NodeImageMode::Stretch),
-                ));
+                    target.clone(),
+                    |_preview| {},
+                );
             });
 
             root.spawn((
@@ -1175,20 +1218,67 @@ pub(crate) fn model_library_open_preview_panel(
                     width: Val::Percent(100.0),
                     flex_grow: 1.0,
                     flex_basis: Val::Px(0.0),
-                    overflow: Overflow::clip_y(),
+                    min_height: Val::Px(0.0),
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(6.0),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
-                BackgroundColor(Color::NONE),
+                BackgroundColor(Color::srgba(0.01, 0.01, 0.015, 0.65)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
             ))
-            .with_children(|panel| {
-                panel.spawn((
-                    Text::new(meta),
-                    TextFont {
-                        font_size: 14.0,
+            .with_children(|row| {
+                row.spawn((
+                    Node {
+                        flex_grow: 1.0,
+                        flex_basis: Val::Px(0.0),
+                        min_height: Val::Px(0.0),
+                        overflow: Overflow::scroll_y(),
                         ..default()
                     },
-                    TextColor(Color::srgb(0.90, 0.90, 0.94)),
-                ));
+                    BackgroundColor(Color::NONE),
+                    ScrollPosition::default(),
+                    ModelLibraryPreviewInfoScrollPanel,
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new(meta),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.90, 0.90, 0.94)),
+                    ));
+                });
+
+                row.spawn((
+                    Node {
+                        width: Val::Px(8.0),
+                        height: Val::Percent(100.0),
+                        position_type: PositionType::Relative,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    Visibility::Hidden,
+                    ModelLibraryPreviewInfoScrollbarTrack,
+                ))
+                .with_children(|track| {
+                    track.spawn((
+                        Button,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(1.0),
+                            right: Val::Px(1.0),
+                            top: Val::Px(0.0),
+                            height: Val::Px(18.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.20)),
+                        ModelLibraryPreviewInfoScrollbarThumb,
+                    ));
+                });
             });
         })
         .id();
@@ -1230,10 +1320,103 @@ pub(crate) fn model_library_preview_close_on_escape(
     }
 }
 
+pub(crate) fn model_library_preview_keyboard_navigation(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<ModelLibraryUiState>,
+) {
+    let active = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        && !state.search_focused;
+    if !active {
+        return;
+    }
+
+    let Some(current_prefab) = state.preview.as_ref().map(|p| p.prefab_id) else {
+        return;
+    };
+    if state.listed_prefabs.is_empty() {
+        return;
+    }
+
+    let direction = if keys.just_pressed(KeyCode::ArrowDown) {
+        1_i32
+    } else if keys.just_pressed(KeyCode::ArrowUp) {
+        -1_i32
+    } else {
+        return;
+    };
+
+    let current_index = state
+        .listed_prefabs
+        .iter()
+        .position(|id| *id == current_prefab)
+        .unwrap_or(0) as i32;
+    let max_index = state.listed_prefabs.len().saturating_sub(1) as i32;
+
+    let next_index = (current_index + direction).clamp(0, max_index) as usize;
+    let next_prefab = state.listed_prefabs[next_index];
+    if next_prefab != current_prefab {
+        state.pending_preview = Some(next_prefab);
+    }
+}
+
 pub(crate) fn model_library_update_scrollbar_ui(
     panels: Query<(&ComputedNode, &ScrollPosition), With<ModelLibraryScrollPanel>>,
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<ModelLibraryScrollbarTrack>>,
     mut thumbs: Query<&mut Node, With<ModelLibraryScrollbarThumb>>,
+) {
+    let Ok((panel, scroll_pos)) = panels.single() else {
+        return;
+    };
+    let Ok((track_node, mut track_vis)) = tracks.single_mut() else {
+        return;
+    };
+    let Ok(mut thumb) = thumbs.single_mut() else {
+        return;
+    };
+
+    let panel_scale = panel.inverse_scale_factor();
+    let track_scale = track_node.inverse_scale_factor();
+    let viewport_h = panel.size.y.max(0.0) * panel_scale;
+    let content_h = panel.content_size.y.max(0.0) * panel_scale;
+    let track_h = track_node.size.y.max(1.0) * track_scale;
+
+    if viewport_h < 1.0 || content_h < 1.0 {
+        *track_vis = Visibility::Hidden;
+        return;
+    }
+
+    if content_h <= viewport_h + 0.5 {
+        *track_vis = Visibility::Hidden;
+        thumb.top = Val::Px(0.0);
+        thumb.height = Val::Px(track_h);
+        return;
+    }
+
+    *track_vis = Visibility::Inherited;
+
+    let max_scroll = (content_h - viewport_h).max(1.0);
+    let scroll_y = scroll_pos.y.clamp(0.0, max_scroll);
+
+    let min_thumb_h = 14.0;
+    let thumb_h = (viewport_h * viewport_h / content_h).clamp(min_thumb_h, track_h);
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    let thumb_top = (max_thumb_top * (scroll_y / max_scroll)).clamp(0.0, max_thumb_top);
+
+    thumb.top = Val::Px(thumb_top);
+    thumb.height = Val::Px(thumb_h);
+}
+
+pub(crate) fn model_library_update_preview_info_scrollbar_ui(
+    panels: Query<(&ComputedNode, &ScrollPosition), With<ModelLibraryPreviewInfoScrollPanel>>,
+    mut tracks: Query<
+        (&ComputedNode, &mut Visibility),
+        With<ModelLibraryPreviewInfoScrollbarTrack>,
+    >,
+    mut thumbs: Query<&mut Node, With<ModelLibraryPreviewInfoScrollbarThumb>>,
 ) {
     let Ok((panel, scroll_pos)) = panels.single() else {
         return;
@@ -1317,6 +1500,71 @@ pub(crate) fn model_library_scroll_wheel(
         for _ in mouse_wheel.read() {}
         return;
     };
+
+    let mut delta_lines = 0.0f32;
+    for ev in mouse_wheel.read() {
+        let lines = match ev.unit {
+            MouseScrollUnit::Line => ev.y,
+            MouseScrollUnit::Pixel => ev.y / 120.0,
+        };
+        delta_lines += lines;
+    }
+    if delta_lines.abs() < 1e-4 {
+        return;
+    }
+
+    // `ScrollPosition` is in logical pixels. Approximate a line step as 24px.
+    let delta_px = delta_lines * 24.0;
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
+    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(0.0);
+    scroll.y = (scroll.y - delta_px).clamp(0.0, max_scroll);
+}
+
+pub(crate) fn model_library_preview_info_scroll_wheel(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut mouse_wheel: bevy::ecs::message::MessageReader<MouseWheel>,
+    state: Res<ModelLibraryUiState>,
+    mut panels: Query<
+        (&ComputedNode, &UiGlobalTransform, &mut ScrollPosition),
+        With<ModelLibraryPreviewInfoScrollPanel>,
+    >,
+) {
+    let active = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        && state.preview.is_some()
+        && state.preview_scrollbar_drag.is_none();
+    if !active {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+
+    let Ok((panel_node, panel_transform, mut scroll)) = panels.single_mut() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+    if !panel_node.contains_point(*panel_transform, cursor) {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
 
     let mut delta_lines = 0.0f32;
     for ev in mouse_wheel.read() {
@@ -1442,6 +1690,111 @@ pub(crate) fn model_library_scrollbar_drag(
     scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
 }
 
+pub(crate) fn model_library_preview_info_scrollbar_drag(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut panels: Query<
+        (&ComputedNode, &mut ScrollPosition),
+        With<ModelLibraryPreviewInfoScrollPanel>,
+    >,
+    tracks: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<ModelLibraryPreviewInfoScrollbarTrack>,
+    >,
+    thumbs: Query<
+        (&Interaction, &ComputedNode, &Node),
+        With<ModelLibraryPreviewInfoScrollbarThumb>,
+    >,
+) {
+    let active = state.is_open()
+        && state.preview.is_some()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
+    if !active {
+        state.preview_scrollbar_drag = None;
+        return;
+    }
+
+    if !mouse_buttons.pressed(MouseButton::Left) {
+        state.preview_scrollbar_drag = None;
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        return;
+    };
+    let Ok((panel_node, mut scroll)) = panels.single_mut() else {
+        return;
+    };
+    let Ok((track_node, track_transform, track_vis)) = tracks.single() else {
+        return;
+    };
+    if *track_vis == Visibility::Hidden {
+        state.preview_scrollbar_drag = None;
+        return;
+    }
+    let Ok((interaction, thumb_node, thumb_layout)) = thumbs.single() else {
+        return;
+    };
+
+    if state.preview_scrollbar_drag.is_none() && *interaction == Interaction::Pressed {
+        if let Some(local) = track_transform
+            .try_inverse()
+            .map(|transform| transform.transform_point2(cursor))
+        {
+            let track_scale = track_node.inverse_scale_factor();
+            let thumb_scale = thumb_node.inverse_scale_factor();
+            let cursor_in_track = (local.y + track_node.size.y * 0.5) * track_scale;
+            let thumb_top = match thumb_layout.top {
+                Val::Px(value) => value,
+                _ => 0.0,
+            };
+            let grab_offset =
+                (cursor_in_track - thumb_top).clamp(0.0, thumb_node.size.y.max(1.0) * thumb_scale);
+            state.preview_scrollbar_drag = Some(ModelLibraryScrollbarDrag { grab_offset });
+        }
+    }
+
+    let Some(drag) = state.preview_scrollbar_drag else {
+        return;
+    };
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
+    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        return;
+    }
+
+    let track_scale = track_node.inverse_scale_factor();
+    let thumb_scale = thumb_node.inverse_scale_factor();
+    let track_h = track_node.size.y.max(1.0) * track_scale;
+    let thumb_h = thumb_node.size.y.max(1.0) * thumb_scale;
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    if max_thumb_top <= 1e-4 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(1.0);
+
+    let Some(local) = track_transform
+        .try_inverse()
+        .map(|transform| transform.transform_point2(cursor))
+    else {
+        return;
+    };
+    let cursor_in_track = ((local.y + track_node.size.y * 0.5) * track_scale).clamp(0.0, track_h);
+    let thumb_top = (cursor_in_track - drag.grab_offset).clamp(0.0, max_thumb_top);
+
+    scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
+}
+
 pub(crate) fn model_library_gen3d_button_interactions(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
@@ -1513,6 +1866,7 @@ pub(crate) fn model_library_item_button_interactions(
                 *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
                 *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
                 if state.preview.is_some() {
+                    state.pending_preview = Some(button.model_id);
                     continue;
                 }
                 if state.drag.is_none() {
