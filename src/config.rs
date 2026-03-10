@@ -10,6 +10,7 @@ pub(crate) struct AppConfig {
     pub(crate) gemini: Option<GeminiConfig>,
     pub(crate) claude: Option<ClaudeConfig>,
     pub(crate) log_path: Option<PathBuf>,
+    pub(crate) log_level: bevy::log::Level,
     pub(crate) scene_dat_path: Option<PathBuf>,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
     pub(crate) gen3d_ai_service: Gen3dAiService,
@@ -63,7 +64,8 @@ impl Default for AppConfig {
             openai: None,
             gemini: None,
             claude: None,
-            log_path: None,
+            log_path: Some(crate::paths::gravimera_dir().join("gravimera.log")),
+            log_level: bevy::log::Level::INFO,
             scene_dat_path: None,
             gen3d_cache_dir: None,
             gen3d_ai_service: Gen3dAiService::OpenAi,
@@ -202,6 +204,7 @@ fn load_config_from_path(path: &Path) -> AppConfig {
 
 fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_log_path_into_config(out, text);
+    parse_log_level_into_config(out, text);
     parse_scene_dat_path_into_config(out, text);
     parse_gen3d_cache_dir_into_config(out, text);
     parse_gen3d_ai_service_into_config(out, text);
@@ -367,7 +370,8 @@ fn parse_gen3d_ai_service_into_config(out: &mut AppConfig, text: &str) {
 
 fn parse_log_path_into_config(out: &mut AppConfig, text: &str) {
     match parse_log_path(text) {
-        Ok(Some(path)) => {
+        Ok(Some(ParsedLogPath::Disabled)) => out.log_path = None,
+        Ok(Some(ParsedLogPath::Path(path))) => {
             let resolved = if path.is_relative() {
                 match out.loaded_from.as_ref().and_then(|p| p.parent()) {
                     Some(dir) => dir.join(&path),
@@ -378,6 +382,14 @@ fn parse_log_path_into_config(out: &mut AppConfig, text: &str) {
             };
             out.log_path = Some(resolved);
         }
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_log_level_into_config(out: &mut AppConfig, text: &str) {
+    match parse_log_level(text) {
+        Ok(Some(value)) => out.log_level = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -634,9 +646,9 @@ fn parse_gen3d_reasoning_effort_repair_into_config(out: &mut AppConfig, text: &s
     }
 }
 
-fn parse_log_path(text: &str) -> Result<Option<PathBuf>, String> {
+fn parse_log_path(text: &str) -> Result<Option<ParsedLogPath>, String> {
     let mut section: Option<String> = None;
-    let mut log_path: Option<PathBuf> = None;
+    let mut log_path: Option<ParsedLogPath> = None;
 
     for (line_no, raw_line) in text.lines().enumerate() {
         let line_no = line_no + 1;
@@ -658,37 +670,107 @@ fn parse_log_path(text: &str) -> Result<Option<PathBuf>, String> {
             continue;
         };
         let key = key.trim();
-        if key != "log_path" {
+        if key != "path" {
             continue;
         }
 
-        // Accept `log_path` at top-level, or under `[app]` / `[logging]` / `[openai]` for convenience.
-        if let Some(sec) = section.as_deref() {
-            if sec != "app" && sec != "logging" && sec != "openai" {
-                continue;
-            }
+        // Only accept `[log].path`.
+        if section.as_deref() != Some("log") {
+            continue;
         }
 
         let value = value.trim();
         let value = if value.starts_with('"') || value.starts_with('\'') {
             parse_toml_string(value).ok_or_else(|| {
                 format!(
-                    "config.toml:{line_no}: expected a quoted string value for key `log_path` (example: log_path = \"./gravimera.log\")"
+                    "config.toml:{line_no}: expected a quoted string value for key `log.path` (example: [log]\\npath = \"./gravimera.log\")"
                 )
             })?
         } else {
-            // Be forgiving: accept unquoted path strings for `log_path`.
+            // Be forgiving: accept unquoted path strings for `log.path`.
             value.to_string()
         };
         let trimmed = value.trim();
         if trimmed.is_empty() {
-            log_path = None;
+            log_path = Some(ParsedLogPath::Disabled);
         } else {
-            log_path = Some(expand_tilde_path(trimmed));
+            log_path = Some(ParsedLogPath::Path(expand_tilde_path(trimmed)));
         }
     }
 
     Ok(log_path)
+}
+
+fn parse_log_level(text: &str) -> Result<Option<bevy::log::Level>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<bevy::log::Level> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "level" {
+            continue;
+        }
+
+        // Only accept `[log].level`.
+        if section.as_deref() != Some("log") {
+            continue;
+        }
+
+        let value = value.trim();
+        let value = if value.starts_with('"') || value.starts_with('\'') {
+            parse_toml_string(value).ok_or_else(|| {
+                format!(
+                    "config.toml:{line_no}: expected a quoted string value for key `log.level` (example: [log]\\nlevel = \"info\")"
+                )
+            })?
+        } else {
+            // Be forgiving: accept unquoted strings.
+            value.to_string()
+        };
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        out = match trimmed.to_ascii_lowercase().as_str() {
+            "error" => Some(bevy::log::Level::ERROR),
+            "warn" | "warning" => Some(bevy::log::Level::WARN),
+            "info" => Some(bevy::log::Level::INFO),
+            "debug" => Some(bevy::log::Level::DEBUG),
+            "trace" => Some(bevy::log::Level::TRACE),
+            _ => {
+                return Err(format!(
+                    "config.toml:{line_no}: invalid `log.level` value `{trimmed}` (expected: \"error\" | \"warn\" | \"info\" | \"debug\" | \"trace\")"
+                ))
+            }
+        };
+    }
+
+    Ok(out)
+}
+
+enum ParsedLogPath {
+    Disabled,
+    Path(PathBuf),
 }
 
 fn parse_scene_dat_path(text: &str) -> Result<Option<PathBuf>, String> {
@@ -2595,6 +2677,7 @@ mod tests {
         parse_config_text_into, parse_intelligence_service_mode, AppConfig, Gen3dAiService,
         IntelligenceServiceMode,
     };
+    use std::path::PathBuf;
 
     #[test]
     fn parses_gen3d_save_pass_screenshots_from_gen3d_section() {
@@ -2677,6 +2760,99 @@ mod tests {
         assert!(
             cfg.errors.is_empty(),
             "unexpected config errors: {:?}",
+            cfg.errors
+        );
+    }
+
+    #[test]
+    fn parses_log_path_from_log_section() {
+        let text = r#"
+        [log]
+        path = "./gravimera.log"
+
+        [openai]
+        base_url = "mock://gen3d"
+        model = "mock"
+        token = ""
+        "#;
+
+        let mut cfg = AppConfig::default();
+        cfg.loaded_from = Some(PathBuf::from("testdata/config.toml"));
+        parse_config_text_into(&mut cfg, text);
+        assert_eq!(
+            cfg.log_path,
+            Some(PathBuf::from("testdata").join("./gravimera.log"))
+        );
+        assert!(
+            cfg.errors.is_empty(),
+            "unexpected config errors: {:?}",
+            cfg.errors
+        );
+    }
+
+    #[test]
+    fn disables_file_logging_when_log_path_is_empty() {
+        let text = r#"
+        [log]
+        path = ""
+
+        [openai]
+        base_url = "mock://gen3d"
+        model = "mock"
+        token = ""
+        "#;
+
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert_eq!(cfg.log_path, None);
+        assert!(
+            cfg.errors.is_empty(),
+            "unexpected config errors: {:?}",
+            cfg.errors
+        );
+    }
+
+    #[test]
+    fn parses_log_level_from_log_section() {
+        let text = r#"
+        [log]
+        level = "debug"
+
+        [openai]
+        base_url = "mock://gen3d"
+        model = "mock"
+        token = ""
+        "#;
+
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert_eq!(cfg.log_level, bevy::log::Level::DEBUG);
+        assert!(
+            cfg.errors.is_empty(),
+            "unexpected config errors: {:?}",
+            cfg.errors
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_log_level() {
+        let text = r#"
+        [log]
+        level = "nope"
+
+        [openai]
+        base_url = "mock://gen3d"
+        model = "mock"
+        token = ""
+        "#;
+
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert!(
+            cfg.errors
+                .iter()
+                .any(|e| e.contains("invalid `log.level` value")),
+            "expected log level parse error, got: {:?}",
             cfg.errors
         );
     }

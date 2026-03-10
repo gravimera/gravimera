@@ -150,10 +150,13 @@ Config lookup:
   - `cargo run -- --config ./some_config.toml`
   - or `GRAVIMERA_CONFIG=./some_config.toml cargo run`
 
-Optional logging:
+Logging:
 
-- Add `log_path = "./gravimera.log"` (top-level).
-  - Relative paths are resolved relative to the config file directory.
+- By default, Gravimera writes the main log to `~/.gravimera/gravimera.log`.
+- Override in `config.toml`:
+  - `[log].path = "./gravimera.log"` (relative to the config file directory)
+  - `[log].level = "debug"` (default: `"info"`)
+- Disable file logging: set `[log].path = ""`.
 
 Gen3D budgets / guard:
 

@@ -1,10 +1,19 @@
 # Copy this file to `~/.gravimera/config.toml` and fill in your settings.
 # NOTE: `config.toml` is gitignored in this repo to avoid committing secrets.
 
-# Optional: write logs to a file (in addition to the terminal).
+[log]
+
+# Optional: override where the main log file is written.
+# Default: `~/.gravimera/gravimera.log`.
 # Relative paths are resolved relative to the config file directory.
 # If the path can't be opened, Gravimera logs a warning and falls back next to the running binary.
-# log_path = "./gravimera.log"
+# Set to an empty string to disable file logging.
+# path = "./gravimera.log"
+
+# Optional: set log verbosity.
+# Values: "error" | "warn" | "info" | "debug" | "trace"
+# Default: "info"
+# level = "info"
 
 [scene]
 

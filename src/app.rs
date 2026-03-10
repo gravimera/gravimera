@@ -443,6 +443,7 @@ fn run_rendered_catching_panics(
 fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) {
     // Shared AI request limiter (Scene Build + Gen3D).
     crate::ai_limiter::set_max_permits(config.gen3d_max_parallel_components.max(1) + 1);
+    let log_level = config.log_level;
 
     let mut app = App::new();
     app.insert_resource(config);
@@ -453,7 +454,7 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     );
     if !BEVY_LOG_INITIALIZED.swap(true, Ordering::Relaxed) {
         let mut log_plugin = bevy::log::LogPlugin::default();
-        log_plugin.filter = format!("{},gravimera::gen3d=debug", log_plugin.filter);
+        log_plugin.level = log_level;
         log_plugin.custom_layer = log_file_layer;
         app.add_plugins(log_plugin);
     }
@@ -519,6 +520,7 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
 fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) -> AppExit {
     // Shared AI request limiter (Scene Build + Gen3D).
     crate::ai_limiter::set_max_permits(config.gen3d_max_parallel_components.max(1) + 1);
+    let log_level = config.log_level;
 
     #[cfg(target_os = "linux")]
     fixup_linux_display_env_for_winit();
@@ -594,7 +596,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     };
 
     let mut log_plugin = bevy::log::LogPlugin::default();
-    log_plugin.filter = format!("{},gravimera::gen3d=debug", log_plugin.filter);
+    log_plugin.level = log_level;
     log_plugin.custom_layer = log_file_layer;
     BEVY_LOG_INITIALIZED.store(true, Ordering::Relaxed);
 

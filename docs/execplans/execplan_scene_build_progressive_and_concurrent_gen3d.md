@@ -119,7 +119,7 @@ Acceptance is met when:
 - Pressing **Build** causes the world to update more than once during a single build run (objects appear progressively, not only at the end).
 - Scene build produces multiple step folders under `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/runs/<run_id>/steps/` and multiple LLM artifact folders under `.../llm/`.
 - Gen3D can be started while scene build is running without crashing or deadlocking.
-- Logs show per-phase scene build messages and are written to the configured log sink (if `log_path` is set).
+- Logs show per-phase scene build messages and are written to the configured log sink (see `[log].path`).
 
 ## Idempotence and Recovery
 
