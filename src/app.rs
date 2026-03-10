@@ -455,6 +455,7 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     if !BEVY_LOG_INITIALIZED.swap(true, Ordering::Relaxed) {
         let mut log_plugin = bevy::log::LogPlugin::default();
         log_plugin.level = log_level;
+        log_plugin.filter = bevy_log_filter(log_level);
         log_plugin.custom_layer = log_file_layer;
         app.add_plugins(log_plugin);
     }
@@ -515,6 +516,17 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
         ),
     );
     app.run();
+}
+
+fn bevy_log_filter(level: bevy::log::Level) -> String {
+    let mut filter = bevy::log::DEFAULT_FILTER.to_string();
+
+    // Treat noisy engine-level debug logs as trace-only.
+    if level != bevy::log::Level::TRACE {
+        filter.push_str("cosmic_text=info,");
+    }
+
+    filter
 }
 
 fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) -> AppExit {
@@ -597,6 +609,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
 
     let mut log_plugin = bevy::log::LogPlugin::default();
     log_plugin.level = log_level;
+    log_plugin.filter = bevy_log_filter(log_level);
     log_plugin.custom_layer = log_file_layer;
     BEVY_LOG_INITIALIZED.store(true, Ordering::Relaxed);
 
