@@ -145,6 +145,7 @@ pub(super) struct Gen3dAgentState {
     pub(super) last_motion_ok: Option<bool>,
     pub(super) pending_regen_component_indices: Vec<usize>,
     pub(super) pending_regen_component_indices_skipped_due_to_budget: Vec<usize>,
+    pub(super) pending_regen_component_indices_blocked_due_to_qa_gate: Vec<usize>,
 }
 
 impl Default for Gen3dAgentState {
@@ -184,6 +185,7 @@ impl Default for Gen3dAgentState {
             last_motion_ok: None,
             pending_regen_component_indices: Vec::new(),
             pending_regen_component_indices_skipped_due_to_budget: Vec::new(),
+            pending_regen_component_indices_blocked_due_to_qa_gate: Vec::new(),
         }
     }
 }

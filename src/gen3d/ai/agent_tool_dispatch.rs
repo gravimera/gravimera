@@ -1664,25 +1664,65 @@ pub(super) fn execute_tool_call(
                         .unwrap_or(false)
                 });
                 if wants_regen {
-                    let validate_ok = job.agent.last_validate_ok;
-                    let smoke_ok = job.agent.last_smoke_ok;
-                    let has_errors = validate_ok == Some(false) || smoke_ok == Some(false);
-                    if !has_errors {
-                        let reason = if validate_ok.is_none() || smoke_ok.is_none() {
-                            "qa_v1 has not been run (or is incomplete)"
-                        } else {
-                            "qa_v1 reports no errors"
-                        };
-                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                            call.call_id,
-                            call.tool_id,
-                            format!(
-                                "Refusing force:true regeneration because {reason}. validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors. For placement/assembly fixes, prefer `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry."
-                            ),
-                        ));
-                    }
-                }
-            }
+	                    let validate_ok = job.agent.last_validate_ok;
+	                    let smoke_ok = job.agent.last_smoke_ok;
+	                    let has_errors = validate_ok == Some(false) || smoke_ok == Some(false);
+	                    if !has_errors {
+	                        // Safety net: if the agent tries a QA-gated force regen, clear any
+	                        // requested regen indices out of the pending queue so the run cannot
+	                        // deadlock on an un-executable "pending regen" list.
+	                        let mut blocked_regen_indices: Vec<usize> = requested_indices
+	                            .iter()
+	                            .copied()
+	                            .filter(|idx| {
+	                                job.planned_components
+	                                    .get(*idx)
+	                                    .map(|c| c.actual_size.is_some())
+	                                    .unwrap_or(false)
+	                            })
+	                            .collect();
+	                        blocked_regen_indices.sort_unstable();
+	                        blocked_regen_indices.dedup();
+	                        if !blocked_regen_indices.is_empty() {
+	                            let blocked_set: std::collections::HashSet<usize> =
+	                                blocked_regen_indices.iter().copied().collect();
+	                            job.agent
+	                                .pending_regen_component_indices
+	                                .retain(|pending| !blocked_set.contains(pending));
+	                            job.agent
+	                                .pending_regen_component_indices_skipped_due_to_budget
+	                                .retain(|pending| !blocked_set.contains(pending));
+
+	                            let mut merged: std::collections::HashSet<usize> = job
+	                                .agent
+	                                .pending_regen_component_indices_blocked_due_to_qa_gate
+	                                .iter()
+	                                .copied()
+	                                .collect();
+	                            for idx in blocked_regen_indices {
+	                                merged.insert(idx);
+	                            }
+	                            let mut merged: Vec<usize> = merged.into_iter().collect();
+	                            merged.sort_unstable();
+	                            job.agent.pending_regen_component_indices_blocked_due_to_qa_gate =
+	                                merged;
+	                        }
+
+	                        let reason = if validate_ok.is_none() || smoke_ok.is_none() {
+	                            "qa_v1 has not been run (or is incomplete)"
+	                        } else {
+	                            "qa_v1 reports no errors"
+	                        };
+	                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+	                            call.call_id,
+	                            call.tool_id,
+	                            format!(
+	                                "Refusing force:true regeneration because {reason}. validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors. For placement/assembly fixes, prefer `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry. If you intend a style/geometry rebuild in a seeded edit, disable preserve mode via `llm_generate_plan_v1` with `constraints.preserve_existing_components=false`, then regenerate without `force`."
+	                            ),
+	                        ));
+	                    }
+	                }
+	            }
 
             if requested_indices.is_empty() {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(

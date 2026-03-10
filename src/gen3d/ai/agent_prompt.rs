@@ -99,12 +99,16 @@ Rules:\n\
       Run `qa_v1`, then fix assembly/placement with `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry.\n\
   - If the plan declares `reuse_groups`, the engine will skip reuse targets in missing_only batches and auto-copy them after sources are generated.\n\
 - IMPORTANT: If the state summary contains `pending_regen_component_indices` (non-empty), APPLY THEM NEXT:\n\
-  - Call llm_generate_components_v1 with component_indices set to that list and force=true (regen is expected).\n\
+  - Call llm_generate_components_v1 with component_indices set to that list.\n\
+  - Only set force=true if QA indicates errors (`state_summary.qa.last_validate_ok=false` OR `state_summary.qa.last_smoke_ok=false`).\n\
   - Then run QA and confirm:\n\
     - Always: qa_v1\n\
     - If review_appearance=true: render_preview_v1\n\
     - Then: llm_review_delta_v1\n\
-  - Do NOT call llm_review_delta_v1 repeatedly without applying the pending regen or rerunning qa_v1 (and render_preview_v1 if review_appearance=true).\n\
+  - Do NOT call llm_review_delta_v1 repeatedly without applying the pending work or rerunning qa_v1 (and render_preview_v1 if review_appearance=true).\n\
+- If `state_summary.pending_regen_component_indices_blocked_due_to_qa_gate` is non-empty:\n\
+  - Do NOT retry force-regeneration while QA is clean/unknown.\n\
+  - Fix via `apply_draft_ops_v1` / `llm_review_delta_v1`, OR disable preserve mode via `llm_generate_plan_v1` with `constraints.preserve_existing_components=false` and then regenerate without `force`.\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
@@ -246,6 +250,9 @@ pub(super) fn build_agent_user_text(
                 let regen_skipped = value
                     .get("regen_component_indices_skipped_due_to_budget")
                     .and_then(|v| v.as_array());
+                let regen_blocked = value
+                    .get("regen_component_indices_blocked_due_to_qa_gate")
+                    .and_then(|v| v.as_array());
                 out.push_str("ok");
                 if let Some(accepted) = accepted {
                     out.push_str(&format!(" accepted={accepted}"));
@@ -279,6 +286,20 @@ pub(super) fn build_agent_user_text(
                     }
                     if total > skipped.len() {
                         out.push_str(&format!(" regen_skipped_total={total}"));
+                    }
+                }
+                if let Some(regen_blocked) = regen_blocked {
+                    let total = regen_blocked.len();
+                    let blocked: Vec<u64> = regen_blocked
+                        .iter()
+                        .filter_map(|v| v.as_u64())
+                        .take(12)
+                        .collect();
+                    if !blocked.is_empty() {
+                        out.push_str(&format!(" regen_blocked_by_qa={blocked:?}"));
+                    }
+                    if total > blocked.len() {
+                        out.push_str(&format!(" regen_blocked_by_qa_total={total}"));
                     }
                 }
             }
@@ -977,6 +998,9 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         "pending_regen_component_indices_skipped_due_to_budget": &job
             .agent
             .pending_regen_component_indices_skipped_due_to_budget,
+        "pending_regen_component_indices_blocked_due_to_qa_gate": &job
+            .agent
+            .pending_regen_component_indices_blocked_due_to_qa_gate,
         "reuse_groups": reuse_groups_json,
         "reuse_group_warnings": &job.reuse_group_warnings,
         "missing_only_generation_indices": missing_only_generation_indices,

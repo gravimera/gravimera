@@ -64,6 +64,20 @@ When this flag is true:
 - Regen budgets still apply when `force=true` is used.
 - `force=true` regeneration is additionally **QA-gated**: the engine refuses force-regeneration unless the latest `qa_v1` reports errors (`validate.ok=false` or `smoke.ok=false`). If QA is clean (or has not been run), fix placement/assembly via `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry.
 
+### QA-gated regen requests (agent visibility)
+
+In preserve mode, higher-level tools (most commonly `llm_review_delta_v1`) may request regeneration of already-generated components (for example, to restyle geometry).
+
+When the QA gate is closed (latest QA is clean or unknown), these regen requests are **not actionable** as `force=true` regeneration. The engine surfaces them explicitly in `get_state_summary_v1`:
+
+- `pending_regen_component_indices`: actionable generation work (missing components, or regen that is currently permitted).
+- `pending_regen_component_indices_blocked_due_to_qa_gate`: regen requested for already-generated components, but blocked by the QA gate.
+
+Deterministic recovery options:
+
+1) Prefer deterministic edits (`apply_draft_ops_v1`) and/or review-delta tweak actions (`llm_review_delta_v1`) for placement/attachment fixes.
+2) If you truly intend a style/geometry rebuild in a seeded edit session, disable preserve mode by calling `llm_generate_plan_v1` with `constraints.preserve_existing_components=false`, then regenerate the affected components **without** `force`.
+
 ## Tool Note: Querying Parts by Index
 
 `query_component_parts_v1` accepts either:

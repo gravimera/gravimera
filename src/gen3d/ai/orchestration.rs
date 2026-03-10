@@ -266,6 +266,9 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.agent
         .pending_regen_component_indices_skipped_due_to_budget
         .clear();
+    job.agent
+        .pending_regen_component_indices_blocked_due_to_qa_gate
+        .clear();
 
     workshop.error = None;
     workshop.status =

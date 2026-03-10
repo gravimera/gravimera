@@ -31,6 +31,58 @@ use super::{
     GEN3D_PREVIEW_DEFAULT_PITCH, GEN3D_PREVIEW_DEFAULT_YAW,
 };
 
+#[derive(Debug, Default)]
+struct ReviewDeltaRegenBuckets {
+    allowed: Vec<usize>,
+    skipped_due_to_budget: Vec<usize>,
+    blocked_due_to_qa_gate: Vec<usize>,
+}
+
+fn bucket_review_delta_regen_requests(
+    config: &AppConfig,
+    job: &mut Gen3dAiJob,
+    requested_indices: &[usize],
+) -> ReviewDeltaRegenBuckets {
+    let mut buckets = ReviewDeltaRegenBuckets::default();
+    if requested_indices.is_empty() {
+        return buckets;
+    }
+
+    ensure_agent_regen_budget_len(job);
+    let preserve_mode = job.preserve_existing_components_mode;
+    let qa_gate_open =
+        job.agent.last_validate_ok == Some(false) || job.agent.last_smoke_ok == Some(false);
+
+    let mut seen = std::collections::HashSet::<usize>::new();
+    for idx in requested_indices.iter().copied() {
+        if idx >= job.planned_components.len() {
+            continue;
+        }
+        if !seen.insert(idx) {
+            continue;
+        }
+        let is_regen = job
+            .planned_components
+            .get(idx)
+            .map(|c| c.actual_size.is_some())
+            .unwrap_or(false);
+        if preserve_mode && is_regen && !qa_gate_open {
+            buckets.blocked_due_to_qa_gate.push(idx);
+            continue;
+        }
+        if is_regen && !regen_budget_allows(config, job, idx) {
+            buckets.skipped_due_to_budget.push(idx);
+            continue;
+        }
+        buckets.allowed.push(idx);
+    }
+
+    buckets.allowed.sort_unstable();
+    buckets.skipped_due_to_budget.sort_unstable();
+    buckets.blocked_due_to_qa_gate.sort_unstable();
+    buckets
+}
+
 pub(super) fn poll_agent_tool(
     config: &AppConfig,
     commands: &mut Commands,
@@ -601,6 +653,9 @@ pub(super) fn poll_agent_tool(
                                     job.agent.pending_regen_component_indices.clear();
                                     job.agent
                                         .pending_regen_component_indices_skipped_due_to_budget
+                                        .clear();
+                                    job.agent
+                                        .pending_regen_component_indices_blocked_due_to_qa_gate
                                         .clear();
                                     job.agent.pending_llm_repair_attempt = 0;
 
@@ -1450,45 +1505,32 @@ pub(super) fn poll_agent_tool(
                                     }
 
                                     // Budget-gate regen requests so the agent doesn't loop forever on a single component.
-                                    let mut regen_allowed: Vec<usize> = Vec::new();
-                                    let mut regen_skipped: Vec<usize> = Vec::new();
-                                    if !apply.regen_indices.is_empty() {
-                                        ensure_agent_regen_budget_len(job);
-                                        let mut seen = std::collections::HashSet::<usize>::new();
-                                        for idx in apply.regen_indices.iter().copied() {
-                                            if idx >= job.planned_components.len() {
-                                                continue;
-                                            }
-                                            if !seen.insert(idx) {
-                                                continue;
-                                            }
-                                            if regen_budget_allows(config, job, idx) {
-                                                regen_allowed.push(idx);
-                                            } else {
-                                                regen_skipped.push(idx);
-                                            }
-                                        }
-                                        if !regen_skipped.is_empty() {
-                                            regen_skipped.sort_unstable();
-                                            append_gen3d_run_log(
-                                                job.pass_dir.as_deref(),
-                                                format!(
-                                                    "regen_budget_skip_review skipped={} max_total={} max_per_component={}",
-                                                    regen_skipped.len(),
-                                                    config.gen3d_max_regen_total,
-                                                    config.gen3d_max_regen_per_component
-                                                ),
-                                            );
-                                        }
+                                    let regen_buckets = bucket_review_delta_regen_requests(
+                                        config,
+                                        job,
+                                        &apply.regen_indices,
+                                    );
+                                    if !regen_buckets.skipped_due_to_budget.is_empty() {
+                                        append_gen3d_run_log(
+                                            job.pass_dir.as_deref(),
+                                            format!(
+                                                "regen_budget_skip_review skipped={} max_total={} max_per_component={}",
+                                                regen_buckets.skipped_due_to_budget.len(),
+                                                config.gen3d_max_regen_total,
+                                                config.gen3d_max_regen_per_component
+                                            ),
+                                        );
                                     }
-                                    regen_allowed.sort_unstable();
-                                    job.agent.pending_regen_component_indices = regen_allowed.clone();
+                                    job.agent.pending_regen_component_indices =
+                                        regen_buckets.allowed.clone();
                                     job.agent.pending_regen_component_indices_skipped_due_to_budget =
-                                        regen_skipped.clone();
+                                        regen_buckets.skipped_due_to_budget.clone();
+                                    job.agent.pending_regen_component_indices_blocked_due_to_qa_gate =
+                                        regen_buckets.blocked_due_to_qa_gate.clone();
 
                                     let non_actionable_regen_only = delta_requested_regen
-                                        && regen_allowed.is_empty()
-                                        && !regen_skipped.is_empty()
+                                        && regen_buckets.allowed.is_empty()
+                                        && !regen_buckets.skipped_due_to_budget.is_empty()
                                         && !delta_has_non_regen_actions
                                         && apply.replan_reason.is_none();
 
@@ -1532,8 +1574,9 @@ pub(super) fn poll_agent_tool(
                                             "ok": true,
                                             "accepted": apply.accepted,
                                             "had_actions": apply.had_actions && !non_actionable_regen_only,
-                                            "regen_component_indices": regen_allowed,
-                                            "regen_component_indices_skipped_due_to_budget": regen_skipped,
+                                            "regen_component_indices": regen_buckets.allowed,
+                                            "regen_component_indices_skipped_due_to_budget": regen_buckets.skipped_due_to_budget,
+                                            "regen_component_indices_blocked_due_to_qa_gate": regen_buckets.blocked_due_to_qa_gate,
                                             "replan_reason": apply.replan_reason,
                                         }),
                                     )
@@ -1870,4 +1913,106 @@ pub(super) fn poll_agent_tool(
     let _ = commands;
     let _ = images;
     let _ = feedback_history;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::object::registry::AnchorDef;
+    use bevy::prelude::{Quat, Transform, Vec3};
+
+    fn make_job_with_components(generated_flags: &[bool]) -> Gen3dAiJob {
+        let mut job = Gen3dAiJob::default();
+        job.planned_components = generated_flags
+            .iter()
+            .enumerate()
+            .map(|(idx, generated)| super::super::job::Gen3dPlannedComponent {
+                display_name: format!("{}. c{idx}", idx + 1),
+                name: format!("c{idx}"),
+                purpose: String::new(),
+                modeling_notes: String::new(),
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                planned_size: Vec3::ONE,
+                actual_size: generated.then_some(Vec3::ONE),
+                anchors: vec![AnchorDef {
+                    name: "mount".into(),
+                    transform: Transform::IDENTITY,
+                }],
+                contacts: Vec::new(),
+                attach_to: if idx == 0 {
+                    None
+                } else {
+                    Some(super::super::job::Gen3dPlannedAttachment {
+                        parent: "c0".to_string(),
+                        parent_anchor: "mount".to_string(),
+                        child_anchor: "mount".to_string(),
+                        offset: Transform::IDENTITY,
+                        joint: None,
+                        animations: Vec::new(),
+                    })
+                },
+            })
+            .collect();
+        job
+    }
+
+    #[test]
+    fn bucket_regen_requests_blocks_force_regen_when_preserve_mode_and_qa_clean() {
+        let config = AppConfig::default();
+        let mut job = make_job_with_components(&[true, true]);
+        job.preserve_existing_components_mode = true;
+        job.agent.last_validate_ok = Some(true);
+        job.agent.last_smoke_ok = Some(true);
+
+        let buckets = bucket_review_delta_regen_requests(&config, &mut job, &[1]);
+        assert_eq!(buckets.allowed, Vec::<usize>::new());
+        assert_eq!(buckets.skipped_due_to_budget, Vec::<usize>::new());
+        assert_eq!(buckets.blocked_due_to_qa_gate, vec![1]);
+    }
+
+    #[test]
+    fn bucket_regen_requests_allows_force_regen_when_qa_has_errors() {
+        let config = AppConfig::default();
+        let mut job = make_job_with_components(&[true, true]);
+        job.preserve_existing_components_mode = true;
+        job.agent.last_validate_ok = Some(false);
+        job.agent.last_smoke_ok = Some(true);
+
+        let buckets = bucket_review_delta_regen_requests(&config, &mut job, &[1]);
+        assert_eq!(buckets.allowed, vec![1]);
+        assert!(buckets.blocked_due_to_qa_gate.is_empty());
+    }
+
+    #[test]
+    fn bucket_regen_requests_keeps_missing_components_actionable_even_if_regen_budget_exhausted() {
+        let mut config = AppConfig::default();
+        config.gen3d_max_regen_total = 1;
+
+        let mut job = make_job_with_components(&[true, false]);
+        job.preserve_existing_components_mode = true;
+        job.agent.last_validate_ok = Some(true);
+        job.agent.last_smoke_ok = Some(true);
+        job.regen_total = 1;
+
+        let buckets = bucket_review_delta_regen_requests(&config, &mut job, &[1]);
+        assert_eq!(buckets.allowed, vec![1]);
+        assert!(buckets.skipped_due_to_budget.is_empty());
+        assert!(buckets.blocked_due_to_qa_gate.is_empty());
+    }
+
+    #[test]
+    fn bucket_regen_requests_respects_regen_budget_for_generated_components() {
+        let mut config = AppConfig::default();
+        config.gen3d_max_regen_total = 1;
+
+        let mut job = make_job_with_components(&[true, true]);
+        job.preserve_existing_components_mode = false;
+        job.regen_total = 1;
+
+        let buckets = bucket_review_delta_regen_requests(&config, &mut job, &[1]);
+        assert!(buckets.allowed.is_empty());
+        assert_eq!(buckets.skipped_due_to_budget, vec![1]);
+    }
 }
