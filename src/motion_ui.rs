@@ -25,11 +25,12 @@ use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::threaded_result::{
     new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
 };
+use crate::rich_text::spawn_rich_text_line;
 use crate::types::{
-    BuildScene, Collider, Commandable, GameMode, ModelSpeechBubbleCommand, ModelSpeechSource,
-    MoveOrder, ObjectForms, ObjectId, ObjectPrefabId, ObjectTint, SelectionState, UiFonts,
+    BuildScene, Collider, Commandable, EmojiAtlas, GameMode, ModelSpeechBubbleCommand,
+    ModelSpeechSource, MoveOrder, ObjectForms, ObjectId, ObjectPrefabId, ObjectTint,
+    SelectionState, UiFonts,
 };
-use crate::ui_text::spawn_text_with_ui_fonts;
 
 const PANEL_Z_INDEX: i32 = 940;
 const PANEL_WIDTH_PX: f32 = 300.0;
@@ -353,6 +354,8 @@ pub(crate) fn motion_algorithm_ui_update(
     descriptors: Res<PrefabDescriptorLibrary>,
     runtime: Res<IntelligenceHostRuntime>,
     ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
     mut state: ResMut<MotionAlgorithmUiState>,
     roots: Query<(
         Option<&ObjectPrefabId>,
@@ -819,7 +822,25 @@ pub(crate) fn motion_algorithm_ui_update(
             } else {
                 Color::srgb(0.90, 0.90, 0.95)
             };
-            spawn_text_with_ui_fonts(b, &content_text, &ui_fonts, 13.0, text_color, ());
+            spawn_rich_text_line(
+                b,
+                &content_text,
+                &ui_fonts,
+                &emoji_atlas,
+                &asset_server,
+                13.0,
+                text_color,
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(1.0),
+                    row_gap: Val::Px(2.0),
+                    ..default()
+                },
+                None,
+            );
         });
 
         list.spawn((

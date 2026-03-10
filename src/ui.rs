@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use crate::constants::*;
 use crate::object::registry::ObjectLibrary;
 use crate::types::*;
-use crate::ui_text::{set_text_with_ui_fonts, spawn_text_with_ui_fonts};
+use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
 
 const HEALTH_POPUP_TTL_SECS_ENEMY: f32 = 0.85;
 const HEALTH_POPUP_TTL_SECS_HERO: f32 = 1.05;
@@ -299,11 +299,17 @@ pub(crate) fn apply_model_speech_bubble_commands(
     mut cmd_events: MessageReader<ModelSpeechBubbleCommand>,
     icons: Res<MinimapIcons>,
     ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
     mut existing_bubbles: Query<(Entity, &mut ModelSpeechBubble, &Children, &mut Visibility)>,
     bubble_texts: Query<Entity, With<ModelSpeechBubbleText>>,
 ) {
     let bubble_text_color = Color::srgb(0.10, 0.10, 0.12);
     let bubble_font_size = 13.0;
+    let bubble_shadow = TextShadow {
+        offset: Vec2::splat(1.0),
+        color: Color::linear_rgba(0.0, 0.0, 0.0, 0.12),
+    };
     for event in cmd_events.read() {
         match event {
             ModelSpeechBubbleCommand::Start {
@@ -340,13 +346,16 @@ pub(crate) fn apply_model_speech_bubble_commands(
                     bubble.last_size = Vec2::ZERO;
                     for child in children.iter() {
                         if let Ok(text_entity) = bubble_texts.get(child) {
-                            set_text_with_ui_fonts(
+                            set_rich_text_line(
                                 &mut commands,
                                 text_entity,
                                 &truncated,
                                 &ui_fonts,
+                                &emoji_atlas,
+                                &asset_server,
                                 bubble_font_size,
                                 bubble_text_color,
+                                Some(bubble_shadow),
                             );
                             break;
                         }
@@ -424,27 +433,31 @@ pub(crate) fn apply_model_speech_bubble_commands(
                                 .with_color(Color::srgba(0.98, 0.98, 1.0, 0.90)),
                             ZIndex(220),
                         ));
-                        spawn_text_with_ui_fonts(
+                        spawn_rich_text_line(
                             parent,
                             &text_value,
                             &ui_fonts,
+                            &emoji_atlas,
+                            &asset_server,
                             bubble_font_size,
                             bubble_text_color,
                             (
                                 Node {
                                     width: Val::Percent(100.0),
+                                    flex_wrap: FlexWrap::Wrap,
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(2.0),
+                                    row_gap: Val::Px(2.0),
                                     ..default()
                                 },
                                 TextLayout {
                                     justify: Justify::Center,
                                     linebreak: LineBreak::WordBoundary,
                                 },
-                                TextShadow {
-                                    offset: Vec2::splat(1.0),
-                                    color: Color::linear_rgba(0.0, 0.0, 0.0, 0.12),
-                                },
                                 ModelSpeechBubbleText,
                             ),
+                            Some(bubble_shadow),
                         );
                     });
             }

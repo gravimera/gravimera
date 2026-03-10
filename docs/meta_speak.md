@@ -69,14 +69,20 @@ Voice presets are mapped to `soundtest` effects:
 - `content` field supports direct typing, `Backspace`, `Esc`, paste (`Ctrl/Cmd+V`), IME-based Chinese input, and emoji. The hint text only appears when the field is empty.
 - While `content` is focused, gameplay keyboard state is suppressed so typing does not trigger movement/shortcuts.
 
-## Font Fallback (CJK + Emoji)
+## Text + Emoji Rendering
 
-The Speak content field and speech bubble render text with two bundled fonts:
+The Speak content field and speech bubble render mixed CJK + emoji with a font/image hybrid:
 
-- `assets/fonts/NotoSansCJKsc-Regular.otf` (CJK + Latin)
-- `assets/fonts/NotoColorEmoji.ttf` (emoji)
+- Text font: `assets/fonts/NotoSansCJKsc-Regular.otf` (CJK + Latin)
+- Emoji images: `assets/emoji/twemoji/72x72/*.png` (Twemoji)
+- Fallback emoji font: `assets/fonts/NotoColorEmoji.ttf` (monochrome if color glyphs are unsupported)
 
-Licenses for both fonts are stored under `assets/fonts/`. Emoji rendering uses the emoji font; if the renderer does not support color glyphs, emoji may appear monochrome.
+Licenses:
+
+- Noto fonts under `assets/fonts/`
+- Twemoji under `assets/emoji/LICENSE_TWEMOJI.txt`
+
+Twemoji is used for color emoji. If an emoji is missing from Twemoji, the system falls back to the emoji font (which may render monochrome depending on renderer support).
 
 ## Build Dependency Notes
 

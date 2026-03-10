@@ -13,6 +13,7 @@ bevy = { version = "0.18.0", default-features = false, features = [
   "ui_bevy_render",
   "debug",
   "jpeg",
+  "png",
 ] }
 emojis = "0.8"
 image = "0.25"

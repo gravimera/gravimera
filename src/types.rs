@@ -289,6 +289,40 @@ pub(crate) struct UiFonts {
     pub(crate) emoji: Handle<Font>,
 }
 
+#[derive(Resource, Clone)]
+pub(crate) struct EmojiAtlas {
+    pub(crate) base_path: String,
+}
+
+impl EmojiAtlas {
+    pub(crate) fn lookup(
+        &self,
+        emoji: &str,
+        asset_server: &AssetServer,
+    ) -> Option<Handle<Image>> {
+        let filename = twemoji_filename(emoji)?;
+        Some(asset_server.load(format!("{}{}", self.base_path, filename)))
+    }
+}
+
+fn twemoji_filename(emoji: &str) -> Option<String> {
+    if emoji.trim().is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for ch in emoji.chars() {
+        if ch == '\u{fe0f}' {
+            continue;
+        }
+        let code = ch as u32;
+        parts.push(format!("{:x}", code));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!("{}.png", parts.join("-")))
+}
+
 #[derive(Component)]
 pub(crate) struct LocomotionClock {
     pub(crate) t: f32,

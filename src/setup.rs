@@ -326,6 +326,9 @@ pub(crate) fn setup_rendered(
         cjk: asset_server.load("fonts/NotoSansCJKsc-Regular.otf"),
         emoji: asset_server.load("fonts/NotoColorEmoji.ttf"),
     });
+    commands.insert_resource(EmojiAtlas {
+        base_path: "emoji/twemoji/72x72/".to_string(),
+    });
 
     commands.insert_resource(BuildPreview::default());
 
