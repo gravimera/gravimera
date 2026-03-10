@@ -1,6 +1,7 @@
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
+use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
 use serde_json::json;
 
@@ -608,7 +609,6 @@ pub(crate) fn motion_algorithm_ui_update(
     let brain_modules_error = state.brain_modules_error.clone();
     let brain_modules = state.brain_modules.clone();
     let speak_content = state.speak_content.clone();
-    let speak_content_focused = state.speak_content_focused;
     let speak_running = state.speak_running;
     let speak_status = state.speak_status.clone();
     let speak_error = state.speak_error.clone();
@@ -806,23 +806,19 @@ pub(crate) fn motion_algorithm_ui_update(
             MetaSpeakUiContentField,
         ))
         .with_children(|b| {
-            let content_text = if speak_content.trim().is_empty() {
+            let show_hint = speak_content.trim().is_empty();
+            let content_text = if show_hint {
                 "content".to_string()
             } else {
                 speak_content.clone()
             };
-            let text_color = if speak_content.trim().is_empty() {
+            let text_color = if show_hint {
                 Color::srgb(0.60, 0.60, 0.66)
             } else {
                 Color::srgb(0.90, 0.90, 0.95)
             };
-            let focus_line = if speak_content_focused {
-                " (focused)"
-            } else {
-                ""
-            };
             b.spawn((
-                Text::new(format!("content{focus_line}: {content_text}")),
+                Text::new(content_text),
                 TextFont {
                     font_size: 13.0,
                     ..default()
@@ -1175,6 +1171,7 @@ pub(crate) fn motion_algorithm_ui_scrollbar_drag(
 
 pub(crate) fn meta_speak_ui_content_field_focus(
     mut state: ResMut<MotionAlgorithmUiState>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut fields: Query<
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<MetaSpeakUiContentField>),
@@ -1190,6 +1187,9 @@ pub(crate) fn meta_speak_ui_content_field_focus(
                 state.speak_content_focused = true;
                 state.needs_rebuild = true;
                 *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.78));
+                if let Ok(mut window) = windows.single_mut() {
+                    window.ime_enabled = true;
+                }
             }
             Interaction::Hovered => {
                 *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70));
@@ -1201,6 +1201,11 @@ pub(crate) fn meta_speak_ui_content_field_focus(
                     0.65
                 };
                 *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, alpha));
+                if !state.speak_content_focused {
+                    if let Ok(mut window) = windows.single_mut() {
+                        window.ime_enabled = false;
+                    }
+                }
             }
         }
     }
@@ -1210,13 +1215,24 @@ pub(crate) fn meta_speak_ui_text_input(
     mut state: ResMut<MotionAlgorithmUiState>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard: bevy::ecs::message::MessageReader<KeyboardInput>,
+    mut ime_events: bevy::ecs::message::MessageReader<Ime>,
 ) {
     if !state.open {
         keyboard.clear();
+        ime_events.clear();
         return;
     }
     if !state.speak_content_focused {
         return;
+    }
+
+    for event in ime_events.read() {
+        if let Ime::Commit { value, .. } = event {
+            if !value.is_empty() {
+                push_meta_speak_text(&mut state.speak_content, value);
+                state.needs_rebuild = true;
+            }
+        }
     }
 
     for event in keyboard.read() {
@@ -1231,10 +1247,12 @@ pub(crate) fn meta_speak_ui_text_input(
             KeyCode::Escape => {
                 state.speak_content_focused = false;
                 state.needs_rebuild = true;
+                ime_events.clear();
             }
             KeyCode::Enter | KeyCode::NumpadEnter => {
                 state.speak_content_focused = false;
                 state.needs_rebuild = true;
+                ime_events.clear();
             }
             KeyCode::KeyV => {
                 let modifier = keys.pressed(KeyCode::ControlLeft)
