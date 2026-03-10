@@ -78,6 +78,15 @@ pub(crate) fn realm_dir(realm_id: &str) -> PathBuf {
     realms_dir().join(realm_id)
 }
 
+pub(crate) fn realm_prefabs_dir(realm_id: &str) -> PathBuf {
+    realm_dir(realm_id).join("prefabs")
+}
+
+pub(crate) fn realm_prefab_package_dir(realm_id: &str, root_prefab_id: u128) -> PathBuf {
+    let uuid = uuid::Uuid::from_u128(root_prefab_id).to_string();
+    realm_prefabs_dir(realm_id).join(uuid)
+}
+
 pub(crate) fn scene_dir(realm_id: &str, scene_id: &str) -> PathBuf {
     realm_dir(realm_id).join("scenes").join(scene_id)
 }

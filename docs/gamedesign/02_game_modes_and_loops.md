@@ -22,7 +22,7 @@ Build mode has two scene views:
 - **Realm scene**: the normal in-world camera view where instances live.
 - **3D Preview scene**: an asset-creation view for Gen3D (workshop UI + model preview). Gen3D exists only in this view.
 
-In Build mode, the top toolbar includes **Scenes** and **Prefabs** toggles, a **Scene Builder** button, and a Play/Build toggle. Selecting **Prefabs** shows a left-side Prefabs panel listing **scene-local prefab packages** for the active scene; long lists are scrollable via a vertical scrollbar with a draggable thumb. Selecting **Scenes** shows a left-side Scenes panel listing all scenes in the current realm, with an **Add Scene** flow that creates a new scene workspace and switches to it (saving the current scene first). Clicking **Scene Builder** opens the Scene Builder panel.
+In Build mode, the top toolbar includes **Scenes** and **Prefabs** toggles, a **Scene Builder** button, and a Play/Build toggle. Selecting **Prefabs** shows a left-side Prefabs panel listing **realm prefab packages** for the active realm. The panel includes a search box; each row shows a thumbnail + short name (fallback to prefab id for legacy prefabs). The list sorts by last-modified time by default, and query results are ranked by relevance. Clicking a row opens a preview overlay; dragging a row spawns the prefab into the world. Long lists are scrollable via a vertical scrollbar with a draggable thumb. Selecting **Scenes** shows a left-side Scenes panel listing all scenes in the current realm, with an **Add Scene** flow that creates a new scene workspace and switches to it (saving the current scene first). Clicking **Scene Builder** opens the Scene Builder panel.
 
 ### Play Mode (Gameplay)
 
@@ -35,7 +35,7 @@ Play mode is for moment-to-moment gameplay:
 
 ### Build: 3D Preview Scene (Gen3D Workshop)
 
-Gen3D is the in-game workflow for generating new prefabs from prompts and optional reference images, then saving them into the **active scene’s local prefab store** so they can be spawned into the world as units/buildings/props (see `docs/gamedesign/39_scene_local_prefab_packages_v1.md`).
+Gen3D is the in-game workflow for generating new prefabs from prompts and optional reference images, then saving them into the **active realm’s prefab library** so they can be spawned into the world as units/buildings/props (see `docs/gamedesign/39_realm_prefab_packages_v1.md`).
 
 Gen3D is an authoring tool; it does not define gameplay rules. Generated prefabs become ordinary objects that can be assigned mobility/interaction/attack/brains.
 

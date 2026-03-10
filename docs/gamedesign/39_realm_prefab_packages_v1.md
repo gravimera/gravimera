@@ -1,24 +1,25 @@
-# Scene-Local Prefab Packages (v1)
+# Realm Prefab Packages (v1)
 
-This spec defines the **scene-local prefab package** on-disk layout: how non-built-in prefabs (including Gen3D-saved prefabs) are stored under a scene directory for **editing, copying, and tooling**.
+This spec defines the **realm-scoped prefab package** on-disk layout: how non-built-in prefabs (including Gen3D-saved prefabs) are stored under a realm directory for **editing, copying, and tooling**.
 
 This is intentionally separate from runtime persistence: **runtime scene load must not require these packages**. A scene must be able to load and render from `scene.dat` alone (plus built-in prefab defs compiled into the game).
 
 ## Goals
 
 - **Scene reliability:** `scene.dat` is the single required runtime file for loading a scene.
-- **Locality:** user-created prefabs are stored under the scene they were created in (no global depot, no realm-wide shared packs).
+- **Realm-wide reuse:** user-created prefabs are shared across scenes within the same realm.
 - **Restart-safe Gen3D edit:** a Gen3D-saved prefab includes the minimum persisted metadata required to restart the game and continue editing (without relying on `~/.gravimera/cache/`).
 - **Prefab-scoped assets:** any non-built-in assets (textures/meshes/etc) associated with a prefab are stored under that prefab’s own folder so assets from different prefabs do not intermix.
+- **Thumbnails:** prefab packages may include an optional `thumbnail.png` for fast UI browsing.
 
 ## Non-Goals
 
-- This spec does not define a “shared library” or cross-scene asset store. Copying between scenes (export/import) is an explicit tool operation.
+- This spec does not define a cross-realm shared library (no global depot).
 - This spec does not replace `scene.dat`. Packages exist to support authoring workflows, not as a runtime dependency.
 
 ## Terms
 
-- **Scene directory:** `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/`.
+- **Realm directory:** `~/.gravimera/realm/<realm_id>/`.
 - **Prefab package:** one directory containing a root prefab and any related files (prefab JSON, descriptor, Gen3D edit metadata, assets).
 - **Root prefab id:** the prefab UUID that identifies a saved object “as a thing you can spawn/edit”. This is the directory name of the prefab package.
 - **Prefab defs:** one or more `PrefabFileV1` JSON documents (see `docs/gamedesign/34_realm_prefabs_v1.md`) representing the root prefab plus any internal component prefabs referenced by `object_ref`.
@@ -28,16 +29,17 @@ This is intentionally separate from runtime persistence: **runtime scene load mu
 
 ## Directory Layout
 
-All scene-local prefab packages live under:
+All realm prefab packages live under:
 
-- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/`
+- `~/.gravimera/realm/<realm_id>/prefabs/`
 
 Each prefab package directory is named by the root prefab UUID:
 
-- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/<root_prefab_uuid>/`
+- `~/.gravimera/realm/<realm_id>/prefabs/<root_prefab_uuid>/`
 
 Within a prefab package:
 
+- `thumbnail.png` (optional; recommended; used by Prefabs UI)
 - `prefabs/`
   - `<prefab_uuid>.json` (required; `PrefabFileV1`)
   - `<prefab_uuid>.desc.json` (optional; `PrefabDescriptorFileV1`)
@@ -52,12 +54,13 @@ Notes:
 - The `prefabs/` directory contains the **published** runtime prefab defs for this package. Tools may load these defs into memory on demand to spawn/copy/edit, but runtime scene load must not depend on them.
 - `gen3d_source_v1/` contains **draft** defs (including the Gen3D draft root prefab id used by the Gen3D engine). Tools must not treat these draft ids as stable world prefab ids.
 - `materials/` is always scoped per prefab package. Future `ObjectPartKind::Model { scene }` references that point to external files must resolve under this folder (or another folder inside this package) rather than a global depot.
+- `thumbnail.png` is a UI hint and is not required for correctness. When present, it should be a small square PNG (recommended: 256×256) showing the prefab in a deterministic “front +30°” orbit view.
 
 ## Enumeration Rules
 
-To list scene-local prefab packages for a scene:
+To list realm prefab packages for a realm:
 
-1. List direct children of `.../scenes/<scene_id>/prefabs/`.
+1. List direct children of `.../realm/<realm_id>/prefabs/`.
 2. Keep only directory entries whose names parse as UUIDs.
 3. Treat each UUID as a root prefab id.
 
@@ -69,7 +72,7 @@ Non-UUID directories are ignored.
   - built-in prefab defs (compiled into the game), and
   - the `defs` embedded in `scene.dat`.
 - Runtime scene load must not scan, parse, or depend on `.../prefabs/` packages.
-- Deleting or renaming `.../scenes/<scene_id>/prefabs/` must not prevent scene load.
+- Deleting or renaming `.../realm/<realm_id>/prefabs/` must not prevent scene load.
 
 If tooling wants to spawn/copy/edit prefabs that are not already referenced by the current `scene.dat`, it must load prefab defs from the relevant package **explicitly** (edit-time only).
 
@@ -141,8 +144,21 @@ Transforms in the edit bundle use a single JSON shape:
 - `rotation_quat_xyzw`: `[x,y,z,w]` floats
 - `scale`: `[x,y,z]` floats
 
+## Migration (Legacy Scene-Local Packages)
+
+Older builds stored prefab packages under:
+
+- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/<root_prefab_uuid>/`
+
+New builds may migrate these scene-local packages into the realm prefab store on startup by moving the package directories into:
+
+- `~/.gravimera/realm/<realm_id>/prefabs/<root_prefab_uuid>/`
+
+If a destination already exists, tools should avoid overwriting and quarantine the legacy package in a realm-scoped conflicts directory so data is not lost.
+
 ## Idempotence and Overwrite Rules
 
 - Saving a Gen3D edit in “overwrite” mode overwrites the existing prefab package directory for that root prefab id.
 - Saving a Gen3D fork writes a new prefab package directory named by the new root prefab id.
 - Tools should treat repeated writes as idempotent: delete/rewrite `gen3d_source_v1/` on each save to avoid stale files; delete stale prefab JSON under `prefabs/` that no longer correspond to the saved defs.
+

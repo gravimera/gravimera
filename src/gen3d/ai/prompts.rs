@@ -1324,10 +1324,13 @@ Return ONLY a single JSON object for gen3d_descriptor_meta_v1 (no markdown, no p
 Schema:\n\
 {\n\
   \"version\": 1,\n\
-  \"short\": \"1–2 lines: an AI conclusion describing what the prefab is (do NOT copy the user prompt)\",\n\
+  \"name\": \"1–3 words: a short name for the prefab\",\n\
+  \"short\": \"1–2 lines: a concise description (do NOT copy the user prompt)\",\n\
   \"tags\": [\"lower_snake_case\", \"searchable\", \"style\", \"species\", \"category\", \"materials\", \"theme\"]\n\
 }\n\n\
 Rules:\n\
+- `name` must be at most 3 words.\n\
+- `name` must be a conclusion based on the provided facts (not just the prompt text).\n\
 - `short` must be a conclusion based on the provided facts (not the prompt text).\n\
 - Prefer concrete nouns/adjectives; avoid marketing fluff.\n\
 - `tags` must be lower_snake_case tokens (no spaces, no hyphens).\n\

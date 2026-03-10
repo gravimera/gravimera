@@ -581,6 +581,8 @@ pub(crate) struct AiDescriptorMetaJsonV1 {
     #[serde(default)]
     pub(crate) version: u32,
     #[serde(default)]
+    pub(crate) name: String,
+    #[serde(default)]
     pub(crate) short: String,
     #[serde(default)]
     pub(crate) tags: Vec<String>,

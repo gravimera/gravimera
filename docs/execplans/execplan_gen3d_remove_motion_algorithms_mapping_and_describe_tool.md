@@ -65,7 +65,7 @@ Docs that must match the new behavior:
 
 - Gen3D implementation doc: `gen_3d.md`
 - Prefab descriptor spec: `docs/gamedesign/35_prefab_descriptors_v1.md`
-- Scene-local prefab package spec (Gen3D edit bundle schema): `docs/gamedesign/39_scene_local_prefab_packages_v1.md`
+- Prefab package spec (Gen3D edit bundle schema): `docs/gamedesign/39_realm_prefab_packages_v1.md`
 - ExecPlans index: `docs/execplans/README.md` (should no longer present runtime motion algorithms as an active plan)
 
 ## Plan of Work
@@ -99,7 +99,7 @@ Docs that must match the new behavior:
 
    - `gen_3d.md`: remove runtime motion mapping/algorithm sections; document that Gen3D always asks AI to author motion clips for movable units; remove Meta panel algorithm selection description.
    - `docs/gamedesign/35_prefab_descriptors_v1.md`: remove/mark removed `motion_roles_v1` and `motion_rig_v1` keys; keep `motion_summary` as the supported “what animations exist” summary.
-   - `docs/gamedesign/39_scene_local_prefab_packages_v1.md`: remove `motion_roles` from the edit bundle schema and adjust wording around motion authoring.
+   - `docs/gamedesign/39_realm_prefab_packages_v1.md`: remove `motion_roles` from the edit bundle schema and adjust wording around motion authoring.
    - `docs/execplans/README.md`: add this plan as active and mark runtime motion algorithms plan as historical/removed.
 
 ## Concrete Steps

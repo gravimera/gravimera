@@ -751,22 +751,20 @@ pub(crate) fn scene_build_ai_poll(
                     ));
                     job.next_run_step = job.next_run_step.saturating_add(1).max(1);
 
-                    // Refresh optional scene-local prefab descriptors so the plan prompt can use them
+                    // Refresh optional realm-prefab descriptors so the plan prompt can use them
                     // (e.g. right after Gen3D saves a new prefab).
                     prefab_descriptors.clear();
-                    let scene_prefabs_dir = crate::scene_prefabs::scene_prefabs_root_dir(
-                        &active.realm_id,
-                        &active.scene_id,
-                    );
+                    let realm_prefabs_dir =
+                        crate::realm_prefab_packages::realm_prefabs_root_dir(&active.realm_id);
                     match crate::prefab_descriptors::load_prefab_descriptors_from_dir(
-                        &scene_prefabs_dir,
+                        &realm_prefabs_dir,
                         &mut *prefab_descriptors,
                     ) {
                         Ok(count) => {
                             if count > 0 {
                                 info!(
-                                    "Loaded {count} scene prefab descriptors for {}/{}.",
-                                    active.realm_id, active.scene_id
+                                    "Loaded {count} realm prefab descriptors for {}.",
+                                    active.realm_id
                                 );
                             }
                         }

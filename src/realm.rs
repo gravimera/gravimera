@@ -53,6 +53,18 @@ pub(crate) fn realm_startup_init(mut active: ResMut<ActiveRealmScene>) {
         warn!("{err}");
     }
 
+    if let Err(err) = std::fs::create_dir_all(crate::paths::realm_prefabs_dir(&active.realm_id)) {
+        warn!(
+            "Failed to create realm prefabs dir {}: {err}",
+            crate::paths::realm_prefabs_dir(&active.realm_id).display()
+        );
+    }
+    if let Err(err) =
+        crate::realm_prefab_packages::migrate_scene_prefab_packages_to_realm(&active.realm_id)
+    {
+        warn!("{err}");
+    }
+
     if let Err(err) = ensure_scene_sources_scaffold(&active.realm_id, &active.scene_id) {
         warn!("{err}");
     }
@@ -64,6 +76,13 @@ pub(crate) fn realm_startup_init(mut active: ResMut<ActiveRealmScene>) {
 
 pub(crate) fn ensure_realm_scene_scaffold(realm_id: &str, scene_id: &str) -> Result<(), String> {
     ensure_scene_dirs(realm_id, scene_id)?;
+    std::fs::create_dir_all(crate::paths::realm_prefabs_dir(realm_id)).map_err(|err| {
+        format!(
+            "Failed to create realm prefabs dir {}: {err}",
+            crate::paths::realm_prefabs_dir(realm_id).display()
+        )
+    })?;
+    crate::realm_prefab_packages::migrate_scene_prefab_packages_to_realm(realm_id)?;
     ensure_scene_sources_scaffold(realm_id, scene_id)?;
     Ok(())
 }

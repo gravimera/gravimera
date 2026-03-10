@@ -61,7 +61,7 @@ By default Gravimera stores runtime data under `~/.gravimera/`:
 - `~/.gravimera/realm/` (realms + scenes)
 - `~/.gravimera/realm/active.json` (active realm/scene selection)
 - `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
-- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/` (scene-local prefab packages; Gen3D saves prefabs here; layout spec `docs/gamedesign/39_scene_local_prefab_packages_v1.md`)
+- `~/.gravimera/realm/<realm_id>/prefabs/` (realm prefab packages; Gen3D saves prefabs here; layout spec `docs/gamedesign/39_realm_prefab_packages_v1.md`)
 - `~/.gravimera/cache/` (Gen3D artifacts, logs, screenshots)
 
 Override the base directory with `GRAVIMERA_HOME=/path/to/dir`.

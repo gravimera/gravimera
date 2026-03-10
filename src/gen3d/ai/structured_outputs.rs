@@ -544,6 +544,7 @@ fn schema_review_delta() -> serde_json::Value {
 fn schema_descriptor_meta() -> serde_json::Value {
     schema_object(vec![
         ("version", schema_integer()),
+        ("name", schema_string()),
         ("short", schema_string()),
         ("tags", schema_array_of(schema_string())),
     ])

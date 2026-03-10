@@ -164,9 +164,19 @@ pub(super) fn execute_tool_call(
                 #[serde(default)]
                 version: u32,
                 #[serde(default)]
+                name: Option<String>,
+                #[serde(default)]
                 short: Option<String>,
                 #[serde(default)]
                 tags: Option<Vec<String>>,
+            }
+
+            fn canonicalize_name(name: String) -> String {
+                name.trim()
+                    .split_whitespace()
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" ")
             }
 
             fn canonicalize_tags(mut tags: Vec<String>) -> Vec<String> {
@@ -207,10 +217,14 @@ pub(super) fn execute_tool_call(
                 .map(|(_, meta)| meta.clone())
                 .unwrap_or_else(|| super::schema::AiDescriptorMetaJsonV1 {
                     version: 1,
+                    name: String::new(),
                     short: String::new(),
                     tags: Vec::new(),
                 });
 
+            if let Some(name) = args.name {
+                meta.name = canonicalize_name(name);
+            }
             if let Some(short) = args.short {
                 meta.short = short.trim().to_string();
             }
@@ -222,6 +236,7 @@ pub(super) fn execute_tool_call(
             job.descriptor_meta_override = Some(meta.clone());
 
             if let Some(dir) = job.pass_dir.as_deref() {
+                let name = meta.name.clone();
                 let short = meta.short.clone();
                 let tags = meta.tags.clone();
                 write_gen3d_json_artifact(
@@ -229,6 +244,7 @@ pub(super) fn execute_tool_call(
                     "descriptor_meta_override.json",
                     &serde_json::json!({
                         "version": 1,
+                        "name": name,
                         "short": short,
                         "tags": tags,
                     }),
@@ -237,7 +253,8 @@ pub(super) fn execute_tool_call(
             append_gen3d_run_log(
                 job.pass_dir.as_deref(),
                 format!(
-                    "descriptor_meta_override_set short_chars={} tags={}",
+                    "descriptor_meta_override_set name_chars={} short_chars={} tags={}",
+                    meta.name.chars().count(),
                     meta.short.chars().count(),
                     meta.tags.len()
                 ),
@@ -248,6 +265,7 @@ pub(super) fn execute_tool_call(
                 call.tool_id,
                 serde_json::json!({
                     "version": 1,
+                    "name": meta.name,
                     "short": meta.short,
                     "tags": meta.tags,
                 }),

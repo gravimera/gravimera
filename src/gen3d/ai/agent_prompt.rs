@@ -62,7 +62,7 @@ Rules:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
     - If `state_summary.seed.kind` is `edit_overwrite` or `fork`: this is a seeded edit session. Even with `review_appearance=false`, you SHOULD apply machine-appliable alignment/attachment tweaks to satisfy the user notes (do not wait for QA errors).\n\
-    - Descriptor meta (prefab descriptor `text.short` + `tags`): in seeded edit sessions, preserve existing values unless the user explicitly requests changes. If requested, call `set_descriptor_meta_v1` before finishing.\n\
+    - Descriptor meta (prefab descriptor short name `label` (<=3 words) + `text.short` + `tags`): in seeded edit sessions, preserve existing values unless the user explicitly requests changes. If requested, call `set_descriptor_meta_v1` before finishing.\n\
     - qa_v1 runs validate_v1 + smoke_check_v1 and returns a combined summary.\n\
 - If review_appearance=true: do visual QA in WAVES to reduce LLM wall time.\n\
   - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\

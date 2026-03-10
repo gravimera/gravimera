@@ -210,6 +210,14 @@ impl Plugin for RenderedUiPlugin {
             (
                 crate::model_library_ui::model_library_gen3d_button_interactions
                     .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_search_field_focus
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_search_text_input
+                    .after(crate::model_library_ui::model_library_search_field_focus)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_update_search_field_ui
+                    .after(crate::model_library_ui::model_library_search_text_input)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_item_button_interactions
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_scroll_wheel
@@ -220,6 +228,15 @@ impl Plugin for RenderedUiPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_drag_update
                     .after(crate::model_library_ui::model_library_item_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_open_preview_panel
+                    .after(crate::model_library_ui::model_library_drag_update)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_preview_close_button_interactions
+                    .after(crate::model_library_ui::model_library_open_preview_panel)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_preview_close_on_escape
+                    .after(crate::model_library_ui::model_library_preview_close_button_interactions)
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_draw_drag_preview_gizmos
                     .after(crate::model_library_ui::model_library_drag_update),
@@ -368,6 +385,7 @@ impl Plugin for RenderedGen3dPlugin {
             )
                 .run_if(in_state(BuildScene::Preview)),
         );
+        app.add_systems(Update, crate::gen3d::gen3d_prefab_thumbnail_capture_poll);
         app.add_systems(
             Update,
             (

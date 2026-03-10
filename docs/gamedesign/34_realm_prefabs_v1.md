@@ -2,7 +2,7 @@
 
 This spec defines the **prefab definition JSON** format (`PrefabFileV1`): how an object definition (a “prefab”) is stored as a stable, text-based JSON document.
 
-Prefab definition JSON is used in multiple places, but the primary on-disk home for user-created prefabs is the **scene-local prefab package** (see `docs/gamedesign/39_scene_local_prefab_packages_v1.md`).
+Prefab definition JSON is used in multiple places, but the primary on-disk home for user-created prefabs is the **realm prefab package** (see `docs/gamedesign/39_realm_prefab_packages_v1.md`).
 
 ## Goals
 
@@ -14,7 +14,7 @@ Prefab definition JSON is used in multiple places, but the primary on-disk home 
 
 Prefab definition JSON documents are stored under a prefab package’s `prefabs/` directory:
 
-- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/<root_prefab_uuid>/prefabs/<prefab_uuid>.json`
+- `~/.gravimera/realm/<realm_id>/prefabs/<root_prefab_uuid>/prefabs/<prefab_uuid>.json`
 
 Notes:
 

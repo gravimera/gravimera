@@ -36,6 +36,7 @@ mod platform;
 mod player;
 mod prefab_descriptors;
 mod realm;
+mod realm_prefab_packages;
 mod realm_prefabs;
 mod rts;
 mod scene_authoring_ui;

@@ -75,6 +75,9 @@ pub(crate) use preview::{
 };
 pub(crate) use save::gen3d_save_button;
 pub(crate) use save::gen3d_save_current_draft_seed_aware_from_api;
+pub(crate) use save::gen3d_request_prefab_thumbnail_capture;
+pub(crate) use save::gen3d_prefab_thumbnail_capture_poll;
+pub(crate) use save::Gen3dPrefabThumbnailCaptureRuntime;
 pub(crate) use state::*;
 pub(crate) use status::{gen3d_status_scroll_wheel, gen3d_update_status_scrollbar_ui};
 pub(crate) use tool_feedback::{gen3d_load_tool_feedback_history, Gen3dToolFeedbackHistory};

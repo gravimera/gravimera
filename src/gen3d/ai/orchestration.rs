@@ -445,7 +445,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job: &mut Gen3dAiJob,
     draft: &mut Gen3dDraft,
     realm_id: &str,
-    scene_id: &str,
+    _scene_id: &str,
     prefab_id: u128,
     mode: Gen3dSeededSessionMode,
 ) -> Result<(), String> {
@@ -458,19 +458,18 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
 
     let ai = resolve_gen3d_ai_service_config(config)?;
 
-    let package_dir = crate::scene_prefabs::scene_prefab_package_dir(realm_id, scene_id, prefab_id);
+    let package_dir = crate::realm_prefab_packages::realm_prefab_package_dir(realm_id, prefab_id);
     if !package_dir.exists() {
-        crate::scene_prefabs::debug_log_missing_prefab_package(realm_id, scene_id, prefab_id);
-        return Err("Prefab package not found in the active scene. It may have been saved in a different scene.".into());
+        crate::realm_prefab_packages::debug_log_missing_realm_prefab_package(realm_id, prefab_id);
+        return Err("Prefab package not found in this realm.".into());
     }
 
     let source_dir =
-        crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(realm_id, scene_id, prefab_id);
+        crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(realm_id, prefab_id);
     let has_source_bundle = source_dir.exists();
 
-    let edit_bundle_path = crate::scene_prefabs::scene_prefab_package_gen3d_edit_bundle_path(
-        realm_id, scene_id, prefab_id,
-    );
+    let edit_bundle_path =
+        crate::realm_prefab_packages::realm_prefab_package_gen3d_edit_bundle_path(realm_id, prefab_id);
     if !edit_bundle_path.exists() {
         return Err("This prefab can’t be edited because it’s missing Gen3D edit metadata (gen3d_edit_bundle_v1.json).".into());
     }
@@ -487,12 +486,16 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
         }
     }
 
-    let descriptor =
-        load_prefab_descriptor_from_scene_prefab_package(realm_id, scene_id, prefab_id).ok();
+    let descriptor = load_prefab_descriptor_from_realm_prefab_package(realm_id, prefab_id).ok();
     let seed_descriptor_meta = descriptor
         .as_ref()
         .map(|descriptor| AiDescriptorMetaJsonV1 {
             version: 1,
+            name: descriptor
+                .label
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default(),
             short: descriptor
                 .text
                 .as_ref()
@@ -518,7 +521,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     }
 
     let seeded_defs =
-        load_gen3d_draft_defs_from_scene_prefab_package_or_fallback(realm_id, scene_id, prefab_id)?;
+        load_gen3d_draft_defs_from_realm_prefab_package_or_fallback(realm_id, prefab_id)?;
     if seeded_defs
         .iter()
         .all(|d| d.object_id != gen3d_draft_object_id())
@@ -667,13 +670,13 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     Ok(())
 }
 
-fn load_prefab_descriptor_from_scene_prefab_package(
+fn load_prefab_descriptor_from_realm_prefab_package(
     realm_id: &str,
-    scene_id: &str,
     prefab_id: u128,
 ) -> Result<crate::prefab_descriptors::PrefabDescriptorFileV1, String> {
-    let prefabs_dir =
-        crate::scene_prefabs::scene_prefab_package_prefabs_dir(realm_id, scene_id, prefab_id);
+    let prefabs_dir = crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(
+        realm_id, prefab_id,
+    );
     let uuid = uuid::Uuid::from_u128(prefab_id).to_string();
     let prefab_json = prefabs_dir.join(format!("{uuid}.json"));
     let descriptor_path =
@@ -692,19 +695,18 @@ fn load_prefab_descriptor_from_scene_prefab_package(
     Ok(descriptor)
 }
 
-fn load_gen3d_draft_defs_from_scene_prefab_package_or_fallback(
+fn load_gen3d_draft_defs_from_realm_prefab_package_or_fallback(
     realm_id: &str,
-    scene_id: &str,
     prefab_id: u128,
 ) -> Result<Vec<ObjectDef>, String> {
     let source_dir =
-        crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(realm_id, scene_id, prefab_id);
+        crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(realm_id, prefab_id);
     if source_dir.exists() {
         return load_prefab_defs_from_dir(&source_dir, true);
     }
 
     let prefabs_dir =
-        crate::scene_prefabs::scene_prefab_package_prefabs_dir(realm_id, scene_id, prefab_id);
+        crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(realm_id, prefab_id);
     reconstruct_gen3d_draft_defs_from_saved_prefabs(&prefabs_dir, prefab_id)
 }
 
@@ -4842,6 +4844,36 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
                     return;
                 }
             };
+
+        let clamp_words = |text: &str, max_words: usize| -> String {
+            text.trim()
+                .split_whitespace()
+                .filter(|w| !w.trim().is_empty())
+                .take(max_words)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        let mut should_update_label = true;
+        if let Some(label) = doc
+            .label
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            should_update_label = false;
+            let clamped = clamp_words(&prefab_label, 3);
+            if !clamped.is_empty() && label == clamped {
+                should_update_label = true;
+            }
+            if label.eq_ignore_ascii_case(prefab_label.trim()) {
+                should_update_label = true;
+            }
+        }
+
+        if should_update_label && !meta.name.trim().is_empty() {
+            doc.label = Some(meta.name.trim().to_string());
+        }
 
         let mut should_update_short = true;
         if let Some(text) = doc.text.as_ref().and_then(|t| t.short.as_deref()) {

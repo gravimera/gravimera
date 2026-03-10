@@ -433,10 +433,12 @@ struct AutomationGen3d<'w> {
     pending_seed: Option<ResMut<'w, crate::gen3d::Gen3dPendingSeedFromPrefab>>,
     asset_server: Option<Res<'w, AssetServer>>,
     assets: Option<Res<'w, SceneAssets>>,
+    images: Option<ResMut<'w, Assets<Image>>>,
     meshes: Option<ResMut<'w, Assets<Mesh>>>,
     materials: Option<ResMut<'w, Assets<StandardMaterial>>>,
     material_cache: Option<ResMut<'w, crate::object::visuals::MaterialCache>>,
     mesh_cache: Option<ResMut<'w, crate::object::visuals::PrimitiveMeshCache>>,
+    prefab_thumbnail_capture: Option<ResMut<'w, crate::gen3d::Gen3dPrefabThumbnailCaptureRuntime>>,
     scene_saves: MessageWriter<'w, SceneSaveRequest>,
 }
 
@@ -1127,10 +1129,12 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
     let mut gen3d_draft = ctx.gen3d.draft.as_deref_mut();
     let asset_server = ctx.gen3d.asset_server.as_deref();
     let assets = ctx.gen3d.assets.as_deref();
+    let images = ctx.gen3d.images.as_deref_mut();
     let meshes = ctx.gen3d.meshes.as_deref_mut();
     let materials = ctx.gen3d.materials.as_deref_mut();
     let material_cache = ctx.gen3d.material_cache.as_deref_mut();
     let mesh_cache = ctx.gen3d.mesh_cache.as_deref_mut();
+    let prefab_thumbnail_capture = ctx.gen3d.prefab_thumbnail_capture.as_deref_mut();
     let scene_saves = &mut ctx.gen3d.scene_saves;
 
     let player_q = &ctx.world.player_q;
@@ -1981,6 +1985,30 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 Ok(saved) => saved,
                 Err(err) => return Some(json_error(400, err)),
             };
+
+            if let (Some(images), Some(prefab_thumbnail_capture)) = (images, prefab_thumbnail_capture)
+            {
+                let thumbnail_path = crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
+                    active_realm_id,
+                    saved.prefab_id,
+                );
+                if let Err(err) = crate::gen3d::gen3d_request_prefab_thumbnail_capture(
+                    commands,
+                    prefab_thumbnail_capture,
+                    images,
+                    asset_server,
+                    assets,
+                    meshes,
+                    materials,
+                    material_cache,
+                    mesh_cache,
+                    &*library,
+                    saved.prefab_id,
+                    thumbnail_path,
+                ) {
+                    warn!("Gen3D: thumbnail capture skipped: {err}");
+                }
+            }
 
             let body = serde_json::json!({
                 "ok": true,

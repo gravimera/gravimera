@@ -1,11 +1,16 @@
+use bevy::camera::RenderTarget;
 use bevy::ecs::system::SystemParam;
+use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
+use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use std::collections::HashMap;
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::geometry::{clamp_world_xz, normalize_flat_direction, snap_to_grid};
+use crate::geometry::{clamp_world_xz, snap_to_grid};
 use crate::object::registry::ObjectLibrary;
 use crate::object::registry::{ColliderProfile, MobilityMode};
 use crate::object::visuals;
@@ -13,12 +18,16 @@ use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::scene_store::SceneSaveRequest;
 use crate::types::{
     AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, GameMode, ObjectId,
-    ObjectPrefabId, Player,
+    ObjectPrefabId,
 };
 
 const PANEL_Z_INDEX: i32 = 930;
 const PANEL_WIDTH_PX: f32 = 260.0;
 const DRAG_START_THRESHOLD_PX: f32 = 6.0;
+const PREFAB_PREVIEW_Z_INDEX: i32 = 1200;
+const PREFAB_PREVIEW_LAYER: usize = 28;
+const PREFAB_PREVIEW_WIDTH_PX: u32 = 640;
+const PREFAB_PREVIEW_HEIGHT_PX: u32 = 360;
 
 #[derive(SystemParam)]
 pub(crate) struct ModelLibraryEnv<'w> {
@@ -39,13 +48,32 @@ struct ModelLibraryScrollbarDrag {
     grab_offset: f32,
 }
 
+#[derive(Debug, Clone)]
+struct ModelLibraryThumbnailCacheEntry {
+    handle: Handle<Image>,
+    modified_at_ms: u128,
+}
+
+#[derive(Debug)]
+struct ModelLibraryPrefabPreview {
+    prefab_id: u128,
+    ui_root: Entity,
+    scene_root: Entity,
+    target: Handle<Image>,
+}
+
 #[derive(Resource, Debug)]
 pub(crate) struct ModelLibraryUiState {
     models_dirty: bool,
     open: bool,
+    search_query: String,
+    search_focused: bool,
     drag: Option<ModelLibraryDrag>,
     spawn_seq: u32,
     scrollbar_drag: Option<ModelLibraryScrollbarDrag>,
+    thumbnail_cache: HashMap<u128, ModelLibraryThumbnailCacheEntry>,
+    pending_preview: Option<u128>,
+    preview: Option<ModelLibraryPrefabPreview>,
     last_rebuilt_scene: Option<(String, String)>,
 }
 
@@ -54,9 +82,14 @@ impl Default for ModelLibraryUiState {
         Self {
             models_dirty: true,
             open: true,
+            search_query: String::new(),
+            search_focused: false,
             drag: None,
             spawn_seq: 0,
             scrollbar_drag: None,
+            thumbnail_cache: HashMap::new(),
+            pending_preview: None,
+            preview: None,
             last_rebuilt_scene: None,
         }
     }
@@ -79,6 +112,8 @@ impl ModelLibraryUiState {
         if !open {
             self.drag = None;
             self.scrollbar_drag = None;
+            self.search_focused = false;
+            self.pending_preview = None;
         }
     }
 
@@ -115,6 +150,21 @@ pub(crate) struct ModelLibraryGen3dButton;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryGen3dButtonText;
+
+#[derive(Component)]
+pub(crate) struct ModelLibrarySearchField;
+
+#[derive(Component)]
+pub(crate) struct ModelLibrarySearchFieldText;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewOverlayRoot;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewCloseButton;
+
+#[derive(Component)]
+struct ModelLibraryPreviewSceneRoot;
 
 pub(crate) fn setup_model_library_ui(mut commands: Commands) {
     commands
@@ -185,6 +235,30 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
                         ModelLibraryGen3dButtonText,
                     ));
                 });
+            });
+
+            root.spawn((
+                Button,
+                Node {
+                    width: Val::Percent(100.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                ModelLibrarySearchField,
+            ))
+            .with_children(|field| {
+                field.spawn((
+                    Text::new("Search…"),
+                    TextFont {
+                        font_size: 14.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgba(0.80, 0.80, 0.86, 0.75)),
+                    ModelLibrarySearchFieldText,
+                ));
             });
 
             root.spawn((
@@ -259,7 +333,8 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
 pub(crate) fn model_library_update_visibility(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
-    state: Res<ModelLibraryUiState>,
+    mut commands: Commands,
+    mut state: ResMut<ModelLibraryUiState>,
     mut roots: Query<&mut Visibility, With<ModelLibraryRoot>>,
 ) {
     let visible = state.is_open()
@@ -272,23 +347,185 @@ pub(crate) fn model_library_update_visibility(
             Visibility::Hidden
         };
     }
+
+    if !visible {
+        state.drag = None;
+        state.search_focused = false;
+        state.pending_preview = None;
+        close_model_library_preview(&mut commands, &mut state);
+    }
+}
+
+pub(crate) fn model_library_search_field_focus(
+    mut state: ResMut<ModelLibraryUiState>,
+    mut fields: Query<&Interaction, (Changed<Interaction>, With<ModelLibrarySearchField>)>,
+) {
+    if !state.is_open() {
+        return;
+    }
+
+    for interaction in &mut fields {
+        if *interaction == Interaction::Pressed {
+            state.search_focused = true;
+        }
+    }
+}
+
+pub(crate) fn model_library_search_text_input(
+    mut state: ResMut<ModelLibraryUiState>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut keyboard: MessageReader<KeyboardInput>,
+) {
+    if !state.is_open() {
+        keyboard.clear();
+        return;
+    }
+    if !state.search_focused {
+        return;
+    }
+
+    fn push_text(target: &mut String, text: &str) -> bool {
+        let before = target.len();
+        for ch in text.replace("\r\n", "\n").replace('\r', "\n").chars() {
+            if ch.is_control() || ch == '\n' {
+                continue;
+            }
+            if target.chars().count() >= 256 {
+                break;
+            }
+            target.push(ch);
+        }
+        target.len() != before
+    }
+
+    for event in keyboard.read() {
+        if event.state != bevy::input::ButtonState::Pressed {
+            continue;
+        }
+
+        let mut changed = false;
+        match event.key_code {
+            KeyCode::Backspace => {
+                let before = state.search_query.chars().count();
+                if before > 0 {
+                    state.search_query.pop();
+                    changed = true;
+                }
+            }
+            KeyCode::Escape => {
+                state.search_focused = false;
+            }
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                state.search_focused = false;
+            }
+            KeyCode::KeyV => {
+                let modifier = keys.pressed(KeyCode::ControlLeft)
+                    || keys.pressed(KeyCode::ControlRight)
+                    || keys.pressed(KeyCode::SuperLeft)
+                    || keys.pressed(KeyCode::SuperRight);
+                if modifier {
+                    if let Some(text) = crate::clipboard::read_text() {
+                        if push_text(&mut state.search_query, &text) {
+                            state.models_dirty = true;
+                        }
+                    }
+                    continue;
+                }
+                if let Some(text) = &event.text {
+                    changed |= push_text(&mut state.search_query, text);
+                }
+            }
+            _ => {
+                let Some(text) = &event.text else {
+                    continue;
+                };
+                changed |= push_text(&mut state.search_query, text);
+            }
+        }
+
+        if changed {
+            state.models_dirty = true;
+        }
+    }
+}
+
+pub(crate) fn model_library_update_search_field_ui(
+    state: Res<ModelLibraryUiState>,
+    mut fields: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        With<ModelLibrarySearchField>,
+    >,
+    mut texts: Query<(&mut Text, &mut TextColor), With<ModelLibrarySearchFieldText>>,
+) {
+    if !state.is_open() {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut fields {
+        let focused = state.search_focused;
+        match *interaction {
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.78));
+                *border = BorderColor::all(Color::srgb(0.30, 0.55, 0.95));
+            }
+            Interaction::Hovered => {
+                let alpha = if focused { 0.78 } else { 0.70 };
+                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, alpha));
+                *border = BorderColor::all(if focused {
+                    Color::srgb(0.30, 0.55, 0.95)
+                } else {
+                    Color::srgba(0.25, 0.25, 0.30, 0.75)
+                });
+            }
+            Interaction::None => {
+                let alpha = if focused { 0.74 } else { 0.65 };
+                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, alpha));
+                *border = BorderColor::all(if focused {
+                    Color::srgb(0.30, 0.55, 0.95)
+                } else {
+                    Color::srgba(0.25, 0.25, 0.30, 0.65)
+                });
+            }
+        }
+    }
+
+    let query = state.search_query.trim();
+    let (text_value, text_color) = if query.is_empty() {
+        (
+            "Search…".to_string(),
+            Color::srgba(0.80, 0.80, 0.86, 0.75),
+        )
+    } else {
+        (
+            query.to_string(),
+            Color::srgba(0.92, 0.92, 0.96, 1.0),
+        )
+    };
+
+    for (mut text, mut color) in &mut texts {
+        if **text != text_value {
+            **text = text_value.clone();
+        }
+        *color = TextColor(text_color);
+    }
 }
 
 pub(crate) fn model_library_rebuild_list_ui(
     mut commands: Commands,
     active: Res<crate::realm::ActiveRealmScene>,
-    library: Res<ObjectLibrary>,
+    mut images: ResMut<Assets<Image>>,
     mut descriptors: ResMut<PrefabDescriptorLibrary>,
     mut state: ResMut<ModelLibraryUiState>,
     lists: Query<Entity, With<ModelLibraryList>>,
     existing_items: Query<Entity, With<ModelLibraryListItem>>,
 ) {
     let active_changed = match state.last_rebuilt_scene.as_ref() {
-        Some((realm_id, scene_id)) => realm_id != &active.realm_id || scene_id != &active.scene_id,
+        Some((realm_id, _scene_id)) => realm_id != &active.realm_id,
         None => true,
     };
     if active_changed {
         state.models_dirty = true;
+        state.thumbnail_cache.clear();
     }
 
     if !state.models_dirty {
@@ -304,22 +541,20 @@ pub(crate) fn model_library_rebuild_list_ui(
     }
 
     descriptors.clear();
-    let scene_prefabs_dir =
-        crate::scene_prefabs::scene_prefabs_root_dir(&active.realm_id, &active.scene_id);
+    let realm_prefabs_dir = crate::realm_prefab_packages::realm_prefabs_root_dir(&active.realm_id);
     if let Err(err) = crate::prefab_descriptors::load_prefab_descriptors_from_dir(
-        &scene_prefabs_dir,
+        &realm_prefabs_dir,
         &mut *descriptors,
     ) {
         warn!("{err}");
     }
 
-    let model_ids =
-        crate::scene_prefabs::list_scene_prefab_packages(&active.realm_id, &active.scene_id)
-            .unwrap_or_default();
+    let model_ids = crate::realm_prefab_packages::list_realm_prefab_packages(&active.realm_id)
+        .unwrap_or_default();
     if model_ids.is_empty() {
         commands.entity(list_entity).with_children(|list| {
             list.spawn((
-                Text::new("No scene prefabs yet.\nUse Gen3D to generate one."),
+                Text::new("No realm prefabs yet.\nUse Gen3D to generate one."),
                 TextFont {
                     font_size: 14.0,
                     ..default()
@@ -332,25 +567,242 @@ pub(crate) fn model_library_rebuild_list_ui(
         return;
     }
 
+    fn system_time_ms(time: std::time::SystemTime) -> u128 {
+        time.duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u128)
+            .unwrap_or(0)
+    }
+
+    fn load_png_ui_image(images: &mut Assets<Image>, path: &std::path::Path) -> Result<Handle<Image>, String> {
+        let bytes =
+            std::fs::read(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+        let image = Image::from_buffer(
+            &bytes,
+            ImageType::Extension("png"),
+            CompressedImageFormats::NONE,
+            true,
+            ImageSampler::linear(),
+            bevy::asset::RenderAssetUsages::default(),
+        )
+        .map_err(|err| format!("Failed to decode {}: {err}", path.display()))?;
+        Ok(images.add(image))
+    }
+
+    fn relevance_score(query: &str, name: &str, tags: &[String], summary: Option<&str>, id: &str) -> u32 {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return 0;
+        }
+        let name_l = name.to_lowercase();
+        let id_l = id.to_lowercase();
+        let tags_l: Vec<String> = tags.iter().map(|t| t.to_lowercase()).collect();
+        let summary_l = summary.map(|s| s.to_lowercase());
+
+        let mut score: u32 = 0;
+        if name_l.contains(&query) {
+            score = score.saturating_add(120);
+        }
+        if name_l.starts_with(&query) {
+            score = score.saturating_add(80);
+        }
+        if id_l.contains(&query) {
+            score = score.saturating_add(15);
+        }
+
+        let tokens: Vec<&str> = query.split_whitespace().collect();
+        for token in tokens {
+            if token.is_empty() {
+                continue;
+            }
+            if name_l.contains(token) {
+                score = score.saturating_add(60);
+            }
+            if tags_l.iter().any(|t| t == token) {
+                score = score.saturating_add(45);
+            } else if tags_l.iter().any(|t| t.contains(token)) {
+                score = score.saturating_add(20);
+            }
+            if let Some(summary_l) = summary_l.as_ref() {
+                if summary_l.contains(token) {
+                    score = score.saturating_add(12);
+                }
+            }
+        }
+        score
+    }
+
+    #[derive(Debug)]
+    struct Row {
+        prefab_id: u128,
+        display_name: String,
+        modified_at_ms: u128,
+        score: u32,
+        thumbnail: Option<Handle<Image>>,
+    }
+
+    let query = state.search_query.trim().to_string();
+    let mut rows: Vec<Row> = Vec::new();
+
+    for prefab_id in model_ids {
+        let uuid = uuid::Uuid::from_u128(prefab_id).to_string();
+        let desc = descriptors.get(prefab_id);
+
+        let display_name = desc
+            .and_then(|d| d.label.as_ref())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| uuid.clone());
+
+        let modified_at_ms = desc
+            .and_then(|d| d.provenance.as_ref())
+            .and_then(|p| p.modified_at_ms.or(p.created_at_ms))
+            .unwrap_or_else(|| {
+                let prefabs_dir = crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(
+                    &active.realm_id,
+                    prefab_id,
+                );
+                let path = prefabs_dir.join(format!("{uuid}.desc.json"));
+                std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .map(system_time_ms)
+                    .unwrap_or(0)
+            });
+
+        let summary = desc
+            .and_then(|d| d.text.as_ref())
+            .and_then(|t| t.short.as_deref())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty());
+        let tags: Vec<String> = desc.map(|d| d.tags.clone()).unwrap_or_default();
+
+        let score = relevance_score(query.as_str(), &display_name, &tags, summary, &uuid);
+        if !query.is_empty() && score == 0 {
+            continue;
+        }
+
+        let thumbnail = {
+            let path = crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
+                &active.realm_id,
+                prefab_id,
+            );
+            if let Ok(meta) = std::fs::metadata(&path) {
+                let modified_at_ms = meta.modified().map(system_time_ms).unwrap_or(0);
+                if let Some(entry) = state.thumbnail_cache.get(&prefab_id) {
+                    if entry.modified_at_ms == modified_at_ms {
+                        Some(entry.handle.clone())
+                    } else {
+                        match load_png_ui_image(&mut images, &path) {
+                            Ok(handle) => {
+                                state.thumbnail_cache.insert(
+                                    prefab_id,
+                                    ModelLibraryThumbnailCacheEntry {
+                                        handle: handle.clone(),
+                                        modified_at_ms,
+                                    },
+                                );
+                                Some(handle)
+                            }
+                            Err(err) => {
+                                debug!("{err}");
+                                None
+                            }
+                        }
+                    }
+                } else {
+                    match load_png_ui_image(&mut images, &path) {
+                        Ok(handle) => {
+                            state.thumbnail_cache.insert(
+                                prefab_id,
+                                ModelLibraryThumbnailCacheEntry {
+                                    handle: handle.clone(),
+                                    modified_at_ms,
+                                },
+                            );
+                            Some(handle)
+                        }
+                        Err(err) => {
+                            debug!("{err}");
+                            None
+                        }
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        rows.push(Row {
+            prefab_id,
+            display_name,
+            modified_at_ms,
+            score,
+            thumbnail,
+        });
+    }
+
+    rows.sort_by(|a, b| {
+        if !query.is_empty() {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| b.modified_at_ms.cmp(&a.modified_at_ms))
+                .then_with(|| a.display_name.cmp(&b.display_name))
+                .then_with(|| a.prefab_id.cmp(&b.prefab_id))
+        } else {
+            b.modified_at_ms
+                .cmp(&a.modified_at_ms)
+                .then_with(|| a.display_name.cmp(&b.display_name))
+                .then_with(|| a.prefab_id.cmp(&b.prefab_id))
+        }
+    });
+
     commands.entity(list_entity).with_children(|list| {
-        for model_id in model_ids {
-            let label = model_label(model_id, &library, &descriptors);
+        for row in rows {
             list.spawn((
                 Button,
                 Node {
                     width: Val::Percent(100.0),
                     padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
                     border: UiRect::all(Val::Px(1.0)),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(10.0),
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
                 BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
                 ModelLibraryListItem,
-                ModelLibraryItemButton { model_id },
+                ModelLibraryItemButton {
+                    model_id: row.prefab_id,
+                },
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new(label),
+                    Node {
+                        width: Val::Px(42.0),
+                        height: Val::Px(42.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                ))
+                .with_children(|thumb| {
+                    if let Some(handle) = row.thumbnail.as_ref() {
+                        thumb.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            ImageNode::new(handle.clone())
+                                .with_mode(NodeImageMode::Stretch),
+                        ));
+                    }
+                });
+
+                b.spawn((
+                    Text::new(row.display_name),
                     TextFont {
                         font_size: 14.0,
                         ..default()
@@ -362,6 +814,420 @@ pub(crate) fn model_library_rebuild_list_ui(
     });
 
     state.models_dirty = false;
+}
+
+fn close_model_library_preview(commands: &mut Commands, state: &mut ModelLibraryUiState) {
+    let Some(preview) = state.preview.take() else {
+        return;
+    };
+    let target_id = preview.target.id();
+    commands.entity(preview.ui_root).try_despawn();
+    commands.entity(preview.scene_root).try_despawn();
+    commands.queue(move |world: &mut World| {
+        if let Some(mut images) = world.get_resource_mut::<Assets<Image>>() {
+            images.remove(target_id);
+        }
+    });
+}
+
+fn spawn_model_library_preview_scene(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    asset_server: &AssetServer,
+    assets: &SceneAssets,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    material_cache: &mut visuals::MaterialCache,
+    mesh_cache: &mut visuals::PrimitiveMeshCache,
+    library: &ObjectLibrary,
+    prefab_id: u128,
+) -> Result<(Entity, Handle<Image>), String> {
+    if library.get(prefab_id).is_none() {
+        return Err(format!(
+            "Cannot preview prefab {}: prefab def is not loaded.",
+            uuid::Uuid::from_u128(prefab_id)
+        ));
+    }
+
+    let size = library
+        .size(prefab_id)
+        .unwrap_or_else(|| Vec3::splat(DEFAULT_OBJECT_SIZE_M))
+        .abs()
+        .max(Vec3::splat(0.01));
+    let origin_y = library.ground_origin_y_or_default(prefab_id);
+    let center_y = size.y * 0.5 - origin_y;
+    let focus = if center_y.is_finite() {
+        Vec3::new(0.0, center_y, 0.0)
+    } else {
+        Vec3::ZERO
+    };
+
+    let target =
+        crate::orbit_capture::create_render_target(images, PREFAB_PREVIEW_WIDTH_PX, PREFAB_PREVIEW_HEIGHT_PX);
+
+    let aspect = PREFAB_PREVIEW_WIDTH_PX.max(1) as f32 / PREFAB_PREVIEW_HEIGHT_PX.max(1) as f32;
+    let mut projection = bevy::camera::PerspectiveProjection::default();
+    projection.aspect_ratio = aspect;
+    let fov_y = projection.fov;
+    let near = projection.near;
+
+    let yaw = std::f32::consts::FRAC_PI_6;
+    let pitch = -0.45;
+    let half_extents = size * 0.5;
+    let base_distance =
+        crate::orbit_capture::required_distance_for_view(half_extents, yaw, pitch, fov_y, aspect, near);
+    let distance = (base_distance * 1.08).clamp(near + 0.2, 500.0);
+    let camera_transform = crate::orbit_capture::orbit_transform(yaw, pitch, distance, focus);
+
+    let render_layer = bevy::camera::visibility::RenderLayers::layer(PREFAB_PREVIEW_LAYER);
+
+    let scene_root = commands
+        .spawn((
+            Transform::IDENTITY,
+            Visibility::Inherited,
+            ModelLibraryPreviewSceneRoot,
+        ))
+        .id();
+
+    let model_id = {
+        let mut entity = commands.spawn((Transform::IDENTITY, Visibility::Inherited));
+        visuals::spawn_object_visuals_with_settings(
+            &mut entity,
+            library,
+            asset_server,
+            assets,
+            meshes,
+            materials,
+            material_cache,
+            mesh_cache,
+            prefab_id,
+            None,
+            visuals::VisualSpawnSettings {
+                mark_parts: false,
+                render_layer: Some(PREFAB_PREVIEW_LAYER),
+            },
+        );
+        entity.id()
+    };
+    commands.entity(scene_root).add_child(model_id);
+
+    let lights = [
+        (
+            Vec3::new(10.0, 18.0, 8.0),
+            16_000.0,
+            true,
+            Color::srgb(1.0, 0.97, 0.94),
+        ),
+        (
+            Vec3::new(-10.0, 10.0, 6.0),
+            6_500.0,
+            false,
+            Color::srgb(0.90, 0.95, 1.0),
+        ),
+        (
+            Vec3::new(0.0, 12.0, -12.0),
+            4_000.0,
+            false,
+            Color::srgb(1.0, 1.0, 1.0),
+        ),
+        (
+            Vec3::new(0.0, -14.0, 0.0),
+            4_500.0,
+            false,
+            Color::srgb(0.96, 0.97, 1.0),
+        ),
+    ];
+    for (offset, illuminance, shadows_enabled, color) in lights {
+        let light_id = commands
+            .spawn((
+                DirectionalLight {
+                    shadows_enabled,
+                    illuminance,
+                    color,
+                    ..default()
+                },
+                Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y),
+                render_layer.clone(),
+            ))
+            .id();
+        commands.entity(scene_root).add_child(light_id);
+    }
+
+    let camera_id = commands
+        .spawn((
+            Camera3d::default(),
+            bevy::camera::Projection::Perspective(projection),
+            Camera {
+                clear_color: ClearColorConfig::Custom(Color::srgb(0.93, 0.94, 0.96)),
+                ..default()
+            },
+            RenderTarget::Image(target.clone().into()),
+            Tonemapping::TonyMcMapface,
+            render_layer.clone(),
+            camera_transform,
+        ))
+        .id();
+    commands.entity(scene_root).add_child(camera_id);
+
+    Ok((scene_root, target))
+}
+
+pub(crate) fn model_library_open_preview_panel(
+    mut commands: Commands,
+    env: ModelLibraryEnv,
+    asset_server: Res<AssetServer>,
+    assets: Res<SceneAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut material_cache: ResMut<visuals::MaterialCache>,
+    mut mesh_cache: ResMut<visuals::PrimitiveMeshCache>,
+    mut images: ResMut<Assets<Image>>,
+    mut library: ResMut<ObjectLibrary>,
+    descriptors: Res<PrefabDescriptorLibrary>,
+    mut state: ResMut<ModelLibraryUiState>,
+) {
+    if !state.is_open() || !matches!(env.build_scene.get(), crate::types::BuildScene::Realm) {
+        state.pending_preview = None;
+        return;
+    }
+
+    let Some(prefab_id) = state.pending_preview.take() else {
+        return;
+    };
+    state.search_focused = false;
+
+    if state.preview.as_ref().is_some_and(|p| p.prefab_id == prefab_id) {
+        return;
+    }
+    close_model_library_preview(&mut commands, &mut state);
+
+    if let Err(err) = ensure_realm_prefab_loaded(&env.active, prefab_id, &mut library) {
+        warn!("{err}");
+        return;
+    }
+
+    let (scene_root, target) = match spawn_model_library_preview_scene(
+        &mut commands,
+        &mut images,
+        &asset_server,
+        &assets,
+        &mut meshes,
+        &mut materials,
+        &mut material_cache,
+        &mut mesh_cache,
+        &library,
+        prefab_id,
+    ) {
+        Ok(v) => v,
+        Err(err) => {
+            warn!("{err}");
+            return;
+        }
+    };
+
+    let uuid = uuid::Uuid::from_u128(prefab_id).to_string();
+    let desc = descriptors.get(prefab_id);
+    let name = desc
+        .and_then(|d| d.label.as_ref())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| uuid.clone());
+    let tags = desc.map(|d| d.tags.clone()).unwrap_or_default();
+    let roles = desc.map(|d| d.roles.clone()).unwrap_or_default();
+    let short = desc
+        .and_then(|d| d.text.as_ref())
+        .and_then(|t| t.short.as_deref())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty());
+    let long = desc
+        .and_then(|d| d.text.as_ref())
+        .and_then(|t| t.long.as_deref())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty());
+
+    let modified_at_ms = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.modified_at_ms);
+    let created_at_ms = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.created_at_ms);
+
+    let mut meta = String::new();
+    meta.push_str(&format!("Name: {name}\n"));
+    meta.push_str(&format!("ID: {uuid}\n"));
+    if let Some(modified_at_ms) = modified_at_ms {
+        meta.push_str(&format!("Modified: {modified_at_ms}\n"));
+    }
+    if let Some(created_at_ms) = created_at_ms {
+        meta.push_str(&format!("Created: {created_at_ms}\n"));
+    }
+    if !roles.is_empty() {
+        meta.push_str(&format!("Roles: {}\n", roles.join(", ")));
+    }
+    if !tags.is_empty() {
+        meta.push_str(&format!("Tags: {}\n", tags.join(", ")));
+    }
+    if let Some(size) = library.size(prefab_id) {
+        meta.push_str(&format!(
+            "Size (m): [{:.3}, {:.3}, {:.3}]\n",
+            size.x, size.y, size.z
+        ));
+    }
+    meta.push('\n');
+    if let Some(long) = long {
+        meta.push_str(long);
+    } else if let Some(short) = short {
+        meta.push_str(short);
+    }
+
+    let ui_root = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(64.0),
+                left: Val::Px(300.0),
+                width: Val::Px(720.0),
+                height: Val::Px(560.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(10.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.94)),
+            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.85)),
+            Outline {
+                width: Val::Px(1.0),
+                color: Color::srgba(0.25, 0.25, 0.30, 0.85),
+                offset: Val::Px(0.0),
+            },
+            ZIndex(PREFAB_PREVIEW_Z_INDEX),
+            ModelLibraryPreviewOverlayRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|row| {
+                row.spawn((
+                    Text::new(name.clone()),
+                    TextFont {
+                        font_size: 18.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.95, 0.95, 0.97)),
+                ));
+
+                row.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ModelLibraryPreviewCloseButton,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("Exit"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    ));
+                });
+            });
+
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Px(360.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.01, 0.01, 0.015, 0.96)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+            ))
+            .with_children(|img| {
+                img.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    ImageNode::new(target.clone()).with_mode(NodeImageMode::Stretch),
+                ));
+            });
+
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.0),
+                    overflow: Overflow::clip_y(),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|panel| {
+                panel.spawn((
+                    Text::new(meta),
+                    TextFont {
+                        font_size: 14.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.90, 0.90, 0.94)),
+                ));
+            });
+        })
+        .id();
+
+    state.preview = Some(ModelLibraryPrefabPreview {
+        prefab_id,
+        ui_root,
+        scene_root,
+        target,
+    });
+}
+
+pub(crate) fn model_library_preview_close_button_interactions(
+    mut commands: Commands,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<ModelLibraryPreviewCloseButton>)>,
+) {
+    if state.preview.is_none() {
+        return;
+    }
+    for interaction in &mut buttons {
+        if *interaction == Interaction::Pressed {
+            close_model_library_preview(&mut commands, &mut state);
+            break;
+        }
+    }
+}
+
+pub(crate) fn model_library_preview_close_on_escape(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut state: ResMut<ModelLibraryUiState>,
+) {
+    if state.preview.is_none() {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        close_model_library_preview(&mut commands, &mut state);
+    }
 }
 
 pub(crate) fn model_library_update_scrollbar_ui(
@@ -646,6 +1512,9 @@ pub(crate) fn model_library_item_button_interactions(
             Interaction::Pressed => {
                 *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
                 *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+                if state.preview.is_some() {
+                    continue;
+                }
                 if state.drag.is_none() {
                     if let Some(cursor) = cursor {
                         state.drag = Some(ModelLibraryDrag {
@@ -667,7 +1536,6 @@ pub(crate) fn model_library_drag_update(
     env: ModelLibraryEnv,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<crate::types::MainCamera>>,
-    player_q: Query<(&Transform, &Collider), With<Player>>,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -686,50 +1554,43 @@ pub(crate) fn model_library_drag_update(
         state.drag = None;
         return;
     }
+    if state.preview.is_some() {
+        state.drag = None;
+        return;
+    }
 
     let Some(mut drag) = state.drag else {
         return;
     };
 
     if !mouse_buttons.pressed(MouseButton::Left) {
-        // Mouse was released; treat as either click-spawn (near hero) or drag-spawn.
+        // Mouse was released; treat as either click-to-preview or drag-spawn.
         let prefab_id = drag.model_id;
-        if let Err(err) = ensure_scene_prefab_loaded(&env.active, prefab_id, &mut library) {
+        if let Err(err) = ensure_realm_prefab_loaded(&env.active, prefab_id, &mut library) {
             warn!("{err}");
             state.drag = None;
             return;
         }
-        let spawn_translation = if drag.is_dragging && drag.preview_translation.is_some() {
-            drag.preview_translation.unwrap()
-        } else {
-            let Ok((player_transform, player_collider)) = player_q.single() else {
-                state.drag = None;
-                return;
-            };
-            spawn_near_hero(
-                prefab_id,
-                player_transform,
-                player_collider,
+        if drag.is_dragging && drag.preview_translation.is_some() {
+            let spawn_translation = drag.preview_translation.unwrap();
+            let spawned = spawn_prefab_instance(
+                &mut commands,
+                &asset_server,
+                &assets,
+                &mut meshes,
+                &mut materials,
+                &mut material_cache,
+                &mut mesh_cache,
                 &library,
-                state.spawn_seq,
-            )
-        };
-
-        let spawned = spawn_prefab_instance(
-            &mut commands,
-            &asset_server,
-            &assets,
-            &mut meshes,
-            &mut materials,
-            &mut material_cache,
-            &mut mesh_cache,
-            &library,
-            prefab_id,
-            spawn_translation,
-        );
-        if spawned.is_some() {
-            state.spawn_seq = state.spawn_seq.wrapping_add(1);
-            scene_saves.write(SceneSaveRequest::new("spawned prefab from scene"));
+                prefab_id,
+                spawn_translation,
+            );
+            if spawned.is_some() {
+                state.spawn_seq = state.spawn_seq.wrapping_add(1);
+                scene_saves.write(SceneSaveRequest::new("spawned prefab from realm"));
+            }
+        } else {
+            state.pending_preview = Some(prefab_id);
         }
 
         state.drag = None;
@@ -746,7 +1607,7 @@ pub(crate) fn model_library_drag_update(
         }
 
         if drag.is_dragging {
-            if let Err(err) = ensure_scene_prefab_loaded(&env.active, drag.model_id, &mut library) {
+            if let Err(err) = ensure_realm_prefab_loaded(&env.active, drag.model_id, &mut library) {
                 warn!("{err}");
                 drag.preview_translation = None;
                 state.drag = Some(drag);
@@ -816,42 +1677,7 @@ pub(crate) fn model_library_draw_drag_preview_gizmos(
     draw_dashed_box(&mut gizmos, min, max, Color::srgb(0.25, 0.95, 0.85));
 }
 
-fn model_label(
-    model_id: u128,
-    library: &ObjectLibrary,
-    descriptors: &PrefabDescriptorLibrary,
-) -> String {
-    if let Some(desc) = descriptors.get(model_id) {
-        if let Some(label) = desc
-            .label
-            .as_ref()
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-        {
-            return label.to_string();
-        }
-        if let Some(text) = desc
-            .text
-            .as_ref()
-            .and_then(|t| t.short.as_ref())
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-        {
-            return text.to_string();
-        }
-    }
-
-    if let Some(def) = library.get(model_id) {
-        let label = def.label.as_ref().trim();
-        if !label.is_empty() {
-            return label.to_string();
-        }
-    }
-
-    uuid::Uuid::from_u128(model_id).to_string()
-}
-
-fn ensure_scene_prefab_loaded(
+fn ensure_realm_prefab_loaded(
     active: &crate::realm::ActiveRealmScene,
     prefab_id: u128,
     library: &mut ObjectLibrary,
@@ -860,18 +1686,16 @@ fn ensure_scene_prefab_loaded(
         return Ok(());
     }
 
-    let loaded = crate::scene_prefabs::load_scene_prefab_package_defs_into_library(
+    let loaded = crate::realm_prefab_packages::load_realm_prefab_package_defs_into_library(
         &active.realm_id,
-        &active.scene_id,
         prefab_id,
         library,
     )?;
     if loaded == 0 {
         return Err(format!(
-            "Prefab {} is not loaded and no scene-local prefab package was found under {}/{}.",
+            "Prefab {} is not loaded and no realm prefab package was found under {}.",
             uuid::Uuid::from_u128(prefab_id),
-            active.realm_id,
-            active.scene_id,
+            active.realm_id
         ));
     }
 
@@ -921,46 +1745,6 @@ fn prefab_bounds(library: &ObjectLibrary, prefab_id: u128, scale: Vec3) -> (Vec3
     let origin_y = library.ground_origin_y_or_default(prefab_id) * scale.y;
 
     (size, half_xz, origin_y)
-}
-
-fn spawn_near_hero(
-    prefab_id: u128,
-    player_transform: &Transform,
-    player_collider: &Collider,
-    library: &ObjectLibrary,
-    seq: u32,
-) -> Vec3 {
-    let (_size, half_xz, origin_y) = prefab_bounds(library, prefab_id, Vec3::ONE);
-    let object_radius = half_xz.x.max(half_xz.y).max(0.1);
-    let mobility_mode = library.mobility(prefab_id).map(|m| m.mode);
-
-    let forward = normalize_flat_direction(player_transform.rotation * Vec3::Z).unwrap_or(Vec3::Z);
-    let right = Vec3::Y.cross(forward).normalize_or_zero();
-    let distance = player_collider.radius + object_radius + BUILD_UNIT_SIZE;
-
-    let slots_per_ring: u32 = 12;
-    let ring = seq / slots_per_ring;
-    let index_in_ring = seq % slots_per_ring;
-    let angle = (index_in_ring as f32) * (std::f32::consts::TAU / slots_per_ring as f32);
-    let mut dir = (right * angle.cos() + forward * angle.sin()).normalize_or_zero();
-    if dir.length_squared() <= 0.0001 {
-        dir = Vec3::X;
-    }
-    let spacing = (object_radius * 2.0 + BUILD_UNIT_SIZE * 2.0).max(BUILD_UNIT_SIZE * 4.0);
-    let radial = distance + ring as f32 * spacing;
-
-    let mut pos = player_transform.translation + dir * radial;
-    pos.x = snap_to_grid(pos.x, BUILD_GRID_SIZE);
-    pos.z = snap_to_grid(pos.z, BUILD_GRID_SIZE);
-    pos.y = match mobility_mode {
-        Some(MobilityMode::Air) => origin_y + BUILD_UNIT_SIZE * 8.0,
-        _ => origin_y,
-    };
-
-    pos.x = clamp_world_xz(pos.x, half_xz.x);
-    pos.z = clamp_world_xz(pos.z, half_xz.y);
-
-    pos
 }
 
 fn spawn_at_pick(prefab_id: u128, hit: Vec3, surface_y: f32, library: &ObjectLibrary) -> Vec3 {

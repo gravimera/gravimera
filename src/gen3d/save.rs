@@ -1,6 +1,12 @@
+use bevy::camera::RenderTarget;
 use bevy::ecs::message::MessageWriter;
 use bevy::ecs::system::SystemParam;
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::assets::SceneAssets;
@@ -25,6 +31,7 @@ use super::state::{Gen3dDraft, Gen3dPreview, Gen3dSaveButton, Gen3dWorkshop};
 pub(crate) struct Gen3dSaveRenderWorld<'w> {
     asset_server: Res<'w, AssetServer>,
     assets: Res<'w, SceneAssets>,
+    images: ResMut<'w, Assets<Image>>,
     meshes: ResMut<'w, Assets<Mesh>>,
     materials: ResMut<'w, Assets<StandardMaterial>>,
     material_cache: ResMut<'w, visuals::MaterialCache>,
@@ -43,6 +50,46 @@ pub(crate) struct Gen3dSavedInstance {
     pub(crate) prefab_id: u128,
     pub(crate) mobility: bool,
     pub(crate) position: Vec3,
+}
+
+const GEN3D_SAVE_THUMBNAIL_LAYER: usize = 29;
+const GEN3D_SAVE_THUMBNAIL_WIDTH_PX: u32 = 256;
+const GEN3D_SAVE_THUMBNAIL_HEIGHT_PX: u32 = 256;
+const GEN3D_SAVE_THUMBNAIL_TIMEOUT_SECS: u64 = 5;
+
+#[derive(Component)]
+struct Gen3dSavedPrefabThumbnailRoot;
+
+#[derive(Component)]
+struct Gen3dSavedPrefabThumbnailCamera;
+
+#[derive(Component)]
+struct Gen3dSavedPrefabThumbnailLight;
+
+#[derive(Resource, Default)]
+pub(crate) struct Gen3dPrefabThumbnailCaptureRuntime {
+    active: Option<Gen3dPrefabThumbnailCapture>,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct Gen3dSaveRuntime<'w> {
+    thumbnail_capture: ResMut<'w, Gen3dPrefabThumbnailCaptureRuntime>,
+    job: ResMut<'w, Gen3dAiJob>,
+}
+
+#[derive(Debug)]
+struct Gen3dPrefabThumbnailCaptureProgress {
+    expected: usize,
+    completed: usize,
+}
+
+#[derive(Debug)]
+struct Gen3dPrefabThumbnailCapture {
+    root: Entity,
+    camera: Entity,
+    screenshot: Entity,
+    progress: Arc<Mutex<Gen3dPrefabThumbnailCaptureProgress>>,
+    started_at: Instant,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1105,7 +1152,7 @@ fn collider_half_xz(collider: ColliderProfile, size: Vec3) -> Vec2 {
 
 fn save_gen3d_snapshot_to_scene_and_library(
     realm_id: &str,
-    scene_id: &str,
+    _scene_id: &str,
     library: &mut ObjectLibrary,
     prefab_descriptors: Option<&mut crate::prefab_descriptors::PrefabDescriptorLibrary>,
     workshop: &mut Gen3dWorkshop,
@@ -1119,27 +1166,15 @@ fn save_gen3d_snapshot_to_scene_and_library(
         job.save_overwrite_prefab_id(),
         job.min_ground_contact_y_in_root(),
     )?;
-    let scene_prefabs_dir = crate::scene_prefabs::save_scene_prefab_package_defs(
-        realm_id,
-        scene_id,
-        saved_root_id,
-        &defs,
-    )?;
+    let prefabs_dir =
+        crate::realm_prefab_packages::save_realm_prefab_package_defs(realm_id, saved_root_id, &defs)?;
 
     save_gen3d_source_bundle_best_effort(
-        &crate::scene_prefabs::scene_prefab_package_gen3d_source_dir(
-            realm_id,
-            scene_id,
-            saved_root_id,
-        ),
+        &crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(realm_id, saved_root_id),
         snapshot,
     );
     save_gen3d_edit_bundle_best_effort(
-        &crate::scene_prefabs::scene_prefab_package_gen3d_edit_bundle_path(
-            realm_id,
-            scene_id,
-            saved_root_id,
-        ),
+        &crate::realm_prefab_packages::realm_prefab_package_gen3d_edit_bundle_path(realm_id, saved_root_id),
         job,
         saved_root_id,
     );
@@ -1153,7 +1188,7 @@ fn save_gen3d_snapshot_to_scene_and_library(
     };
 
     let descriptor = save_generated_prefab_descriptor_best_effort(
-        &scene_prefabs_dir,
+        &prefabs_dir,
         &root_def,
         library,
         job,
@@ -1415,7 +1450,7 @@ pub(crate) fn gen3d_save_button(
     mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
-    mut job: ResMut<Gen3dAiJob>,
+    runtime: Gen3dSaveRuntime,
     draft: Res<Gen3dDraft>,
     preview: Res<Gen3dPreview>,
     player_q: Query<(&Transform, &Collider), With<Player>>,
@@ -1479,6 +1514,11 @@ pub(crate) fn gen3d_save_button(
                 return;
             };
 
+            let Gen3dSaveRuntime {
+                mut thumbnail_capture,
+                mut job,
+            } = runtime;
+
             match gen3d_save_current_draft_seed_aware_from_api(
                 &mut commands,
                 &render.asset_server,
@@ -1501,7 +1541,31 @@ pub(crate) fn gen3d_save_button(
                 &children_q,
                 &mut scene_saves,
             ) {
-                Ok(_) => model_library.mark_models_dirty(),
+                Ok(saved) => {
+                    model_library.mark_models_dirty();
+
+                    let thumbnail_path =
+                        crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
+                            &env.active.realm_id,
+                            saved.prefab_id,
+                        );
+                    if let Err(err) = gen3d_request_prefab_thumbnail_capture(
+                        &mut commands,
+                        &mut *thumbnail_capture,
+                        &mut *render.images,
+                        &render.asset_server,
+                        &render.assets,
+                        &mut *render.meshes,
+                        &mut *render.materials,
+                        &mut *render.material_cache,
+                        &mut *render.mesh_cache,
+                        &*library,
+                        saved.prefab_id,
+                        thumbnail_path,
+                    ) {
+                        warn!("Gen3D: thumbnail capture skipped: {err}");
+                    }
+                }
                 Err(err) => {
                     workshop.error = Some(err);
                     workshop.status = "Save failed.".into();
@@ -1511,6 +1575,256 @@ pub(crate) fn gen3d_save_button(
     }
 
     *last_interaction = Some(*interaction);
+}
+
+pub(crate) fn gen3d_request_prefab_thumbnail_capture(
+    commands: &mut Commands,
+    runtime: &mut Gen3dPrefabThumbnailCaptureRuntime,
+    images: &mut Assets<Image>,
+    asset_server: &AssetServer,
+    assets: &SceneAssets,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    material_cache: &mut visuals::MaterialCache,
+    mesh_cache: &mut visuals::PrimitiveMeshCache,
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    thumbnail_path: PathBuf,
+) -> Result<(), String> {
+    if let Some(active) = runtime.active.take() {
+        cleanup_gen3d_prefab_thumbnail_capture(commands, active);
+    }
+    let capture = start_gen3d_prefab_thumbnail_capture(
+        commands,
+        images,
+        asset_server,
+        assets,
+        meshes,
+        materials,
+        material_cache,
+        mesh_cache,
+        library,
+        prefab_id,
+        thumbnail_path,
+    )?;
+    runtime.active = Some(capture);
+    Ok(())
+}
+
+fn start_gen3d_prefab_thumbnail_capture(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    asset_server: &AssetServer,
+    assets: &SceneAssets,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    material_cache: &mut visuals::MaterialCache,
+    mesh_cache: &mut visuals::PrimitiveMeshCache,
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    thumbnail_path: PathBuf,
+) -> Result<Gen3dPrefabThumbnailCapture, String> {
+    let Some(def) = library.get(prefab_id) else {
+        return Err(format!(
+            "Prefab {} is not loaded.",
+            uuid::Uuid::from_u128(prefab_id)
+        ));
+    };
+
+    if let Some(parent) = thumbnail_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "Failed to create thumbnail dir {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let render_layer = bevy::camera::visibility::RenderLayers::layer(GEN3D_SAVE_THUMBNAIL_LAYER);
+
+    let size = def.size.abs().max(Vec3::splat(0.01));
+    let origin_y = library.ground_origin_y_or_default(prefab_id);
+    let center_y = size.y * 0.5 - origin_y;
+    let focus = if center_y.is_finite() {
+        Vec3::new(0.0, center_y, 0.0)
+    } else {
+        Vec3::ZERO
+    };
+
+    let root = commands
+        .spawn((
+            Transform::IDENTITY,
+            Visibility::Inherited,
+            Gen3dSavedPrefabThumbnailRoot,
+        ))
+        .id();
+
+    let model_id = {
+        let mut entity = commands.spawn((Transform::IDENTITY, Visibility::Inherited));
+        crate::object::visuals::spawn_object_visuals_with_settings(
+            &mut entity,
+            library,
+            asset_server,
+            assets,
+            meshes,
+            materials,
+            material_cache,
+            mesh_cache,
+            prefab_id,
+            None,
+            visuals::VisualSpawnSettings {
+                mark_parts: false,
+                render_layer: Some(GEN3D_SAVE_THUMBNAIL_LAYER),
+            },
+        );
+        entity.id()
+    };
+    commands.entity(root).add_child(model_id);
+
+    let lights = [
+        (
+            Vec3::new(10.0, 18.0, 8.0),
+            16_000.0,
+            true,
+            Color::srgb(1.0, 0.97, 0.94),
+        ),
+        (
+            Vec3::new(-10.0, 10.0, 6.0),
+            6_500.0,
+            false,
+            Color::srgb(0.90, 0.95, 1.0),
+        ),
+        (
+            Vec3::new(0.0, 12.0, -12.0),
+            4_000.0,
+            false,
+            Color::srgb(1.0, 1.0, 1.0),
+        ),
+        (
+            Vec3::new(0.0, -14.0, 0.0),
+            4_500.0,
+            false,
+            Color::srgb(0.96, 0.97, 1.0),
+        ),
+    ];
+    for (offset, illuminance, shadows_enabled, color) in lights {
+        let light_id = commands
+            .spawn((
+                DirectionalLight {
+                    shadows_enabled,
+                    illuminance,
+                    color,
+                    ..default()
+                },
+                Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y),
+                render_layer.clone(),
+                Gen3dSavedPrefabThumbnailLight,
+            ))
+            .id();
+        commands.entity(root).add_child(light_id);
+    }
+
+    let width_px = GEN3D_SAVE_THUMBNAIL_WIDTH_PX;
+    let height_px = GEN3D_SAVE_THUMBNAIL_HEIGHT_PX;
+    let aspect = width_px.max(1) as f32 / height_px.max(1) as f32;
+    let mut projection = bevy::camera::PerspectiveProjection::default();
+    projection.aspect_ratio = aspect;
+    let fov_y = projection.fov;
+    let near = projection.near;
+
+    let yaw = std::f32::consts::FRAC_PI_6;
+    let pitch = super::GEN3D_PREVIEW_DEFAULT_PITCH;
+    let half_extents = size * 0.5;
+    let base_distance = crate::orbit_capture::required_distance_for_view(
+        half_extents,
+        yaw,
+        pitch,
+        fov_y,
+        aspect,
+        near,
+    );
+    let distance = (base_distance * 1.08).clamp(near + 0.2, 500.0);
+    let camera_transform = crate::orbit_capture::orbit_transform(yaw, pitch, distance, focus);
+
+    let target = crate::orbit_capture::create_render_target(images, width_px, height_px);
+    let camera = commands
+        .spawn((
+            Camera3d::default(),
+            bevy::camera::Projection::Perspective(projection),
+            Camera {
+                clear_color: ClearColorConfig::Custom(Color::srgb(0.93, 0.94, 0.96)),
+                ..default()
+            },
+            RenderTarget::Image(target.clone().into()),
+            Tonemapping::TonyMcMapface,
+            render_layer.clone(),
+            camera_transform,
+            Gen3dSavedPrefabThumbnailCamera,
+        ))
+        .id();
+    commands.entity(root).add_child(camera);
+
+    let progress = Arc::new(Mutex::new(Gen3dPrefabThumbnailCaptureProgress {
+        expected: 1,
+        completed: 0,
+    }));
+    let path_for_capture = thumbnail_path.clone();
+    let progress_for_capture = progress.clone();
+    let screenshot = commands
+        .spawn(Screenshot::image(target))
+        .observe(move |event: On<ScreenshotCaptured>| {
+            let mut saver = save_to_disk(path_for_capture.clone());
+            saver(event);
+            if let Ok(mut guard) = progress_for_capture.lock() {
+                guard.completed = guard.completed.saturating_add(1);
+            }
+        })
+        .id();
+    commands.entity(root).add_child(screenshot);
+
+    Ok(Gen3dPrefabThumbnailCapture {
+        root,
+        camera,
+        screenshot,
+        progress,
+        started_at: Instant::now(),
+    })
+}
+
+fn cleanup_gen3d_prefab_thumbnail_capture(
+    commands: &mut Commands,
+    capture: Gen3dPrefabThumbnailCapture,
+) {
+    commands.entity(capture.root).try_despawn();
+    commands.entity(capture.camera).try_despawn();
+    commands.entity(capture.screenshot).try_despawn();
+}
+
+pub(crate) fn gen3d_prefab_thumbnail_capture_poll(
+    mut commands: Commands,
+    mut runtime: ResMut<Gen3dPrefabThumbnailCaptureRuntime>,
+) {
+    let Some(capture) = runtime.active.as_ref() else {
+        return;
+    };
+
+    let done = match capture.progress.lock() {
+        Ok(guard) => guard.completed >= guard.expected.max(1),
+        Err(_) => true,
+    };
+    let timed_out = capture.started_at.elapsed()
+        > Duration::from_secs(GEN3D_SAVE_THUMBNAIL_TIMEOUT_SECS);
+
+    if !done && !timed_out {
+        return;
+    }
+    if timed_out && !done {
+        warn!("Gen3D: thumbnail capture timed out.");
+    }
+
+    if let Some(capture) = runtime.active.take() {
+        cleanup_gen3d_prefab_thumbnail_capture(&mut commands, capture);
+    }
 }
 
 pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
@@ -2068,7 +2382,7 @@ fn save_generated_prefab_descriptor_best_effort(
         out
     }
 
-    let created_at_ms = std::time::SystemTime::now()
+    let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u128)
         .unwrap_or(0);
@@ -2077,6 +2391,41 @@ fn save_generated_prefab_descriptor_best_effort(
     let prefab_json = prefabs_dir.join(format!("{prefab_uuid}.json"));
     let descriptor_path =
         crate::prefab_descriptors::prefab_descriptor_path_for_prefab_json(&prefab_json);
+
+    let existing_descriptor: Option<crate::prefab_descriptors::PrefabDescriptorFileV1> =
+        std::fs::read(&descriptor_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|json| serde_json::from_value(json).ok());
+    let created_at_ms = existing_descriptor
+        .as_ref()
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.created_at_ms)
+        .unwrap_or(now_ms);
+
+    let mut revisions = existing_descriptor
+        .as_ref()
+        .and_then(|d| d.provenance.as_ref())
+        .map(|p| p.revisions.clone())
+        .unwrap_or_default();
+    let next_rev = revisions
+        .iter()
+        .map(|rev| rev.rev)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    let revision_summary = if existing_descriptor.is_some() {
+        "saved"
+    } else {
+        "generated"
+    };
+    revisions.push(crate::prefab_descriptors::PrefabDescriptorRevisionV1 {
+        rev: next_rev,
+        created_at_ms: now_ms,
+        actor: "agent:object".to_string(),
+        summary: revision_summary.to_string(),
+        extra: Default::default(),
+    });
 
     let mut anchors: Vec<crate::prefab_descriptors::PrefabDescriptorAnchorV1> = root_def
         .anchors
@@ -2114,6 +2463,23 @@ fn save_generated_prefab_descriptor_best_effort(
         .find(|line| !line.trim().is_empty())
         .map(|line| line.trim().to_string())
         .filter(|v| !v.is_empty());
+
+    fn clamp_words(text: &str, max_words: usize) -> Option<String> {
+        let words: Vec<&str> = text
+            .trim()
+            .split_whitespace()
+            .filter(|w| !w.trim().is_empty())
+            .take(max_words)
+            .collect();
+        (!words.is_empty()).then_some(words.join(" "))
+    }
+
+    let name = clamp_words(root_def.label.as_ref(), 3).or_else(|| {
+        prompt_used
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .and_then(|line| clamp_words(line, 3))
+    });
 
     let ground_origin_y_m = library.ground_origin_y_or_default(root_def.object_id);
     let mobility_str = root_def.mobility.map(|m| match m.mode {
@@ -2210,7 +2576,7 @@ fn save_generated_prefab_descriptor_best_effort(
     let mut descriptor = crate::prefab_descriptors::PrefabDescriptorFileV1 {
         format_version: crate::prefab_descriptors::PREFAB_DESCRIPTOR_FORMAT_VERSION,
         prefab_id: prefab_uuid,
-        label: Some(root_def.label.to_string()),
+        label: name,
         text: Some(crate::prefab_descriptors::PrefabDescriptorTextV1 {
             short,
             long: Some(long),
@@ -2226,19 +2592,14 @@ fn save_generated_prefab_descriptor_best_effort(
         provenance: Some(crate::prefab_descriptors::PrefabDescriptorProvenanceV1 {
             source: Some("gen3d".to_string()),
             created_at_ms: Some(created_at_ms),
+            modified_at_ms: Some(now_ms),
             gen3d: Some(crate::prefab_descriptors::PrefabDescriptorGen3dV1 {
                 prompt: Some(prompt_used.trim().to_string()).filter(|v| !v.is_empty()),
                 style_prompt: None,
                 run_id: job.run_id().map(|id| id.to_string()),
                 extra: gen3d_extra,
             }),
-            revisions: vec![crate::prefab_descriptors::PrefabDescriptorRevisionV1 {
-                rev: 1,
-                created_at_ms,
-                actor: "agent:object".to_string(),
-                summary: "generated".to_string(),
-                extra: Default::default(),
-            }],
+            revisions,
             extra: Default::default(),
         }),
         extra: top_extra,
@@ -2247,6 +2608,28 @@ fn save_generated_prefab_descriptor_best_effort(
     if let Some((policy, meta)) = job.descriptor_meta_for_save() {
         match policy {
             Gen3dDescriptorMetaPolicy::Suggest => {
+                let mut should_update_label = true;
+                if let Some(label) = descriptor
+                    .label
+                    .as_ref()
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty())
+                {
+                    should_update_label = false;
+                    if let Some(clamped) = clamp_words(root_def.label.as_ref(), 3) {
+                        if label == clamped {
+                            should_update_label = true;
+                        }
+                    }
+                    if label.eq_ignore_ascii_case(root_def.label.as_ref().trim()) {
+                        should_update_label = true;
+                    }
+                }
+
+                if should_update_label && !meta.name.trim().is_empty() {
+                    descriptor.label = Some(meta.name.trim().to_string());
+                }
+
                 let mut should_update_short = true;
                 if let Some(text) = descriptor.text.as_ref().and_then(|t| t.short.as_deref()) {
                     if !text.trim().is_empty() {
@@ -2267,6 +2650,12 @@ fn save_generated_prefab_descriptor_best_effort(
                 descriptor.tags = meta.tags.clone();
             }
             Gen3dDescriptorMetaPolicy::Preserve => {
+                if meta.name.trim().is_empty() {
+                    descriptor.label = None;
+                } else {
+                    descriptor.label = Some(meta.name.trim().to_string());
+                }
+
                 if meta.short.trim().is_empty() {
                     if let Some(text) = descriptor.text.as_mut() {
                         text.short = None;

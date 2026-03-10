@@ -26,10 +26,10 @@ definition in `docs/gamedesign/34_realm_prefabs_v1.md`.
 
 Prefab descriptor files live **next to** their prefab definition JSON.
 
-In the current storage model, prefab defs + descriptors live inside **scene-local prefab packages**:
+In the current storage model, prefab defs + descriptors live inside **realm prefab packages** (see `docs/gamedesign/39_realm_prefab_packages_v1.md`):
 
-- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/<root_prefab_uuid>/prefabs/<prefab_uuid>.json`
-- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/prefabs/<root_prefab_uuid>/prefabs/<prefab_uuid>.desc.json`
+- `~/.gravimera/realm/<realm_id>/prefabs/<root_prefab_uuid>/prefabs/<prefab_uuid>.json`
+- `~/.gravimera/realm/<realm_id>/prefabs/<root_prefab_uuid>/prefabs/<prefab_uuid>.desc.json`
 
 Notes:
 
@@ -44,7 +44,7 @@ Top-level fields:
 
 - `format_version`: integer. **Must be `1`** for this spec.
 - `prefab_id`: UUID string. Prefab id this descriptor describes.
-- `label`: optional string. Human-friendly name (may differ from prefab-def label).
+- `label`: optional string. Human-friendly name (may differ from prefab-def label). For Gen3D-saved prefabs, tools should keep this as a short name suitable for UI library listing (recommended: ≤3 words).
 - `text`: optional text descriptions (short/long).
 - `tags`: optional array of strings (open vocabulary).
 - `roles`: optional array of strings (open vocabulary; recommended values below).
@@ -129,6 +129,7 @@ Fields:
 
 - `source`: optional string (open vocabulary; recommended: `"gen3d"`, `"import"`, `"handmade"`, `"builtin"`).
 - `created_at_ms`: optional integer (unix epoch milliseconds).
+- `modified_at_ms`: optional integer (unix epoch milliseconds). Last-modified timestamp (for sorting and recency).
 - `gen3d`: optional object (present when `source = "gen3d"`):
   - `prompt`: optional string (the user’s intent; may be multi-line).
   - `style_prompt`: optional string
@@ -179,5 +180,5 @@ Gen3D writes descriptor files for saved models. In addition to filling standard 
 - Populate `text.long` with a compact summary including derived facts, an AI plan extract (when available), and a derived motion summary.
 - Populate `interfaces.extra.motion_summary` with a structured summary of available animation channels (drivers/clip kinds/counts).
 - Populate `extra.facts` with a structured set of derived facts (size, mobility/attack presence, grounding, etc.).
-- Populate `text.short` and `tags` via a best-effort AI call (when AI config is available). Gen3D should do this **before reporting the run complete** so Save can write a descriptor that already includes these fields; falling back to blank/default values is acceptable. Tools should treat these as suggestions and preserve human edits.
-- For seeded Edit/Fork sessions, Save should preserve the previous `text.short` + `tags` by default. If the user explicitly requests changes, the Gen3D agent may override them.
+- Populate `label` (short name), `text.short`, and `tags` via a best-effort AI call (when AI config is available). Gen3D should do this **before reporting the run complete** so Save can write a descriptor that already includes these fields; falling back to blank/default values is acceptable. Tools should treat these as suggestions and preserve human edits.
+- For seeded Edit/Fork sessions, Save should preserve the previous `label` + `text.short` + `tags` by default. If the user explicitly requests changes, the Gen3D agent may override them (via `set_descriptor_meta_v1`).

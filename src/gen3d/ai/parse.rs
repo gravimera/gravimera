@@ -213,6 +213,14 @@ pub(super) fn parse_ai_descriptor_meta_from_text(
         ));
     }
 
+    meta.name = meta.name.trim().to_string();
+    meta.name = meta
+        .name
+        .split_whitespace()
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" ");
+
     meta.short = meta.short.trim().to_string();
     meta.short = meta.short.split_whitespace().collect::<Vec<_>>().join(" ");
 
@@ -502,9 +510,10 @@ mod tests {
 
     #[test]
     fn parses_descriptor_meta_and_normalizes_tags() {
-        let text = r#"ok {"version":1,"short":"  A cute rabbit.\n","tags":["Voxel Art","rabbit","Rabbit","cute!!",""]}"#;
+        let text = r#"ok {"version":1,"name":"  The Very Cute Rabbit  ","short":"  A cute rabbit.\n","tags":["Voxel Art","rabbit","Rabbit","cute!!",""]}"#;
         let meta = parse_ai_descriptor_meta_from_text(text).expect("meta should parse");
         assert_eq!(meta.version, 1);
+        assert_eq!(meta.name.as_str(), "The Very Cute");
         assert_eq!(meta.short.as_str(), "A cute rabbit.");
         assert_eq!(
             meta.tags,

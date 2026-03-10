@@ -182,6 +182,8 @@ pub(crate) struct PrefabDescriptorProvenanceV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) created_at_ms: Option<u128>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) modified_at_ms: Option<u128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) gen3d: Option<PrefabDescriptorGen3dV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) revisions: Vec<PrefabDescriptorRevisionV1>,
@@ -212,6 +214,7 @@ impl PrefabDescriptorProvenanceV1 {
     fn is_empty(&self) -> bool {
         self.source.as_ref().is_none_or(|v| v.trim().is_empty())
             && self.created_at_ms.is_none()
+            && self.modified_at_ms.is_none()
             && self.gen3d.is_none()
             && self.revisions.is_empty()
             && self.extra.is_empty()
@@ -507,6 +510,7 @@ mod tests {
             provenance: Some(PrefabDescriptorProvenanceV1 {
                 source: Some(" gen3d ".to_string()),
                 created_at_ms: Some(123),
+                modified_at_ms: None,
                 gen3d: Some(PrefabDescriptorGen3dV1 {
                     prompt: Some("  make a tower ".to_string()),
                     style_prompt: Some("  ".to_string()),

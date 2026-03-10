@@ -17,7 +17,7 @@ The product goals and intent live in the design docs in `docs/gamedesign/`. The 
 - Scene sources and build artifacts (git/process-friendly scenes): `docs/gamedesign/30_scene_sources_and_build_artifacts.md`
 - Prefab definition JSON (`PrefabFileV1`): `docs/gamedesign/34_realm_prefabs_v1.md`
 - Prefab descriptors (v1): `docs/gamedesign/35_prefab_descriptors_v1.md`
-- Scene-local prefab packages (v1): `docs/gamedesign/39_scene_local_prefab_packages_v1.md`
+- Realm prefab packages (v1): `docs/gamedesign/39_realm_prefab_packages_v1.md`
 - Local model depot (v1, removed): `docs/gamedesign/36_model_depot_v1.md`
 - Object forms and transformations (v1): `docs/gamedesign/37_object_forms_and_transformations.md`
 - Scene procedural layer kinds (v1): `docs/gamedesign/33_scene_layer_kinds_v1.md`

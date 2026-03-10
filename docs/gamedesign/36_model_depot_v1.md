@@ -4,7 +4,7 @@ Status: **removed as of 2026-03-08**.
 
 Gravimera no longer uses a global, realm-independent model depot under `~/.gravimera/depot/models/`.
 
-Gen3D-saved prefabs are stored **scene-locally** under the active scene directory (see `docs/gamedesign/39_scene_local_prefab_packages_v1.md`).
+Gen3D-saved prefabs are stored **realm-scoped** under the active realm directory (see `docs/gamedesign/39_realm_prefab_packages_v1.md`).
 
 This document is retained for **historical reference only**. New code must not read or write the depot.
 
