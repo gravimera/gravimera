@@ -46,6 +46,7 @@ Notes:
 
 - If you want to reposition parts without replanning, prefer `apply_draft_ops_v1`:
   - `SetAttachmentOffset` (move an existing component along its attachment edge),
+  - `SetAttachmentJoint` (edit degrees-of-freedom metadata for an attachment edge; useful for hinge axis fixes),
   - `SetAnchorTransform` (adjust a join frame), and
   - primitive part ops (add/remove/update geometry).
 - If you want to change animation clips, prefer `llm_generate_motion_authoring_v1` (or `apply_draft_ops_v1` animation slot ops).

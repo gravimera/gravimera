@@ -2251,8 +2251,7 @@ fn save_generated_prefab_descriptor_best_effort(
                 if let Some(text) = descriptor.text.as_ref().and_then(|t| t.short.as_deref()) {
                     if !text.trim().is_empty() {
                         should_update_short = false;
-                        if let Some(first_line) =
-                            prompt_used.lines().find(|l| !l.trim().is_empty())
+                        if let Some(first_line) = prompt_used.lines().find(|l| !l.trim().is_empty())
                         {
                             if text.trim() == first_line.trim() {
                                 should_update_short = true;

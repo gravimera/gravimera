@@ -1386,9 +1386,15 @@ Rules:\n\
   - These authored keyframes animate the ATTACHMENT OFFSET for that edge.\n\
   - `delta` transforms are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
   - The engine applies: animated_offset = base_offset * delta(t).\n\
+  - JOIN frame axes: +X = join_right, +Y = join_up, +Z = join_forward.\n\
+    - `rot_quat_xyzw=[x,y,z,w]` is in the JOIN frame; the rotation axis is proportional to `[x,y,z]` (normalized).\n\
+    - This does NOT restrict you to axis-aligned rotations; any axis vector in join frame is allowed.\n\
 - Hinge joints (IMPORTANT):\n\
   - If an edge's attachment joint is `kind=hinge`, `axis_join` is expressed in the JOIN frame.\n\
   - Any authored rotation MUST be a pure twist about `axis_join` (no off-axis swing), or motion validation will fail with `hinge_off_axis`.\n\
+- Fixed joints (diagnostic):\n\
+  - If an edge's attachment joint is `kind=fixed`, any authored rotation will trigger a motion validation warning `fixed_joint_rotates`.\n\
+    - Only rotate fixed joints if it is intentional, or if the articulation metadata must be updated elsewhere.\n\
 - `replace_channels`:\n\
   - If decision=author_clips, list the channels you want the engine to REPLACE on targeted edges before adding your slots.\n\
   - If decision=regen_geometry_required, set replace_channels=[] and edges=[] (do not author clips).\n\
@@ -1518,6 +1524,11 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
         has_idle_slot,
         has_move_slot,
     ));
+    out.push('\n');
+
+    out.push_str("Join frame convention (IMPORTANT):\n");
+    out.push_str("- The JOIN frame basis vectors are: +X = join_right_world, +Y = join_up_world, +Z = join_forward_world.\n");
+    out.push_str("- For `delta.rot_quat_xyzw=[x,y,z,w]`, the rotation axis is proportional to `[x,y,z]` in the JOIN frame (normalized). You can rotate about any join-frame axis (not just the basis axes).\n");
     out.push('\n');
 
     let mut name_to_idx: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();

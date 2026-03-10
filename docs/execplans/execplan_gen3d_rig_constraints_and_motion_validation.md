@@ -238,8 +238,9 @@ For each attachment with a declared `joint` and a `move` animation:
 
 Return issues like:
 
-- `hinge_off_axis` (error or warn): include `axis_join`, observed axis, alignment score.
-- `hinge_limit_exceeded` (error): include observed angle and limits.
+- `hinge_off_axis` (error or warn): include `axis_join`, observed axis, and an axis-alignment score (e.g. `abs(dot)`).
+- `hinge_limit_exceeded` (error): include observed hinge angle and limits.
+- `fixed_joint_rotates` (warn): include observed rotation axis (helps decide whether to re-author motion vs declare a hinge/ball joint).
 
 3) Contact validation:
 

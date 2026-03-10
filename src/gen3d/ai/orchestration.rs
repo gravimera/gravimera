@@ -486,16 +486,18 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
 
     let descriptor =
         load_prefab_descriptor_from_scene_prefab_package(realm_id, scene_id, prefab_id).ok();
-    let seed_descriptor_meta = descriptor.as_ref().map(|descriptor| AiDescriptorMetaJsonV1 {
-        version: 1,
-        short: descriptor
-            .text
-            .as_ref()
-            .and_then(|t| t.short.as_ref())
-            .map(|v| v.trim().to_string())
-            .unwrap_or_default(),
-        tags: descriptor.tags.clone(),
-    });
+    let seed_descriptor_meta = descriptor
+        .as_ref()
+        .map(|descriptor| AiDescriptorMetaJsonV1 {
+            version: 1,
+            short: descriptor
+                .text
+                .as_ref()
+                .and_then(|t| t.short.as_ref())
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default(),
+            tags: descriptor.tags.clone(),
+        });
 
     let prompt_from_descriptor = descriptor
         .as_ref()

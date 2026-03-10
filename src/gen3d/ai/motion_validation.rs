@@ -877,6 +877,20 @@ fn quat_angle_deg(q: Quat) -> f32 {
     (2.0 * w.acos()).to_degrees()
 }
 
+fn quat_axis(q: Quat) -> Option<Vec3> {
+    let q = if q.is_finite() {
+        q.normalize()
+    } else {
+        return None;
+    };
+    let v = Vec3::new(q.x, q.y, q.z);
+    let sin_half = v.length();
+    if !sin_half.is_finite() || sin_half <= 1e-6 {
+        return None;
+    }
+    Some((v / sin_half).normalize())
+}
+
 fn hinge_signed_angle_and_off_axis_deg(q_delta: Quat, axis_join: Vec3) -> (f32, f32) {
     let axis = axis_join.normalize();
     let q = if q_delta.is_finite() {
@@ -993,15 +1007,18 @@ fn validate_joints(
 
             let mut max_angle_deg: f32 = 0.0;
             let mut max_angle_phase: f32 = 0.0;
+            let mut max_angle_q_delta = Quat::IDENTITY;
             let mut min_angle_deg: f32 = f32::INFINITY;
             let mut min_angle_phase: f32 = 0.0;
 
             let mut max_off_axis_deg: f32 = 0.0;
             let mut max_off_axis_phase: f32 = 0.0;
+            let mut max_off_axis_q_delta = Quat::IDENTITY;
             let mut max_abs_hinge_angle_deg: f32 = 0.0;
             let mut max_abs_hinge_angle_phase: f32 = 0.0;
             let mut max_limit_exceed_deg: f32 = 0.0;
             let mut max_limit_exceed_phase: f32 = 0.0;
+            let mut max_limit_exceed_hinge_angle_deg: f32 = 0.0;
             let mut max_translation_m: f32 = 0.0;
             let mut max_translation_phase: f32 = 0.0;
 
@@ -1055,6 +1072,7 @@ fn validate_joints(
                 if angle_deg > max_angle_deg {
                     max_angle_deg = angle_deg;
                     max_angle_phase = sample_phase_01;
+                    max_angle_q_delta = q_delta;
                 }
                 if angle_deg < min_angle_deg {
                     min_angle_deg = angle_deg;
@@ -1072,6 +1090,7 @@ fn validate_joints(
                     if off_axis_deg > max_off_axis_deg {
                         max_off_axis_deg = off_axis_deg;
                         max_off_axis_phase = sample_phase_01;
+                        max_off_axis_q_delta = q_delta;
                     }
                     if hinge_angle_deg.abs() > max_abs_hinge_angle_deg {
                         max_abs_hinge_angle_deg = hinge_angle_deg.abs();
@@ -1093,6 +1112,7 @@ fn validate_joints(
                         if exceed > max_limit_exceed_deg {
                             max_limit_exceed_deg = exceed;
                             max_limit_exceed_phase = sample_phase_01;
+                            max_limit_exceed_hinge_angle_deg = hinge_angle_deg;
                         }
                     }
                 }
@@ -1111,6 +1131,9 @@ fn validate_joints(
                         } else {
                             MotionSeverity::Warn
                         };
+                        let observed_axis = quat_axis(max_off_axis_q_delta);
+                        let axis_alignment_abs =
+                            observed_axis.map(|a| a.dot(axis_join).abs()).unwrap_or(0.0);
                         issues.push(MotionIssue {
                             severity,
                             kind: "hinge_off_axis",
@@ -1121,6 +1144,8 @@ fn validate_joints(
                                 .into(),
                             evidence: serde_json::json!({
                                 "axis_join": [axis_join.x, axis_join.y, axis_join.z],
+                                "observed_axis_join": observed_axis.map(|v| [v.x, v.y, v.z]),
+                                "axis_alignment_abs": axis_alignment_abs,
                                 "max_off_axis_degrees": max_off_axis_deg,
                                 "at_phase_01": max_off_axis_phase,
                                 "max_abs_hinge_angle_degrees": max_abs_hinge_angle_deg,
@@ -1140,6 +1165,7 @@ fn validate_joints(
                             message: "Hinge joint motion exceeds declared limits.".into(),
                             evidence: serde_json::json!({
                                 "limits_degrees": joint.limits_degrees,
+                                "hinge_angle_degrees": max_limit_exceed_hinge_angle_deg,
                                 "max_exceed_degrees": max_limit_exceed_deg,
                                 "at_phase_01": max_limit_exceed_phase,
                             }),
@@ -1160,6 +1186,7 @@ fn validate_joints(
                 AiJointKindJson::Fixed => {
                     let warn_deg = 2.0;
                     if max_angle_deg.is_finite() && max_angle_deg > warn_deg {
+                        let observed_axis = quat_axis(max_angle_q_delta);
                         issues.push(MotionIssue {
                             severity: MotionSeverity::Warn,
                             kind: "fixed_joint_rotates",
@@ -1171,6 +1198,7 @@ fn validate_joints(
                             evidence: serde_json::json!({
                                 "max_angle_degrees": max_angle_deg,
                                 "at_phase_01": max_angle_phase,
+                                "observed_axis_join": observed_axis.map(|v| [v.x, v.y, v.z]),
                                 "tolerances": { "warn_degrees": warn_deg },
                             }),
                             score: max_angle_deg,

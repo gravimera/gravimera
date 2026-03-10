@@ -56,7 +56,8 @@ Rules:\n\
   - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if move slots already exist.\n\
   - If `qa_v1` reports motion_validation errors that are primarily animation-delta problems (examples: `hinge_off_axis`, `hinge_limit_exceeded`, `time_offset_no_effect`, `joint_rest_bias_large`, `attack_self_intersection`), prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
   - If `qa_v1` reports `contact_stance_missing`, prefer `llm_review_delta_v1` to add/fix `contacts[].stance` (motion authoring cannot create stance metadata).\n\
-  - If `qa_v1` reports `hinge_axis_missing` or `hinge_axis_invalid`, fix the joint axis in the plan (replan) before motion authoring.\n\
+  - If `qa_v1` reports `hinge_axis_missing` or `hinge_axis_invalid`, fix the joint axis (replan OR `apply_draft_ops_v1` set_attachment_joint) before motion authoring.\n\
+  - If `qa_v1` reports `fixed_joint_rotates` on a joint you INTEND to rotate, update that edge's joint metadata (usually to `hinge` with a valid `axis_join`) so QA reflects the intended degrees-of-freedom.\n\
 - Visual QA / appearance review:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\

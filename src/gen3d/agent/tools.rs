@@ -151,8 +151,21 @@ impl Gen3dToolRegistryV1 {
                 title: "Apply draft ops",
                 one_line_summary: "Mutates draft: apply deterministic edit ops (atomic + if_assembly_rev supported).",
                 args_schema:
-                    "{ version?: 1, atomic?: bool, if_assembly_rev?: number, ops: DraftOp[] }",
-                args_example: serde_json::json!({ "atomic": true, "ops": [] }),
+                    "{ version?: 1, atomic?: bool, if_assembly_rev?: number, ops: DraftOp[] }\n\
+\n\
+DraftOp =\n\
+  | { kind:\"set_anchor_transform\", component:string, anchor:string, set:TransformDelta }\n\
+  | { kind:\"set_attachment_offset\", child_component:string, set:TransformDelta }\n\
+  | { kind:\"set_attachment_joint\", child_component:string, set_joint: Joint|null }\n\
+  | { kind:\"update_primitive_part\", component:string, part_id_uuid:string, set_transform?:TransformDelta, set_primitive?:PrimitiveSpec, set_render_priority?:number }\n\
+  | { kind:\"add_primitive_part\", component:string, part_id_uuid:string, primitive:PrimitiveSpec, transform:TransformDelta, render_priority?:number }\n\
+  | { kind:\"remove_primitive_part\", component:string, part_id_uuid:string }\n\
+  | { kind:\"upsert_animation_slot\", child_component:string, channel:string, slot:AnimationSlotSpec }\n\
+  | { kind:\"remove_animation_slot\", child_component:string, channel:string }\n\
+\n\
+Joint = { kind:\"fixed\"|\"hinge\"|\"ball\"|\"free\", axis_join?:[number,number,number], limits_degrees?:[number,number], swing_limits_degrees?:[number,number], twist_limits_degrees?:[number,number] }\n\
+TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,number,number], scale?:[number,number,number], forward?:[number,number,number], up?:[number,number,number] }",
+                args_example: serde_json::json!({"atomic":true,"ops":[{"kind":"set_attachment_joint","child_component":"wing_L","set_joint":{"kind":"hinge","axis_join":[1.0,0.0,0.0],"limits_degrees":[-60.0,60.0]}}]}),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_SNAPSHOT,

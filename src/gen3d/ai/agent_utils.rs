@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 
 use crate::gen3d::agent::tools::{TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE};
 use crate::gen3d::agent::Gen3dToolResultJsonV1;
+use crate::object::registry::{PartAnimationDef, PartAnimationDriver};
 
 use super::super::state::Gen3dDraft;
 use super::Gen3dAiJob;
@@ -20,8 +21,141 @@ pub(super) fn note_observable_tool_result(job: &mut Gen3dAiJob, result: &Gen3dTo
     }
 }
 
+fn quantize_f32_1e4(v: f32) -> i32 {
+    if !v.is_finite() {
+        return i32::MIN;
+    }
+    (v * 10000.0).round() as i32
+}
+
+fn motion_values_digest(job: &Gen3dAiJob) -> String {
+    fn driver_tag(driver: PartAnimationDriver) -> u8 {
+        match driver {
+            PartAnimationDriver::Always => 0,
+            PartAnimationDriver::MovePhase => 1,
+            PartAnimationDriver::MoveDistance => 2,
+            PartAnimationDriver::AttackTime => 3,
+        }
+    }
+
+    let mut indices: Vec<usize> = (0..job.planned_components.len()).collect();
+    indices.sort_by_key(|&i| job.planned_components[i].name.clone());
+
+    let mut hasher = Sha256::new();
+    for idx in indices {
+        let comp = &job.planned_components[idx];
+        let Some(att) = comp.attach_to.as_ref() else {
+            continue;
+        };
+        if att.animations.is_empty() {
+            continue;
+        }
+
+        let mut slot_indices: Vec<usize> = (0..att.animations.len()).collect();
+        slot_indices.sort_by_key(|&i| att.animations[i].channel.to_string());
+
+        for slot_idx in slot_indices {
+            let slot = &att.animations[slot_idx];
+            hasher.update(comp.name.as_bytes());
+            hasher.update(b"|");
+            hasher.update(att.parent.as_bytes());
+            hasher.update(b"|");
+            hasher.update(slot.channel.as_bytes());
+            hasher.update(b"|");
+            hasher.update([driver_tag(slot.spec.driver)]);
+            hasher.update(quantize_f32_1e4(slot.spec.speed_scale).to_le_bytes());
+            hasher.update(quantize_f32_1e4(slot.spec.time_offset_units).to_le_bytes());
+
+            match &slot.spec.clip {
+                PartAnimationDef::Loop {
+                    duration_secs,
+                    keyframes,
+                } => {
+                    hasher.update(b"loop");
+                    hasher.update(quantize_f32_1e4(*duration_secs).to_le_bytes());
+                    hasher.update((keyframes.len() as u32).to_le_bytes());
+                    for k in keyframes {
+                        hasher.update(quantize_f32_1e4(k.time_secs).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.translation.x).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.translation.y).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.translation.z).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.x).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.y).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.z).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.w).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.scale.x).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.scale.y).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.scale.z).to_le_bytes());
+                    }
+                }
+                PartAnimationDef::Once {
+                    duration_secs,
+                    keyframes,
+                } => {
+                    hasher.update(b"once");
+                    hasher.update(quantize_f32_1e4(*duration_secs).to_le_bytes());
+                    hasher.update((keyframes.len() as u32).to_le_bytes());
+                    for k in keyframes {
+                        hasher.update(quantize_f32_1e4(k.time_secs).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.translation.x).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.translation.y).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.translation.z).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.x).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.y).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.z).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.w).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.scale.x).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.scale.y).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.scale.z).to_le_bytes());
+                    }
+                }
+                PartAnimationDef::PingPong {
+                    duration_secs,
+                    keyframes,
+                } => {
+                    hasher.update(b"ping_pong");
+                    hasher.update(quantize_f32_1e4(*duration_secs).to_le_bytes());
+                    hasher.update((keyframes.len() as u32).to_le_bytes());
+                    for k in keyframes {
+                        hasher.update(quantize_f32_1e4(k.time_secs).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.translation.x).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.translation.y).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.translation.z).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.x).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.y).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.z).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.rotation.w).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.scale.x).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.scale.y).to_le_bytes());
+                        hasher.update(quantize_f32_1e4(k.delta.scale.z).to_le_bytes());
+                    }
+                }
+                PartAnimationDef::Spin {
+                    axis,
+                    radians_per_unit,
+                } => {
+                    hasher.update(b"spin");
+                    hasher.update(quantize_f32_1e4(axis.x).to_le_bytes());
+                    hasher.update(quantize_f32_1e4(axis.y).to_le_bytes());
+                    hasher.update(quantize_f32_1e4(axis.z).to_le_bytes());
+                    hasher.update(quantize_f32_1e4(*radians_per_unit).to_le_bytes());
+                }
+            }
+
+            hasher.update(b"\n");
+        }
+    }
+
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        hex.push_str(&format!("{:02x}", b));
+    }
+    format!("sha256:{hex}")
+}
+
 pub(super) fn compute_agent_state_hash(job: &Gen3dAiJob, draft: &Gen3dDraft) -> String {
-    let summary = super::build_gen3d_scene_graph_summary(
+    let mut summary = super::build_gen3d_scene_graph_summary(
         "",
         0,
         0,
@@ -32,6 +166,15 @@ pub(super) fn compute_agent_state_hash(job: &Gen3dAiJob, draft: &Gen3dDraft) -> 
         &job.planned_components,
         draft,
     );
+    if let serde_json::Value::Object(map) = &mut summary {
+        // The scene graph summary intentionally omits per-keyframe delta values for size reasons.
+        // However, the no-progress guard must treat motion value changes as progress so the agent
+        // can iterate on animation fixes without being stopped prematurely.
+        map.insert(
+            "motion_values_digest".into(),
+            serde_json::Value::String(motion_values_digest(job)),
+        );
+    }
     let text = serde_json::to_string(&summary).unwrap_or_else(|_| summary.to_string());
     let digest = Sha256::digest(text.as_bytes());
     let mut hex = String::with_capacity(digest.len() * 2);

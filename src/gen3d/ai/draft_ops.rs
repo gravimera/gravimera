@@ -14,7 +14,8 @@ use super::agent_utils::sanitize_prefix;
 use super::artifacts::{append_gen3d_jsonl_artifact, write_gen3d_json_artifact};
 use super::convert;
 use super::schema::{
-    AiAnimationClipJsonV1, AiAnimationDeltaTransformJsonV1, AiAnimationDriverJsonV1,
+    AiAnimationClipJsonV1, AiAnimationDeltaTransformJsonV1, AiAnimationDriverJsonV1, AiJointJson,
+    AiJointKindJson,
 };
 use super::{Gen3dAiJob, Gen3dPlannedComponent};
 
@@ -100,6 +101,10 @@ enum DraftOpJsonV1 {
     SetAttachmentOffset {
         child_component: String,
         set: TransformDeltaJsonV1,
+    },
+    SetAttachmentJoint {
+        child_component: String,
+        set_joint: Option<AiJointJson>,
     },
     UpdatePrimitivePart {
         component: String,
@@ -602,6 +607,7 @@ fn apply_one_op(
     let kind = match op {
         DraftOpJsonV1::SetAnchorTransform { .. } => "set_anchor_transform",
         DraftOpJsonV1::SetAttachmentOffset { .. } => "set_attachment_offset",
+        DraftOpJsonV1::SetAttachmentJoint { .. } => "set_attachment_joint",
         DraftOpJsonV1::UpdatePrimitivePart { .. } => "update_primitive_part",
         DraftOpJsonV1::AddPrimitivePart { .. } => "add_primitive_part",
         DraftOpJsonV1::RemovePrimitivePart { .. } => "remove_primitive_part",
@@ -689,6 +695,47 @@ fn apply_one_op(
             mark_changed_component(state, child_name);
             mark_changed_component(state, att.parent.as_str());
             diff
+        }
+        DraftOpJsonV1::SetAttachmentJoint {
+            child_component,
+            set_joint,
+        } => {
+            let child_name = child_component.trim();
+            let planned_child = find_planned_component_mut(planned, child_name).map_err(reject)?;
+            let Some(att) = planned_child.attach_to.as_mut() else {
+                return Err(reject(format!(
+                    "Component `{}` has no attach_to (cannot edit joint on root)",
+                    child_name
+                )));
+            };
+
+            if let Some(joint) = set_joint.as_ref() {
+                if joint.kind == AiJointKindJson::Hinge {
+                    let Some(axis) = joint.axis_join else {
+                        return Err(reject(
+                            "Hinge joint requires axis_join (set_joint.axis_join)".into(),
+                        ));
+                    };
+                    let v = Vec3::new(axis[0], axis[1], axis[2]);
+                    if !v.is_finite() || v.length_squared() <= 1e-6 {
+                        return Err(reject(
+                            "Hinge joint axis_join must be finite and non-zero".into(),
+                        ));
+                    }
+                }
+            }
+
+            let before = att.joint.clone();
+            att.joint = set_joint.clone();
+
+            state.attachments_updated = state.attachments_updated.saturating_add(1);
+            mark_changed_component(state, child_name);
+            mark_changed_component(state, att.parent.as_str());
+
+            serde_json::json!({
+                "before": before,
+                "after": att.joint,
+            })
         }
         DraftOpJsonV1::UpdatePrimitivePart {
             component,
@@ -1480,5 +1527,71 @@ mod tests {
             .find(|a| a.name.as_ref() == "mount")
             .unwrap();
         assert!((mount.transform.translation.y - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn apply_sets_attachment_joint() {
+        let mut job = make_job_with_components(&["root", "child"]);
+        let mut draft = Gen3dDraft {
+            defs: vec![
+                make_root_def(),
+                make_component_def("root"),
+                make_component_def("child"),
+            ],
+        };
+
+        let args = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "ops": [
+                {
+                    "kind": "set_attachment_joint",
+                    "child_component": "child",
+                    "set_joint": { "kind": "hinge", "axis_join": [1.0, 0.0, 0.0], "limits_degrees": [-45.0, 45.0] }
+                }
+            ]
+        });
+        let out = apply_draft_ops_v1(&mut job, &mut draft, Some("test"), args).unwrap();
+        assert!(out.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+        let joint = job.planned_components[1]
+            .attach_to
+            .as_ref()
+            .and_then(|a| a.joint.as_ref())
+            .expect("expected joint");
+        assert_eq!(joint.kind, AiJointKindJson::Hinge);
+        assert_eq!(joint.axis_join, Some([1.0, 0.0, 0.0]));
+        assert_eq!(joint.limits_degrees, Some([-45.0, 45.0]));
+    }
+
+    #[test]
+    fn apply_rejects_hinge_without_axis() {
+        let mut job = make_job_with_components(&["root", "child"]);
+        let mut draft = Gen3dDraft {
+            defs: vec![
+                make_root_def(),
+                make_component_def("root"),
+                make_component_def("child"),
+            ],
+        };
+
+        let args = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "ops": [
+                {
+                    "kind": "set_attachment_joint",
+                    "child_component": "child",
+                    "set_joint": { "kind": "hinge" }
+                }
+            ]
+        });
+        let out = apply_draft_ops_v1(&mut job, &mut draft, Some("test"), args).unwrap();
+        assert!(!out.get("ok").and_then(|v| v.as_bool()).unwrap_or(true));
+        let rejected = out
+            .get("rejected_ops")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(!rejected.is_empty());
     }
 }

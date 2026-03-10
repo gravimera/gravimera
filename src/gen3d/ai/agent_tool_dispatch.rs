@@ -14,8 +14,8 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
     TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RENDER_PREVIEW,
     TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE,
-    TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
-    TOOL_ID_VALIDATE,
+    TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT,
+    TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -195,7 +195,10 @@ pub(super) fn execute_tool_call(
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    format!("Unsupported `{TOOL_ID_SET_DESCRIPTOR_META}` version {}.", args.version),
+                    format!(
+                        "Unsupported `{TOOL_ID_SET_DESCRIPTOR_META}` version {}.",
+                        args.version
+                    ),
                 ));
             }
 

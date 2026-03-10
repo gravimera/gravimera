@@ -129,7 +129,8 @@ pub(super) fn validate_preserve_mode_plan_diff(
         let Some(new) = new_by_name.get(name) else {
             continue;
         };
-        let allow_this_rewire = policy == PreserveEditPolicy::AllowRewire && allow_rewire.contains(*name);
+        let allow_this_rewire =
+            policy == PreserveEditPolicy::AllowRewire && allow_rewire.contains(*name);
 
         match (old.attach_to.as_ref(), new.attach_to.as_ref()) {
             (None, None) => {}
@@ -186,11 +187,15 @@ pub(super) fn validate_preserve_mode_plan_diff(
                         field: "attach_to.offset".into(),
                         old: format!(
                             "pos={:?} rot={:?} scale={:?}",
-                            old_att.offset.translation, old_att.offset.rotation, old_att.offset.scale
+                            old_att.offset.translation,
+                            old_att.offset.rotation,
+                            old_att.offset.scale
                         ),
                         new: format!(
                             "pos={:?} rot={:?} scale={:?}",
-                            new_att.offset.translation, new_att.offset.rotation, new_att.offset.scale
+                            new_att.offset.translation,
+                            new_att.offset.rotation,
+                            new_att.offset.scale
                         ),
                     });
                 }
@@ -237,7 +242,12 @@ mod tests {
         }
     }
 
-    fn att(parent: &str, parent_anchor: &str, child_anchor: &str, offset_z: f32) -> Gen3dPlannedAttachment {
+    fn att(
+        parent: &str,
+        parent_anchor: &str,
+        child_anchor: &str,
+        offset_z: f32,
+    ) -> Gen3dPlannedAttachment {
         Gen3dPlannedAttachment {
             parent: parent.into(),
             parent_anchor: parent_anchor.into(),
@@ -252,30 +262,55 @@ mod tests {
     fn additive_rejects_rewire_and_offset_changes() {
         let old = vec![
             comp("torso", None),
-            comp("neck", Some(att("torso", "neck_socket", "torso_socket", -0.03))),
-            comp("head", Some(att("neck", "head_socket", "neck_socket", -0.02))),
+            comp(
+                "neck",
+                Some(att("torso", "neck_socket", "torso_socket", -0.03)),
+            ),
+            comp(
+                "head",
+                Some(att("neck", "head_socket", "neck_socket", -0.02)),
+            ),
         ];
         let new = vec![
             comp("torso", None),
-            comp("neck", Some(att("torso", "neck_mount", "torso_mount", -0.01))), // rewire + offset
-            comp("head", Some(att("neck", "head_socket", "neck_socket", -0.02))),
-            comp("santa_hat", Some(att("head", "hat_mount", "head_mount", -0.01))), // new component ok
+            comp(
+                "neck",
+                Some(att("torso", "neck_mount", "torso_mount", -0.01)),
+            ), // rewire + offset
+            comp(
+                "head",
+                Some(att("neck", "head_socket", "neck_socket", -0.02)),
+            ),
+            comp(
+                "santa_hat",
+                Some(att("head", "hat_mount", "head_mount", -0.01)),
+            ), // new component ok
         ];
 
         let v = validate_preserve_mode_plan_diff(&old, &new, PreserveEditPolicy::Additive, &[]);
-        assert!(v.iter().any(|i| i.kind == PreservePlanViolationKind::RewireInterfaceChanged));
-        assert!(v.iter().any(|i| i.kind == PreservePlanViolationKind::OffsetChanged));
+        assert!(v
+            .iter()
+            .any(|i| i.kind == PreservePlanViolationKind::RewireInterfaceChanged));
+        assert!(v
+            .iter()
+            .any(|i| i.kind == PreservePlanViolationKind::OffsetChanged));
     }
 
     #[test]
     fn allow_offsets_allows_offset_changes_but_not_rewire() {
         let old = vec![
             comp("torso", None),
-            comp("neck", Some(att("torso", "neck_socket", "torso_socket", -0.03))),
+            comp(
+                "neck",
+                Some(att("torso", "neck_socket", "torso_socket", -0.03)),
+            ),
         ];
         let new = vec![
             comp("torso", None),
-            comp("neck", Some(att("torso", "neck_socket", "torso_socket", -0.01))), // offset only
+            comp(
+                "neck",
+                Some(att("torso", "neck_socket", "torso_socket", -0.01)),
+            ), // offset only
         ];
 
         let v = validate_preserve_mode_plan_diff(&old, &new, PreserveEditPolicy::AllowOffsets, &[]);
@@ -283,7 +318,10 @@ mod tests {
 
         let new_rewire = vec![
             comp("torso", None),
-            comp("neck", Some(att("torso", "neck_mount", "torso_socket", -0.03))),
+            comp(
+                "neck",
+                Some(att("torso", "neck_mount", "torso_socket", -0.03)),
+            ),
         ];
         let v = validate_preserve_mode_plan_diff(
             &old,
@@ -291,25 +329,38 @@ mod tests {
             PreserveEditPolicy::AllowOffsets,
             &[],
         );
-        assert!(v.iter().any(|i| i.kind == PreservePlanViolationKind::RewireInterfaceChanged));
+        assert!(v
+            .iter()
+            .any(|i| i.kind == PreservePlanViolationKind::RewireInterfaceChanged));
     }
 
     #[test]
     fn allow_rewire_requires_non_empty_allowlist_and_enforces_it() {
         let old = vec![
             comp("torso", None),
-            comp("neck", Some(att("torso", "neck_socket", "torso_socket", -0.03))),
-            comp("head", Some(att("neck", "head_socket", "neck_socket", -0.02))),
+            comp(
+                "neck",
+                Some(att("torso", "neck_socket", "torso_socket", -0.03)),
+            ),
+            comp(
+                "head",
+                Some(att("neck", "head_socket", "neck_socket", -0.02)),
+            ),
         ];
 
         let new = vec![
             comp("torso", None),
-            comp("neck", Some(att("torso", "neck_mount", "torso_mount", -0.01))), // rewire
+            comp(
+                "neck",
+                Some(att("torso", "neck_mount", "torso_mount", -0.01)),
+            ), // rewire
             comp("head", Some(att("neck", "head_mount", "neck_mount", -0.01))), // rewire too
         ];
 
         let v = validate_preserve_mode_plan_diff(&old, &new, PreserveEditPolicy::AllowRewire, &[]);
-        assert!(v.iter().any(|i| i.kind == PreservePlanViolationKind::MissingAllowList));
+        assert!(v
+            .iter()
+            .any(|i| i.kind == PreservePlanViolationKind::MissingAllowList));
 
         let allow_neck = vec!["neck".to_string()];
         let v = validate_preserve_mode_plan_diff(
@@ -318,7 +369,9 @@ mod tests {
             PreserveEditPolicy::AllowRewire,
             &allow_neck,
         );
-        assert!(v.iter().any(|i| i.kind == PreservePlanViolationKind::RewireInterfaceChanged));
+        assert!(v
+            .iter()
+            .any(|i| i.kind == PreservePlanViolationKind::RewireInterfaceChanged));
 
         let allow_both = vec!["neck".to_string(), "head".to_string()];
         let v = validate_preserve_mode_plan_diff(
@@ -327,6 +380,8 @@ mod tests {
             PreserveEditPolicy::AllowRewire,
             &allow_both,
         );
-        assert!(!v.iter().any(|i| i.kind == PreservePlanViolationKind::RewireInterfaceChanged));
+        assert!(!v
+            .iter()
+            .any(|i| i.kind == PreservePlanViolationKind::RewireInterfaceChanged));
     }
 }
