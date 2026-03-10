@@ -241,6 +241,9 @@ impl Plugin for RenderedUiPlugin {
                 crate::model_library_ui::model_library_open_preview_panel
                     .after(crate::model_library_ui::model_library_preview_keyboard_navigation)
                     .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_preview_orbit_controls
+                    .after(crate::model_library_ui::model_library_open_preview_panel)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_preview_close_button_interactions
                     .after(crate::model_library_ui::model_library_open_preview_panel)
                     .run_if(crate::automation::local_input_enabled),

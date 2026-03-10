@@ -35,6 +35,34 @@ pub(crate) struct ModelLibraryEnv<'w> {
     active: Res<'w, crate::realm::ActiveRealmScene>,
 }
 
+#[derive(SystemParam)]
+pub(crate) struct ModelLibraryPreviewInputCapture<'w, 's> {
+    state: Res<'w, ModelLibraryUiState>,
+    windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+    roots: Query<
+        'w,
+        's,
+        (&'static ComputedNode, &'static UiGlobalTransform, &'static Visibility),
+        With<ModelLibraryPreviewOverlayRoot>,
+    >,
+}
+
+impl<'w, 's> ModelLibraryPreviewInputCapture<'w, 's> {
+    pub(crate) fn window(&self) -> Option<&Window> {
+        self.windows.single().ok()
+    }
+
+    pub(crate) fn captures_cursor(&self, window: &Window) -> bool {
+        if !self.state.is_preview_open() {
+            return false;
+        }
+        let Some(cursor) = window.physical_cursor_position() else {
+            return false;
+        };
+        model_library_preview_overlay_contains_cursor(cursor, &self.roots)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ModelLibraryDrag {
     model_id: u128,
@@ -60,6 +88,21 @@ struct ModelLibraryPrefabPreview {
     ui_root: Entity,
     scene_root: Entity,
     target: Handle<Image>,
+    focus: Vec3,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    last_cursor: Option<Vec2>,
+}
+
+#[derive(Debug)]
+struct SpawnedModelLibraryPreviewScene {
+    scene_root: Entity,
+    target: Handle<Image>,
+    focus: Vec3,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
 }
 
 #[derive(Resource, Debug)]
@@ -131,6 +174,18 @@ impl ModelLibraryUiState {
     }
 }
 
+pub(crate) fn model_library_preview_overlay_contains_cursor(
+    cursor_physical: Vec2,
+    roots: &Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<ModelLibraryPreviewOverlayRoot>,
+    >,
+) -> bool {
+    roots.iter().any(|(node, transform, vis)| {
+        *vis != Visibility::Hidden && node.contains_point(*transform, cursor_physical)
+    })
+}
+
 #[derive(Component)]
 pub(crate) struct ModelLibraryRoot;
 
@@ -183,6 +238,9 @@ pub(crate) struct ModelLibraryPreviewInfoScrollbarThumb;
 
 #[derive(Component)]
 struct ModelLibraryPreviewSceneRoot;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewCamera;
 
 pub(crate) fn setup_model_library_ui(mut commands: Commands) {
     commands
@@ -867,7 +925,7 @@ fn spawn_model_library_preview_scene(
     mesh_cache: &mut visuals::PrimitiveMeshCache,
     library: &ObjectLibrary,
     prefab_id: u128,
-) -> Result<(Entity, Handle<Image>), String> {
+) -> Result<SpawnedModelLibraryPreviewScene, String> {
     if library.get(prefab_id).is_none() {
         return Err(format!(
             "Cannot preview prefab {}: prefab def is not loaded.",
@@ -1000,11 +1058,19 @@ fn spawn_model_library_preview_scene(
             Tonemapping::TonyMcMapface,
             render_layer.clone(),
             camera_transform,
+            ModelLibraryPreviewCamera,
         ))
         .id();
     commands.entity(scene_root).add_child(camera_id);
 
-    Ok((scene_root, target))
+    Ok(SpawnedModelLibraryPreviewScene {
+        scene_root,
+        target,
+        focus,
+        yaw,
+        pitch,
+        distance,
+    })
 }
 
 pub(crate) fn model_library_open_preview_panel(
@@ -1045,7 +1111,7 @@ pub(crate) fn model_library_open_preview_panel(
         return;
     }
 
-    let (scene_root, target) = match spawn_model_library_preview_scene(
+    let scene = match spawn_model_library_preview_scene(
         &mut commands,
         &mut images,
         &asset_server,
@@ -1208,7 +1274,7 @@ pub(crate) fn model_library_open_preview_panel(
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
-                    target.clone(),
+                    scene.target.clone(),
                     |_preview| {},
                 );
             });
@@ -1286,8 +1352,13 @@ pub(crate) fn model_library_open_preview_panel(
     state.preview = Some(ModelLibraryPrefabPreview {
         prefab_id,
         ui_root,
-        scene_root,
-        target,
+        scene_root: scene.scene_root,
+        target: scene.target,
+        focus: scene.focus,
+        yaw: scene.yaw,
+        pitch: scene.pitch,
+        distance: scene.distance,
+        last_cursor: None,
     });
 }
 
@@ -1363,6 +1434,80 @@ pub(crate) fn model_library_preview_keyboard_navigation(
     }
 }
 
+pub(crate) fn model_library_preview_orbit_controls(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut mouse_wheel: bevy::ecs::message::MessageReader<MouseWheel>,
+    panel: Query<&Interaction, With<crate::gen3d::Gen3dPreviewPanel>>,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut cameras: Query<&mut Transform, With<ModelLibraryPreviewCamera>>,
+) {
+    let active = state.is_open()
+        && state.preview.is_some()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
+    if !active {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+
+    let hovered = panel
+        .iter()
+        .any(|i| matches!(*i, Interaction::Hovered | Interaction::Pressed));
+
+    let Some(preview) = state.preview.as_mut() else {
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+
+    let cursor = window.cursor_position();
+
+    if hovered {
+        let mut scroll = 0.0f32;
+        for ev in mouse_wheel.read() {
+            let delta = match ev.unit {
+                MouseScrollUnit::Line => ev.y,
+                MouseScrollUnit::Pixel => ev.y / 120.0,
+            };
+            scroll += delta;
+        }
+        if scroll.abs() > 1e-4 {
+            preview.distance = (preview.distance - scroll * 0.6).clamp(0.5, 500.0);
+        }
+    } else {
+        for _ in mouse_wheel.read() {}
+    }
+
+    let dragging = hovered && mouse_buttons.pressed(MouseButton::Left);
+    if dragging {
+        if let (Some(prev), Some(cur)) = (preview.last_cursor, cursor) {
+            let delta = cur - prev;
+            let sensitivity = 0.010;
+            preview.yaw = wrap_angle(preview.yaw - delta.x * sensitivity);
+            preview.pitch = (preview.pitch + delta.y * sensitivity).clamp(-1.56, 1.56);
+        }
+    }
+
+    preview.last_cursor = if hovered { cursor } else { None };
+
+    let camera_transform = crate::orbit_capture::orbit_transform(
+        preview.yaw,
+        preview.pitch,
+        preview.distance,
+        preview.focus,
+    );
+    for mut transform in &mut cameras {
+        *transform = camera_transform;
+    }
+}
+
 pub(crate) fn model_library_update_scrollbar_ui(
     panels: Query<(&ComputedNode, &ScrollPosition), With<ModelLibraryScrollPanel>>,
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<ModelLibraryScrollbarTrack>>,
@@ -1408,6 +1553,16 @@ pub(crate) fn model_library_update_scrollbar_ui(
 
     thumb.top = Val::Px(thumb_top);
     thumb.height = Val::Px(thumb_h);
+}
+
+fn wrap_angle(mut v: f32) -> f32 {
+    while v > std::f32::consts::PI {
+        v -= std::f32::consts::TAU;
+    }
+    while v < -std::f32::consts::PI {
+        v += std::f32::consts::TAU;
+    }
+    v
 }
 
 pub(crate) fn model_library_update_preview_info_scrollbar_ui(
@@ -1865,10 +2020,6 @@ pub(crate) fn model_library_item_button_interactions(
             Interaction::Pressed => {
                 *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
                 *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
-                if state.preview.is_some() {
-                    state.pending_preview = Some(button.model_id);
-                    continue;
-                }
                 if state.drag.is_none() {
                     if let Some(cursor) = cursor {
                         state.drag = Some(ModelLibraryDrag {
@@ -1905,10 +2056,6 @@ pub(crate) fn model_library_drag_update(
     mut state: ResMut<ModelLibraryUiState>,
 ) {
     if !state.is_open() || !matches!(env.build_scene.get(), crate::types::BuildScene::Realm) {
-        state.drag = None;
-        return;
-    }
-    if state.preview.is_some() {
         state.drag = None;
         return;
     }
@@ -1958,6 +2105,9 @@ pub(crate) fn model_library_drag_update(
     if let Some(cursor) = cursor {
         if !drag.is_dragging && cursor.distance(drag.start_cursor) > DRAG_START_THRESHOLD_PX {
             drag.is_dragging = true;
+            if state.preview.is_some() {
+                close_model_library_preview(&mut commands, &mut state);
+            }
         }
 
         if drag.is_dragging {

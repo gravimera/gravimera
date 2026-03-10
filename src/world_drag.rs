@@ -53,6 +53,10 @@ pub(crate) fn world_drag_start(
     model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     selection: Res<SelectionState>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
     commandables: Query<(Entity, &Transform, &Collider, &ObjectPrefabId), With<Commandable>>,
@@ -86,6 +90,16 @@ pub(crate) fn world_drag_start(
     let Ok(window) = windows.single() else {
         return;
     };
+    if model_library.is_preview_open() {
+        if let Some(cursor) = window.physical_cursor_position() {
+            if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                cursor,
+                &model_library_preview_roots,
+            ) {
+                return;
+            }
+        }
+    }
     let Some(cursor) = window.cursor_position() else {
         return;
     };
@@ -168,6 +182,10 @@ pub(crate) fn world_drag_update(
     build: Res<BuildState>,
     model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
     mut units: Query<
@@ -187,7 +205,19 @@ pub(crate) fn world_drag_update(
     mut selection: ResMut<SelectionState>,
     mut scene_saves: bevy::ecs::message::MessageWriter<SceneSaveRequest>,
 ) {
-    if build.placing_active || model_library.is_drag_active() {
+    let cursor_over_preview = model_library.is_preview_open()
+        && windows
+            .single()
+            .ok()
+            .and_then(|window| window.physical_cursor_position())
+            .is_some_and(|cursor| {
+                crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                )
+            });
+
+    if build.placing_active || model_library.is_drag_active() || cursor_over_preview {
         state.pending = None;
         state.active = None;
         selection.drag_start = None;

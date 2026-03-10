@@ -12,6 +12,10 @@ pub(crate) fn camera_zoom_input(
         (&ComputedNode, &UiGlobalTransform, &Visibility),
         With<crate::model_library_ui::ModelLibraryRoot>,
     >,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     meta_panel_roots: Query<
         (&ComputedNode, &UiGlobalTransform, &Visibility),
         With<crate::motion_ui::MotionAlgorithmUiRoot>,
@@ -36,6 +40,10 @@ pub(crate) fn camera_zoom_input(
                     .is_some_and(|(node, transform, vis)| {
                         *vis != Visibility::Hidden && node.contains_point(*transform, cursor)
                     })
+                || crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                )
         });
     if cursor_over_ui_panel {
         for _ in mouse_wheel.read() {}
@@ -91,11 +99,29 @@ pub(crate) fn camera_keyboard_rotate(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     console: Res<CommandConsole>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     mut camera_yaw: ResMut<CameraYaw>,
     mut camera_pitch: ResMut<CameraPitch>,
 ) {
     if console.open {
         return;
+    }
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    return;
+                }
+            }
+        }
     }
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -134,6 +160,11 @@ pub(crate) fn camera_edge_pan(
     zoom: Res<CameraZoom>,
     console: Res<CommandConsole>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     camera_yaw: Res<CameraYaw>,
     mut focus: ResMut<CameraFocus>,
 ) {
@@ -153,6 +184,16 @@ pub(crate) fn camera_edge_pan(
     let Ok(window) = windows.single() else {
         return;
     };
+    if model_library.is_preview_open() {
+        if let Some(cursor) = window.physical_cursor_position() {
+            if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                cursor,
+                &model_library_preview_roots,
+            ) {
+                return;
+            }
+        }
+    }
     let Some((_cursor, factor)) = edge_pan_factor(window) else {
         return;
     };
@@ -184,12 +225,30 @@ pub(crate) fn camera_keyboard_pan(
     zoom: Res<CameraZoom>,
     keys: Res<ButtonInput<KeyCode>>,
     console: Res<CommandConsole>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     selection: Res<SelectionState>,
     camera_yaw: Res<CameraYaw>,
     mut focus: ResMut<CameraFocus>,
 ) {
     if console.open {
         return;
+    }
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    return;
+                }
+            }
+        }
     }
 
     if !selection.selected.is_empty() {

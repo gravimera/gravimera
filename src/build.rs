@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use std::collections::HashSet;
 
 use crate::assets::SceneAssets;
@@ -536,8 +537,26 @@ pub(crate) fn build_cancel_preview_and_clear_selection(
     keys: Res<ButtonInput<KeyCode>>,
     mut build: ResMut<BuildState>,
     mut selection: ResMut<SelectionState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
+        return;
+    }
+    let cursor_over_preview = windows
+        .single()
+        .ok()
+        .and_then(|window| window.physical_cursor_position())
+        .is_some_and(|cursor| {
+            crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                cursor,
+                &model_library_preview_roots,
+            )
+        });
+    if cursor_over_preview {
         return;
     }
 
@@ -557,8 +576,26 @@ pub(crate) fn build_select_object(
 pub(crate) fn build_toggle_fence_axis(
     keys: Res<ButtonInput<KeyCode>>,
     mut build: ResMut<BuildState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
 ) {
     if !keys.just_pressed(KeyCode::KeyG) {
+        return;
+    }
+    let cursor_over_preview = windows
+        .single()
+        .ok()
+        .and_then(|window| window.physical_cursor_position())
+        .is_some_and(|cursor| {
+            crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                cursor,
+                &model_library_preview_roots,
+            )
+        });
+    if cursor_over_preview {
         return;
     }
 
@@ -584,6 +621,7 @@ pub(crate) fn build_place_object(
     keys: Res<ButtonInput<KeyCode>>,
     aim: Res<Aim>,
     build: Res<BuildState>,
+    ui_capture: crate::model_library_ui::ModelLibraryPreviewInputCapture,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -617,6 +655,11 @@ pub(crate) fn build_place_object(
     }
     if !mouse_buttons.just_pressed(MouseButton::Left) {
         return;
+    }
+    if let Some(window) = ui_capture.window() {
+        if ui_capture.captures_cursor(window) {
+            return;
+        }
     }
     if !aim.has_cursor_hit {
         return;
@@ -735,6 +778,11 @@ pub(crate) fn build_remove_object(
     keys: Res<ButtonInput<KeyCode>>,
     aim: Res<Aim>,
     build: Res<BuildState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     objects: Query<(Entity, &Transform, &AabbCollider), (With<BuildObject>, Without<Player>)>,
     mut player_q: Query<&mut Transform, With<Player>>,
 ) {
@@ -746,6 +794,19 @@ pub(crate) fn build_remove_object(
         return;
     }
     if !mouse_buttons.just_pressed(MouseButton::Right) {
+        return;
+    }
+    let cursor_over_preview = windows
+        .single()
+        .ok()
+        .and_then(|window| window.physical_cursor_position())
+        .is_some_and(|cursor| {
+            crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                cursor,
+                &model_library_preview_roots,
+            )
+        });
+    if cursor_over_preview {
         return;
     }
     if !aim.has_cursor_hit {
@@ -1002,6 +1063,11 @@ pub(crate) fn build_remove_selected_objects(
     mut commands: Commands,
     build: Res<BuildState>,
     keys: Res<ButtonInput<KeyCode>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     mut selection: ResMut<SelectionState>,
     objects: Query<(), With<BuildObject>>,
 ) {
@@ -1009,6 +1075,19 @@ pub(crate) fn build_remove_selected_objects(
         return;
     }
     if !(keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace)) {
+        return;
+    }
+    let cursor_over_preview = windows
+        .single()
+        .ok()
+        .and_then(|window| window.physical_cursor_position())
+        .is_some_and(|cursor| {
+            crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                cursor,
+                &model_library_preview_roots,
+            )
+        });
+    if cursor_over_preview {
         return;
     }
 

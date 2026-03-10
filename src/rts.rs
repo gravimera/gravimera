@@ -170,8 +170,26 @@ fn pick_unit_entity_under_cursor(
 
 pub(crate) fn toggle_slow_move_mode(
     keys: Res<ButtonInput<KeyCode>>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     mut slow_move: ResMut<SlowMoveMode>,
 ) {
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    return;
+                }
+            }
+        }
+    }
     if keys.just_pressed(KeyCode::CapsLock) {
         slow_move.enabled = !slow_move.enabled;
     }
@@ -189,6 +207,10 @@ pub(crate) fn selection_input(
     mut motion_ui: ResMut<crate::motion_ui::MotionAlgorithmUiState>,
     ui_buttons: Query<&Interaction, With<Button>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
     commandables: Query<
@@ -227,6 +249,21 @@ pub(crate) fn selection_input(
         selection.drag_start = None;
         selection.drag_end = None;
         return;
+    }
+
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    selection.drag_start = None;
+                    selection.drag_end = None;
+                    return;
+                }
+            }
+        }
     }
 
     let ui_captured = ui_buttons
@@ -660,7 +697,7 @@ pub(crate) fn move_command_input(
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<GameMode>>,
     build: Res<BuildState>,
-    windows: Query<&Window, With<PrimaryWindow>>,
+    ui_capture: crate::model_library_ui::ModelLibraryPreviewInputCapture,
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
     assets: Res<SceneAssets>,
@@ -679,9 +716,12 @@ pub(crate) fn move_command_input(
         return;
     }
 
-    let Ok(window) = windows.single() else {
+    let Some(window) = ui_capture.window() else {
         return;
     };
+    if ui_capture.captures_cursor(window) {
+        return;
+    }
     let Some(cursor) = window.cursor_position() else {
         return;
     };
@@ -878,6 +918,12 @@ pub(crate) fn keyboard_move_input(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
     build: Res<BuildState>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     mut move_state: ResMut<MoveCommandState>,
     camera_q: Query<&Transform, With<MainCamera>>,
     library: Res<ObjectLibrary>,
@@ -900,6 +946,18 @@ pub(crate) fn keyboard_move_input(
     }
     if matches!(mode.get(), GameMode::Build) && build.placing_active {
         return;
+    }
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    return;
+                }
+            }
+        }
     }
 
     if selection.selected.is_empty() {
@@ -1007,10 +1065,29 @@ pub(crate) fn unit_animation_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<GameMode>>,
     build: Res<BuildState>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     library: Res<ObjectLibrary>,
     selection: Res<SelectionState>,
     targets: Query<&ObjectPrefabId, Without<Player>>,
 ) {
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    return;
+                }
+            }
+        }
+    }
+
     match mode.get() {
         GameMode::Play => {}
         GameMode::Build => {
@@ -1141,6 +1218,12 @@ pub(crate) fn build_unit_hotkeys(
     mode: Res<State<GameMode>>,
     build: Res<BuildState>,
     keys: Res<ButtonInput<KeyCode>>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     mut selection: ResMut<SelectionState>,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
@@ -1166,6 +1249,18 @@ pub(crate) fn build_unit_hotkeys(
     }
     if build.placing_active {
         return;
+    }
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    return;
+                }
+            }
+        }
     }
 
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
@@ -1455,7 +1550,12 @@ pub(crate) fn update_fire_control(
     mode: Res<State<GameMode>>,
     game: Res<Game>,
     selection: Res<SelectionState>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
     enemies: Query<(Entity, &Transform, &ObjectPrefabId), (With<Enemy>, Without<Died>)>,
@@ -1470,6 +1570,21 @@ pub(crate) fn update_fire_control(
         fire.active = false;
         fire.target = None;
         return;
+    }
+
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    fire.active = false;
+                    fire.target = None;
+                    return;
+                }
+            }
+        }
     }
 
     if !keys.pressed(KeyCode::Space) {

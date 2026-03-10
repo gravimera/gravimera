@@ -99,6 +99,12 @@ pub(crate) fn ensure_object_forms_component(
 pub(crate) fn object_forms_tab_switch_selected(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     selection: Res<SelectionState>,
     library: Res<ObjectLibrary>,
     asset_server: Res<AssetServer>,
@@ -127,6 +133,18 @@ pub(crate) fn object_forms_tab_switch_selected(
 ) {
     if !keys.just_pressed(KeyCode::Tab) {
         return;
+    }
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    return;
+                }
+            }
+        }
     }
 
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
@@ -207,10 +225,32 @@ pub(crate) fn object_forms_tab_switch_selected(
 pub(crate) fn object_forms_copy_mode_start_cancel(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model_library_preview_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
+    >,
     selection: Res<SelectionState>,
     eligible: Query<(), (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>)>,
     mut copy: ResMut<FormCopyState>,
 ) {
+    if model_library.is_preview_open() {
+        if let Ok(window) = windows.single() {
+            if let Some(cursor) = window.physical_cursor_position() {
+                if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
+                    cursor,
+                    &model_library_preview_roots,
+                ) {
+                    copy.active = false;
+                    copy.destinations.clear();
+                    copy.hovered_source = None;
+                    return;
+                }
+            }
+        }
+    }
+
     // Copy mode is "hold C". If we missed the release (e.g., UI capture / focus changes), exit
     // once C is no longer held.
     if copy.active && !keys.pressed(KeyCode::KeyC) && !keys.just_released(KeyCode::KeyC) {
