@@ -34,21 +34,28 @@ fn normalize_ai_plan_component_joint_fields(json_value: &mut serde_json::Value) 
         };
 
         let Some(attach_to) = component_obj.get_mut("attach_to") else {
+            // Keep the invalid field so strict schema parsing can surface the issue.
+            component_obj.insert("joint".to_string(), joint_value);
             continue;
         };
         let Some(attach_to_obj) = attach_to.as_object_mut() else {
+            component_obj.insert("joint".to_string(), joint_value);
             continue;
         };
-        if attach_to_obj.get("joint").is_none() {
-            attach_to_obj.insert("joint".to_string(), joint_value);
-            debug!(
-                "Gen3D: normalized component-level `joint` into `attach_to.joint` (component={})",
-                component_obj
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("<unknown>")
-            );
+
+        // If the attachment already has a joint, drop the invalid top-level copy.
+        if attach_to_obj.get("joint").is_some() {
+            continue;
         }
+
+        attach_to_obj.insert("joint".to_string(), joint_value);
+        debug!(
+            "Gen3D: normalized component-level `joint` into `attach_to.joint` (component={})",
+            component_obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>")
+        );
     }
 }
 
@@ -571,6 +578,41 @@ mod tests {
         assert!(
             attach_to.joint.is_some(),
             "component-level joint should be migrated to attach_to.joint"
+        );
+    }
+
+    #[test]
+    fn normalize_ai_plan_component_joint_fields_does_not_drop_root_joint() {
+        let mut json_value: serde_json::Value = serde_json::from_str(
+            r#"
+            {
+              "version": 8,
+              "mobility": { "kind": "static" },
+              "components": [
+                {
+                  "name": "root",
+                  "size": [1.0, 1.0, 1.0],
+                  "anchors": [
+                    { "name": "a", "pos": [0.0,0.0,0.0], "forward": [0.0,0.0,1.0], "up": [0.0,1.0,0.0] }
+                  ],
+                  "joint": { "kind": "hinge" }
+                }
+              ]
+            }
+            "#,
+        )
+        .expect("JSON should parse");
+
+        normalize_ai_plan_component_joint_fields(&mut json_value);
+
+        assert!(
+            json_value
+                .get("components")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.get("joint"))
+                .is_some(),
+            "root component joint should not be dropped (strict schema parsing should surface it)"
         );
     }
 
