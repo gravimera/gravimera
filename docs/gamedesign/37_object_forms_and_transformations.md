@@ -73,6 +73,7 @@ The badge is always visible (not only when selected).
 
 - `forms[]` list of prefab ids (UUIDs)
 - `active` index
+- `is_protagonist` boolean flag (Player Character; exactly one instance per scene)
 
 The file format is versioned and may bump version without backward compatibility.
 

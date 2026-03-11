@@ -354,6 +354,20 @@ pub(crate) fn ensure_default_selection_on_enter_play(
     selection.selected.insert(player);
 }
 
+pub(crate) fn ensure_default_selection_on_player_added(
+    mut selection: ResMut<SelectionState>,
+    added_players: Query<Entity, Added<Player>>,
+) {
+    if !selection.selected.is_empty() {
+        return;
+    }
+
+    let Some(player) = added_players.iter().next() else {
+        return;
+    };
+    selection.selected.insert(player);
+}
+
 pub(crate) fn update_selection_box_ui(
     selection: Res<SelectionState>,
     mut q: Query<(&mut Node, &mut Visibility), With<SelectionBoxUi>>,

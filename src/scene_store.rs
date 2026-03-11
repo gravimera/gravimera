@@ -23,7 +23,7 @@ use crate::workspace_ui::{
     PendingWorkspaceSwitch, WorkspaceCameraSnapshot, WorkspaceCameraState, WorkspaceTab,
 };
 
-const SCENE_DAT_VERSION: u32 = 8;
+const SCENE_DAT_VERSION: u32 = 9;
 // Persist positions in centimeters (stable and easy to reason about for AI-authored worlds).
 const DEFAULT_UNITS_PER_METER: u32 = 100;
 const SCENE_AUTOSAVE_INTERVAL_SECS: f32 = 60.0;
@@ -41,11 +41,31 @@ pub(crate) fn ensure_default_scene_dat_exists(
         return Ok(());
     }
 
+    let hero_prefab = crate::object::types::characters::hero::object_id();
+    let player_start = Vec3::new(0.0, PLAYER_Y, 0.0);
+    let instance_id = ObjectId::new_v4();
     let scene = SceneDat {
         version: SCENE_DAT_VERSION,
         units_per_meter: DEFAULT_UNITS_PER_METER,
         defs: Vec::new(),
-        instances: Vec::new(),
+        instances: vec![SceneDatObjectInstance {
+            instance_id: Some(u128_to_uuid(instance_id.0)),
+            base_object_id: Some(u128_to_uuid(hero_prefab)),
+            x_units: quantize_world(player_start.x, DEFAULT_UNITS_PER_METER),
+            y_units: quantize_world(player_start.y, DEFAULT_UNITS_PER_METER),
+            z_units: quantize_world(player_start.z, DEFAULT_UNITS_PER_METER),
+            rot_x: 0.0,
+            rot_y: 0.0,
+            rot_z: 0.0,
+            rot_w: 1.0,
+            tint: None,
+            scale_x: None,
+            scale_y: None,
+            scale_z: None,
+            forms: vec![u128_to_uuid(hero_prefab)],
+            active_form: 0,
+            is_protagonist: true,
+        }],
     };
     let bytes = scene.encode_to_vec();
     write_atomic(&path, &bytes)
@@ -195,6 +215,8 @@ struct SceneDatObjectInstance {
     forms: Vec<Uuid128Dat>,
     #[prost(uint32, tag = "15")]
     active_form: u32,
+    #[prost(bool, tag = "19")]
+    is_protagonist: bool,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1626,8 +1648,9 @@ fn save_scene_dat_internal(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
+            Option<&Player>,
         ),
-        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+        Or<(With<BuildObject>, With<Commandable>)>,
     >,
     library: &ObjectLibrary,
     path: &Path,
@@ -1637,7 +1660,9 @@ fn save_scene_dat_internal(
     let mut instances: Vec<SceneDatObjectInstance> = Vec::with_capacity(objects.iter().len());
     let mut root_defs: Vec<u128> = Vec::with_capacity(objects.iter().len());
 
-    for (transform, instance_id, prefab_id, tint, forms) in objects {
+    let mut found_protagonist = false;
+
+    for (transform, instance_id, prefab_id, tint, forms, player) in objects {
         let pos = transform.translation;
         let scale = transform.scale;
 
@@ -1663,6 +1688,18 @@ fn save_scene_dat_internal(
 
         root_defs.extend(forms.iter().copied());
 
+        let is_protagonist = if player.is_some() {
+            if found_protagonist {
+                warn!("scene.dat: multiple Player Character entities found; only the first will be saved");
+                false
+            } else {
+                found_protagonist = true;
+                true
+            }
+        } else {
+            false
+        };
+
         instances.push(SceneDatObjectInstance {
             instance_id: Some(u128_to_uuid(instance_id.0)),
             base_object_id: Some(u128_to_uuid(prefab_id.0)),
@@ -1679,6 +1716,7 @@ fn save_scene_dat_internal(
             scale_z: pack_non_default_scale(scale.z),
             forms: forms.into_iter().map(u128_to_uuid).collect(),
             active_form: active as u32,
+            is_protagonist,
         });
     }
 
@@ -2006,13 +2044,11 @@ pub(crate) fn apply_pending_workspace_switch(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
+            Option<&Player>,
         ),
-        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+        Or<(With<BuildObject>, With<Commandable>)>,
     >,
-    existing_scene_entities: Query<
-        Entity,
-        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
-    >,
+    existing_scene_entities: Query<Entity, Or<(With<BuildObject>, With<Commandable>)>>,
 ) {
     let Some(switch) = pending_switch.take() else {
         return;
@@ -2118,10 +2154,7 @@ pub(crate) fn apply_pending_realm_scene_switch(
     mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
     mut library: ResMut<ObjectLibrary>,
     mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
-    existing_scene_entities: Query<
-        Entity,
-        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
-    >,
+    existing_scene_entities: Query<Entity, Or<(With<BuildObject>, With<Commandable>)>>,
 ) {
     let Some(target) = pending.target.take() else {
         return;
@@ -2204,9 +2237,9 @@ fn load_scene_dat_from_path(
     let scene = SceneDat::decode(bytes.as_slice())
         .map_err(|err| format!("Failed to decode {}: {err}", path.display()))?;
 
-    if scene.version != 7 && scene.version != SCENE_DAT_VERSION {
+    if !matches!(scene.version, 7 | 8 | SCENE_DAT_VERSION) {
         warn!(
-            "Ignoring {}: unsupported scene.dat version {} (expected 7 or {}).",
+            "Ignoring {}: unsupported scene.dat version {} (expected 7, 8, or {}).",
             path.display(),
             scene.version,
             SCENE_DAT_VERSION
@@ -2225,6 +2258,9 @@ fn load_scene_dat_from_path(
 
     let units_per_meter = scene.units_per_meter.max(1);
     let mut spawned = 0usize;
+    let hero_prefab_id = crate::object::types::characters::hero::object_id();
+    let mut protagonist_entity: Option<(Entity, Transform)> = None;
+    let mut hero_entity: Option<(Entity, Transform)> = None;
 
     for instance in &scene.instances {
         let Some(base_prefab_id) = instance.base_object_id.as_ref().map(uuid_to_u128) else {
@@ -2243,6 +2279,8 @@ fn load_scene_dat_from_path(
             warn!("scene.dat: missing prefab for instance {prefab_id:#x}");
             continue;
         }
+
+        let is_commandable_prefab = library.mobility(prefab_id).is_some();
 
         let instance_id = instance
             .instance_id
@@ -2291,6 +2329,67 @@ fn load_scene_dat_from_path(
             .entity(entity)
             .insert(ObjectForms { forms, active });
         spawned += 1;
+
+        if prefab_id == hero_prefab_id && hero_entity.is_none() {
+            hero_entity = Some((entity, transform));
+        }
+
+        if instance.is_protagonist {
+            if !is_commandable_prefab {
+                warn!(
+                    "scene.dat: Player Character instance {prefab_id:#x} is not commandable; ignoring."
+                );
+            } else if protagonist_entity.is_none() {
+                protagonist_entity = Some((entity, transform));
+            } else {
+                warn!(
+                    "scene.dat: multiple Player Character instances flagged; keeping the first."
+                );
+            }
+        }
+    }
+
+    if protagonist_entity.is_none() {
+        if let Some(hero) = hero_entity {
+            protagonist_entity = Some(hero);
+        } else {
+            let transform = Transform::from_translation(Vec3::new(0.0, PLAYER_Y, 0.0));
+            let instance_id = ObjectId::new_v4();
+            let entity = spawn_scene_instance_from_scene(
+                commands,
+                asset_server,
+                assets,
+                meshes,
+                materials,
+                material_cache,
+                mesh_cache,
+                library,
+                hero_prefab_id,
+                transform,
+                instance_id,
+                None,
+            );
+            commands.entity(entity).insert(ObjectForms {
+                forms: vec![hero_prefab_id],
+                active: 0,
+            });
+            spawned += 1;
+            protagonist_entity = Some((entity, transform));
+        }
+    }
+
+    if let Some((entity, transform)) = protagonist_entity {
+        commands.entity(entity).insert(Player);
+        commands
+            .entity(entity)
+            .insert(Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH));
+        commands
+            .entity(entity)
+            .insert(LaserDamageAccum::default());
+        commands.entity(entity).insert(PlayerAnimator {
+            phase: 0.0,
+            last_translation: transform.translation,
+        });
     }
 
     Ok(spawned)
@@ -2303,27 +2402,26 @@ pub(crate) fn request_scene_save_on_enter_play(mut saves: MessageWriter<SceneSav
 pub(crate) fn scene_autosave_detect_changes(
     mut autosave: ResMut<SceneAutosaveState>,
     added_buildings: Query<Entity, Added<BuildObject>>,
-    added_units: Query<Entity, (Added<Commandable>, Without<Player>)>,
+    added_units: Query<Entity, Added<Commandable>>,
+    added_players: Query<Entity, Added<Player>>,
     changed_building_transforms: Query<Entity, (With<BuildObject>, Changed<Transform>)>,
-    changed_unit_transforms: Query<
-        Entity,
-        (With<Commandable>, Without<Player>, Changed<Transform>),
-    >,
+    changed_unit_transforms: Query<Entity, (With<Commandable>, Changed<Transform>)>,
     changed_building_prefabs: Query<Entity, (With<BuildObject>, Changed<ObjectPrefabId>)>,
-    changed_unit_prefabs: Query<
-        Entity,
-        (With<Commandable>, Without<Player>, Changed<ObjectPrefabId>),
-    >,
+    changed_unit_prefabs: Query<Entity, (With<Commandable>, Changed<ObjectPrefabId>)>,
     changed_building_forms: Query<Entity, (With<BuildObject>, Changed<ObjectForms>)>,
-    changed_unit_forms: Query<Entity, (With<Commandable>, Without<Player>, Changed<ObjectForms>)>,
+    changed_unit_forms: Query<Entity, (With<Commandable>, Changed<ObjectForms>)>,
     changed_building_tints: Query<Entity, (With<BuildObject>, Changed<ObjectTint>)>,
-    changed_unit_tints: Query<Entity, (With<Commandable>, Without<Player>, Changed<ObjectTint>)>,
+    changed_unit_tints: Query<Entity, (With<Commandable>, Changed<ObjectTint>)>,
     mut removed: RemovedComponents<BuildObject>,
     mut removed_units: RemovedComponents<Commandable>,
+    mut removed_players: RemovedComponents<Player>,
 ) {
     let removed_any = removed.read().next().is_some();
     let removed_units_any = removed_units.read().next().is_some();
-    let added_any = added_buildings.iter().next().is_some() || added_units.iter().next().is_some();
+    let removed_players_any = removed_players.read().next().is_some();
+    let added_any = added_buildings.iter().next().is_some()
+        || added_units.iter().next().is_some()
+        || added_players.iter().next().is_some();
     let moved_any = changed_building_transforms.iter().next().is_some()
         || changed_unit_transforms.iter().next().is_some();
     let prefab_any = changed_building_prefabs.iter().next().is_some()
@@ -2341,6 +2439,7 @@ pub(crate) fn scene_autosave_detect_changes(
 
     if removed_any
         || removed_units_any
+        || removed_players_any
         || added_any
         || moved_any
         || prefab_any
@@ -2360,8 +2459,9 @@ pub(crate) fn scene_save_requests(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
+            Option<&Player>,
         ),
-        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+        Or<(With<BuildObject>, With<Commandable>)>,
     >,
     config: Res<AppConfig>,
     active: Res<crate::realm::ActiveRealmScene>,
@@ -2403,8 +2503,9 @@ pub(crate) fn scene_autosave_tick(
             &ObjectPrefabId,
             Option<&ObjectTint>,
             Option<&ObjectForms>,
+            Option<&Player>,
         ),
-        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+        Or<(With<BuildObject>, With<Commandable>)>,
     >,
     config: Res<AppConfig>,
     active: Res<crate::realm::ActiveRealmScene>,

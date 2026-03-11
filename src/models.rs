@@ -3,7 +3,7 @@ use bevy::prelude::*;
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::types::EnemyLeg;
+use crate::types::{EnemyLeg, PlayerGunRig, PlayerGunVisual, PlayerLeg, PlayerWeapon};
 
 pub(crate) fn spawn_scaled_cube(
     parent: &mut ChildSpawnerCommands,
@@ -186,6 +186,117 @@ pub(crate) fn spawn_enemy_human_model(parent: &mut ChildSpawnerCommands, assets:
                 ),
                 Vec3::new(PLAYER_ARM_THICK, PLAYER_ARM_THICK, PLAYER_ARM_LENGTH),
             );
+        });
+}
+
+pub(crate) fn spawn_player_model(parent: &mut ChildSpawnerCommands, assets: &SceneAssets) {
+    let torso_mesh = &assets.player_torso_mesh;
+    let head_mesh = &assets.player_head_mesh;
+    let leg_mesh = &assets.player_leg_mesh;
+    let arm_mesh = &assets.player_arm_mesh;
+    let gun_mesh = &assets.player_gun_mesh;
+
+    parent.spawn((
+        Mesh3d(torso_mesh.clone()),
+        MeshMaterial3d(assets.player_shirt_material.clone()),
+        Transform::from_xyz(0.0, PLAYER_TORSO_HEIGHT / 2.0, 0.0),
+        Visibility::Inherited,
+    ));
+
+    parent.spawn((
+        Mesh3d(head_mesh.clone()),
+        MeshMaterial3d(assets.player_skin_material.clone()),
+        Transform::from_xyz(0.0, PLAYER_TORSO_HEIGHT + PLAYER_HEAD_SIZE / 2.0, 0.0),
+        Visibility::Inherited,
+    ));
+
+    parent
+        .spawn((
+            Transform::from_xyz(-PLAYER_LEG_OFFSET_X, 0.0, 0.0),
+            Visibility::Inherited,
+            PlayerLeg { side: 1.0 },
+        ))
+        .with_children(|leg| {
+            leg.spawn((
+                Mesh3d(leg_mesh.clone()),
+                MeshMaterial3d(assets.player_pants_material.clone()),
+                Transform::from_xyz(0.0, -PLAYER_LEG_HEIGHT / 2.0, 0.0),
+                Visibility::Inherited,
+            ));
+        });
+
+    parent
+        .spawn((
+            Transform::from_xyz(PLAYER_LEG_OFFSET_X, 0.0, 0.0),
+            Visibility::Inherited,
+            PlayerLeg { side: -1.0 },
+        ))
+        .with_children(|leg| {
+            leg.spawn((
+                Mesh3d(leg_mesh.clone()),
+                MeshMaterial3d(assets.player_pants_material.clone()),
+                Transform::from_xyz(0.0, -PLAYER_LEG_HEIGHT / 2.0, 0.0),
+                Visibility::Inherited,
+            ));
+        });
+
+    let base_back_offset_z =
+        PLAYER_TORSO_DEPTH * 0.5 + PLAYER_GUN_OFFSET_Z + PLAYER_GUN_RIG_FORWARD_OFFSET_Z
+            - PLAYER_GUN_TORSO_PULLBACK_Z;
+    let gun_length = PLAYER_GUN_LENGTH * HERO_GUN_MODEL_SCALE_MULT;
+
+    parent
+        .spawn((
+            Transform::from_xyz(0.0, PLAYER_GUN_Y, 0.0),
+            Visibility::Inherited,
+            PlayerGunRig,
+        ))
+        .with_children(|rig| {
+            let spawn_gun = |rig: &mut ChildSpawnerCommands, weapon: PlayerWeapon| {
+                let visibility = if weapon == PlayerWeapon::Normal {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                };
+
+                let translation_z = base_back_offset_z + gun_length * 0.5;
+                let transform = Transform::from_translation(Vec3::new(0.0, 0.0, translation_z))
+                    .with_scale(Vec3::splat(HERO_GUN_MODEL_SCALE_MULT));
+
+                rig.spawn((
+                    Mesh3d(gun_mesh.clone()),
+                    MeshMaterial3d(assets.player_gun_material.clone()),
+                    transform,
+                    visibility,
+                    PlayerGunVisual { weapon },
+                ));
+            };
+
+            spawn_gun(rig, PlayerWeapon::Normal);
+            spawn_gun(rig, PlayerWeapon::Shotgun);
+            spawn_gun(rig, PlayerWeapon::Laser);
+
+            rig.spawn((
+                Mesh3d(arm_mesh.clone()),
+                MeshMaterial3d(assets.player_shirt_material.clone()),
+                Transform::from_xyz(
+                    -PLAYER_ARM_OFFSET_X,
+                    -PLAYER_ARM_THICK * 0.6,
+                    PLAYER_ARM_LENGTH / 2.0,
+                ),
+                Visibility::Inherited,
+            ));
+
+            rig.spawn((
+                Mesh3d(arm_mesh.clone()),
+                MeshMaterial3d(assets.player_shirt_material.clone()),
+                Transform::from_xyz(
+                    PLAYER_ARM_OFFSET_X,
+                    -PLAYER_ARM_THICK * 0.6,
+                    PLAYER_ARM_LENGTH / 2.0,
+                ),
+                Visibility::Inherited,
+            ));
         });
 }
 

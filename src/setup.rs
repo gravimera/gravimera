@@ -1,10 +1,9 @@
-use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::object::types::{buildings, characters};
+use crate::object::types::buildings;
 use crate::types::*;
 
 pub(crate) fn setup_rendered(
@@ -13,7 +12,6 @@ pub(crate) fn setup_rendered(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
-    mut selection: ResMut<SelectionState>,
 ) {
     info!(
          "Controls: LMB selects (click/drag), RMB issues move orders.\n\
@@ -290,6 +288,15 @@ pub(crate) fn setup_rendered(
         unit_torus_mesh: unit_torus_mesh.clone(),
         unit_triangle_mesh: unit_triangle_mesh.clone(),
         unit_tetrahedron_mesh: unit_tetrahedron_mesh.clone(),
+        player_head_mesh: player_head_mesh.clone(),
+        player_torso_mesh: player_torso_mesh.clone(),
+        player_leg_mesh: player_leg_mesh.clone(),
+        player_arm_mesh: player_arm_mesh.clone(),
+        player_gun_mesh: player_gun_mesh.clone(),
+        player_skin_material: player_skin_material.clone(),
+        player_shirt_material: player_shirt_material.clone(),
+        player_pants_material: player_pants_material.clone(),
+        player_gun_material: player_gun_material.clone(),
         dog_material: dog_material.clone(),
         human_material: human_material.clone(),
         gundam_material: gundam_material.clone(),
@@ -348,128 +355,6 @@ pub(crate) fn setup_rendered(
     ));
 
     let player_start = Vec3::new(0.0, PLAYER_Y, 0.0);
-    let player_entity = commands
-        .spawn((
-            ObjectId::new_v4(),
-            ObjectPrefabId(characters::hero::object_id()),
-            Transform::from_translation(player_start),
-            Visibility::Inherited,
-            Player,
-            Commandable,
-            Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH),
-            LaserDamageAccum::default(),
-            Collider {
-                radius: PLAYER_RADIUS,
-            },
-            PlayerAnimator {
-                phase: 0.0,
-                last_translation: player_start,
-            },
-        ))
-        .id();
-
-    selection.selected.clear();
-    selection.selected.insert(player_entity);
-
-    commands.entity(player_entity).with_children(|parent| {
-        parent.spawn((
-            Mesh3d(player_torso_mesh.clone()),
-            MeshMaterial3d(player_shirt_material.clone()),
-            Transform::from_xyz(0.0, PLAYER_TORSO_HEIGHT / 2.0, 0.0),
-            Visibility::Inherited,
-        ));
-
-        parent.spawn((
-            Mesh3d(player_head_mesh.clone()),
-            MeshMaterial3d(player_skin_material.clone()),
-            Transform::from_xyz(0.0, PLAYER_TORSO_HEIGHT + PLAYER_HEAD_SIZE / 2.0, 0.0),
-            Visibility::Inherited,
-        ));
-
-        parent
-            .spawn((
-                Transform::from_xyz(-PLAYER_LEG_OFFSET_X, 0.0, 0.0),
-                Visibility::Inherited,
-                PlayerLeg { side: 1.0 },
-            ))
-            .with_children(|leg| {
-                leg.spawn((
-                    Mesh3d(player_leg_mesh.clone()),
-                    MeshMaterial3d(player_pants_material.clone()),
-                    Transform::from_xyz(0.0, -PLAYER_LEG_HEIGHT / 2.0, 0.0),
-                    Visibility::Inherited,
-                ));
-            });
-
-        parent
-            .spawn((
-                Transform::from_xyz(PLAYER_LEG_OFFSET_X, 0.0, 0.0),
-                Visibility::Inherited,
-                PlayerLeg { side: -1.0 },
-            ))
-            .with_children(|leg| {
-                leg.spawn((
-                    Mesh3d(player_leg_mesh.clone()),
-                    MeshMaterial3d(player_pants_material.clone()),
-                    Transform::from_xyz(0.0, -PLAYER_LEG_HEIGHT / 2.0, 0.0),
-                    Visibility::Inherited,
-                ));
-            });
-
-        parent
-            .spawn((
-                Transform::from_xyz(0.0, PLAYER_GUN_Y, 0.0),
-                Visibility::Inherited,
-                PlayerGunRig,
-            ))
-            .with_children(|rig| {
-                let spawn_gun = |rig: &mut ChildSpawnerCommands, weapon: PlayerWeapon| {
-                    let visibility = if weapon == PlayerWeapon::Normal {
-                        Visibility::Inherited
-                    } else {
-                        Visibility::Hidden
-                    };
-
-                    let translation_z = base_back_offset_z + gun_length * 0.5;
-                    let transform = Transform::from_translation(Vec3::new(0.0, 0.0, translation_z))
-                        .with_scale(Vec3::splat(HERO_GUN_MODEL_SCALE_MULT));
-
-                    rig.spawn((
-                        Mesh3d(player_gun_mesh.clone()),
-                        MeshMaterial3d(player_gun_material.clone()),
-                        transform,
-                        visibility,
-                        PlayerGunVisual { weapon },
-                    ));
-                };
-
-                spawn_gun(rig, PlayerWeapon::Normal);
-                spawn_gun(rig, PlayerWeapon::Shotgun);
-                spawn_gun(rig, PlayerWeapon::Laser);
-
-                rig.spawn((
-                    Mesh3d(player_arm_mesh.clone()),
-                    MeshMaterial3d(player_shirt_material.clone()),
-                    Transform::from_xyz(
-                        -PLAYER_ARM_OFFSET_X,
-                        -PLAYER_ARM_THICK * 0.6,
-                        PLAYER_ARM_LENGTH / 2.0,
-                    ),
-                    Visibility::Inherited,
-                ));
-
-                rig.spawn((
-                    Mesh3d(player_arm_mesh.clone()),
-                    MeshMaterial3d(player_shirt_material.clone()),
-                    Transform::from_xyz(
-                        PLAYER_ARM_OFFSET_X,
-                        -PLAYER_ARM_THICK * 0.6,
-                        PLAYER_ARM_LENGTH / 2.0,
-                    ),
-                    Visibility::Inherited,
-                ));
-            });
-    });
 
     commands.spawn((
         DirectionalLight {

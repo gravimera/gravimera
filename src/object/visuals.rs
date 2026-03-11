@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::assets::SceneAssets;
+use crate::models;
 use crate::object::depth_bias::{
     clamp_depth_bias, compute_auto_object_ref_depth_biases,
     compute_primitive_part_depth_biases_with_transforms, depth_bias_delta_from_render_priority,
@@ -11,6 +12,7 @@ use crate::object::registry::{
     PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
     PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
 };
+use crate::object::types::characters;
 use crate::types::{
     AnimationChannelsActive, AttackClock, ForcedAnimationChannel, LocomotionClock, ObjectPrefabId,
 };
@@ -332,6 +334,13 @@ pub(crate) fn spawn_object_visuals_with_settings(
     tint: Option<Color>,
     settings: VisualSpawnSettings,
 ) {
+    if object_id == characters::hero::object_id() {
+        entity.with_children(|parent| {
+            models::spawn_player_model(parent, assets);
+        });
+        return;
+    }
+
     let root_entity = entity.id();
     let aim_object_ids = aim_object_ids_for_root(library, object_id);
     let mut stack = Vec::new();

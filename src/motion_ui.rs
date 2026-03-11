@@ -6,7 +6,7 @@ use bevy::window::PrimaryWindow;
 use serde_json::json;
 
 use crate::assets::SceneAssets;
-use crate::constants::{BUILD_GRID_SIZE, BUILD_UNIT_SIZE};
+use crate::constants::{BUILD_GRID_SIZE, BUILD_UNIT_SIZE, PLAYER_MAX_HEALTH};
 use crate::gen3d::{
     Gen3dPendingSeedFromPrefab, Gen3dSeedFromPrefabMode, Gen3dSeedFromPrefabRequest,
 };
@@ -22,10 +22,11 @@ use crate::threaded_result::{
     new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
 };
 use crate::rich_text::spawn_rich_text_line;
+use crate::scene_store::SceneSaveRequest;
 use crate::types::{
-    BuildScene, Collider, Commandable, EmojiAtlas, GameMode, ModelSpeechBubbleCommand,
-    ModelSpeechSource, MoveOrder, ObjectForms, ObjectId, ObjectPrefabId, ObjectTint,
-    SelectionState, UiFonts,
+    BuildScene, CameraFocus, Collider, Commandable, EmojiAtlas, GameMode, Health,
+    LaserDamageAccum, ModelSpeechBubbleCommand, ModelSpeechSource, MoveOrder, ObjectForms,
+    ObjectId, ObjectPrefabId, ObjectTint, Player, PlayerAnimator, SelectionState, UiFonts,
 };
 
 const PANEL_Z_INDEX: i32 = 940;
@@ -177,6 +178,9 @@ pub(crate) enum MetaGen3dUiAction {
 pub(crate) struct MetaGen3dUiButton {
     pub(crate) action: MetaGen3dUiAction,
 }
+
+#[derive(Component)]
+pub(crate) struct MetaProtagonistUiButton;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct MetaSpeakUiVoiceButton {
@@ -340,7 +344,12 @@ pub(crate) fn motion_algorithm_ui_update(
     emoji_atlas: Res<EmojiAtlas>,
     asset_server: Res<AssetServer>,
     mut state: ResMut<MotionAlgorithmUiState>,
-    roots: Query<(Option<&ObjectPrefabId>, Option<&StandaloneBrain>)>,
+    roots: Query<(
+        Option<&ObjectPrefabId>,
+        Option<&StandaloneBrain>,
+        Option<&Player>,
+        Option<&Commandable>,
+    )>,
     mut roots_ui: Query<&mut Visibility, With<MotionAlgorithmUiRoot>>,
     mut subtitle: Query<&mut Text, With<MotionAlgorithmUiSubtitle>>,
     list: Query<Entity, With<MotionAlgorithmUiList>>,
@@ -370,7 +379,7 @@ pub(crate) fn motion_algorithm_ui_update(
         return;
     }
 
-    let Ok((prefab_id, brain)) = roots.get(target) else {
+    let Ok((prefab_id, brain, player, commandable)) = roots.get(target) else {
         if let Some(entity) = state.speak_target.or(Some(target)) {
             speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
             state.speak_target = None;
@@ -390,6 +399,9 @@ pub(crate) fn motion_algorithm_ui_update(
     };
 
     *visibility = Visibility::Visible;
+
+    let is_player = player.is_some();
+    let is_commandable = commandable.is_some();
 
     let target_changed = state.last_built_target != state.target;
     if target_changed {
@@ -447,6 +459,7 @@ pub(crate) fn motion_algorithm_ui_update(
         let gen3d_line = gen3d_run_id
             .map(|run_id| format!("\nGen3D run: {run_id}"))
             .unwrap_or_default();
+        let protagonist_label = if is_player { "yes" } else { "no" };
         let mobility_str = match mobility_mode {
             Some(crate::object::registry::MobilityMode::Ground) => "ground",
             Some(crate::object::registry::MobilityMode::Air) => "air",
@@ -458,7 +471,7 @@ pub(crate) fn motion_algorithm_ui_update(
             None => "none",
         };
         *subtitle = Text::new(format!(
-            "Target: {label}{gen3d_line}\nBrain: {brain_label}{brain_error}\nMobility: {mobility_str}\nAttack: {attack_str}\nAnimations: {anim_channels:?}",
+            "Target: {label}{gen3d_line}\nBrain: {brain_label}{brain_error}\nPlayer Character: {protagonist_label}\nMobility: {mobility_str}\nAttack: {attack_str}\nAnimations: {anim_channels:?}",
         ));
     }
 
@@ -619,6 +632,47 @@ pub(crate) fn motion_algorithm_ui_update(
                     b.spawn((Text::new(label), button_font.clone(), button_color));
                 });
             }
+        }
+
+        list.spawn((
+            Text::new("Player Character"),
+            section_font.clone(),
+            section_color,
+            MotionAlgorithmUiListItem,
+        ));
+
+        if is_commandable {
+            let label = if is_player {
+                "Current Player Character"
+            } else {
+                "Set as Player Character"
+            };
+            list.spawn((
+                Button,
+                Node {
+                    width: Val::Percent(100.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                button_bg,
+                button_border,
+                MotionAlgorithmUiListItem,
+                MetaProtagonistUiButton,
+            ))
+            .with_children(|b| {
+                b.spawn((Text::new(label), button_font.clone(), button_color));
+            });
+        } else {
+            list.spawn((
+                Text::new("Only commandable units can be set as Player Character."),
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.70, 0.70, 0.76)),
+                MotionAlgorithmUiListItem,
+            ));
         }
 
         list.spawn((
@@ -1305,6 +1359,72 @@ pub(crate) fn meta_gen3d_ui_button_styles(
     }
 }
 
+pub(crate) fn meta_protagonist_ui_button_styles(
+    state: Res<MotionAlgorithmUiState>,
+    players: Query<(), With<Player>>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (With<Button>, With<MetaProtagonistUiButton>),
+    >,
+) {
+    if !state.open {
+        return;
+    }
+    let Some(target) = state.target else {
+        return;
+    };
+
+    let is_selected = players.get(target).is_ok();
+    let (base_bg, base_border) = if is_selected {
+        (
+            Color::srgba(0.10, 0.10, 0.14, 0.88),
+            Color::srgba(0.45, 0.45, 0.60, 0.85),
+        )
+    } else {
+        (
+            Color::srgba(0.05, 0.05, 0.06, 0.75),
+            Color::srgba(0.25, 0.25, 0.30, 0.65),
+        )
+    };
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(base_bg);
+                *border = BorderColor::all(base_border);
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(
+                    (base_bg.to_srgba().red + 0.02).min(1.0),
+                    (base_bg.to_srgba().green + 0.02).min(1.0),
+                    (base_bg.to_srgba().blue + 0.03).min(1.0),
+                    base_bg.to_srgba().alpha,
+                ));
+                *border = BorderColor::all(Color::srgba(
+                    (base_border.to_srgba().red + 0.08).min(1.0),
+                    (base_border.to_srgba().green + 0.08).min(1.0),
+                    (base_border.to_srgba().blue + 0.10).min(1.0),
+                    base_border.to_srgba().alpha,
+                ));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(
+                    (base_bg.to_srgba().red + 0.05).min(1.0),
+                    (base_bg.to_srgba().green + 0.05).min(1.0),
+                    (base_bg.to_srgba().blue + 0.07).min(1.0),
+                    base_bg.to_srgba().alpha,
+                ));
+                *border = BorderColor::all(Color::srgba(
+                    (base_border.to_srgba().red + 0.12).min(1.0),
+                    (base_border.to_srgba().green + 0.12).min(1.0),
+                    (base_border.to_srgba().blue + 0.14).min(1.0),
+                    base_border.to_srgba().alpha,
+                ));
+            }
+        }
+    }
+}
+
 pub(crate) fn meta_speak_ui_button_styles(
     state: Res<MotionAlgorithmUiState>,
     mut voice_buttons: Query<
@@ -1522,6 +1642,58 @@ pub(crate) fn meta_brain_ui_button_clicks(
             button.module_id, updated
         );
 
+        state.needs_rebuild = true;
+    }
+}
+
+pub(crate) fn meta_protagonist_ui_button_clicks(
+    mut commands: Commands,
+    mut state: ResMut<MotionAlgorithmUiState>,
+    mut saves: MessageWriter<SceneSaveRequest>,
+    mut focus: ResMut<CameraFocus>,
+    units: Query<&Transform, With<Commandable>>,
+    players: Query<Entity, With<Player>>,
+    mut buttons: Query<(&Interaction, &MetaProtagonistUiButton), Changed<Interaction>>,
+) {
+    if !state.open {
+        return;
+    }
+    let Some(target) = state.target else {
+        return;
+    };
+
+    for (interaction, _button) in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        let Ok(transform) = units.get(target) else {
+            state.needs_rebuild = true;
+            continue;
+        };
+
+        for entity in &players {
+            commands.entity(entity).remove::<Player>();
+            commands.entity(entity).remove::<PlayerAnimator>();
+            commands.entity(entity).remove::<LaserDamageAccum>();
+        }
+
+        commands.entity(target).insert(Player);
+        commands
+            .entity(target)
+            .insert(Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH));
+        commands
+            .entity(target)
+            .insert(LaserDamageAccum::default());
+        commands.entity(target).insert(PlayerAnimator {
+            phase: 0.0,
+            last_translation: transform.translation,
+        });
+
+        focus.position = transform.translation;
+        focus.initialized = true;
+
+        saves.write(SceneSaveRequest::new("set Player Character"));
         state.needs_rebuild = true;
     }
 }

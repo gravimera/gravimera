@@ -58,7 +58,13 @@ pub(crate) struct RenderedSceneRuntimePlugin;
 
 impl Plugin for RenderedSceneRuntimePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PreUpdate, effects::clear_killed_enemies);
+        app.add_systems(
+            PreUpdate,
+            (
+                effects::clear_killed_enemies,
+                rts::ensure_default_selection_on_player_added,
+            ),
+        );
         app.add_systems(
             Update,
             crate::scene_instance_visuals::ensure_scene_instance_visuals_spawned,
@@ -606,6 +612,9 @@ impl Plugin for RenderedGameplayPlugin {
                 crate::motion_ui::meta_gen3d_ui_button_clicks
                     .after(crate::motion_ui::motion_algorithm_ui_update)
                     .run_if(crate::automation::local_input_enabled),
+                crate::motion_ui::meta_protagonist_ui_button_clicks
+                    .after(crate::motion_ui::motion_algorithm_ui_update)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::meta_speak_ui_content_field_focus
                     .after(crate::motion_ui::motion_algorithm_ui_update)
                     .run_if(crate::automation::local_input_enabled),
@@ -616,11 +625,14 @@ impl Plugin for RenderedGameplayPlugin {
                     .after(crate::motion_ui::meta_brain_ui_button_clicks),
                 crate::motion_ui::meta_gen3d_ui_button_styles
                     .after(crate::motion_ui::meta_gen3d_ui_button_clicks),
+                crate::motion_ui::meta_protagonist_ui_button_styles
+                    .after(crate::motion_ui::meta_protagonist_ui_button_clicks),
                 crate::motion_ui::meta_speak_ui_button_styles
                     .after(crate::motion_ui::meta_speak_ui_button_clicks),
                 crate::motion_ui::motion_algorithm_ui_scroll_wheel
                     .after(crate::motion_ui::meta_brain_ui_button_styles)
                     .after(crate::motion_ui::meta_gen3d_ui_button_styles)
+                    .after(crate::motion_ui::meta_protagonist_ui_button_styles)
                     .after(crate::motion_ui::meta_speak_ui_button_styles)
                     .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::motion_algorithm_ui_scrollbar_drag
