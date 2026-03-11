@@ -2342,9 +2342,7 @@ fn load_scene_dat_from_path(
             } else if protagonist_entity.is_none() {
                 protagonist_entity = Some((entity, transform));
             } else {
-                warn!(
-                    "scene.dat: multiple Player Character instances flagged; keeping the first."
-                );
+                warn!("scene.dat: multiple Player Character instances flagged; keeping the first.");
             }
         }
     }
@@ -2383,9 +2381,7 @@ fn load_scene_dat_from_path(
         commands
             .entity(entity)
             .insert(Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH));
-        commands
-            .entity(entity)
-            .insert(LaserDamageAccum::default());
+        commands.entity(entity).insert(LaserDamageAccum::default());
         commands.entity(entity).insert(PlayerAnimator {
             phase: 0.0,
             last_translation: transform.translation,

@@ -18,15 +18,15 @@ use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, Me
 use crate::object::registry::ObjectLibrary;
 use crate::object::visuals;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
+use crate::rich_text::spawn_rich_text_line;
+use crate::scene_store::SceneSaveRequest;
 use crate::threaded_result::{
     new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
 };
-use crate::rich_text::spawn_rich_text_line;
-use crate::scene_store::SceneSaveRequest;
 use crate::types::{
-    BuildScene, CameraFocus, Collider, Commandable, EmojiAtlas, GameMode, Health,
-    LaserDamageAccum, ModelSpeechBubbleCommand, ModelSpeechSource, MoveOrder, ObjectForms,
-    ObjectId, ObjectPrefabId, ObjectTint, Player, PlayerAnimator, SelectionState, UiFonts,
+    BuildScene, CameraFocus, Collider, Commandable, EmojiAtlas, GameMode, Health, LaserDamageAccum,
+    ModelSpeechBubbleCommand, ModelSpeechSource, MoveOrder, ObjectForms, ObjectId, ObjectPrefabId,
+    ObjectTint, Player, PlayerAnimator, SelectionState, UiFonts,
 };
 
 const PANEL_Z_INDEX: i32 = 940;
@@ -1682,9 +1682,7 @@ pub(crate) fn meta_protagonist_ui_button_clicks(
         commands
             .entity(target)
             .insert(Health::new(PLAYER_MAX_HEALTH, PLAYER_MAX_HEALTH));
-        commands
-            .entity(target)
-            .insert(LaserDamageAccum::default());
+        commands.entity(target).insert(LaserDamageAccum::default());
         commands.entity(target).insert(PlayerAnimator {
             phase: 0.0,
             last_translation: transform.translation,

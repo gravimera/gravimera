@@ -22,6 +22,7 @@ mod edit_bundle;
 mod gemini;
 mod headless_prefab;
 mod job;
+mod motion_recenter;
 mod motion_validation;
 mod openai;
 mod orchestration;

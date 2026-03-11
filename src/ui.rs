@@ -8,8 +8,8 @@ use std::collections::HashSet;
 
 use crate::constants::*;
 use crate::object::registry::ObjectLibrary;
-use crate::types::*;
 use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
+use crate::types::*;
 
 const HEALTH_POPUP_TTL_SECS_ENEMY: f32 = 0.85;
 const HEALTH_POPUP_TTL_SECS_HERO: f32 = 1.05;
@@ -425,7 +425,10 @@ pub(crate) fn apply_model_speech_bubble_commands(
                                 ..default()
                             },
                             UiTransform {
-                                translation: Val2::px(-tail_inner_size.x * 0.5, tail_attach_top - 1.0),
+                                translation: Val2::px(
+                                    -tail_inner_size.x * 0.5,
+                                    tail_attach_top - 1.0,
+                                ),
                                 rotation: Rot2::radians(std::f32::consts::PI),
                                 ..default()
                             },
@@ -534,8 +537,8 @@ pub(crate) fn update_model_speech_bubbles(
         screen_pos += MODEL_SPEECH_BUBBLE_BASE_OFFSET_PX;
         // `world_to_viewport` returns logical pixels, while `ComputedNode::size` is physical pixels.
         // Convert size to logical units so centering math uses one coordinate space.
-        let bubble_size =
-            Vec2::new(computed.size.x.max(0.0), computed.size.y.max(0.0)) * computed.inverse_scale_factor;
+        let bubble_size = Vec2::new(computed.size.x.max(0.0), computed.size.y.max(0.0))
+            * computed.inverse_scale_factor;
         if bubble_size.x <= MODEL_SPEECH_BUBBLE_MIN_VALID_SIZE_PX
             || bubble_size.y <= MODEL_SPEECH_BUBBLE_MIN_VALID_SIZE_PX
         {

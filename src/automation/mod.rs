@@ -1986,12 +1986,14 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 Err(err) => return Some(json_error(400, err)),
             };
 
-            if let (Some(images), Some(prefab_thumbnail_capture)) = (images, prefab_thumbnail_capture)
+            if let (Some(images), Some(prefab_thumbnail_capture)) =
+                (images, prefab_thumbnail_capture)
             {
-                let thumbnail_path = crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
-                    active_realm_id,
-                    saved.prefab_id,
-                );
+                let thumbnail_path =
+                    crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
+                        active_realm_id,
+                        saved.prefab_id,
+                    );
                 if let Err(err) = crate::gen3d::gen3d_request_prefab_thumbnail_capture(
                     commands,
                     prefab_thumbnail_capture,

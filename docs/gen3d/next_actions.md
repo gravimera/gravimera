@@ -3,7 +3,7 @@
 This document records Gen3D process decisions and forward-looking next actions.
 It may describe behavior that is **not implemented yet**.
 
-Last updated: 2026-03-09
+Last updated: 2026-03-11
 
 ## Non‑negotiable constraints
 
@@ -30,6 +30,7 @@ Last updated: 2026-03-09
   - `render_preview_v1` + `llm_review_delta_v1` (optional appearance loop).
 - The engine respects agent `done` by default (except empty draft). Any unfinished QA/review/motion state is surfaced as warnings/status (no hidden auto-fixes).
 - “Stop” cancels in-flight work but preserves the session context, so the run can be resumed (“Continue”) without resetting the draft.
+- Motion repair tool: `recenter_attachment_motion_v1` is available for deterministic fixes of `joint_rest_bias_large` without changing motion (agent must call explicitly; no hidden post-process).
 
 ## Decision: respect `done` by default (Implemented)
 

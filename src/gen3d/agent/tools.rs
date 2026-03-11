@@ -15,6 +15,7 @@ pub(crate) const TOOL_ID_LIST_RUN_ARTIFACTS: &str = "list_run_artifacts_v1";
 pub(crate) const TOOL_ID_READ_ARTIFACT: &str = "read_artifact_v1";
 pub(crate) const TOOL_ID_SEARCH_ARTIFACTS: &str = "search_artifacts_v1";
 pub(crate) const TOOL_ID_APPLY_DRAFT_OPS: &str = "apply_draft_ops_v1";
+pub(crate) const TOOL_ID_RECENTER_ATTACHMENT_MOTION: &str = "recenter_attachment_motion_v1";
 pub(crate) const TOOL_ID_SNAPSHOT: &str = "snapshot_v1";
 pub(crate) const TOOL_ID_LIST_SNAPSHOTS: &str = "list_snapshots_v1";
 pub(crate) const TOOL_ID_DIFF_SNAPSHOTS: &str = "diff_snapshots_v1";
@@ -166,6 +167,14 @@ DraftOp =\n\
 Joint = { kind:\"fixed\"|\"hinge\"|\"ball\"|\"free\", axis_join?:[number,number,number], limits_degrees?:[number,number], swing_limits_degrees?:[number,number], twist_limits_degrees?:[number,number] }\n\
 TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,number,number], scale?:[number,number,number], forward?:[number,number,number], up?:[number,number,number] }",
                 args_example: serde_json::json!({"atomic":true,"ops":[{"kind":"set_attachment_joint","child_component":"wing_L","set_joint":{"kind":"hinge","axis_join":[1.0,0.0,0.0],"limits_degrees":[-60.0,60.0]}}]}),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_RECENTER_ATTACHMENT_MOTION,
+                title: "Recenter attachment motion",
+                one_line_summary: "Mutates draft: deterministically recenter attachment delta rotations around neutral (fixes joint_rest_bias_large without changing motion).",
+                args_schema:
+                    "{ version?: 1, child_components: (string|number)[], channels?: string[], target?: \"warn\"|\"error\", dry_run?: bool }",
+                args_example: serde_json::json!({ "child_components": ["leg_l_shin", "leg_r_shin"], "channels": ["idle","move"], "target": "warn" }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_SNAPSHOT,

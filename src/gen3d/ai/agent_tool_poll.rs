@@ -1927,33 +1927,35 @@ mod tests {
         job.planned_components = generated_flags
             .iter()
             .enumerate()
-            .map(|(idx, generated)| super::super::job::Gen3dPlannedComponent {
-                display_name: format!("{}. c{idx}", idx + 1),
-                name: format!("c{idx}"),
-                purpose: String::new(),
-                modeling_notes: String::new(),
-                pos: Vec3::ZERO,
-                rot: Quat::IDENTITY,
-                planned_size: Vec3::ONE,
-                actual_size: generated.then_some(Vec3::ONE),
-                anchors: vec![AnchorDef {
-                    name: "mount".into(),
-                    transform: Transform::IDENTITY,
-                }],
-                contacts: Vec::new(),
-                attach_to: if idx == 0 {
-                    None
-                } else {
-                    Some(super::super::job::Gen3dPlannedAttachment {
-                        parent: "c0".to_string(),
-                        parent_anchor: "mount".to_string(),
-                        child_anchor: "mount".to_string(),
-                        offset: Transform::IDENTITY,
-                        joint: None,
-                        animations: Vec::new(),
-                    })
+            .map(
+                |(idx, generated)| super::super::job::Gen3dPlannedComponent {
+                    display_name: format!("{}. c{idx}", idx + 1),
+                    name: format!("c{idx}"),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    pos: Vec3::ZERO,
+                    rot: Quat::IDENTITY,
+                    planned_size: Vec3::ONE,
+                    actual_size: generated.then_some(Vec3::ONE),
+                    anchors: vec![AnchorDef {
+                        name: "mount".into(),
+                        transform: Transform::IDENTITY,
+                    }],
+                    contacts: Vec::new(),
+                    attach_to: if idx == 0 {
+                        None
+                    } else {
+                        Some(super::super::job::Gen3dPlannedAttachment {
+                            parent: "c0".to_string(),
+                            parent_anchor: "mount".to_string(),
+                            child_anchor: "mount".to_string(),
+                            offset: Transform::IDENTITY,
+                            joint: None,
+                            animations: Vec::new(),
+                        })
+                    },
                 },
-            })
+            )
             .collect();
         job
     }

@@ -295,11 +295,7 @@ pub(crate) struct EmojiAtlas {
 }
 
 impl EmojiAtlas {
-    pub(crate) fn lookup(
-        &self,
-        emoji: &str,
-        asset_server: &AssetServer,
-    ) -> Option<Handle<Image>> {
+    pub(crate) fn lookup(&self, emoji: &str, asset_server: &AssetServer) -> Option<Handle<Image>> {
         let filename = twemoji_filename(emoji)?;
         Some(asset_server.load(format!("{}{}", self.base_path, filename)))
     }

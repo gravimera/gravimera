@@ -6,7 +6,8 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA, TOOL_ID_READ_ARTIFACT,
-    TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
+    TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use uuid::Uuid;
@@ -54,7 +55,9 @@ Rules:\n\
   - If the draft is a movable unit (mobility is ground/air) and `state_summary.motion_coverage.has_move` is false, call `llm_generate_motion_authoring_v1` before finishing.\n\
   - This tool authors explicit per-edge animation clips (idle/move/attack) baked into the prefab; the engine does not provide runtime motion algorithms.\n\
   - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if move slots already exist.\n\
-  - If `qa_v1` reports motion_validation errors that are primarily animation-delta problems (examples: `hinge_off_axis`, `hinge_limit_exceeded`, `time_offset_no_effect`, `joint_rest_bias_large`, `attack_self_intersection`), prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
+  - If `qa_v1` reports `joint_rest_bias_large`, prefer calling `recenter_attachment_motion_v1` on the offending child components/channels first; it is deterministic and preserves motion exactly by re-parameterizing offset vs delta.\n\
+    - If it returns applied=false or the issue persists, then call `llm_generate_motion_authoring_v1` to re-author the offending clips/channels.\n\
+  - If `qa_v1` reports motion_validation errors that are primarily animation-delta problems (examples: `hinge_off_axis`, `hinge_limit_exceeded`, `time_offset_no_effect`, `attack_self_intersection`), prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
   - If `qa_v1` reports `contact_stance_missing`, prefer `llm_review_delta_v1` to add/fix `contacts[].stance` (motion authoring cannot create stance metadata).\n\
   - If `qa_v1` reports `hinge_axis_missing` or `hinge_axis_invalid`, fix the joint axis (replan OR `apply_draft_ops_v1` set_attachment_joint) before motion authoring.\n\
   - If `qa_v1` reports `fixed_joint_rotates` on a joint you INTEND to rotate, update that edge's joint metadata (usually to `hinge` with a valid `axis_join`) so QA reflects the intended degrees-of-freedom.\n\
@@ -301,6 +304,27 @@ pub(super) fn build_agent_user_text(
                     if total > blocked.len() {
                         out.push_str(&format!(" regen_blocked_by_qa_total={total}"));
                     }
+                }
+            }
+            TOOL_ID_RECENTER_ATTACHMENT_MOTION => {
+                let applied_any = value.get("applied_any").and_then(|v| v.as_bool());
+                let children = value.get("children").and_then(|v| v.as_array());
+                let applied_children = children.map(|arr| {
+                    arr.iter()
+                        .filter(|child| {
+                            child.get("applied").and_then(|v| v.as_bool()) == Some(true)
+                        })
+                        .count()
+                });
+                out.push_str("ok");
+                if let Some(applied_any) = applied_any {
+                    out.push_str(&format!(" applied_any={applied_any}"));
+                }
+                if let Some(applied_children) = applied_children {
+                    out.push_str(&format!(" applied_children={applied_children}"));
+                }
+                if let Some(children) = children {
+                    out.push_str(&format!(" children={}", children.len()));
                 }
             }
             TOOL_ID_RENDER_PREVIEW => {

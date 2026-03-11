@@ -32,8 +32,7 @@ fn split_text_for_rich_ui(
 
     for grapheme in text.graphemes(true) {
         let stripped = grapheme.replace('\u{fe0f}', "");
-        let is_emoji =
-            emojis::get(grapheme).is_some() || emojis::get(stripped.as_str()).is_some();
+        let is_emoji = emojis::get(grapheme).is_some() || emojis::get(stripped.as_str()).is_some();
         if is_emoji {
             if let Some(emoji_handle) = emoji_atlas.lookup(grapheme, asset_server) {
                 if !pending_text.is_empty() {
