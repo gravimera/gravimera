@@ -329,33 +329,95 @@ fn bounds_of_object(
     bounds
 }
 
-fn bounds_of_primitive_parts_only(def: &ObjectDef) -> Bounds {
-    let mut bounds = Bounds::empty();
-    for part in def.parts.iter() {
-        let ObjectPartKind::Primitive { primitive } = &part.kind else {
-            continue;
-        };
-        let (mesh, params) = match primitive {
-            PrimitiveVisualDef::Primitive { mesh, params, .. } => (*mesh, params.as_ref()),
-            PrimitiveVisualDef::Mesh { mesh, material } => {
-                let _ = material;
-                (*mesh, None)
-            }
-        };
-
-        let base = primitive_base_size(mesh, params);
-        let local_half = (base * part.transform.scale).abs() * 0.5;
-        let center = part.transform.translation;
-        let rot = part.transform.rotation;
-        if !center.is_finite() || !local_half.is_finite() || !rot.is_finite() {
-            continue;
-        }
-
-        let abs = Mat3::from_quat(rot).abs();
-        let ext = abs * local_half;
-        bounds.include_point(center - ext);
-        bounds.include_point(center + ext);
+fn bounds_of_object_rest_pose(
+    object_id: u128,
+    defs: &std::collections::HashMap<u128, ObjectDef>,
+    stack: &mut Vec<u128>,
+    memo: &mut std::collections::HashMap<u128, Bounds>,
+) -> Bounds {
+    if let Some(cached) = memo.get(&object_id) {
+        return *cached;
     }
+    if stack.contains(&object_id) {
+        return Bounds::empty();
+    }
+    let Some(def) = defs.get(&object_id) else {
+        return Bounds::empty();
+    };
+
+    stack.push(object_id);
+    let mut bounds = Bounds::empty();
+
+    for part in def.parts.iter() {
+        match &part.kind {
+            ObjectPartKind::Primitive { primitive } => {
+                let (mesh, params) = match primitive {
+                    PrimitiveVisualDef::Primitive { mesh, params, .. } => (*mesh, params.as_ref()),
+                    PrimitiveVisualDef::Mesh { mesh, material } => {
+                        let _ = material;
+                        (*mesh, None)
+                    }
+                };
+
+                let base = primitive_base_size(mesh, params);
+                let local_half = (base * part.transform.scale).abs() * 0.5;
+                let center = part.transform.translation;
+                let rot = part.transform.rotation;
+                if !center.is_finite() || !local_half.is_finite() || !rot.is_finite() {
+                    continue;
+                }
+
+                let abs = Mat3::from_quat(rot).abs();
+                let ext = abs * local_half;
+                bounds.include_point(center - ext);
+                bounds.include_point(center + ext);
+            }
+            ObjectPartKind::ObjectRef { object_id: child } => {
+                let child_bounds = bounds_of_object_rest_pose(*child, defs, stack, memo);
+                if child_bounds.is_empty() {
+                    continue;
+                }
+
+                let child_mat = if let Some(attachment) = part.attachment.as_ref() {
+                    let parent_anchor = anchor_transform(def, attachment.parent_anchor.as_ref())
+                        .unwrap_or(Transform::IDENTITY);
+                    let child_anchor = defs
+                        .get(child)
+                        .and_then(|child_def| {
+                            anchor_transform(child_def, attachment.child_anchor.as_ref())
+                        })
+                        .unwrap_or(Transform::IDENTITY);
+
+                    parent_anchor.to_matrix()
+                        * part.transform.to_matrix()
+                        * child_anchor.to_matrix().inverse()
+                } else {
+                    part.transform.to_matrix()
+                };
+
+                let corners = [
+                    Vec3::new(child_bounds.min.x, child_bounds.min.y, child_bounds.min.z),
+                    Vec3::new(child_bounds.min.x, child_bounds.min.y, child_bounds.max.z),
+                    Vec3::new(child_bounds.min.x, child_bounds.max.y, child_bounds.min.z),
+                    Vec3::new(child_bounds.min.x, child_bounds.max.y, child_bounds.max.z),
+                    Vec3::new(child_bounds.max.x, child_bounds.min.y, child_bounds.min.z),
+                    Vec3::new(child_bounds.max.x, child_bounds.min.y, child_bounds.max.z),
+                    Vec3::new(child_bounds.max.x, child_bounds.max.y, child_bounds.min.z),
+                    Vec3::new(child_bounds.max.x, child_bounds.max.y, child_bounds.max.z),
+                ];
+
+                let mut transformed = Bounds::empty();
+                for corner in corners {
+                    transformed.include_point(child_mat.transform_point3(corner));
+                }
+                bounds.include_bounds(transformed);
+            }
+            ObjectPartKind::Model { .. } => {}
+        };
+    }
+
+    stack.pop();
+    memo.insert(object_id, bounds);
     bounds
 }
 
@@ -557,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn draft_to_saved_defs_preserves_root_unit_collider_profile() {
+    fn draft_to_saved_defs_expands_root_unit_circle_collider_to_fit_rest_pose_bounds() {
         use crate::object::registry::MobilityDef;
         use crate::object::registry::ObjectPartDef;
 
@@ -659,7 +721,8 @@ mod tests {
             .expect("saved root present");
         match saved_root.collider {
             ColliderProfile::CircleXZ { radius } => {
-                assert!((radius - 0.65).abs() < 1e-6, "radius={radius}");
+                let expected = Vec2::splat(0.65).length();
+                assert!((radius - expected).abs() < 1e-6, "radius={radius}");
             }
             other => panic!("expected CircleXZ collider, got {other:?}"),
         }
@@ -863,7 +926,7 @@ mod tests {
             .ground_origin_y
             .expect("expected ground_origin_y for unit root");
         assert!(
-            (ground_origin_y - 0.2).abs() < 1e-6,
+            (ground_origin_y - 0.1).abs() < 1e-6,
             "ground_origin_y={ground_origin_y}"
         );
     }
@@ -964,8 +1027,130 @@ mod tests {
             .ground_origin_y
             .expect("expected ground_origin_y for unit root");
         assert!(
-            (ground_origin_y - 0.25).abs() < 1e-6,
+            (ground_origin_y - 0.15).abs() < 1e-6,
             "ground_origin_y={ground_origin_y}"
+        );
+    }
+
+    #[test]
+    fn draft_to_saved_defs_unit_recenters_to_rest_pose_bounds_center_and_expands_collider() {
+        use crate::object::registry::{MobilityDef, ObjectPartDef};
+
+        let root_id = super::super::gen3d_draft_object_id();
+        let tail_id = 0x30u128;
+        let body_id = 0x31u128;
+
+        let body_def = ObjectDef {
+            object_id: body_id,
+            label: "body".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(1.0, 1.0, 1.0),
+                    unlit: false,
+                },
+                Transform::IDENTITY.with_scale(Vec3::splat(2.0)),
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let tail_def = ObjectDef {
+            object_id: tail_id,
+            label: "tail".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![
+                ObjectPartDef::primitive(
+                    PrimitiveVisualDef::Primitive {
+                        mesh: MeshKey::UnitCube,
+                        params: None,
+                        color: Color::srgb(1.0, 1.0, 1.0),
+                        unlit: false,
+                    },
+                    Transform::IDENTITY,
+                ),
+                ObjectPartDef::object_ref(
+                    body_id,
+                    Transform::from_translation(Vec3::new(0.0, 0.0, 10.0)),
+                ),
+            ],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let root_def = ObjectDef {
+            object_id: root_id,
+            label: "gen3d_draft".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::AabbXZ {
+                half_extents: Vec2::splat(0.5),
+            },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::object_ref(tail_id, Transform::IDENTITY)],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let draft = Gen3dDraft {
+            defs: vec![root_def, tail_def, body_def],
+        };
+
+        let (saved_root_id, saved_defs) =
+            draft_to_saved_defs(&draft, false, None, None).expect("save ok");
+        let saved_root = saved_defs
+            .iter()
+            .find(|def| def.object_id == saved_root_id)
+            .expect("saved root present");
+
+        // Rest-pose bounds: tail cube (-0.5..0.5) and body cube at z=10 with scale 2 => z=9..11.
+        // Center z is (min=-0.5 + max=11.0)/2 = 5.25, so the root's part is shifted by -5.25.
+        let root_part_z = saved_root.parts[0].transform.translation.z;
+        assert!(
+            (root_part_z + 5.25).abs() < 1e-3,
+            "root_part_z={root_part_z}"
+        );
+
+        // Collider should expand to fit the full rest-pose bounds around the new pivot.
+        let ColliderProfile::AabbXZ { half_extents } = saved_root.collider else {
+            panic!("expected AabbXZ collider");
+        };
+        assert!(
+            half_extents.y >= 5.75 - 1e-3,
+            "expected half_extents.z>=5.75, got {}",
+            half_extents.y
         );
     }
 }
@@ -981,6 +1166,7 @@ pub(super) fn draft_to_saved_defs(
         return Err("Gen3D: missing root draft object def.".into());
     };
     let root_is_unit = root_def.mobility.is_some();
+    let root_is_build = !root_is_unit;
 
     let mut defs_map: std::collections::HashMap<u128, ObjectDef> = draft
         .defs
@@ -1014,37 +1200,41 @@ pub(super) fn draft_to_saved_defs(
     let root_size_override =
         (!root_bounds.is_empty()).then(|| root_bounds.size().abs().max(Vec3::splat(0.01)));
 
+    let mut memo_rest = std::collections::HashMap::<u128, Bounds>::new();
+    let mut stack_rest = Vec::new();
+    let root_bounds_rest =
+        bounds_of_object_rest_pose(root_id, &defs_map, &mut stack_rest, &mut memo_rest);
+
     let mut recenter = Vec3::ZERO;
     let mut root_ground_origin_y = None;
     if root_is_unit {
-        let root_ref = root_def.parts.iter().find_map(|part| match &part.kind {
-            ObjectPartKind::ObjectRef { object_id } => Some((part, *object_id)),
-            _ => None,
-        });
-
-        if let Some((root_ref, root_component_id)) = root_ref {
-            if let Some(root_component_def) = defs_map.get(&root_component_id) {
-                let bounds = bounds_of_primitive_parts_only(root_component_def);
-                if !bounds.is_empty() {
-                    let torso_center_local = bounds.center();
-                    recenter = root_ref
-                        .transform
-                        .to_matrix()
-                        .transform_point3(torso_center_local);
-                }
-            }
+        if !root_bounds_rest.is_empty() {
+            // Units should have a stable pivot near the assembled geometry center (rest pose),
+            // even if the plan's component tree is rooted at a non-central link (e.g. tails/chains).
+            recenter = root_bounds_rest.center();
         }
 
         if let Some(min_contact_y) = min_ground_contact_y_in_root.filter(|y| y.is_finite()) {
             root_ground_origin_y = Some((recenter.y - min_contact_y).max(0.0));
-        } else if !root_bounds.is_empty() {
-            // After applying `recenter`, the new bounds are `root_bounds - recenter`, so:
+        } else if !root_bounds_rest.is_empty() {
+            // After applying `recenter`, the new bounds are `root_bounds_rest - recenter`, so:
             // `ground_origin_y = -min.y`.
-            root_ground_origin_y = Some((recenter.y - root_bounds.min.y).max(0.0));
+            root_ground_origin_y = Some((recenter.y - root_bounds_rest.min.y).max(0.0));
         }
-    } else if !root_bounds.is_empty() {
+    } else if root_is_build && !root_bounds.is_empty() {
         recenter = root_bounds.center();
     }
+
+    let root_unit_fit_half_xz = if root_is_unit && !root_bounds_rest.is_empty() {
+        let min = root_bounds_rest.min - recenter;
+        let max = root_bounds_rest.max - recenter;
+        Some(Vec2::new(
+            min.x.abs().max(max.x.abs()).max(0.01),
+            min.z.abs().max(max.z.abs()).max(0.01),
+        ))
+    } else {
+        None
+    };
 
     let mut id_map = std::collections::HashMap::<u128, u128>::new();
     for def in &draft.defs {
@@ -1078,6 +1268,20 @@ pub(super) fn draft_to_saved_defs(
             if root_is_unit {
                 if let Some(ground_origin_y) = root_ground_origin_y {
                     new_def.ground_origin_y = Some(ground_origin_y);
+                }
+                if let Some(half_xz) = root_unit_fit_half_xz {
+                    new_def.collider = match new_def.collider {
+                        ColliderProfile::None => ColliderProfile::None,
+                        ColliderProfile::CircleXZ { radius } => ColliderProfile::CircleXZ {
+                            radius: radius.max(half_xz.length()).max(0.01),
+                        },
+                        ColliderProfile::AabbXZ { half_extents } => ColliderProfile::AabbXZ {
+                            half_extents: Vec2::new(
+                                half_extents.x.max(half_xz.x).max(0.01),
+                                half_extents.y.max(half_xz.y).max(0.01),
+                            ),
+                        },
+                    };
                 }
             } else if let Some(size) = root_size_override {
                 new_def.collider = match new_def.collider {
