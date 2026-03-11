@@ -399,50 +399,59 @@ pub(super) fn poll_agent_tool(
                                                 Some(format!(
                                                     "llm_generate_plan_v1 preserve_existing_components=true requires the plan to include ALL existing component names. Missing: {missing:?}"
                                                 ))
-                                            } else if let Some(old_root_name) = old_root_name.as_ref()
-                                            {
-                                                let new_root_name = planned
-                                                    .iter()
-                                                    .find(|c| c.attach_to.is_none())
-                                                    .map(|c| c.name.as_str())
-                                                    .unwrap_or("");
-                                                (new_root_name != old_root_name.as_str()).then(|| {
-                                                    format!(
-                                                        "llm_generate_plan_v1 preserve_existing_components=true must keep the same root component. Old root=`{}`, new root=`{}`",
-                                                        old_root_name, new_root_name
-                                                    )
-                                                })
                                             } else {
-                                                let violations = super::preserve_plan_policy::validate_preserve_mode_plan_diff(
-                                                    &old_components,
-                                                    &planned,
-                                                    preserve_edit_policy,
-                                                    &rewire_components,
-                                                );
-                                                if violations.is_empty() {
-                                                    None
+                                                let root_error = if let Some(old_root_name) =
+                                                    old_root_name.as_ref()
+                                                {
+                                                    let new_root_name = planned
+                                                        .iter()
+                                                        .find(|c| c.attach_to.is_none())
+                                                        .map(|c| c.name.as_str())
+                                                        .unwrap_or("");
+                                                    (new_root_name != old_root_name.as_str())
+                                                        .then(|| {
+                                                            format!(
+                                                                "llm_generate_plan_v1 preserve_existing_components=true must keep the same root component. Old root=`{}`, new root=`{}`",
+                                                                old_root_name, new_root_name
+                                                            )
+                                                        })
                                                 } else {
-                                                    let mut lines: Vec<String> = Vec::new();
-                                                    lines.push(format!(
-                                                        "llm_generate_plan_v1 preserve_existing_components=true edit_policy={} rejected plan diff:",
-                                                        preserve_edit_policy.as_str()
-                                                    ));
-                                                    for v in violations.iter().take(24) {
-                                                        lines.push(format!(
-                                                            "- component={} kind={:?} field={} old={} new={}",
-                                                            v.component, v.kind, v.field, v.old, v.new
-                                                        ));
-                                                    }
-                                                    if violations.len() > 24 {
-                                                        lines.push(format!(
-                                                            "- … ({} more)",
-                                                            violations.len().saturating_sub(24)
-                                                        ));
-                                                    }
-                                                    lines.push(
-                                                        "Hint: Use `apply_draft_ops_v1` to adjust offsets/parts, or re-run `llm_generate_plan_v1` with a broader preserve_edit_policy (and explicit rewire_components for allow_rewire), or disable preserve mode for a full rebuild.".into(),
+                                                    None
+                                                };
+                                                if let Some(err) = root_error {
+                                                    Some(err)
+                                                } else {
+                                                    let violations = super::preserve_plan_policy::validate_preserve_mode_plan_diff(
+                                                        &old_components,
+                                                        &planned,
+                                                        preserve_edit_policy,
+                                                        &rewire_components,
                                                     );
-                                                    Some(lines.join("\n"))
+                                                    if violations.is_empty() {
+                                                        None
+                                                    } else {
+                                                        let mut lines: Vec<String> = Vec::new();
+                                                        lines.push(format!(
+                                                            "llm_generate_plan_v1 preserve_existing_components=true edit_policy={} rejected plan diff:",
+                                                            preserve_edit_policy.as_str()
+                                                        ));
+                                                        for v in violations.iter().take(24) {
+                                                            lines.push(format!(
+                                                                "- component={} kind={:?} field={} old={} new={}",
+                                                                v.component, v.kind, v.field, v.old, v.new
+                                                            ));
+                                                        }
+                                                        if violations.len() > 24 {
+                                                            lines.push(format!(
+                                                                "- … ({} more)",
+                                                                violations.len().saturating_sub(24)
+                                                            ));
+                                                        }
+                                                        lines.push(
+                                                            "Hint: Use `apply_draft_ops_v1` to adjust offsets/parts, or re-run `llm_generate_plan_v1` with a broader preserve_edit_policy (and explicit rewire_components for allow_rewire), or disable preserve mode for a full rebuild.".into(),
+                                                        );
+                                                        Some(lines.join("\n"))
+                                                    }
                                                 }
                                             }
                                         }
@@ -787,19 +796,25 @@ pub(super) fn poll_agent_tool(
                                 }
                             }
                         }
-                        Err(err) => {
-                            job.pending_plan_attempt = None;
-                            match (job.ai.clone(), job.pass_dir.clone()) {
-                            (Some(ai), Some(pass_dir)) => {
-                                let system = super::prompts::build_gen3d_plan_system_instructions();
-                                let prompt_override =
-                                    call.args.get("prompt").and_then(|v| v.as_str());
-                                let style_hint = call.args.get("style").and_then(|v| v.as_str());
-                                let mut required_component_names: Vec<String> = call
-                                    .args
-                                    .get("components")
-                                    .and_then(|v| v.as_array())
-                                    .map(|arr| {
+	                        Err(err) => {
+	                            job.pending_plan_attempt = None;
+	                            match (job.ai.clone(), job.pass_dir.clone()) {
+	                            (Some(ai), Some(pass_dir)) => {
+	                                let system = super::prompts::build_gen3d_plan_system_instructions();
+	                                let prompt_override =
+	                                    call.args.get("prompt").and_then(|v| v.as_str());
+	                                let style_hint = call.args.get("style").and_then(|v| v.as_str());
+	                                let plan_template_artifact_ref = call
+	                                    .args
+	                                    .get("plan_template_artifact_ref")
+	                                    .and_then(|v| v.as_str())
+	                                    .map(|s| s.trim().to_string())
+	                                    .filter(|s| !s.is_empty());
+	                                let mut required_component_names: Vec<String> = call
+	                                    .args
+	                                    .get("components")
+	                                    .and_then(|v| v.as_array())
+	                                    .map(|arr| {
                                         arr.iter()
                                             .filter_map(|v| v.as_str())
                                             .map(|s| s.trim().to_string())
@@ -815,23 +830,71 @@ pub(super) fn poll_agent_tool(
                                     );
                                 }
 
-                                let prompt_text = prompt_override
-                                    .map(|s| s.trim())
-                                    .filter(|s| !s.is_empty())
-                                    .unwrap_or(job.user_prompt_raw.as_str());
-                                let user_text =
-                                    super::prompts::build_gen3d_plan_user_text_with_hints(
-                                        prompt_text,
-                                        !job.user_images.is_empty(),
-                                        workshop.speed_mode,
-                                        style_hint,
-                                        &required_component_names,
-                                    );
+	                                let prompt_text = prompt_override
+	                                    .map(|s| s.trim())
+	                                    .filter(|s| !s.is_empty())
+	                                    .unwrap_or(job.user_prompt_raw.as_str());
+	                                let preserve_edit_policy = preserve_edit_policy_raw
+	                                    .map(|s| s.trim())
+	                                    .filter(|s| !s.is_empty())
+	                                    .unwrap_or("additive");
 
-                                if schedule_llm_tool_schema_repair(
-                                    job,
-                                    workshop,
-                                    &call,
+	                                let plan_template_json: Option<serde_json::Value> =
+	                                    if let Some(template_ref) =
+	                                        plan_template_artifact_ref.as_deref()
+	                                    {
+	                                        job.run_dir
+	                                            .as_deref()
+	                                            .and_then(|run_dir| {
+	                                                super::artifacts::read_artifact_v1(
+	                                                    run_dir,
+	                                                    template_ref,
+	                                                    64 * 1024,
+	                                                    None,
+	                                                    None,
+	                                                )
+	                                                .ok()
+	                                            })
+	                                            .and_then(|v| {
+	                                                let truncated = v
+	                                                    .get("truncated")
+	                                                    .and_then(|v| v.as_bool())
+	                                                    .unwrap_or(false);
+	                                                (!truncated).then(|| v.get("json").cloned())
+	                                            })
+	                                            .flatten()
+	                                    } else {
+	                                        None
+	                                    };
+
+	                                let user_text = if preserve_existing_components
+	                                    && !job.planned_components.is_empty()
+	                                {
+	                                    super::prompts::build_gen3d_plan_user_text_preserve_existing_components(
+	                                        prompt_text,
+	                                        !job.user_images.is_empty(),
+	                                        workshop.speed_mode,
+	                                        style_hint,
+	                                        &job.planned_components,
+	                                        &job.assembly_notes,
+	                                        preserve_edit_policy,
+	                                        &rewire_components,
+	                                        plan_template_json.as_ref(),
+	                                    )
+	                                } else {
+	                                    super::prompts::build_gen3d_plan_user_text_with_hints(
+	                                        prompt_text,
+	                                        !job.user_images.is_empty(),
+	                                        workshop.speed_mode,
+	                                        style_hint,
+	                                        &required_component_names,
+	                                    )
+	                                };
+
+	                                if schedule_llm_tool_schema_repair(
+	                                    job,
+	                                    workshop,
+	                                    &call,
                                     kind,
                                     ai,
                                     &config.gen3d_reasoning_effort_repair,

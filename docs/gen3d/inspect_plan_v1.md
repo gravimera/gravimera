@@ -9,6 +9,7 @@ It is designed to reduce thrash where the agent repeatedly calls `get_scene_grap
 Call `inspect_plan_v1` immediately after `llm_generate_plan_v1` returns an error that looks like a **semantic** plan failure, for example:
 
 - unknown/missing `attach_to.parent` component names,
+- missing `attach_to.parent_anchor` / `attach_to.child_anchor` anchors (anchors referenced by attachments but not present in the plan’s `anchors[]` for that component),
 - preserve-mode requirements (missing existing component names, root changed),
 - root ambiguity (multiple components with no `attach_to`, or invalid `root_component`).
 
@@ -30,11 +31,10 @@ The tool returns a JSON object with these top-level fields:
 Notes:
 
 - `inspect_plan_v1` does **not** mutate the draft or apply any repair.
-- It does **not** guess intent or “auto-map” names. If the plan references a parent name that does not exist, it reports that fact and provides the allowed name set.
+- It does **not** “auto-map” names. For `unknown_parent`, it may include a small `suggestions[]` list derived from existing component names (token/substring match), but you must still edit/replan explicitly.
 
 ## Recommended follow-ups
 
 - If the error is preserve-mode “missing names/root”: call `get_plan_template_v1`, then re-run `llm_generate_plan_v1` with `plan_template_artifact_ref`.
 - If the error is “unknown parent”: fix the plan to use an existing component name exactly (case-sensitive); consider using the template as a starting point.
 - If the error is a preserve edit-policy violation: either broaden `constraints.preserve_edit_policy`, use `apply_draft_ops_v1`, or disable preserve mode for a full rebuild.
-

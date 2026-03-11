@@ -38,6 +38,8 @@ When preserve-mode replanning fails, prefer deterministic “hints/tools” that
   - `get_plan_template_v1` (read-only) to write a plan JSON template artifact, then
   - re-run `llm_generate_plan_v1` with `plan_template_artifact_ref` set to that artifact ref.
 
+Note: if the model output is invalid JSON or fails the plan JSON schema, the engine may attempt an automatic “schema repair” retry of `llm_generate_plan_v1`. In preserve mode, this retry includes the same preserve-mode constraints/context (and the template, if provided) so it does not accidentally “forget” existing component names.
+
 Related docs:
 
 - `docs/gen3d/inspect_plan_v1.md`

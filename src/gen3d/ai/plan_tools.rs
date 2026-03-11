@@ -33,6 +33,63 @@ fn component_name_for_object_id<'a>(
         .map(|c| c.name.as_str())
 }
 
+fn normalize_name_tokens(raw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut buf = String::new();
+    for ch in raw.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            buf.push(ch.to_ascii_lowercase());
+        } else {
+            if buf.len() >= 2 {
+                out.push(buf.clone());
+            }
+            buf.clear();
+        }
+    }
+    if buf.len() >= 2 {
+        out.push(buf);
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn suggest_existing_component_names(unknown: &str, existing_names: &[String]) -> Vec<String> {
+    let unknown = unknown.trim();
+    if unknown.is_empty() {
+        return Vec::new();
+    }
+    let unknown_lc = unknown.to_ascii_lowercase();
+    let unknown_tokens = normalize_name_tokens(unknown);
+
+    let mut token_matches: Vec<String> = Vec::new();
+    let mut substring_matches: Vec<String> = Vec::new();
+    for name in existing_names.iter() {
+        let candidate = name.trim();
+        if candidate.is_empty() {
+            continue;
+        }
+        let candidate_lc = candidate.to_ascii_lowercase();
+        if unknown_tokens.iter().any(|t| t == &candidate_lc) {
+            token_matches.push(candidate.to_string());
+            continue;
+        }
+        if candidate_lc.len() >= 3 && unknown_lc.contains(&candidate_lc) {
+            substring_matches.push(candidate.to_string());
+        }
+    }
+    token_matches.sort();
+    token_matches.dedup();
+    substring_matches.sort();
+    substring_matches.dedup();
+
+    let mut out = token_matches;
+    out.extend(substring_matches);
+    out.dedup();
+    out.truncate(5);
+    out
+}
+
 fn build_ai_mobility_json(root_def: Option<&ObjectDef>) -> serde_json::Value {
     let Some(root_def) = root_def else {
         return serde_json::json!({ "kind": "static" });
@@ -518,6 +575,17 @@ pub(super) fn inspect_pending_plan_attempt_v1(
         }));
     }
 
+    let plan_component_by_name: std::collections::HashMap<&str, &super::schema::AiPlanComponentJson> =
+        pending
+            .plan
+            .components
+            .iter()
+            .filter_map(|c| {
+                let name = c.name.trim();
+                (!name.is_empty()).then_some((name, c))
+            })
+            .collect();
+
     // Root selection should match convert.rs: root_component if provided, else exactly 1 component with attach_to omitted.
     let root_from_field = pending
         .plan
@@ -569,10 +637,76 @@ pub(super) fn inspect_pending_plan_attempt_v1(
             continue;
         }
         if !plan_name_set.contains(parent) {
+            let suggestions = suggest_existing_component_names(parent, &existing_names);
             errors.push(serde_json::json!({
                 "kind": "unknown_parent",
                 "component": comp.name.trim(),
                 "parent": parent,
+                "suggestions": suggestions,
+            }));
+        }
+    }
+
+    for comp in pending.plan.components.iter() {
+        let Some(att) = comp.attach_to.as_ref() else {
+            continue;
+        };
+        let child_anchor = att.child_anchor.trim();
+        if !(child_anchor.is_empty() || child_anchor == "origin") {
+            let anchors: std::collections::HashSet<&str> = comp
+                .anchors
+                .iter()
+                .map(|a| a.name.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !anchors.contains(child_anchor) {
+                let available: Vec<String> = comp
+                    .anchors
+                    .iter()
+                    .map(|a| a.name.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .take(24)
+                    .collect();
+                errors.push(serde_json::json!({
+                    "kind": "missing_child_anchor",
+                    "component": comp.name.trim(),
+                    "child_anchor": child_anchor,
+                    "available_anchors": available,
+                }));
+            }
+        }
+
+        let parent = att.parent.trim();
+        if parent.is_empty() || !plan_name_set.contains(parent) {
+            continue;
+        }
+        let parent_anchor = att.parent_anchor.trim();
+        if parent_anchor.is_empty() || parent_anchor == "origin" {
+            continue;
+        }
+        let Some(parent_comp) = plan_component_by_name.get(parent).copied() else {
+            continue;
+        };
+        let parent_anchors: std::collections::HashSet<&str> = parent_comp
+            .anchors
+            .iter()
+            .map(|a| a.name.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !parent_anchors.contains(parent_anchor) {
+            let available: Vec<String> = parent_comp
+                .anchors
+                .iter()
+                .map(|a| a.name.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .take(24)
+                .collect();
+            errors.push(serde_json::json!({
+                "kind": "missing_parent_anchor",
+                "component": comp.name.trim(),
+                "parent": parent,
+                "parent_anchor": parent_anchor,
+                "available_parent_anchors": available,
             }));
         }
     }
@@ -633,6 +767,7 @@ pub(super) fn inspect_pending_plan_attempt_v1(
             "hints": [
                 "Component/parent names must match EXACTLY (case-sensitive).",
                 "In preserve mode: include ALL existing component names and keep the same root component.",
+                "Attachment anchors must exist: child_anchor/parent_anchor may be `origin` (implicit) or a named anchor listed under that component. If anchors are missing in preserve mode, prefer get_plan_template_v1 so existing anchors are included.",
                 "If you need a safe starting point: run get_plan_template_v1, then pass llm_generate_plan_v1.plan_template_artifact_ref."
             ],
         }
@@ -733,7 +868,81 @@ mod tests {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        assert!(errors.iter().any(|e| e.get("kind").and_then(|v| v.as_str()) == Some("unknown_parent")));
+        let unknown_parent = errors
+            .iter()
+            .find(|e| e.get("kind").and_then(|v| v.as_str()) == Some("unknown_parent"))
+            .cloned()
+            .expect("missing unknown_parent error");
+        let suggestions: Vec<String> = unknown_parent
+            .get("suggestions")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(suggestions.contains(&"neck".to_string()));
+    }
+
+    #[test]
+    fn inspect_detects_missing_parent_and_child_anchors() {
+        let existing = vec![dummy_component("body", None), dummy_component("neck", Some("body"))];
+        let plan = dummy_plan(
+            vec![
+                AiPlanComponentJson {
+                    name: "body".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [1.0, 1.0, 1.0],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: None,
+                },
+                AiPlanComponentJson {
+                    name: "neck".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [1.0, 1.0, 1.0],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: Some(AiPlanAttachmentJson {
+                        parent: "body".into(),
+                        parent_anchor: "neck_mount".into(),
+                        child_anchor: "body_socket".into(),
+                        offset: None,
+                        joint: None,
+                    }),
+                },
+            ],
+            Some("body"),
+        );
+
+        let pending = Gen3dPendingPlanAttempt {
+            call_id: "call_3".into(),
+            error: "anchors missing".into(),
+            preserve_existing_components: true,
+            preserve_edit_policy: Some("additive".into()),
+            rewire_components: Vec::new(),
+            existing_component_names: vec!["body".into(), "neck".into()],
+            existing_root_component: Some("body".into()),
+            plan,
+        };
+
+        let report = inspect_pending_plan_attempt_v1(Some(&pending), &existing, true);
+        let errors = report
+            .get("analysis")
+            .and_then(|v| v.get("errors"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(errors
+            .iter()
+            .any(|e| e.get("kind").and_then(|v| v.as_str()) == Some("missing_child_anchor")));
+        assert!(errors
+            .iter()
+            .any(|e| e.get("kind").and_then(|v| v.as_str()) == Some("missing_parent_anchor")));
     }
 
     #[test]
@@ -796,4 +1005,3 @@ mod tests {
         assert!(errors.iter().any(|e| e.get("kind").and_then(|v| v.as_str()) == Some("preserve_root_changed")));
     }
 }
-
