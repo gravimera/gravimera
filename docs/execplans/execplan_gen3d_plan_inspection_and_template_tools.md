@@ -28,7 +28,7 @@ User-visible outcome: preserve-mode runs converge more reliably with fewer LLM c
 - [x] (2026-03-12 04:11Z) Add unit tests for inspection/template logic (no network dependency).
 - [x] (2026-03-12 04:11Z) Update docs under `docs/gen3d/` to describe new tools and recommended flows.
 - [x] (2026-03-12 04:13Z) Run `cargo test` and the required rendered smoke test.
-- [ ] Commit.
+- [x] (2026-03-12 04:15Z) Commit.
 
 ## Surprises & Discoveries
 
@@ -46,7 +46,7 @@ User-visible outcome: preserve-mode runs converge more reliably with fewer LLM c
 
 ## Outcomes & Retrospective
 
-- (not started) This section will be updated after implementation lands.
+- (2026-03-12) Added two read-only tools (`inspect_plan_v1`, `get_plan_template_v1`) and wired them into prompts/docs, while preventing schema-repair retries from triggering on semantic plan conversion failures. Preserve-mode runs now get deterministic hints/templates instead of repeated auto-LLM retries.
 
 ## Context and Orientation
 
