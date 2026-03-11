@@ -1476,6 +1476,11 @@ pub(crate) fn model_library_open_preview_panel(
                 .with_children(|panel| {
                     panel.spawn((
                         Text::new(meta),
+                        Node {
+                            width: Val::Percent(100.0),
+                            align_self: AlignSelf::FlexStart,
+                            ..default()
+                        },
                         TextFont {
                             font_size: 14.0,
                             ..default()
