@@ -7,6 +7,7 @@ Note:
 5. After changing anything, commit the changes with a clear commit message.
 6. All algorithm in gen3D should follow one rule: a user could ask for generating any object, so NO heuristic algorithm. Only generic algorithms are allowed.
 7. We don't need to guarantee backwards compatibility for now.
+8. For gen3d agent, we prefer tools which provide clear suggestions and diffs, avoid changes silently without AI confirm. And after added / updates tools, review carefully to avoid mismatches between prompts.
 
 # Design & Specs (Source of Truth)
 
