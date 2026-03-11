@@ -675,6 +675,13 @@ mod tests {
         assert!(prompt.contains("planned_size=[1.000,2.000,3.000]"));
         assert!(prompt.contains("actual_size=[4.000,5.000,6.000]"));
     }
+
+    #[test]
+    fn gen3d_plan_system_instructions_disallow_component_level_joint_field() {
+        let text = build_gen3d_plan_system_instructions();
+        assert!(text.contains("`joint` is ONLY allowed inside `attach_to`"));
+        assert!(text.contains("Do NOT output a component-level field named \"joint\""));
+    }
 }
 
 pub(super) fn build_gen3d_plan_system_instructions() -> String {
@@ -760,6 +767,8 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
           Motion metadata (optional; recommended for movable objects):\n\
           - Use `attach_to.joint` to declare articulation (`fixed`/`hinge`/`ball`/`free`).\n\
             - Joint axes/limits are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
+          - IMPORTANT: `joint` is ONLY allowed inside `attach_to` as `attach_to.joint`.\n\
+            - Do NOT output a component-level field named \"joint\".\n\
           - Use `contacts[]` to declare ground contacts (feet/hooves) by referencing one of the component's anchors.\n\
             - For planted contacts, include `contacts[].stance`:\n\
               - `phase_01`: start phase in [0,1).\n\
@@ -833,6 +842,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - Use units roughly in meters; keep scale consistent.\n\
          - Each component should be a coherent structural sub-part (not tiny decoration).\n\
          - Focus on BASIC STRUCTURE over details.\n\
+         - Keep `assembly_notes` short (<= 500 chars). Keep `purpose` short; omit `modeling_notes` unless essential.\n\
          - Order components from most important (core volumes) to least important.\n\
          - `size` is the component's approximate full bounds extents in the component's LOCAL axes.\n\
          - Keep names simple; no spaces.\n\

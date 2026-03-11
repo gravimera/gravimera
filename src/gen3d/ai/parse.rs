@@ -7,6 +7,51 @@ use super::schema::{
     AiReviewDeltaJsonV1,
 };
 
+fn normalize_ai_plan_component_joint_fields(json_value: &mut serde_json::Value) {
+    let Some(components) = json_value
+        .get_mut("components")
+        .and_then(|v| v.as_array_mut())
+    else {
+        return;
+    };
+
+    for component in components {
+        let Some(component_obj) = component.as_object_mut() else {
+            continue;
+        };
+
+        // Models sometimes emit an invalid top-level `joint` field on components:
+        //
+        //   { ..., "attach_to": { ... }, "joint": { ... } }
+        //
+        // The schema only allows joints as attachment metadata:
+        //
+        //   { ..., "attach_to": { ..., "joint": { ... } } }
+        //
+        // Normalize this common mistake so we don't trigger an expensive LLM schema-repair step.
+        let Some(joint_value) = component_obj.remove("joint") else {
+            continue;
+        };
+
+        let Some(attach_to) = component_obj.get_mut("attach_to") else {
+            continue;
+        };
+        let Some(attach_to_obj) = attach_to.as_object_mut() else {
+            continue;
+        };
+        if attach_to_obj.get("joint").is_none() {
+            attach_to_obj.insert("joint".to_string(), joint_value);
+            debug!(
+                "Gen3D: normalized component-level `joint` into `attach_to.joint` (component={})",
+                component_obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unknown>")
+            );
+        }
+    }
+}
+
 fn normalize_snake_case_token(raw: &str) -> String {
     let mut normalized = raw.trim().to_ascii_lowercase();
     normalized = normalized.replace(' ', "_");
@@ -119,11 +164,13 @@ pub(super) fn parse_ai_plan_from_text(text: &str) -> Result<AiPlanJsonV1, String
     }
 
     let json_text = json_text.trim();
-    let json_value: serde_json::Value =
+    let mut json_value: serde_json::Value =
         serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
     if json_value.get("version").is_none() {
         return Err("AI plan JSON missing required `version` (expected 8).".into());
     }
+
+    normalize_ai_plan_component_joint_fields(&mut json_value);
 
     let plan: AiPlanJsonV1 =
         serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
@@ -486,6 +533,46 @@ pub(super) fn extract_json_objects(text: &str, max_objects: usize) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_ai_plan_normalizes_component_level_joint() {
+        let text = r#"
+        {
+          "version": 8,
+          "mobility": { "kind": "static" },
+          "components": [
+            {
+              "name": "root",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "a", "pos": [0.0,0.0,0.0], "forward": [0.0,0.0,1.0], "up": [0.0,1.0,0.0] }
+              ]
+            },
+            {
+              "name": "child",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "b", "pos": [0.0,0.0,0.0], "forward": [0.0,0.0,1.0], "up": [0.0,1.0,0.0] }
+              ],
+              "attach_to": { "parent": "root", "parent_anchor": "a", "child_anchor": "b" },
+              "joint": { "kind": "hinge", "axis_join": [1.0, 0.0, 0.0], "limits_degrees": [-10.0, 10.0] }
+            }
+          ]
+        }
+        "#;
+
+        let plan = parse_ai_plan_from_text(text).expect("plan should parse");
+        let child = plan
+            .components
+            .iter()
+            .find(|c| c.name == "child")
+            .expect("child component should exist");
+        let attach_to = child.attach_to.as_ref().expect("child should have attach_to");
+        assert!(
+            attach_to.joint.is_some(),
+            "component-level joint should be migrated to attach_to.joint"
+        );
+    }
 
     #[test]
     fn extracts_last_json_object_when_multiple_present() {
