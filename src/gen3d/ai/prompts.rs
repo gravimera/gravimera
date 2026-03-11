@@ -187,6 +187,7 @@ pub(super) fn build_gen3d_plan_user_text_preserve_existing_components(
     existing_assembly_notes: &str,
     preserve_edit_policy: &str,
     rewire_components: &[String],
+    plan_template: Option<&serde_json::Value>,
 ) -> String {
     let mut out = String::new();
     out.push_str(
@@ -296,6 +297,21 @@ Hard requirements:\n\
                 out.push_str("]\n");
             }
         }
+    }
+
+    if let Some(template) = plan_template {
+        out.push_str("\nPlan template (engine-generated; copy+edit):\n");
+        out.push_str(
+            &serde_json::to_string_pretty(template).unwrap_or_else(|_| template.to_string()),
+        );
+        out.push('\n');
+        out.push_str(
+            "Template usage:\n\
+- Start from the template and make the smallest valid changes.\n\
+- Keep ALL existing component names and keep the same root component.\n\
+- Preserve existing anchor frames unless adding NEW anchors.\n\
+- Only change existing attach_to fields if the preserve_edit_policy allows it.\n",
+        );
     }
 
     out.push_str("\n---\n\n");
@@ -654,6 +670,7 @@ mod tests {
             "",
             "additive",
             &[],
+            None,
         );
         assert!(prompt.contains("planned_size=[1.000,2.000,3.000]"));
         assert!(prompt.contains("actual_size=[4.000,5.000,6.000]"));

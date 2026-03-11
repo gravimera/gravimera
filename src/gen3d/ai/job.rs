@@ -103,6 +103,18 @@ pub(super) struct Gen3dDescriptorMetaCache {
     pub(super) meta: AiDescriptorMetaJsonV1,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct Gen3dPendingPlanAttempt {
+    pub(super) call_id: String,
+    pub(super) error: String,
+    pub(super) preserve_existing_components: bool,
+    pub(super) preserve_edit_policy: Option<String>,
+    pub(super) rewire_components: Vec<String>,
+    pub(super) existing_component_names: Vec<String>,
+    pub(super) existing_root_component: Option<String>,
+    pub(super) plan: AiPlanJsonV1,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Gen3dDescriptorMetaPolicy {
     Suggest,
@@ -513,7 +525,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) pending_finish_run: Option<Gen3dPendingFinishRun>,
     pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     pub(super) reuse_group_warnings: Vec<String>,
-    pub(super) pending_plan: Option<AiPlanJsonV1>,
+    pub(super) pending_plan_attempt: Option<Gen3dPendingPlanAttempt>,
     pub(super) component_queue: Vec<usize>,
     pub(super) component_queue_pos: usize,
     pub(super) component_attempts: Vec<u8>,
@@ -814,7 +826,8 @@ impl Gen3dAiJob {
         fn summarize_tool_for_step(tool_id: &str) -> String {
             use crate::gen3d::agent::tools::{
                 TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DETACH_COMPONENT,
-                TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY,
+                TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY,
+                TOOL_ID_INSPECT_PLAN,
                 TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
                 TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
                 TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
@@ -837,7 +850,10 @@ impl Gen3dAiJob {
                 | TOOL_ID_COPY_COMPONENT_SUBTREE
                 | TOOL_ID_MIRROR_COMPONENT_SUBTREE
                 | TOOL_ID_DETACH_COMPONENT => "Copy".into(),
-                TOOL_ID_GET_STATE_SUMMARY | TOOL_ID_GET_SCENE_GRAPH_SUMMARY => "Inspect".into(),
+                TOOL_ID_GET_STATE_SUMMARY
+                | TOOL_ID_GET_SCENE_GRAPH_SUMMARY
+                | TOOL_ID_INSPECT_PLAN
+                | TOOL_ID_GET_PLAN_TEMPLATE => "Inspect".into(),
                 TOOL_ID_SUBMIT_TOOLING_FEEDBACK => "Feedback".into(),
                 other => short_tool_id(other).to_string(),
             }

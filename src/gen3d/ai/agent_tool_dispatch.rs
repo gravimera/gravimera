@@ -7,8 +7,9 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
     TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE,
     TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_DIFF_WORKSPACES,
-    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_TOOL_DETAIL,
-    TOOL_ID_GET_USER_INPUTS, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LIST_SNAPSHOTS,
+    TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY,
+    TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_GET_USER_INPUTS, TOOL_ID_INSPECT_PLAN,
+    TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LIST_SNAPSHOTS,
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
@@ -286,6 +287,147 @@ pub(super) fn execute_tool_call(
                 write_gen3d_json_artifact(Some(dir), "scene_graph_summary.json", &json);
             }
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+        }
+        TOOL_ID_INSPECT_PLAN => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct InspectPlanArgsV1 {
+                #[serde(default)]
+                version: u32,
+            }
+
+            let args: InspectPlanArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid args for `{TOOL_ID_INSPECT_PLAN}`: {err}"),
+                    ));
+                }
+            };
+            if args.version != 0 && args.version != 1 {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!("Unsupported `{TOOL_ID_INSPECT_PLAN}` version {}.", args.version),
+                ));
+            }
+
+            let json = super::plan_tools::inspect_pending_plan_attempt_v1(
+                job.pending_plan_attempt.as_ref(),
+                &job.planned_components,
+                job.preserve_existing_components_mode,
+            );
+            if let Some(dir) = job.pass_dir.as_deref() {
+                write_gen3d_json_artifact(Some(dir), "plan_inspect.json", &json);
+            }
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+        }
+        TOOL_ID_GET_PLAN_TEMPLATE => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct GetPlanTemplateArgsV1 {
+                #[serde(default)]
+                version: u32,
+            }
+
+            let args: GetPlanTemplateArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid args for `{TOOL_ID_GET_PLAN_TEMPLATE}`: {err}"),
+                    ));
+                }
+            };
+            if args.version != 0 && args.version != 1 {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "Unsupported `{TOOL_ID_GET_PLAN_TEMPLATE}` version {}.",
+                        args.version
+                    ),
+                ));
+            }
+
+            let Some(run_dir) = job.run_dir.as_deref() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing run dir.".into(),
+                ));
+            };
+            let Some(pass_dir) = job.pass_dir.as_deref() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing pass dir.".into(),
+                ));
+            };
+
+            let plan = match super::plan_tools::build_preserve_mode_plan_template_json_v8(
+                draft,
+                &job.planned_components,
+                &job.assembly_notes,
+                job.plan_collider.as_ref(),
+                job.rig_move_cycle_m,
+                &job.reuse_groups,
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
+
+            let plan_pretty = serde_json::to_string_pretty(&plan).unwrap_or_else(|_| plan.to_string());
+            let bytes = plan_pretty.as_bytes().len();
+            const MAX_TEMPLATE_BYTES: usize = 60 * 1024;
+            if bytes > MAX_TEMPLATE_BYTES {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "`{TOOL_ID_GET_PLAN_TEMPLATE}` output is too large ({bytes} bytes > {MAX_TEMPLATE_BYTES}). Use `get_scene_graph_summary_v1` or simplify the plan before templating."
+                    ),
+                ));
+            }
+
+            let filename = format!(
+                "plan_template_{}.json",
+                sanitize_prefix(&call.call_id)
+            );
+            write_gen3d_json_artifact(Some(pass_dir), &filename, &plan);
+
+            let artifact_path = pass_dir.join(&filename);
+            let artifact_ref = artifact_path
+                .strip_prefix(run_dir)
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|| filename.clone());
+
+            let components_total = plan
+                .get("components")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
+                call.call_id,
+                call.tool_id,
+                serde_json::json!({
+                    "version": 1,
+                    "artifact_ref": artifact_ref,
+                    "bytes": bytes,
+                    "components_total": components_total,
+                }),
+            ))
         }
         TOOL_ID_QUERY_COMPONENT_PARTS => {
             let json = match super::draft_ops::query_component_parts_v1(job, draft, call.args) {
@@ -1303,6 +1445,12 @@ pub(super) fn execute_tool_call(
             let system = super::prompts::build_gen3d_plan_system_instructions();
             let prompt_override = call.args.get("prompt").and_then(|v| v.as_str());
             let style_hint = call.args.get("style").and_then(|v| v.as_str());
+            let plan_template_artifact_ref = call
+                .args
+                .get("plan_template_artifact_ref")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
             let preserve_existing_components = call
                 .args
                 .get("constraints")
@@ -1366,6 +1514,57 @@ pub(super) fn execute_tool_call(
                 .filter(|s| !s.is_empty())
                 .unwrap_or(job.user_prompt_raw.as_str());
 
+            let plan_template_json: Option<serde_json::Value> =
+                if let Some(template_ref) = plan_template_artifact_ref.as_deref() {
+                    if !preserve_existing_components || job.planned_components.is_empty() {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call.call_id,
+                            call.tool_id,
+                            format!(
+                                "`plan_template_artifact_ref` requires preserve mode (constraints.preserve_existing_components=true) and an existing plan."
+                            ),
+                        ));
+                    }
+                    let Some(run_dir) = job.run_dir.as_deref() else {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call.call_id,
+                            call.tool_id,
+                            "Missing run dir (needed to read plan_template_artifact_ref).".into(),
+                        ));
+                    };
+                    match read_artifact_v1(run_dir, template_ref, 64 * 1024, None, None) {
+                        Ok(v) => {
+                            let truncated = v
+                                .get("truncated")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            if truncated {
+                                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                                    call.call_id,
+                                    call.tool_id,
+                                    format!(
+                                        "plan_template_artifact_ref `{}` is truncated when read (too large). Re-generate a smaller template or replan without a template.",
+                                        template_ref
+                                    ),
+                                ));
+                            }
+                            v.get("json").cloned()
+                        }
+                        Err(err) => {
+                            return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                                call.call_id,
+                                call.tool_id,
+                                format!(
+                                    "Failed to read plan_template_artifact_ref `{}`: {}",
+                                    template_ref, err
+                                ),
+                            ));
+                        }
+                    }
+                } else {
+                    None
+                };
+
             let user_text = if preserve_existing_components && !job.planned_components.is_empty() {
                 super::prompts::build_gen3d_plan_user_text_preserve_existing_components(
                     prompt_text,
@@ -1376,6 +1575,7 @@ pub(super) fn execute_tool_call(
                     &job.assembly_notes,
                     preserve_edit_policy,
                     &rewire_components,
+                    plan_template_json.as_ref(),
                 )
             } else {
                 super::prompts::build_gen3d_plan_user_text_with_hints(

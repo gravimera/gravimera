@@ -357,7 +357,7 @@ pub(super) fn poll_agent_tool(
                                         .filter(|v| v.is_finite())
                                         .map(f32::abs)
                                         .filter(|v| *v > 1e-3);
-                                    let plan_collider = plan.collider;
+                                    let plan_collider = plan.collider.clone();
 
                                     let (validated, warnings) =
                                         super::reuse_groups::validate_reuse_groups(
@@ -451,12 +451,35 @@ pub(super) fn poll_agent_tool(
                                     };
 
                                     if let Some(err) = preserve_error {
+                                        let mut existing_component_names: Vec<String> =
+                                            old_components
+                                                .iter()
+                                                .map(|c| c.name.clone())
+                                                .collect();
+                                        existing_component_names.sort();
+                                        existing_component_names.dedup();
+
+                                        job.pending_plan_attempt =
+                                            Some(super::Gen3dPendingPlanAttempt {
+                                                call_id: call.call_id.clone(),
+                                                error: err.clone(),
+                                                preserve_existing_components,
+                                                preserve_edit_policy: preserve_edit_policy_raw
+                                                    .map(|s| s.trim().to_string())
+                                                    .filter(|s| !s.is_empty()),
+                                                rewire_components: rewire_components.clone(),
+                                                existing_component_names,
+                                                existing_root_component: old_root_name.clone(),
+                                                plan,
+                                            });
+
                                         Gen3dToolResultJsonV1::err(
                                             call.call_id.clone(),
                                             call.tool_id.clone(),
-                                            err,
+                                            format!("{err}\nHint: Run `inspect_plan_v1` for computed preserve-mode constraints (allowed names/root/policy) before replanning."),
                                         )
                                     } else {
+                                        job.pending_plan_attempt = None;
                                         let mut planned_components = planned;
                                         let mut apply_err: Option<String> = None;
                                         if can_preserve_geometry {
@@ -726,81 +749,47 @@ pub(super) fn poll_agent_tool(
                                     }
                                     }
                                 }
-                                Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
-                                    (Some(ai), Some(pass_dir)) => {
-                                        let system =
-                                            super::prompts::build_gen3d_plan_system_instructions();
-                                        let prompt_override =
-                                            call.args.get("prompt").and_then(|v| v.as_str());
-                                        let style_hint =
-                                            call.args.get("style").and_then(|v| v.as_str());
-                                        let mut required_component_names: Vec<String> = call
-                                            .args
-                                            .get("components")
-                                            .and_then(|v| v.as_array())
-                                            .map(|arr| {
-                                                arr.iter()
-                                                    .filter_map(|v| v.as_str())
-                                                    .map(|s| s.trim().to_string())
-                                                    .filter(|s| !s.is_empty())
-                                                    .collect::<Vec<_>>()
-                                            })
-                                            .unwrap_or_default();
-                                        if required_component_names.len()
-                                            > super::max_components_for_speed(workshop.speed_mode)
-                                        {
-                                            required_component_names.truncate(
-                                                super::max_components_for_speed(
-                                                    workshop.speed_mode,
-                                                ),
-                                            );
-                                        }
+                                Err(err) => {
+                                    let mut existing_component_names: Vec<String> = job
+                                        .planned_components
+                                        .iter()
+                                        .map(|c| c.name.clone())
+                                        .collect();
+                                    existing_component_names.sort();
+                                    existing_component_names.dedup();
+                                    let existing_root_component = job
+                                        .planned_components
+                                        .iter()
+                                        .find(|c| c.attach_to.is_none())
+                                        .map(|c| c.name.clone());
 
-                                        let prompt_text = prompt_override
-                                            .map(|s| s.trim())
-                                            .filter(|s| !s.is_empty())
-                                            .unwrap_or(job.user_prompt_raw.as_str());
-                                        let user_text =
-                                            super::prompts::build_gen3d_plan_user_text_with_hints(
-                                                prompt_text,
-                                                !job.user_images.is_empty(),
-                                                workshop.speed_mode,
-                                                style_hint,
-                                                &required_component_names,
-                                            );
+                                    job.pending_plan_attempt =
+                                        Some(super::Gen3dPendingPlanAttempt {
+                                            call_id: call.call_id.clone(),
+                                            error: err.clone(),
+                                            preserve_existing_components,
+                                            preserve_edit_policy: preserve_edit_policy_raw
+                                                .map(|s| s.trim().to_string())
+                                                .filter(|s| !s.is_empty()),
+                                            rewire_components: rewire_components.clone(),
+                                            existing_component_names,
+                                            existing_root_component,
+                                            plan,
+                                        });
 
-                                        if schedule_llm_tool_schema_repair(
-                                            job,
-                                            workshop,
-                                            &call,
-                                            kind,
-                                            ai,
-                                            &config.gen3d_reasoning_effort_repair,
-                                            pass_dir,
-                                            system,
-                                            user_text,
-                                            job.user_images.clone(),
-                                            &err,
-                                            &text,
-                                            &format!("tool_plan_{}", call.call_id),
-                                        ) {
-                                            return;
-                                        }
-                                        Gen3dToolResultJsonV1::err(
-                                            call.call_id.clone(),
-                                            call.tool_id.clone(),
-                                            err,
-                                        )
-                                    }
-                                    _ => Gen3dToolResultJsonV1::err(
+                                    Gen3dToolResultJsonV1::err(
                                         call.call_id.clone(),
                                         call.tool_id.clone(),
-                                        err,
-                                    ),
-                                },
+                                        format!(
+                                            "{err}\nHint: This is a semantic plan error (not JSON/schema). Run `inspect_plan_v1` for computed constraints, or use `get_plan_template_v1` + llm_generate_plan_v1.plan_template_artifact_ref to replan safely."
+                                        ),
+                                    )
+                                }
                             }
                         }
-                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                        Err(err) => {
+                            job.pending_plan_attempt = None;
+                            match (job.ai.clone(), job.pass_dir.clone()) {
                             (Some(ai), Some(pass_dir)) => {
                                 let system = super::prompts::build_gen3d_plan_system_instructions();
                                 let prompt_override =
@@ -867,7 +856,8 @@ pub(super) fn poll_agent_tool(
                                 call.tool_id.clone(),
                                 err,
                             ),
-                        },
+                        }
+                        }
                     }
                 }
                 super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => Gen3dToolResultJsonV1::err(

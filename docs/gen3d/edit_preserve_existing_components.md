@@ -28,6 +28,21 @@ When preserve mode is enabled **and** the current draft already contains generat
 
 If the plan violates the guardrails (including the selected edit policy), `llm_generate_plan_v1` returns a tool error and the draft is left unchanged.
 
+## Preserve Mode (Troubleshooting plan failures)
+
+When preserve-mode replanning fails, prefer deterministic “hints/tools” that avoid repeated scene dumps:
+
+- If `llm_generate_plan_v1` fails with a **semantic** error (unknown parent/root, missing required existing names, policy rejection), call:
+  - `inspect_plan_v1` (read-only) to get computed constraints (allowed names/root/policy) and structured error kinds.
+- If preserve-mode replanning keeps failing, call:
+  - `get_plan_template_v1` (read-only) to write a plan JSON template artifact, then
+  - re-run `llm_generate_plan_v1` with `plan_template_artifact_ref` set to that artifact ref.
+
+Related docs:
+
+- `docs/gen3d/inspect_plan_v1.md`
+- `docs/gen3d/get_plan_template_v1.md`
+
 Examples (tool args):
 
 - Additive (default; safest for “add a hat”):

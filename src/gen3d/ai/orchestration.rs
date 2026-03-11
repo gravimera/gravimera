@@ -241,7 +241,7 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.review_static_paths.clear();
     job.motion_capture = None;
     job.capture_previews_only = false;
-    job.pending_plan = None;
+    job.pending_plan_attempt = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.component_attempts.clear();
@@ -558,7 +558,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.capture_previews_only = false;
     job.plan_attempt = 0;
     job.max_parallel_components = config.gen3d_max_parallel_components.max(1);
-    job.pending_plan = None;
+    job.pending_plan_attempt = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.component_attempts.clear();
@@ -1029,7 +1029,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.pending_finish_run = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
-    job.pending_plan = None;
+    job.pending_plan_attempt = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.review_capture = None;
@@ -2568,7 +2568,7 @@ fn retry_gen3d_plan(
     job.motion_authoring = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
-    job.pending_plan = None;
+    job.pending_plan_attempt = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.component_attempts.clear();
@@ -3198,7 +3198,7 @@ fn try_start_gen3d_replan(
     job.motion_authoring = None;
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
-    job.pending_plan = None;
+    job.pending_plan_attempt = None;
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.generation_kind = Gen3dComponentGenerationKind::Initial;

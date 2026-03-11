@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_TOOL_DETAIL,
-    TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_RUN_ARTIFACTS,
+    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
-    TOOL_ID_READ_ARTIFACT, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS,
+    TOOL_ID_QA, TOOL_ID_READ_ARTIFACT, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
     TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
@@ -97,6 +98,9 @@ Rules:\n\
     - Default `constraints.preserve_edit_policy` is `additive` (no rewires; offsets frozen).\n\
     - For moving existing parts without rewiring, prefer `apply_draft_ops_v1` or set `preserve_edit_policy` to `allow_offsets`.\n\
     - For rewires, set `preserve_edit_policy` to `allow_rewire` and provide `constraints.rewire_components` as an explicit allow-list.\n\
+  - Preserve-mode planning helpers (no silent mutation):\n\
+    - If `llm_generate_plan_v1` fails with a semantic error (unknown parent/root, missing required names, policy diff rejection), call `inspect_plan_v1` next (NOT `get_scene_graph_summary_v1`).\n\
+    - If preserve-mode replanning keeps failing, call `get_plan_template_v1`, then re-run `llm_generate_plan_v1` with `plan_template_artifact_ref` set to the returned `artifact_ref`.\n\
   - To explicitly regenerate already-generated components in preserve mode, pass force=true (regen budgets still apply).\n\
   - IMPORTANT: `force=true` regeneration is ONLY allowed when the latest QA indicates errors.\n\
     - The engine refuses force-regeneration unless `state_summary.qa.last_validate_ok=false` OR `state_summary.qa.last_smoke_ok=false`.\n\
@@ -516,6 +520,52 @@ pub(super) fn build_agent_user_text(
                 }
                 if let Some(truncated) = truncated {
                     out.push_str(&format!(" truncated={truncated}"));
+                }
+            }
+            TOOL_ID_GET_PLAN_TEMPLATE => {
+                let artifact_ref = value.get("artifact_ref").and_then(|v| v.as_str());
+                let bytes = value.get("bytes").and_then(|v| v.as_u64());
+                let components_total = value.get("components_total").and_then(|v| v.as_u64());
+                out.push_str("ok");
+                if let Some(artifact_ref) = artifact_ref {
+                    out.push_str(&format!(
+                        " artifact_ref={}",
+                        truncate_for_prompt(artifact_ref, 120)
+                    ));
+                }
+                if let Some(bytes) = bytes {
+                    out.push_str(&format!(" bytes={bytes}"));
+                }
+                if let Some(components_total) = components_total {
+                    out.push_str(&format!(" components_total={components_total}"));
+                }
+            }
+            TOOL_ID_INSPECT_PLAN => {
+                let has_pending = value.get("has_pending_plan").and_then(|v| v.as_bool());
+                let analysis_ok = value
+                    .get("analysis")
+                    .and_then(|v| v.get("ok"))
+                    .and_then(|v| v.as_bool());
+                let errors = value
+                    .get("analysis")
+                    .and_then(|v| v.get("errors"))
+                    .and_then(|v| v.as_array());
+                let first_error_kind = errors
+                    .and_then(|e| e.first())
+                    .and_then(|v| v.get("kind"))
+                    .and_then(|v| v.as_str());
+                out.push_str("ok");
+                if let Some(has_pending) = has_pending {
+                    out.push_str(&format!(" has_pending_plan={has_pending}"));
+                }
+                if let Some(analysis_ok) = analysis_ok {
+                    out.push_str(&format!(" analysis_ok={analysis_ok}"));
+                }
+                if let Some(errors) = errors {
+                    out.push_str(&format!(" errors={}", errors.len()));
+                }
+                if let Some(kind) = first_error_kind {
+                    out.push_str(&format!(" first_error_kind={}", truncate_for_prompt(kind, 64)));
                 }
             }
             TOOL_ID_COPY_COMPONENT

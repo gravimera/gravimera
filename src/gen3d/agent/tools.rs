@@ -6,6 +6,8 @@ pub(crate) const TOOL_ID_GET_TOOL_DETAIL: &str = "get_tool_detail_v1";
 pub(crate) const TOOL_ID_GET_USER_INPUTS: &str = "get_user_inputs_v1";
 pub(crate) const TOOL_ID_GET_STATE_SUMMARY: &str = "get_state_summary_v1";
 pub(crate) const TOOL_ID_GET_SCENE_GRAPH_SUMMARY: &str = "get_scene_graph_summary_v1";
+pub(crate) const TOOL_ID_INSPECT_PLAN: &str = "inspect_plan_v1";
+pub(crate) const TOOL_ID_GET_PLAN_TEMPLATE: &str = "get_plan_template_v1";
 pub(crate) const TOOL_ID_SET_DESCRIPTOR_META: &str = "set_descriptor_meta_v1";
 pub(crate) const TOOL_ID_QUERY_COMPONENT_PARTS: &str = "query_component_parts_v1";
 pub(crate) const TOOL_ID_VALIDATE: &str = "validate_v1";
@@ -93,6 +95,22 @@ impl Gen3dToolRegistryV1 {
                 one_line_summary: "Read-only: structured component/attachment/anchor graph for the current draft.",
                 args_schema: "{}",
                 args_example: serde_json::json!({}),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_INSPECT_PLAN,
+                title: "Inspect plan",
+                one_line_summary:
+                    "Read-only: inspect the last rejected llm_generate_plan_v1 output and return semantic errors + preserve-mode constraints (names/root/policy).",
+                args_schema: "{ version?: 1 }",
+                args_example: serde_json::json!({ "version": 1 }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_GET_PLAN_TEMPLATE,
+                title: "Get plan template",
+                one_line_summary:
+                    "Read-only: write a preserve-mode plan template JSON artifact (copy+edit) and return artifact_ref for llm_generate_plan_v1.plan_template_artifact_ref.",
+                args_schema: "{ version?: 1 }",
+                args_example: serde_json::json!({ "version": 1 }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_QUERY_COMPONENT_PARTS,
@@ -259,7 +277,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 one_line_summary:
                     "LLM+mutates: generate/replace the component plan; preserve-mode diffs are policy-validated (constraints.preserve_edit_policy).",
                 args_schema:
-                    "{ prompt?: string, style?: string, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, components?: string[] }",
+                    "{ prompt?: string, style?: string, plan_template_artifact_ref?: string, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, components?: string[] }",
                 args_example: serde_json::json!({
                     "constraints": {
                         "preserve_existing_components": true,
