@@ -1,7 +1,14 @@
 use bevy::prelude::*;
 use sha2::{Digest, Sha256};
 
-use crate::gen3d::agent::tools::{TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE};
+use crate::gen3d::agent::tools::{
+    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
+    TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_DETACH_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENT,
+    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
+    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
+    TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
+};
 use crate::gen3d::agent::Gen3dToolResultJsonV1;
 use crate::object::registry::{PartAnimationDef, PartAnimationDriver};
 
@@ -19,6 +26,28 @@ pub(super) fn note_observable_tool_result(job: &mut Gen3dAiJob, result: &Gen3dTo
     ) {
         job.agent.step_had_observable_output = true;
     }
+}
+
+pub(super) fn step_had_no_progress_try(tool_results: &[Gen3dToolResultJsonV1]) -> bool {
+    tool_results.iter().any(|result| {
+        matches!(
+            result.tool_id.as_str(),
+            TOOL_ID_APPLY_DRAFT_OPS
+                | TOOL_ID_COPY_COMPONENT
+                | TOOL_ID_COPY_COMPONENT_SUBTREE
+                | TOOL_ID_COPY_FROM_WORKSPACE
+                | TOOL_ID_DETACH_COMPONENT
+                | TOOL_ID_LLM_GENERATE_COMPONENT
+                | TOOL_ID_LLM_GENERATE_COMPONENTS
+                | TOOL_ID_LLM_GENERATE_MOTION_AUTHORING
+                | TOOL_ID_LLM_GENERATE_PLAN
+                | TOOL_ID_LLM_REVIEW_DELTA
+                | TOOL_ID_MIRROR_COMPONENT
+                | TOOL_ID_MIRROR_COMPONENT_SUBTREE
+                | TOOL_ID_RESTORE_SNAPSHOT
+                | TOOL_ID_SET_DESCRIPTOR_META
+        )
+    })
 }
 
 fn quantize_f32_1e4(v: f32) -> i32 {

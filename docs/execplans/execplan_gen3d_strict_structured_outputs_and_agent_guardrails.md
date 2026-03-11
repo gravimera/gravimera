@@ -61,7 +61,7 @@ User-visible success is: a small edit like “add a red hat on top” finishes i
 - Added `gen3d.require_structured_outputs` (default true). Gen3D requests strict schemas for all schema-constrained calls, warns when a backend violates enforcement, and attempts to coerce outputs back to a single JSON object.
 - Fixed `parse_agent_step()` to prefer a `done` step when it is a strict superset of the non-done candidate (same tool calls + trailing `done`).
 - Blocked `force:true` regen unless validate/smoke indicates errors (prevents churn after QA is clean).
-- Tightened the no-progress guard: default `no_progress_max_steps = 3`, and only auto-finishes when the run is objectively “complete enough”.
+- Tightened the no-progress guard: defaults `no_progress_tries_max = 3` and `inspection_steps_max = 12`, and only auto-finishes when the run is objectively “complete enough”.
 
 ## Context and Orientation
 
@@ -122,7 +122,7 @@ reject `force:true` regeneration when:
 
 The tool result should be an error with a clear message so the agent can pivot to running `qa_v1` (or stop).
 
-4) Auto-finish when complete enough, and lower default no-progress steps to 3.
+4) Auto-finish when complete enough, and set default no-progress budgets.
 
 In `src/gen3d/ai/agent_step.rs`, add an “auto-finish” check at the end of a step (before requesting a new step) that stops the run when all of the following are true:
 
@@ -132,7 +132,7 @@ In `src/gen3d/ai/agent_step.rs`, add an “auto-finish” check at the end of a 
 - If the draft is movable, motion requirements are satisfied for the current assembled state (either runtime motion candidate is available, or authored move clips exist).
 - If appearance review is enabled, the latest renders have been reviewed.
 
-In `src/config.rs`, change default `gen3d_no_progress_max_steps` from 12 to 3, and update `config.example.toml` commentary to match.
+In `src/config.rs`, set default no-progress budgets to `gen3d_no_progress_tries_max = 3` and `gen3d_inspection_steps_max = 12`, and update `config.example.toml` commentary to match.
 
 5) Validation, smoke start, and commit.
 

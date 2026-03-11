@@ -343,7 +343,8 @@ mod tests {
         let mut config = AppConfig::default();
         config.gen3d_max_seconds = 200;
         config.gen3d_max_tokens = 2000;
-        config.gen3d_no_progress_max_steps = 12;
+        config.gen3d_no_progress_tries_max = 12;
+        config.gen3d_inspection_steps_max = 20;
         config.gen3d_max_regen_total = 16;
         config.gen3d_max_regen_per_component = 2;
 
@@ -353,7 +354,8 @@ mod tests {
         job.current_run_tokens = 1234;
         job.regen_total = 15;
         job.regen_per_component = vec![2, 1];
-        job.agent.no_progress_steps = 5;
+        job.agent.no_progress_tries = 5;
+        job.agent.no_progress_inspection_steps = 8;
         job.planned_components = vec![
             super::super::Gen3dPlannedComponent {
                 display_name: "A".into(),
@@ -396,12 +398,19 @@ mod tests {
             .expect("expected regen remaining_total");
         assert_eq!(regen_remaining, 1);
 
-        let no_progress_remaining = budgets
+        let no_progress_tries_remaining = budgets
             .get("no_progress")
-            .and_then(|v| v.get("remaining_steps"))
+            .and_then(|v| v.get("tries_remaining"))
             .and_then(|v| v.as_u64())
-            .expect("expected no_progress remaining_steps");
-        assert_eq!(no_progress_remaining, 7);
+            .expect("expected no_progress tries_remaining");
+        assert_eq!(no_progress_tries_remaining, 7);
+
+        let inspection_steps_remaining = budgets
+            .get("no_progress")
+            .and_then(|v| v.get("inspection_steps_remaining"))
+            .and_then(|v| v.as_u64())
+            .expect("expected no_progress inspection_steps_remaining");
+        assert_eq!(inspection_steps_remaining, 12);
 
         let token_remaining = budgets
             .get("tokens")

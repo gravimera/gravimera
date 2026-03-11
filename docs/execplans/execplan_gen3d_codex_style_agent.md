@@ -30,7 +30,7 @@ You can see this working by:
 - [x] (2026-02-01 07:30Z) Add preview tools with AI-chosen camera angles/resolution (implemented `render_preview_v1` with view list + width/height + `axes_grid` overlay preset).
 - [x] (2026-02-01 07:30Z) Add multi-workspace preview support (implemented `create_workspace_v1` / `delete_workspace_v1` / `set_active_workspace_v1` with optional component subset previews).
 - [x] (2026-02-01 07:30Z) Make **Save** available after the first usable draft and allow multiple saves while building (snapshots draft; writes `save_*.json`).
-- [x] (2026-02-01 07:30Z) Add a no-progress guard to avoid infinite loops (`[gen3d].no_progress_max_steps`).
+- [x] (2026-02-01 07:30Z) Add a no-progress guard to avoid infinite loops (`[gen3d].no_progress_tries_max` / `[gen3d].inspection_steps_max`).
 - [x] (2026-02-01 07:30Z) Keep budgets “very large” by default (time/tokens) and remove pass-count limitations (passes iterate until Stop/budgets/no-progress).
 - [x] (2026-02-01 07:30Z) Validation: `cargo test` and `cargo run -- --headless --headless-seconds 1`.
 - [x] (2026-02-01 07:42Z) Update `README.md` / `gen_3d.md` (tool-driven agent + artifacts + config) and commit.
@@ -209,14 +209,17 @@ Change **Save** behavior:
 Add a no-progress guard:
 
 - Track a stable hash of the current assembled state (plan hash + assembly_rev + a hash of draft defs).
-- If the agent performs N consecutive steps without changing the state hash and without producing new renders/validations, stop the run as “best effort” with a clear summary.
-- Make N configurable in `config.toml` under `[gen3d]` (default: 12).
+- Track a stable hash of the current assembled state (plan hash + assembled draft summary + motion-values digest; ignores `assembly_rev` churn).
+- If the agent performs too many consecutive steps without changing the assembled-state hash, stop the run as “best effort” with a clear summary.
+- Budgets are configurable under `[gen3d]`:
+  - `no_progress_tries_max` (default: 3) counts steps that attempted to change the draft/meta (mutating tools).
+  - `inspection_steps_max` (default: 12) counts inspection-only steps (read-only / QA / tool lookup).
 
 ### Milestone 6: Budgets and docs
 
 Budgets must be “very large” by default:
 
-- Time: 3600 seconds (1 hour).
+- Time: 1800 seconds (30 minutes).
 - Tokens: 10,000,000.
 - No pass-count limit (passes/steps run until Stop/budgets/no-progress guard).
 

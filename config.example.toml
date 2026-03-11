@@ -108,15 +108,22 @@ max_parallel_components = 10
 # reasoning_effort_review = "medium"
 # reasoning_effort_repair = "low"
 
-# Budget: max wall-clock seconds per Build run (default: 3600). Set to 0 to disable the time budget.
-# max_seconds = 3600
+# Budget: max wall-clock seconds per Build run (default: 1800). Set to 0 to disable the time budget.
+# max_seconds = 1800
 
 # Budget: max OpenAI tokens per Build run across all requests (default: 10000000). Set to 0 to disable the token budget.
 # max_tokens = 10000000
 
-# No-progress guard: stop a Build run if the agent makes no observable progress for N steps.
-# Set to 0 to disable the guard (default: 3).
-# no_progress_max_steps = 3
+# No-progress guard: stop a Build run if the agent makes no observable progress.
+#
+# There are two independent budgets (set either to 0 to disable):
+# - `no_progress_tries_max` (default: 3): steps that attempted to change the draft/meta (mutating tools),
+#   but the assembled-state hash did not change.
+# - `inspection_steps_max` (default: 12): steps that only inspected state (read-only / QA / tool lookup),
+#   and the assembled-state hash did not change.
+#
+# no_progress_tries_max = 3
+# inspection_steps_max = 12
 
 # Budget: max number of replans per Build run (default: 1).
 # max_replans = 1

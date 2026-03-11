@@ -28,7 +28,8 @@ pub(crate) struct AppConfig {
     pub(crate) gen3d_max_parallel_components: usize,
     pub(crate) gen3d_max_seconds: u64,
     pub(crate) gen3d_max_tokens: u64,
-    pub(crate) gen3d_no_progress_max_steps: u32,
+    pub(crate) gen3d_no_progress_tries_max: u32,
+    pub(crate) gen3d_inspection_steps_max: u32,
     pub(crate) gen3d_max_replans: u32,
     pub(crate) gen3d_max_regen_total: u32,
     pub(crate) gen3d_max_regen_per_component: u32,
@@ -81,9 +82,10 @@ impl Default for AppConfig {
             automation_pause_on_start: true,
             refine_iterations: 1,
             gen3d_max_parallel_components: 10,
-            gen3d_max_seconds: 60 * 60,
+            gen3d_max_seconds: 60 * 30,
             gen3d_max_tokens: 10_000_000,
-            gen3d_no_progress_max_steps: 3,
+            gen3d_no_progress_tries_max: 3,
+            gen3d_inspection_steps_max: 12,
             gen3d_max_replans: 1,
             gen3d_max_regen_total: 16,
             gen3d_max_regen_per_component: 2,
@@ -222,7 +224,8 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_gen3d_max_parallel_components_into_config(out, text);
     parse_gen3d_max_seconds_into_config(out, text);
     parse_gen3d_max_tokens_into_config(out, text);
-    parse_gen3d_no_progress_max_steps_into_config(out, text);
+    parse_gen3d_no_progress_tries_max_into_config(out, text);
+    parse_gen3d_inspection_steps_max_into_config(out, text);
     parse_gen3d_max_replans_into_config(out, text);
     parse_gen3d_max_regen_total_into_config(out, text);
     parse_gen3d_max_regen_per_component_into_config(out, text);
@@ -550,9 +553,17 @@ fn parse_gen3d_max_tokens_into_config(out: &mut AppConfig, text: &str) {
     }
 }
 
-fn parse_gen3d_no_progress_max_steps_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_no_progress_max_steps(text) {
-        Ok(Some(value)) => out.gen3d_no_progress_max_steps = value,
+fn parse_gen3d_no_progress_tries_max_into_config(out: &mut AppConfig, text: &str) {
+    match parse_gen3d_no_progress_tries_max(text) {
+        Ok(Some(value)) => out.gen3d_no_progress_tries_max = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_gen3d_inspection_steps_max_into_config(out: &mut AppConfig, text: &str) {
+    match parse_gen3d_inspection_steps_max(text) {
+        Ok(Some(value)) => out.gen3d_inspection_steps_max = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -1700,7 +1711,7 @@ fn parse_gen3d_max_seconds(text: &str) -> Result<Option<u64>, String> {
         let value = if value.starts_with('"') || value.starts_with('\'') {
             parse_toml_string(value).ok_or_else(|| {
                 format!(
-                    "config.toml:{line_no}: expected an integer for `max_seconds` (example: max_seconds = 3600)"
+                    "config.toml:{line_no}: expected an integer for `max_seconds` (example: max_seconds = 1800)"
                 )
             })?
         } else {
@@ -1709,7 +1720,7 @@ fn parse_gen3d_max_seconds(text: &str) -> Result<Option<u64>, String> {
 
         let parsed: i128 = value.trim().parse().map_err(|_| {
             format!(
-                "config.toml:{line_no}: expected an integer for `max_seconds` (example: max_seconds = 3600)"
+                "config.toml:{line_no}: expected an integer for `max_seconds` (example: max_seconds = 1800)"
             )
         })?;
         if parsed < 0 {
@@ -1950,7 +1961,7 @@ fn parse_gen3d_max_tokens(text: &str) -> Result<Option<u64>, String> {
     Ok(out)
 }
 
-fn parse_gen3d_no_progress_max_steps(text: &str) -> Result<Option<u32>, String> {
+fn parse_gen3d_no_progress_tries_max(text: &str) -> Result<Option<u32>, String> {
     const MAX_ALLOWED: u32 = 10_000;
 
     let mut section: Option<String> = None;
@@ -1976,7 +1987,7 @@ fn parse_gen3d_no_progress_max_steps(text: &str) -> Result<Option<u32>, String> 
             continue;
         };
         let key = key.trim();
-        if key != "no_progress_max_steps" && key != "gen3d_no_progress_max_steps" {
+        if key != "no_progress_tries_max" && key != "gen3d_no_progress_tries_max" {
             continue;
         }
 
@@ -1996,7 +2007,7 @@ fn parse_gen3d_no_progress_max_steps(text: &str) -> Result<Option<u32>, String> 
         let value = if value.starts_with('"') || value.starts_with('\'') {
             parse_toml_string(value).ok_or_else(|| {
                 format!(
-                    "config.toml:{line_no}: expected an integer for `no_progress_max_steps` (example: no_progress_max_steps = 12)"
+                    "config.toml:{line_no}: expected an integer for `no_progress_tries_max` (example: no_progress_tries_max = 3)"
                 )
             })?
         } else {
@@ -2005,12 +2016,82 @@ fn parse_gen3d_no_progress_max_steps(text: &str) -> Result<Option<u32>, String> 
 
         let parsed: i64 = value.trim().parse().map_err(|_| {
             format!(
-                "config.toml:{line_no}: expected an integer for `no_progress_max_steps` (example: no_progress_max_steps = 12)"
+                "config.toml:{line_no}: expected an integer for `no_progress_tries_max` (example: no_progress_tries_max = 3)"
             )
         })?;
         if parsed < 0 {
             return Err(format!(
-                "config.toml:{line_no}: `no_progress_max_steps` must be >= 0 (0 disables the guard)"
+                "config.toml:{line_no}: `no_progress_tries_max` must be >= 0 (0 disables the guard)"
+            ));
+        }
+
+        out = Some((parsed as u32).min(MAX_ALLOWED));
+    }
+
+    Ok(out)
+}
+
+fn parse_gen3d_inspection_steps_max(text: &str) -> Result<Option<u32>, String> {
+    const MAX_ALLOWED: u32 = 10_000;
+
+    let mut section: Option<String> = None;
+    let mut out: Option<u32> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "inspection_steps_max" && key != "gen3d_inspection_steps_max" {
+            continue;
+        }
+
+        // Accept at top-level, or under `[gen3d]` / `[app]` for convenience.
+        if let Some(sec) = section.as_deref() {
+            if sec != "gen3d" && sec != "app" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let value = if value.starts_with('"') || value.starts_with('\'') {
+            parse_toml_string(value).ok_or_else(|| {
+                format!(
+                    "config.toml:{line_no}: expected an integer for `inspection_steps_max` (example: inspection_steps_max = 12)"
+                )
+            })?
+        } else {
+            value.to_string()
+        };
+
+        let parsed: i64 = value.trim().parse().map_err(|_| {
+            format!(
+                "config.toml:{line_no}: expected an integer for `inspection_steps_max` (example: inspection_steps_max = 12)"
+            )
+        })?;
+        if parsed < 0 {
+            return Err(format!(
+                "config.toml:{line_no}: `inspection_steps_max` must be >= 0 (0 disables the guard)"
             ));
         }
 

@@ -832,13 +832,22 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
     } else {
         Some(config.gen3d_max_regen_total.saturating_sub(job.regen_total))
     };
-    let no_progress_steps_remaining = if config.gen3d_no_progress_max_steps == 0 {
+    let no_progress_tries_remaining = if config.gen3d_no_progress_tries_max == 0 {
         None
     } else {
         Some(
             config
-                .gen3d_no_progress_max_steps
-                .saturating_sub(job.agent.no_progress_steps),
+                .gen3d_no_progress_tries_max
+                .saturating_sub(job.agent.no_progress_tries),
+        )
+    };
+    let inspection_steps_remaining = if config.gen3d_inspection_steps_max == 0 {
+        None
+    } else {
+        Some(
+            config
+                .gen3d_inspection_steps_max
+                .saturating_sub(job.agent.no_progress_inspection_steps),
         )
     };
     let run_elapsed_seconds = job.run_elapsed().map(|d| d.as_secs_f64());
@@ -993,7 +1002,10 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         "motion_coverage": motion_coverage,
         "review_appearance": job.review_appearance,
         "needs_review": job.agent.rendered_since_last_review,
-        "no_progress_steps": job.agent.no_progress_steps,
+        "no_progress": {
+            "tries": job.agent.no_progress_tries,
+            "inspection_steps": job.agent.no_progress_inspection_steps,
+        },
         "pending_regen_component_indices": &job.agent.pending_regen_component_indices,
         "pending_regen_component_indices_skipped_due_to_budget": &job
             .agent
@@ -1022,9 +1034,12 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
                 "max_per_component": config.gen3d_max_regen_per_component,
             },
             "no_progress": {
-                "max_steps": config.gen3d_no_progress_max_steps,
-                "used_steps": job.agent.no_progress_steps,
-                "remaining_steps": no_progress_steps_remaining,
+                "tries_max": config.gen3d_no_progress_tries_max,
+                "tries_used": job.agent.no_progress_tries,
+                "tries_remaining": no_progress_tries_remaining,
+                "inspection_steps_max": config.gen3d_inspection_steps_max,
+                "inspection_steps_used": job.agent.no_progress_inspection_steps,
+                "inspection_steps_remaining": inspection_steps_remaining,
             },
             "time": {
                 "max_seconds": config.gen3d_max_seconds,

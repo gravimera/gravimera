@@ -163,7 +163,9 @@ Gen3D budgets / guard:
 - `[gen3d].review_appearance` controls whether the AI reviews visual appearance from preview renders (default: `false` / structural-only).
   - Note: this controls *image-based* review. In seeded Edit/Fork sessions, Gen3D can still apply machine-appliable alignment/attachment tweaks from user notes even when `review_appearance=false` (no renders sent to the model).
 - `[gen3d].max_seconds` / `[gen3d].max_tokens` cap a Build run (set to `0` to disable a budget).
-- `[gen3d].no_progress_max_steps` stops best-effort if the agent produces no progress for N steps (set to `0` to disable).
+- No-progress guard (set either to `0` to disable):
+  - `[gen3d].no_progress_tries_max` stops best-effort after N “try” steps (mutating tools) without changing the assembled-state hash.
+  - `[gen3d].inspection_steps_max` stops best-effort after N inspection-only steps (read-only / QA / tool lookup) without changing the assembled-state hash.
 
 Gen3D AI provider:
 

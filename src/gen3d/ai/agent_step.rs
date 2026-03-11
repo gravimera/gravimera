@@ -21,7 +21,8 @@ use super::agent_loop::spawn_agent_step_request;
 use super::agent_parsing::{is_transient_ai_error_message, parse_agent_step};
 use super::agent_tool_dispatch::execute_tool_call;
 use super::agent_utils::{
-    compute_agent_state_hash, note_observable_tool_result, truncate_json_for_log,
+    compute_agent_state_hash, note_observable_tool_result, step_had_no_progress_try,
+    truncate_json_for_log,
 };
 use super::artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_text_artifact,
@@ -762,25 +763,39 @@ pub(super) fn execute_agent_actions(
                 .map(|h| h != state_hash.as_str())
                 .unwrap_or(true);
             if changed {
-                job.agent.no_progress_steps = 0;
+                job.agent.no_progress_tries = 0;
+                job.agent.no_progress_inspection_steps = 0;
                 job.agent.last_state_hash = Some(state_hash.clone());
             } else {
-                job.agent.no_progress_steps = job.agent.no_progress_steps.saturating_add(1);
+                if step_had_no_progress_try(&job.agent.step_tool_results) {
+                    job.agent.no_progress_tries = job.agent.no_progress_tries.saturating_add(1);
+                } else {
+                    job.agent.no_progress_inspection_steps =
+                        job.agent.no_progress_inspection_steps.saturating_add(1);
+                }
             }
             job.agent.step_had_observable_output = false;
 
-            let max_steps = config.gen3d_no_progress_max_steps;
-            if max_steps > 0 && job.agent.no_progress_steps >= max_steps {
+            let tries_max = config.gen3d_no_progress_tries_max;
+            let inspection_max = config.gen3d_inspection_steps_max;
+            let tries_triggered = tries_max > 0 && job.agent.no_progress_tries >= tries_max;
+            let inspection_triggered =
+                inspection_max > 0 && job.agent.no_progress_inspection_steps >= inspection_max;
+            if tries_triggered || inspection_triggered {
                 if !run_complete_enough_for_auto_finish(job, draft) {
                     // Prefer continuing so the agent can run the required QA sequence.
                     // If it refuses, budgets will stop the run anyway.
-                    job.agent.no_progress_steps = 0;
+                    job.agent.no_progress_tries = 0;
+                    job.agent.no_progress_inspection_steps = 0;
                     job.agent.last_state_hash = Some(state_hash);
                 } else {
                     workshop.error = None;
                     let status = format!(
-                        "Build finished (best effort).\nReason: No-progress guard triggered ({} step(s) without progress).",
-                        job.agent.no_progress_steps
+                        "Build finished (best effort).\nReason: No-progress guard triggered (tries: {}/{}; inspection steps: {}/{}).",
+                        job.agent.no_progress_tries,
+                        tries_max,
+                        job.agent.no_progress_inspection_steps,
+                        inspection_max
                     );
                     start_finish_run_sequence(
                         config,
@@ -792,12 +807,14 @@ pub(super) fn execute_agent_actions(
                         Gen3dPendingFinishRun {
                             workshop_status: status,
                             run_log: format!(
-                                "no_progress_guard_stop steps={}",
-                                job.agent.no_progress_steps
+                                "no_progress_guard_stop tries={} inspection_steps={}",
+                                job.agent.no_progress_tries,
+                                job.agent.no_progress_inspection_steps
                             ),
                             info_log: format!(
-                                "Gen3D agent: best-effort stop (no-progress guard; steps={}).",
-                                job.agent.no_progress_steps
+                                "Gen3D agent: best-effort stop (no-progress guard; tries={} inspection_steps={}).",
+                                job.agent.no_progress_tries,
+                                job.agent.no_progress_inspection_steps
                             ),
                         },
                     );
