@@ -160,6 +160,363 @@ pub(super) fn build_motion_validation_report(
     }
 }
 
+pub(super) fn build_motion_metrics_report_v1(
+    rig_move_cycle_m: Option<f32>,
+    components: &[Gen3dPlannedComponent],
+    sample_count: usize,
+) -> serde_json::Value {
+    fn finite_f32(v: f32) -> Option<f32> {
+        v.is_finite().then_some(v)
+    }
+
+    fn vec3_json(v: Vec3) -> Option<[f32; 3]> {
+        v.is_finite().then_some([v.x, v.y, v.z])
+    }
+
+    fn stats_json(values: &[f32]) -> serde_json::Value {
+        let mut min_v = f32::INFINITY;
+        let mut max_v = f32::NEG_INFINITY;
+        let mut sum_v = 0.0;
+        let mut count: u32 = 0;
+
+        for &v in values {
+            if !v.is_finite() {
+                continue;
+            }
+            min_v = min_v.min(v);
+            max_v = max_v.max(v);
+            sum_v += v;
+            count = count.saturating_add(1);
+        }
+
+        if count == 0 || !min_v.is_finite() || !max_v.is_finite() {
+            return serde_json::json!({ "count": 0 });
+        }
+
+        let mean = (sum_v / count as f32).max(0.0);
+        serde_json::json!({
+            "count": count,
+            "min": min_v.max(0.0),
+            "max": max_v.max(0.0),
+            "mean": mean,
+        })
+    }
+
+    let sample_count = sample_count.clamp(8, 256);
+
+    let joints_total: usize = components
+        .iter()
+        .filter(|c| {
+            c.attach_to
+                .as_ref()
+                .and_then(|a| a.joint.as_ref())
+                .is_some()
+        })
+        .count();
+    let contacts_total: usize = components.iter().map(|c| c.contacts.len()).sum();
+
+    let (cycle_m, cycle_source) = infer_cycle_m(rig_move_cycle_m, components);
+    let cycle_m = cycle_m.max(1e-3);
+
+    let samples_t_m: Vec<f32> = (0..sample_count)
+        .map(|i| (i as f32 / sample_count as f32) * cycle_m)
+        .collect();
+    let samples_phase_01: Vec<f32> = samples_t_m.iter().map(|t| *t / cycle_m).collect();
+
+    let root_idx = components
+        .iter()
+        .position(|c| c.attach_to.is_none())
+        .unwrap_or(0);
+
+    let root_forward = Vec3::Z;
+    let mut root_forward_xz = Vec3::new(root_forward.x, 0.0, root_forward.z);
+    if !root_forward_xz.is_finite() || root_forward_xz.length_squared() <= 1e-6 {
+        root_forward_xz = Vec3::Z;
+    } else {
+        root_forward_xz = root_forward_xz.normalize();
+    }
+    let mut root_right_xz = Vec3::Y.cross(root_forward_xz);
+    if !root_right_xz.is_finite() || root_right_xz.length_squared() <= 1e-6 {
+        root_right_xz = Vec3::X;
+    } else {
+        root_right_xz = root_right_xz.normalize();
+    }
+
+    let rig_max_dim_m: f32 = components
+        .iter()
+        .map(|c| c.planned_size.abs().max_element())
+        .filter(|v| v.is_finite())
+        .fold(0.0_f32, |acc, v| acc.max(v))
+        .max(0.01_f32);
+
+    let mut name_to_idx: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (idx, c) in components.iter().enumerate() {
+        name_to_idx.insert(c.name.as_str(), idx);
+    }
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); components.len()];
+    for (idx, c) in components.iter().enumerate() {
+        let Some(att) = c.attach_to.as_ref() else {
+            continue;
+        };
+        if let Some(parent_idx) = name_to_idx.get(att.parent.as_str()).copied() {
+            children[parent_idx].push(idx);
+        }
+    }
+
+    let world_per_sample: Vec<Vec<Transform>> = samples_t_m
+        .iter()
+        .map(|&t_m| compute_world_transforms_at_t(components, &children, root_idx, t_m))
+        .collect();
+
+    let mut contacts_ground_total: usize = 0;
+    let mut contacts_ground_with_stance: usize = 0;
+
+    let mut stance_slip_max_xz_values: Vec<f32> = Vec::new();
+    let mut stance_lift_max_values: Vec<f32> = Vec::new();
+    let mut root_frame_forward_range_values: Vec<f32> = Vec::new();
+
+    let mut ground_contacts: Vec<serde_json::Value> = Vec::new();
+
+    for (component_idx, comp) in components.iter().enumerate() {
+        // Stance metrics assume the contact point is planted in world space during stance. That's
+        // not true for rolling wheels/rollers where a rim anchor rotates around the hub.
+        let move_is_spin = comp
+            .attach_to
+            .as_ref()
+            .and_then(find_move_slot)
+            .map(|slot| matches!(slot.spec.clip, PartAnimationDef::Spin { .. }))
+            .unwrap_or(false);
+
+        for contact in comp.contacts.iter() {
+            if contact.kind != AiContactKindJson::Ground {
+                continue;
+            }
+            contacts_ground_total = contacts_ground_total.saturating_add(1);
+
+            let anchor_name = contact.anchor.trim();
+            if anchor_name.is_empty() {
+                continue;
+            }
+
+            let anchor_local = anchor_transform_from_component(comp, anchor_name);
+
+            let mut positions_root: Vec<Vec3> = Vec::with_capacity(sample_count);
+            let mut positions_world: Vec<Vec3> = Vec::with_capacity(sample_count);
+
+            for (i, &t_m) in samples_t_m.iter().enumerate() {
+                let component_world = world_per_sample
+                    .get(i)
+                    .and_then(|w| w.get(component_idx))
+                    .copied()
+                    .unwrap_or(Transform::IDENTITY);
+                let p_root = component_world
+                    .to_matrix()
+                    .transform_point3(anchor_local.translation);
+                positions_root.push(p_root);
+                positions_world.push(root_forward_xz * t_m + p_root);
+            }
+
+            let mut f_min = f32::INFINITY;
+            let mut f_max = f32::NEG_INFINITY;
+            let mut r_min = f32::INFINITY;
+            let mut r_max = f32::NEG_INFINITY;
+            let mut y_min = f32::INFINITY;
+            let mut y_max = f32::NEG_INFINITY;
+
+            for p in &positions_root {
+                if !p.is_finite() {
+                    continue;
+                }
+                let f = p.dot(root_forward_xz);
+                let r = p.dot(root_right_xz);
+                let y = p.y;
+                if f.is_finite() {
+                    f_min = f_min.min(f);
+                    f_max = f_max.max(f);
+                }
+                if r.is_finite() {
+                    r_min = r_min.min(r);
+                    r_max = r_max.max(r);
+                }
+                if y.is_finite() {
+                    y_min = y_min.min(y);
+                    y_max = y_max.max(y);
+                }
+            }
+
+            let forward_range_m = if f_min.is_finite() && f_max.is_finite() {
+                (f_max - f_min).abs()
+            } else {
+                0.0
+            };
+            let right_range_m = if r_min.is_finite() && r_max.is_finite() {
+                (r_max - r_min).abs()
+            } else {
+                0.0
+            };
+            let up_range_m = if y_min.is_finite() && y_max.is_finite() {
+                (y_max - y_min).abs()
+            } else {
+                0.0
+            };
+            if forward_range_m.is_finite() {
+                root_frame_forward_range_values.push(forward_range_m);
+            }
+
+            let stance_json = contact.stance.as_ref().map(|s| {
+                serde_json::json!({
+                    "phase_01": finite_f32(s.phase_01),
+                    "duty_factor_01": finite_f32(s.duty_factor_01),
+                })
+            });
+
+            let mut stance_metrics_json: Option<serde_json::Value> = None;
+            if let Some(stance) = contact.stance.as_ref().filter(|_| !move_is_spin) {
+                contacts_ground_with_stance = contacts_ground_with_stance.saturating_add(1);
+
+                let phase_start = if stance.phase_01.is_finite() {
+                    stance.phase_01.rem_euclid(1.0)
+                } else {
+                    0.0
+                };
+                let duty = if stance.duty_factor_01.is_finite() {
+                    stance.duty_factor_01.clamp(0.0, 1.0)
+                } else {
+                    0.5
+                };
+
+                let stance_mid_phase = (phase_start + duty * 0.5).rem_euclid(1.0);
+                let mut stance_indices: Vec<usize> = Vec::new();
+                for (i, &phase) in samples_phase_01.iter().enumerate() {
+                    if phase_in_stance(phase, phase_start, duty) {
+                        stance_indices.push(i);
+                    }
+                }
+
+                if stance_indices.len() >= 2 {
+                    let baseline_idx = stance_indices
+                        .iter()
+                        .copied()
+                        .min_by(|&a, &b| {
+                            let da = circular_distance(samples_phase_01[a], stance_mid_phase);
+                            let db = circular_distance(samples_phase_01[b], stance_mid_phase);
+                            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .unwrap_or(stance_indices[0]);
+                    let baseline_world = positions_world[baseline_idx];
+                    let baseline_phase_01 =
+                        samples_phase_01.get(baseline_idx).copied().unwrap_or(0.0);
+                    let baseline_t_m = samples_t_m.get(baseline_idx).copied().unwrap_or(0.0);
+
+                    let mut max_lift_m: f32 = 0.0;
+                    let mut max_lift_phase_01: f32 = baseline_phase_01;
+                    let mut max_slip_xz_m: f32 = 0.0;
+                    let mut max_slip_phase_01: f32 = baseline_phase_01;
+
+                    let mut max_slip_forward_m: f32 = 0.0;
+                    let mut max_slip_right_m: f32 = 0.0;
+
+                    for &i in &stance_indices {
+                        let p = positions_world[i];
+                        if !p.is_finite() || !baseline_world.is_finite() {
+                            continue;
+                        }
+                        let delta = p - baseline_world;
+                        let lift = (p.y - baseline_world.y).abs();
+                        if lift.is_finite() && lift > max_lift_m {
+                            max_lift_m = lift;
+                            max_lift_phase_01 = samples_phase_01.get(i).copied().unwrap_or(0.0);
+                        }
+
+                        let dxz = Vec2::new(delta.x, delta.z);
+                        let slip_xz = dxz.length();
+                        if slip_xz.is_finite() && slip_xz > max_slip_xz_m {
+                            max_slip_xz_m = slip_xz;
+                            max_slip_phase_01 = samples_phase_01.get(i).copied().unwrap_or(0.0);
+                        }
+
+                        let slip_forward = delta.dot(root_forward_xz).abs();
+                        if slip_forward.is_finite() && slip_forward > max_slip_forward_m {
+                            max_slip_forward_m = slip_forward;
+                        }
+                        let slip_right = delta.dot(root_right_xz).abs();
+                        if slip_right.is_finite() && slip_right > max_slip_right_m {
+                            max_slip_right_m = slip_right;
+                        }
+                    }
+
+                    if max_slip_xz_m.is_finite() {
+                        stance_slip_max_xz_values.push(max_slip_xz_m);
+                    }
+                    if max_lift_m.is_finite() {
+                        stance_lift_max_values.push(max_lift_m);
+                    }
+
+                    stance_metrics_json = Some(serde_json::json!({
+                        "stance_phase_01": phase_start,
+                        "stance_duty_factor_01": duty,
+                        "baseline": {
+                            "phase_01": finite_f32(baseline_phase_01),
+                            "t_m": finite_f32(baseline_t_m),
+                            "pos_world_m": vec3_json(baseline_world),
+                        },
+                        "lift_max_m": finite_f32(max_lift_m),
+                        "lift_at_phase_01": finite_f32(max_lift_phase_01),
+                        "slip_max_m_xz": finite_f32(max_slip_xz_m),
+                        "slip_at_phase_01": finite_f32(max_slip_phase_01),
+                        "slip_max_m_forward": finite_f32(max_slip_forward_m),
+                        "slip_max_m_right": finite_f32(max_slip_right_m),
+                    }));
+                }
+            }
+
+            ground_contacts.push(serde_json::json!({
+                "component": comp.name.as_str(),
+                "component_id": component_id_uuid_for_name(&comp.name),
+                "contact": contact.name.trim(),
+                "anchor": anchor_name,
+                "move_is_spin": move_is_spin,
+                "stance": stance_json,
+                "root_frame": {
+                    "forward_range_m": finite_f32(forward_range_m),
+                    "right_range_m": finite_f32(right_range_m),
+                    "up_range_m": finite_f32(up_range_m),
+                    "forward_range_fraction_of_cycle": finite_f32(forward_range_m / cycle_m),
+                    "cycle_fraction_of_rig_max_dim": finite_f32(cycle_m / rig_max_dim_m),
+                },
+                "stance_metrics": stance_metrics_json,
+            }));
+        }
+    }
+
+    serde_json::json!({
+        "version": 1,
+        "rig_summary": {
+            "cycle_m": cycle_m,
+            "cycle_source": cycle_source,
+            "sample_count": sample_count,
+            "root_forward_xz": vec3_json(root_forward_xz),
+            "root_right_xz": vec3_json(root_right_xz),
+            "joints_total": joints_total,
+            "contacts_total": contacts_total,
+            "contacts_ground_total": contacts_ground_total,
+            "contacts_ground_with_stance": contacts_ground_with_stance,
+            "rig_max_dim_m": rig_max_dim_m,
+        },
+        "definitions": {
+            "root_frame.forward_range_m": "Range of the contact anchor position along root +Z (forward) over one move cycle, measured in root frame (visual step excursion relative to the body).",
+            "stance_metrics.slip_max_m_xz": "Max horizontal drift of the contact point in WORLD space during its stance window (ideal planted contact ~= 0).",
+            "stance_metrics.lift_max_m": "Max vertical lift of the contact point in WORLD space during its stance window (ideal planted contact ~= 0).",
+        },
+        "summary": {
+            "stance_slip_max_m_xz": stats_json(&stance_slip_max_xz_values),
+            "stance_lift_max_m": stats_json(&stance_lift_max_values),
+            "root_frame_forward_range_m": stats_json(&root_frame_forward_range_values),
+        },
+        "ground_contacts": ground_contacts,
+    })
+}
+
 fn validate_chain_anchor_axes(components: &[Gen3dPlannedComponent], issues: &mut Vec<MotionIssue>) {
     const EPS: f32 = 1e-6;
     const DOT_ERROR_THRESHOLD: f32 = 0.2;

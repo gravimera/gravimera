@@ -5,9 +5,9 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_TOOL_DETAIL,
     TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_QA, TOOL_ID_READ_ARTIFACT,
-    TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS,
-    TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
+    TOOL_ID_READ_ARTIFACT, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use uuid::Uuid;
@@ -61,6 +61,8 @@ Rules:\n\
   - If `qa_v1` reports `contact_stance_missing`, prefer `llm_review_delta_v1` to add/fix `contacts[].stance` (motion authoring cannot create stance metadata).\n\
   - If `qa_v1` reports `hinge_axis_missing` or `hinge_axis_invalid`, fix the joint axis (replan OR `apply_draft_ops_v1` set_attachment_joint) before motion authoring.\n\
   - If `qa_v1` reports `fixed_joint_rotates` on a joint you INTEND to rotate, update that edge's joint metadata (usually to `hinge` with a valid `axis_join`) so QA reflects the intended degrees-of-freedom.\n\
+  - If the user complains about stride/step size (\"stride too small\", \"bigger steps\", \"feet barely move\"), call `motion_metrics_v1` to measure stride + planted-contact slip/lift BEFORE re-authoring motion; then use those numeric metrics explicitly (goal + measurement) in your fix.\n\
+  - `render_preview_v1` is local-only rendering; it does NOT send images to the LLM. Use `render_preview_v1` with `include_motion_sheets=true` to generate motion sprite sheets for quick inspection.\n\
 - Visual QA / appearance review:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
@@ -332,9 +334,30 @@ pub(super) fn build_agent_user_text(
                     .get("images")
                     .and_then(|v| v.as_array())
                     .map(|a| a.len());
+                let static_images = value
+                    .get("static_images")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
+                let motion_sheets = value.get("motion_sheets");
+                let has_move_sheet = motion_sheets
+                    .and_then(|v| v.get("move"))
+                    .and_then(|v| v.as_str())
+                    .is_some();
+                let has_attack_sheet = motion_sheets
+                    .and_then(|v| v.get("attack"))
+                    .and_then(|v| v.as_str())
+                    .is_some();
                 out.push_str("ok");
                 if let Some(images) = images {
                     out.push_str(&format!(" images={images}"));
+                }
+                if let Some(static_images) = static_images {
+                    out.push_str(&format!(" static_images={static_images}"));
+                }
+                if has_move_sheet || has_attack_sheet {
+                    out.push_str(&format!(
+                        " motion_sheets={{move:{has_move_sheet},attack:{has_attack_sheet}}}"
+                    ));
                 }
             }
             TOOL_ID_VALIDATE => {
@@ -411,6 +434,46 @@ pub(super) fn build_agent_user_text(
                 }
                 if let Some(issues) = issues {
                     out.push_str(&format!(" issues={issues}"));
+                }
+            }
+            TOOL_ID_MOTION_METRICS => {
+                let cycle_m = value
+                    .get("rig_summary")
+                    .and_then(|v| v.get("cycle_m"))
+                    .and_then(|v| v.as_f64());
+                let contacts_ground = value
+                    .get("rig_summary")
+                    .and_then(|v| v.get("contacts_ground_total"))
+                    .and_then(|v| v.as_u64());
+                let stance_slip_max = value
+                    .get("summary")
+                    .and_then(|v| v.get("stance_slip_max_m_xz"))
+                    .and_then(|v| v.get("max"))
+                    .and_then(|v| v.as_f64());
+                let forward_range_mean = value
+                    .get("summary")
+                    .and_then(|v| v.get("root_frame_forward_range_m"))
+                    .and_then(|v| v.get("mean"))
+                    .and_then(|v| v.as_f64());
+
+                out.push_str("ok");
+                if let Some(cycle_m) = cycle_m {
+                    out.push_str(&format!(" cycle_m={:.3}", cycle_m.max(0.0)));
+                }
+                if let Some(contacts_ground) = contacts_ground {
+                    out.push_str(&format!(" ground_contacts={contacts_ground}"));
+                }
+                if let Some(forward_range_mean) = forward_range_mean {
+                    out.push_str(&format!(
+                        " forward_range_mean_m={:.3}",
+                        forward_range_mean.max(0.0)
+                    ));
+                }
+                if let Some(stance_slip_max) = stance_slip_max {
+                    out.push_str(&format!(
+                        " stance_slip_max_m_xz={:.3}",
+                        stance_slip_max.max(0.0)
+                    ));
                 }
             }
             TOOL_ID_LIST_RUN_ARTIFACTS => {

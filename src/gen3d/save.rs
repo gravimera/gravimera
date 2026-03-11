@@ -85,6 +85,8 @@ struct Gen3dPrefabThumbnailCaptureProgress {
 
 #[derive(Debug)]
 struct Gen3dPrefabThumbnailCapture {
+    prefab_id: u128,
+    thumbnail_path: PathBuf,
     root: Entity,
     camera: Entity,
     screenshot: Entity,
@@ -1788,6 +1790,8 @@ fn start_gen3d_prefab_thumbnail_capture(
     commands.entity(root).add_child(screenshot);
 
     Ok(Gen3dPrefabThumbnailCapture {
+        prefab_id,
+        thumbnail_path,
         root,
         camera,
         screenshot,
@@ -1808,6 +1812,7 @@ fn cleanup_gen3d_prefab_thumbnail_capture(
 pub(crate) fn gen3d_prefab_thumbnail_capture_poll(
     mut commands: Commands,
     mut runtime: ResMut<Gen3dPrefabThumbnailCaptureRuntime>,
+    mut model_library: Option<ResMut<crate::model_library_ui::ModelLibraryUiState>>,
 ) {
     let Some(capture) = runtime.active.as_ref() else {
         return;
@@ -1825,6 +1830,20 @@ pub(crate) fn gen3d_prefab_thumbnail_capture_poll(
     }
     if timed_out && !done {
         warn!("Gen3D: thumbnail capture timed out.");
+    }
+
+    if done {
+        let thumbnail_exists = std::fs::metadata(&capture.thumbnail_path).is_ok();
+        if !thumbnail_exists {
+            debug!(
+                "Gen3D: thumbnail capture finished but output is missing (prefab={}): {}",
+                Uuid::from_u128(capture.prefab_id),
+                capture.thumbnail_path.display()
+            );
+        }
+        if let Some(state) = model_library.as_mut() {
+            state.mark_models_dirty();
+        }
     }
 
     if let Some(capture) = runtime.active.take() {

@@ -3,7 +3,7 @@
 This document records Gen3D process decisions and forward-looking next actions.
 It may describe behavior that is **not implemented yet**.
 
-Last updated: 2026-03-11
+Last updated: 2026-03-12
 
 ## Non‑negotiable constraints
 
@@ -26,6 +26,7 @@ Last updated: 2026-03-11
 - QA is available as both primitives and a composed tool:
   - `validate_v1` (structural consistency checks),
   - `smoke_check_v1` (behavioral checks + motion validation summary),
+  - `motion_metrics_v1` (read-only stride/contact metrics for “bigger stride”/slip debugging),
   - `qa_v1` (composed `validate_v1` + `smoke_check_v1`),
   - `render_preview_v1` + `llm_review_delta_v1` (optional appearance loop).
 - The engine respects agent `done` by default (except empty draft). Any unfinished QA/review/motion state is surfaced as warnings/status (no hidden auto-fixes).

@@ -117,11 +117,27 @@ pub(super) fn poll_agent_render_capture(
             }
         }
 
+        let mut images: Vec<String> = Vec::with_capacity(paths.len());
+        let mut static_images: Vec<String> = Vec::new();
+        let mut move_sheet: Option<String> = None;
+        let mut attack_sheet: Option<String> = None;
+        for path in &paths {
+            let s = path.display().to_string();
+            images.push(s.clone());
+            match path.file_name().and_then(|v| v.to_str()) {
+                Some("move_sheet.png") => move_sheet = Some(s),
+                Some("attack_sheet.png") => attack_sheet = Some(s),
+                _ => static_images.push(s),
+            }
+        }
+
         let result = Gen3dToolResultJsonV1::ok(
             call.call_id,
             call.tool_id,
             serde_json::json!({
-                "images": paths.iter().map(|p| p.display().to_string()).collect::<Vec<String>>(),
+                "images": images,
+                "static_images": static_images,
+                "motion_sheets": { "move": move_sheet, "attack": attack_sheet },
             }),
         );
         job.metrics.note_tool_result(&result);
@@ -225,11 +241,27 @@ pub(super) fn poll_agent_render_capture(
         }
     }
 
+    let mut images: Vec<String> = Vec::with_capacity(paths.len());
+    let mut static_images: Vec<String> = Vec::new();
+    let mut move_sheet: Option<String> = None;
+    let mut attack_sheet: Option<String> = None;
+    for path in &paths {
+        let s = path.display().to_string();
+        images.push(s.clone());
+        match path.file_name().and_then(|v| v.to_str()) {
+            Some("move_sheet.png") => move_sheet = Some(s),
+            Some("attack_sheet.png") => attack_sheet = Some(s),
+            _ => static_images.push(s),
+        }
+    }
+
     let result = Gen3dToolResultJsonV1::ok(
         call.call_id,
         call.tool_id,
         serde_json::json!({
-            "images": paths.iter().map(|p| p.display().to_string()).collect::<Vec<String>>(),
+            "images": images,
+            "static_images": static_images,
+            "motion_sheets": { "move": move_sheet, "attack": attack_sheet },
         }),
     );
     job.metrics.note_tool_result(&result);

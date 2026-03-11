@@ -10,6 +10,7 @@ pub(crate) const TOOL_ID_SET_DESCRIPTOR_META: &str = "set_descriptor_meta_v1";
 pub(crate) const TOOL_ID_QUERY_COMPONENT_PARTS: &str = "query_component_parts_v1";
 pub(crate) const TOOL_ID_VALIDATE: &str = "validate_v1";
 pub(crate) const TOOL_ID_SMOKE_CHECK: &str = "smoke_check_v1";
+pub(crate) const TOOL_ID_MOTION_METRICS: &str = "motion_metrics_v1";
 pub(crate) const TOOL_ID_QA: &str = "qa_v1";
 pub(crate) const TOOL_ID_LIST_RUN_ARTIFACTS: &str = "list_run_artifacts_v1";
 pub(crate) const TOOL_ID_READ_ARTIFACT: &str = "read_artifact_v1";
@@ -115,6 +116,14 @@ impl Gen3dToolRegistryV1 {
                     "Checks behavior/motion (bounded); may apply deterministic motion contact auto-repair.",
                 args_schema: "{}",
                 args_example: serde_json::json!({}),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_MOTION_METRICS,
+                title: "Motion metrics",
+                one_line_summary:
+                    "Read-only: deterministic stride/contact metrics for the current draft motion (no mutation).",
+                args_schema: "{ version?: 1, sample_count?: number }",
+                args_example: serde_json::json!({ "version": 1, "sample_count": 32 }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_QA,

@@ -12,7 +12,7 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
-    TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT,
+    TOOL_ID_MOTION_METRICS, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT,
     TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
     TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META,
     TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
@@ -315,6 +315,49 @@ pub(super) fn execute_tool_call(
                     ));
                 }
             };
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+        }
+        TOOL_ID_MOTION_METRICS => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct MotionMetricsArgsV1 {
+                #[serde(default)]
+                version: u32,
+                #[serde(default)]
+                sample_count: Option<usize>,
+            }
+
+            let args: MotionMetricsArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid args for `{TOOL_ID_MOTION_METRICS}`: {err}"),
+                    ));
+                }
+            };
+
+            if args.version != 0 && args.version != 1 {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "Unsupported `{TOOL_ID_MOTION_METRICS}` version {}.",
+                        args.version
+                    ),
+                ));
+            }
+
+            let sample_count = args.sample_count.unwrap_or(24).clamp(8, 256);
+            let json = super::motion_validation::build_motion_metrics_report_v1(
+                job.rig_move_cycle_m,
+                &job.planned_components,
+                sample_count,
+            );
+            if let Some(dir) = job.pass_dir.as_deref() {
+                write_gen3d_json_artifact(Some(dir), "motion_metrics.json", &json);
+            }
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_QA => {
