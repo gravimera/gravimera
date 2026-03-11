@@ -140,11 +140,21 @@ Fields:
     - `plan_hash`: string (hash of the plan context)
     - `assembly_rev`: integer (monotonic assembly revision)
     - `plan_extracted`: object (a compact plan extract written by Gen3D; similar to the `plan_extracted.json` artifact)
+    - `descriptor_meta_policy`: string (`"suggest"` or `"preserve"`). Indicates how descriptor-meta was applied when saving.
+    - `descriptor_meta_v1`: object. Raw Gen3D descriptor-meta output used to populate `label` + `text.short` + `tags`:
+      - `version`: integer (schema version)
+      - `name`: string (≤3 words recommended)
+      - `short`: string (1–2 lines)
+      - `tags`: array of strings
 - `revisions`: optional array of revision entries:
   - `rev`: integer (monotonic)
   - `created_at_ms`: integer
   - `actor`: string (e.g. `"human"`, `"agent:object"`)
   - `summary`: string
+  - Additional fields may be present. Recommended fields when available:
+    - `prompt`: string. The Gen3D prompt used at the time this revision was saved.
+    - `descriptor_meta_policy`: string (`"suggest"` or `"preserve"`). Indicates how descriptor-meta was applied.
+    - `descriptor_meta_v1`: object. Raw Gen3D descriptor-meta output (see `gen3d.descriptor_meta_v1` above).
 
 ## Validation Rules (Non-Exhaustive)
 

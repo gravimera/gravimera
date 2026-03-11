@@ -1,7 +1,7 @@
 use bevy::camera::RenderTarget;
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::message::MessageWriter;
 use bevy::ecs::system::SystemParam;
-use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use std::path::PathBuf;
@@ -1166,15 +1166,24 @@ fn save_gen3d_snapshot_to_scene_and_library(
         job.save_overwrite_prefab_id(),
         job.min_ground_contact_y_in_root(),
     )?;
-    let prefabs_dir =
-        crate::realm_prefab_packages::save_realm_prefab_package_defs(realm_id, saved_root_id, &defs)?;
+    let prefabs_dir = crate::realm_prefab_packages::save_realm_prefab_package_defs(
+        realm_id,
+        saved_root_id,
+        &defs,
+    )?;
 
     save_gen3d_source_bundle_best_effort(
-        &crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(realm_id, saved_root_id),
+        &crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(
+            realm_id,
+            saved_root_id,
+        ),
         snapshot,
     );
     save_gen3d_edit_bundle_best_effort(
-        &crate::realm_prefab_packages::realm_prefab_package_gen3d_edit_bundle_path(realm_id, saved_root_id),
+        &crate::realm_prefab_packages::realm_prefab_package_gen3d_edit_bundle_path(
+            realm_id,
+            saved_root_id,
+        ),
         job,
         saved_root_id,
     );
@@ -1632,12 +1641,8 @@ fn start_gen3d_prefab_thumbnail_capture(
     };
 
     if let Some(parent) = thumbnail_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| {
-            format!(
-                "Failed to create thumbnail dir {}: {err}",
-                parent.display()
-            )
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create thumbnail dir {}: {err}", parent.display()))?;
     }
 
     let render_layer = bevy::camera::visibility::RenderLayers::layer(GEN3D_SAVE_THUMBNAIL_LAYER);
@@ -1812,8 +1817,8 @@ pub(crate) fn gen3d_prefab_thumbnail_capture_poll(
         Ok(guard) => guard.completed >= guard.expected.max(1),
         Err(_) => true,
     };
-    let timed_out = capture.started_at.elapsed()
-        > Duration::from_secs(GEN3D_SAVE_THUMBNAIL_TIMEOUT_SECS);
+    let timed_out =
+        capture.started_at.elapsed() > Duration::from_secs(GEN3D_SAVE_THUMBNAIL_TIMEOUT_SECS);
 
     if !done && !timed_out {
         return;
@@ -2419,13 +2424,6 @@ fn save_generated_prefab_descriptor_best_effort(
     } else {
         "generated"
     };
-    revisions.push(crate::prefab_descriptors::PrefabDescriptorRevisionV1 {
-        rev: next_rev,
-        created_at_ms: now_ms,
-        actor: "agent:object".to_string(),
-        summary: revision_summary.to_string(),
-        extra: Default::default(),
-    });
 
     let mut anchors: Vec<crate::prefab_descriptors::PrefabDescriptorAnchorV1> = root_def
         .anchors
@@ -2457,6 +2455,41 @@ fn save_generated_prefab_descriptor_best_effort(
             job_prompt.to_string()
         }
     };
+
+    let mut revision_extra: std::collections::BTreeMap<String, serde_json::Value> =
+        Default::default();
+    if !prompt_used.trim().is_empty() {
+        revision_extra.insert(
+            "prompt".to_string(),
+            serde_json::Value::String(prompt_used.trim().to_string()),
+        );
+    }
+    if let Some((policy, meta)) = job.descriptor_meta_for_save() {
+        revision_extra.insert(
+            "descriptor_meta_policy".to_string(),
+            serde_json::Value::String(match policy {
+                Gen3dDescriptorMetaPolicy::Suggest => "suggest".to_string(),
+                Gen3dDescriptorMetaPolicy::Preserve => "preserve".to_string(),
+            }),
+        );
+        revision_extra.insert(
+            "descriptor_meta_v1".to_string(),
+            serde_json::json!({
+                "version": meta.version,
+                "name": meta.name.trim(),
+                "short": meta.short.trim(),
+                "tags": meta.tags.clone(),
+            }),
+        );
+    }
+
+    revisions.push(crate::prefab_descriptors::PrefabDescriptorRevisionV1 {
+        rev: next_rev,
+        created_at_ms: now_ms,
+        actor: "agent:object".to_string(),
+        summary: revision_summary.to_string(),
+        extra: revision_extra,
+    });
 
     let short = prompt_used
         .lines()
@@ -2515,6 +2548,25 @@ fn save_generated_prefab_descriptor_best_effort(
         .and_then(|dir| load_optional_json(&dir.join("plan_extracted.json")));
     if let Some(plan) = plan_extracted_value.as_ref() {
         gen3d_extra.insert("plan_extracted".to_string(), plan.clone());
+    }
+
+    if let Some((policy, meta)) = job.descriptor_meta_for_save() {
+        gen3d_extra.insert(
+            "descriptor_meta_policy".to_string(),
+            serde_json::Value::String(match policy {
+                Gen3dDescriptorMetaPolicy::Suggest => "suggest".to_string(),
+                Gen3dDescriptorMetaPolicy::Preserve => "preserve".to_string(),
+            }),
+        );
+        gen3d_extra.insert(
+            "descriptor_meta_v1".to_string(),
+            serde_json::json!({
+                "version": meta.version,
+                "name": meta.name.trim(),
+                "short": meta.short.trim(),
+                "tags": meta.tags.clone(),
+            }),
+        );
     }
 
     let anchors_for_ai = anchor_names.clone();

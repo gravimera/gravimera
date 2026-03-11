@@ -469,7 +469,9 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     let has_source_bundle = source_dir.exists();
 
     let edit_bundle_path =
-        crate::realm_prefab_packages::realm_prefab_package_gen3d_edit_bundle_path(realm_id, prefab_id);
+        crate::realm_prefab_packages::realm_prefab_package_gen3d_edit_bundle_path(
+            realm_id, prefab_id,
+        );
     if !edit_bundle_path.exists() {
         return Err("This prefab can’t be edited because it’s missing Gen3D edit metadata (gen3d_edit_bundle_v1.json).".into());
     }
@@ -674,9 +676,8 @@ fn load_prefab_descriptor_from_realm_prefab_package(
     realm_id: &str,
     prefab_id: u128,
 ) -> Result<crate::prefab_descriptors::PrefabDescriptorFileV1, String> {
-    let prefabs_dir = crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(
-        realm_id, prefab_id,
-    );
+    let prefabs_dir =
+        crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(realm_id, prefab_id);
     let uuid = uuid::Uuid::from_u128(prefab_id).to_string();
     let prefab_json = prefabs_dir.join(format!("{uuid}.json"));
     let descriptor_path =
@@ -4899,9 +4900,38 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
             text.short = Some(meta.short.trim().to_string());
         }
 
+        let meta_value = serde_json::json!({
+            "version": meta.version,
+            "name": meta.name.trim(),
+            "short": meta.short.trim(),
+            "tags": meta.tags.clone(),
+        });
+
         let mut merged_tags: Vec<String> = doc.tags;
         merged_tags.extend(meta.tags);
         doc.tags = merged_tags;
+
+        if let Some(prov) = doc.provenance.as_mut() {
+            if let Some(gen3d) = prov.gen3d.as_mut() {
+                gen3d.extra.insert(
+                    "descriptor_meta_policy".to_string(),
+                    serde_json::Value::String("suggest".to_string()),
+                );
+                gen3d
+                    .extra
+                    .insert("descriptor_meta_v1".to_string(), meta_value.clone());
+            }
+
+            if let Some(last_rev) = prov.revisions.iter_mut().max_by_key(|rev| rev.rev) {
+                last_rev.extra.insert(
+                    "descriptor_meta_policy".to_string(),
+                    serde_json::Value::String("suggest".to_string()),
+                );
+                last_rev
+                    .extra
+                    .insert("descriptor_meta_v1".to_string(), meta_value);
+            }
+        }
 
         if let Err(err) =
             crate::prefab_descriptors::save_prefab_descriptor_file(&descriptor_path, &doc)

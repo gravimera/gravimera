@@ -1175,6 +1175,20 @@ pub(crate) fn model_library_open_preview_panel(
         .and_then(|t| t.long.as_deref())
         .map(|v| v.trim())
         .filter(|v| !v.is_empty());
+    let gen3d_prompt = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.gen3d.as_ref())
+        .and_then(|g| g.prompt.as_deref())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty());
+    let gen3d_descriptor_meta = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.gen3d.as_ref())
+        .and_then(|g| g.extra.get("descriptor_meta_v1"));
+    let revisions = desc
+        .and_then(|d| d.provenance.as_ref())
+        .map(|p| p.revisions.as_slice())
+        .unwrap_or(&[]);
 
     let modified_at_ms = desc
         .and_then(|d| d.provenance.as_ref())
@@ -1204,11 +1218,138 @@ pub(crate) fn model_library_open_preview_panel(
             size.x, size.y, size.z
         ));
     }
+
+    meta.push_str("\nDescriptions\n");
+    meta.push_str("Short:\n");
+    if let Some(short) = short {
+        meta.push_str(short);
+        meta.push('\n');
+    } else {
+        meta.push_str("<none>\n");
+    }
     meta.push('\n');
+    meta.push_str("Long:\n");
     if let Some(long) = long {
         meta.push_str(long);
-    } else if let Some(short) = short {
-        meta.push_str(short);
+        meta.push('\n');
+    } else {
+        meta.push_str("<none>\n");
+    }
+
+    if let Some(gen3d_prompt) = gen3d_prompt {
+        meta.push('\n');
+        meta.push_str("Gen3D prompt:\n");
+        meta.push_str(gen3d_prompt);
+        meta.push('\n');
+    }
+
+    if let Some(meta_json) = gen3d_descriptor_meta {
+        let name = meta_json
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty());
+        let short = meta_json
+            .get("short")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty());
+        let tags = meta_json
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        meta.push('\n');
+        meta.push_str("AI enriched (descriptor_meta_v1):\n");
+        if let Some(name) = name {
+            meta.push_str(&format!("- name: {name}\n"));
+        }
+        if let Some(short) = short {
+            meta.push_str("- short: ");
+            meta.push_str(short);
+            meta.push('\n');
+        }
+        if !tags.is_empty() {
+            meta.push_str(&format!("- tags: {}\n", tags.join(", ")));
+        }
+    }
+
+    if !revisions.is_empty() {
+        const MAX_REVISIONS: usize = 32;
+        let total = revisions.len();
+
+        meta.push('\n');
+        meta.push_str("Revision prompts (newest first):\n");
+        for rev in revisions.iter().rev().take(MAX_REVISIONS) {
+            meta.push_str(&format!(
+                "- rev {} ({}) {}: {}\n",
+                rev.rev, rev.created_at_ms, rev.actor, rev.summary
+            ));
+
+            if let Some(prompt) = rev.extra.get("prompt").and_then(|v| v.as_str()) {
+                let prompt = prompt.trim();
+                if !prompt.is_empty() {
+                    meta.push_str("  prompt:\n");
+                    for line in prompt.lines() {
+                        meta.push_str("    ");
+                        meta.push_str(line);
+                        meta.push('\n');
+                    }
+                }
+            }
+
+            if let Some(desc_meta) = rev.extra.get("descriptor_meta_v1") {
+                let name = desc_meta
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty());
+                let short = desc_meta
+                    .get("short")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty());
+                let tags = desc_meta
+                    .get("tags")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                if name.is_some() || short.is_some() || !tags.is_empty() {
+                    meta.push_str("  ai:\n");
+                    if let Some(name) = name {
+                        meta.push_str(&format!("    name: {name}\n"));
+                    }
+                    if let Some(short) = short {
+                        meta.push_str("    short: ");
+                        meta.push_str(short);
+                        meta.push('\n');
+                    }
+                    if !tags.is_empty() {
+                        meta.push_str(&format!("    tags: {}\n", tags.join(", ")));
+                    }
+                }
+            }
+        }
+        if total > MAX_REVISIONS {
+            meta.push_str(&format!(
+                "… ({} older revisions omitted)\n",
+                total - MAX_REVISIONS
+            ));
+        }
     }
 
     let ui_root = commands
