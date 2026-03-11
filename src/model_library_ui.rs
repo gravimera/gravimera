@@ -42,7 +42,11 @@ pub(crate) struct ModelLibraryPreviewInputCapture<'w, 's> {
     roots: Query<
         'w,
         's,
-        (&'static ComputedNode, &'static UiGlobalTransform, &'static Visibility),
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            &'static Visibility,
+        ),
         With<ModelLibraryPreviewOverlayRoot>,
     >,
 }
@@ -197,6 +201,11 @@ pub(crate) struct ModelLibraryList;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryListItem;
+
+#[derive(Component)]
+pub(crate) struct ModelLibrarySelectionMark {
+    pub(crate) model_id: u128,
+}
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryScrollbarTrack;
@@ -861,6 +870,22 @@ pub(crate) fn model_library_rebuild_list_ui(
                 },
             ))
             .with_children(|b| {
+                b.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(1.0),
+                        top: Val::Px(1.0),
+                        bottom: Val::Px(1.0),
+                        width: Val::Px(4.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.85)),
+                    Visibility::Hidden,
+                    ModelLibrarySelectionMark {
+                        model_id: row.prefab_id,
+                    },
+                ));
+
                 b.spawn((
                     Node {
                         width: Val::Px(42.0),
@@ -1993,46 +2018,198 @@ pub(crate) fn model_library_gen3d_button_interactions(
 pub(crate) fn model_library_item_button_interactions(
     mut state: ResMut<ModelLibraryUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut buttons: Query<
-        (
-            &Interaction,
-            &ModelLibraryItemButton,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
-        Changed<Interaction>,
-    >,
+    mut buttons: Query<(&Interaction, &ModelLibraryItemButton), Changed<Interaction>>,
 ) {
     let cursor = windows
         .single()
         .ok()
         .and_then(|window| window.cursor_position());
-    for (interaction, button, mut bg, mut border) in &mut buttons {
-        match *interaction {
-            Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
-                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
-                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
-            }
-            Interaction::Pressed => {
-                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
-                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
-                if state.drag.is_none() {
-                    if let Some(cursor) = cursor {
-                        state.drag = Some(ModelLibraryDrag {
-                            model_id: button.model_id,
-                            start_cursor: cursor,
-                            is_dragging: false,
-                            preview_translation: None,
-                        });
-                    }
-                }
-            }
+    for (interaction, button) in &mut buttons {
+        if !matches!(*interaction, Interaction::Pressed) {
+            continue;
+        }
+
+        if state.drag.is_some() {
+            continue;
+        }
+
+        if let Some(cursor) = cursor {
+            state.drag = Some(ModelLibraryDrag {
+                model_id: button.model_id,
+                start_cursor: cursor,
+                is_dragging: false,
+                preview_translation: None,
+            });
         }
     }
+}
+
+pub(crate) fn model_library_update_list_item_styles(
+    state: Res<ModelLibraryUiState>,
+    mut last_selected: Local<Option<u128>>,
+    mut buttons: Query<
+        (
+            Ref<Interaction>,
+            &ModelLibraryItemButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<ModelLibraryListItem>,
+    >,
+    mut marks: Query<(Ref<ModelLibrarySelectionMark>, &mut Visibility)>,
+) {
+    let selected_id = state.preview.as_ref().map(|p| p.prefab_id);
+    let selection_changed = *last_selected != selected_id;
+    if selection_changed {
+        *last_selected = selected_id;
+    }
+
+    for (interaction, button, mut bg, mut border) in &mut buttons {
+        if !selection_changed && !interaction.is_changed() && !interaction.is_added() {
+            continue;
+        }
+
+        let is_selected = selected_id == Some(button.model_id);
+
+        let (bg_color, border_color) = match *interaction {
+            Interaction::Pressed => (
+                Color::srgba(0.10, 0.10, 0.12, 0.92),
+                if is_selected {
+                    Color::srgba(0.30, 0.97, 0.87, 0.95)
+                } else {
+                    Color::srgba(0.45, 0.45, 0.55, 0.85)
+                },
+            ),
+            Interaction::Hovered => (
+                if is_selected {
+                    Color::srgba(0.08, 0.08, 0.10, 0.86)
+                } else {
+                    Color::srgba(0.07, 0.07, 0.09, 0.84)
+                },
+                if is_selected {
+                    Color::srgba(0.25, 0.95, 0.85, 0.85)
+                } else {
+                    Color::srgba(0.35, 0.35, 0.42, 0.75)
+                },
+            ),
+            Interaction::None => (
+                if is_selected {
+                    Color::srgba(0.06, 0.06, 0.08, 0.82)
+                } else {
+                    Color::srgba(0.05, 0.05, 0.06, 0.75)
+                },
+                if is_selected {
+                    Color::srgba(0.25, 0.95, 0.85, 0.85)
+                } else {
+                    Color::srgba(0.25, 0.25, 0.30, 0.65)
+                },
+            ),
+        };
+
+        *bg = BackgroundColor(bg_color);
+        *border = BorderColor::all(border_color);
+    }
+
+    for (mark, mut vis) in &mut marks {
+        if !selection_changed && !mark.is_added() {
+            continue;
+        }
+        *vis = if selected_id == Some(mark.model_id) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+fn ui_rect_global_y_bounds(rect: bevy::math::Rect, transform: UiGlobalTransform) -> (f32, f32) {
+    let corners = [
+        rect.min,
+        Vec2::new(rect.max.x, rect.min.y),
+        Vec2::new(rect.min.x, rect.max.y),
+        rect.max,
+    ];
+    let mut min_y = f32::INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for corner in corners {
+        let point = transform.transform_point2(corner);
+        min_y = min_y.min(point.y);
+        max_y = max_y.max(point.y);
+    }
+    (min_y, max_y)
+}
+
+pub(crate) fn model_library_scroll_selected_item_into_view(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    state: Res<ModelLibraryUiState>,
+    mut last_scrolled: Local<Option<u128>>,
+    mut panels: Query<
+        (&ComputedNode, &UiGlobalTransform, &mut ScrollPosition),
+        With<ModelLibraryScrollPanel>,
+    >,
+    items: Query<
+        (&ModelLibraryItemButton, &ComputedNode, &UiGlobalTransform),
+        With<ModelLibraryListItem>,
+    >,
+) {
+    let active = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        && state.scrollbar_drag.is_none();
+    if !active {
+        *last_scrolled = None;
+        return;
+    }
+
+    let Some(selected_id) = state.preview.as_ref().map(|p| p.prefab_id) else {
+        *last_scrolled = None;
+        return;
+    };
+    if *last_scrolled == Some(selected_id) {
+        return;
+    }
+
+    let Ok((panel_node, panel_transform, mut scroll)) = panels.single_mut() else {
+        return;
+    };
+
+    let Some((item_node, item_transform)) = items
+        .iter()
+        .find(|(button, _node, _transform)| button.model_id == selected_id)
+        .map(|(_button, node, transform)| (node, transform))
+    else {
+        return;
+    };
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
+    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        scroll.y = 0.0;
+        *last_scrolled = Some(selected_id);
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(0.0);
+
+    let (panel_top_y, panel_bottom_y) =
+        ui_rect_global_y_bounds(panel_node.content_box(), *panel_transform);
+    let (item_top_y, item_bottom_y) =
+        ui_rect_global_y_bounds(item_node.border_box(), *item_transform);
+
+    let margin_physical = 6.0;
+    let mut next_scroll = scroll.y;
+
+    if item_top_y < panel_top_y + margin_physical {
+        let delta = (panel_top_y + margin_physical - item_top_y).max(0.0) * panel_scale;
+        next_scroll = (next_scroll - delta).clamp(0.0, max_scroll);
+    } else if item_bottom_y > panel_bottom_y - margin_physical {
+        let delta = (item_bottom_y - (panel_bottom_y - margin_physical)).max(0.0) * panel_scale;
+        next_scroll = (next_scroll + delta).clamp(0.0, max_scroll);
+    }
+
+    scroll.y = next_scroll;
+    *last_scrolled = Some(selected_id);
 }
 
 pub(crate) fn model_library_drag_update(

@@ -220,6 +220,10 @@ impl Plugin for RenderedUiPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_item_button_interactions
                     .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_update_list_item_styles
+                    .after(crate::model_library_ui::model_library_rebuild_list_ui)
+                    .after(crate::model_library_ui::model_library_open_preview_panel)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_scroll_wheel
                     .after(crate::model_library_ui::model_library_item_button_interactions)
                     .run_if(crate::automation::local_input_enabled),
@@ -240,6 +244,9 @@ impl Plugin for RenderedUiPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_open_preview_panel
                     .after(crate::model_library_ui::model_library_preview_keyboard_navigation)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_scroll_selected_item_into_view
+                    .after(crate::model_library_ui::model_library_open_preview_panel)
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_preview_orbit_controls
                     .after(crate::model_library_ui::model_library_open_preview_panel)
