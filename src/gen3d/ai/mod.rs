@@ -23,6 +23,7 @@ mod gemini;
 mod headless_prefab;
 mod job;
 mod motion_recenter;
+mod motion_repairs;
 mod motion_validation;
 mod openai;
 mod orchestration;

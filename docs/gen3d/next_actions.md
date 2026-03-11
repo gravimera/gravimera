@@ -27,6 +27,7 @@ Last updated: 2026-03-12
   - `validate_v1` (structural consistency checks),
   - `smoke_check_v1` (behavioral checks + motion validation summary),
   - `motion_metrics_v1` (read-only stride/contact metrics for “bigger stride”/slip debugging),
+  - `suggest_motion_repairs_v1` (read-only repair suggestions as explicit draft-op patches; no silent apply),
   - `qa_v1` (composed `validate_v1` + `smoke_check_v1`),
   - `render_preview_v1` + `llm_review_delta_v1` (optional appearance loop).
 - The engine respects agent `done` by default (except empty draft). Any unfinished QA/review/motion state is surfaced as warnings/status (no hidden auto-fixes).

@@ -173,7 +173,10 @@ fn infer_projectile_spec_json(projectile_def: &ObjectDef) -> Result<serde_json::
             spec.insert("radius".into(), serde_json::json!(radius));
         }
         MeshKey::UnitCapsule => {
-            let PrimitiveParams::Capsule { radius, half_length } = params.ok_or_else(|| {
+            let PrimitiveParams::Capsule {
+                radius,
+                half_length,
+            } = params.ok_or_else(|| {
                 "Projectile capsule missing capsule params (radius/half_length).".to_string()
             })?
             else {
@@ -494,10 +497,7 @@ pub(super) fn build_preserve_mode_plan_template_json_v8(
         );
     }
     plan.insert("assembly_notes".into(), serde_json::json!(assembly_notes));
-    plan.insert(
-        "root_component".into(),
-        serde_json::json!(root_component),
-    );
+    plan.insert("root_component".into(), serde_json::json!(root_component));
     if !reuse_groups_json.is_empty() {
         plan.insert(
             "reuse_groups".into(),
@@ -513,10 +513,8 @@ pub(super) fn inspect_pending_plan_attempt_v1(
     current_components: &[Gen3dPlannedComponent],
     preserve_existing_components_mode: bool,
 ) -> serde_json::Value {
-    let mut existing_names: Vec<String> = current_components
-        .iter()
-        .map(|c| c.name.clone())
-        .collect();
+    let mut existing_names: Vec<String> =
+        current_components.iter().map(|c| c.name.clone()).collect();
     existing_names.sort();
     existing_names.dedup();
     let existing_root = current_components
@@ -575,16 +573,18 @@ pub(super) fn inspect_pending_plan_attempt_v1(
         }));
     }
 
-    let plan_component_by_name: std::collections::HashMap<&str, &super::schema::AiPlanComponentJson> =
-        pending
-            .plan
-            .components
-            .iter()
-            .filter_map(|c| {
-                let name = c.name.trim();
-                (!name.is_empty()).then_some((name, c))
-            })
-            .collect();
+    let plan_component_by_name: std::collections::HashMap<
+        &str,
+        &super::schema::AiPlanComponentJson,
+    > = pending
+        .plan
+        .components
+        .iter()
+        .filter_map(|c| {
+            let name = c.name.trim();
+            (!name.is_empty()).then_some((name, c))
+        })
+        .collect();
 
     // Root selection should match convert.rs: root_component if provided, else exactly 1 component with attach_to omitted.
     let root_from_field = pending
@@ -717,8 +717,7 @@ pub(super) fn inspect_pending_plan_attempt_v1(
             .iter()
             .map(|s| s.as_str())
             .collect();
-        let new: std::collections::HashSet<&str> =
-            plan_names.iter().map(|s| s.as_str()).collect();
+        let new: std::collections::HashSet<&str> = plan_names.iter().map(|s| s.as_str()).collect();
         let mut missing: Vec<String> = required
             .difference(&new)
             .map(|s| (*s).to_string())
@@ -777,7 +776,9 @@ pub(super) fn inspect_pending_plan_attempt_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gen3d::ai::schema::{AiMobilityJson, AiPlanAttachmentJson, AiPlanComponentJson, AiPlanJsonV1};
+    use crate::gen3d::ai::schema::{
+        AiMobilityJson, AiPlanAttachmentJson, AiPlanComponentJson, AiPlanJsonV1,
+    };
 
     fn dummy_component(name: &str, parent: Option<&str>) -> Gen3dPlannedComponent {
         Gen3dPlannedComponent {
@@ -802,7 +803,10 @@ mod tests {
         }
     }
 
-    fn dummy_plan(components: Vec<AiPlanComponentJson>, root_component: Option<&str>) -> AiPlanJsonV1 {
+    fn dummy_plan(
+        components: Vec<AiPlanComponentJson>,
+        root_component: Option<&str>,
+    ) -> AiPlanJsonV1 {
         AiPlanJsonV1 {
             version: 8,
             rig: None,
@@ -819,7 +823,10 @@ mod tests {
 
     #[test]
     fn inspect_detects_unknown_parent() {
-        let existing = vec![dummy_component("body", None), dummy_component("neck", Some("body"))];
+        let existing = vec![
+            dummy_component("body", None),
+            dummy_component("neck", Some("body")),
+        ];
         let plan = dummy_plan(
             vec![
                 AiPlanComponentJson {
@@ -852,7 +859,8 @@ mod tests {
 
         let pending = Gen3dPendingPlanAttempt {
             call_id: "call_1".into(),
-            error: "AI plan: component `rider_mount` attach_to parent `dragon_neck` not found.".into(),
+            error: "AI plan: component `rider_mount` attach_to parent `dragon_neck` not found."
+                .into(),
             preserve_existing_components: true,
             preserve_edit_policy: Some("additive".into()),
             rewire_components: Vec::new(),
@@ -888,7 +896,10 @@ mod tests {
 
     #[test]
     fn inspect_detects_missing_parent_and_child_anchors() {
-        let existing = vec![dummy_component("body", None), dummy_component("neck", Some("body"))];
+        let existing = vec![
+            dummy_component("body", None),
+            dummy_component("neck", Some("body")),
+        ];
         let plan = dummy_plan(
             vec![
                 AiPlanComponentJson {
@@ -1001,7 +1012,10 @@ mod tests {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        assert!(errors.iter().any(|e| e.get("kind").and_then(|v| v.as_str()) == Some("preserve_missing_existing_component_names")));
-        assert!(errors.iter().any(|e| e.get("kind").and_then(|v| v.as_str()) == Some("preserve_root_changed")));
+        assert!(errors.iter().any(|e| e.get("kind").and_then(|v| v.as_str())
+            == Some("preserve_missing_existing_component_names")));
+        assert!(errors
+            .iter()
+            .any(|e| e.get("kind").and_then(|v| v.as_str()) == Some("preserve_root_changed")));
     }
 }

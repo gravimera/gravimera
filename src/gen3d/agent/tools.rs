@@ -13,6 +13,7 @@ pub(crate) const TOOL_ID_QUERY_COMPONENT_PARTS: &str = "query_component_parts_v1
 pub(crate) const TOOL_ID_VALIDATE: &str = "validate_v1";
 pub(crate) const TOOL_ID_SMOKE_CHECK: &str = "smoke_check_v1";
 pub(crate) const TOOL_ID_MOTION_METRICS: &str = "motion_metrics_v1";
+pub(crate) const TOOL_ID_SUGGEST_MOTION_REPAIRS: &str = "suggest_motion_repairs_v1";
 pub(crate) const TOOL_ID_QA: &str = "qa_v1";
 pub(crate) const TOOL_ID_LIST_RUN_ARTIFACTS: &str = "list_run_artifacts_v1";
 pub(crate) const TOOL_ID_READ_ARTIFACT: &str = "read_artifact_v1";
@@ -144,6 +145,13 @@ impl Gen3dToolRegistryV1 {
                 args_example: serde_json::json!({ "version": 1, "sample_count": 32 }),
             },
             Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_SUGGEST_MOTION_REPAIRS,
+                title: "Suggest motion repairs",
+                one_line_summary: "Read-only: suggests deterministic patches for motion_validation errors (no mutation; explicit apply required).",
+                args_schema: "{ version?: 1, max_suggestions?: number, safety_margin_degrees?: number }",
+                args_example: serde_json::json!({ "version": 1, "max_suggestions": 8, "safety_margin_degrees": 0.2 }),
+            },
+            Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_QA,
                 title: "QA",
                 one_line_summary:
@@ -189,6 +197,7 @@ DraftOp =\n\
   | { kind:\"add_primitive_part\", component:string, part_id_uuid:string, primitive:PrimitiveSpec, transform:TransformDelta, render_priority?:number }\n\
   | { kind:\"remove_primitive_part\", component:string, part_id_uuid:string }\n\
   | { kind:\"upsert_animation_slot\", child_component:string, channel:string, slot:AnimationSlotSpec }\n\
+  | { kind:\"scale_animation_slot_rotation\", child_component:string, channel:string, scale:number }\n\
   | { kind:\"remove_animation_slot\", child_component:string, channel:string }\n\
 \n\
 Joint = { kind:\"fixed\"|\"hinge\"|\"ball\"|\"free\", axis_join?:[number,number,number], limits_degrees?:[number,number], swing_limits_degrees?:[number,number], twist_limits_degrees?:[number,number] }\n\

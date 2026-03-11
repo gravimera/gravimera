@@ -2,13 +2,14 @@ use std::path::PathBuf;
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_TOOL_DETAIL,
-    TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_RUN_ARTIFACTS,
+    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_PLAN_TEMPLATE,
+    TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_RUN_ARTIFACTS,
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS,
-    TOOL_ID_QA, TOOL_ID_READ_ARTIFACT, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
+    TOOL_ID_READ_ARTIFACT, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUGGEST_MOTION_REPAIRS,
+    TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use uuid::Uuid;
@@ -58,7 +59,9 @@ Rules:\n\
   - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if move slots already exist.\n\
   - If `qa_v1` reports `joint_rest_bias_large`, prefer calling `recenter_attachment_motion_v1` on the offending child components/channels first; it is deterministic and preserves motion exactly by re-parameterizing offset vs delta.\n\
     - If it returns applied=false or the issue persists, then call `llm_generate_motion_authoring_v1` to re-author the offending clips/channels.\n\
-  - If `qa_v1` reports motion_validation errors that are primarily animation-delta problems (examples: `hinge_off_axis`, `hinge_limit_exceeded`, `time_offset_no_effect`, `attack_self_intersection`), prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
+  - If `qa_v1` reports `hinge_limit_exceeded`, call `suggest_motion_repairs_v1` to get deterministic patch options (relax joint limits vs scale rotation), then explicitly apply ONE chosen patch via `apply_draft_ops_v1`.\n\
+    - Only fall back to `llm_generate_motion_authoring_v1` if the suggestions are unsuitable (ex: would relax limits too much, or would scale motion too aggressively).\n\
+  - If `qa_v1` reports motion_validation errors that are primarily animation-delta problems (examples: `hinge_off_axis`, `time_offset_no_effect`, `attack_self_intersection`), prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
   - If `qa_v1` reports `contact_stance_missing`, prefer `llm_review_delta_v1` to add/fix `contacts[].stance` (motion authoring cannot create stance metadata).\n\
   - If `qa_v1` reports `hinge_axis_missing` or `hinge_axis_invalid`, fix the joint axis (replan OR `apply_draft_ops_v1` set_attachment_joint) before motion authoring.\n\
   - If `qa_v1` reports `fixed_joint_rotates` on a joint you INTEND to rotate, update that edge's joint metadata (usually to `hinge` with a valid `axis_join`) so QA reflects the intended degrees-of-freedom.\n\
@@ -480,6 +483,20 @@ pub(super) fn build_agent_user_text(
                     ));
                 }
             }
+            TOOL_ID_SUGGEST_MOTION_REPAIRS => {
+                let suggestions = value
+                    .get("suggestions")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
+                let truncated = value.get("truncated").and_then(|v| v.as_bool());
+                out.push_str("ok");
+                if let Some(suggestions) = suggestions {
+                    out.push_str(&format!(" suggestions={suggestions}"));
+                }
+                if let Some(truncated) = truncated {
+                    out.push_str(&format!(" truncated={truncated}"));
+                }
+            }
             TOOL_ID_LIST_RUN_ARTIFACTS => {
                 let items = value
                     .get("items")
@@ -565,7 +582,10 @@ pub(super) fn build_agent_user_text(
                     out.push_str(&format!(" errors={}", errors.len()));
                 }
                 if let Some(kind) = first_error_kind {
-                    out.push_str(&format!(" first_error_kind={}", truncate_for_prompt(kind, 64)));
+                    out.push_str(&format!(
+                        " first_error_kind={}",
+                        truncate_for_prompt(kind, 64)
+                    ));
                 }
             }
             TOOL_ID_COPY_COMPONENT

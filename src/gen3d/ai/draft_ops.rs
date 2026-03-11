@@ -133,6 +133,11 @@ enum DraftOpJsonV1 {
         channel: String,
         slot: AnimationSlotSpecJsonV1,
     },
+    ScaleAnimationSlotRotation {
+        child_component: String,
+        channel: String,
+        scale: f32,
+    },
     RemoveAnimationSlot {
         child_component: String,
         channel: String,
@@ -588,6 +593,7 @@ struct ApplyWorkState {
     anchors_updated: u32,
     attachments_updated: u32,
     animation_slots_upserted: u32,
+    animation_slots_scaled: u32,
     animation_slots_removed: u32,
     changed_component_ids: std::collections::BTreeSet<u128>,
 }
@@ -612,6 +618,7 @@ fn apply_one_op(
         DraftOpJsonV1::AddPrimitivePart { .. } => "add_primitive_part",
         DraftOpJsonV1::RemovePrimitivePart { .. } => "remove_primitive_part",
         DraftOpJsonV1::UpsertAnimationSlot { .. } => "upsert_animation_slot",
+        DraftOpJsonV1::ScaleAnimationSlotRotation { .. } => "scale_animation_slot_rotation",
         DraftOpJsonV1::RemoveAnimationSlot { .. } => "remove_animation_slot",
     }
     .to_string();
@@ -964,6 +971,99 @@ fn apply_one_op(
             mark_changed_component(state, child_name);
             mark_changed_component(state, att.parent.as_str());
             serde_json::Value::Object(diff)
+        }
+        DraftOpJsonV1::ScaleAnimationSlotRotation {
+            child_component,
+            channel,
+            scale,
+        } => {
+            let child_name = child_component.trim();
+            let channel = channel.trim();
+            if channel.is_empty() {
+                return Err(reject("channel must be non-empty".into()));
+            }
+            if !scale.is_finite() || *scale <= 0.0 || *scale > 10.0 {
+                return Err(reject("scale must be finite and in (0, 10].".into()));
+            }
+
+            let planned_child = find_planned_component_mut(planned, child_name).map_err(reject)?;
+            let Some(att) = planned_child.attach_to.as_mut() else {
+                return Err(reject(format!(
+                    "Component `{}` has no attach_to (cannot edit animation slots on root)",
+                    child_name
+                )));
+            };
+
+            let mut matches: Vec<usize> = att
+                .animations
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.channel.as_ref() == channel)
+                .map(|(idx, _)| idx)
+                .collect();
+            if matches.is_empty() {
+                return Err(reject(format!(
+                    "Animation slot not found for channel `{}` on `{}`",
+                    channel, child_name
+                )));
+            }
+            if matches.len() > 1 {
+                return Err(reject(format!(
+                    "Ambiguous animation slot (multiple slots found for channel `{}` on `{}`)",
+                    channel, child_name
+                )));
+            }
+            let idx = matches.pop().unwrap_or(0);
+            let slot = &mut att.animations[idx];
+
+            fn scale_delta_rotation(delta: &mut Transform, scale: f32) -> Result<(), String> {
+                if !delta.rotation.is_finite() {
+                    return Err("keyframe rotation is non-finite".into());
+                }
+                let q = delta.rotation.normalize();
+                if !q.is_finite() {
+                    return Err("keyframe rotation became non-finite after normalize".into());
+                }
+                let (axis, angle) = q.to_axis_angle();
+                if !axis.is_finite() || !angle.is_finite() {
+                    return Err("failed to compute axis-angle for keyframe rotation".into());
+                }
+                let scaled = Quat::from_axis_angle(axis, angle * scale).normalize();
+                if !scaled.is_finite() {
+                    return Err("scaled keyframe rotation became non-finite".into());
+                }
+                delta.rotation = scaled;
+                Ok(())
+            }
+
+            let mut scaled_keyframes: u32 = 0;
+            match &mut slot.spec.clip {
+                PartAnimationDef::Loop { keyframes, .. }
+                | PartAnimationDef::Once { keyframes, .. }
+                | PartAnimationDef::PingPong { keyframes, .. } => {
+                    for k in keyframes.iter_mut() {
+                        scale_delta_rotation(&mut k.delta, *scale).map_err(reject)?;
+                        scaled_keyframes = scaled_keyframes.saturating_add(1);
+                    }
+                }
+                PartAnimationDef::Spin {
+                    radians_per_unit, ..
+                } => {
+                    let next = *radians_per_unit * *scale;
+                    if !next.is_finite() {
+                        return Err(reject(
+                            "scaled spin radians_per_unit became non-finite".into(),
+                        ));
+                    }
+                    *radians_per_unit = next;
+                }
+            }
+
+            state.needs_sync_attachments = true;
+            state.animation_slots_scaled = state.animation_slots_scaled.saturating_add(1);
+            mark_changed_component(state, child_name);
+            mark_changed_component(state, att.parent.as_str());
+            serde_json::json!({"scaled": true, "channel": channel, "scale": scale, "scaled_keyframes": scaled_keyframes})
         }
         DraftOpJsonV1::RemoveAnimationSlot {
             child_component,
@@ -1338,6 +1438,7 @@ pub(super) fn apply_draft_ops_v1(
         },
         "animation_slots": {
             "upserted": state.animation_slots_upserted,
+            "scaled": state.animation_slots_scaled,
             "removed": state.animation_slots_removed,
         }
     });
@@ -1593,5 +1694,82 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(!rejected.is_empty());
+    }
+
+    #[test]
+    fn apply_scales_animation_slot_rotation_keyframes() {
+        let mut job = make_job_with_components(&["root", "child"]);
+        let mut draft = Gen3dDraft {
+            defs: vec![
+                make_root_def(),
+                make_component_def("root"),
+                make_component_def("child"),
+            ],
+        };
+
+        let child = job.planned_components.get_mut(1).unwrap();
+        let att = child.attach_to.as_mut().unwrap();
+        let slot = PartAnimationSlot {
+            channel: "move".into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::MovePhase,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Loop {
+                    duration_secs: 1.0,
+                    keyframes: vec![
+                        PartAnimationKeyframeDef {
+                            time_secs: 0.0,
+                            delta: Transform::IDENTITY,
+                        },
+                        PartAnimationKeyframeDef {
+                            time_secs: 0.5,
+                            delta: Transform {
+                                rotation: Quat::from_axis_angle(
+                                    Vec3::X,
+                                    std::f32::consts::FRAC_PI_2,
+                                ),
+                                ..Default::default()
+                            },
+                        },
+                    ],
+                },
+            },
+        };
+        att.animations.push(slot);
+
+        let args = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "ops": [
+                {
+                    "kind": "scale_animation_slot_rotation",
+                    "child_component": "child",
+                    "channel": "move",
+                    "scale": 0.5
+                }
+            ]
+        });
+        let out = apply_draft_ops_v1(&mut job, &mut draft, Some("test"), args).unwrap();
+        assert!(out.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+
+        let child = job.planned_components.get(1).unwrap();
+        let att = child.attach_to.as_ref().unwrap();
+        let slot = att
+            .animations
+            .iter()
+            .find(|s| s.channel.as_ref() == "move")
+            .unwrap();
+        let PartAnimationDef::Loop { keyframes, .. } = &slot.spec.clip else {
+            panic!("expected loop clip");
+        };
+        let q = keyframes
+            .iter()
+            .find(|k| (k.time_secs - 0.5).abs() < 1e-6)
+            .unwrap()
+            .delta
+            .rotation;
+        let (_axis, angle) = q.normalize().to_axis_angle();
+        assert!((angle - std::f32::consts::FRAC_PI_4).abs() < 1e-3);
     }
 }
