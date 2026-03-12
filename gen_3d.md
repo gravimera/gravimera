@@ -81,7 +81,7 @@ Gen3D uses the prefab-based object system:
 - Each component becomes an `ObjectDef` prefab containing only **primitive** parts.
 - The root `gen3d_draft` `ObjectDef` is a combined object with `ObjectRef` parts that reference the component prefabs via **anchor-based attachments** (tree-style).
 - Clicking **Save** clones the current draft into fresh UUID-based prefab ids (so multiple saved models can coexist) and spawns an instance in the world (unit if the prefab has mobility; otherwise a build object).
-- For saved units, the origin is recentered to the assembled model’s **rest-pose bounds center**, and the saved collider is expanded (if needed) to enclose those rest-pose bounds.
+- For saved units, the origin is recentered to the assembled model’s **rest-pose bounds center**. The saved collider is preserved from the plan (main-body footprint) and is used for selection/click targeting; it is NOT auto-expanded to enclose long tails/wings/protrusions.
 
 “Atom vs Combined” is expressed purely through composition:
 
@@ -216,7 +216,7 @@ Gen3D AI provider:
 }
 ```
 
-`collider` is optional and supports:
+`collider` is REQUIRED for movable units (mobility `ground` / `air`) and optional for static objects. It supports:
 
 - `{ "kind": "none" }`
 - `{ "kind": "circle_xz", "radius": number }`
@@ -225,6 +225,7 @@ Gen3D AI provider:
 Notes:
 
 - This plan has **no absolute placement**. Assembly uses a tree of `attach_to` links.
+- For movable units, `collider` is the unit's selection/click hit area; size it to the MAIN BODY footprint (do not inflate it to cover long appendages).
 - Anchor names must be stable and unique per component.
 - Do **not** output an anchor named `"origin"`; the engine provides an implicit identity anchor `"origin"`.
 - `attach_to.offset` is a tweak transform in the **parent-anchor join frame** (after alignment).

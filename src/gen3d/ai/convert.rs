@@ -792,6 +792,12 @@ pub(super) fn ai_plan_to_initial_draft_defs(
     if plan.components.is_empty() {
         return Err("AI plan has no components.".into());
     }
+    let is_unit = !matches!(&plan.mobility, AiMobilityJson::Static);
+    if is_unit && plan.collider.is_none() {
+        return Err(
+            "AI plan: movable units (mobility=ground/air) must include `collider`. This collider is the unit's selection/click hit area; size it to the MAIN BODY footprint (do not inflate it to cover long tails/wings/antennas).".into(),
+        );
+    }
 
     let mut components = plan.components;
     if components.len() > GEN3D_MAX_COMPONENTS {
@@ -3216,6 +3222,7 @@ mod tests {
         let text = r##"{
           "version": 8,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
+          "collider": { "kind": "circle_xz", "radius": 0.5 },
           "attack": {
             "kind": "ranged_projectile",
             "muzzle": { "component": "root", "anchor": "origin" }
@@ -3251,6 +3258,7 @@ mod tests {
         let text = r##"{
           "version": 8,
           "mobility": { "kind": "ground", "max_speed": 6.0 },
+          "collider": { "kind": "circle_xz", "radius": 0.5 },
           "attack": {
             "kind": "ranged_projectile",
             "cooldown_secs": 0.6,
@@ -3315,6 +3323,7 @@ mod tests {
         let text = r##"{
           "version": 8,
           "mobility": { "kind": "ground", "max_speed": 6.0 },
+          "collider": { "kind": "circle_xz", "radius": 0.5 },
           "attack": {
             "kind": "ranged_projectile",
             "cooldown_secs": 0.6,
@@ -3370,6 +3379,7 @@ mod tests {
         let text = r##"{
           "version": 8,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
+          "collider": { "kind": "circle_xz", "radius": 0.5 },
           "attack": {
             "kind": "ranged_projectile",
             "cooldown_secs": 0.6,
@@ -3422,6 +3432,7 @@ mod tests {
         let text = r##"{
           "version": 8,
           "mobility": { "kind": "ground", "max_speed": 5.0 },
+          "collider": { "kind": "circle_xz", "radius": 0.5 },
           "attack": {
             "kind": "ranged_projectile",
             "cooldown_secs": 0.6,

@@ -1037,6 +1037,7 @@ fn mock_generate_text_via_openai(
             MockKind::Warcar => serde_json::json!({
                 "version": 8,
                 "mobility": { "kind": "ground", "max_speed": 6.0 },
+                "collider": { "kind": "aabb_xz", "half_extents": [2.2, 3.8] },
                 "attack": {
                     "kind": "ranged_projectile",
                     "cooldown_secs": 0.8,
@@ -1123,6 +1124,7 @@ fn mock_generate_text_via_openai(
             MockKind::Snake => serde_json::json!({
                 "version": 8,
                 "mobility": { "kind": "ground", "max_speed": 5.0 },
+                "collider": { "kind": "circle_xz", "radius": 0.6 },
                 "attack": { "kind": "none" },
                 "assembly_notes": "Mock plan: segmented snake body for slither motion authoring.",
                 "root_component": "body",
@@ -1188,6 +1190,7 @@ fn mock_generate_text_via_openai(
             MockKind::Octopus => serde_json::json!({
                 "version": 8,
                 "mobility": { "kind": "ground", "max_speed": 4.0 },
+                "collider": { "kind": "circle_xz", "radius": 0.9 },
                 "attack": { "kind": "melee", "cooldown_secs": 0.8, "damage": 4, "range": 1.0, "radius": 0.6, "arc_degrees": 120.0 },
                 "assembly_notes": "Mock plan: octopus body + 8 tentacles for undulation motion authoring.",
                 "root_component": "body",
@@ -1220,6 +1223,7 @@ fn mock_generate_text_via_openai(
             MockKind::Mantis => serde_json::json!({
                 "version": 8,
                 "mobility": { "kind": "ground", "max_speed": 5.5 },
+                "collider": { "kind": "circle_xz", "radius": 0.85 },
                 "attack": { "kind": "melee", "cooldown_secs": 0.6, "damage": 6, "range": 1.1, "radius": 0.55, "arc_degrees": 140.0 },
                 "assembly_notes": "Mock plan: mantis body with 6 legs + 2 scythe arms (requires authored motion).",
                 "root_component": "body",

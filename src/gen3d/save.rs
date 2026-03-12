@@ -619,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn draft_to_saved_defs_expands_root_unit_circle_collider_to_fit_rest_pose_bounds() {
+    fn draft_to_saved_defs_preserves_root_unit_circle_collider() {
         use crate::object::registry::MobilityDef;
         use crate::object::registry::ObjectPartDef;
 
@@ -721,8 +721,7 @@ mod tests {
             .expect("saved root present");
         match saved_root.collider {
             ColliderProfile::CircleXZ { radius } => {
-                let expected = Vec2::splat(0.65).length();
-                assert!((radius - expected).abs() < 1e-6, "radius={radius}");
+                assert!((radius - 0.65).abs() < 1e-6, "radius={radius}");
             }
             other => panic!("expected CircleXZ collider, got {other:?}"),
         }
@@ -1033,7 +1032,7 @@ mod tests {
     }
 
     #[test]
-    fn draft_to_saved_defs_unit_recenters_to_rest_pose_bounds_center_and_expands_collider() {
+    fn draft_to_saved_defs_unit_recenters_to_rest_pose_bounds_center_without_expanding_collider() {
         use crate::object::registry::{MobilityDef, ObjectPartDef};
 
         let root_id = super::super::gen3d_draft_object_id();
@@ -1143,15 +1142,11 @@ mod tests {
             "root_part_z={root_part_z}"
         );
 
-        // Collider should expand to fit the full rest-pose bounds around the new pivot.
         let ColliderProfile::AabbXZ { half_extents } = saved_root.collider else {
             panic!("expected AabbXZ collider");
         };
-        assert!(
-            half_extents.y >= 5.75 - 1e-3,
-            "expected half_extents.z>=5.75, got {}",
-            half_extents.y
-        );
+        assert!((half_extents.x - 0.5).abs() < 1e-6, "half_extents={half_extents:?}");
+        assert!((half_extents.y - 0.5).abs() < 1e-6, "half_extents={half_extents:?}");
     }
 }
 
@@ -1225,17 +1220,6 @@ pub(super) fn draft_to_saved_defs(
         recenter = root_bounds.center();
     }
 
-    let root_unit_fit_half_xz = if root_is_unit && !root_bounds_rest.is_empty() {
-        let min = root_bounds_rest.min - recenter;
-        let max = root_bounds_rest.max - recenter;
-        Some(Vec2::new(
-            min.x.abs().max(max.x.abs()).max(0.01),
-            min.z.abs().max(max.z.abs()).max(0.01),
-        ))
-    } else {
-        None
-    };
-
     let mut id_map = std::collections::HashMap::<u128, u128>::new();
     for def in &draft.defs {
         let new_id = if def.object_id == root_id {
@@ -1268,20 +1252,6 @@ pub(super) fn draft_to_saved_defs(
             if root_is_unit {
                 if let Some(ground_origin_y) = root_ground_origin_y {
                     new_def.ground_origin_y = Some(ground_origin_y);
-                }
-                if let Some(half_xz) = root_unit_fit_half_xz {
-                    new_def.collider = match new_def.collider {
-                        ColliderProfile::None => ColliderProfile::None,
-                        ColliderProfile::CircleXZ { radius } => ColliderProfile::CircleXZ {
-                            radius: radius.max(half_xz.length()).max(0.01),
-                        },
-                        ColliderProfile::AabbXZ { half_extents } => ColliderProfile::AabbXZ {
-                            half_extents: Vec2::new(
-                                half_extents.x.max(half_xz.x).max(0.01),
-                                half_extents.y.max(half_xz.y).max(0.01),
-                            ),
-                        },
-                    };
                 }
             } else if let Some(size) = root_size_override {
                 new_def.collider = match new_def.collider {

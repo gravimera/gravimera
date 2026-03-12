@@ -468,7 +468,14 @@ pub(super) fn poll_agent_tool(
                         })
                         .unwrap_or_default();
                     match parse::parse_ai_plan_from_text(&text) {
-                        Ok(plan) => {
+                        Ok(mut plan) => {
+                            if !matches!(&plan.mobility, super::schema::AiMobilityJson::Static)
+                                && plan.collider.is_none()
+                            {
+                                if let Some(previous) = job.plan_collider.clone() {
+                                    plan.collider = Some(previous);
+                                }
+                            }
                             let plan_reuse_groups = plan.reuse_groups.clone();
                             match super::convert::ai_plan_to_initial_draft_defs(plan.clone()) {
                                 Ok((planned, notes, defs)) => {

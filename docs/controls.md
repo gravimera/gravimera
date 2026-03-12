@@ -36,7 +36,7 @@ Notes:
 - Units and buildings cannot transform between each other.
 - Multi-form objects show a circular `i/n` badge above them.
 - All selectable objects (units + buildings) have a selection circle.
-  - Units: based on their collision radius.
+  - Units: based on their collision radius (Gen3D: AI-authored main-body footprint; long protrusions may extend outside and won’t be clickable/targetable).
   - Buildings: based on their footprint radius (max X/Z half-extent).
 - Cursor targeting uses selection circles:
   - Selection circles are centered at the object’s ground ring (bottom).

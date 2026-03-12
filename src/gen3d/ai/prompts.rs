@@ -58,6 +58,7 @@ pub(super) fn build_gen3d_plan_user_text(
          Anchor NAMES must be stable: the next step will ask you to output the same anchor names again with precise frames.\n\
          Every non-root component must define `attach_to` (parent component + anchor names).\n\
          Also decide the object's `mobility` (static vs ground vs air).\n\
+         For movable units (mobility ground/air), you MUST also choose a top-level `collider` sized to the MAIN BODY footprint only (selection/click hit area).\n\
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
          Avoid z-fighting at joins: do NOT make parent/child faces flush and coplanar; add a small epsilon offset along the attachment direction (e.g. `attach_to.offset.pos[2]` ~= 0.005m).\n\
          Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
@@ -115,6 +116,7 @@ pub(super) fn build_gen3d_plan_user_text_with_hints(
          Anchor NAMES must be stable: the next step will ask you to output the same anchor names again with precise frames.\n\
          Every non-root component must define `attach_to` (parent component + anchor names).\n\
          Also decide the object's `mobility` (static vs ground vs air).\n\
+         For movable units (mobility ground/air), you MUST also choose a top-level `collider` sized to the MAIN BODY footprint only (selection/click hit area).\n\
          Use `attach_to.offset.pos` to explicitly encode overlap/inset/outset at joins (the engine will not auto-adjust placement).\n\
          Avoid z-fighting at joins: do NOT make parent/child faces flush and coplanar; add a small epsilon offset along the attachment direction (e.g. `attach_to.offset.pos[2]` ~= 0.005m).\n\
          Define attachment anchors as JOIN frames (each expressed in its OWN component-local coordinates):\n\
@@ -704,6 +706,13 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - Strong guideline:\n\
            - If the prompt describes a creature/character/vehicle (e.g. horse, soldier, knight, goblin, car, truck, tank), prefer `ground`.\n\
            - Use `static` primarily for buildings/props (e.g. chair, table, lamp, door) unless the prompt explicitly says it is a controllable unit.\n\n\
+         Collider (IMPORTANT):\n\
+         - `collider` is used as the unit's selection circle and click/target hit area.\n\
+         - For movable units (`mobility.kind` = `ground` / `air`), you MUST output a top-level `collider`.\n\
+         - Size `collider` to the MAIN BODY footprint only.\n\
+           - Do NOT inflate it to cover long tails, wings, antennas, swords, barrels, or other protrusions.\n\
+           - If the unit is long/segmented (snake, tentacles), pick a reasonable central body footprint.\n\
+         - For static objects (`mobility.kind` = `static`), `collider` is optional; if omitted, the engine falls back to a size-based AABB.\n\n\
          Combat decision (optional):\n\
          - Decide whether the object should be able to attack.\n\
          - Most buildings/props are NOT attack-capable.\n\
@@ -802,7 +811,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             \"mobility\": {{\"kind\":\"static\"}} | {{\"kind\":\"ground\",\"max_speed\": number}} | {{\"kind\":\"air\",\"max_speed\": number}},\n\
             \"attack\": {{ ... }} (optional; omit if not attack-capable),\n\
             \"aim\": {{\"max_yaw_delta_degrees\": number|null (optional), \"components\": [\"component_name\", ...]}} (optional),\n\
-            \"collider\": {{\"kind\":\"aabb_xz\",\"half_extents\":[x,z]}} | {{\"kind\":\"circle_xz\",\"radius\":r}} | {{\"kind\":\"none\"}} (optional),\n\
+            \"collider\": {{\"kind\":\"aabb_xz\",\"half_extents\":[x,z]}} | {{\"kind\":\"circle_xz\",\"radius\":r}} | {{\"kind\":\"none\"}} (REQUIRED for mobility ground/air; optional for static),\n\
             \"assembly_notes\": \"...\" (optional),\n\
           \"root_component\": \"component_name\" (optional; otherwise inferred as the only component without attach_to),\n\
           \"reuse_groups\": [\n\
