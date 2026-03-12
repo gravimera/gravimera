@@ -50,6 +50,17 @@ Core artifacts (conceptual; carried via API payloads or files):
 
 If every agent produces one of these artifacts, the pipeline becomes reliable and testable.
 
+## Tooling Contracts (Agent-Facing)
+
+When the engine exposes authoring primitives as tools (or HTTP endpoints used like tools), the contracts must be compiler-like:
+
+- **Actionable results**: return the ids/examples needed for the next step (avoid “keys=[…]” summaries that force guesswork).
+- **Actionable errors**: explain the violated rule and the concrete recovery path (which tool/args to use next).
+- **No silent apply**: prefer suggest → confirm → apply; any auto-repair must be explicit and auditable.
+- **No hidden heuristics**: keep tools generic/deterministic; do not bake in domain assumptions.
+
+See: `docs/agent_skills/tool_authoring_rules.md`.
+
 ## Recommended Agent Roles
 
 ### 1) Manager / Orchestrator Agent

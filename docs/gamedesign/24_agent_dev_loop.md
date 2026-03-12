@@ -98,6 +98,7 @@ Key properties:
 - capabilities are enforced (missing capability produces the right code),
 - idempotency works for request ids,
 - snapshot includes `tick` and `event_id` consistency.
+- tool/endpoint errors are actionable (cause + fix path), see `docs/agent_skills/tool_authoring_rules.md`.
 
 ### 3) Scenario Tests (End-to-End)
 

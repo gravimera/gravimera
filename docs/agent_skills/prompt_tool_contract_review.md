@@ -2,6 +2,9 @@
 
 Use this checklist whenever you add/modify tools (especially Gen3D tools). The goal is to prevent common failures where the LLM is instructed to use keys/flows that the engine rejects, or where the new tool behavior exists but is undiscoverable to the agent.
 
+See also:
+- Tool authoring rules: `docs/agent_skills/tool_authoring_rules.md`
+
 ## Minimum review checklist
 
 1. Tool registry matches runtime parsing
@@ -25,6 +28,7 @@ Use this checklist whenever you add/modify tools (especially Gen3D tools). The g
 
 - Tool errors should explain what changed (diff/violation) and what to do next (which tool/args to use instead).
 - Avoid silent truncation/fallbacks; prefer deterministic errors when inputs are missing/ambiguous.
+- Tool results should be actionable and bounded (ids + counts + small examples), not just “keys=[…]” summaries.
 
 5. Tests and smoke
 
@@ -32,4 +36,3 @@ Use this checklist whenever you add/modify tools (especially Gen3D tools). The g
 - Run the required rendered smoke test:
   - `tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2`
 - Commit changes with a clear message.
-

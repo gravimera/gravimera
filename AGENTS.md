@@ -8,6 +8,7 @@ Note:
 6. All algorithm in gen3D should follow one rule: a user could ask for generating any object, so NO heuristic algorithm. Only generic algorithms are allowed.
 7. We don't need to guarantee backwards compatibility for now.
 8. For gen3d agent, we prefer tools which provide clear suggestions and diffs, avoid changes silently without AI confirm. And after added / updates tools, review carefully to avoid mismatches between prompts.
+   - Tool authoring rules (contract-first): `docs/agent_skills/tool_authoring_rules.md` (actionable tool results + actionable errors; enforce gates in tools instead of adding agent-level “call X before Y” rules).
 
 # Design & Specs (Source of Truth)
 

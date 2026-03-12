@@ -87,6 +87,17 @@ For the agent system to be effective, the engine must expose:
 
 These are not “town features”; they are general-purpose tooling to build any scene.
 
+## Tooling Contracts (Authoring Rules)
+
+The agent system depends on tools behaving like a compiler toolchain:
+
+- tool results are **actionable** (include the ids/examples needed for the next deterministic step, not just “keys=[…]”),
+- tool errors are **actionable** (state the violated rule + the recovery path),
+- no “silent” mutation without an explicit apply/mutation tool call (suggest → confirm → apply),
+- gates/budgets are exposed as machine-readable fields (blocked/skipped lists) to avoid deadlocks and inspection loops.
+
+See: `docs/agent_skills/tool_authoring_rules.md`.
+
 ## Artifacts (Structured Contracts)
 
 The scene generator agents should communicate using a small set of versioned artifacts.
