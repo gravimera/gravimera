@@ -1,8 +1,10 @@
 use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::prelude::*;
+use bevy::window::{Ime, PrimaryWindow};
 
 use crate::assets::SceneAssets;
-use crate::types::{BuildScene, GameMode};
+use crate::rich_text::set_rich_text_line;
+use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 
 use super::ai::Gen3dAiJob;
 use super::preview;
@@ -859,17 +861,20 @@ pub(crate) fn enter_gen3d_mode(
                                                 Gen3dPromptScrollPanel,
                                             ))
                                             .with_children(|scroll| {
-                                                scroll.spawn((
-                                                    Text::new(
-                                                        "Drop images (optional) and add style/notes… (default: Voxel/Pixel Art)",
-                                                    ),
-                                                    TextFont {
-                                                        font_size: 16.0,
-                                                        ..default()
-                                                    },
-                                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                                    Gen3dPromptText,
-                                                ));
+                                                scroll
+                                                    .spawn((
+                                                        Node {
+                                                            width: Val::Percent(100.0),
+                                                            flex_wrap: FlexWrap::Wrap,
+                                                            justify_content: JustifyContent::FlexStart,
+                                                            align_items: AlignItems::Center,
+                                                            column_gap: Val::Px(1.0),
+                                                            row_gap: Val::Px(2.0),
+                                                            ..default()
+                                                        },
+                                                        Gen3dPromptRichText,
+                                                    ))
+                                                    .with_children(|_| {});
                                             });
 
                                         prompt_row
@@ -1286,6 +1291,7 @@ pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
 
 pub(crate) fn gen3d_prompt_box_focus(
     mut workshop: ResMut<Gen3dWorkshop>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut prompt_boxes: Query<
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Gen3dPromptBox>),
@@ -1296,6 +1302,9 @@ pub(crate) fn gen3d_prompt_box_focus(
             Interaction::Pressed => {
                 workshop.prompt_focused = true;
                 *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.78));
+                if let Ok(mut window) = windows.single_mut() {
+                    window.ime_enabled = true;
+                }
             }
             Interaction::Hovered => {
                 *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70));
@@ -1303,6 +1312,11 @@ pub(crate) fn gen3d_prompt_box_focus(
             Interaction::None => {
                 let alpha = if workshop.prompt_focused { 0.70 } else { 0.65 };
                 *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, alpha));
+                if !workshop.prompt_focused {
+                    if let Ok(mut window) = windows.single_mut() {
+                        window.ime_enabled = false;
+                    }
+                }
             }
         }
     }
@@ -1468,12 +1482,24 @@ pub(crate) fn gen3d_prompt_text_input(
     mut workshop: ResMut<Gen3dWorkshop>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard: bevy::ecs::message::MessageReader<bevy::input::keyboard::KeyboardInput>,
+    mut ime_events: bevy::ecs::message::MessageReader<Ime>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     if !workshop.prompt_focused {
+        keyboard.clear();
+        ime_events.clear();
         return;
+    }
+
+    for event in ime_events.read() {
+        if let Ime::Commit { value, .. } = event {
+            if !value.is_empty() {
+                push_prompt_text(&mut workshop.prompt, value);
+            }
+        }
     }
 
     for event in keyboard.read() {
@@ -1486,6 +1512,9 @@ pub(crate) fn gen3d_prompt_text_input(
             }
             KeyCode::Escape => {
                 workshop.prompt_focused = false;
+                if let Ok(mut window) = windows.single_mut() {
+                    window.ime_enabled = false;
+                }
             }
             KeyCode::Enter | KeyCode::NumpadEnter => {}
             KeyCode::KeyV => {
@@ -1999,19 +2028,24 @@ pub(crate) fn gen3d_clear_prompt_button(
 }
 
 pub(crate) fn gen3d_update_ui_text(
+    mut commands: Commands,
     build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     preview_state: Res<Gen3dPreview>,
     draft: Res<Gen3dDraft>,
     job: Res<Gen3dAiJob>,
+    ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
     mut continue_buttons: Query<(&mut Node, &mut Visibility), With<Gen3dContinueButton>>,
     mut texts: ParamSet<(
-        Query<&mut Text, With<Gen3dPromptText>>,
         Query<&mut Text, With<Gen3dStatusText>>,
         Query<&mut Text, With<Gen3dGenerateButtonText>>,
         Query<&mut Text, With<Gen3dCollisionToggleText>>,
         Query<&mut Text, With<Gen3dPreviewStatsText>>,
     )>,
+    rich_text: Query<Entity, With<Gen3dPromptRichText>>,
+    mut last_prompt: Local<Option<String>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
@@ -2022,10 +2056,20 @@ pub(crate) fn gen3d_update_ui_text(
     } else {
         workshop.prompt.clone()
     };
-    {
-        let mut prompt = texts.p0();
-        for mut text in &mut prompt {
-            **text = prompt_text.clone();
+    if last_prompt.as_ref() != Some(&prompt_text) {
+        if let Ok(entity) = rich_text.single() {
+            set_rich_text_line(
+                &mut commands,
+                entity,
+                &prompt_text,
+                &ui_fonts,
+                &emoji_atlas,
+                &asset_server,
+                16.0,
+                Color::srgb(0.92, 0.92, 0.96),
+                None,
+            );
+            *last_prompt = Some(prompt_text.clone());
         }
     }
 
@@ -2064,7 +2108,7 @@ pub(crate) fn gen3d_update_ui_text(
         status_text.push_str(err);
     }
     {
-        let mut status = texts.p1();
+        let mut status = texts.p0();
         for mut text in &mut status {
             **text = status_text.clone();
         }
@@ -2072,7 +2116,7 @@ pub(crate) fn gen3d_update_ui_text(
 
     let label = if job.is_running() { "Stop" } else { "Build" };
     {
-        let mut button = texts.p2();
+        let mut button = texts.p1();
         for mut text in &mut button {
             **text = label.into();
         }
@@ -2096,7 +2140,7 @@ pub(crate) fn gen3d_update_ui_text(
         "Collision: Off"
     };
     {
-        let mut collision = texts.p3();
+        let mut collision = texts.p2();
         for mut text in &mut collision {
             **text = collision_label.into();
         }
@@ -2119,7 +2163,7 @@ pub(crate) fn gen3d_update_ui_text(
         "Run time: {run_time}\nTokens (run): {run_tokens}\nTokens (total): {total_tokens}",
     );
     {
-        let mut stats = texts.p4();
+        let mut stats = texts.p3();
         for mut text in &mut stats {
             **text = stats_text.clone();
         }
