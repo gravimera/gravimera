@@ -113,6 +113,7 @@ pub(super) fn build_motion_validation_report(
 
     validate_chain_anchor_axes(components, &mut issues);
     validate_time_offset_effectiveness(components, &mut issues);
+    validate_move_phase_cycle_alignment(cycle_m, cycle_source, root_idx, components, &mut issues);
     validate_joints(&samples_t_m, &samples_phase_01, components, &mut issues);
     validate_contacts(
         &samples_t_m,
@@ -683,6 +684,173 @@ fn infer_cycle_m(
     }
 
     (DEFAULT_CYCLE_M, "default")
+}
+
+fn validate_move_phase_cycle_alignment(
+    cycle_m: f32,
+    cycle_source: &str,
+    root_idx: usize,
+    components: &[Gen3dPlannedComponent],
+    issues: &mut Vec<MotionIssue>,
+) {
+    const MIN_RATIO_OK: f32 = 0.5;
+    const MAX_RATIO_OK: f32 = 2.0;
+
+    #[derive(Clone)]
+    struct LoopInfo {
+        component_name: String,
+        clip_kind: &'static str,
+        duration_units: f32,
+        speed_scale: f32,
+        repeats: f32,
+        effective_loop_m: f32,
+        ratio_to_cycle_m: f32,
+    }
+
+    if cycle_source != "rig.move_cycle_m" {
+        return;
+    }
+    if !cycle_m.is_finite() || cycle_m <= 1e-3 {
+        return;
+    }
+    let root_name = components
+        .get(root_idx)
+        .map(|c| c.name.as_str())
+        .unwrap_or("root");
+
+    let mut loops: Vec<LoopInfo> = Vec::new();
+    for comp in components.iter() {
+        let Some(att) = comp.attach_to.as_ref() else {
+            continue;
+        };
+        let Some(move_slot) = find_move_slot(att) else {
+            continue;
+        };
+        if move_slot.spec.driver != PartAnimationDriver::MovePhase {
+            continue;
+        }
+
+        let (duration_units, repeats, clip_kind) = match &move_slot.spec.clip {
+            PartAnimationDef::Loop { duration_secs, .. } => (*duration_secs, 1.0, "loop"),
+            PartAnimationDef::PingPong { duration_secs, .. } => (*duration_secs, 2.0, "ping_pong"),
+            PartAnimationDef::Once { .. } => continue,
+            PartAnimationDef::Spin { .. } => continue,
+        };
+        if !duration_units.is_finite() || duration_units <= 1e-6 {
+            continue;
+        }
+        let speed_scale = move_slot.spec.speed_scale.max(0.0);
+        if !speed_scale.is_finite() || speed_scale <= 1e-6 {
+            continue;
+        }
+
+        let effective_loop_m = (repeats * duration_units / speed_scale).abs();
+        if !effective_loop_m.is_finite() || effective_loop_m <= 1e-6 {
+            continue;
+        }
+        let ratio_to_cycle_m = (effective_loop_m / cycle_m).abs();
+        if !ratio_to_cycle_m.is_finite() || ratio_to_cycle_m <= 1e-6 {
+            continue;
+        }
+
+        loops.push(LoopInfo {
+            component_name: comp.name.clone(),
+            clip_kind,
+            duration_units,
+            speed_scale,
+            repeats,
+            effective_loop_m,
+            ratio_to_cycle_m,
+        });
+    }
+
+    if loops.len() < 2 {
+        return;
+    }
+
+    let mut effective: Vec<f32> = loops.iter().map(|v| v.effective_loop_m).collect();
+    effective.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median_effective = if effective.len() % 2 == 1 {
+        effective[effective.len() / 2]
+    } else {
+        let i = effective.len() / 2;
+        (effective[i - 1] + effective[i]) * 0.5
+    };
+    let median_ratio = (median_effective / cycle_m).abs();
+
+    if median_ratio.is_finite() && median_ratio >= MIN_RATIO_OK && median_ratio <= MAX_RATIO_OK {
+        return;
+    }
+
+    loops.sort_by(|a, b| {
+        a.effective_loop_m
+            .partial_cmp(&b.effective_loop_m)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let fastest: Vec<serde_json::Value> = loops
+        .iter()
+        .take(4)
+        .map(|v| {
+            serde_json::json!({
+                "component_name": v.component_name,
+                "clip_kind": v.clip_kind,
+                "duration_units": v.duration_units,
+                "speed_scale": v.speed_scale,
+                "repeats_per_loop": v.repeats,
+                "effective_loop_m": v.effective_loop_m,
+                "ratio_to_cycle_m": v.ratio_to_cycle_m,
+                "loops_per_cycle": (cycle_m / v.effective_loop_m).abs(),
+            })
+        })
+        .collect();
+    let slowest: Vec<serde_json::Value> = loops
+        .iter()
+        .rev()
+        .take(4)
+        .map(|v| {
+            serde_json::json!({
+                "component_name": v.component_name,
+                "clip_kind": v.clip_kind,
+                "duration_units": v.duration_units,
+                "speed_scale": v.speed_scale,
+                "repeats_per_loop": v.repeats,
+                "effective_loop_m": v.effective_loop_m,
+                "ratio_to_cycle_m": v.ratio_to_cycle_m,
+                "loops_per_cycle": (cycle_m / v.effective_loop_m).abs(),
+            })
+        })
+        .collect();
+
+    let score = if median_ratio.is_finite() && median_ratio > 0.0 {
+        if median_ratio < 1.0 {
+            1.0 / median_ratio
+        } else {
+            median_ratio
+        }
+    } else {
+        0.0
+    };
+
+    issues.push(MotionIssue {
+        severity: MotionSeverity::Warn,
+        kind: "move_phase_cycle_m_mismatch",
+        component_id: component_id_uuid_for_name(root_name),
+        component_name: root_name.to_string(),
+        channel: "move".to_string(),
+        message: "MovePhase move loops appear out of scale with rig.move_cycle_m (MovePhase time is meters traveled); motion may oscillate too fast/slow.".into(),
+        evidence: serde_json::json!({
+            "cycle_m": cycle_m,
+            "cycle_source": cycle_source,
+            "median_effective_loop_m": median_effective,
+            "median_ratio_to_cycle_m": median_ratio,
+            "move_phase_loops_count": loops.len(),
+            "fastest_edges": fastest,
+            "slowest_edges": slowest,
+            "tolerances": { "ratio_min_ok": MIN_RATIO_OK, "ratio_max_ok": MAX_RATIO_OK },
+            "notes": "For MovePhase loops, effective meters-per-loop is roughly (repeats * duration_units / speed_scale).",
+        }),
+        score,
+    });
 }
 
 fn validate_time_offset_effectiveness(

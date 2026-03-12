@@ -1408,10 +1408,14 @@ Rules:\n\
   - Only include `edges[]` entries you intend to CHANGE. Omit edges you are not touching.\n\
   - Prefer replacing ONLY the channels you actually author (e.g. if you only author `move`, set replace_channels=[\"move\"]).\n\
   - Prefer a SMALL number of authored edges. Default target: <= 12 edges unless strictly required.\n\
-  - Prefer simple loop clips with FEW keyframes (target 3 keyframes at t=0.0,0.5,1.0). Avoid >5 keyframes unless necessary.\n\
+  - Prefer simple loop clips with FEW keyframes (target 3 keyframes at t_units=0.0, 0.5*duration_units, duration_units). Avoid >5 keyframes unless necessary.\n\
   - Prefer using `time_offset_units` to create phase offsets across repeated limbs instead of unique keyframe shapes per limb.\n\
   - Keep deltas small and stable; avoid large translations.\n\
   - Output compact JSON (no pretty formatting).\n\
+- Driver units (IMPORTANT):\n\
+  - `always` and `attack_time`: time units are seconds.\n\
+  - `move_phase` and `move_distance`: time units are meters traveled.\n\
+  - `time_offset_units` and `clip.duration_units` are expressed in the SAME units as the driver.\n\
 - Coordinate frames:\n\
   - These authored keyframes animate the ATTACHMENT OFFSET for that edge.\n\
   - `delta` transforms are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
@@ -1577,6 +1581,10 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     out.push_str("Motion validation model (important):\n");
     out.push_str(&format!(
         "- The root is assumed to translate forward along WORLD +Z by cycle_m meters per cycle (cycle_m={cycle_m:.3}, source={cycle_source}).\n"
+    ));
+    out.push_str("- IMPORTANT: For `driver=move_phase` and `driver=move_distance`, time units are METERS traveled (not seconds).\n");
+    out.push_str(&format!(
+        "  - To make one `move` loop match this cycle, set `clip.duration_units` ~= cycle_m (or ~= cycle_m * speed_scale if you set speed_scale != 1).\n"
     ));
     out.push_str(&format!(
         "- If a ground contact has a stance schedule, it is treated as PLANTED during stance: keep its anchor stable in world XZ and near-constant Y during stance.\n  - slip_error_m={slip_error_m:.3} (warn={slip_warn_m:.3}) lift_error_m={lift_error_m:.3} (warn={lift_warn_m:.3})\n"
