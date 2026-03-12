@@ -389,6 +389,9 @@ impl Plugin for RenderedGen3dPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_images_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),
+                crate::gen3d::gen3d_images_scrollbar_drag
+                    .after(crate::gen3d::gen3d_images_scroll_wheel)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_status_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_tool_feedback_scroll_wheel
@@ -445,7 +448,7 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_rebuild_images_list_ui
                     .after(crate::gen3d::gen3d_handle_drag_and_drop)
                     .after(crate::gen3d::gen3d_clear_images_button),
-                crate::gen3d::gen3d_update_images_tip_visibility
+                crate::gen3d::gen3d_update_images_inline_visibility
                     .after(crate::gen3d::gen3d_handle_drag_and_drop)
                     .after(crate::gen3d::gen3d_clear_images_button),
                 crate::gen3d::gen3d_thumbnail_button_open_viewer

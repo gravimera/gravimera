@@ -103,10 +103,12 @@ pub(crate) fn enter_gen3d_mode(
     job: Res<Gen3dAiJob>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut preview_state: ResMut<Gen3dPreview>,
+    mut meta_state: ResMut<crate::motion_ui::MotionAlgorithmUiState>,
+    mut meta_roots: Query<&mut Visibility, With<crate::motion_ui::MotionAlgorithmUiRoot>>,
 ) {
     if !job.is_running() {
         workshop.status = format!(
-            "Drop 0–{} images and/or type a prompt, then click Build.",
+            "Drop 0–{} images (optional) and/or type a prompt, then click Build.",
             super::GEN3D_MAX_IMAGES
         );
         workshop.speed_mode = Gen3dSpeedMode::Level3;
@@ -114,12 +116,19 @@ pub(crate) fn enter_gen3d_mode(
     workshop.error = None;
     workshop.prompt_focused = true;
     workshop.image_viewer = None;
+    workshop.images_scrollbar_drag = None;
     workshop.side_tab = Gen3dSideTab::Status;
     workshop.side_panel_open = false;
     workshop.tool_feedback_unread = false;
     preview_state.animation_channel = "idle".to_string();
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
+    if meta_state.open {
+        meta_state.close();
+    }
+    if let Ok(mut visibility) = meta_roots.single_mut() {
+        *visibility = Visibility::Hidden;
+    }
 
     let needs_setup = preview_state.target.is_none()
         || preview_state.root.is_none()
@@ -208,146 +217,6 @@ pub(crate) fn enter_gen3d_mode(
                 BackgroundColor(Color::NONE),
             ))
             .with_children(|row| {
-                // Left: photos.
-                row.spawn((
-                    Node {
-                        width: Val::Px(260.0),
-                        height: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(8.0),
-                        padding: UiRect::all(Val::Px(10.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        min_height: Val::Px(0.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
-                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                ))
-                .with_children(|panel| {
-                    panel
-                        .spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                flex_direction: FlexDirection::Row,
-                                justify_content: JustifyContent::FlexEnd,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::NONE),
-                        ))
-                        .with_children(|row| {
-                            row.spawn((
-                                Button,
-                                Node {
-                                    width: Val::Px(68.0),
-                                    height: Val::Px(28.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
-                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                                Gen3dClearImagesButton,
-                            ))
-                            .with_children(|button| {
-                                button.spawn((
-                                    Text::new("Clear"),
-                                    TextFont {
-                                        font_size: 14.0,
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                    Gen3dClearImagesButtonText,
-                                ));
-                            });
-                        });
-                    panel.spawn((
-                        Text::new(format!(
-                            "Drop up to {} images (optional).\nAccepted: png/jpg/webp\nHover a thumbnail to see its name.\nClick to open (↑/↓ navigate, Esc to close).",
-                            super::GEN3D_MAX_IMAGES
-                        )),
-                        TextFont {
-                            font_size: 14.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.85, 0.85, 0.90)),
-                        Gen3dImagesTipText,
-                    ));
-
-                    panel
-                        .spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                flex_grow: 1.0,
-                                flex_basis: Val::Px(0.0),
-                                min_height: Val::Px(0.0),
-                                flex_direction: FlexDirection::Row,
-                                column_gap: Val::Px(6.0),
-                                ..default()
-                            },
-                            BackgroundColor(Color::NONE),
-                        ))
-                        .with_children(|row| {
-                            row.spawn((
-                                Node {
-                                    flex_grow: 1.0,
-                                    flex_basis: Val::Px(0.0),
-                                    min_height: Val::Px(0.0),
-                                    overflow: Overflow::scroll_y(),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::NONE),
-                                ScrollPosition::default(),
-                                Gen3dImagesScrollPanel,
-                            ))
-                            .with_children(|scroll| {
-                                scroll.spawn((
-                                    Node {
-                                        width: Val::Percent(100.0),
-                                        flex_direction: FlexDirection::Row,
-                                        flex_wrap: FlexWrap::Wrap,
-                                        justify_content: JustifyContent::FlexStart,
-                                        align_content: AlignContent::FlexStart,
-                                        align_items: AlignItems::FlexStart,
-                                        column_gap: Val::Px(6.0),
-                                        row_gap: Val::Px(6.0),
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::NONE),
-                                    Gen3dImagesList,
-                                ));
-                            });
-
-                            row.spawn((
-                                Node {
-                                    width: Val::Px(8.0),
-                                    height: Val::Percent(100.0),
-                                    position_type: PositionType::Relative,
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
-                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                                Visibility::Hidden,
-                                Gen3dImagesScrollbarTrack,
-                            ))
-                            .with_children(|track| {
-                                track.spawn((
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        left: Val::Px(1.0),
-                                        right: Val::Px(1.0),
-                                        top: Val::Px(0.0),
-                                        height: Val::Px(18.0),
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::srgba(0.95, 0.85, 0.25, 0.85)),
-                                    Gen3dImagesScrollbarThumb,
-                                ));
-                            });
-                        });
-                });
-
                 // Center: preview.
                 row.spawn((
                     Node {
@@ -908,7 +777,7 @@ pub(crate) fn enter_gen3d_mode(
             // Bottom: prompt + generate + status.
             root.spawn((
                 Node {
-                    height: Val::Px(160.0),
+                    height: Val::Px(super::GEN3D_PROMPT_BAR_HEIGHT_PX),
                     flex_direction: FlexDirection::Row,
                     column_gap: Val::Px(12.0),
                     padding: UiRect::all(Val::Px(12.0)),
@@ -920,74 +789,247 @@ pub(crate) fn enter_gen3d_mode(
             ))
             .with_children(|bar| {
                 bar.spawn((
-                    Button,
                     Node {
                         flex_grow: 1.0,
                         flex_basis: Val::Px(0.0),
                         height: Val::Percent(100.0),
-                        border: UiRect::all(Val::Px(1.0)),
                         flex_direction: FlexDirection::Row,
-                        min_height: Val::Px(0.0),
+                        column_gap: Val::Px(12.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
-                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                    Gen3dPromptBox,
+                    BackgroundColor(Color::NONE),
                 ))
-                .with_children(|prompt| {
-                    prompt
-                        .spawn((
-                            Node {
-                                flex_grow: 1.0,
-                                flex_basis: Val::Px(0.0),
-                                min_height: Val::Px(0.0),
-                                padding: UiRect::all(Val::Px(10.0)),
-                                overflow: Overflow::scroll_y(),
-                                ..default()
-                            },
-                            BackgroundColor(Color::NONE),
-                            ScrollPosition::default(),
-                            Gen3dPromptScrollPanel,
-                        ))
-                        .with_children(|scroll| {
-                            scroll.spawn((
-                                Text::new("Optional: style/notes… (default: Voxel/Pixel Art)"),
-                                TextFont {
-                                    font_size: 16.0,
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                Gen3dPromptText,
-                            ));
-                        });
-
-                    prompt
-                        .spawn((
-                            Node {
-                                width: Val::Px(8.0),
-                                height: Val::Percent(100.0),
-                                position_type: PositionType::Relative,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
-                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                            Visibility::Hidden,
-                            Gen3dPromptScrollbarTrack,
-                        ))
-                        .with_children(|track| {
-                            track.spawn((
+                .with_children(|row| {
+                    row.spawn((
+                        Button,
+                        Node {
+                            flex_grow: 1.0,
+                            flex_basis: Val::Px(0.0),
+                            height: Val::Percent(100.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            flex_direction: FlexDirection::Row,
+                            min_height: Val::Px(0.0),
+                            overflow: Overflow::clip(),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                        Gen3dPromptBox,
+                    ))
+                    .with_children(|prompt| {
+                        prompt
+                            .spawn((
                                 Node {
-                                    position_type: PositionType::Absolute,
-                                    left: Val::Px(1.0),
-                                    right: Val::Px(1.0),
-                                    top: Val::Px(0.0),
-                                    height: Val::Px(18.0),
+                                    flex_grow: 1.0,
+                                    flex_basis: Val::Px(0.0),
+                                    height: Val::Percent(100.0),
+                                    flex_direction: FlexDirection::Row,
+                                    column_gap: Val::Px(10.0),
+                                    min_height: Val::Px(0.0),
                                     ..default()
                                 },
-                                BackgroundColor(Color::srgba(0.85, 0.88, 0.95, 0.85)),
-                                Gen3dPromptScrollbarThumb,
-                            ));
-                        });
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|content| {
+                                content
+                                    .spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            flex_basis: Val::Px(0.0),
+                                            height: Val::Percent(100.0),
+                                            flex_direction: FlexDirection::Row,
+                                            min_height: Val::Px(0.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::NONE),
+                                    ))
+                                    .with_children(|prompt_row| {
+                                        prompt_row
+                                            .spawn((
+                                                Node {
+                                                    flex_grow: 1.0,
+                                                    flex_basis: Val::Px(0.0),
+                                                    min_height: Val::Px(0.0),
+                                                    padding: UiRect::all(Val::Px(10.0)),
+                                                    overflow: Overflow::scroll_y(),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::NONE),
+                                                ScrollPosition::default(),
+                                                Gen3dPromptScrollPanel,
+                                            ))
+                                            .with_children(|scroll| {
+                                                scroll.spawn((
+                                                    Text::new(
+                                                        "Drop images (optional) and add style/notes… (default: Voxel/Pixel Art)",
+                                                    ),
+                                                    TextFont {
+                                                        font_size: 16.0,
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                                    Gen3dPromptText,
+                                                ));
+                                            });
+
+                                        prompt_row
+                                            .spawn((
+                                                Node {
+                                                    width: Val::Px(8.0),
+                                                    height: Val::Percent(100.0),
+                                                    position_type: PositionType::Relative,
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
+                                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                Visibility::Hidden,
+                                                Gen3dPromptScrollbarTrack,
+                                            ))
+                                            .with_children(|track| {
+                                                track.spawn((
+                                                    Node {
+                                                        position_type: PositionType::Absolute,
+                                                        left: Val::Px(1.0),
+                                                        right: Val::Px(1.0),
+                                                        top: Val::Px(0.0),
+                                                        height: Val::Px(18.0),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(0.85, 0.88, 0.95, 0.85)),
+                                                    Gen3dPromptScrollbarThumb,
+                                                ));
+                                            });
+                                    });
+
+                                content
+                                    .spawn((
+                                        Node {
+                                            width: Val::Px(240.0),
+                                            height: Val::Percent(100.0),
+                                            flex_direction: FlexDirection::Column,
+                                            row_gap: Val::Px(6.0),
+                                            min_height: Val::Px(0.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::NONE),
+                                        Gen3dImagesInlinePanel,
+                                    ))
+                                    .with_children(|panel| {
+                                        panel
+                                            .spawn((
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    flex_direction: FlexDirection::Row,
+                                                    justify_content: JustifyContent::FlexEnd,
+                                                    align_items: AlignItems::Center,
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::NONE),
+                                            ))
+                                            .with_children(|header| {
+                                                header
+                                                    .spawn((
+                                                        Button,
+                                                        Node {
+                                                            width: Val::Px(64.0),
+                                                            height: Val::Px(24.0),
+                                                            justify_content: JustifyContent::Center,
+                                                            align_items: AlignItems::Center,
+                                                            border: UiRect::all(Val::Px(1.0)),
+                                                            ..default()
+                                                        },
+                                                        BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                                                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                        Gen3dClearImagesButton,
+                                                    ))
+                                                    .with_children(|button| {
+                                                        button.spawn((
+                                                            Text::new("Clear"),
+                                                            TextFont {
+                                                                font_size: 12.0,
+                                                                ..default()
+                                                            },
+                                                            TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                                            Gen3dClearImagesButtonText,
+                                                        ));
+                                                    });
+                                            });
+
+                                        panel
+                                            .spawn((
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    flex_grow: 1.0,
+                                                    flex_basis: Val::Px(0.0),
+                                                    min_height: Val::Px(0.0),
+                                                    flex_direction: FlexDirection::Row,
+                                                    column_gap: Val::Px(6.0),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::NONE),
+                                            ))
+                                            .with_children(|row| {
+                                                row.spawn((
+                                                    Node {
+                                                        flex_grow: 1.0,
+                                                        flex_basis: Val::Px(0.0),
+                                                        min_height: Val::Px(0.0),
+                                                        overflow: Overflow::scroll_y(),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::NONE),
+                                                    ScrollPosition::default(),
+                                                    Gen3dImagesScrollPanel,
+                                                ))
+                                                .with_children(|scroll| {
+                                                    scroll.spawn((
+                                                        Node {
+                                                            width: Val::Percent(100.0),
+                                                            flex_direction: FlexDirection::Row,
+                                                            flex_wrap: FlexWrap::Wrap,
+                                                            justify_content: JustifyContent::FlexStart,
+                                                            align_content: AlignContent::FlexStart,
+                                                            align_items: AlignItems::Stretch,
+                                                            column_gap: Val::Px(0.0),
+                                                            row_gap: Val::Px(0.0),
+                                                            ..default()
+                                                        },
+                                                        BackgroundColor(Color::NONE),
+                                                        Gen3dImagesList,
+                                                    ));
+                                                });
+
+                                                row.spawn((
+                                                    Node {
+                                                        width: Val::Px(8.0),
+                                                        height: Val::Percent(100.0),
+                                                        position_type: PositionType::Relative,
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
+                                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                    Visibility::Hidden,
+                                                    Gen3dImagesScrollbarTrack,
+                                                ))
+                                                .with_children(|track| {
+                                                    track.spawn((
+                                                        Button,
+                                                        Node {
+                                                            position_type: PositionType::Absolute,
+                                                            left: Val::Px(1.0),
+                                                            right: Val::Px(1.0),
+                                                            top: Val::Px(0.0),
+                                                            height: Val::Px(18.0),
+                                                            ..default()
+                                                        },
+                                                        BackgroundColor(Color::srgba(0.95, 0.85, 0.25, 0.85)),
+                                                        Gen3dImagesScrollbarThumb,
+                                                    ));
+                                                });
+                                            });
+                                    });
+                            });
+                    });
                 });
 
                 bar.spawn((
@@ -1976,7 +2018,7 @@ pub(crate) fn gen3d_update_ui_text(
     }
 
     let prompt_text = if workshop.prompt.trim().is_empty() {
-        "Optional: style/notes… (default: Voxel/Pixel Art)".to_string()
+        "Drop images (optional) and add style/notes… (default: Voxel/Pixel Art)".to_string()
     } else {
         workshop.prompt.clone()
     };

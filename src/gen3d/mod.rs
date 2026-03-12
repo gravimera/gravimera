@@ -31,6 +31,8 @@ const GEN3D_PREVIEW_WIDTH_PX: u32 = 960;
 const GEN3D_PREVIEW_HEIGHT_PX: u32 = 540;
 const GEN3D_REVIEW_CAPTURE_WIDTH_PX: u32 = GEN3D_PREVIEW_WIDTH_PX * 2;
 const GEN3D_REVIEW_CAPTURE_HEIGHT_PX: u32 = GEN3D_PREVIEW_HEIGHT_PX * 2;
+const GEN3D_PROMPT_BAR_HEIGHT_PX: f32 = 160.0;
+const GEN3D_IMAGE_ROW_HEIGHT_PX: f32 = GEN3D_PROMPT_BAR_HEIGHT_PX * 0.5;
 const GEN3D_DRAFT_OBJECT_KEY: &str = "gravimera/gen3d/draft";
 const GEN3D_DRAFT_PROJECTILE_KEY: &str = "gravimera/gen3d/projectile";
 const GEN3D_PREVIEW_DEFAULT_YAW: f32 = 0.0;
@@ -64,10 +66,11 @@ pub(crate) use ai::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResu
 pub(crate) use images::{
     gen3d_clear_images_button, gen3d_handle_drag_and_drop, gen3d_image_viewer_click_to_close,
     gen3d_image_viewer_keyboard_navigation, gen3d_images_scroll_wheel,
+    gen3d_images_scrollbar_drag,
     gen3d_rebuild_images_list_ui, gen3d_thumbnail_button_open_viewer,
     gen3d_thumbnail_button_style_on_interaction, gen3d_thumbnail_button_style_on_selection,
     gen3d_update_image_viewer_ui, gen3d_update_images_scrollbar_ui,
-    gen3d_update_images_tip_visibility, gen3d_update_thumbnail_tooltip,
+    gen3d_update_images_inline_visibility, gen3d_update_thumbnail_tooltip,
 };
 pub(crate) use preview::{
     gen3d_apply_draft_to_preview, gen3d_preview_orbit_controls,

@@ -1,6 +1,6 @@
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
-use bevy::window::FileDragAndDrop;
+use bevy::window::{FileDragAndDrop, PrimaryWindow};
 use std::path::PathBuf;
 
 use crate::types::BuildScene;
@@ -8,23 +8,23 @@ use crate::types::BuildScene;
 use super::ai::Gen3dAiJob;
 use super::state::*;
 
-pub(crate) fn gen3d_update_images_tip_visibility(
+pub(crate) fn gen3d_update_images_inline_visibility(
     build_scene: Res<State<BuildScene>>,
-    workshop: Res<Gen3dWorkshop>,
-    mut tips: Query<(&mut Node, &mut Visibility), With<Gen3dImagesTipText>>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut panels: Query<(&mut Node, &mut Visibility), With<Gen3dImagesInlinePanel>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
     let show = workshop.images.is_empty();
-    for (mut node, mut vis) in &mut tips {
+    for (mut node, mut vis) in &mut panels {
         if show {
-            node.display = Display::Flex;
-            *vis = Visibility::Visible;
-        } else {
-            // `Visibility::Hidden` keeps the element in the layout, so also disable it via `Display::None`.
             node.display = Display::None;
             *vis = Visibility::Hidden;
+            workshop.images_scrollbar_drag = None;
+        } else {
+            node.display = Display::Flex;
+            *vis = Visibility::Visible;
         }
     }
 }
@@ -37,8 +37,13 @@ pub(crate) fn gen3d_images_scroll_wheel(
         (&ComputedNode, &UiGlobalTransform, &mut ScrollPosition),
         With<Gen3dImagesScrollPanel>,
     >,
+    workshop: Res<Gen3dWorkshop>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+    if workshop.images_scrollbar_drag.is_some() {
+        for _ in mouse_wheel.read() {}
         return;
     }
     let Ok(window) = windows.single() else {
@@ -74,7 +79,15 @@ pub(crate) fn gen3d_images_scroll_wheel(
 
     // `ScrollPosition` is in logical pixels. Approximate a line step as 24px.
     let delta_px = delta_lines * 24.0;
-    scroll.y = (scroll.y - delta_px).max(0.0);
+    let panel_scale = node.inverse_scale_factor();
+    let viewport_h = node.size.y.max(0.0) * panel_scale;
+    let content_h = node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(0.0);
+    scroll.y = (scroll.y - delta_px).clamp(0.0, max_scroll);
 }
 
 pub(crate) fn gen3d_update_images_scrollbar_ui(
@@ -96,9 +109,11 @@ pub(crate) fn gen3d_update_images_scrollbar_ui(
         return;
     };
 
-    let viewport_h = panel.size.y.max(0.0);
-    let content_h = panel.content_size.y.max(0.0);
-    let track_h = track_node.size.y.max(1.0);
+    let panel_scale = panel.inverse_scale_factor();
+    let track_scale = track_node.inverse_scale_factor();
+    let viewport_h = panel.size.y.max(0.0) * panel_scale;
+    let content_h = panel.content_size.y.max(0.0) * panel_scale;
+    let track_h = track_node.size.y.max(1.0) * track_scale;
 
     if viewport_h < 1.0 || content_h < 1.0 {
         *track_vis = Visibility::Hidden;
@@ -118,11 +133,107 @@ pub(crate) fn gen3d_update_images_scrollbar_ui(
     let scroll_y = panel.scroll_position.y.clamp(0.0, max_scroll);
 
     let min_thumb_h = 14.0;
-    let thumb_h = (track_h * (viewport_h / content_h)).clamp(min_thumb_h, track_h);
-    let thumb_top = (track_h - thumb_h) * (scroll_y / max_scroll);
+    let thumb_h = (viewport_h * viewport_h / content_h).clamp(min_thumb_h, track_h);
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    let thumb_top = (max_thumb_top * (scroll_y / max_scroll)).clamp(0.0, max_thumb_top);
 
     thumb.top = Val::Px(thumb_top);
     thumb.height = Val::Px(thumb_h);
+}
+
+pub(crate) fn gen3d_images_scrollbar_drag(
+    build_scene: Res<State<BuildScene>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<Gen3dImagesScrollPanel>>,
+    tracks: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<Gen3dImagesScrollbarTrack>,
+    >,
+    thumbs: Query<(&Interaction, &ComputedNode, &Node), With<Gen3dImagesScrollbarThumb>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        workshop.images_scrollbar_drag = None;
+        return;
+    }
+
+    if !mouse_buttons.pressed(MouseButton::Left) {
+        workshop.images_scrollbar_drag = None;
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        return;
+    };
+    let Ok((panel_node, mut scroll)) = panels.single_mut() else {
+        return;
+    };
+    let Ok((track_node, track_transform, track_vis)) = tracks.single() else {
+        return;
+    };
+    if *track_vis == Visibility::Hidden {
+        workshop.images_scrollbar_drag = None;
+        return;
+    }
+    let Ok((interaction, thumb_node, thumb_layout)) = thumbs.single() else {
+        return;
+    };
+
+    if workshop.images_scrollbar_drag.is_none() && *interaction == Interaction::Pressed {
+        if let Some(local) = track_transform
+            .try_inverse()
+            .map(|transform| transform.transform_point2(cursor))
+        {
+            let track_scale = track_node.inverse_scale_factor();
+            let thumb_scale = thumb_node.inverse_scale_factor();
+            let cursor_in_track = (local.y + track_node.size.y * 0.5) * track_scale;
+            let thumb_top = match thumb_layout.top {
+                Val::Px(value) => value,
+                _ => 0.0,
+            };
+            let grab_offset =
+                (cursor_in_track - thumb_top).clamp(0.0, thumb_node.size.y.max(1.0) * thumb_scale);
+            workshop.images_scrollbar_drag = Some(Gen3dImagesScrollbarDrag { grab_offset });
+        }
+    }
+
+    let Some(drag) = workshop.images_scrollbar_drag else {
+        return;
+    };
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
+    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        scroll.y = 0.0;
+        return;
+    }
+
+    let track_scale = track_node.inverse_scale_factor();
+    let thumb_scale = thumb_node.inverse_scale_factor();
+    let track_h = track_node.size.y.max(1.0) * track_scale;
+    let thumb_h = thumb_node.size.y.max(1.0) * thumb_scale;
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    if max_thumb_top <= 1e-4 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(1.0);
+
+    let Some(local) = track_transform
+        .try_inverse()
+        .map(|transform| transform.transform_point2(cursor))
+    else {
+        return;
+    };
+    let cursor_in_track = ((local.y + track_node.size.y * 0.5) * track_scale).clamp(0.0, track_h);
+    let thumb_top = (cursor_in_track - drag.grab_offset).clamp(0.0, max_thumb_top);
+
+    scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
 }
 
 pub(crate) fn gen3d_clear_images_button(
@@ -154,7 +265,7 @@ pub(crate) fn gen3d_clear_images_button(
                 job.reset_session();
                 if !job.is_running() {
                     workshop.status = format!(
-                        "Drop 0–{} images and/or type a prompt, then click Build.",
+                        "Drop 0–{} images (optional) and/or type a prompt, then click Build.",
                         super::GEN3D_MAX_IMAGES
                     );
                 }
@@ -252,15 +363,6 @@ pub(crate) fn gen3d_rebuild_images_list_ui(
 
     commands.entity(root).with_children(|list| {
         if workshop.images.is_empty() {
-            list.spawn((
-                Text::new("(no images loaded)"),
-                TextFont {
-                    font_size: 13.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.75, 0.75, 0.80)),
-                Gen3dImagesListItem,
-            ));
             return;
         }
 
@@ -273,8 +375,9 @@ pub(crate) fn gen3d_rebuild_images_list_ui(
             list.spawn((
                 Button,
                 Node {
-                    width: Val::Px(74.0),
-                    height: Val::Px(74.0),
+                    width: Val::Percent(50.0),
+                    height: Val::Px(super::GEN3D_IMAGE_ROW_HEIGHT_PX),
+                    min_width: Val::Px(0.0),
                     padding: UiRect::all(Val::Px(6.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     ..default()

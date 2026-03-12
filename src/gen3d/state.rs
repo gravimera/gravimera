@@ -46,6 +46,7 @@ pub(crate) struct Gen3dWorkshop {
     pub(crate) side_tab: Gen3dSideTab,
     pub(crate) side_panel_open: bool,
     pub(crate) tool_feedback_unread: bool,
+    pub(crate) images_scrollbar_drag: Option<Gen3dImagesScrollbarDrag>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +153,11 @@ pub(crate) struct Gen3dImageRef {
     pub(crate) aspect_ratio: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Gen3dImagesScrollbarDrag {
+    pub(crate) grab_offset: f32,
+}
+
 #[derive(Component)]
 pub(crate) struct Gen3dWorkshopRoot;
 
@@ -177,7 +183,7 @@ impl Gen3dThumbnailButton {
 }
 
 #[derive(Component)]
-pub(crate) struct Gen3dImagesTipText;
+pub(crate) struct Gen3dImagesInlinePanel;
 
 #[derive(Component)]
 pub(crate) struct Gen3dImagesScrollPanel;
