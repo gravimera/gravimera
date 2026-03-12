@@ -52,7 +52,8 @@ Rules:\n\
   - If the latest review delta accepts the model / has no actionable fixes (and `qa_v1` has been run), output a \"done\" action.\n\
   - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
   - If budgets prevent further improvement (regen budgets, time, tokens), output a \"done\" action with a best-effort reason.\n\
-  - `qa_v1` may report warnings (non-fatal). If warnings>0, either take corrective action OR mention the remaining warnings explicitly in \"done.reason\" (do not claim \"no warnings\").\n\
+  - `qa_v1` may report warnings (non-fatal). Treat warnings as informational: do NOT spend steps trying to eliminate warnings.\n\
+    - If warnings>0, mention them explicitly in \"done.reason\" (do not claim \"no warnings\").\n\
 - Motion authoring (required for movable units):\n\
   - If the draft is a movable unit (mobility is ground/air) and `state_summary.motion_coverage.has_move` is false, call `llm_generate_motion_authoring_v1` before finishing.\n\
   - This tool authors explicit per-edge animation clips (idle/move/attack) baked into the prefab; the engine does not provide runtime motion algorithms.\n\
@@ -61,7 +62,8 @@ Rules:\n\
     - If it returns applied=false or the issue persists, then call `llm_generate_motion_authoring_v1` to re-author the offending clips/channels.\n\
   - If `qa_v1` reports `hinge_limit_exceeded`, call `suggest_motion_repairs_v1` to get deterministic patch options (relax joint limits vs scale rotation), then explicitly apply ONE chosen patch via `apply_draft_ops_v1`.\n\
     - Only fall back to `llm_generate_motion_authoring_v1` if the suggestions are unsuitable (ex: would relax limits too much, or would scale motion too aggressively).\n\
-  - If `qa_v1` reports motion_validation errors that are primarily animation-delta problems (examples: `hinge_off_axis`, `time_offset_no_effect`, `attack_self_intersection`), prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
+  - If `qa_v1` reports motion_validation issues with severity=\"error\" that are primarily animation-delta problems (examples: `hinge_off_axis`, `time_offset_no_effect`), prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
+  - Do NOT chase warn-only motion_validation issues (example: `attack_self_intersection`). Treat them as informational and finish once required QA is ok.\n\
   - If `qa_v1` reports `contact_stance_missing`, prefer `llm_review_delta_v1` to add/fix `contacts[].stance` (motion authoring cannot create stance metadata).\n\
   - If `qa_v1` reports `hinge_axis_missing` or `hinge_axis_invalid`, fix the joint axis (replan OR `apply_draft_ops_v1` set_attachment_joint) before motion authoring.\n\
   - If `qa_v1` reports `fixed_joint_rotates` on a joint you INTEND to rotate, update that edge's joint metadata (usually to `hinge` with a valid `axis_join`) so QA reflects the intended degrees-of-freedom.\n\
@@ -1234,4 +1236,17 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         "tokens_run": job.current_run_tokens(),
         "tokens_total": job.total_tokens(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_system_instructions_ignore_warnings_policy_is_present() {
+        let text = build_agent_system_instructions();
+        assert!(text.contains("do NOT spend steps trying to eliminate warnings"));
+        assert!(text.contains("Do NOT chase warn-only motion_validation issues"));
+        assert!(text.contains("attack_self_intersection"));
+    }
 }

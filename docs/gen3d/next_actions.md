@@ -184,6 +184,7 @@ Policy (already decided, but write down as a strict contract for implementation)
 - Engine: respects agent `done` by default (except “empty draft”).
 - Engine: surfaces incomplete QA/review/motion status via the status flags above.
 - Agent prompt: strongly recommends running `qa_v1` before `done`, but the engine does not enforce it.
+- Agent prompt: treats `qa_v1` warnings as non-blocking; do not spend passes chasing warnings. Mention remaining warnings in the final reason/status and finish best-effort.
 
 ### Contract: Stop / Continue semantics
 

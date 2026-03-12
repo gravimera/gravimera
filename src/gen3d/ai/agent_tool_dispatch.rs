@@ -626,6 +626,39 @@ pub(super) fn execute_tool_call(
                 &mut warnings,
             );
 
+            job.agent.last_qa_warnings_count = Some(warnings.len().min(u32::MAX as usize) as u32);
+            job.agent.last_qa_warning_example = warnings.first().and_then(|issue| {
+                let source = issue.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                let component_name = issue
+                    .get("component_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let kind = issue.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                let message = issue.get("message").and_then(|v| v.as_str()).unwrap_or("");
+
+                let mut example = String::new();
+                if !source.trim().is_empty() {
+                    example.push_str(source.trim());
+                    example.push(' ');
+                }
+                if !component_name.trim().is_empty() {
+                    example.push_str(component_name.trim());
+                    example.push(' ');
+                }
+                if !kind.trim().is_empty() {
+                    example.push_str(kind.trim());
+                    example.push_str(": ");
+                }
+                example.push_str(message.trim());
+
+                let example = example.trim();
+                if example.is_empty() {
+                    None
+                } else {
+                    Some(example.replace('\n', " "))
+                }
+            });
+
             let ok = validate_ok && smoke_ok;
             let json = serde_json::json!({
                 "ok": ok,

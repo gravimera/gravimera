@@ -99,6 +99,23 @@ fn run_complete_enough_for_auto_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> 
     true
 }
 
+fn append_qa_warnings_to_status(status: &mut String, agent: &super::Gen3dAgentState) {
+    let count = agent.last_qa_warnings_count.unwrap_or(0);
+    if count == 0 {
+        return;
+    }
+
+    status.push_str("\n\nQA warnings (non-blocking):");
+    status.push_str(&format!("\n- count: {count}"));
+    if let Some(example) = agent.last_qa_warning_example.as_ref() {
+        let example = example.trim();
+        if !example.is_empty() {
+            status.push_str("\n- example: ");
+            status.push_str(example);
+        }
+    }
+}
+
 fn finalize_run_now(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
@@ -790,13 +807,14 @@ pub(super) fn execute_agent_actions(
                     job.agent.last_state_hash = Some(state_hash);
                 } else {
                     workshop.error = None;
-                    let status = format!(
+                    let mut status = format!(
                         "Build finished (best effort).\nReason: No-progress guard triggered (tries: {}/{}; inspection steps: {}/{}).",
                         job.agent.no_progress_tries,
                         tries_max,
                         job.agent.no_progress_inspection_steps,
                         inspection_max
                     );
+                    append_qa_warnings_to_status(&mut status, &job.agent);
                     start_finish_run_sequence(
                         config,
                         commands,
@@ -940,6 +958,7 @@ pub(super) fn execute_agent_actions(
                         status.push_str(item.trim());
                     }
                 }
+                append_qa_warnings_to_status(&mut status, &job.agent);
 
                 workshop.error = None;
                 start_finish_run_sequence(
@@ -1271,4 +1290,40 @@ pub(super) fn poll_agent_pass_snapshot_capture(
 pub(super) enum ToolCallOutcome {
     Immediate(Gen3dToolResultJsonV1),
     StartedAsync,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_qa_warnings_to_status_noop_without_warnings() {
+        let mut status = "Build finished.".to_string();
+        let agent = super::super::Gen3dAgentState::default();
+        append_qa_warnings_to_status(&mut status, &agent);
+        assert_eq!(status, "Build finished.");
+
+        let mut agent = super::super::Gen3dAgentState::default();
+        agent.last_qa_warnings_count = Some(0);
+        let mut status = "Build finished.".to_string();
+        append_qa_warnings_to_status(&mut status, &agent);
+        assert_eq!(status, "Build finished.");
+    }
+
+    #[test]
+    fn append_qa_warnings_to_status_includes_count_and_example() {
+        let mut agent = super::super::Gen3dAgentState::default();
+        agent.last_qa_warnings_count = Some(2);
+        agent.last_qa_warning_example = Some(
+            "motion_validation jaw_lower attack_self_intersection: Attack animation increases self-intersection relative to idle pose."
+                .to_string(),
+        );
+
+        let mut status = "Build finished.".to_string();
+        append_qa_warnings_to_status(&mut status, &agent);
+
+        assert!(status.contains("QA warnings (non-blocking):"));
+        assert!(status.contains("count: 2"));
+        assert!(status.contains("example: motion_validation jaw_lower attack_self_intersection"));
+    }
 }
