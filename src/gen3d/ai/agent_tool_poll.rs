@@ -14,7 +14,7 @@ use super::agent_component_batch::poll_agent_component_batch;
 use super::agent_regen_budget::{ensure_agent_regen_budget_len, regen_budget_allows};
 use super::agent_review_images::{
     motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
-    select_review_preview_images,
+    select_review_preview_images, validate_review_images_for_llm,
 };
 use super::agent_utils::{note_observable_tool_result, sanitize_prefix, truncate_json_for_log};
 use super::artifacts::{
@@ -1002,12 +1002,16 @@ pub(super) fn poll_agent_tool(
 	                                        None
 	                                    };
 
+	                                let image_object_summary = job
+	                                    .user_image_object_summary
+	                                    .as_ref()
+	                                    .map(|s| s.text.as_str());
 	                                let user_text = if preserve_existing_components
 	                                    && !job.planned_components.is_empty()
 	                                {
 	                                    super::prompts::build_gen3d_plan_user_text_preserve_existing_components(
 	                                        prompt_text,
-	                                        !job.user_images.is_empty(),
+	                                        image_object_summary,
 	                                        workshop.speed_mode,
 	                                        style_hint,
 	                                        &job.planned_components,
@@ -1019,7 +1023,7 @@ pub(super) fn poll_agent_tool(
 	                                } else {
 	                                    super::prompts::build_gen3d_plan_user_text_with_hints(
 	                                        prompt_text,
-	                                        !job.user_images.is_empty(),
+	                                        image_object_summary,
 	                                        workshop.speed_mode,
 	                                        style_hint,
 	                                        &required_component_names,
@@ -1036,7 +1040,7 @@ pub(super) fn poll_agent_tool(
                                     pass_dir,
                                     system,
                                     user_text,
-                                    job.user_images.clone(),
+                                    Vec::new(),
                                     &err,
                                     &text,
                                     &format!("tool_plan_{}", call.call_id),
@@ -1139,9 +1143,13 @@ pub(super) fn poll_agent_tool(
                                 (Some(ai), Some(pass_dir)) => {
                                     let system =
                                         super::prompts::build_gen3d_component_system_instructions();
+                                    let image_object_summary = job
+                                        .user_image_object_summary
+                                        .as_ref()
+                                        .map(|s| s.text.as_str());
                                     let user_text = super::prompts::build_gen3d_component_user_text(
                                         &job.user_prompt_raw,
-                                        !job.user_images.is_empty(),
+                                        image_object_summary,
                                         workshop.speed_mode,
                                         &job.assembly_notes,
                                         &job.planned_components,
@@ -1157,7 +1165,7 @@ pub(super) fn poll_agent_tool(
                                         pass_dir,
                                         system,
                                         user_text,
-                                        job.user_images.clone(),
+                                        Vec::new(),
                                         &err,
                                         &text,
                                         &format!(
@@ -1185,9 +1193,13 @@ pub(super) fn poll_agent_tool(
                             (Some(ai), Some(pass_dir)) => {
                                 let system =
                                     super::prompts::build_gen3d_component_system_instructions();
+                                let image_object_summary = job
+                                    .user_image_object_summary
+                                    .as_ref()
+                                    .map(|s| s.text.as_str());
                                 let user_text = super::prompts::build_gen3d_component_user_text(
                                     &job.user_prompt_raw,
-                                    !job.user_images.is_empty(),
+                                    image_object_summary,
                                     workshop.speed_mode,
                                     &job.assembly_notes,
                                     &job.planned_components,
@@ -1203,7 +1215,7 @@ pub(super) fn poll_agent_tool(
                                     pass_dir,
                                     system,
                                     user_text,
-                                    job.user_images.clone(),
+                                    Vec::new(),
                                     &err,
                                     &text,
                                     &format!(
@@ -1590,9 +1602,13 @@ pub(super) fn poll_agent_tool(
 	                                        }
 	                                    }
 	                                }
+	                                let image_object_summary = job
+	                                    .user_image_object_summary
+	                                    .as_ref()
+	                                    .map(|s| s.text.as_str());
 	                                let user_text = super::prompts::build_gen3d_motion_authoring_user_text(
 	                                    &job.user_prompt_raw,
-	                                    !job.user_images.is_empty(),
+	                                    image_object_summary,
 	                                    &run_id,
 	                                    job.attempt,
 	                                    &job.plan_hash,
@@ -1839,16 +1855,14 @@ pub(super) fn poll_agent_tool(
                                             let review_appearance = job.review_appearance;
                                             let edit_session = job.edit_base_prefab_id.is_some()
                                                 && !job.user_prompt_raw.trim().is_empty();
-                                            let system = super::prompts::build_gen3d_review_delta_system_instructions(
-                                                review_appearance,
-                                                edit_session,
-                                            );
-                                            let include_original_images = review_appearance
-                                                && call
-                                                    .args
-                                                    .get("include_original_images")
-                                                    .and_then(|v| v.as_bool())
-                                                    .unwrap_or(true);
+	                                            let system = super::prompts::build_gen3d_review_delta_system_instructions(
+	                                                review_appearance,
+	                                                edit_session,
+	                                            );
+	                                            let image_object_summary = job
+	                                                .user_image_object_summary
+	                                                .as_ref()
+	                                                .map(|s| s.text.as_str());
                                             let user_text =
                                                 super::prompts::build_gen3d_review_delta_user_text(
                                                     &run_id,
@@ -1856,8 +1870,7 @@ pub(super) fn poll_agent_tool(
                                                     &job.plan_hash,
                                                     job.assembly_rev,
                                                     &job.user_prompt_raw,
-                                                    include_original_images
-                                                        && !job.user_images.is_empty(),
+                                                    image_object_summary,
                                                     &scene_graph_summary,
                                                 &smoke_results,
                                             );
@@ -1887,10 +1900,6 @@ pub(super) fn poll_agent_tool(
                                                         include_attack_sheet,
                                                     );
                                                 }
-                                                if include_original_images {
-                                                    images_to_send
-                                                        .extend(job.user_images.clone());
-                                                }
                                                 images_to_send.extend(preview_images);
                                                 if images_to_send.len()
                                                     > GEN3D_MAX_REQUEST_IMAGES
@@ -1900,29 +1909,49 @@ pub(super) fn poll_agent_tool(
                                                 }
                                             }
 
-                                            if schedule_llm_tool_schema_repair(
-                                                job,
-                                                workshop,
-                                                &call,
-                                                kind,
-                                                ai,
-                                                &config.gen3d_reasoning_effort_repair,
-                                                pass_dir,
-                                                system,
-                                                user_text,
-                                                images_to_send,
-                                                &err,
-                                                &text,
-                                                &format!("tool_review_{}", call.call_id),
-                                            ) {
-                                                return;
-                                            }
-                                            Gen3dToolResultJsonV1::err(
-                                                call.call_id.clone(),
-                                                call.tool_id.clone(),
-                                                err,
-                                            )
-                                        }
+	                                            let images_to_send = if images_to_send.is_empty() {
+	                                                Ok(images_to_send)
+	                                            } else {
+	                                                match job.run_dir.as_deref() {
+	                                                    Some(run_dir) => {
+	                                                        validate_review_images_for_llm(run_dir, &images_to_send)
+	                                                    }
+	                                                    None => Err("Internal error: missing Gen3D run_dir for preview images.".to_string()),
+	                                                }
+	                                            };
+
+	                                            match images_to_send {
+	                                                Ok(images_to_send) => {
+	                                                    if schedule_llm_tool_schema_repair(
+	                                                        job,
+	                                                        workshop,
+	                                                        &call,
+	                                                        kind,
+	                                                        ai,
+	                                                        &config.gen3d_reasoning_effort_repair,
+	                                                        pass_dir,
+	                                                        system,
+	                                                        user_text,
+	                                                        images_to_send,
+	                                                        &err,
+	                                                        &text,
+	                                                        &format!("tool_review_{}", call.call_id),
+	                                                    ) {
+	                                                        return;
+	                                                    }
+	                                                    Gen3dToolResultJsonV1::err(
+	                                                        call.call_id.clone(),
+	                                                        call.tool_id.clone(),
+	                                                        err,
+	                                                    )
+	                                                }
+	                                                Err(validation_err) => Gen3dToolResultJsonV1::err(
+	                                                    call.call_id.clone(),
+	                                                    call.tool_id.clone(),
+	                                                    validation_err,
+	                                                ),
+	                                            }
+	                                        }
                                         _ => Gen3dToolResultJsonV1::err(
                                             call.call_id.clone(),
                                             call.tool_id.clone(),
@@ -1955,23 +1984,21 @@ pub(super) fn poll_agent_tool(
                                 let review_appearance = job.review_appearance;
                                 let edit_session = job.edit_base_prefab_id.is_some()
                                     && !job.user_prompt_raw.trim().is_empty();
-                                let system = super::prompts::build_gen3d_review_delta_system_instructions(
-                                    review_appearance,
-                                    edit_session,
-                                );
-                                let include_original_images = review_appearance
-                                    && call
-                                        .args
-                                        .get("include_original_images")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(true);
+	                                let system = super::prompts::build_gen3d_review_delta_system_instructions(
+	                                    review_appearance,
+	                                    edit_session,
+	                                );
+	                                let image_object_summary = job
+	                                    .user_image_object_summary
+	                                    .as_ref()
+	                                    .map(|s| s.text.as_str());
                                 let user_text = super::prompts::build_gen3d_review_delta_user_text(
                                     &run_id,
                                     job.attempt,
                                     &job.plan_hash,
                                     job.assembly_rev,
                                     &job.user_prompt_raw,
-                                    include_original_images && !job.user_images.is_empty(),
+                                    image_object_summary,
                                     &scene_graph_summary,
                                     &smoke_results,
                                 );
@@ -1998,38 +2025,58 @@ pub(super) fn poll_agent_tool(
                                         );
                                     }
 
-                                    if include_original_images {
-                                        images_to_send.extend(job.user_images.clone());
-                                    }
                                     images_to_send.extend(preview_images);
                                     if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
                                         images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
                                     }
                                 }
 
-                                if schedule_llm_tool_schema_repair(
-                                    job,
-                                    workshop,
-                                    &call,
-                                    kind,
-                                    ai,
-                                    &config.gen3d_reasoning_effort_repair,
-                                    pass_dir,
-                                    system,
-                                    user_text,
-                                    images_to_send,
-                                    &err,
-                                    &text,
-                                    &format!("tool_review_{}", call.call_id),
-                                ) {
-                                    return;
-                                }
-                                Gen3dToolResultJsonV1::err(
-                                    call.call_id.clone(),
-                                    call.tool_id.clone(),
-                                    err,
-                                )
-                            }
+	                                let images_to_send = if images_to_send.is_empty() {
+	                                    Ok(images_to_send)
+	                                } else {
+	                                    match job.run_dir.as_deref() {
+	                                        Some(run_dir) => {
+	                                            validate_review_images_for_llm(run_dir, &images_to_send)
+	                                        }
+	                                        None => Err(
+	                                            "Internal error: missing Gen3D run_dir for preview images."
+	                                                .to_string(),
+	                                        ),
+	                                    }
+	                                };
+
+	                                match images_to_send {
+	                                    Ok(images_to_send) => {
+	                                        if schedule_llm_tool_schema_repair(
+	                                            job,
+	                                            workshop,
+	                                            &call,
+	                                            kind,
+	                                            ai,
+	                                            &config.gen3d_reasoning_effort_repair,
+	                                            pass_dir,
+	                                            system,
+	                                            user_text,
+	                                            images_to_send,
+	                                            &err,
+	                                            &text,
+	                                            &format!("tool_review_{}", call.call_id),
+	                                        ) {
+	                                            return;
+	                                        }
+	                                        Gen3dToolResultJsonV1::err(
+	                                            call.call_id.clone(),
+	                                            call.tool_id.clone(),
+	                                            err,
+	                                        )
+	                                    }
+	                                    Err(validation_err) => Gen3dToolResultJsonV1::err(
+	                                        call.call_id.clone(),
+	                                        call.tool_id.clone(),
+	                                        validation_err,
+	                                    ),
+	                                }
+	                            }
                             _ => Gen3dToolResultJsonV1::err(
                                 call.call_id.clone(),
                                 call.tool_id.clone(),

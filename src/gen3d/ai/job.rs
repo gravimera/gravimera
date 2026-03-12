@@ -522,6 +522,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) regen_per_component: Vec<u32>,
     pub(super) user_prompt_raw: String,
     pub(super) user_images: Vec<PathBuf>,
+    pub(super) user_image_object_summary: Option<Gen3dUserImageObjectSummary>,
     pub(super) run_dir: Option<PathBuf>,
     pub(super) pass_dir: Option<PathBuf>,
     pub(super) log_sinks: Option<crate::app::Gen3dLogSinks>,
@@ -564,6 +565,14 @@ pub(crate) struct Gen3dAiJob {
     pub(super) save_overwrite_prefab_id: Option<u128>,
     pub(super) seed_target_entity: Option<Entity>,
     pub(super) metrics: Gen3dRunMetrics,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct Gen3dUserImageObjectSummary {
+    pub(super) text: String,
+    pub(super) truncated: bool,
+    pub(super) word_count: usize,
+    pub(super) images_count: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -1082,6 +1091,7 @@ pub(super) struct Gen3dChatHistoryMessage {
 pub(super) enum Gen3dAiPhase {
     Idle,
     // Codex-style tool-driven agent loop.
+    AgentWaitingUserImageSummary,
     AgentWaitingStep,
     AgentExecutingActions,
     AgentWaitingTool,

@@ -71,7 +71,6 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
     let mut session = Gen3dAiSessionState::default();
 
     let speed = Gen3dSpeedMode::default();
-    let has_images = false;
     let image_paths: Vec<std::path::PathBuf> = Vec::new();
 
     let plan = gen3d_plan_via_openai(
@@ -80,7 +79,6 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
         &mut session,
         &llm,
         prompt,
-        has_images,
         speed,
         &image_paths,
         run_dir,
@@ -116,7 +114,6 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
             &mut session,
             &llm,
             prompt,
-            has_images,
             speed,
             &assembly_notes,
             planned_components.as_slice(),
@@ -173,13 +170,12 @@ fn gen3d_plan_via_openai(
     session: &mut Gen3dAiSessionState,
     ai: &Gen3dAiServiceConfig,
     prompt: &str,
-    has_images: bool,
     speed: Gen3dSpeedMode,
     image_paths: &[std::path::PathBuf],
     run_dir: &Path,
 ) -> Result<AiPlanJsonV1, String> {
     let system = prompts::build_gen3d_plan_system_instructions();
-    let user = prompts::build_gen3d_plan_user_text(prompt, has_images, speed);
+    let user = prompts::build_gen3d_plan_user_text(prompt, None, speed);
 
     let resp = generate_text_via_ai_service(
         progress,
@@ -206,7 +202,6 @@ fn gen3d_component_draft_via_openai(
     session: &mut Gen3dAiSessionState,
     ai: &Gen3dAiServiceConfig,
     prompt: &str,
-    has_images: bool,
     speed: Gen3dSpeedMode,
     assembly_notes: &str,
     planned_components: &[super::Gen3dPlannedComponent],
@@ -217,7 +212,7 @@ fn gen3d_component_draft_via_openai(
     let system = prompts::build_gen3d_component_system_instructions();
     let user = prompts::build_gen3d_component_user_text(
         prompt,
-        has_images,
+        None,
         speed,
         assembly_notes,
         planned_components,

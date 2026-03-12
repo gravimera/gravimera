@@ -410,7 +410,7 @@ fn gen3d_review_delta_prompt_includes_join_axes_and_offset_pos() {
         "sha256:abc",
         42,
         "A warcar with a cannon as weapon",
-        false,
+        None,
         &scene_graph_summary,
         &smoke_results,
     );

@@ -107,6 +107,27 @@ pub(crate) fn gen3d_handle_drag_and_drop(
             continue;
         }
 
+        match std::fs::metadata(path_buf) {
+            Ok(meta) => {
+                let bytes = meta.len();
+                if bytes >= super::GEN3D_MAX_IMAGE_BYTES {
+                    let mib = bytes as f64 / (1024.0 * 1024.0);
+                    workshop.error = Some(format!(
+                        "Image is too large: {:.2} MiB. Max per image is <5 MiB.",
+                        mib
+                    ));
+                    continue;
+                }
+            }
+            Err(err) => {
+                workshop.error = Some(format!(
+                    "Failed to read image file metadata for {}: {err}",
+                    path_buf.display()
+                ));
+                continue;
+            }
+        }
+
         match load_gen3d_ui_image(&mut images, path_buf) {
             Ok((handle, aspect)) => {
                 workshop.images.push(Gen3dImageRef {

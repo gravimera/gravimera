@@ -918,6 +918,34 @@ pub(crate) fn gen3d_start_build_from_api(
     if workshop.images.is_empty() && workshop.prompt.trim().is_empty() {
         return Err("Provide at least 1 image or a text prompt.".into());
     }
+    if workshop.images.len() > super::super::GEN3D_MAX_IMAGES {
+        return Err(format!(
+            "Too many images: {} (max {}).",
+            workshop.images.len(),
+            super::super::GEN3D_MAX_IMAGES
+        ));
+    }
+    for image in workshop.images.iter() {
+        match std::fs::metadata(&image.path) {
+            Ok(meta) => {
+                if meta.len() >= super::super::GEN3D_MAX_IMAGE_BYTES {
+                    let mib = meta.len() as f64 / (1024.0 * 1024.0);
+                    return Err(format!(
+                        "Image is too large: {:.2} MiB (max per image is <5 MiB): {}",
+                        mib,
+                        image.path.display()
+                    ));
+                }
+            }
+            Err(err) => {
+                return Err(format!(
+                    "Failed to read image file metadata for {}: {err}",
+                    image.path.display()
+                ));
+            }
+        }
+    }
+    super::super::validate_gen3d_user_prompt_limits(&workshop.prompt)?;
 
     let ai = resolve_gen3d_ai_service_config(config)?;
 
@@ -994,7 +1022,11 @@ pub(crate) fn gen3d_start_build_from_api(
     job.running = true;
     job.build_complete = false;
     job.mode = Gen3dAiMode::Agent;
-    job.phase = Gen3dAiPhase::AgentWaitingStep;
+    job.phase = if cached_image_paths.is_empty() {
+        Gen3dAiPhase::AgentWaitingStep
+    } else {
+        Gen3dAiPhase::AgentWaitingUserImageSummary
+    };
     job.capture_previews_only = false;
     job.plan_attempt = 0;
     job.max_parallel_components = config.gen3d_max_parallel_components.max(1);
@@ -1007,6 +1039,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.assembly_rev = 0;
     job.user_prompt_raw = workshop.prompt.clone();
     job.user_images = cached_image_paths.clone();
+    job.user_image_object_summary = None;
     job.run_dir = Some(run_dir.clone());
     job.pass_dir = Some(pass_dir.clone());
     job.review_kind = Gen3dAutoReviewKind::EndOfRun;
@@ -1051,15 +1084,23 @@ pub(crate) fn gen3d_start_build_from_api(
     job.seed_target_entity = None;
     draft.defs.clear();
 
-    workshop.status = format!(
-        "Building…\nService: {}\nModel: {}\nImages: {}",
-        job.ai.as_ref().map(|c| c.service_label()).unwrap_or(""),
-        job.ai.as_ref().map(|c| c.model()).unwrap_or(""),
-        job.user_images.len()
-    );
+    let service = job.ai.as_ref().map(|c| c.service_label()).unwrap_or("");
+    let model = job.ai.as_ref().map(|c| c.model()).unwrap_or("");
+    let images_count = job.user_images.len();
+    workshop.status = if matches!(job.phase, Gen3dAiPhase::AgentWaitingUserImageSummary) {
+        format!(
+            "Analyzing reference images…\nService: {service}\nModel: {model}\nImages: {images_count}",
+        )
+    } else {
+        format!("Building…\nService: {service}\nModel: {model}\nImages: {images_count}")
+    };
 
-    if let Err(err) = agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir.clone())
-    {
+    let spawn_result = if matches!(job.phase, Gen3dAiPhase::AgentWaitingUserImageSummary) {
+        agent_loop::spawn_agent_user_image_summary_request(config, workshop, job, pass_dir.clone())
+    } else {
+        agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir.clone())
+    };
+    if let Err(err) = spawn_result {
         job.finish_run_metrics();
         job.running = false;
         job.build_complete = false;
@@ -1425,11 +1466,10 @@ pub(crate) fn gen3d_poll_ai_job(
                 return;
             };
 
-            let mut review_inputs = job.user_images.clone();
-            review_inputs.extend(review_paths.clone());
+            let mut review_inputs = review_paths.clone();
             if review_inputs.len() > GEN3D_MAX_REQUEST_IMAGES {
                 debug!(
-                    "Gen3D: review inputs exceed max images ({} > {}), truncating extra reference photos",
+                    "Gen3D: review inputs exceed max images ({} > {}), truncating extra preview renders",
                     review_inputs.len(),
                     GEN3D_MAX_REQUEST_IMAGES
                 );
@@ -1522,13 +1562,17 @@ pub(crate) fn gen3d_poll_ai_job(
                 job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
             let system =
                 build_gen3d_review_delta_system_instructions(job.review_appearance, edit_session);
+            let image_object_summary = job
+                .user_image_object_summary
+                .as_ref()
+                .map(|s| s.text.as_str());
             let user_text = build_gen3d_review_delta_user_text(
                 &run_id,
                 job.attempt,
                 &plan_hash,
                 job.assembly_rev,
                 &job.user_prompt_raw,
-                job.review_appearance && !job.user_images.is_empty(),
+                image_object_summary,
                 &scene_graph_summary,
                 &smoke_results,
             );
@@ -1670,13 +1714,14 @@ pub(crate) fn gen3d_poll_ai_job(
             }
             let text = resp.text;
 
-            match job.phase {
-                Gen3dAiPhase::AgentWaitingStep
-                | Gen3dAiPhase::AgentExecutingActions
-                | Gen3dAiPhase::AgentWaitingTool
-                | Gen3dAiPhase::AgentCapturingRender
-                | Gen3dAiPhase::AgentCapturingPassSnapshot
-                | Gen3dAiPhase::AgentWaitingDescriptorMeta => {
+	            match job.phase {
+	                Gen3dAiPhase::AgentWaitingStep
+	                | Gen3dAiPhase::AgentWaitingUserImageSummary
+	                | Gen3dAiPhase::AgentExecutingActions
+	                | Gen3dAiPhase::AgentWaitingTool
+	                | Gen3dAiPhase::AgentCapturingRender
+	                | Gen3dAiPhase::AgentCapturingPassSnapshot
+	                | Gen3dAiPhase::AgentWaitingDescriptorMeta => {
                     // Agent mode is polled via `agent_loop::poll_gen3d_agent`. If we end up here,
                     // just ignore this legacy response path.
                     debug!("Gen3D: ignoring legacy AI result while in agent phase.");
@@ -2066,9 +2111,13 @@ pub(crate) fn gen3d_poll_ai_job(
                         .clone();
 
                     let system = build_gen3d_component_system_instructions();
+                    let image_object_summary = job
+                        .user_image_object_summary
+                        .as_ref()
+                        .map(|s| s.text.as_str());
                     let user_text = build_gen3d_component_user_text(
                         &job.user_prompt_raw,
-                        !job.user_images.is_empty(),
+                        image_object_summary,
                         workshop.speed_mode,
                         &job.assembly_notes,
                         &job.planned_components,
@@ -2110,7 +2159,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         reasoning_effort,
                         system,
                         user_text,
-                        job.user_images.clone(),
+                        Vec::new(),
                         run_dir,
                         prefix,
                     );
@@ -2467,9 +2516,13 @@ pub(crate) fn gen3d_poll_ai_job(
                         .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
                         .clone();
                     let system = build_gen3d_component_system_instructions();
+                    let image_object_summary = job
+                        .user_image_object_summary
+                        .as_ref()
+                        .map(|s| s.text.as_str());
                     let user_text = build_gen3d_component_user_text(
                         &job.user_prompt_raw,
-                        !job.user_images.is_empty(),
+                        image_object_summary,
                         workshop.speed_mode,
                         &job.assembly_notes,
                         &job.planned_components,
@@ -2504,7 +2557,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         reasoning_effort,
                         system,
                         user_text,
-                        job.user_images.clone(),
+                        Vec::new(),
                         run_dir,
                         prefix,
                     );
@@ -2667,8 +2720,11 @@ fn retry_gen3d_plan(
     job.phase = Gen3dAiPhase::WaitingPlan;
 
     let system = build_gen3d_plan_system_instructions();
-    let user_text =
-        build_gen3d_plan_user_text(&job.user_prompt_raw, !job.user_images.is_empty(), speed);
+    let image_object_summary = job
+        .user_image_object_summary
+        .as_ref()
+        .map(|s| s.text.as_str());
+    let user_text = build_gen3d_plan_user_text(&job.user_prompt_raw, image_object_summary, speed);
     let prefix = format!("plan_retry{}", job.plan_attempt);
     let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
@@ -2682,7 +2738,7 @@ fn retry_gen3d_plan(
         reasoning_effort,
         system,
         user_text,
-        job.user_images.clone(),
+        Vec::new(),
         run_dir,
         prefix,
     );
@@ -2891,12 +2947,8 @@ fn poll_gen3d_parallel_components(
         };
 
         let attempt = *job.component_attempts.get(idx).unwrap_or(&0);
-        let sent_images = !job.user_images.is_empty();
-        let image_paths = if sent_images {
-            job.user_images.clone()
-        } else {
-            Vec::new()
-        };
+        let sent_images = false;
+        let image_paths: Vec<PathBuf> = Vec::new();
 
         let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
         let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
@@ -2904,9 +2956,13 @@ fn poll_gen3d_parallel_components(
         }));
 
         let system = build_gen3d_component_system_instructions();
+        let image_object_summary = job
+            .user_image_object_summary
+            .as_ref()
+            .map(|s| s.text.as_str());
         let user_text = build_gen3d_component_user_text(
             &job.user_prompt_raw,
-            !job.user_images.is_empty(),
+            image_object_summary,
             speed,
             &job.assembly_notes,
             &job.planned_components,
@@ -3181,9 +3237,13 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
         .clone();
 
     let system = build_gen3d_component_system_instructions();
+    let image_object_summary = job
+        .user_image_object_summary
+        .as_ref()
+        .map(|s| s.text.as_str());
     let user_text = build_gen3d_component_user_text(
         &job.user_prompt_raw,
-        !job.user_images.is_empty(),
+        image_object_summary,
         workshop.speed_mode,
         &job.assembly_notes,
         &job.planned_components,
@@ -3206,7 +3266,7 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
         reasoning_effort,
         system,
         user_text,
-        job.user_images.clone(),
+        Vec::new(),
         run_dir,
         prefix,
     );
@@ -3299,9 +3359,13 @@ fn try_start_gen3d_replan(
     set_progress(&progress, "Starting re-plan…");
 
     let system = build_gen3d_plan_system_instructions();
+    let image_object_summary = job
+        .user_image_object_summary
+        .as_ref()
+        .map(|s| s.text.as_str());
     let mut user_text = build_gen3d_plan_user_text(
         &job.user_prompt_raw,
-        !job.user_images.is_empty(),
+        image_object_summary,
         workshop.speed_mode,
     );
     user_text.push_str("\n\nReplan requested by reviewer.\nReason:\n");
@@ -3324,7 +3388,7 @@ fn try_start_gen3d_replan(
         reasoning_effort,
         system,
         user_text,
-        job.user_images.clone(),
+        Vec::new(),
         pass_dir,
         prefix,
     );

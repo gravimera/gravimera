@@ -1186,6 +1186,9 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 Ok(v) => v,
                 Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
             };
+            if let Err(err) = crate::gen3d::validate_gen3d_user_prompt_limits(&req.prompt) {
+                return Some(json_error(400, err));
+            }
             workshop.prompt = req.prompt;
             Some(AutomationReply {
                 status: 200,

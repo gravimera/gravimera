@@ -748,6 +748,11 @@ Response:
 {"ok":true}
 ```
 
+Notes:
+
+- The prompt is validated server-side and must be ≤ 250 whitespace-separated words and ≤ 2000 characters.
+  - Over-limit prompts return `400` with an actionable error string (same limits as the UI).
+
 ### `POST /v1/gen3d/build`
 
 Start a new build.

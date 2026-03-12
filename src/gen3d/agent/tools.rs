@@ -3,7 +3,7 @@ use serde_json::Value;
 
 pub(crate) const TOOL_ID_GET_TOOL_DETAIL: &str = "get_tool_detail_v1";
 
-pub(crate) const TOOL_ID_GET_USER_INPUTS: &str = "get_user_inputs_v1";
+pub(crate) const TOOL_ID_GET_USER_INPUTS: &str = "get_user_inputs_v2";
 pub(crate) const TOOL_ID_GET_STATE_SUMMARY: &str = "get_state_summary_v1";
 pub(crate) const TOOL_ID_GET_SCENE_GRAPH_SUMMARY: &str = "get_scene_graph_summary_v1";
 pub(crate) const TOOL_ID_INSPECT_PLAN: &str = "inspect_plan_v1";
@@ -72,7 +72,7 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_GET_USER_INPUTS,
                 title: "Get user inputs",
-                one_line_summary: "Read-only: returns the user prompt + cached input images for this run.",
+                one_line_summary: "Read-only: returns the user prompt + reference-image main-object summary (no raw image paths; user photos are not sent to the LLM).",
                 args_schema: "{}",
                 args_example: serde_json::json!({}),
             },

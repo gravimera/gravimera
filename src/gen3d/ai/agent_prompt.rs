@@ -825,7 +825,18 @@ pub(super) fn build_agent_user_text(
     out.push_str("User prompt:\n");
     out.push_str(job.user_prompt_raw.trim());
     out.push('\n');
-    out.push_str(&format!("Input images: {}\n\n", job.user_images.len()));
+    out.push_str(&format!("Input images: {}\n", job.user_images.len()));
+    if let Some(summary) = job
+        .user_image_object_summary
+        .as_ref()
+        .map(|s| s.text.trim())
+        .filter(|s| !s.is_empty())
+    {
+        out.push_str("\nReference image main-object summary:\n");
+        out.push_str(summary);
+        out.push('\n');
+    }
+    out.push('\n');
 
     out.push_str("Available tools (call get_tool_detail_v1 for args_schema + args_example):\n");
     for tool in registry.list() {

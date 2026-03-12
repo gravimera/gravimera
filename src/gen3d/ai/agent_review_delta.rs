@@ -8,7 +8,7 @@ use crate::threaded_result::{new_shared_result, SharedResult};
 use super::super::state::Gen3dDraft;
 use super::agent_review_images::{
     motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
-    select_review_preview_images,
+    select_review_preview_images, validate_review_images_for_llm,
 };
 use super::agent_utils::sanitize_prefix;
 use super::artifacts::write_gen3d_json_artifact;
@@ -40,12 +40,16 @@ pub(super) fn start_agent_llm_review_delta_call(
     if review_appearance && preview_images.is_empty() {
         preview_images = job.agent.last_render_images.clone();
     }
-    let include_original_images = review_appearance
-        && call
-            .args
-            .get("include_original_images")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+    let include_original_images_requested = call
+        .args
+        .get("include_original_images")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if include_original_images_requested {
+        return Err(
+            "`include_original_images=true` is not supported: user reference photos are pre-summarized into text and are not sent to the LLM. Use the prompt + image summary only (and optionally preview renders when review_appearance=true).".into(),
+        );
+    }
 
     let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
     let scene_graph_summary = super::build_gen3d_scene_graph_summary(
@@ -76,14 +80,16 @@ pub(super) fn start_agent_llm_review_delta_call(
                 include_attack_sheet,
             );
         }
-
-        if include_original_images {
-            images_to_send.extend(job.user_images.clone());
-        }
         images_to_send.extend(preview_images);
         if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
             images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
         }
+    }
+    if review_appearance && !images_to_send.is_empty() {
+        let Some(run_dir) = job.run_dir.as_deref() else {
+            return Err("Missing run dir (needed to validate preview image paths).".into());
+        };
+        images_to_send = validate_review_images_for_llm(run_dir, &images_to_send)?;
     }
 
     if let Some(dir) = job.pass_dir.as_deref() {
@@ -96,13 +102,17 @@ pub(super) fn start_agent_llm_review_delta_call(
         review_appearance,
         edit_session,
     );
+    let image_object_summary = job
+        .user_image_object_summary
+        .as_ref()
+        .map(|s| s.text.as_str());
     let user_text = super::prompts::build_gen3d_review_delta_user_text(
         &run_id,
         job.attempt,
         &job.plan_hash,
         job.assembly_rev,
         &job.user_prompt_raw,
-        include_original_images && !job.user_images.is_empty(),
+        image_object_summary,
         &scene_graph_summary,
         &smoke_results,
     );

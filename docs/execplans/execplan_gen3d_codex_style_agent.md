@@ -16,7 +16,7 @@ From the player’s perspective, Gen3D stays simple: **Build / Stop / Save**.
 You can see this working by:
 
 1. Running the game and entering Gen3D.
-2. Dropping 0–6 images and/or typing a prompt, then clicking **Build**.
+2. Dropping 0–3 images (<5 MiB each) and/or typing a prompt, then clicking **Build**.
 3. Watching the status panel show high-level summaries (not logs).
 4. Inspecting `gen3d_cache/<run_id>/agent_trace.jsonl` plus per-step artifacts and renders.
 5. Clicking **Save** multiple times during a run to capture multiple versions, and clicking **Stop** to halt at any point.
@@ -161,7 +161,7 @@ This lets the agent brain orchestrate “plan/generate/review” without losing 
 
 Expose engine abilities as tools that do not require more LLM calls:
 
-- `get_user_inputs_v1`: return prompt text and cached input image filenames/paths for this run.
+- `get_user_inputs_v2`: return prompt text, `reference_images_count`, and `image_object_summary` for this run (does not expose image paths).
 - `get_scene_graph_summary_v1`: return the same info as today’s `scene_graph_summary.json`.
 - `validate_v1`: run generic validations and return structured issues with severity.
 - `smoke_check_v1`: run the lightweight behavioral smoke checks used today (move/attack sheet capture applicability).

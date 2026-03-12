@@ -1423,7 +1423,7 @@ pub(crate) fn gen3d_prompt_text_input(
                     }
                 }
                 if accept_input {
-                    push_prompt_text(&mut workshop.prompt, value);
+                    push_prompt_text(&mut workshop, value);
                 }
             }
         }
@@ -1456,7 +1456,7 @@ pub(crate) fn gen3d_prompt_text_input(
                             window.ime_enabled = true;
                         }
                         if accept_input {
-                            push_prompt_text(&mut workshop.prompt, &text);
+                            push_prompt_text(&mut workshop, &text);
                             handled = true;
                         }
                     }
@@ -1477,6 +1477,7 @@ pub(crate) fn gen3d_prompt_text_input(
         match event.key_code {
             KeyCode::Backspace => {
                 workshop.prompt.pop();
+                clear_prompt_limit_error(&mut workshop);
             }
             KeyCode::Escape => {
                 workshop.prompt_focused = false;
@@ -1492,35 +1493,92 @@ pub(crate) fn gen3d_prompt_text_input(
                     || keys.pressed(KeyCode::SuperRight);
                 if !modifier {
                     if let Some(text) = &event.text {
-                        push_prompt_text(&mut workshop.prompt, text);
+                        push_prompt_text(&mut workshop, text);
                     }
                     continue;
                 }
                 if let Some(text) = crate::clipboard::read_text() {
-                    push_prompt_text(&mut workshop.prompt, &text);
+                    push_prompt_text(&mut workshop, &text);
                 }
             }
             _ => {
                 let Some(text) = &event.text else {
                     continue;
                 };
-                push_prompt_text(&mut workshop.prompt, text);
+                push_prompt_text(&mut workshop, text);
             }
         }
     }
 }
 
-fn push_prompt_text(prompt: &mut String, text: &str) {
-    let mut inserted = 0usize;
-    for ch in text.replace("\r\n", "\n").replace('\r', "\n").chars() {
+fn clear_prompt_limit_error(workshop: &mut Gen3dWorkshop) {
+    if workshop
+        .error
+        .as_ref()
+        .is_some_and(|err| err.starts_with("Prompt limit"))
+    {
+        workshop.error = None;
+    }
+}
+
+fn push_prompt_text(workshop: &mut Gen3dWorkshop, text: &str) {
+    let max_words = super::GEN3D_PROMPT_MAX_WORDS;
+    let max_chars = super::GEN3D_PROMPT_MAX_CHARS;
+
+    let mut words = super::gen3d_count_whitespace_separated_words(&workshop.prompt);
+    let mut in_word = workshop
+        .prompt
+        .chars()
+        .last()
+        .is_some_and(|ch| !ch.is_whitespace());
+    let mut chars = workshop.prompt.chars().count();
+
+    let mut hit_words = false;
+    let mut hit_chars = false;
+    let mut inserted_any = false;
+
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    for ch in normalized.chars() {
         if ch.is_control() && ch != '\n' && ch != '\t' {
             continue;
         }
-        prompt.push(ch);
-        inserted += 1;
-        if inserted >= 4096 {
+        if chars >= max_chars {
+            hit_chars = true;
             break;
         }
+
+        let is_ws = ch.is_whitespace();
+        if !is_ws && !in_word {
+            if words >= max_words {
+                hit_words = true;
+                break;
+            }
+            words += 1;
+            in_word = true;
+        } else if is_ws {
+            in_word = false;
+        }
+
+        workshop.prompt.push(ch);
+        chars += 1;
+        inserted_any = true;
+    }
+
+    if hit_words || hit_chars {
+        let words_now = super::gen3d_count_whitespace_separated_words(&workshop.prompt);
+        let chars_now = workshop.prompt.chars().count();
+        let reason = if hit_words && hit_chars {
+            "word+char limits"
+        } else if hit_words {
+            "word limit"
+        } else {
+            "char limit"
+        };
+        workshop.error = Some(format!(
+            "Prompt limit reached ({reason}). words={words_now}/{max_words} chars={chars_now}/{max_chars}. Extra input ignored."
+        ));
+    } else if inserted_any {
+        clear_prompt_limit_error(workshop);
     }
 }
 

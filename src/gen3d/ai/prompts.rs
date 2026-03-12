@@ -4,14 +4,82 @@ use super::schema::{AiContactKindJson, AiJointKindJson};
 use super::Gen3dPlannedComponent;
 use crate::gen3d::state::{Gen3dDraft, Gen3dSpeedMode};
 
-use crate::gen3d::{GEN3D_DEFAULT_STYLE_PROMPT, GEN3D_MAX_COMPONENTS, GEN3D_MAX_PARTS};
+use crate::gen3d::{
+    GEN3D_DEFAULT_STYLE_PROMPT, GEN3D_IMAGE_OBJECT_SUMMARY_MAX_WORDS, GEN3D_MAX_COMPONENTS,
+    GEN3D_MAX_PARTS,
+};
 
-pub(super) fn build_gen3d_effective_user_prompt(raw_prompt: &str) -> String {
+pub(super) fn build_gen3d_user_image_object_summary_system_instructions() -> String {
+    format!(
+        "You are an image-to-text summarizer for Gravimera Gen3D.\n\
+You will be given 1–3 reference photos of an object.\n\
+Your job: describe ONLY the MAIN object (ignore the background) so a text-only 3D modeling agent can generate it.\n\n\
+Output format:\n\
+- Plain text only.\n\
+- Use 8–10 bullets.\n\
+- Every bullet MUST start with `- `.\n\
+- Keep the ENTIRE output to at most {GEN3D_IMAGE_OBJECT_SUMMARY_MAX_WORDS} whitespace-separated words.\n\n\
+Bullet labels (use these; one per bullet):\n\
+- Primary object:\n\
+- Geometry/silhouette:\n\
+- Parts/topology:\n\
+- Symmetry/repetition:\n\
+- Materials/surface:\n\
+- Colors:\n\
+- Style:\n\
+- Notable details:\n\
+- View/occlusions:\n\
+- Unknowns:\n\
+- Certainty: high|medium|low\n\n\
+Rules:\n\
+- Only describe clearly visible facts.\n\
+- If unsure, put it under Unknowns (do NOT guess).\n\
+- Do not describe background, lighting, or camera unless it changes object identity.\n"
+    )
+}
+
+pub(super) fn build_gen3d_user_image_object_summary_user_text(
+    raw_prompt: &str,
+    images_count: usize,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "Summarize the main object across these {images_count} reference image(s).\n"
+    ));
+    let notes = raw_prompt.trim();
+    if notes.is_empty() {
+        out.push_str("User notes: (none)\n");
+    } else {
+        out.push_str(
+            "User notes (may be incomplete or wrong; if they conflict with the images, mention the mismatch under Unknowns):\n",
+        );
+        out.push_str(notes);
+        out.push('\n');
+    }
+    out
+}
+
+pub(super) fn build_gen3d_effective_user_prompt(
+    raw_prompt: &str,
+    image_object_summary: Option<&str>,
+) -> String {
     let trimmed = raw_prompt.trim();
     let mut out = String::new();
     out.push_str(
-        "If photos are provided, choose the main object in the photos (ignore the background).\n\
-         If no photos are provided, infer the object solely from the user notes.\n",
+        "Reference inputs:\n\
+- If reference photos were provided, the engine pre-processed them into a short text summary.\n\
+- IMPORTANT: The LLM does NOT receive raw user photos directly.\n\
+- Only use the user notes and/or the photo summary; do NOT invent missing details.\n",
+    );
+    if let Some(summary) = image_object_summary.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        out.push_str("Reference photo main-object summary (auto-generated; visible facts only):\n");
+        out.push_str(summary);
+        out.push('\n');
+    } else {
+        out.push_str("Reference photo main-object summary: (none)\n");
+    }
+    out.push_str(
+        "Conflict rule: if user notes conflict with the photo summary, prefer the user notes.\n",
     );
     out.push_str(
         "Default style (use this unless the user explicitly requests a different style): ",
@@ -46,7 +114,7 @@ pub(super) fn build_gen3d_effective_user_prompt(raw_prompt: &str) -> String {
 
 pub(super) fn build_gen3d_plan_user_text(
     raw_prompt: &str,
-    has_images: bool,
+    image_object_summary: Option<&str>,
     speed: Gen3dSpeedMode,
 ) -> String {
     let mut out = String::new();
@@ -93,16 +161,16 @@ If you intend a thin surface layer, keep its size small along the attachment dir
              - Keep the assembled object coherent near the origin (avoid scattering components).\n",
         );
     }
-    if !has_images {
-        out.push_str("No photos are provided for this run.\n");
-    }
-    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push_str(&build_gen3d_effective_user_prompt(
+        raw_prompt,
+        image_object_summary,
+    ));
     out
 }
 
 pub(super) fn build_gen3d_plan_user_text_with_hints(
     raw_prompt: &str,
-    has_images: bool,
+    image_object_summary: Option<&str>,
     speed: Gen3dSpeedMode,
     style_hint: Option<&str>,
     required_component_names: &[String],
@@ -173,16 +241,16 @@ Required component names (in order):\n",
         out.push('\n');
     }
 
-    if !has_images {
-        out.push_str("No photos are provided for this run.\n");
-    }
-    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push_str(&build_gen3d_effective_user_prompt(
+        raw_prompt,
+        image_object_summary,
+    ));
     out
 }
 
 pub(super) fn build_gen3d_plan_user_text_preserve_existing_components(
     raw_prompt: &str,
-    has_images: bool,
+    image_object_summary: Option<&str>,
     speed: Gen3dSpeedMode,
     style_hint: Option<&str>,
     existing_components: &[Gen3dPlannedComponent],
@@ -375,16 +443,16 @@ Hard requirements:\n\
         out.push_str(style);
         out.push('\n');
     }
-    if !has_images {
-        out.push_str("No photos are provided for this run.\n");
-    }
-    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push_str(&build_gen3d_effective_user_prompt(
+        raw_prompt,
+        image_object_summary,
+    ));
     out
 }
 
 pub(super) fn build_gen3d_component_user_text(
     raw_prompt: &str,
-    has_images: bool,
+    image_object_summary: Option<&str>,
     speed: Gen3dSpeedMode,
     assembly_notes: &str,
     components: &[Gen3dPlannedComponent],
@@ -428,10 +496,10 @@ pub(super) fn build_gen3d_component_user_text(
              Use consistent shared dimensions and place anchors precisely where attachments should occur.\n",
         );
     }
-    if !has_images {
-        out.push_str("No photos are provided for this run.\n");
-    }
-    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push_str(&build_gen3d_effective_user_prompt(
+        raw_prompt,
+        image_object_summary,
+    ));
     out.push('\n');
 
     out.push_str("Plan context (compact; for scale and attachments):\n");
@@ -595,10 +663,15 @@ mod tests {
 
     #[test]
     fn gen3d_plan_prompt_mentions_attachment_placement_sanity_check() {
-        let prompt = build_gen3d_plan_user_text("test", false, Gen3dSpeedMode::Level3);
+        let prompt = build_gen3d_plan_user_text("test", None, Gen3dSpeedMode::Level3);
         assert!(prompt.contains("Placement sanity check"));
-        let prompt =
-            build_gen3d_plan_user_text_with_hints("test", false, Gen3dSpeedMode::Level3, None, &[]);
+        let prompt = build_gen3d_plan_user_text_with_hints(
+            "test",
+            None,
+            Gen3dSpeedMode::Level3,
+            None,
+            &[],
+        );
         assert!(prompt.contains("Placement sanity check"));
     }
 
@@ -665,7 +738,7 @@ mod tests {
 
         let prompt = build_gen3d_plan_user_text_preserve_existing_components(
             "test",
-            false,
+            None,
             Gen3dSpeedMode::Level3,
             None,
             &components,
@@ -1039,7 +1112,7 @@ pub(super) fn build_gen3d_review_delta_user_text(
     plan_hash: &str,
     assembly_rev: u32,
     raw_prompt: &str,
-    has_images: bool,
+    image_object_summary: Option<&str>,
     scene_graph_summary: &serde_json::Value,
     smoke_results: &serde_json::Value,
 ) -> String {
@@ -1331,10 +1404,10 @@ pub(super) fn build_gen3d_review_delta_user_text(
 
     let mut out = String::new();
     out.push_str("Auto-review pass: propose strict machine-appliable deltas.\n");
-    if !has_images {
-        out.push_str("No photos are provided for this run.\n");
-    }
-    out.push_str(&build_gen3d_effective_user_prompt(raw_prompt));
+    out.push_str(&build_gen3d_effective_user_prompt(
+        raw_prompt,
+        image_object_summary,
+    ));
     out.push('\n');
 
     out.push_str("You MUST copy these values into `applies_to` exactly:\n");
@@ -1449,7 +1522,7 @@ Rules:\n\
 
 pub(super) fn build_gen3d_motion_authoring_user_text(
     raw_prompt: &str,
-    has_images: bool,
+    image_object_summary: Option<&str>,
     run_id: &str,
     attempt: u32,
     plan_hash: &str,
@@ -1535,8 +1608,10 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
 
     let mut out = String::new();
     out.push_str("Goal: author explicit per-edge animation clips.\n");
-    if !has_images {
-        out.push_str("No photos are provided for this run.\n");
+    if let Some(summary) = image_object_summary.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        out.push_str("Reference photo main-object summary (raw images not available):\n");
+        out.push_str(summary);
+        out.push('\n');
     }
     let prompt = raw_prompt.trim();
     if prompt.is_empty() {

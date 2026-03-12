@@ -292,12 +292,8 @@ pub(super) fn poll_agent_component_batch(
         };
 
         let attempt = *job.component_attempts.get(idx).unwrap_or(&0);
-        let sent_images = !job.user_images.is_empty();
-        let image_paths = if sent_images {
-            job.user_images.clone()
-        } else {
-            Vec::new()
-        };
+        let sent_images = false;
+        let image_paths = Vec::new();
 
         let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
         let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
@@ -305,9 +301,13 @@ pub(super) fn poll_agent_component_batch(
         }));
 
         let system = super::prompts::build_gen3d_component_system_instructions();
+        let image_object_summary = job
+            .user_image_object_summary
+            .as_ref()
+            .map(|s| s.text.as_str());
         let user_text = super::prompts::build_gen3d_component_user_text(
             &job.user_prompt_raw,
-            !job.user_images.is_empty(),
+            image_object_summary,
             speed,
             &job.assembly_notes,
             &job.planned_components,

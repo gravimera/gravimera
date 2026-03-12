@@ -8,7 +8,7 @@ use crate::config::AppConfig;
 use crate::gen3d::agent::Gen3dToolResultJsonV1;
 use crate::gen3d::agent::{append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolRegistryV1};
 
-use super::artifacts::append_gen3d_run_log;
+use super::artifacts::{append_gen3d_run_log, write_gen3d_json_artifact, write_gen3d_text_artifact};
 use super::{
     fail_job, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
     Gen3dAiTextResponse,
@@ -32,6 +32,7 @@ use super::agent_step::{execute_agent_actions, poll_agent_pass_snapshot_capture,
 use super::agent_tool_poll::poll_agent_tool;
 #[cfg(test)]
 use super::agent_utils::compute_agent_state_hash;
+use crate::threaded_result::take_shared_result;
 
 use super::super::state::{
     Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dWorkshop,
@@ -61,6 +62,9 @@ pub(super) fn poll_gen3d_agent(
     super::orchestration::poll_gen3d_descriptor_meta_in_flight(job);
 
     match job.phase {
+        Gen3dAiPhase::AgentWaitingUserImageSummary => {
+            poll_agent_user_image_summary(config, workshop, job);
+        }
         Gen3dAiPhase::AgentWaitingStep => poll_agent_step(
             config,
             commands,
@@ -120,6 +124,222 @@ pub(super) fn poll_gen3d_agent(
             job,
             "Internal error: agent entered an unexpected phase.",
         ),
+    }
+}
+
+pub(super) fn spawn_agent_user_image_summary_request(
+    config: &AppConfig,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    pass_dir: PathBuf,
+) -> Result<(), String> {
+    if job.user_images.is_empty() {
+        job.phase = Gen3dAiPhase::AgentWaitingStep;
+        return spawn_agent_step_request(config, workshop, job, pass_dir);
+    }
+    if job.user_image_object_summary.is_some() {
+        job.phase = Gen3dAiPhase::AgentWaitingStep;
+        return spawn_agent_step_request(config, workshop, job, pass_dir);
+    }
+
+    let Some(ai) = job.ai.clone() else {
+        return Err("Internal error: missing AI config.".into());
+    };
+
+    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+    job.shared_result = Some(shared.clone());
+    let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+        message: "Summarizing images…".into(),
+    }));
+    job.shared_progress = Some(progress.clone());
+
+    set_progress(&progress, "Analyzing reference images…");
+
+    append_agent_trace_event_v1(
+        job.run_dir.as_deref(),
+        &AgentTraceEventV1::Info {
+            message: format!(
+                "Gen3D: summarizing {} reference image(s) into text",
+                job.user_images.len()
+            ),
+        },
+    );
+    append_gen3d_run_log(
+        Some(&pass_dir),
+        format!(
+            "user_image_summary_request attempt={} pass={} images={}",
+            job.attempt,
+            job.pass,
+            job.user_images.len()
+        ),
+    );
+
+    let system = super::prompts::build_gen3d_user_image_object_summary_system_instructions();
+    let user_text = super::prompts::build_gen3d_user_image_object_summary_user_text(
+        &job.user_prompt_raw,
+        job.user_images.len(),
+    );
+    let reasoning_effort = super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+    spawn_gen3d_ai_text_thread(
+        shared,
+        progress,
+        job.cancel_flag.clone(),
+        job.session.clone(),
+        None,
+        config.gen3d_require_structured_outputs,
+        ai,
+        reasoning_effort,
+        system,
+        user_text,
+        job.user_images.clone(),
+        pass_dir,
+        "user_image_summary".into(),
+    );
+
+    Ok(())
+}
+
+fn truncate_text_to_max_words_preserving_whitespace(
+    text: &str,
+    max_words: usize,
+) -> (String, bool, usize) {
+    let mut out = String::new();
+    let mut in_word = false;
+    let mut words = 0usize;
+
+    for ch in text.chars() {
+        let is_ws = ch.is_whitespace();
+        if !is_ws && !in_word {
+            if words >= max_words {
+                let out = out.trim().to_string();
+                let words_out = crate::gen3d::gen3d_count_whitespace_separated_words(&out);
+                return (out, true, words_out);
+            }
+            words += 1;
+            in_word = true;
+        } else if is_ws {
+            in_word = false;
+        }
+        out.push(ch);
+    }
+
+    let out = out.trim().to_string();
+    let words_out = crate::gen3d::gen3d_count_whitespace_separated_words(&out);
+    (out, false, words_out)
+}
+
+fn poll_agent_user_image_summary(config: &AppConfig, workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {
+    if job.user_images.is_empty() {
+        job.phase = Gen3dAiPhase::AgentWaitingStep;
+        if let Some(pass_dir) = job.pass_dir.clone() {
+            if let Err(err) = spawn_agent_step_request(config, workshop, job, pass_dir) {
+                fail_job(workshop, job, err);
+            }
+        } else {
+            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+        }
+        return;
+    }
+
+    if job.user_image_object_summary.is_some() {
+        job.phase = Gen3dAiPhase::AgentWaitingStep;
+        if let Some(pass_dir) = job.pass_dir.clone() {
+            if let Err(err) = spawn_agent_step_request(config, workshop, job, pass_dir) {
+                fail_job(workshop, job, err);
+            }
+        } else {
+            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+        }
+        return;
+    }
+
+    if job.shared_result.is_none() {
+        let Some(pass_dir) = job.pass_dir.clone() else {
+            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+            return;
+        };
+        if let Err(err) = spawn_agent_user_image_summary_request(config, workshop, job, pass_dir) {
+            fail_job(workshop, job, err);
+        }
+        return;
+    }
+
+    let Some(shared) = job.shared_result.as_ref() else {
+        fail_job(workshop, job, "Internal error: missing Gen3D shared_result.");
+        return;
+    };
+    let Some(result) = take_shared_result(shared) else {
+        return;
+    };
+    job.shared_result = None;
+    job.shared_progress = None;
+
+    match result {
+        Ok(resp) => {
+            job.note_api_used(resp.api);
+            job.session = resp.session;
+            if let Some(tokens) = resp.total_tokens {
+                job.add_tokens(tokens);
+            }
+
+            let normalized = resp.text.replace("\r\n", "\n").replace('\r', "\n");
+            let (text, truncated, word_count) = truncate_text_to_max_words_preserving_whitespace(
+                normalized.trim(),
+                crate::gen3d::GEN3D_IMAGE_OBJECT_SUMMARY_MAX_WORDS,
+            );
+            if text.trim().is_empty() {
+                fail_job(
+                    workshop,
+                    job,
+                    "Reference image summary was empty. Add a text prompt or try again.",
+                );
+                return;
+            }
+
+            job.user_image_object_summary = Some(super::job::Gen3dUserImageObjectSummary {
+                text: text.clone(),
+                truncated,
+                word_count,
+                images_count: job.user_images.len(),
+            });
+
+            let Some(run_dir) = job.run_dir.clone() else {
+                fail_job(workshop, job, "Internal error: missing Gen3D run dir.");
+                return;
+            };
+            let attempt_dir = run_dir.join(format!("attempt_{}", job.attempt));
+            write_gen3d_text_artifact(Some(&attempt_dir), "inputs/image_object_summary.txt", &text);
+            write_gen3d_json_artifact(
+                Some(&attempt_dir),
+                "inputs/image_object_summary.json",
+                &serde_json::json!({
+                    "version": 1,
+                    "images_count": job.user_images.len(),
+                    "word_count": word_count,
+                    "truncated": truncated,
+                }),
+            );
+
+            workshop.status = "Reference images summarized.\nPlanning…".to_string();
+            job.phase = Gen3dAiPhase::AgentWaitingStep;
+
+            let Some(pass_dir) = job.pass_dir.clone() else {
+                fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+                return;
+            };
+            if let Err(err) = spawn_agent_step_request(config, workshop, job, pass_dir) {
+                fail_job(workshop, job, err);
+            }
+        }
+        Err(err) => {
+            fail_job(
+                workshop,
+                job,
+                format!(
+                    "Reference image pre-processing failed: {err}\nTip: try again or use a text prompt without images."
+                ),
+            );
+        }
     }
 }
 

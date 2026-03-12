@@ -38,6 +38,59 @@ pub(super) fn parse_review_preview_images_from_args(args: &serde_json::Value) ->
     )
 }
 
+fn is_user_reference_photo_path(path: &Path) -> bool {
+    let mut last = None::<&str>;
+    for component in path.components() {
+        let Some(seg) = component.as_os_str().to_str() else {
+            last = None;
+            continue;
+        };
+        if last == Some("inputs") && seg == "images" {
+            return true;
+        }
+        last = Some(seg);
+    }
+    false
+}
+
+pub(super) fn validate_review_images_for_llm(run_dir: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+    let run_dir = std::fs::canonicalize(run_dir)
+        .map_err(|err| format!("Failed to canonicalize run_dir {}: {err}", run_dir.display()))?;
+
+    let mut out: Vec<PathBuf> = Vec::with_capacity(paths.len());
+    for path in paths {
+        let canonical = std::fs::canonicalize(path)
+            .map_err(|err| format!("Invalid preview image path {}: {err}", path.display()))?;
+        if !canonical.starts_with(&run_dir) {
+            return Err(format!(
+                "Refusing preview image outside Gen3D run cache. Expected under {} but got {}.",
+                run_dir.display(),
+                canonical.display()
+            ));
+        }
+        if is_user_reference_photo_path(&canonical) {
+            return Err(format!(
+                "Refusing user reference photos as preview images (attempt_*/inputs/images/*): {}. Reference photos are summarized into text and not sent to the LLM.",
+                canonical.display()
+            ));
+        }
+        let ext = canonical
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if ext != "png" {
+            return Err(format!(
+                "Refusing non-PNG preview image: {} (expected a Gen3D render PNG).",
+                canonical.display()
+            ));
+        }
+        out.push(canonical);
+    }
+    Ok(out)
+}
+
 fn file_name_lower(path: &Path) -> Option<String> {
     path.file_name()
         .and_then(|s| s.to_str())

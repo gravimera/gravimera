@@ -1,6 +1,6 @@
 # Gen3D Workshop (MVP)
 
-Gen3D is an in-game “workshop” mode that drafts a 3D object from **0–6 photos and/or a text prompt** using an AI vision-capable model (OpenAI-compatible, Gemini, or Claude). The draft is built from a small set of **atom primitives** (cuboid/sphere/cylinder/cone) and assembled as a **combined object** via data-driven composition.
+Gen3D is an in-game “workshop” mode that drafts a 3D object from **0–3 reference photos (optional) and/or a text prompt** using an AI vision-capable model (OpenAI-compatible, Gemini, or Claude). When reference photos are provided, Gen3D first runs a single “image → object summary” request and then continues generation using text only (the raw user photos are not attached to downstream LLM requests). The draft is built from a small set of **atom primitives** (cuboid/sphere/cylinder/cone) and assembled as a **combined object** via data-driven composition.
 
 This file describes the **current implementation** in this repo.
 
@@ -11,13 +11,15 @@ The AI is instructed to prioritize **basic structure and proportions** over smal
 ## User Workflow
 
 1. Enter Gen3D: click the **Gen3D** button (top-left).
-2. Drag & drop **0–6** images (supported: `.png`, `.jpg/.jpeg`, `.webp`).
+2. Drag & drop **0–3** images (supported: `.png`, `.jpg/.jpeg`, `.webp`).
    - You can drop anywhere in the window; the prompt area is the visual target.
    - Thumbnails appear inside the prompt box on the right. Click a thumbnail to open the viewer (`↑/↓` navigate, `Esc` to close) while keeping the 3D preview visible.
+   - Limits: at most 3 images total; each image must be smaller than 5 MiB (over-limit images are refused with a tip).
 3. Optional: type notes/style in the prompt box (supports Chinese/IME input, emoji, paste via `Cmd/Ctrl+V`, and scrolling for long text; **Clear Prompt** wipes it).
    - On WSL, paste/copy prefers the Windows clipboard via interop (`powershell.exe` / `clip.exe`). If interop is disabled, install `wl-clipboard` or `xclip`/`xsel`.
    - The game always provides a default style: “Concise Voxel/Pixel Art style (not necessarily cuboid-only).”
    - If your notes include a different style, the AI should prefer your notes over the default.
+   - Limits: at most 250 whitespace-separated words and at most 2000 characters (extra input is refused with a tip).
    - You must provide at least one: a reference photo or a text prompt.
 4. Click **Build** (each click starts a fresh run and overwrites the current draft).
    - While building, click **Stop** to cancel.
@@ -41,6 +43,10 @@ If generation fails, the status panel shows a short error summary; detailed step
 
 Gen3D Build is a Codex-style, tool-driven agent loop.
 
+- If reference images are present, the engine runs a single pre-agent “image → object summary” request and stores the result as `image_object_summary` (hard-capped at 160 words).
+  - The agent and all Gen3D LLM-backed tools then receive *only* the user prompt text plus that summary (raw user reference photos are not sent to the LLM).
+  - The agent can call `get_user_inputs_v2` to retrieve `{prompt, reference_images_count, image_object_summary}`; image paths are intentionally not exposed.
+
 - The game calls the AI for a strict JSON `gen3d_agent_step_v1` object.
   - `status_summary` is shown to the player (Status tab).
   - `actions` are executed by the engine.
@@ -54,7 +60,8 @@ In practice, the agent usually gets good results by calling:
 - `llm_generate_component_v1` (generate one component’s primitives + anchors)
 - `render_preview_v1` (optional; appearance review) + `validate_v1` / `smoke_check_v1` (structural checks)
 - `llm_review_delta_v1` (apply machine-appliable tweaks / request replan / request regen)
-  - If `preview_images` is omitted and `[gen3d].review_appearance = true`, the engine uses the latest render outputs; if those are missing or stale for the current `assembly_rev`, it auto-captures a minimal set of review renders (and only captures motion sheets when motion validation reports errors) before calling the model.
+  - If `preview_images` is omitted and `[gen3d].review_appearance = true`, the engine uses the latest *engine-rendered* preview PNGs; if those are missing or stale for the current `assembly_rev`, it auto-captures a minimal set of review renders (and only captures motion sheets when motion validation reports errors) before calling the model.
+  - User reference photos are never used as preview images.
 
 Plan-level reuse:
 
@@ -122,9 +129,11 @@ The game stores request/response + tool artifacts there (useful for debugging):
 - `agent_trace.jsonl` (per-run structured trace: LLM requests/responses + tool calls/results)
 - `tool_feedback.jsonl` (per-run; also appended to the global `~/.gravimera/cache/gen3d/tool_feedback_history.jsonl`)
 - `save_*.json` (each Save click writes a small metadata artifact)
-- `inputs/user_prompt.txt` (raw user prompt as typed)
-- `inputs/images/*` (copies of the input reference photos)
-- `inputs_manifest.json` (maps original paths → cached copies)
+- `attempt_0/inputs/user_prompt.txt` (raw user prompt as typed)
+- `attempt_0/inputs/images/*` (copies of the input reference photos; used for UI preview and the one-time image summary step)
+- `attempt_0/inputs/image_object_summary.txt` (one-time “image → object summary”; downstream LLM calls use this text instead of user photos)
+- `attempt_0/inputs/image_object_summary.json` (summary metadata: word_count/truncated/images_count)
+- `attempt_0/inputs_manifest.json` (maps original paths → cached copies)
 - `plan_*` (planning)
 - `plan_extracted.json` (engine-extracted plan summary, including computed absolute `pos` + `forward`/`up`)
 - `assembly_transforms.json` (latest computed absolute transforms, including `pos` + `forward`/`up`)
@@ -297,7 +306,8 @@ Notes:
 
 ## Limits (MVP)
 
-- Images: 0–6
+- Images: 0–3 (each must be smaller than 5 MiB)
+- Prompt textbox: ≤ 250 whitespace-separated words and ≤ 2000 characters
 - Components (plan): current build mode ≤ 24 (hard cap ≤ 64)
 - Total primitives (across all components): hard cap ≤ 1024
 - Primitives: cuboid / sphere / cylinder / cone (plus optional `params` for `capsule`, `conical_frustum`, `torus`)

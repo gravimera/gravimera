@@ -151,7 +151,10 @@ pub(super) fn execute_tool_call(
             call.tool_id,
             serde_json::json!({
                 "prompt": job.user_prompt_raw,
-                "images": job.user_images.iter().map(|p| p.display().to_string()).collect::<Vec<String>>(),
+                "reference_images_count": job.user_images.len(),
+                "image_object_summary": job.user_image_object_summary.as_ref().map(|s| s.text.clone()),
+                "image_object_summary_word_count": job.user_image_object_summary.as_ref().map(|s| s.word_count),
+                "image_object_summary_truncated": job.user_image_object_summary.as_ref().map(|s| s.truncated),
             }),
         )),
         TOOL_ID_GET_STATE_SUMMARY => ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
@@ -1649,10 +1652,14 @@ pub(super) fn execute_tool_call(
                 None
             };
 
+            let image_object_summary = job
+                .user_image_object_summary
+                .as_ref()
+                .map(|s| s.text.as_str());
             let user_text = if preserve_existing_components && !job.planned_components.is_empty() {
                 super::prompts::build_gen3d_plan_user_text_preserve_existing_components(
                     prompt_text,
-                    !job.user_images.is_empty(),
+                    image_object_summary,
                     workshop.speed_mode,
                     style_hint,
                     &job.planned_components,
@@ -1664,7 +1671,7 @@ pub(super) fn execute_tool_call(
             } else {
                 super::prompts::build_gen3d_plan_user_text_with_hints(
                     prompt_text,
-                    !job.user_images.is_empty(),
+                    image_object_summary,
                     workshop.speed_mode,
                     style_hint,
                     &required_component_names,
@@ -1685,7 +1692,7 @@ pub(super) fn execute_tool_call(
                 reasoning_effort,
                 system,
                 user_text,
-                job.user_images.clone(),
+                Vec::new(),
                 pass_dir,
                 sanitize_prefix(&format!("tool_plan_{}", &call.call_id)),
             );
@@ -1856,9 +1863,13 @@ pub(super) fn execute_tool_call(
             job.shared_progress = Some(progress.clone());
 
             let system = super::prompts::build_gen3d_component_system_instructions();
+            let image_object_summary = job
+                .user_image_object_summary
+                .as_ref()
+                .map(|s| s.text.as_str());
             let user_text = super::prompts::build_gen3d_component_user_text(
                 &job.user_prompt_raw,
-                !job.user_images.is_empty(),
+                image_object_summary,
                 workshop.speed_mode,
                 &job.assembly_notes,
                 &job.planned_components,
@@ -1880,7 +1891,7 @@ pub(super) fn execute_tool_call(
                 reasoning_effort,
                 system,
                 user_text,
-                job.user_images.clone(),
+                Vec::new(),
                 pass_dir,
                 sanitize_prefix(&format!("tool_component{}_{}", idx + 1, &call.call_id)),
             );
@@ -2277,9 +2288,13 @@ pub(super) fn execute_tool_call(
             }
 
             let system = super::prompts::build_gen3d_motion_authoring_system_instructions();
+            let image_object_summary = job
+                .user_image_object_summary
+                .as_ref()
+                .map(|s| s.text.as_str());
             let user_text = super::prompts::build_gen3d_motion_authoring_user_text(
                 &job.user_prompt_raw,
-                !job.user_images.is_empty(),
+                image_object_summary,
                 &run_id,
                 job.attempt,
                 &job.plan_hash,

@@ -19,7 +19,7 @@ The player experience remains simple: click **Build** (or **Stop**). The extra i
 You can see this working by:
 
 1. Running the game and entering Gen3D.
-2. Dropping 0–6 images and/or typing a prompt (e.g. “goblin with spear, can attack” or “small wooden chair”).
+2. Dropping 0–3 images (<5 MiB each) and/or typing a prompt (e.g. “goblin with spear, can attack” or “small wooden chair”).
 3. Clicking **Build** and waiting for it to finish.
 4. Observing in the terminal debug logs: multiple “pass” steps (render → validate → review → apply delta).
 5. Inspecting the cache folder: `gen3d_cache/<run_id>/attempt_0/pass_0/...` with artifacts, then additional `pass_1/...` if review iterations are enabled.
@@ -222,8 +222,7 @@ At the end of this change:
 
 - The review AI response format is `review_delta_v1` and is validated strictly before application.
 - Gen3D review requests always include:
-  - original images (0–6)
-  - 7 static renders (front, front_left, left_back, back, right_back, front_right, top)
-  - motion sheets (`move_sheet.png`, `attack_sheet.png`)
+  - user prompt text + `image_object_summary` (when reference photos are provided; raw photos are not attached)
+  - engine-rendered preview PNGs when `[gen3d].review_appearance = true` (static views, plus motion sheets only when smoke/validation indicates motion issues)
   - `scene_graph_summary.json` and `smoke_results.json` embedded as text
 - The code paths remain in `src/gen3d/ai/*` (no re-monolithification into a single file).

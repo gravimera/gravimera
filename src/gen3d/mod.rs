@@ -11,7 +11,8 @@ mod ui;
 
 use crate::object::registry::builtin_object_id;
 
-const GEN3D_MAX_IMAGES: usize = 6;
+const GEN3D_MAX_IMAGES: usize = 3;
+const GEN3D_MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024; // < 5 MiB each.
 // Some Gen3D steps include extra internal preview renders in addition to user reference images.
 // Keep a slightly higher cap for a single OpenAI request.
 const GEN3D_REVIEW_VIEW_IMAGES: usize = 9; // 6 horizontal + 1 top + 2 motion sheets
@@ -19,6 +20,9 @@ const GEN3D_MAX_REQUEST_IMAGES: usize = GEN3D_MAX_IMAGES + GEN3D_REVIEW_VIEW_IMA
 const GEN3D_MAX_PARTS: usize = 1024;
 const GEN3D_MAX_COMPONENTS: usize = 64;
 const GEN3D_MAX_CHAT_HISTORY_MESSAGES: usize = 24;
+const GEN3D_PROMPT_MAX_WORDS: usize = 250;
+const GEN3D_PROMPT_MAX_CHARS: usize = 2000;
+const GEN3D_IMAGE_OBJECT_SUMMARY_MAX_WORDS: usize = 160;
 // Long-running Structured Outputs generations (large schemas + high reasoning effort) can exceed a
 // few minutes on some providers. Keep this generous so background /responses polling doesn't time
 // out prematurely.
@@ -42,8 +46,70 @@ const GEN3D_PREVIEW_DEFAULT_DISTANCE: f32 = 6.0;
 const GEN3D_DEFAULT_STYLE_PROMPT: &str =
     "Concise Voxel/Pixel Art style (not necessarily cuboid-only).";
 
+pub(crate) fn gen3d_count_whitespace_separated_words(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+pub(crate) fn validate_gen3d_user_prompt_limits(prompt: &str) -> Result<(), String> {
+    let words = gen3d_count_whitespace_separated_words(prompt);
+    if words > GEN3D_PROMPT_MAX_WORDS {
+        return Err(format!(
+            "Prompt is too long: {words} words (max {GEN3D_PROMPT_MAX_WORDS})."
+        ));
+    }
+
+    let chars = prompt.chars().count();
+    if chars > GEN3D_PROMPT_MAX_CHARS {
+        return Err(format!(
+            "Prompt is too long: {chars} chars (max {GEN3D_PROMPT_MAX_CHARS})."
+        ));
+    }
+
+    Ok(())
+}
+
 fn gen3d_draft_object_id() -> u128 {
     builtin_object_id(GEN3D_DRAFT_OBJECT_KEY)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gen3d_word_count_is_whitespace_separated() {
+        assert_eq!(gen3d_count_whitespace_separated_words(""), 0);
+        assert_eq!(gen3d_count_whitespace_separated_words("a"), 1);
+        assert_eq!(gen3d_count_whitespace_separated_words("a b\tc\n"), 3);
+        assert_eq!(gen3d_count_whitespace_separated_words("  a   b  "), 2);
+    }
+
+    #[test]
+    fn gen3d_prompt_limits_enforce_words_and_chars() {
+        let words_250 = std::iter::repeat("w")
+            .take(250)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(validate_gen3d_user_prompt_limits(&words_250).is_ok());
+
+        let words_251 = std::iter::repeat("w")
+            .take(251)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let err = validate_gen3d_user_prompt_limits(&words_251)
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("251 words"));
+
+        let chars_2000 = "a".repeat(2000);
+        assert!(validate_gen3d_user_prompt_limits(&chars_2000).is_ok());
+
+        let chars_2001 = "a".repeat(2001);
+        let err = validate_gen3d_user_prompt_limits(&chars_2001)
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("2001 chars"));
+    }
 }
 
 fn gen3d_draft_projectile_object_id() -> u128 {
