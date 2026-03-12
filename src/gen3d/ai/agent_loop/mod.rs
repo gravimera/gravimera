@@ -58,6 +58,8 @@ pub(super) fn poll_gen3d_agent(
         With<Gen3dPreviewModelRoot>,
     >,
 ) {
+    super::orchestration::poll_gen3d_descriptor_meta_in_flight(job);
+
     match job.phase {
         Gen3dAiPhase::AgentWaitingStep => poll_agent_step(
             config,

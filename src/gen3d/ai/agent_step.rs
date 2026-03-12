@@ -365,6 +365,24 @@ fn maybe_start_descriptor_meta_request(
         return false;
     }
 
+    if let Some(in_flight) = job.descriptor_meta_in_flight.as_ref() {
+        let stale = job.run_id != Some(in_flight.run_id)
+            || job.plan_hash.trim() != in_flight.plan_hash.trim();
+        if !stale {
+            let in_flight = job.descriptor_meta_in_flight.take().unwrap();
+            job.shared_result = Some(in_flight.shared_result);
+            let progress = job
+                .shared_progress
+                .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
+                .clone();
+            set_progress(&progress, "Waiting for prefab metadata…");
+            append_gen3d_run_log(job.pass_dir.as_deref(), "descriptor_meta_adopt_in_flight");
+            job.pending_finish_run = Some(finish.clone());
+            job.phase = Gen3dAiPhase::AgentWaitingDescriptorMeta;
+            return true;
+        }
+    }
+
     let Some(root_def) = draft.root_def() else {
         return false;
     };

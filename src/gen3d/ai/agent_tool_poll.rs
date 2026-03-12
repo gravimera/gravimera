@@ -83,6 +83,134 @@ fn bucket_review_delta_regen_requests(
     buckets
 }
 
+fn maybe_spawn_descriptor_meta_after_plan(
+    workshop: &Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+) {
+    if let Some(in_flight) = job.descriptor_meta_in_flight.as_ref() {
+        let stale = job.run_id != Some(in_flight.run_id)
+            || job.plan_hash.trim() != in_flight.plan_hash.trim();
+        if !stale {
+            return;
+        }
+        job.descriptor_meta_in_flight = None;
+    }
+    if job.plan_hash.trim().is_empty() {
+        return;
+    }
+    if job.descriptor_meta_for_save().is_some() {
+        return;
+    }
+
+    let Some(ai) = job.ai.clone() else {
+        return;
+    };
+    let Some(run_id) = job.run_id else {
+        return;
+    };
+    let Some(pass_dir) = job.pass_dir.clone() else {
+        return;
+    };
+    let Some(root_def) = draft.root_def() else {
+        return;
+    };
+
+    let user_prompt = {
+        let raw = job.user_prompt_raw.trim();
+        if raw.is_empty() {
+            workshop.prompt.trim().to_string()
+        } else {
+            raw.to_string()
+        }
+    };
+
+    let roles = vec![if root_def.mobility.is_some() {
+        "unit".to_string()
+    } else {
+        "building".to_string()
+    }];
+
+    let size_m = root_def.size;
+    let ground_origin_y_m = root_def
+        .ground_origin_y
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .unwrap_or_else(|| {
+            if size_m.y.is_finite() {
+                size_m.y.abs() * 0.5
+            } else {
+                0.0
+            }
+        });
+    let mobility_str = root_def.mobility.map(|m| match m.mode {
+        crate::object::registry::MobilityMode::Ground => "ground".to_string(),
+        crate::object::registry::MobilityMode::Air => "air".to_string(),
+    });
+    let attack_kind_str = root_def.attack.as_ref().map(|a| match a.kind {
+        crate::object::registry::UnitAttackKind::Melee => "melee".to_string(),
+        crate::object::registry::UnitAttackKind::RangedProjectile => {
+            "ranged_projectile".to_string()
+        }
+    });
+
+    let mut anchors: Vec<String> = root_def
+        .anchors
+        .iter()
+        .map(|a| a.name.as_ref().to_string())
+        .collect();
+    anchors.sort();
+    anchors.dedup();
+
+    let plan_extracted_text = job.pass_dir_path().and_then(|dir| {
+        std::fs::read(dir.join("plan_extracted.json"))
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+    });
+
+    let system = super::prompts::build_gen3d_descriptor_meta_system_instructions();
+    let user_text = super::prompts::build_gen3d_descriptor_meta_user_text(
+        root_def.label.as_ref(),
+        &user_prompt,
+        &roles,
+        size_m,
+        ground_origin_y_m,
+        mobility_str.as_deref(),
+        attack_kind_str.as_deref(),
+        &anchors,
+        &[],
+        plan_extracted_text.as_deref(),
+        None,
+    );
+
+    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+    job.descriptor_meta_in_flight = Some(super::Gen3dInFlightDescriptorMeta {
+        run_id,
+        plan_hash: job.plan_hash.clone(),
+        shared_result: shared.clone(),
+    });
+
+    append_gen3d_run_log(Some(pass_dir.as_path()), "descriptor_meta_plan_start");
+    let progress = Arc::new(Mutex::new(Gen3dAiProgress {
+        message: "Generating prefab metadata…".into(),
+    }));
+    let reasoning_effort = super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+    spawn_gen3d_ai_text_thread(
+        shared,
+        progress,
+        job.cancel_flag.clone(),
+        job.session.clone(),
+        Some(super::structured_outputs::Gen3dAiJsonSchemaKind::DescriptorMetaV1),
+        job.require_structured_outputs,
+        ai,
+        reasoning_effort,
+        system,
+        user_text,
+        Vec::new(),
+        pass_dir,
+        "descriptor_meta_plan".into(),
+    );
+}
+
 pub(super) fn poll_agent_tool(
     config: &AppConfig,
     commands: &mut Commands,
@@ -1957,6 +2085,9 @@ pub(super) fn poll_agent_tool(
     }
     let tool_id_for_guard = tool_result.tool_id.clone();
     let tool_ok_for_guard = tool_result.ok;
+    if tool_ok_for_guard && tool_id_for_guard == TOOL_ID_LLM_GENERATE_PLAN {
+        maybe_spawn_descriptor_meta_after_plan(workshop, job, draft);
+    }
     note_observable_tool_result(job, &tool_result);
     job.agent.step_tool_results.push(tool_result);
 

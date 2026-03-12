@@ -237,6 +237,7 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.phase = Gen3dAiPhase::Idle;
     job.shared_progress = None;
     job.shared_result = None;
+    job.descriptor_meta_in_flight = None;
     job.review_capture = None;
     job.review_static_paths.clear();
     job.motion_capture = None;
@@ -312,6 +313,7 @@ pub(crate) fn gen3d_resume_build_from_api(
     job.shared_progress = None;
     job.shared_result = None;
     job.descriptor_meta_cache = None;
+    job.descriptor_meta_in_flight = None;
     job.pending_finish_run = None;
     job.review_capture = None;
     job.capture_previews_only = false;
@@ -582,6 +584,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.current_run_tokens = 0;
     job.chat_fallbacks_this_run = 0;
     job.descriptor_meta_cache = None;
+    job.descriptor_meta_in_flight = None;
     job.seed_descriptor_meta = seed_descriptor_meta;
     job.descriptor_meta_override = None;
     job.pending_finish_run = None;
@@ -1024,6 +1027,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.rig_move_cycle_m = None;
     job.motion_authoring = None;
     job.descriptor_meta_cache = None;
+    job.descriptor_meta_in_flight = None;
     job.seed_descriptor_meta = None;
     job.descriptor_meta_override = None;
     job.pending_finish_run = None;
@@ -1079,6 +1083,66 @@ pub(super) fn max_components_for_speed(speed: Gen3dSpeedMode) -> usize {
     24
 }
 
+pub(super) fn poll_gen3d_descriptor_meta_in_flight(job: &mut Gen3dAiJob) {
+    let Some(in_flight) = job.descriptor_meta_in_flight.as_ref() else {
+        return;
+    };
+    let Some(result) = take_shared_result(&in_flight.shared_result) else {
+        return;
+    };
+    let Some(in_flight) = job.descriptor_meta_in_flight.take() else {
+        return;
+    };
+
+    // Ignore stale results after a new Build/Plan.
+    if job.run_id != Some(in_flight.run_id) {
+        return;
+    }
+    if job.plan_hash.trim() != in_flight.plan_hash.trim() {
+        return;
+    }
+
+    match result {
+        Ok(resp) => {
+            job.note_api_used(resp.api);
+            if let Some(tokens) = resp.total_tokens {
+                job.add_tokens(tokens);
+            }
+            if let Some(flag) = resp.session.responses_supported {
+                job.session.responses_supported = Some(flag);
+            }
+            if let Some(flag) = resp.session.responses_continuation_supported {
+                job.session.responses_continuation_supported = Some(flag);
+            }
+            if let Some(flag) = resp.session.responses_background_supported {
+                job.session.responses_background_supported = Some(flag);
+            }
+            if let Some(flag) = resp.session.responses_structured_outputs_supported {
+                job.session.responses_structured_outputs_supported = Some(flag);
+            }
+            if let Some(flag) = resp.session.chat_structured_outputs_supported {
+                job.session.chat_structured_outputs_supported = Some(flag);
+            }
+
+            match parse::parse_ai_descriptor_meta_from_text(&resp.text) {
+                Ok(meta) => {
+                    job.descriptor_meta_cache = Some(Gen3dDescriptorMetaCache {
+                        plan_hash: in_flight.plan_hash,
+                        assembly_rev: job.assembly_rev,
+                        meta,
+                    });
+                }
+                Err(err) => {
+                    warn!("Gen3D: descriptor-meta(plan) parse failed: {err}");
+                }
+            }
+        }
+        Err(err) => {
+            warn!("Gen3D: descriptor-meta(plan) request failed: {err}");
+        }
+    }
+}
+
 pub(crate) fn gen3d_poll_ai_job(
     config: Res<AppConfig>,
     time: Res<Time>,
@@ -1105,6 +1169,8 @@ pub(crate) fn gen3d_poll_ai_job(
     if matches!(job.phase, Gen3dAiPhase::Idle) {
         return;
     }
+
+    poll_gen3d_descriptor_meta_in_flight(&mut job);
 
     // Hard budgets: stop the run when exceeded (best-effort draft stays in the preview).
     if config.gen3d_max_seconds > 0 {

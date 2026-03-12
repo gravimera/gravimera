@@ -105,6 +105,13 @@ pub(super) struct Gen3dDescriptorMetaCache {
 }
 
 #[derive(Clone, Debug)]
+pub(super) struct Gen3dInFlightDescriptorMeta {
+    pub(super) run_id: Uuid,
+    pub(super) plan_hash: String,
+    pub(super) shared_result: SharedResult<Gen3dAiTextResponse, String>,
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct Gen3dPendingPlanAttempt {
     pub(super) call_id: String,
     pub(super) error: String,
@@ -525,6 +532,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) rig_move_cycle_m: Option<f32>,
     pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
     pub(super) descriptor_meta_cache: Option<Gen3dDescriptorMetaCache>,
+    pub(super) descriptor_meta_in_flight: Option<Gen3dInFlightDescriptorMeta>,
     pub(super) seed_descriptor_meta: Option<AiDescriptorMetaJsonV1>,
     pub(super) descriptor_meta_override: Option<AiDescriptorMetaJsonV1>,
     pub(super) pending_finish_run: Option<Gen3dPendingFinishRun>,
@@ -691,9 +699,9 @@ impl Gen3dAiJob {
 
     pub(crate) fn descriptor_meta_for_current_draft(&self) -> Option<&AiDescriptorMetaJsonV1> {
         let cached = self.descriptor_meta_cache.as_ref()?;
-        (cached.plan_hash.trim() == self.plan_hash.trim()
-            && cached.assembly_rev == self.assembly_rev)
-            .then_some(&cached.meta)
+        // Descriptor meta is a semantic "best effort" label/short/tags suggestion. It should stay
+        // usable across assembly revisions within the same plan hash.
+        (cached.plan_hash.trim() == self.plan_hash.trim()).then_some(&cached.meta)
     }
 
     pub(crate) fn descriptor_meta_for_save(
