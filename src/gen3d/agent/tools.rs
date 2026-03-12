@@ -185,7 +185,7 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_APPLY_DRAFT_OPS,
                 title: "Apply draft ops",
-                one_line_summary: "Mutates draft: apply deterministic edit ops (recolor primitives, transforms, attachments, animation slots; atomic + if_assembly_rev supported).",
+                one_line_summary: "Mutates draft: apply deterministic edit ops (atomic + if_assembly_rev supported).",
                 args_schema:
                     "{ version?: 1, atomic?: bool, if_assembly_rev?: number, ops: DraftOp[] }\n\
 \n\
@@ -201,38 +201,8 @@ DraftOp =\n\
   | { kind:\"remove_animation_slot\", child_component:string, channel:string }\n\
 \n\
 Joint = { kind:\"fixed\"|\"hinge\"|\"ball\"|\"free\", axis_join?:[number,number,number], limits_degrees?:[number,number], swing_limits_degrees?:[number,number], twist_limits_degrees?:[number,number] }\n\
-TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,number,number], scale?:[number,number,number], forward?:[number,number,number], up?:[number,number,number] }\n\
-\n\
-PrimitiveSpec = { mesh:string, params?: PrimitiveParams|null, color_rgba?: [number,number,number,number], unlit?: bool }\n\
-PrimitiveParams =\n\
-  | { kind:\"capsule\", radius:number, half_length:number }\n\
-  | { kind:\"conical_frustum\", top_radius:number, bottom_radius:number, height:number }\n\
-  | { kind:\"torus\", minor_radius:number, major_radius:number }",
-                args_example: serde_json::json!({
-                    "atomic": true,
-                    "ops": [
-                        {
-                            "kind": "update_primitive_part",
-                            "component": "hat",
-                            "part_id_uuid": "00000000-0000-0000-0000-000000000000",
-                            "set_primitive": {
-                                "mesh": "UnitSphere",
-                                "params": null,
-                                "color_rgba": [1.0, 0.2, 0.2, 1.0],
-                                "unlit": false
-                            }
-                        },
-                        {
-                            "kind": "set_attachment_joint",
-                            "child_component": "wing_L",
-                            "set_joint": {
-                                "kind": "hinge",
-                                "axis_join": [1.0, 0.0, 0.0],
-                                "limits_degrees": [-60.0, 60.0]
-                            }
-                        }
-                    ]
-                }),
+TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,number,number], scale?:[number,number,number], forward?:[number,number,number], up?:[number,number,number] }",
+                args_example: serde_json::json!({"atomic":true,"ops":[{"kind":"set_attachment_joint","child_component":"wing_L","set_joint":{"kind":"hinge","axis_join":[1.0,0.0,0.0],"limits_degrees":[-60.0,60.0]}}]}),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_RECENTER_ATTACHMENT_MOTION,
@@ -422,45 +392,5 @@ PrimitiveParams =\n\
         ];
         out.sort_by(|a, b| a.tool_id.cmp(b.tool_id));
         out
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn apply_draft_ops_tool_includes_recolor_example_and_schema() {
-        let registry = Gen3dToolRegistryV1::default();
-        let tool = registry
-            .list()
-            .into_iter()
-            .find(|t| t.tool_id == TOOL_ID_APPLY_DRAFT_OPS)
-            .expect("apply_draft_ops_v1 tool descriptor missing");
-
-        assert!(tool.one_line_summary.contains("recolor primitives"));
-        assert!(tool.args_schema.contains("PrimitiveSpec"));
-
-        let ops = tool
-            .args_example
-            .get("ops")
-            .and_then(|v| v.as_array())
-            .expect("apply_draft_ops_v1 args_example.ops must be an array");
-        let recolor_op = ops
-            .iter()
-            .find(|op| op.get("kind").and_then(|v| v.as_str()) == Some("update_primitive_part"))
-            .expect("args_example.ops must include an update_primitive_part op");
-
-        let set_primitive = recolor_op
-            .get("set_primitive")
-            .expect("update_primitive_part example must include set_primitive");
-        assert!(
-            set_primitive.get("mesh").and_then(|v| v.as_str()).is_some(),
-            "set_primitive.mesh must be present (required by the engine)"
-        );
-        assert!(
-            set_primitive.get("color_rgba").and_then(|v| v.as_array()).is_some(),
-            "set_primitive.color_rgba must be present in the recolor example"
-        );
     }
 }

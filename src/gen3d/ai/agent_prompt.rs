@@ -71,13 +71,8 @@ Rules:\n\
   - `render_preview_v1` is local-only rendering; it does NOT send images to the LLM. Use `render_preview_v1` with `include_motion_sheets=true` to generate motion sprite sheets for quick inspection.\n\
 - Visual QA / appearance review:\n\
   - The state summary includes `review_appearance` (bool).\n\
-  - If review_appearance=false (default): no visual iteration (no renders). Still satisfy explicit appearance requests using deterministic edits when possible (ex: recolor primitives via `apply_draft_ops_v1`) and then run `qa_v1`.\n\
-    - IMPORTANT: `llm_review_delta_v1` cannot directly recolor existing primitive parts; use `apply_draft_ops_v1` `update_primitive_part`.\n\
-    - Deterministic recolor recipe (no regen): `query_component_parts_v1` -> `apply_draft_ops_v1` `update_primitive_part` per `part_id_uuid`, copying `primitive.mesh`/`primitive.params`/`primitive.unlit` and changing only `color_rgba`.\n\
-      - Note: `set_primitive.mesh` is required; copy it from `query_component_parts_v1`.\n\
-      - Example op (replace `<uuid>` + mesh/params): {\"kind\":\"update_primitive_part\",\"component\":\"hat\",\"part_id_uuid\":\"<uuid>\",\"set_primitive\":{\"mesh\":\"UnitSphere\",\"params\":null,\"unlit\":false,\"color_rgba\":[1,0,0,1]}}.\n\
-    - If you call both `qa_v1` and `llm_review_delta_v1` in the same step, call `qa_v1` FIRST (QA-gated regen/pending indices depend on it).\n\
-    - If `state_summary.seed.kind` is `edit_overwrite` or `fork`: this is a seeded edit session. Even with `review_appearance=false`, you SHOULD apply machine-appliable tweaks (attachments, anchors, primitive recolors) to satisfy the user notes (do not wait for QA errors).\n\
+  - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
+    - If `state_summary.seed.kind` is `edit_overwrite` or `fork`: this is a seeded edit session. Even with `review_appearance=false`, you SHOULD apply machine-appliable alignment/attachment tweaks to satisfy the user notes (do not wait for QA errors).\n\
     - Descriptor meta (prefab descriptor short name `label` (<=3 words) + `text.short` + `tags`): in seeded edit sessions, preserve existing values unless the user explicitly requests changes. If requested, call `set_descriptor_meta_v1` before finishing.\n\
     - qa_v1 runs validate_v1 + smoke_check_v1 and returns a combined summary.\n\
 - If review_appearance=true: do visual QA in WAVES to reduce LLM wall time.\n\
@@ -1441,15 +1436,5 @@ mod tests {
         assert!(text.contains("do NOT spend steps trying to eliminate warnings"));
         assert!(text.contains("Do NOT chase warn-only motion_validation issues"));
         assert!(text.contains("attack_self_intersection"));
-    }
-
-    #[test]
-    fn agent_system_instructions_deterministic_recolor_guidance_is_present() {
-        let text = build_agent_system_instructions();
-        assert!(text.contains("Deterministic recolor recipe"));
-        assert!(text.contains("update_primitive_part"));
-        assert!(text.contains("set_primitive.mesh"));
-        assert!(text.contains("`llm_review_delta_v1` cannot directly recolor"));
-        assert!(text.contains("`qa_v1` FIRST"));
     }
 }
