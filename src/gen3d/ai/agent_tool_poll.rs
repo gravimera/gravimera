@@ -1587,52 +1587,86 @@ pub(super) fn poll_agent_tool(
                                         && !delta_has_non_regen_actions
                                         && apply.replan_reason.is_none();
 
-                                    if non_actionable_regen_only {
-                                        let llm_available = job
-                                            .ai
-                                            .as_ref()
-                                            .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
-                                            .unwrap_or(true);
-                                        let appearance_review_enabled =
-                                            llm_available && job.review_appearance;
-                                        let qa_ok = job.agent.ever_validated
-                                            && job.agent.ever_smoke_checked
-                                            && (!appearance_review_enabled
-                                                || (job.agent.ever_rendered
-                                                    && job.agent.ever_reviewed));
-                                        if qa_ok {
-                                            stop_best_effort_after_tool = Some(format!(
-                                                "Regen budget exhausted for requested component(s) (max_regen_total={}, max_regen_per_component={}).",
-                                                config.gen3d_max_regen_total,
-                                                config.gen3d_max_regen_per_component
-                                            ));
+                                    let qa_gated_regen_only = delta_requested_regen
+                                        && regen_buckets.allowed.is_empty()
+                                        && !regen_buckets.blocked_due_to_qa_gate.is_empty()
+                                        && !delta_has_non_regen_actions
+                                        && apply.replan_reason.is_none()
+                                        && !apply.had_actions;
+
+                                    if qa_gated_regen_only {
+                                        job.agent.rendered_since_last_review = false;
+                                        job.agent.ever_reviewed = true;
+                                        job.agent.pending_llm_repair_attempt = 0;
+
+                                        let validate_ok = job.agent.last_validate_ok;
+                                        let smoke_ok = job.agent.last_smoke_ok;
+                                        let reason = if validate_ok.is_none() || smoke_ok.is_none()
+                                        {
+                                            "qa_v1 has not been run (or is incomplete)"
+                                        } else {
+                                            "qa_v1 reports no errors"
+                                        };
+
+                                        Gen3dToolResultJsonV1::err(
+                                            call.call_id,
+                                            call.tool_id,
+                                            format!(
+                                                "Regen request blocked by QA gate because {reason}. validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. blocked_component_indices={:?}. In preserve-existing-components mode, regenerating already-generated components is only allowed when QA reports errors. Prefer `apply_draft_ops_v1` / non-regen `llm_review_delta_v1` actions, OR disable preserve mode via `llm_generate_plan_v1` with `constraints.preserve_existing_components=false` and rebuild.",
+                                                regen_buckets.blocked_due_to_qa_gate
+                                            ),
+                                        )
+                                    } else {
+                                        if non_actionable_regen_only {
+                                            let llm_available = job
+                                                .ai
+                                                .as_ref()
+                                                .map(|ai| {
+                                                    !ai.base_url().starts_with("mock://gen3d")
+                                                })
+                                                .unwrap_or(true);
+                                            let appearance_review_enabled =
+                                                llm_available && job.review_appearance;
+                                            let qa_ok = job.agent.ever_validated
+                                                && job.agent.ever_smoke_checked
+                                                && (!appearance_review_enabled
+                                                    || (job.agent.ever_rendered
+                                                        && job.agent.ever_reviewed));
+                                            if qa_ok {
+                                                stop_best_effort_after_tool = Some(format!(
+                                                    "Regen budget exhausted for requested component(s) (max_regen_total={}, max_regen_per_component={}).",
+                                                    config.gen3d_max_regen_total,
+                                                    config.gen3d_max_regen_per_component
+                                                ));
+                                            }
                                         }
-                                    }
 
-                                    if apply.had_actions && !non_actionable_regen_only {
-                                        job.assembly_rev = job.assembly_rev.saturating_add(1);
-                                        write_gen3d_assembly_snapshot(
-                                            job.pass_dir.as_deref(),
-                                            &job.planned_components,
-                                        );
-                                    }
-                                    job.agent.rendered_since_last_review = false;
-                                    job.agent.ever_reviewed = true;
-                                    job.agent.pending_llm_repair_attempt = 0;
+                                        if apply.had_actions && !non_actionable_regen_only {
+                                            job.assembly_rev =
+                                                job.assembly_rev.saturating_add(1);
+                                            write_gen3d_assembly_snapshot(
+                                                job.pass_dir.as_deref(),
+                                                &job.planned_components,
+                                            );
+                                        }
+                                        job.agent.rendered_since_last_review = false;
+                                        job.agent.ever_reviewed = true;
+                                        job.agent.pending_llm_repair_attempt = 0;
 
-                                    Gen3dToolResultJsonV1::ok(
-                                        call.call_id,
-                                        call.tool_id,
-                                        serde_json::json!({
-                                            "ok": true,
-                                            "accepted": apply.accepted,
-                                            "had_actions": apply.had_actions && !non_actionable_regen_only,
-                                            "regen_component_indices": regen_buckets.allowed,
-                                            "regen_component_indices_skipped_due_to_budget": regen_buckets.skipped_due_to_budget,
-                                            "regen_component_indices_blocked_due_to_qa_gate": regen_buckets.blocked_due_to_qa_gate,
-                                            "replan_reason": apply.replan_reason,
-                                        }),
-                                    )
+                                        Gen3dToolResultJsonV1::ok(
+                                            call.call_id,
+                                            call.tool_id,
+                                            serde_json::json!({
+                                                "ok": true,
+                                                "accepted": apply.accepted,
+                                                "had_actions": apply.had_actions && !non_actionable_regen_only,
+                                                "regen_component_indices": regen_buckets.allowed,
+                                                "regen_component_indices_skipped_due_to_budget": regen_buckets.skipped_due_to_budget,
+                                                "regen_component_indices_blocked_due_to_qa_gate": regen_buckets.blocked_due_to_qa_gate,
+                                                "replan_reason": apply.replan_reason,
+                                            }),
+                                        )
+                                    }
                                 }
                                 Err(err) => {
                                     if !extracted_feedback.is_empty() {

@@ -73,8 +73,8 @@ Rules:\n\
   - The state summary includes `review_appearance` (bool).\n\
   - If review_appearance=false (default): STRUCTURE-ONLY. Prefer qa_v1 + llm_review_delta_v1 (no preview images). Do NOT chase cosmetic regen/transform tweaks.\n\
     - If `state_summary.seed.kind` is `edit_overwrite` or `fork`: this is a seeded edit session. Even with `review_appearance=false`, you SHOULD apply machine-appliable alignment/attachment tweaks to satisfy the user notes (do not wait for QA errors).\n\
-    - Descriptor meta (prefab descriptor short name `label` (<=3 words) + `text.short` + `tags`): in seeded edit sessions, preserve existing values unless the user explicitly requests changes. If requested, call `set_descriptor_meta_v1` before finishing.\n\
-    - qa_v1 runs validate_v1 + smoke_check_v1 and returns a combined summary.\n\
+  - Descriptor meta (prefab descriptor short name `name` (<=3 words) + `short` + `tags`): in seeded edit sessions, preserve existing values unless the user explicitly requests changes. If requested, call `set_descriptor_meta_v1` before finishing.\n\
+  - qa_v1 runs validate_v1 + smoke_check_v1 and returns a combined summary.\n\
 - If review_appearance=true: do visual QA in WAVES to reduce LLM wall time.\n\
   - Preferred loop: plan -> generate components (batch) -> render_preview_v1 -> llm_review_delta_v1.\n\
   - IMPORTANT: planning must be its OWN step.\n\
@@ -271,6 +271,11 @@ pub(super) fn build_agent_user_text(
                             .get("part_id_uuid")
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
+                        let mesh = part
+                            .get("primitive")
+                            .and_then(|v| v.get("mesh"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         let color = part
                             .get("primitive")
                             .and_then(|v| v.get("color_rgba"))
@@ -292,6 +297,10 @@ pub(super) fn build_agent_user_text(
                             ex.push_str(part_id.trim());
                         } else {
                             ex.push_str("<no_part_id>");
+                        }
+                        if !mesh.trim().is_empty() {
+                            ex.push_str(" mesh=");
+                            ex.push_str(mesh.trim());
                         }
                         ex.push_str(" color=");
                         ex.push_str(color.trim());
@@ -367,6 +376,10 @@ pub(super) fn build_agent_user_text(
                     .get("failed")
                     .and_then(|v| v.as_array())
                     .map(|a| a.len());
+                let preserve_skipped = value
+                    .get("skipped_due_to_preserve_existing_components")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
                 let regen_skipped = value
                     .get("skipped_due_to_regen_budget")
                     .and_then(|v| v.as_array())
@@ -384,6 +397,11 @@ pub(super) fn build_agent_user_text(
                 }
                 if let Some(failed) = failed {
                     out.push_str(&format!(" failed={failed}"));
+                }
+                if let Some(total) = preserve_skipped {
+                    if total > 0 {
+                        out.push_str(&format!(" preserve_skipped={total}"));
+                    }
                 }
                 if let Some(total) = regen_skipped {
                     if total > 0 {
@@ -831,42 +849,6 @@ pub(super) fn build_agent_user_text(
             out.push('\n');
         }
         out.push('\n');
-    }
-
-    // Explicit escape hatch: if the only remaining work is QA-gated regeneration requests,
-    // tell the agent to either apply deterministic ops, disable preserve mode (rebuild),
-    // or finish best-effort. This prevents long inspection loops.
-    let blocked_by_qa = state_summary
-        .get("pending_regen_component_indices_blocked_due_to_qa_gate")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_u64())
-                .take(32)
-                .collect::<Vec<u64>>()
-        })
-        .unwrap_or_default();
-    if !blocked_by_qa.is_empty() {
-        let pending = state_summary
-            .get("pending_regen_component_indices")
-            .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
-        let qa_validate_ok = state_summary
-            .get("qa")
-            .and_then(|v| v.get("last_validate_ok"))
-            .and_then(|v| v.as_bool());
-        let qa_smoke_ok = state_summary
-            .get("qa")
-            .and_then(|v| v.get("last_smoke_ok"))
-            .and_then(|v| v.as_bool());
-        if pending == 0 && qa_validate_ok == Some(true) && qa_smoke_ok == Some(true) {
-            out.push_str(
-                "\nNOTE: Regen requested but blocked by QA gate (preserve mode + QA ok):\n",
-            );
-            out.push_str(&format!("- blocked_component_indices={blocked_by_qa:?}\n"));
-            out.push_str("- Do NOT keep inspecting. Either apply deterministic edits (apply_draft_ops_v1), OR disable preserve mode (llm_generate_plan_v1 preserve_existing_components=false), OR finish best-effort (done).\n");
-        }
     }
 
     if !workshop

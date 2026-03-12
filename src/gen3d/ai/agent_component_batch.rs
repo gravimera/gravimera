@@ -46,6 +46,18 @@ pub(super) fn poll_agent_component_batch(
 
     let total = batch.requested_indices.len();
     if total == 0 {
+        let skipped_due_to_preserve_existing_components_json: Vec<serde_json::Value> = batch
+            .skipped_due_to_preserve_existing_components
+            .iter()
+            .copied()
+            .filter(|idx| *idx < job.planned_components.len())
+            .map(|idx| {
+                serde_json::json!({
+                    "index": idx,
+                    "name": job.planned_components[idx].name.as_str(),
+                })
+            })
+            .collect();
         let call = job.agent.pending_tool_call.take().unwrap();
         job.agent.pending_llm_tool = None;
         job.agent.pending_component_batch = None;
@@ -58,6 +70,7 @@ pub(super) fn poll_agent_component_batch(
                 "requested": 0,
                 "succeeded": 0,
                 "failed": [],
+                "skipped_due_to_preserve_existing_components": skipped_due_to_preserve_existing_components_json,
                 "skipped_due_to_regen_budget": batch.skipped_due_to_regen_budget,
             }),
         ));
@@ -524,6 +537,18 @@ pub(super) fn poll_agent_component_batch(
                 })
             })
             .collect();
+        let skipped_due_to_preserve_existing_components_json: Vec<serde_json::Value> = batch
+            .skipped_due_to_preserve_existing_components
+            .iter()
+            .copied()
+            .filter(|idx| *idx < job.planned_components.len())
+            .map(|idx| {
+                serde_json::json!({
+                    "index": idx,
+                    "name": job.planned_components[idx].name.as_str(),
+                })
+            })
+            .collect();
 
         let call = job.agent.pending_tool_call.take().unwrap();
         job.agent.pending_llm_tool = None;
@@ -540,6 +565,7 @@ pub(super) fn poll_agent_component_batch(
                 "failed": failed_json,
                 "optimized_by_reuse_groups": batch.optimized_by_reuse_groups,
                 "skipped_due_to_reuse_groups": skipped_due_to_reuse_groups_json,
+                "skipped_due_to_preserve_existing_components": skipped_due_to_preserve_existing_components_json,
                 "skipped_due_to_regen_budget": batch.skipped_due_to_regen_budget,
                 "auto_copy": {
                     "enabled": auto_copy.enabled,

@@ -1771,7 +1771,7 @@ pub(super) fn execute_tool_call(
                     serde_json::json!({
                         "ok": true,
                         "skipped_due_to_preserve_existing_components": true,
-                        "note": "This run is in preserve-existing-components mode. Pass {\"force\":true} to explicitly regenerate an already-generated component.",
+                        "note": "This run is in preserve-existing-components mode. Already-generated components are not regenerated unless {\"force\":true}. NOTE: force regeneration is QA-gated and only allowed when qa_v1 reports errors (last_validate_ok=false or last_smoke_ok=false).",
                         "component_index": idx,
                         "component_name": name,
                     }),
@@ -1796,7 +1796,7 @@ pub(super) fn execute_tool_call(
                         call.call_id,
                         call.tool_id,
                         format!(
-                            "Refusing force:true regeneration for component `{name}` because {reason}. validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors. For placement/assembly fixes, prefer `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry."
+                            "Refusing force:true regeneration for component `{name}` because {reason}. validate_ok={validate_ok:?} smoke_ok={smoke_ok:?}. Run `qa_v1` and only use force regen when there are errors. For placement/assembly fixes, prefer `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry. If you intend a style/geometry rebuild in a seeded edit, disable preserve mode via `llm_generate_plan_v1` with `constraints.preserve_existing_components=false`, then regenerate without `force`."
                         ),
                     ));
                 }
@@ -1974,6 +1974,7 @@ pub(super) fn execute_tool_call(
             }
             let mut optimized_by_reuse_groups = false;
             let mut skipped_due_to_reuse_groups: Vec<usize> = Vec::new();
+            let mut skipped_due_to_preserve_existing_components: Vec<usize> = Vec::new();
 
             if requested_indices.is_empty() {
                 if missing_only {
@@ -2011,6 +2012,16 @@ pub(super) fn execute_tool_call(
             }
 
             if missing_only && !force {
+                for idx in requested_indices.iter().copied() {
+                    let is_generated = job
+                        .planned_components
+                        .get(idx)
+                        .map(|c| c.actual_size.is_some())
+                        .unwrap_or(false);
+                    if is_generated {
+                        skipped_due_to_preserve_existing_components.push(idx);
+                    }
+                }
                 requested_indices.retain(|&idx| {
                     job.planned_components
                         .get(idx)
@@ -2088,6 +2099,18 @@ pub(super) fn execute_tool_call(
             }
 
             if requested_indices.is_empty() {
+                let skipped_due_to_preserve_existing_components_json: Vec<serde_json::Value> =
+                    skipped_due_to_preserve_existing_components
+                        .iter()
+                        .copied()
+                        .filter(|idx| *idx < job.planned_components.len())
+                        .map(|idx| {
+                            serde_json::json!({
+                                "index": idx,
+                                "name": job.planned_components[idx].name.as_str(),
+                            })
+                        })
+                        .collect();
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
                     call.call_id,
                     call.tool_id,
@@ -2095,6 +2118,7 @@ pub(super) fn execute_tool_call(
                         "requested": 0,
                         "succeeded": 0,
                         "failed": [],
+                        "skipped_due_to_preserve_existing_components": skipped_due_to_preserve_existing_components_json,
                     }),
                 ));
             }
@@ -2142,6 +2166,18 @@ pub(super) fn execute_tool_call(
 
             let requested_indices = filtered_indices;
             if requested_indices.is_empty() {
+                let skipped_due_to_preserve_existing_components_json: Vec<serde_json::Value> =
+                    skipped_due_to_preserve_existing_components
+                        .iter()
+                        .copied()
+                        .filter(|idx| *idx < job.planned_components.len())
+                        .map(|idx| {
+                            serde_json::json!({
+                                "index": idx,
+                                "name": job.planned_components[idx].name.as_str(),
+                            })
+                        })
+                        .collect();
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
                     call.call_id,
                     call.tool_id,
@@ -2149,6 +2185,7 @@ pub(super) fn execute_tool_call(
                         "requested": 0,
                         "succeeded": 0,
                         "failed": [],
+                        "skipped_due_to_preserve_existing_components": skipped_due_to_preserve_existing_components_json,
                         "skipped_due_to_regen_budget": skipped_due_to_regen_budget,
                         "max_regen_total": config.gen3d_max_regen_total,
                         "max_regen_per_component": config.gen3d_max_regen_per_component,
@@ -2173,6 +2210,7 @@ pub(super) fn execute_tool_call(
                 requested_indices,
                 optimized_by_reuse_groups,
                 skipped_due_to_reuse_groups,
+                skipped_due_to_preserve_existing_components,
                 skipped_due_to_regen_budget,
                 completed_indices: std::collections::HashSet::new(),
                 failed: Vec::new(),

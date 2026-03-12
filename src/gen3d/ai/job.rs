@@ -35,6 +35,7 @@ pub(super) struct Gen3dPendingComponentBatch {
     pub(super) requested_indices: Vec<usize>,
     pub(super) optimized_by_reuse_groups: bool,
     pub(super) skipped_due_to_reuse_groups: Vec<usize>,
+    pub(super) skipped_due_to_preserve_existing_components: Vec<usize>,
     pub(super) skipped_due_to_regen_budget: Vec<usize>,
     pub(super) completed_indices: std::collections::HashSet<usize>,
     pub(super) failed: Vec<Gen3dComponentBatchFailure>,

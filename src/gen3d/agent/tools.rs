@@ -86,14 +86,14 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_SET_DESCRIPTOR_META,
                 title: "Set descriptor meta",
-                one_line_summary: "Mutates session: sets prefab descriptor short name (`label`, <=3 words) + `text.short` + `tags` for the next Save (seeded edits preserve existing meta unless overridden).",
+                one_line_summary: "Mutates session: sets prefab descriptor short name (`name`, <=3 words) + `short` + `tags` for the next Save (seeded edits preserve existing meta unless overridden).",
                 args_schema: "{ version?: 1, name?: string, short?: string, tags?: string[] }",
                 args_example: serde_json::json!({ "name": "Wooden watchtower", "short": "A wooden watchtower with a narrow staircase.", "tags": ["tower", "wood", "defensive"] }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
                 title: "Get scene graph summary",
-                one_line_summary: "Read-only: structured component/attachment/anchor graph for the current draft.",
+                one_line_summary: "Read-only: component graph incl. attachments/anchors/resolved transforms (writes `scene_graph_summary.json`).",
                 args_schema: "{}",
                 args_example: serde_json::json!({}),
             },
@@ -116,7 +116,7 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_QUERY_COMPONENT_PARTS,
                 title: "Query component parts",
-                one_line_summary: "Read-only: list part ids + transforms for a component (bounded).",
+                one_line_summary: "Read-only: list component parts (primitive mesh/color + part_id_uuid + transforms); writes `component_parts_<name>.json`.",
                 args_schema:
                     "{ version?: 1, component?: string, component_index?: number, include_non_primitives?: bool, max_parts?: number }",
                 args_example: serde_json::json!({ "component": "torso", "max_parts": 128 }),
@@ -169,7 +169,7 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_READ_ARTIFACT,
                 title: "Read artifact",
-                one_line_summary: "Read-only: read a bounded slice of a run artifact (scoped).",
+                one_line_summary: "Read-only: read a bounded slice of a run artifact (ex: `tool_results.jsonl`, `scene_graph_summary.json`, `component_parts_*.json`).",
                 args_schema:
                     "{ artifact_ref: string, max_bytes?: number, tail_lines?: number, json_pointer?: string }",
                 args_example: serde_json::json!({ "artifact_ref": "attempt_0/pass_0/gravimera.log", "tail_lines": 200 }),
@@ -185,9 +185,23 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_APPLY_DRAFT_OPS,
                 title: "Apply draft ops",
-                one_line_summary: "Mutates draft: apply deterministic edit ops (atomic + if_assembly_rev supported).",
+                one_line_summary: "Mutates draft: apply deterministic ops (move attachments, edit joints/motion, update/recolor primitives by part_id_uuid).",
                 args_schema:
                     "{ version?: 1, atomic?: bool, if_assembly_rev?: number, ops: DraftOp[] }\n\
+\n\
+PrimitiveSpec = { mesh:string, params?:PrimitiveParams, color_rgba?:[number,number,number,number], unlit?:bool }\n\
+PrimitiveParams =\n\
+  | { kind:\"capsule\", radius:number, half_length:number }\n\
+  | { kind:\"conical_frustum\", top_radius:number, bottom_radius:number, height:number }\n\
+  | { kind:\"torus\", minor_radius:number, major_radius:number }\n\
+AnimationSlotSpec = { driver:\"always\"|\"move_phase\"|\"move_distance\"|\"attack_time\", speed_scale:number, time_offset_units?:number, clip:AnimationClip }\n\
+AnimationClip =\n\
+  | { kind:\"loop\", duration_units:number, keyframes: Keyframe[] }\n\
+  | { kind:\"once\", duration_units:number, keyframes: Keyframe[] }\n\
+  | { kind:\"ping_pong\", duration_units:number, keyframes: Keyframe[] }\n\
+  | { kind:\"spin\", axis:[number,number,number], radians_per_unit:number }\n\
+Keyframe = { t_units:number, delta: AnimationDeltaTransform }\n\
+AnimationDeltaTransform = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,number,number], scale?:[number,number,number] }\n\
 \n\
 DraftOp =\n\
   | { kind:\"set_anchor_transform\", component:string, anchor:string, set:TransformDelta }\n\
@@ -202,7 +216,13 @@ DraftOp =\n\
 \n\
 Joint = { kind:\"fixed\"|\"hinge\"|\"ball\"|\"free\", axis_join?:[number,number,number], limits_degrees?:[number,number], swing_limits_degrees?:[number,number], twist_limits_degrees?:[number,number] }\n\
 TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,number,number], scale?:[number,number,number], forward?:[number,number,number], up?:[number,number,number] }",
-                args_example: serde_json::json!({"atomic":true,"ops":[{"kind":"set_attachment_joint","child_component":"wing_L","set_joint":{"kind":"hinge","axis_join":[1.0,0.0,0.0],"limits_degrees":[-60.0,60.0]}}]}),
+                args_example: serde_json::json!({
+                    "atomic": true,
+                    "ops": [
+                        { "kind": "set_attachment_offset", "child_component": "hat", "set": { "pos": [0.0, 0.6, 0.0] } },
+                        { "kind": "update_primitive_part", "component": "hat", "part_id_uuid": "00000000-0000-0000-0000-000000000000", "set_primitive": { "mesh": "UnitCylinder", "color_rgba": [0.1, 0.3, 0.9, 1.0] } }
+                    ]
+                }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_RECENTER_ATTACHMENT_MOTION,
@@ -298,7 +318,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 tool_id: TOOL_ID_LLM_GENERATE_COMPONENT,
                 title: "LLM: generate component",
                 one_line_summary:
-                    "LLM+mutates: generate one component geometry (or regen if allowed), then apply it.",
+                    "LLM+mutates: generate one component geometry (or regen w/ force). In preserve mode, regen is QA-gated (requires qa_v1 errors).",
                 args_schema:
                     "{ component_name?: string, component_index?: number, force?: bool }",
                 args_example: serde_json::json!({ "component_name": "leg_l_thigh" }),
@@ -306,7 +326,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_LLM_GENERATE_COMPONENTS,
                 title: "LLM: generate components (batch)",
-                one_line_summary: "LLM+mutates: batch-generate components (missing_only/force), then apply deterministically.",
+                one_line_summary: "LLM+mutates: batch-generate components (missing_only/force). Force regen is QA-gated in preserve mode (qa_v1 errors required).",
                 args_schema:
                     "{ component_indices?: number[], component_names?: string[], missing_only?: bool, force?: bool }",
                 args_example: serde_json::json!({ "missing_only": true }),
@@ -322,7 +342,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 tool_id: TOOL_ID_LLM_REVIEW_DELTA,
                 title: "LLM: review delta",
                 one_line_summary:
-                    "LLM+mutates: apply deterministic tweak ops; may request component regen indices.",
+                    "LLM+mutates: apply deterministic tweak ops; may request component regen indices (some may be budget/QA-gated).",
                 args_schema:
                     "{ preview_images?: string[], include_original_images?: bool }",
                 args_example: serde_json::json!({}),

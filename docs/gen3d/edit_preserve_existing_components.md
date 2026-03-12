@@ -80,6 +80,7 @@ After a preserve-mode plan is applied, `get_state_summary_v1` includes:
 When this flag is true:
 
 - `llm_generate_components_v1` behaves as **missing-only** unless `force=true` is provided (prevents accidental regeneration of already-generated components).
+  - If you explicitly pass `component_indices`/`component_names` that include already-generated components while `force=false`, the tool skips them and returns `skipped_due_to_preserve_existing_components` in the tool result.
 - `llm_generate_component_v1` will skip already-generated components unless `force=true`.
 - Regen budgets still apply when `force=true` is used.
 - `force=true` regeneration is additionally **QA-gated**: the engine refuses force-regeneration unless the latest `qa_v1` reports errors (`validate.ok=false` or `smoke.ok=false`). If QA is clean (or has not been run), fix placement/assembly via `llm_review_delta_v1` / `apply_draft_ops_v1` instead of regenerating geometry.
@@ -92,6 +93,8 @@ When the QA gate is closed (latest QA is clean or unknown), these regen requests
 
 - `pending_regen_component_indices`: actionable generation work (missing components, or regen that is currently permitted).
 - `pending_regen_component_indices_blocked_due_to_qa_gate`: regen requested for already-generated components, but blocked by the QA gate.
+
+Additionally, if `llm_review_delta_v1` requests *only* QA-gated regen (no other deterministic tweak actions / replans), the tool returns a tool error explaining the QA gate and the deterministic recovery options.
 
 Deterministic recovery options:
 
