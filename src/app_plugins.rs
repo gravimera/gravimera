@@ -510,6 +510,10 @@ impl Plugin for RenderedGen3dPlugin {
         );
         app.add_systems(
             PostUpdate,
+            crate::gen3d::gen3d_update_preview_panel_image_fit.in_set(UiSystems::Content),
+        );
+        app.add_systems(
+            PostUpdate,
             (
                 crate::model_library_ui::model_library_update_scrollbar_ui,
                 crate::model_library_ui::model_library_update_preview_info_scrollbar_ui,

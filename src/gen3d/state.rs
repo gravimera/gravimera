@@ -321,6 +321,9 @@ pub(crate) struct Gen3dPreviewSceneRoot;
 pub(crate) struct Gen3dPreviewPanel;
 
 #[derive(Component)]
+pub(crate) struct Gen3dPreviewPanelImage;
+
+#[derive(Component)]
 pub(crate) struct Gen3dPreviewStatsText;
 
 #[derive(Component)]

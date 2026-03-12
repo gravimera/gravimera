@@ -167,6 +167,7 @@ pub(crate) use ui::{
     gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
     gen3d_rebuild_preview_animation_dropdown_options_ui,
     gen3d_side_panel_toggle_button, gen3d_update_preview_animation_dropdown_ui,
+    gen3d_update_preview_panel_image_fit,
     gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
     handle_gen3d_toggle_button, spawn_gen3d_preview_panel, update_gen3d_toggle_button_label,
 };

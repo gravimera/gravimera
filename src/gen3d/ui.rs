@@ -1,4 +1,4 @@
-use bevy::ecs::hierarchy::ChildSpawnerCommands;
+use bevy::ecs::hierarchy::{ChildOf, ChildSpawnerCommands};
 use bevy::prelude::*;
 use bevy::window::{Ime, PrimaryWindow};
 
@@ -9,6 +9,21 @@ use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 use super::ai::Gen3dAiJob;
 use super::preview;
 use super::state::*;
+
+fn aspect_fit_size(content_w_px: f32, content_h_px: f32, aspect: f32) -> (f32, f32) {
+    let content_w_px = content_w_px.max(1.0);
+    let content_h_px = content_h_px.max(1.0);
+    let aspect = aspect.clamp(0.05, 20.0);
+
+    let box_aspect = (content_w_px / content_h_px).max(0.05);
+    if aspect >= box_aspect {
+        let w = content_w_px;
+        (w, (w / aspect).max(1.0))
+    } else {
+        let h = content_h_px;
+        ((h * aspect).max(1.0), h)
+    }
+}
 
 pub(crate) fn spawn_gen3d_preview_panel<F>(
     parent: &mut ChildSpawnerCommands,
@@ -33,12 +48,101 @@ where
                 Node {
                     width: Val::Percent(100.0),
                     height: Val::Percent(100.0),
+                    min_width: Val::Px(0.0),
+                    min_height: Val::Px(0.0),
                     ..default()
                 },
+                Gen3dPreviewPanelImage,
             ));
             extra_children(preview);
         })
         .id()
+}
+
+pub(crate) fn gen3d_update_preview_panel_image_fit(
+    images: Res<Assets<Image>>,
+    panels: Query<&ComputedNode, With<Gen3dPreviewPanel>>,
+    mut preview_images: Query<(&ChildOf, &ImageNode, &mut Node), With<Gen3dPreviewPanelImage>>,
+) {
+    for (parent, image_node, mut node) in &mut preview_images {
+        let Ok(panel) = panels.get(parent.parent()) else {
+            continue;
+        };
+
+        let Some(texture) = images.get(&image_node.image) else {
+            continue;
+        };
+        let size = texture.size();
+        if size.y == 0 {
+            continue;
+        }
+        let aspect = (size.x.max(1) as f32 / size.y.max(1) as f32).clamp(0.05, 20.0);
+
+        let scale = panel.inverse_scale_factor();
+        let content_w_px = (panel.size.x
+            - panel.border.min_inset.x
+            - panel.border.max_inset.x
+            - panel.padding.min_inset.x
+            - panel.padding.max_inset.x)
+            .max(0.0)
+            * scale;
+        let content_h_px = (panel.size.y
+            - panel.border.min_inset.y
+            - panel.border.max_inset.y
+            - panel.padding.min_inset.y
+            - panel.padding.max_inset.y)
+            .max(0.0)
+            * scale;
+        if content_w_px < 1.0 || content_h_px < 1.0 {
+            continue;
+        }
+
+        let (fit_w, fit_h) = aspect_fit_size(content_w_px, content_h_px, aspect);
+
+        fn px_value(v: &Val) -> Option<f32> {
+            match v {
+                Val::Px(px) => Some(*px),
+                _ => None,
+            }
+        }
+
+        let needs_w = px_value(&node.width).is_none_or(|v| (v - fit_w).abs() > 0.5);
+        let needs_h = px_value(&node.height).is_none_or(|v| (v - fit_h).abs() > 0.5);
+
+        if needs_w {
+            node.width = Val::Px(fit_w);
+        }
+        if needs_h {
+            node.height = Val::Px(fit_h);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aspect_fit_size_preserves_aspect_ratio_within_box() {
+        let (w, h) = aspect_fit_size(100.0, 100.0, 2.0);
+        assert!((w - 100.0).abs() < 1e-3);
+        assert!((h - 50.0).abs() < 1e-3);
+
+        let (w, h) = aspect_fit_size(100.0, 100.0, 0.5);
+        assert!((w - 50.0).abs() < 1e-3);
+        assert!((h - 100.0).abs() < 1e-3);
+
+        let aspect = 16.0 / 9.0;
+        let (w, h) = aspect_fit_size(200.0, 100.0, aspect);
+        assert!(w <= 200.0 + 1e-3);
+        assert!((h - 100.0).abs() < 1e-3);
+        assert!(((w / h) - aspect).abs() < 1e-3);
+
+        let (w, h) = aspect_fit_size(100.0, 200.0, aspect);
+        assert!((w - 100.0).abs() < 1e-3);
+        assert!(h <= 200.0 + 1e-3);
+        assert!(((w / h) - aspect).abs() < 1e-3);
+    }
 }
 
 pub(crate) fn handle_gen3d_toggle_button(

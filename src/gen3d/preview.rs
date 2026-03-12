@@ -50,9 +50,15 @@ pub(super) fn setup_preview_scene(
         preview.focus,
     );
 
+    let aspect =
+        super::GEN3D_PREVIEW_WIDTH_PX.max(1) as f32 / super::GEN3D_PREVIEW_HEIGHT_PX.max(1) as f32;
+    let mut projection = bevy::camera::PerspectiveProjection::default();
+    projection.aspect_ratio = aspect;
+
     let camera_entity = commands
         .spawn((
             Camera3d::default(),
+            bevy::camera::Projection::Perspective(projection),
             Camera {
                 clear_color: ClearColorConfig::Custom(Color::srgb(0.93, 0.94, 0.96)),
                 ..default()
