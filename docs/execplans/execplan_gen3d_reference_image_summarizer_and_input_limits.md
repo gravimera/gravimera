@@ -39,8 +39,12 @@ You can see this working by starting Gen3D, dropping images, typing near the lim
   Rationale: Word limit matches UX expectations; character cap closes the “no spaces” bypass and keeps latency predictable without needing tokenizer-specific caps.
   Date/Author: 2026-03-13 / Codex
 
-- Decision: Use a structured bullet summary with a hard cap of 160 words for the reference-image summarizer output.
+- Decision (superseded): Use a structured bullet summary with a hard cap of 160 words for the reference-image summarizer output.
   Rationale: 250 words tends to include background trivia/speculation; ~120–160 words preserves the modeling-relevant signal while reducing contradictions and prompt bloat.
+  Date/Author: 2026-03-13 / Codex
+
+- Decision: Increase the image summary hard cap to 300 words, but instruct the summarizer to aim ~160–200 words (unless the object is unusually complex).
+  Rationale: Some objects (especially characters/creatures) need extra room to describe body-shape proportions and a primitives-first blockout without dropping key topology facts, while still keeping the typical-case summary short to control prompt bloat.
   Date/Author: 2026-03-13 / Codex
 
 - Decision: Do not add a user “review/edit the summary” step.
@@ -91,7 +95,7 @@ Second, implement a new pre-agent phase in the Gen3D agent loop to summarize ref
    - describe only the clearly visible main object,
    - structured bullets,
    - no guessing (use “Unknowns”),
-   - hard cap 160 words.
+   - hard cap 300 words (aim ~160–200 unless unusually complex).
 4) Persist the final summary into `attempt_0/inputs/image_object_summary.txt` (and optionally a small JSON metadata artifact).
 5) Store the summary on `Gen3dAiJob` so it can be included in all later prompt builders/tool outputs.
 

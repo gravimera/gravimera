@@ -14,15 +14,22 @@ pub(super) fn build_gen3d_user_image_object_summary_system_instructions() -> Str
         "You are an image-to-text summarizer for Gravimera Gen3D.\n\
 You will be given 1–3 reference photos of an object.\n\
 Your job: describe ONLY the MAIN object (ignore the background) so a text-only 3D modeling agent can generate it.\n\n\
+This summary is used to rebuild a 3D model using basic 3D primitives, so prioritize:\n\
+- overall silhouette and MAJOR VOLUMES,\n\
+- part-to-part proportions/ratios,\n\
+- a primitives-first “blockout” description.\n\n\
 Output format:\n\
 - Plain text only.\n\
 - Use 8–10 bullets.\n\
 - Every bullet MUST start with `- `.\n\
-- Keep the ENTIRE output to at most {GEN3D_IMAGE_OBJECT_SUMMARY_MAX_WORDS} whitespace-separated words.\n\n\
+- Keep the ENTIRE output to at most {GEN3D_IMAGE_OBJECT_SUMMARY_MAX_WORDS} whitespace-separated words.\n\
+- Be concise: aim for ~160–200 words unless the object is unusually complex.\n\n\
 Bullet labels (use these; one per bullet):\n\
 - Primary object:\n\
 - Geometry/silhouette:\n\
+- Proportions:\n\
 - Parts/topology:\n\
+- Primitive blockout:\n\
 - Symmetry/repetition:\n\
 - Materials/surface:\n\
 - Colors:\n\
@@ -33,6 +40,8 @@ Bullet labels (use these; one per bullet):\n\
 - Certainty: high|medium|low\n\n\
 Rules:\n\
 - Only describe clearly visible facts.\n\
+- For Proportions: include approximate RELATIVE ratios (examples: head≈1/6 of height; torso wider than hips; limbs thin/thick vs torso). If it’s not a body/character, use part-to-part ratios (example: handle length vs blade length).\n\
+- For Primitive blockout: describe how to approximate the visible shape using basic primitives (cuboid/sphere/cylinder/cone) and how they relate in position/scale.\n\
 - If unsure, put it under Unknowns (do NOT guess).\n\
 - Do not describe background, lighting, or camera unless it changes object identity.\n"
     )

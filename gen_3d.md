@@ -43,7 +43,7 @@ If generation fails, the status panel shows a short error summary; detailed step
 
 Gen3D Build is a Codex-style, tool-driven agent loop.
 
-- If reference images are present, the engine runs a single pre-agent “image → object summary” request and stores the result as `image_object_summary` (hard-capped at 160 words).
+- If reference images are present, the engine runs a single pre-agent “image → object summary” request and stores the result as `image_object_summary` (hard-capped at 300 words; the summarizer aims ~160–200 unless the object is unusually complex).
   - The agent and all Gen3D LLM-backed tools then receive *only* the user prompt text plus that summary (raw user reference photos are not sent to the LLM).
   - The agent can call `get_user_inputs_v2` to retrieve `{prompt, reference_images_count, image_object_summary}`; image paths are intentionally not exposed.
 

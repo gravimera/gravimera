@@ -22,7 +22,12 @@ const GEN3D_MAX_COMPONENTS: usize = 64;
 const GEN3D_MAX_CHAT_HISTORY_MESSAGES: usize = 24;
 const GEN3D_PROMPT_MAX_WORDS: usize = 250;
 const GEN3D_PROMPT_MAX_CHARS: usize = 2000;
-const GEN3D_IMAGE_OBJECT_SUMMARY_MAX_WORDS: usize = 160;
+// Hard cap for the one-time “reference image → object summary” step.
+//
+// Note: downstream Gen3D prompts include this summary text, so we keep a hard bound for latency and
+// prompt bloat. The summarizer is instructed to *aim* shorter than this cap unless the object is
+// unusually complex.
+const GEN3D_IMAGE_OBJECT_SUMMARY_MAX_WORDS: usize = 300;
 // Long-running Structured Outputs generations (large schemas + high reasoning effort) can exceed a
 // few minutes on some providers. Keep this generous so background /responses polling doesn't time
 // out prematurely.
