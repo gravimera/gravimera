@@ -158,7 +158,9 @@ token = "YOUR_OPENAI_API_KEY_HERE"
 base_url = "https://generativelanguage.googleapis.com/v1beta"
 
 # Any Gemini model id (example below). See: https://ai.google.dev/gemini-api/docs/models
-model = "gemini-1.5-pro"
+# Note: Gen3D schema-constrained calls use Structured Outputs (`response_json_schema`), so use a
+# model that supports it (Gemini 2.0+).
+model = "gemini-2.5-flash"
 
 # API token (sent as `x-goog-api-key`). Can also be provided via env `X_GOOG_API_KEY` / `GEMINI_API_KEY`.
 token = "YOUR_GEMINI_API_KEY_HERE"

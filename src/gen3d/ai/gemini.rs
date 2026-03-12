@@ -13,7 +13,7 @@ use crate::openai_shared::{
 use super::artifacts::{
     append_gen3d_run_log, write_gen3d_json_artifact, write_gen3d_text_artifact,
 };
-use super::structured_outputs::Gen3dAiJsonSchemaKind;
+use super::structured_outputs::{json_schema_spec, Gen3dAiJsonSchemaKind};
 use super::{
     set_progress, truncate_for_ui, Gen3dAiApi, Gen3dAiProgress, Gen3dAiSessionState,
     Gen3dAiTextResponse,
@@ -293,6 +293,86 @@ fn extract_gemini_stream_output(body: &str) -> (Option<String>, Option<u64>) {
     ((!out.trim().is_empty()).then_some(out), total_tokens)
 }
 
+fn is_gemini_structured_outputs_rejected(body: &str) -> bool {
+    let body = body.to_ascii_lowercase();
+    let mentions_feature = body.contains("responsejsonschema")
+        || body.contains("response_json_schema")
+        || body.contains("responseschema")
+        || body.contains("response_schema")
+        || body.contains("responsemimetype")
+        || body.contains("response_mime_type")
+        || body.contains("schema");
+    if !mentions_feature {
+        return false;
+    }
+
+    body.contains("unknown field")
+        || body.contains("unrecognized field")
+        || body.contains("unsupported")
+        || body.contains("not supported")
+        || body.contains("invalid")
+        || body.contains("invalid argument")
+}
+
+fn build_gemini_stream_generate_content_request_json(
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    include_response_json_schema: bool,
+    system_instructions: &str,
+    user_text: &str,
+    images: &[(&str, Vec<u8>)],
+    image_paths: &[PathBuf],
+) -> serde_json::Value {
+    let mut generation_config = serde_json::json!({
+        "temperature": 0.2,
+    });
+
+    if expected_schema.is_some() {
+        generation_config["response_mime_type"] = serde_json::json!("application/json");
+    }
+    if include_response_json_schema {
+        if let Some(kind) = expected_schema {
+            let spec = json_schema_spec(kind);
+            generation_config["response_json_schema"] = spec.schema;
+        }
+    }
+
+    let mut parts: Vec<serde_json::Value> = Vec::new();
+    parts.push(serde_json::json!({ "text": user_text }));
+    for (idx, (mime, bytes)) in images.iter().enumerate() {
+        let b64 = base64_encode(bytes);
+        let name = image_paths
+            .get(idx)
+            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
+            .unwrap_or("<unknown>");
+        parts.push(serde_json::json!({
+            "text": format!("Image {}: {name}", idx + 1),
+        }));
+        parts.push(serde_json::json!({
+            "inline_data": { "mime_type": mime, "data": b64 }
+        }));
+    }
+
+    let mut req = serde_json::json!({
+        "generationConfig": generation_config,
+        "contents": [
+            {
+                "role": "user",
+                "parts": parts,
+            }
+        ]
+    });
+
+    if !system_instructions.trim().is_empty() {
+        req["system_instruction"] = serde_json::json!({
+            "parts": [
+                { "text": system_instructions }
+            ]
+        });
+    }
+
+    req
+}
+
 pub(super) fn generate_text_via_gemini(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: Gen3dAiSessionState,
@@ -308,10 +388,6 @@ pub(super) fn generate_text_via_gemini(
     run_dir: Option<&Path>,
     artifact_prefix: &str,
 ) -> Result<Gen3dAiTextResponse, String> {
-    if require_structured_outputs && expected_schema.is_some() {
-        return Err("Gen3D requires strict Structured Outputs, but the Gemini backend does not yet enforce JSON Schema (it only sets response_mime_type). Use the OpenAI backend or disable [gen3d].require_structured_outputs.".into());
-    }
-
     if image_paths.len() > GEN3D_MAX_REQUEST_IMAGES {
         return Err(format!(
             "Too many images: {} (max {GEN3D_MAX_REQUEST_IMAGES})",
@@ -461,190 +537,180 @@ pub(super) fn generate_text_via_gemini(
 
     set_progress(progress, "Requesting Gemini…");
 
-    let mut generation_config = serde_json::json!({
-        "temperature": 0.2,
-    });
-    if expected_schema.is_some() {
-        // Gemini supports JSON output via `response_mime_type = "application/json"`.
-        // We currently rely on prompts + strict parsing rather than converting our JSON Schema
-        // into Gemini's `response_schema` format.
-        generation_config["response_mime_type"] = serde_json::json!("application/json");
-    }
-
-    let mut parts: Vec<serde_json::Value> = Vec::new();
-    parts.push(serde_json::json!({ "text": user_text }));
-    for (idx, (mime, bytes)) in images.iter().enumerate() {
-        let b64 = base64_encode(bytes);
-        let name = image_paths
-            .get(idx)
-            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
-            .unwrap_or("<unknown>");
-        parts.push(serde_json::json!({
-            "text": format!("Image {}: {name}", idx + 1),
-        }));
-        parts.push(serde_json::json!({
-            "inline_data": { "mime_type": mime, "data": b64 }
-        }));
-    }
-
-    let mut req = serde_json::json!({
-        "generationConfig": generation_config,
-        "contents": [
-            {
-                "role": "user",
-                "parts": parts,
-            }
-        ]
-    });
-    if !system_instructions.trim().is_empty() {
-        req["system_instruction"] = serde_json::json!({
-            "parts": [
-                { "text": system_instructions }
-            ]
-        });
-    }
-
-    write_gen3d_json_artifact(
-        run_dir,
-        format!("{artifact_prefix}_gemini_request.json"),
-        &req,
-    );
-
-    let body =
-        serde_json::to_vec(&req).map_err(|err| format!("Gemini: failed to encode JSON: {err}"))?;
-    debug!(
-        "Gen3D: sending Gemini curl request (url={}, model={}, body_bytes={})",
-        url,
-        model,
-        body.len()
-    );
-
     let headers = curl_x_goog_api_key_header_file(api_key)
         .map_err(|err| format!("Gemini: failed to create curl auth header file: {err}"))?;
 
-    let mut cmd = std::process::Command::new("curl");
-    crate::system_proxy::apply_system_proxy_to_curl_command(&mut cmd, &url);
-    cmd.arg("-sS")
-        .arg("--no-buffer")
-        .arg("--connect-timeout")
-        .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
-        .arg("--max-time")
-        .arg(CURL_HARD_TIMEOUT_SECS_DEFAULT.to_string())
-        .arg("-X")
-        .arg("POST")
-        .arg("-H")
-        .arg("Content-Type: application/json")
-        .arg("-H")
-        .arg(headers.curl_header_arg())
-        .arg("-d")
-        .arg("@-")
-        .arg(&url)
-        .arg("-w")
-        .arg(CURL_HTTP_STATUS_WRITEOUT_ARG)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let child = cmd
-        .spawn()
-        .map_err(|err| format!("Gemini: failed to start curl: {err}"))?;
-
-    let output = wait_curl_with_byte_timeouts(
-        child,
-        Some(&body),
-        CurlByteTimeouts {
-            first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
-            idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
-            hard: std::time::Duration::from_secs(CURL_HARD_TIMEOUT_SECS_DEFAULT.into()),
-        },
-        cancel_flag,
-        &url,
-    )?;
-
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if !output.status.success() {
-        append_gen3d_run_log(
-            run_dir,
-            format!(
-                "gemini_curl_nonzero prefix={} status={} stderr_tail={}",
-                artifact_prefix,
-                output.status,
-                truncate_for_ui(stderr.trim(), 240)
-            ),
+    let mut include_response_json_schema = expected_schema.is_some();
+    let body = loop {
+        let req = build_gemini_stream_generate_content_request_json(
+            expected_schema,
+            include_response_json_schema,
+            system_instructions,
+            user_text,
+            &images,
+            image_paths,
         );
-        return Err(format!(
-            "Gemini curl exited with non-zero status.\nURL: {url}\n{stderr}"
-        ));
-    }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let (body, status_code) = split_curl_http_status(&stdout, CURL_HTTP_STATUS_MARKER);
-    if status_code.is_none() {
-        warn!(
-            "Gen3D: missing HTTP status marker in Gemini curl output (truncated): {}",
-            truncate_for_ui(stdout.trim(), 240)
+        let request_artifact = if include_response_json_schema {
+            format!("{artifact_prefix}_gemini_request.json")
+        } else {
+            format!("{artifact_prefix}_gemini_request_retry_no_schema.json")
+        };
+        write_gen3d_json_artifact(run_dir, request_artifact, &req);
+
+        let request_body = serde_json::to_vec(&req)
+            .map_err(|err| format!("Gemini: failed to encode JSON: {err}"))?;
+        debug!(
+            "Gen3D: sending Gemini curl request (url={}, model={}, body_bytes={})",
+            url,
+            model,
+            request_body.len()
         );
-    }
-    append_gen3d_run_log(
-        run_dir,
-        format!(
-            "gemini_recv prefix={} http_status={} body_chars={}",
-            artifact_prefix,
-            status_code.unwrap_or(0),
-            body.chars().count()
-        ),
-    );
 
-    if let Some(code) = status_code {
-        if !(200..=299).contains(&code) {
+        let mut cmd = std::process::Command::new("curl");
+        crate::system_proxy::apply_system_proxy_to_curl_command(&mut cmd, &url);
+        cmd.arg("-sS")
+            .arg("--no-buffer")
+            .arg("--connect-timeout")
+            .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
+            .arg("--max-time")
+            .arg(CURL_HARD_TIMEOUT_SECS_DEFAULT.to_string())
+            .arg("-X")
+            .arg("POST")
+            .arg("-H")
+            .arg("Content-Type: application/json")
+            .arg("-H")
+            .arg(headers.curl_header_arg())
+            .arg("-d")
+            .arg("@-")
+            .arg(&url)
+            .arg("-w")
+            .arg(CURL_HTTP_STATUS_WRITEOUT_ARG)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let child = cmd
+            .spawn()
+            .map_err(|err| format!("Gemini: failed to start curl: {err}"))?;
+
+        let output = wait_curl_with_byte_timeouts(
+            child,
+            Some(&request_body),
+            CurlByteTimeouts {
+                first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+                idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
+                hard: std::time::Duration::from_secs(CURL_HARD_TIMEOUT_SECS_DEFAULT.into()),
+            },
+            cancel_flag,
+            &url,
+        )?;
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if !output.status.success() {
             append_gen3d_run_log(
                 run_dir,
                 format!(
-                    "gemini_error prefix={} http_status={} body_preview={}",
+                    "gemini_curl_nonzero prefix={} status={} stderr_tail={}",
                     artifact_prefix,
-                    code,
-                    truncate_for_ui(body.trim(), 240)
+                    output.status,
+                    truncate_for_ui(stderr.trim(), 240)
                 ),
             );
-            append_agent_trace_event_v1(
-                run_root_dir,
-                &AgentTraceEventV1::LlmResponse {
-                    artifact_prefix: artifact_prefix.to_string(),
-                    artifact_dir: run_dir
-                        .map(|d| d.display().to_string())
-                        .unwrap_or_else(|| "<none>".into()),
-                    api: "gemini".into(),
-                    ok: false,
-                    total_tokens: None,
-                    error: Some(format!("HTTP {code}")),
-                },
-            );
             return Err(format!(
-                "Gemini request failed (HTTP {code}).\nURL: {url}\n{}",
-                truncate_for_ui(body.trim(), 1200)
+                "Gemini curl exited with non-zero status.\nURL: {url}\n{stderr}"
             ));
         }
-    }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let (body, status_code) = split_curl_http_status(&stdout, CURL_HTTP_STATUS_MARKER);
+        if status_code.is_none() {
+            warn!(
+                "Gen3D: missing HTTP status marker in Gemini curl output (truncated): {}",
+                truncate_for_ui(stdout.trim(), 240)
+            );
+        }
+        append_gen3d_run_log(
+            run_dir,
+            format!(
+                "gemini_recv prefix={} http_status={} body_chars={}",
+                artifact_prefix,
+                status_code.unwrap_or(0),
+                body.chars().count()
+            ),
+        );
+
+        if let Some(code) = status_code {
+            if !(200..=299).contains(&code) {
+                if include_response_json_schema
+                    && expected_schema.is_some()
+                    && !require_structured_outputs
+                    && code == 400
+                    && is_gemini_structured_outputs_rejected(body)
+                {
+                    warn!(
+                        "Gen3D: Gemini structured outputs rejected; retrying without response_json_schema."
+                    );
+                    append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "gemini_retry prefix={} reason=structured_outputs_rejected http_status={} body_preview={}",
+                            artifact_prefix,
+                            code,
+                            truncate_for_ui(body.trim(), 240)
+                        ),
+                    );
+                    include_response_json_schema = false;
+                    continue;
+                }
+
+                append_gen3d_run_log(
+                    run_dir,
+                    format!(
+                        "gemini_error prefix={} http_status={} body_preview={}",
+                        artifact_prefix,
+                        code,
+                        truncate_for_ui(body.trim(), 240)
+                    ),
+                );
+                append_agent_trace_event_v1(
+                    run_root_dir,
+                    &AgentTraceEventV1::LlmResponse {
+                        artifact_prefix: artifact_prefix.to_string(),
+                        artifact_dir: run_dir
+                            .map(|d| d.display().to_string())
+                            .unwrap_or_else(|| "<none>".into()),
+                        api: "gemini".into(),
+                        ok: false,
+                        total_tokens: None,
+                        error: Some(format!("HTTP {code}")),
+                    },
+                );
+                return Err(format!(
+                    "Gemini request failed (HTTP {code}).\nURL: {url}\n{}",
+                    truncate_for_ui(body.trim(), 1200)
+                ));
+            }
+        }
+
+        break body.to_string();
+    };
 
     if let Some(run_dir) = run_dir {
         write_gen3d_text_artifact(
             Some(run_dir),
             format!("{artifact_prefix}_gemini_raw.txt"),
-            body,
+            &body,
         );
     }
 
-    let (text_opt, total_tokens) = extract_gemini_stream_output(body);
+    let (text_opt, total_tokens) = extract_gemini_stream_output(&body);
     let text = text_opt.ok_or_else(|| {
         error!(
-            "Gen3D: Gemini stream returned no output text (prefix={}, http_status={})",
-            artifact_prefix,
-            status_code.unwrap_or(0)
+            "Gen3D: Gemini stream returned no output text (prefix={})",
+            artifact_prefix
         );
-        format!(
-            "Gemini returned no output text. (HTTP {})",
-            status_code.unwrap_or(0)
-        )
+        "Gemini returned no output text.".to_string()
     })?;
 
     append_agent_trace_event_v1(
@@ -679,7 +745,10 @@ pub(super) fn generate_text_via_gemini(
 
 #[cfg(test)]
 mod tests {
-    use super::extract_gemini_stream_output;
+    use super::{
+        build_gemini_stream_generate_content_request_json, extract_gemini_stream_output,
+        Gen3dAiJsonSchemaKind,
+    };
 
     #[test]
     fn parses_stream_output_text_from_sse() {
@@ -691,5 +760,49 @@ data: {"candidates":[{"content":{"parts":[{"text":" world"}]}}],"usageMetadata":
         let (text, tokens) = extract_gemini_stream_output(body);
         assert_eq!(text.unwrap(), "Hello world");
         assert_eq!(tokens, Some(42));
+    }
+
+    #[test]
+    fn structured_outputs_request_includes_response_json_schema() {
+        let req = build_gemini_stream_generate_content_request_json(
+            Some(Gen3dAiJsonSchemaKind::AgentStepV1),
+            true,
+            "You are a test system prompt",
+            "Return an agent step JSON",
+            &[],
+            &[],
+        );
+        let gen = req.get("generationConfig").expect("generationConfig");
+        assert_eq!(
+            gen.get("response_mime_type").and_then(|v| v.as_str()),
+            Some("application/json")
+        );
+        assert!(gen.get("response_json_schema").is_some());
+    }
+
+    #[test]
+    fn structured_outputs_retry_can_omit_response_json_schema() {
+        let req = build_gemini_stream_generate_content_request_json(
+            Some(Gen3dAiJsonSchemaKind::AgentStepV1),
+            false,
+            "",
+            "Return an agent step JSON",
+            &[],
+            &[],
+        );
+        let gen = req.get("generationConfig").expect("generationConfig");
+        assert_eq!(
+            gen.get("response_mime_type").and_then(|v| v.as_str()),
+            Some("application/json")
+        );
+        assert!(gen.get("response_json_schema").is_none());
+    }
+
+    #[test]
+    fn non_schema_requests_do_not_force_json_output() {
+        let req = build_gemini_stream_generate_content_request_json(None, true, "", "Hi", &[], &[]);
+        let gen = req.get("generationConfig").expect("generationConfig");
+        assert!(gen.get("response_mime_type").is_none());
+        assert!(gen.get("response_json_schema").is_none());
     }
 }
