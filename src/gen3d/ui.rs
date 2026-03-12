@@ -2073,6 +2073,7 @@ pub(crate) fn gen3d_update_ui_text(
     )>,
     rich_text: Query<Entity, With<Gen3dPromptRichText>>,
     mut last_prompt: Local<Option<String>>,
+    mut last_prompt_entity: Local<Option<Entity>>,
     mut autoscroll_frames: Local<u8>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
@@ -2084,9 +2085,18 @@ pub(crate) fn gen3d_update_ui_text(
     } else {
         workshop.prompt.clone()
     };
+
+    let prompt_entity = rich_text.single().ok();
+    if prompt_entity != *last_prompt_entity {
+        *last_prompt_entity = prompt_entity;
+        // The prompt UI can be despawned/recreated (e.g. switching Preview ↔ Realm).
+        // Force a re-render so the rich text starts with the correct current prompt.
+        *last_prompt = None;
+    }
+
     let prompt_changed = last_prompt.as_ref() != Some(&prompt_text);
     if prompt_changed {
-        if let Ok(entity) = rich_text.single() {
+        if let Some(entity) = prompt_entity {
             set_rich_text_line(
                 &mut commands,
                 entity,
