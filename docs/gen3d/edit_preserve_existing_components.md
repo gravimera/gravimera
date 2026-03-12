@@ -66,6 +66,9 @@ Notes:
   - `SetAttachmentJoint` (edit degrees-of-freedom metadata for an attachment edge; useful for hinge axis fixes),
   - `SetAnchorTransform` (adjust a join frame), and
   - primitive part ops (add/remove/update geometry).
+- If you want to deterministically **recolor** already-generated geometry (without regeneration):
+  1) Call `query_component_parts_v1` to get `part_id_uuid` + current `primitive.color_rgba`, then
+  2) Call `apply_draft_ops_v1` with `update_primitive_part` and set `set_primitive.color_rgba` for the target `part_id_uuid`.
 - If you want to change animation clips, prefer `llm_generate_motion_authoring_v1` (or `apply_draft_ops_v1` animation slot ops).
 
 ## Preserve Mode (Generation Tools)

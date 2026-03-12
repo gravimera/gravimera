@@ -574,7 +574,10 @@ mod tests {
             .iter()
             .find(|c| c.name == "child")
             .expect("child component should exist");
-        let attach_to = child.attach_to.as_ref().expect("child should have attach_to");
+        let attach_to = child
+            .attach_to
+            .as_ref()
+            .expect("child should have attach_to");
         assert!(
             attach_to.joint.is_some(),
             "component-level joint should be migrated to attach_to.joint"

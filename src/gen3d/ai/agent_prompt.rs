@@ -3,13 +3,13 @@ use std::path::PathBuf;
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_PLAN_TEMPLATE,
-    TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_RUN_ARTIFACTS,
-    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_INSPECT_PLAN,
+    TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
-    TOOL_ID_READ_ARTIFACT, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK, TOOL_ID_SUGGEST_MOTION_REPAIRS,
-    TOOL_ID_VALIDATE,
+    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RECENTER_ATTACHMENT_MOTION,
+    TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK,
+    TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use uuid::Uuid;
@@ -122,7 +122,10 @@ Rules:\n\
   - Do NOT call llm_review_delta_v1 repeatedly without applying the pending work or rerunning qa_v1 (and render_preview_v1 if review_appearance=true).\n\
 - If `state_summary.pending_regen_component_indices_blocked_due_to_qa_gate` is non-empty:\n\
   - Do NOT retry force-regeneration while QA is clean/unknown.\n\
-  - Fix via `apply_draft_ops_v1` / `llm_review_delta_v1`, OR disable preserve mode via `llm_generate_plan_v1` with `constraints.preserve_existing_components=false` and then regenerate without `force`.\n\
+  - Exit this state deterministically (do NOT keep inspecting):\n\
+    - Prefer deterministic edits via `apply_draft_ops_v1` (ex: recolor primitives, adjust attachment offsets).\n\
+    - If the request truly requires regeneration/style rebuild, disable preserve mode via `llm_generate_plan_v1` with `constraints.preserve_existing_components=false`, then regenerate without `force`.\n\
+    - If QA is ok and you have no deterministic fixes to apply, output `done` and mention the blocked indices.\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
@@ -175,6 +178,155 @@ pub(super) fn build_agent_user_text(
         };
 
         match result.tool_id.as_str() {
+            TOOL_ID_GET_SCENE_GRAPH_SUMMARY => {
+                let components = value.get("components").and_then(|v| v.as_array());
+                let components_total = components.map(|a| a.len()).unwrap_or(0);
+                let mut edges: Vec<String> = Vec::new();
+                if let Some(components) = components {
+                    for c in components {
+                        let child = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        let attach_to = c.get("attach_to");
+                        let Some(attach_to) = attach_to else {
+                            continue;
+                        };
+                        if attach_to.is_null() {
+                            continue;
+                        }
+
+                        let parent = attach_to
+                            .get("parent_component_name")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| attach_to.get("parent").and_then(|v| v.as_str()))
+                            .unwrap_or("");
+                        let parent_anchor = attach_to
+                            .get("parent_anchor")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let child_anchor = attach_to
+                            .get("child_anchor")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let joint_kind = attach_to
+                            .get("joint")
+                            .and_then(|v| v.get("kind"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("null");
+                        let offset_pos = attach_to
+                            .get("offset")
+                            .and_then(|v| v.get("pos"))
+                            .map(|v| truncate_for_prompt(&v.to_string(), 64))
+                            .unwrap_or_else(|| "null".into());
+
+                        if child.trim().is_empty() {
+                            continue;
+                        }
+                        let mut edge = String::new();
+                        edge.push_str(child.trim());
+                        edge.push_str("->");
+                        edge.push_str(parent.trim());
+                        if !parent_anchor.trim().is_empty() {
+                            edge.push('.');
+                            edge.push_str(parent_anchor.trim());
+                        }
+                        if !child_anchor.trim().is_empty() {
+                            edge.push_str(" child=");
+                            edge.push_str(child_anchor.trim());
+                        }
+                        edge.push_str(" off=");
+                        edge.push_str(offset_pos.trim());
+                        edge.push_str(" joint=");
+                        edge.push_str(joint_kind.trim());
+                        edges.push(edge);
+                    }
+                }
+
+                out.push_str("ok");
+                out.push_str(&format!(" components={components_total}"));
+                if !edges.is_empty() {
+                    // Keep it bounded; this is just enough info to apply deterministic ops.
+                    let total = edges.len();
+                    let shown: Vec<&str> = edges.iter().take(12).map(|s| s.as_str()).collect();
+                    out.push_str(&format!(
+                        " attachment_edges={}",
+                        truncate_for_prompt(&format!("{shown:?}"), 360)
+                    ));
+                    if total > shown.len() {
+                        out.push_str(&format!(" attachment_edges_total={total}"));
+                    }
+                }
+            }
+            TOOL_ID_QUERY_COMPONENT_PARTS => {
+                let component = value
+                    .get("component")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let component_index = value.get("component_index").and_then(|v| v.as_u64());
+                let parts = value.get("parts").and_then(|v| v.as_array());
+                let parts_len = parts.map(|a| a.len()).unwrap_or(0);
+
+                let mut part_examples: Vec<String> = Vec::new();
+                if let Some(parts) = parts {
+                    for part in parts.iter().take(8) {
+                        let part_id = part
+                            .get("part_id_uuid")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let color = part
+                            .get("primitive")
+                            .and_then(|v| v.get("color_rgba"))
+                            .map(|v| truncate_for_prompt(&v.to_string(), 80))
+                            .unwrap_or_else(|| "null".into());
+                        let pos = part
+                            .get("transform")
+                            .and_then(|v| v.get("pos"))
+                            .map(|v| truncate_for_prompt(&v.to_string(), 80))
+                            .unwrap_or_else(|| "null".into());
+                        let scale = part
+                            .get("transform")
+                            .and_then(|v| v.get("scale"))
+                            .map(|v| truncate_for_prompt(&v.to_string(), 80))
+                            .unwrap_or_else(|| "null".into());
+
+                        let mut ex = String::new();
+                        if !part_id.trim().is_empty() {
+                            ex.push_str(part_id.trim());
+                        } else {
+                            ex.push_str("<no_part_id>");
+                        }
+                        ex.push_str(" color=");
+                        ex.push_str(color.trim());
+                        ex.push_str(" pos=");
+                        ex.push_str(pos.trim());
+                        ex.push_str(" scale=");
+                        ex.push_str(scale.trim());
+                        part_examples.push(ex);
+                    }
+                }
+
+                out.push_str("ok");
+                if !component.trim().is_empty() {
+                    out.push_str(&format!(
+                        " component={}",
+                        truncate_for_prompt(component, 64)
+                    ));
+                }
+                if let Some(component_index) = component_index {
+                    out.push_str(&format!(" idx={component_index}"));
+                }
+                out.push_str(&format!(" parts={parts_len}"));
+                if !part_examples.is_empty() {
+                    let total = part_examples.len();
+                    let shown: Vec<&str> =
+                        part_examples.iter().take(6).map(|s| s.as_str()).collect();
+                    out.push_str(&format!(
+                        " part_examples={}",
+                        truncate_for_prompt(&format!("{shown:?}"), 420)
+                    ));
+                    if total > shown.len() {
+                        out.push_str(&format!(" part_examples_total={total}"));
+                    }
+                }
+            }
             TOOL_ID_LLM_GENERATE_PLAN => {
                 let comps = value.get("components_total").and_then(|v| v.as_u64());
                 let plan_hash = value.get("plan_hash").and_then(|v| v.as_str());
@@ -679,6 +831,42 @@ pub(super) fn build_agent_user_text(
             out.push('\n');
         }
         out.push('\n');
+    }
+
+    // Explicit escape hatch: if the only remaining work is QA-gated regeneration requests,
+    // tell the agent to either apply deterministic ops, disable preserve mode (rebuild),
+    // or finish best-effort. This prevents long inspection loops.
+    let blocked_by_qa = state_summary
+        .get("pending_regen_component_indices_blocked_due_to_qa_gate")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_u64())
+                .take(32)
+                .collect::<Vec<u64>>()
+        })
+        .unwrap_or_default();
+    if !blocked_by_qa.is_empty() {
+        let pending = state_summary
+            .get("pending_regen_component_indices")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let qa_validate_ok = state_summary
+            .get("qa")
+            .and_then(|v| v.get("last_validate_ok"))
+            .and_then(|v| v.as_bool());
+        let qa_smoke_ok = state_summary
+            .get("qa")
+            .and_then(|v| v.get("last_smoke_ok"))
+            .and_then(|v| v.as_bool());
+        if pending == 0 && qa_validate_ok == Some(true) && qa_smoke_ok == Some(true) {
+            out.push_str(
+                "\nNOTE: Regen requested but blocked by QA gate (preserve mode + QA ok):\n",
+            );
+            out.push_str(&format!("- blocked_component_indices={blocked_by_qa:?}\n"));
+            out.push_str("- Do NOT keep inspecting. Either apply deterministic edits (apply_draft_ops_v1), OR disable preserve mode (llm_generate_plan_v1 preserve_existing_components=false), OR finish best-effort (done).\n");
+        }
     }
 
     if !workshop
