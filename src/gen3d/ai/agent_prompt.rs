@@ -2,11 +2,12 @@ use std::path::PathBuf;
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_PLAN_TEMPLATE,
-    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_INSPECT_PLAN,
-    TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
+    Gen3dToolDescriptorV1, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
+    TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_TOOL_DETAIL,
+    TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT,
+    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
+    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RECENTER_ATTACHMENT_MOTION,
     TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK,
     TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
@@ -41,8 +42,10 @@ Example done:\n\
 Rules:\n\
 - Use tools to read/modify state. Do not assume the engine will auto-fix anything.\n\
 - Tool args are strict JSON objects. Do NOT invent arg keys.\n\
+  - The user prompt includes a brief args signature and example for each tool.\n\
+    - Only call a tool with empty `{}` args if its args signature is exactly `{}`.\n\
   - Tool results are only visible in the NEXT step (you cannot \"read\" tool outputs mid-step).\n\
-  - If you need args_schema/args_example, call `get_tool_detail_v1` with `tool_id` and END THE STEP (no other actions).\n\
+  - If you need full args_schema/args_example details beyond the brief tool list, call `get_tool_detail_v1` with `tool_id` and END THE STEP (no other actions).\n\
     - If you need details for multiple tools, call `get_tool_detail_v1` multiple times in the SAME step.\n\
   - Some tools reject unknown keys (hard error). Example: `snapshot_v1` uses `label` (NOT `name`).\n\
   - `query_component_parts_v1` requires `component` or `component_index` (never call it with empty `{}` args).\n\
@@ -155,7 +158,95 @@ pub(super) fn build_agent_user_text(
         out
     }
 
-    fn summarize_tool_result(result: &Gen3dToolResultJsonV1) -> String {
+    fn first_line(text: &str) -> &str {
+        text.split('\n').next().unwrap_or("")
+    }
+
+    fn required_keys_from_args_sig(args_sig: &str) -> Vec<String> {
+        let sig = args_sig.trim();
+        if sig == "{}" {
+            return Vec::new();
+        }
+
+        let Some(inner) = sig
+            .strip_prefix('{')
+            .and_then(|s| s.strip_suffix('}'))
+        else {
+            return Vec::new();
+        };
+
+        fn push_required_key_from_item(keys: &mut Vec<String>, item: &str) {
+            let item = item.trim();
+            if item.is_empty() {
+                return;
+            }
+            let Some((key, _)) = item.split_once(':') else {
+                return;
+            };
+            let key = key.trim();
+            if key.is_empty() || key.ends_with('?') {
+                return;
+            }
+            keys.push(key.to_string());
+        }
+
+        let mut keys = Vec::new();
+        let mut item_buf = String::new();
+        let mut depth: i32 = 0;
+        let mut in_string = false;
+        let mut escaped = false;
+
+        for ch in inner.chars() {
+            if in_string {
+                item_buf.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+
+            match ch {
+                '"' => {
+                    in_string = true;
+                    item_buf.push(ch);
+                }
+                '{' | '[' | '(' => {
+                    depth += 1;
+                    item_buf.push(ch);
+                }
+                '}' | ']' | ')' => {
+                    depth -= 1;
+                    item_buf.push(ch);
+                }
+                ',' if depth == 0 => {
+                    push_required_key_from_item(&mut keys, &item_buf);
+                    item_buf.clear();
+                }
+                _ => item_buf.push(ch),
+            }
+        }
+        push_required_key_from_item(&mut keys, &item_buf);
+
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
+    fn find_tool<'a>(
+        tools: &'a [Gen3dToolDescriptorV1],
+        tool_id: &str,
+    ) -> Option<&'a Gen3dToolDescriptorV1> {
+        tools.iter().find(|t| t.tool_id == tool_id)
+    }
+
+    fn summarize_tool_result(
+        result: &Gen3dToolResultJsonV1,
+        tools: &[Gen3dToolDescriptorV1],
+    ) -> String {
         let mut out = String::new();
         out.push_str("- ");
         out.push_str(result.tool_id.as_str());
@@ -167,8 +258,23 @@ pub(super) fn build_agent_user_text(
             out.push_str("ERROR: ");
             out.push_str(&truncate_for_prompt(
                 result.error.as_deref().unwrap_or("<no error>"),
-                240,
+                320,
             ));
+
+            if let Some(tool) = find_tool(tools, result.tool_id.as_str()) {
+                let args_sig = first_line(tool.args_schema).trim();
+                let args_sig = if args_sig.is_empty() { "{}" } else { args_sig };
+                let required_keys = required_keys_from_args_sig(args_sig);
+
+                out.push_str(" | expected_args=");
+                out.push_str(&truncate_for_prompt(args_sig, 240));
+                if !required_keys.is_empty() {
+                    out.push_str(" required_keys=");
+                    out.push_str(&truncate_for_prompt(&format!("{required_keys:?}"), 200));
+                }
+                out.push_str(" example=");
+                out.push_str(&truncate_for_prompt(&tool.args_example.to_string(), 200));
+            }
             return out;
         }
 
@@ -838,9 +944,20 @@ pub(super) fn build_agent_user_text(
     }
     out.push('\n');
 
-    out.push_str("Available tools (call get_tool_detail_v1 for args_schema + args_example):\n");
-    for tool in registry.list() {
-        out.push_str(&format!("- {}: {}\n", tool.tool_id, tool.one_line_summary));
+    let tools = registry.list();
+
+    out.push_str("Available tools (args signature + example shown; call get_tool_detail_v1 for full schema/examples):\n");
+    for tool in &tools {
+        let args_sig = first_line(tool.args_schema).trim();
+        let args_sig = if args_sig.is_empty() { "{}" } else { args_sig };
+        let args_example = truncate_for_prompt(&tool.args_example.to_string(), 200);
+        out.push_str(&format!(
+            "- {}: {} args={} example={}\n",
+            tool.tool_id,
+            tool.one_line_summary,
+            truncate_for_prompt(args_sig, 240),
+            args_example
+        ));
     }
 
     out.push_str("\nCurrent state summary:\n");
@@ -856,7 +973,7 @@ pub(super) fn build_agent_user_text(
         }
         out.push_str("\nRecent tool results (previous step, compact):\n");
         for r in recent {
-            out.push_str(&summarize_tool_result(r));
+            out.push_str(&summarize_tool_result(r, &tools));
             out.push('\n');
         }
         out.push('\n');
@@ -1422,6 +1539,8 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AppConfig;
+    use crate::gen3d::state::Gen3dWorkshop;
 
     #[test]
     fn agent_system_instructions_ignore_warnings_policy_is_present() {
@@ -1429,5 +1548,68 @@ mod tests {
         assert!(text.contains("do NOT spend steps trying to eliminate warnings"));
         assert!(text.contains("Do NOT chase warn-only motion_validation issues"));
         assert!(text.contains("attack_self_intersection"));
+    }
+
+    #[test]
+    fn agent_system_instructions_forbid_empty_args_unless_no_arg_tool() {
+        let text = build_agent_system_instructions();
+        assert!(text.contains(
+            "Only call a tool with empty `{}` args if its args signature is exactly `{}`"
+        ));
+    }
+
+    #[test]
+    fn agent_user_text_includes_tool_args_signatures() {
+        let config = AppConfig::default();
+        let job = Gen3dAiJob::default();
+        let workshop = Gen3dWorkshop::default();
+        let registry = Gen3dToolRegistryV1::default();
+
+        let text = build_agent_user_text(
+            &config,
+            &job,
+            &workshop,
+            serde_json::json!({}),
+            &[],
+            &registry,
+        );
+
+        assert!(text.contains("Available tools (args signature + example shown"));
+        assert!(text
+            .lines()
+            .any(|line| line.contains("- qa_v1:") && line.contains("args={}")));
+        assert!(text.lines().any(|line| {
+            line.contains("- search_artifacts_v1:") && line.contains("args={ query: string")
+        }));
+    }
+
+    #[test]
+    fn error_tool_results_include_contract_hints() {
+        let config = AppConfig::default();
+        let job = Gen3dAiJob::default();
+        let workshop = Gen3dWorkshop::default();
+        let registry = Gen3dToolRegistryV1::default();
+
+        let recent_tool_results = vec![Gen3dToolResultJsonV1::err(
+            "call_1".to_string(),
+            "search_artifacts_v1".to_string(),
+            "Missing args.query".to_string(),
+        )];
+
+        let text = build_agent_user_text(
+            &config,
+            &job,
+            &workshop,
+            serde_json::json!({}),
+            &recent_tool_results,
+            &registry,
+        );
+
+        assert!(text.contains("Recent tool results (previous step, compact):"));
+        assert!(text.contains("search_artifacts_v1 (call_1): ERROR: Missing args.query"));
+        assert!(text.contains("expected_args={ query: string"));
+        assert!(text.contains("required_keys=[\"query\"]"));
+        assert!(text.contains("example="));
+        assert!(text.contains("\"query\""));
     }
 }

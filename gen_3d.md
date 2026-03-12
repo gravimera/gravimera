@@ -54,6 +54,14 @@ Gen3D Build is a Codex-style, tool-driven agent loop.
   - `tool_call`: versioned, engine-validated tools (`*_v1`)
   - `done`: stop the run (best-effort draft stays in the preview)
 
+Tool contracts and error recovery:
+
+- Each agent step prompt includes a complete tool list with a brief **args signature** (first line of the tool’s args schema) plus a bounded **example args object**.
+  - The agent should use these signatures to avoid malformed tool calls.
+  - Only tools whose args signature is exactly `{}` should ever be called with empty `{}` args.
+- When a tool call fails, the next step’s “Recent tool results” entry includes the error plus a compact hint (expected args signature, required keys, and an example args object) so the agent can correct the call in the next step without spending an extra `get_tool_detail_v1`.
+- `get_tool_detail_v1` still exists for deep inspection of complex tool schemas, but basic correct invocation should not require it.
+
 In practice, the agent usually gets good results by calling:
 
 - `llm_generate_plan_v1` (plan components + anchors + tree attachments)
