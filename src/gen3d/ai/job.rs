@@ -101,7 +101,6 @@ pub(super) struct Gen3dPendingFinishRun {
 #[derive(Clone, Debug)]
 pub(super) struct Gen3dDescriptorMetaCache {
     pub(super) plan_hash: String,
-    pub(super) assembly_rev: u32,
     pub(super) meta: AiDescriptorMetaJsonV1,
 }
 
@@ -574,7 +573,6 @@ pub(super) struct Gen3dUserImageObjectSummary {
     pub(super) text: String,
     pub(super) truncated: bool,
     pub(super) word_count: usize,
-    pub(super) images_count: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -638,10 +636,6 @@ impl Gen3dAiJob {
 
     pub(crate) fn pass_dir_path(&self) -> Option<&Path> {
         self.pass_dir.as_deref()
-    }
-
-    pub(super) fn info_store(&self) -> Option<&Gen3dInfoStore> {
-        self.info_store.as_ref()
     }
 
     pub(super) fn ensure_info_store(&mut self) -> Result<&mut Gen3dInfoStore, String> {

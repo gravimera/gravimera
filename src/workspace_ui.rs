@@ -18,6 +18,7 @@ const SIDE_PANEL_WIDTH_PX: f32 = 260.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkspaceTab {
     ObjectPreview,
+    #[allow(dead_code)]
     SceneBuild,
 }
 
@@ -138,10 +139,6 @@ pub(crate) struct PendingWorkspaceSwitch {
 }
 
 impl PendingWorkspaceSwitch {
-    pub(crate) fn request(&mut self, from: WorkspaceTab, to: WorkspaceTab) {
-        self.pending = Some(WorkspaceTabSwitch { from, to });
-    }
-
     pub(crate) fn take(&mut self) -> Option<WorkspaceTabSwitch> {
         self.pending.take()
     }

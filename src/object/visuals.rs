@@ -271,6 +271,7 @@ pub(crate) struct PartAnimationPlayer {
 ///
 /// This enables runtime systems to deterministically inject/override animation slots for that edge
 /// without requiring the prefab author to provide any animation clips up front.
+#[allow(dead_code)]
 #[derive(Component, Clone, Debug)]
 pub(crate) struct ObjectRefEdgeBinding {
     pub(crate) root_entity: Entity,

@@ -81,14 +81,6 @@ impl Health {
         let current = current.clamp(0, max);
         Self { current, max }
     }
-
-    pub(crate) fn fraction(&self) -> f32 {
-        if self.max > 0 {
-            (self.current.max(0) as f32 / self.max as f32).clamp(0.0, 1.0)
-        } else {
-            0.0
-        }
-    }
 }
 
 /// Marker for units that have died (health <= 0) and should remain as corpses.

@@ -300,7 +300,6 @@ fn poll_agent_user_image_summary(config: &AppConfig, workshop: &mut Gen3dWorksho
                 text: text.clone(),
                 truncated,
                 word_count,
-                images_count: job.user_images.len(),
             });
 
             let Some(run_dir) = job.run_dir.clone() else {

@@ -1169,7 +1169,6 @@ pub(super) fn poll_gen3d_descriptor_meta_in_flight(job: &mut Gen3dAiJob) {
                 Ok(meta) => {
                     job.descriptor_meta_cache = Some(Gen3dDescriptorMetaCache {
                         plan_hash: in_flight.plan_hash,
-                        assembly_rev: job.assembly_rev,
                         meta,
                     });
                 }

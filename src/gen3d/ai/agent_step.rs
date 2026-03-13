@@ -555,7 +555,6 @@ pub(super) fn poll_agent_descriptor_meta(
                 Ok(meta) => {
                     job.descriptor_meta_cache = Some(super::Gen3dDescriptorMetaCache {
                         plan_hash: job.plan_hash.clone(),
-                        assembly_rev: job.assembly_rev,
                         meta,
                     });
                 }

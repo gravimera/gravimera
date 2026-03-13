@@ -297,13 +297,7 @@ pub(crate) struct Gen3dToolFeedbackText;
 pub(crate) struct Gen3dCopyFeedbackCodexButton;
 
 #[derive(Component)]
-pub(crate) struct Gen3dCopyFeedbackCodexButtonText;
-
-#[derive(Component)]
 pub(crate) struct Gen3dCopyFeedbackJsonButton;
-
-#[derive(Component)]
-pub(crate) struct Gen3dCopyFeedbackJsonButtonText;
 
 #[derive(Component)]
 pub(crate) struct Gen3dClearPromptButton;

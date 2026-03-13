@@ -581,6 +581,34 @@ pub(crate) fn enter_gen3d_mode(
                                                     Gen3dSideTabButtonText::new(Gen3dSideTab::Status),
                                                 ));
                                             });
+
+                                            tabs.spawn((
+                                                Button,
+                                                Node {
+                                                    flex_grow: 1.0,
+                                                    height: Val::Px(30.0),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    border: UiRect::all(Val::Px(1.0)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70)),
+                                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.70)),
+                                                Visibility::Inherited,
+                                                Gen3dSideTabButton::new(Gen3dSideTab::ToolFeedback),
+                                            ))
+                                            .with_children(|button| {
+                                                button.spawn((
+                                                    Text::new("Tool Feedback"),
+                                                    TextFont {
+                                                        font_size: 14.0,
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                                    Visibility::Inherited,
+                                                    Gen3dSideTabButtonText::new(Gen3dSideTab::ToolFeedback),
+                                                ));
+                                            });
                                         });
 
                                     // Status tab content.
@@ -653,6 +681,160 @@ pub(crate) fn enter_gen3d_mode(
                                                     Visibility::Inherited,
                                                     Gen3dStatusScrollbarThumb,
                                                 ));
+                                            });
+                                        });
+
+                                    // Tool Feedback tab content.
+                                    panel
+                                        .spawn((
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                flex_grow: 1.0,
+                                                flex_basis: Val::Px(0.0),
+                                                min_height: Val::Px(0.0),
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: Val::Px(6.0),
+                                                display: Display::None,
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::NONE),
+                                            Visibility::Hidden,
+                                            Gen3dToolFeedbackPanelRoot,
+                                        ))
+                                        .with_children(|col| {
+                                            col.spawn((
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    flex_direction: FlexDirection::Row,
+                                                    column_gap: Val::Px(6.0),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::NONE),
+                                                Visibility::Inherited,
+                                            ))
+                                            .with_children(|row| {
+                                                row.spawn((
+                                                    Button,
+                                                    Node {
+                                                        flex_grow: 1.0,
+                                                        height: Val::Px(28.0),
+                                                        justify_content: JustifyContent::Center,
+                                                        align_items: AlignItems::Center,
+                                                        border: UiRect::all(Val::Px(1.0)),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(0.06, 0.10, 0.16, 0.80)),
+                                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                    Visibility::Inherited,
+                                                    Gen3dCopyFeedbackCodexButton,
+                                                ))
+                                                .with_children(|button| {
+                                                    button.spawn((
+                                                        Text::new("Copy for Codex"),
+                                                        TextFont {
+                                                            font_size: 14.0,
+                                                            ..default()
+                                                        },
+                                                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                                        Visibility::Inherited,
+                                                    ));
+                                                });
+
+                                                row.spawn((
+                                                    Button,
+                                                    Node {
+                                                        flex_grow: 1.0,
+                                                        height: Val::Px(28.0),
+                                                        justify_content: JustifyContent::Center,
+                                                        align_items: AlignItems::Center,
+                                                        border: UiRect::all(Val::Px(1.0)),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(0.08, 0.10, 0.12, 0.78)),
+                                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                    Visibility::Inherited,
+                                                    Gen3dCopyFeedbackJsonButton,
+                                                ))
+                                                .with_children(|button| {
+                                                    button.spawn((
+                                                        Text::new("Copy JSON"),
+                                                        TextFont {
+                                                            font_size: 14.0,
+                                                            ..default()
+                                                        },
+                                                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                                        Visibility::Inherited,
+                                                    ));
+                                                });
+                                            });
+
+                                            col.spawn((
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    flex_grow: 1.0,
+                                                    flex_basis: Val::Px(0.0),
+                                                    min_height: Val::Px(0.0),
+                                                    flex_direction: FlexDirection::Row,
+                                                    column_gap: Val::Px(6.0),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::NONE),
+                                                Visibility::Inherited,
+                                            ))
+                                            .with_children(|row| {
+                                                row.spawn((
+                                                    Node {
+                                                        flex_grow: 1.0,
+                                                        flex_basis: Val::Px(0.0),
+                                                        min_height: Val::Px(0.0),
+                                                        overflow: Overflow::scroll_y(),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::NONE),
+                                                    Visibility::Inherited,
+                                                    ScrollPosition::default(),
+                                                    Gen3dToolFeedbackScrollPanel,
+                                                ))
+                                                .with_children(|scroll| {
+                                                    scroll.spawn((
+                                                        Text::new(""),
+                                                        TextFont {
+                                                            font_size: 14.0,
+                                                            ..default()
+                                                        },
+                                                        TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                                                        Visibility::Inherited,
+                                                        Gen3dToolFeedbackText,
+                                                    ));
+                                                });
+
+                                                row.spawn((
+                                                    Node {
+                                                        width: Val::Px(8.0),
+                                                        height: Val::Percent(100.0),
+                                                        position_type: PositionType::Relative,
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
+                                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                    Visibility::Hidden,
+                                                    Gen3dToolFeedbackScrollbarTrack,
+                                                ))
+                                                .with_children(|track| {
+                                                    track.spawn((
+                                                        Node {
+                                                            position_type: PositionType::Absolute,
+                                                            left: Val::Px(1.0),
+                                                            right: Val::Px(1.0),
+                                                            top: Val::Px(0.0),
+                                                            height: Val::Px(18.0),
+                                                            ..default()
+                                                        },
+                                                        BackgroundColor(Color::srgba(0.85, 0.88, 0.95, 0.85)),
+                                                        Visibility::Inherited,
+                                                        Gen3dToolFeedbackScrollbarThumb,
+                                                    ));
+                                                });
                                             });
                                         });
 

@@ -95,6 +95,7 @@ pub(crate) fn scene_prefabs_dir(realm_id: &str, scene_id: &str) -> PathBuf {
     scene_dir(realm_id, scene_id).join("prefabs")
 }
 
+#[allow(dead_code)]
 pub(crate) fn scene_prefab_package_dir(
     realm_id: &str,
     scene_id: &str,

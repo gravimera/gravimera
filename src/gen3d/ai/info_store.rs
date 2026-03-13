@@ -623,10 +623,6 @@ impl Gen3dInfoStore {
         indices.iter().filter_map(|&idx| self.kv_records.get(idx)).collect()
     }
 
-    pub(super) fn kv_records(&self) -> &[InfoKvRecord] {
-        self.kv_records.as_slice()
-    }
-
     pub(super) fn kv_record_by_rev(&self, kv_rev: u64) -> Option<&InfoKvRecord> {
         let idx = self.kv_by_rev.get(&kv_rev).copied()?;
         self.kv_records.get(idx)
