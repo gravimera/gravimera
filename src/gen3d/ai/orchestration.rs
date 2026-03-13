@@ -4453,6 +4453,29 @@ pub(super) fn build_gen3d_scene_graph_summary(
         })
         .collect();
 
+    let attachment_edges: Vec<serde_json::Value> = components
+        .iter()
+        .filter_map(|c| {
+            let att = c.attach_to.as_ref()?;
+            let pos = att.offset.translation;
+            let joint_kind = att.joint.as_ref().map(|joint| match joint.kind {
+                AiJointKindJson::Fixed => "fixed",
+                AiJointKindJson::Hinge => "hinge",
+                AiJointKindJson::Ball => "ball",
+                AiJointKindJson::Free => "free",
+                AiJointKindJson::Unknown => "unknown",
+            });
+            Some(serde_json::json!({
+                "child": c.name.as_str(),
+                "parent": att.parent.as_str(),
+                "parent_anchor": att.parent_anchor.as_str(),
+                "child_anchor": att.child_anchor.as_str(),
+                "offset_pos": [pos.x, pos.y, pos.z],
+                "joint_kind": joint_kind,
+            }))
+        })
+        .collect();
+
     serde_json::json!({
         "version": 1,
         "run_id": run_id,
@@ -4461,6 +4484,9 @@ pub(super) fn build_gen3d_scene_graph_summary(
         "plan_hash": plan_hash,
         "assembly_rev": assembly_rev,
         "root": root_json,
+        "components_total": components.len(),
+        "attachments_total": attachment_edges.len(),
+        "attachment_edges": attachment_edges,
         "components": components_json,
     })
 }

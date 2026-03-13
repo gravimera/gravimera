@@ -494,6 +494,34 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
         &Gen3dDraft::default(),
     );
 
+    assert_eq!(
+        summary
+            .get("components_total")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        2
+    );
+    assert_eq!(
+        summary
+            .get("attachments_total")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        1
+    );
+    let edges = summary
+        .get("attachment_edges")
+        .and_then(|v| v.as_array())
+        .expect("attachment_edges array");
+    assert_eq!(edges.len(), 1);
+    assert_eq!(
+        edges[0].get("child").and_then(|v| v.as_str()),
+        Some("child")
+    );
+    assert_eq!(
+        edges[0].get("parent").and_then(|v| v.as_str()),
+        Some("root")
+    );
+
     let comps = summary
         .get("components")
         .and_then(|v| v.as_array())

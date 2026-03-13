@@ -5,22 +5,22 @@ use std::sync::{Arc, Mutex};
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_BASIS_FROM_UP_FORWARD,
-    TOOL_ID_COPY_COMPONENT,
-    TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE,
-    TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS,
-    TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
-    TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_GET_USER_INPUTS,
-    TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST, TOOL_ID_INFO_EVENTS_GET,
-    TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH, TOOL_ID_INFO_KV_GET,
-    TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS,
-    TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT,
-    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MERGE_WORKSPACE,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
-    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META,
-    TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
-    TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
+    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE,
+    TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT,
+    TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE,
+    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_TOOL_DETAIL,
+    TOOL_ID_GET_USER_INPUTS, TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST,
+    TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH,
+    TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_LIST_HISTORY,
+    TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS,
+    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
+    TOOL_ID_MOTION_METRICS, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS,
+    TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
+    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK,
+    TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_SUGGEST_MOTION_REPAIRS,
+    TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -40,10 +40,10 @@ use super::agent_review_images::{
 };
 use super::agent_step::ToolCallOutcome;
 use super::agent_utils::{build_component_subset_workspace_defs, sanitize_prefix};
-use super::basis_from_up_forward::basis_from_up_forward_v1;
 use super::artifacts::{
     append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact,
 };
+use super::basis_from_up_forward::basis_from_up_forward_v1;
 use super::info_store::InfoPage;
 use super::{
     set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
@@ -121,6 +121,57 @@ struct InfoKvSelectorArgsV1 {
     assembly_rev: Option<u32>,
     #[serde(default)]
     pass: Option<u32>,
+}
+
+fn format_info_kv_get_many_args_error(args: &serde_json::Value, err: &serde_json::Error) -> String {
+    fn selector_kind_from_value(value: &serde_json::Value) -> Option<&str> {
+        value
+            .as_object()?
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    let base = err.to_string();
+    let selector_kind = args
+        .get("selector")
+        .and_then(selector_kind_from_value)
+        .or_else(|| {
+            args.get("items")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("selector"))
+                .and_then(selector_kind_from_value)
+        })
+        .unwrap_or("latest");
+
+    let selector_in_items = args
+        .get("items")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_object())
+                .any(|item| item.contains_key("selector"))
+        })
+        .unwrap_or(false);
+
+    if selector_in_items {
+        let example = serde_json::json!({
+            "selector": { "kind": selector_kind },
+            "items": [
+                { "namespace": "gen3d", "key": "ws.main.scene_graph_summary" }
+            ]
+        });
+        return format!(
+            "Invalid args for `{TOOL_ID_INFO_KV_GET_MANY}`: `selector` is shared and must be top-level (not inside `items[]`). Fix: move `selector` out of each item. Example: {}. Original error: {}",
+            example,
+            base
+        );
+    }
+
+    format!("Invalid args for `{TOOL_ID_INFO_KV_GET_MANY}`: {base}")
 }
 
 fn select_kv_record<'a>(
@@ -1785,13 +1836,14 @@ pub(super) fn execute_tool_call(
                 max_items: Option<u32>,
             }
 
-            let args: InfoKvGetManyArgsV1 = match serde_json::from_value(call.args) {
+            let args_value = call.args.clone();
+            let args: InfoKvGetManyArgsV1 = match serde_json::from_value(args_value.clone()) {
                 Ok(v) => v,
                 Err(err) => {
                     return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                         call.call_id,
                         call.tool_id,
-                        format!("Invalid args for `{TOOL_ID_INFO_KV_GET_MANY}`: {err}"),
+                        format_info_kv_get_many_args_error(&args_value, &err),
                     ));
                 }
             };
@@ -5138,8 +5190,10 @@ pub(super) fn execute_tool_call(
 
 #[cfg(test)]
 mod tests {
+    use super::format_info_kv_get_many_args_error;
     use super::normalize_tool_call_args;
     use crate::gen3d::agent::Gen3dToolCallJsonV1;
+    use serde::Deserialize;
     use std::path::PathBuf;
     use uuid::Uuid;
 
@@ -5195,6 +5249,53 @@ mod tests {
         };
         let err = normalize_tool_call_args(&mut call).expect_err("should reject");
         assert!(err.contains("args must be an object"), "{err}");
+    }
+
+    #[test]
+    fn gen3d_info_kv_get_many_selector_misplaced_error_is_actionable() {
+        #[derive(Debug, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        #[allow(dead_code)]
+        struct Item {
+            namespace: String,
+            key: String,
+            #[serde(default)]
+            json_pointer: Option<String>,
+            #[serde(default)]
+            max_bytes: Option<u64>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        #[allow(dead_code)]
+        struct Args {
+            items: Vec<Item>,
+            #[serde(default)]
+            selector: Option<super::InfoKvSelectorArgsV1>,
+            #[serde(default)]
+            max_items: Option<u32>,
+        }
+
+        let args_value = serde_json::json!({
+            "items": [
+                {
+                    "namespace": "gen3d",
+                    "key": "ws.main.scene_graph_summary",
+                    "selector": { "kind": "latest" },
+                }
+            ],
+        });
+        let err = serde_json::from_value::<Args>(args_value.clone()).expect_err("should reject");
+
+        let msg = format_info_kv_get_many_args_error(&args_value, &err);
+        assert!(
+            msg.contains("selector")
+                && msg.contains("top-level")
+                && msg.contains("items[]")
+                && msg.contains("Example:")
+                && msg.contains("ws.main.scene_graph_summary"),
+            "{msg}"
+        );
     }
 
     #[test]

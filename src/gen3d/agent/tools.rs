@@ -252,15 +252,14 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 tool_id: TOOL_ID_INFO_KV_GET_MANY,
                 title: "Info KV: get many",
                 one_line_summary:
-                    "Read-only: fetch multiple KV values with a shared selector; returns per-key errors; bounded.",
+                    "Read-only: fetch multiple KV values with ONE shared top-level selector (do NOT put selector inside items[]); returns per-key errors; bounded.",
                 args_schema:
                     "{ items: { namespace: string, key: string, json_pointer?: string, max_bytes?: number }[], selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }, max_items?: number }",
                 args_example: serde_json::json!({
                     "selector": { "kind": "latest" },
                     "items": [
-                        { "namespace": "gen3d", "key": "ws.main.state_summary" },
-                        { "namespace": "gen3d", "key": "ws.main.qa" },
-                        { "namespace": "gen3d", "key": "ws.main.scene_graph_summary", "json_pointer": "/components_total" }
+                        { "namespace": "gen3d", "key": "ws.main.scene_graph_summary", "json_pointer": "/attachment_edges" },
+                        { "namespace": "gen3d", "key": "ws.main.qa" }
                     ]
                 }),
             },
