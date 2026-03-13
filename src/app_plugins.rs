@@ -393,11 +393,6 @@ impl Plugin for RenderedGen3dPlugin {
         app.add_systems(
             Update,
             (
-                crate::gen3d::gen3d_images_scroll_wheel
-                    .run_if(crate::automation::local_input_enabled),
-                crate::gen3d::gen3d_images_scrollbar_drag
-                    .after(crate::gen3d::gen3d_images_scroll_wheel)
-                    .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_status_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_tool_feedback_scroll_wheel
@@ -506,7 +501,6 @@ impl Plugin for RenderedGen3dPlugin {
         app.add_systems(
             PostUpdate,
             (
-                crate::gen3d::gen3d_update_images_scrollbar_ui,
                 crate::gen3d::gen3d_update_prompt_scrollbar_ui,
                 crate::gen3d::gen3d_update_status_scrollbar_ui,
                 crate::gen3d::gen3d_update_tool_feedback_scrollbar_ui,

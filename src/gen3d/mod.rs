@@ -65,12 +65,11 @@ pub(crate) use ai::{gen3d_continue_button, gen3d_generate_button, gen3d_poll_ai_
 pub(crate) use ai::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 pub(crate) use images::{
     gen3d_clear_images_button, gen3d_handle_drag_and_drop, gen3d_image_viewer_click_to_close,
-    gen3d_image_viewer_keyboard_navigation, gen3d_images_scroll_wheel,
-    gen3d_images_scrollbar_drag,
+    gen3d_image_viewer_keyboard_navigation,
     gen3d_rebuild_images_list_ui, gen3d_thumbnail_button_open_viewer,
     gen3d_thumbnail_button_style_on_interaction, gen3d_thumbnail_button_style_on_selection,
-    gen3d_update_image_viewer_ui, gen3d_update_images_scrollbar_ui,
-    gen3d_update_images_inline_visibility, gen3d_update_thumbnail_tooltip,
+    gen3d_update_image_viewer_ui, gen3d_update_images_inline_visibility,
+    gen3d_update_thumbnail_tooltip,
 };
 pub(crate) use preview::{
     gen3d_apply_draft_to_preview, gen3d_preview_orbit_controls,

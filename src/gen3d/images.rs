@@ -1,6 +1,6 @@
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
-use bevy::window::{FileDragAndDrop, PrimaryWindow};
+use bevy::window::FileDragAndDrop;
 use std::path::PathBuf;
 
 use crate::types::BuildScene;
@@ -10,7 +10,7 @@ use super::state::*;
 
 pub(crate) fn gen3d_update_images_inline_visibility(
     build_scene: Res<State<BuildScene>>,
-    mut workshop: ResMut<Gen3dWorkshop>,
+    workshop: Res<Gen3dWorkshop>,
     mut panels: Query<(&mut Node, &mut Visibility), With<Gen3dImagesInlinePanel>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
@@ -21,7 +21,6 @@ pub(crate) fn gen3d_update_images_inline_visibility(
         if show {
             node.display = Display::None;
             *vis = Visibility::Hidden;
-            workshop.images_scrollbar_drag = None;
         } else {
             node.display = Display::Flex;
             *vis = Visibility::Visible;
@@ -29,218 +28,10 @@ pub(crate) fn gen3d_update_images_inline_visibility(
     }
 }
 
-pub(crate) fn gen3d_images_scroll_wheel(
-    build_scene: Res<State<BuildScene>>,
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
-    mut panels: Query<
-        (&ComputedNode, &UiGlobalTransform, &mut ScrollPosition),
-        With<Gen3dImagesScrollPanel>,
-    >,
-    workshop: Res<Gen3dWorkshop>,
-) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return;
-    }
-    if workshop.images_scrollbar_drag.is_some() {
-        for _ in mouse_wheel.read() {}
-        return;
-    }
-    let Ok(window) = windows.single() else {
-        // Drain wheel events so we don't build up.
-        for _ in mouse_wheel.read() {}
-        return;
-    };
-    let Some(cursor) = window.physical_cursor_position() else {
-        for _ in mouse_wheel.read() {}
-        return;
-    };
-    let Ok((node, transform, mut scroll)) = panels.single_mut() else {
-        for _ in mouse_wheel.read() {}
-        return;
-    };
-
-    if !node.contains_point(*transform, cursor) {
-        for _ in mouse_wheel.read() {}
-        return;
-    }
-
-    let mut delta_lines = 0.0f32;
-    for ev in mouse_wheel.read() {
-        let lines = match ev.unit {
-            bevy::input::mouse::MouseScrollUnit::Line => ev.y,
-            bevy::input::mouse::MouseScrollUnit::Pixel => ev.y / 120.0,
-        };
-        delta_lines += lines;
-    }
-    if delta_lines.abs() < 1e-4 {
-        return;
-    }
-
-    // `ScrollPosition` is in logical pixels. Approximate a line step as 24px.
-    let delta_px = delta_lines * 24.0;
-    let panel_scale = node.inverse_scale_factor();
-    let viewport_h = node.size.y.max(0.0) * panel_scale;
-    let content_h = node.content_size.y.max(0.0) * panel_scale;
-    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
-        scroll.y = 0.0;
-        return;
-    }
-    let max_scroll = (content_h - viewport_h).max(0.0);
-    scroll.y = (scroll.y - delta_px).clamp(0.0, max_scroll);
-}
-
-pub(crate) fn gen3d_update_images_scrollbar_ui(
-    build_scene: Res<State<BuildScene>>,
-    panels: Query<&ComputedNode, With<Gen3dImagesScrollPanel>>,
-    mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dImagesScrollbarTrack>>,
-    mut thumbs: Query<&mut Node, With<Gen3dImagesScrollbarThumb>>,
-) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return;
-    }
-    let Ok(panel) = panels.single() else {
-        return;
-    };
-    let Ok((track_node, mut track_vis)) = tracks.single_mut() else {
-        return;
-    };
-    let Ok(mut thumb) = thumbs.single_mut() else {
-        return;
-    };
-
-    let panel_scale = panel.inverse_scale_factor();
-    let track_scale = track_node.inverse_scale_factor();
-    let viewport_h = panel.size.y.max(0.0) * panel_scale;
-    let content_h = panel.content_size.y.max(0.0) * panel_scale;
-    let track_h = track_node.size.y.max(1.0) * track_scale;
-
-    if viewport_h < 1.0 || content_h < 1.0 {
-        *track_vis = Visibility::Hidden;
-        return;
-    }
-
-    if content_h <= viewport_h + 0.5 {
-        *track_vis = Visibility::Hidden;
-        thumb.top = Val::Px(0.0);
-        thumb.height = Val::Px(track_h);
-        return;
-    }
-
-    *track_vis = Visibility::Inherited;
-
-    let max_scroll = (content_h - viewport_h).max(1.0);
-    let scroll_y = panel.scroll_position.y.clamp(0.0, max_scroll);
-
-    let min_thumb_h = 14.0;
-    let thumb_h = (viewport_h * viewport_h / content_h).clamp(min_thumb_h, track_h);
-    let max_thumb_top = (track_h - thumb_h).max(0.0);
-    let thumb_top = (max_thumb_top * (scroll_y / max_scroll)).clamp(0.0, max_thumb_top);
-
-    thumb.top = Val::Px(thumb_top);
-    thumb.height = Val::Px(thumb_h);
-}
-
-pub(crate) fn gen3d_images_scrollbar_drag(
-    build_scene: Res<State<BuildScene>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
-    mut workshop: ResMut<Gen3dWorkshop>,
-    mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<Gen3dImagesScrollPanel>>,
-    tracks: Query<
-        (&ComputedNode, &UiGlobalTransform, &Visibility),
-        With<Gen3dImagesScrollbarTrack>,
-    >,
-    thumbs: Query<(&Interaction, &ComputedNode, &Node), With<Gen3dImagesScrollbarThumb>>,
-) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        workshop.images_scrollbar_drag = None;
-        return;
-    }
-
-    if !mouse_buttons.pressed(MouseButton::Left) {
-        workshop.images_scrollbar_drag = None;
-        return;
-    }
-
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let Some(cursor) = window.physical_cursor_position() else {
-        return;
-    };
-    let Ok((panel_node, mut scroll)) = panels.single_mut() else {
-        return;
-    };
-    let Ok((track_node, track_transform, track_vis)) = tracks.single() else {
-        return;
-    };
-    if *track_vis == Visibility::Hidden {
-        workshop.images_scrollbar_drag = None;
-        return;
-    }
-    let Ok((interaction, thumb_node, thumb_layout)) = thumbs.single() else {
-        return;
-    };
-
-    if workshop.images_scrollbar_drag.is_none() && *interaction == Interaction::Pressed {
-        if let Some(local) = track_transform
-            .try_inverse()
-            .map(|transform| transform.transform_point2(cursor))
-        {
-            let track_scale = track_node.inverse_scale_factor();
-            let thumb_scale = thumb_node.inverse_scale_factor();
-            let cursor_in_track = (local.y + track_node.size.y * 0.5) * track_scale;
-            let thumb_top = match thumb_layout.top {
-                Val::Px(value) => value,
-                _ => 0.0,
-            };
-            let grab_offset =
-                (cursor_in_track - thumb_top).clamp(0.0, thumb_node.size.y.max(1.0) * thumb_scale);
-            workshop.images_scrollbar_drag = Some(Gen3dImagesScrollbarDrag { grab_offset });
-        }
-    }
-
-    let Some(drag) = workshop.images_scrollbar_drag else {
-        return;
-    };
-
-    let panel_scale = panel_node.inverse_scale_factor();
-    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
-    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
-    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
-        scroll.y = 0.0;
-        return;
-    }
-
-    let track_scale = track_node.inverse_scale_factor();
-    let thumb_scale = thumb_node.inverse_scale_factor();
-    let track_h = track_node.size.y.max(1.0) * track_scale;
-    let thumb_h = thumb_node.size.y.max(1.0) * thumb_scale;
-    let max_thumb_top = (track_h - thumb_h).max(0.0);
-    if max_thumb_top <= 1e-4 {
-        scroll.y = 0.0;
-        return;
-    }
-    let max_scroll = (content_h - viewport_h).max(1.0);
-
-    let Some(local) = track_transform
-        .try_inverse()
-        .map(|transform| transform.transform_point2(cursor))
-    else {
-        return;
-    };
-    let cursor_in_track = ((local.y + track_node.size.y * 0.5) * track_scale).clamp(0.0, track_h);
-    let thumb_top = (cursor_in_track - drag.grab_offset).clamp(0.0, max_thumb_top);
-
-    scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
-}
-
 pub(crate) fn gen3d_clear_images_button(
     build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut job: ResMut<Gen3dAiJob>,
-    mut scroll_panels: Query<&mut ScrollPosition, With<Gen3dImagesScrollPanel>>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Gen3dClearImagesButton>),
@@ -259,9 +50,6 @@ pub(crate) fn gen3d_clear_images_button(
                 workshop.images.clear();
                 workshop.image_viewer = None;
                 workshop.error = None;
-                if let Ok(mut scroll) = scroll_panels.single_mut() {
-                    scroll.y = 0.0;
-                }
                 job.reset_session();
                 if !job.is_running() {
                     workshop.status = format!(
