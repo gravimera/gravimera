@@ -30,7 +30,7 @@ User-visible verification:
 - [x] (2026-03-14 02:05+0800) Update Gen3D tool contracts + prompts + validators to match the same semantics.
 - [x] (2026-03-14 02:15+0800) Update specs/docs that describe `spin` to include `axis_space`.
 - [x] (2026-03-14 02:20+0800) Add/adjust tests to lock in the semantics (join vs child-local).
-- [ ] (2026-03-14) Run rendered smoke test and commit (completed: tests + smoke run; remaining: git commit).
+- [x] (2026-03-14 02:34+0800) Run rendered smoke test and commit (`faccfec`).
 
 ## Surprises & Discoveries
 
