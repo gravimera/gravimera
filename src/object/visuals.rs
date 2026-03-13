@@ -10,7 +10,7 @@ use crate::object::depth_bias::{
 use crate::object::registry::{
     AttachmentDef, MaterialKey, MeshKey, ObjectLibrary, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
-    PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
+    PartAnimationSpinAxisSpace, PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
 };
 use crate::object::types::characters;
 use crate::types::{
@@ -1009,16 +1009,20 @@ pub(crate) fn update_part_animations(
             Transform::IDENTITY
         };
         let animated_base = match (spec, player.attachment.as_ref()) {
-            (Some(spec), Some(attachment))
-                if matches!(spec.clip, PartAnimationDef::Spin { .. }) =>
-            {
-                let child_anchor = player
-                    .child_object_id
-                    .and_then(|object_id| library.get(object_id))
-                    .and_then(|def| anchor_transform(def, attachment.child_anchor.as_ref()))
-                    .unwrap_or(Transform::IDENTITY);
-                apply_child_local_delta_to_attachment_offset(base, child_anchor, delta)
-            }
+            (Some(spec), Some(attachment)) => match &spec.clip {
+                PartAnimationDef::Spin {
+                    axis_space: PartAnimationSpinAxisSpace::ChildLocal,
+                    ..
+                } => {
+                    let child_anchor = player
+                        .child_object_id
+                        .and_then(|object_id| library.get(object_id))
+                        .and_then(|def| anchor_transform(def, attachment.child_anchor.as_ref()))
+                        .unwrap_or(Transform::IDENTITY);
+                    apply_child_local_delta_to_attachment_offset(base, child_anchor, delta)
+                }
+                _ => mul_transform(&base, &delta),
+            },
             _ => mul_transform(&base, &delta),
         };
 
@@ -1073,6 +1077,7 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
         PartAnimationDef::Spin {
             axis,
             radians_per_unit,
+            ..
         } => {
             let axis = if axis.length_squared() > 1e-6 {
                 axis.normalize()
@@ -1266,10 +1271,12 @@ mod tests {
         let spin_pos_x = PartAnimationDef::Spin {
             axis: Vec3::X,
             radians_per_unit: 1.0,
+            axis_space: PartAnimationSpinAxisSpace::Join,
         };
         let spin_neg_x = PartAnimationDef::Spin {
             axis: Vec3::NEG_X,
             radians_per_unit: 1.0,
+            axis_space: PartAnimationSpinAxisSpace::Join,
         };
         let loop_clip = PartAnimationDef::Loop {
             duration_secs: 1.0,
@@ -1371,6 +1378,7 @@ mod tests {
                 clip: PartAnimationDef::Spin {
                     axis: Vec3::Y,
                     radians_per_unit: 1.0,
+                    axis_space: PartAnimationSpinAxisSpace::ChildLocal,
                 },
             },
         };
@@ -1426,6 +1434,146 @@ mod tests {
             "expected fix to differ from anchor-local spin: got={:?} old={:?}",
             got,
             old,
+        );
+    }
+
+    #[test]
+    fn spin_applies_in_join_frame_for_attachments() {
+        use crate::object::registry::{
+            AnchorDef, ColliderProfile, ObjectDef, ObjectInteraction, PartAnimationDef,
+            PartAnimationDriver, PartAnimationSlot, PartAnimationSpec, PartAnimationSpinAxisSpace,
+        };
+        use std::time::Duration;
+
+        // A rotated anchor frame where +Z points up (common for rotor mounts / mirrored wheels).
+        let child_anchor_rot =
+            Quat::from_mat3(&Mat3::from_cols(Vec3::NEG_X, Vec3::Z, Vec3::Y)).normalize();
+
+        let parent_id = 0x3456_789a_u128;
+        let child_id = 0xbead_f00d_u128;
+
+        let mut library = ObjectLibrary::default();
+        library.upsert(ObjectDef {
+            object_id: parent_id,
+            label: "parent".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![AnchorDef {
+                name: "mount".into(),
+                transform: Transform::IDENTITY,
+            }],
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+        library.upsert(ObjectDef {
+            object_id: child_id,
+            label: "child".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: vec![AnchorDef {
+                name: "arm_mount".into(),
+                transform: Transform::from_rotation(child_anchor_rot),
+            }],
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(library);
+        app.add_systems(Update, update_part_animations);
+
+        let root = app
+            .world_mut()
+            .spawn(AnimationChannelsActive {
+                moving: false,
+                attacking_primary: false,
+            })
+            .id();
+
+        let slot = PartAnimationSlot {
+            channel: "idle".into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::Always,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                clip: PartAnimationDef::Spin {
+                    axis: Vec3::Y,
+                    radians_per_unit: 1.0,
+                    axis_space: PartAnimationSpinAxisSpace::Join,
+                },
+            },
+        };
+        let part = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                PartAnimationPlayer {
+                    root_entity: root,
+                    parent_object_id: parent_id,
+                    child_object_id: Some(child_id),
+                    attachment: Some(AttachmentDef {
+                        parent_anchor: "mount".into(),
+                        child_anchor: "arm_mount".into(),
+                    }),
+                    base_transform: Transform::IDENTITY,
+                    animations: vec![slot],
+                    apply_aim_yaw: false,
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(1.0));
+        app.update();
+
+        let transform = app
+            .world()
+            .get::<Transform>(part)
+            .copied()
+            .expect("part entity has Transform");
+
+        let got = if transform.rotation.is_finite() {
+            transform.rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        let delta = Quat::from_axis_angle(Vec3::Y, 1.0);
+        let expected = (delta * child_anchor_rot.inverse()).normalize();
+        assert!(
+            got.angle_between(expected) < 1e-3,
+            "expected spin to apply in join frame: got={:?} expected={:?}",
+            got,
+            expected,
+        );
+
+        // The child-local application order is different:
+        //   inv(child_anchor) * delta
+        let child_local = (child_anchor_rot.inverse() * delta).normalize();
+        assert!(
+            got.angle_between(child_local) > 1e-2,
+            "expected join-frame spin to differ from child-local spin: got={:?} child_local={:?}",
+            got,
+            child_local,
         );
     }
 

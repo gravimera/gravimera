@@ -56,6 +56,13 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
   - Result: rotation frames are always explicit (`join` vs `parent`) and deterministic; no more “it rotated wrong because the engine assumed join-frame”.
   - Code/docs: `src/gen3d/ai/convert.rs` (`attachment_offset_from_ai`), `src/gen3d/ai/structured_outputs.rs` (requires `rot_frame`), `src/gen3d/ai/prompts.rs` + `gen_3d.md` (updated contract text).
 
+- [x] **Make attachment `spin` axis space explicit (`spin.axis_space`)**
+  - Fixed (2026-03-14): `spin` clips can specify `axis_space` (`"join"` | `"child_local"`) to remove the ambiguity of “which frame is this axis in?” for attachment edges.
+  - Result:
+    - Wheels/hinges can use `"join"` to spin around the joint’s axis (stable across mirrored/rotated mounts).
+    - Model-local spinners (fans/rotors) can use `"child_local"` to spin around the model’s own axis regardless of how the joint is oriented.
+  - Code/docs: `src/object/registry.rs`, `src/object/visuals.rs`, `src/gen3d/ai/schema.rs`, `src/gen3d/ai/motion_validation.rs`, `docs/gamedesign/34_realm_prefabs_v1.md`.
+
 - [x] **Missing anchors sometimes silently become identity**
   - Fixed (2026-02-23): Gen3D now treats missing referenced anchors as a hard error instead of silently using `Transform::IDENTITY`.
   - Key fixes:

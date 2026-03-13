@@ -1597,9 +1597,11 @@ pub(super) fn poll_agent_tool(
                                             super::schema::AiAnimationClipJsonV1::Spin {
                                                 axis,
                                                 radians_per_unit,
+                                                axis_space,
                                             } => PartAnimationDef::Spin {
                                                 axis: Vec3::new(axis[0], axis[1], axis[2]),
                                                 radians_per_unit: *radians_per_unit,
+                                                axis_space: axis_space.to_space(),
                                             },
                                         };
 

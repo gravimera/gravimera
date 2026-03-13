@@ -184,6 +184,9 @@ An animation slot:
     - Spin:
       - `axis`: `{x,y,z}` floats
       - `radians_per_unit`: float
+      - `axis_space`: `"join"` | `"child_local"` (optional; defaults to `"join"`)
+        - `"join"`: `axis` is expressed in the attachment join frame (the same frame as `attach_to.offset` and keyframed `delta`).
+        - `"child_local"`: `axis` is expressed in the child object's local frame (the engine rebases the spin through the child anchor).
 
 ### `projectile` (optional)
 

@@ -626,6 +626,23 @@ pub(crate) struct AiAnimationKeyframeJsonV1 {
     pub(crate) delta: AiAnimationDeltaTransformJsonV1,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiSpinAxisSpaceJsonV1 {
+    #[default]
+    Join,
+    ChildLocal,
+}
+
+impl AiSpinAxisSpaceJsonV1 {
+    pub(crate) fn to_space(&self) -> crate::object::registry::PartAnimationSpinAxisSpace {
+        match self {
+            Self::Join => crate::object::registry::PartAnimationSpinAxisSpace::Join,
+            Self::ChildLocal => crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum AiAnimationClipJsonV1 {
@@ -644,6 +661,8 @@ pub(crate) enum AiAnimationClipJsonV1 {
     Spin {
         axis: [f32; 3],
         radians_per_unit: f32,
+        #[serde(default)]
+        axis_space: AiSpinAxisSpaceJsonV1,
     },
 }
 

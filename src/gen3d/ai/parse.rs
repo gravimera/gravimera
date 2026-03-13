@@ -455,6 +455,7 @@ pub(super) fn parse_ai_motion_authoring_from_text(
                 super::schema::AiAnimationClipJsonV1::Spin {
                     axis,
                     radians_per_unit,
+                    ..
                 } => {
                     if axis.iter().any(|v| !v.is_finite()) {
                         return Err(format!(

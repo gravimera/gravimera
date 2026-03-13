@@ -104,7 +104,7 @@ Key definitions:
      - Keep `Always`.
    - Extend `PartAnimationDef`:
      - Keep `Loop`.
-     - Add `Spin { axis: Vec3, radians_per_unit: f32 }`.
+     - Add `Spin { axis: Vec3, radians_per_unit: f32, axis_space: PartAnimationSpinAxisSpace }`.
 
 2. Update `src/object/visuals.rs`:
    - Update `PartAnimationPlayer` to store:
@@ -244,7 +244,7 @@ In `src/object/registry.rs`:
 
     pub(crate) struct PartAnimationSlot { channel: Cow<'static, str>, spec: PartAnimationSpec }
     pub(crate) enum PartAnimationDriver { Always, MovePhase, MoveDistance }
-    pub(crate) enum PartAnimationDef { Loop{...}, Spin{ axis: Vec3, radians_per_unit: f32 } }
+    pub(crate) enum PartAnimationDef { Loop{...}, Spin{ axis: Vec3, radians_per_unit: f32, axis_space: PartAnimationSpinAxisSpace } }
     pub(crate) struct ObjectPartDef { ..., animations: Vec<PartAnimationSlot>, ... }
 
 In `src/types.rs`:

@@ -250,6 +250,7 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
         PartAnimationDef::Spin {
             axis,
             radians_per_unit,
+            ..
         } => {
             let axis = if axis.length_squared() > 1e-6 {
                 axis.normalize()
@@ -616,10 +617,14 @@ fn spin_slot_supported_for_hinge_bias(slot: &PartAnimationSlot, axis_join: Vec3)
     let PartAnimationDef::Spin {
         axis,
         radians_per_unit,
+        axis_space,
     } = &slot.spec.clip
     else {
         return true;
     };
+    if *axis_space != crate::object::registry::PartAnimationSpinAxisSpace::Join {
+        return false;
+    }
     if !radians_per_unit.is_finite() || radians_per_unit.abs() <= 1e-6 {
         return false;
     }
@@ -668,11 +673,15 @@ fn apply_bias_to_attachment_in_place(
             PartAnimationDef::Spin {
                 axis,
                 radians_per_unit,
+                axis_space,
             } => {
                 let (Some(bias_deg), Some(axis_join)) = (hinge_bias_deg, hinge_axis_join) else {
                     // Unsupported; leave unchanged (caller should have prevented applying).
                     continue;
                 };
+                if *axis_space != crate::object::registry::PartAnimationSpinAxisSpace::Join {
+                    continue;
+                }
                 let omega = *radians_per_unit;
                 if !omega.is_finite() || omega.abs() <= 1e-6 {
                     continue;

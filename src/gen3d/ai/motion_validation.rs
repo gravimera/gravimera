@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::object::registry::{
     builtin_object_id, PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
-    PartAnimationSlot,
+    PartAnimationSlot, PartAnimationSpinAxisSpace,
 };
 
 use super::schema::{AiContactKindJson, AiJointKindJson};
@@ -1177,6 +1177,7 @@ fn sample_part_animation(animation: &PartAnimationDef, time_secs: f32) -> Transf
         PartAnimationDef::Spin {
             axis,
             radians_per_unit,
+            ..
         } => {
             let axis = if axis.length_squared() > 1e-6 {
                 axis.normalize()
@@ -1290,6 +1291,28 @@ fn mul_transform(a: &Transform, b: &Transform) -> Transform {
     crate::geometry::mat4_to_transform_allow_degenerate_scale(composed).unwrap_or(*b)
 }
 
+fn apply_child_local_delta_to_attachment_offset(
+    base_offset: Transform,
+    child_anchor: Transform,
+    delta_child_local: Transform,
+) -> Transform {
+    let child_anchor_mat = child_anchor.to_matrix();
+    let inv_child_anchor = child_anchor_mat.inverse();
+    if !inv_child_anchor.is_finite() {
+        return mul_transform(&base_offset, &delta_child_local);
+    }
+
+    // `offset` is applied as: parent_anchor * offset * inv(child_anchor).
+    // If we want a delta in the CHILD's local frame, the desired composition is:
+    //   parent_anchor * offset * inv(child_anchor) * delta_child_local
+    // Rebase into the offset slot:
+    //   offset' = offset * inv(child_anchor) * delta * child_anchor
+    let rebased_mat = inv_child_anchor * delta_child_local.to_matrix() * child_anchor_mat;
+    let rebased = crate::geometry::mat4_to_transform_allow_degenerate_scale(rebased_mat)
+        .unwrap_or(delta_child_local);
+    mul_transform(&base_offset, &rebased)
+}
+
 fn anchor_transform_from_component(comp: &Gen3dPlannedComponent, name: &str) -> Transform {
     if name == "origin" {
         return Transform::IDENTITY;
@@ -1343,7 +1366,17 @@ fn compute_world_transforms_at_t(
                     PartAnimationDriver::MovePhase | PartAnimationDriver::MoveDistance
                 ) {
                     let delta = sample_move_delta(move_slot, t_m);
-                    animated_offset = mul_transform(&animated_offset, &delta);
+                    animated_offset = match &move_slot.spec.clip {
+                        PartAnimationDef::Spin {
+                            axis_space: PartAnimationSpinAxisSpace::ChildLocal,
+                            ..
+                        } => apply_child_local_delta_to_attachment_offset(
+                            animated_offset,
+                            child_anchor,
+                            delta,
+                        ),
+                        _ => mul_transform(&animated_offset, &delta),
+                    };
                 }
             }
 
@@ -1585,10 +1618,21 @@ fn validate_joints(
                 None
             };
 
+            let child_anchor = anchor_transform_from_component(comp, att.child_anchor.as_str());
             for (i, &sample_t_m) in samples_t_m.iter().enumerate() {
                 let sample_phase_01 = samples_phase_01.get(i).copied().unwrap_or(0.0);
                 let delta = sample_animation_slot_delta(slot, sample_t_m, sample_phase_01);
-                let animated_offset = mul_transform(&att.offset, &delta);
+                let animated_offset = match &slot.spec.clip {
+                    PartAnimationDef::Spin {
+                        axis_space: PartAnimationSpinAxisSpace::ChildLocal,
+                        ..
+                    } => apply_child_local_delta_to_attachment_offset(
+                        att.offset,
+                        child_anchor,
+                        delta,
+                    ),
+                    _ => mul_transform(&att.offset, &delta),
+                };
                 let q_delta =
                     (att.offset.rotation.inverse() * animated_offset.rotation).normalize();
                 let angle_deg = quat_angle_deg(q_delta).abs();
@@ -2357,7 +2401,17 @@ fn compute_world_transforms_for_channels(
                     move_distance_m,
                     attack_elapsed_secs,
                 );
-                animated_offset = mul_transform(&animated_offset, &delta);
+                animated_offset = match &slot.spec.clip {
+                    PartAnimationDef::Spin {
+                        axis_space: PartAnimationSpinAxisSpace::ChildLocal,
+                        ..
+                    } => apply_child_local_delta_to_attachment_offset(
+                        animated_offset,
+                        child_anchor,
+                        delta,
+                    ),
+                    _ => mul_transform(&animated_offset, &delta),
+                };
             }
 
             let inv_child = child_anchor.to_matrix().inverse();
@@ -3233,6 +3287,7 @@ mod tests {
             clip: PartAnimationDef::Spin {
                 axis: Vec3::X,
                 radians_per_unit: 4.0,
+                axis_space: crate::object::registry::PartAnimationSpinAxisSpace::Join,
             },
         };
 
@@ -3284,6 +3339,66 @@ mod tests {
                 .iter()
                 .any(|i| { i.get("kind").and_then(|v| v.as_str()) == Some("contact_lift") }),
             "expected no contact_lift issues for spin move component, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn attachment_spin_axis_space_child_local_rebases_through_child_anchor() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+
+        // A rotated anchor frame where +Z points up (common for rotor mounts / mirrored wheels).
+        let child_anchor_rot =
+            Quat::from_mat3(&Mat3::from_cols(Vec3::NEG_X, Vec3::Z, Vec3::Y)).normalize();
+
+        let mut wheel = stub_component(
+            "wheel",
+            vec![anchor_with_rot("mount", Vec3::ZERO, child_anchor_rot)],
+        );
+        wheel.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: PartAnimationSpec {
+                    driver: PartAnimationDriver::MoveDistance,
+                    speed_scale: 1.0,
+                    time_offset_units: 0.0,
+                    clip: PartAnimationDef::Spin {
+                        axis: Vec3::Y,
+                        radians_per_unit: 1.0,
+                        axis_space: crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal,
+                    },
+                },
+            }],
+        });
+
+        let components = vec![root, wheel];
+        let children = vec![vec![1usize], vec![]];
+
+        let world = compute_world_transforms_at_t(&components, &children, 0, 1.0);
+        let got = if world[1].rotation.is_finite() {
+            world[1].rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        let delta = Quat::from_axis_angle(Vec3::Y, 1.0);
+        let expected = (child_anchor_rot.inverse() * delta).normalize();
+        assert!(
+            got.angle_between(expected) < 1e-3,
+            "expected child-local spin axis to be rebased through child anchor: got={:?} expected={:?}",
+            got,
+            expected,
+        );
+
+        let join = (delta * child_anchor_rot.inverse()).normalize();
+        assert!(
+            got.angle_between(join) > 1e-2,
+            "expected child-local spin to differ from join-frame spin: got={:?} join={:?}",
+            got,
+            join,
         );
     }
 

@@ -295,7 +295,7 @@ AnimationClip =\n\
   | { kind:\"loop\", duration_units:number, keyframes: Keyframe[] }\n\
   | { kind:\"once\", duration_units:number, keyframes: Keyframe[] }\n\
   | { kind:\"ping_pong\", duration_units:number, keyframes: Keyframe[] }\n\
-  | { kind:\"spin\", axis:[number,number,number], radians_per_unit:number }\n\
+  | { kind:\"spin\", axis:[number,number,number], radians_per_unit:number, axis_space:\"join\"|\"child_local\" }\n\
 Keyframe = { t_units:number, delta: AnimationDeltaTransform }\n\
 AnimationDeltaTransform = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,number,number], scale?:[number,number,number] }\n\
 \n\

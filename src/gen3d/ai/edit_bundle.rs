@@ -133,6 +133,14 @@ pub(crate) enum PartAnimationDriverBundleV1 {
     AttackTime,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PartAnimationSpinAxisSpaceBundleV1 {
+    #[default]
+    Join,
+    ChildLocal,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum PartAnimationDefBundleV1 {
@@ -154,6 +162,8 @@ pub(crate) enum PartAnimationDefBundleV1 {
     Spin {
         axis: [f32; 3],
         radians_per_unit: f32,
+        #[serde(default)]
+        axis_space: PartAnimationSpinAxisSpaceBundleV1,
     },
 }
 
@@ -419,6 +429,7 @@ mod tests {
                 clip: PartAnimationDef::Spin {
                     axis: Vec3::Y,
                     radians_per_unit: 1.0,
+                    axis_space: crate::object::registry::PartAnimationSpinAxisSpace::Join,
                 },
             },
         });
@@ -687,9 +698,18 @@ impl PartAnimationDefBundleV1 {
             PartAnimationDef::Spin {
                 axis,
                 radians_per_unit,
+                axis_space,
             } => Self::Spin {
                 axis: [axis.x, axis.y, axis.z],
                 radians_per_unit: *radians_per_unit,
+                axis_space: match axis_space {
+                    crate::object::registry::PartAnimationSpinAxisSpace::Join => {
+                        PartAnimationSpinAxisSpaceBundleV1::Join
+                    }
+                    crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal => {
+                        PartAnimationSpinAxisSpaceBundleV1::ChildLocal
+                    }
+                },
             },
         }
     }
@@ -729,9 +749,18 @@ impl PartAnimationDefBundleV1 {
             Self::Spin {
                 axis,
                 radians_per_unit,
+                axis_space,
             } => PartAnimationDef::Spin {
                 axis: Vec3::new(axis[0], axis[1], axis[2]),
                 radians_per_unit: *radians_per_unit,
+                axis_space: match axis_space {
+                    PartAnimationSpinAxisSpaceBundleV1::Join => {
+                        crate::object::registry::PartAnimationSpinAxisSpace::Join
+                    }
+                    PartAnimationSpinAxisSpaceBundleV1::ChildLocal => {
+                        crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal
+                    }
+                },
             },
         })
     }

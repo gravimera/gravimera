@@ -1714,14 +1714,14 @@ pub(crate) fn gen3d_poll_ai_job(
             }
             let text = resp.text;
 
-	            match job.phase {
-	                Gen3dAiPhase::AgentWaitingStep
-	                | Gen3dAiPhase::AgentWaitingUserImageSummary
-	                | Gen3dAiPhase::AgentExecutingActions
-	                | Gen3dAiPhase::AgentWaitingTool
-	                | Gen3dAiPhase::AgentCapturingRender
-	                | Gen3dAiPhase::AgentCapturingPassSnapshot
-	                | Gen3dAiPhase::AgentWaitingDescriptorMeta => {
+            match job.phase {
+                Gen3dAiPhase::AgentWaitingStep
+                | Gen3dAiPhase::AgentWaitingUserImageSummary
+                | Gen3dAiPhase::AgentExecutingActions
+                | Gen3dAiPhase::AgentWaitingTool
+                | Gen3dAiPhase::AgentCapturingRender
+                | Gen3dAiPhase::AgentCapturingPassSnapshot
+                | Gen3dAiPhase::AgentWaitingDescriptorMeta => {
                     // Agent mode is polled via `agent_loop::poll_gen3d_agent`. If we end up here,
                     // just ignore this legacy response path.
                     debug!("Gen3D: ignoring legacy AI result while in agent phase.");
@@ -3165,10 +3165,7 @@ pub(super) fn finish_job_best_effort(
         super::info_store::InfoEventKindV1::BudgetStop,
         None,
         None,
-        format!(
-            "Budget stop: {}",
-            truncate_for_ui(reason.trim(), 600)
-        ),
+        format!("Budget stop: {}", truncate_for_ui(reason.trim(), 600)),
         serde_json::json!({ "reason": reason.trim() }),
     );
     abort_pending_agent_tool_call(job, format!("Run stopped (best effort): {reason}"));
@@ -4319,11 +4316,15 @@ pub(super) fn build_gen3d_scene_graph_summary(
                                 "keyframes_count": keyframes.len(),
                                 "keyframe_times": keyframes.iter().map(|k| k.time_secs).collect::<Vec<f32>>(),
                             }),
-                            crate::object::registry::PartAnimationDef::Spin { axis, radians_per_unit } => {
+                            crate::object::registry::PartAnimationDef::Spin { axis, radians_per_unit, axis_space } => {
                                 serde_json::json!({
                                     "kind":"spin",
                                     "axis":[axis.x, axis.y, axis.z],
                                     "radians_per_unit": radians_per_unit,
+                                    "axis_space": match axis_space {
+                                        crate::object::registry::PartAnimationSpinAxisSpace::Join => "join",
+                                        crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal => "child_local",
+                                    },
                                 })
                             }
                         };

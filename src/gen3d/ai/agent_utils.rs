@@ -162,8 +162,15 @@ fn motion_values_digest(job: &Gen3dAiJob) -> String {
                 PartAnimationDef::Spin {
                     axis,
                     radians_per_unit,
+                    axis_space,
                 } => {
                     hasher.update(b"spin");
+                    hasher.update(match axis_space {
+                        crate::object::registry::PartAnimationSpinAxisSpace::Join => &b"join"[..],
+                        crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal => {
+                            &b"child_local"[..]
+                        }
+                    });
                     hasher.update(quantize_f32_1e4(axis.x).to_le_bytes());
                     hasher.update(quantize_f32_1e4(axis.y).to_le_bytes());
                     hasher.update(quantize_f32_1e4(axis.z).to_le_bytes());

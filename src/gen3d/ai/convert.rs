@@ -3105,6 +3105,8 @@ mod tests {
                         clip: PartAnimationDef::Spin {
                             axis: Vec3::Z,
                             radians_per_unit: 1.0,
+                            axis_space:
+                                crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal,
                         },
                     },
                 }],
@@ -3609,6 +3611,7 @@ mod tests {
                 clip: PartAnimationDef::Spin {
                     axis: Vec3::Z,
                     radians_per_unit: 1.0,
+                    axis_space: crate::object::registry::PartAnimationSpinAxisSpace::Join,
                 },
             },
         });

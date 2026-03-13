@@ -90,6 +90,17 @@ pub(crate) struct PartAnimationKeyframeDef {
     pub(crate) delta: Transform,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PartAnimationSpinAxisSpace {
+    /// Axis is expressed in the attachment join frame (the same frame as `attach_to.offset` and
+    /// authored keyframe deltas). For non-attachment parts, this is simply the part's local frame.
+    #[default]
+    Join,
+    /// Axis is expressed in the child object's local frame. For attachment edges, the engine
+    /// rebases the spin into the join frame using the child anchor transform.
+    ChildLocal,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum PartAnimationDef {
     /// A looping animation. `delta` transforms are applied in the part's local space as:
@@ -116,7 +127,11 @@ pub(crate) enum PartAnimationDef {
     /// - `Always`: unit is seconds
     /// - `MoveDistance`: unit is meters traveled (XZ)
     /// - `MovePhase`: unit is meters traveled (XZ) (a generic locomotion phase driver)
-    Spin { axis: Vec3, radians_per_unit: f32 },
+    Spin {
+        axis: Vec3,
+        radians_per_unit: f32,
+        axis_space: PartAnimationSpinAxisSpace,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

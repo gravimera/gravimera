@@ -574,6 +574,30 @@ impl PartAnimationDriverJson {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PartAnimationSpinAxisSpaceJson {
+    #[default]
+    Join,
+    ChildLocal,
+}
+
+impl PartAnimationSpinAxisSpaceJson {
+    fn from_space(space: crate::object::registry::PartAnimationSpinAxisSpace) -> Self {
+        match space {
+            crate::object::registry::PartAnimationSpinAxisSpace::Join => Self::Join,
+            crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal => Self::ChildLocal,
+        }
+    }
+
+    fn to_space(self) -> crate::object::registry::PartAnimationSpinAxisSpace {
+        match self {
+            Self::Join => crate::object::registry::PartAnimationSpinAxisSpace::Join,
+            Self::ChildLocal => crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum PartAnimationDefJson {
@@ -592,6 +616,8 @@ enum PartAnimationDefJson {
     Spin {
         axis: Vec3Json,
         radians_per_unit: f32,
+        #[serde(default)]
+        axis_space: PartAnimationSpinAxisSpaceJson,
     },
 }
 
@@ -631,9 +657,11 @@ impl PartAnimationDefJson {
             PartAnimationDef::Spin {
                 axis,
                 radians_per_unit,
+                axis_space,
             } => Self::Spin {
                 axis: Vec3Json::from_vec3(*axis),
                 radians_per_unit: *radians_per_unit,
+                axis_space: PartAnimationSpinAxisSpaceJson::from_space(*axis_space),
             },
         }
     }
@@ -673,9 +701,11 @@ impl PartAnimationDefJson {
             Self::Spin {
                 axis,
                 radians_per_unit,
+                axis_space,
             } => PartAnimationDef::Spin {
                 axis: axis.to_vec3(),
                 radians_per_unit: *radians_per_unit,
+                axis_space: axis_space.to_space(),
             },
         })
     }

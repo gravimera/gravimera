@@ -585,6 +585,7 @@ fn schema_motion_authoring() -> serde_json::Value {
         ("kind", schema_enum(&["spin"])),
         ("axis", schema_vec3()),
         ("radians_per_unit", schema_number()),
+        ("axis_space", schema_enum(&["join", "child_local"])),
     ]);
 
     let clip = schema_any_of(vec![clip_loop, clip_once, clip_ping_pong, clip_spin]);

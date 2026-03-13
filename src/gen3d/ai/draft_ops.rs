@@ -520,6 +520,7 @@ fn animation_slot_from_spec(
         AiAnimationClipJsonV1::Spin {
             axis,
             radians_per_unit,
+            axis_space,
         } => {
             if !radians_per_unit.is_finite() {
                 return Err("clip.radians_per_unit must be finite".into());
@@ -528,6 +529,7 @@ fn animation_slot_from_spec(
             PartAnimationDef::Spin {
                 axis,
                 radians_per_unit: *radians_per_unit,
+                axis_space: axis_space.to_space(),
             }
         }
     };

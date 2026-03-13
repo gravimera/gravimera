@@ -72,7 +72,7 @@ Key code locations (paths are repo-root-relative):
   - Attachments: `AttachmentDef { parent_anchor, child_anchor }` on a part.
   - Animations: `PartAnimationSlot { channel, spec }` on a part with:
     - drivers: `Always`, `MovePhase`, `MoveDistance`, `AttackTime`
-    - clips: `Loop { duration_secs, keyframes }` and `Spin { axis, radians_per_unit }`
+    - clips: `Loop { duration_secs, keyframes }` and `Spin { axis, radians_per_unit, axis_space }`
 
 - `src/object/visuals.rs`: Runtime evaluation reference:
   - Attachment composition: `resolve_attachment_transform*` composes `parent_anchor * offset * child_anchor^-1`.
@@ -277,7 +277,7 @@ Export glTF animations so they play correctly in typical engines with no custom 
      - Start with the node’s “base” local transform (the exported static pose).
      - Evaluate the slot’s delta transform as Gravimera does:
        - Loop clip: interpolate between keyframe deltas and wrap at duration.
-       - Spin clip: compute delta rotation from axis + radians-per-unit.
+       - Spin clip: compute delta rotation from axis + axis-space + radians-per-unit.
      - Apply `speed_scale` and `time_offset_units` exactly as `src/object/visuals.rs`:
        - `t_units = driver_units * speed_scale + time_offset_units`.
      - Compose `animated = base * delta(t_units)`.
@@ -490,4 +490,3 @@ Dependencies to add (minimal set; lock versions in `Cargo.lock`):
 - `gltf` (tests only, parse/validate)
 - `zip` (bundle zip output; optional if bundle is directory-only)
 - `byteorder` (optional; can be replaced by manual little-endian writes)
-

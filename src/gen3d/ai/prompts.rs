@@ -80,7 +80,10 @@ pub(super) fn build_gen3d_effective_user_prompt(
 - IMPORTANT: The LLM does NOT receive raw user photos directly.\n\
 - Only use the user notes and/or the photo summary; do NOT invent missing details.\n",
     );
-    if let Some(summary) = image_object_summary.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(summary) = image_object_summary
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         out.push_str("Reference photo main-object summary (auto-generated; visible facts only):\n");
         out.push_str(summary);
         out.push('\n');
@@ -589,12 +592,17 @@ pub(super) fn build_gen3d_component_user_text(
         if let Some(child_anchor_rot) = child_anchor_rot {
             let mut spin_axes: Vec<(String, Vec3)> = Vec::new();
             for slot in att.animations.iter() {
-                if let crate::object::registry::PartAnimationDef::Spin { axis, .. } =
-                    &slot.spec.clip
+                if let crate::object::registry::PartAnimationDef::Spin {
+                    axis, axis_space, ..
+                } = &slot.spec.clip
                 {
-                    let axis_component_local = (child_anchor_rot
-                        * (att.offset.rotation.inverse() * *axis))
-                        .normalize_or_zero();
+                    let axis_component_local = match axis_space {
+                        crate::object::registry::PartAnimationSpinAxisSpace::Join => {
+                            child_anchor_rot * (att.offset.rotation.inverse() * *axis)
+                        }
+                        crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal => *axis,
+                    }
+                    .normalize_or_zero();
                     if axis_component_local.length_squared() > 1e-6 {
                         spin_axes.push((slot.channel.as_ref().to_string(), axis_component_local));
                     }
@@ -674,13 +682,8 @@ mod tests {
     fn gen3d_plan_prompt_mentions_attachment_placement_sanity_check() {
         let prompt = build_gen3d_plan_user_text("test", None, Gen3dSpeedMode::Level3);
         assert!(prompt.contains("Placement sanity check"));
-        let prompt = build_gen3d_plan_user_text_with_hints(
-            "test",
-            None,
-            Gen3dSpeedMode::Level3,
-            None,
-            &[],
-        );
+        let prompt =
+            build_gen3d_plan_user_text_with_hints("test", None, Gen3dSpeedMode::Level3, None, &[]);
         assert!(prompt.contains("Placement sanity check"));
     }
 
@@ -1508,15 +1511,22 @@ Rules:\n\
   - `move_phase` and `move_distance`: time units are meters traveled.\n\
   - `time_offset_units` and `clip.duration_units` are expressed in the SAME units as the driver.\n\
 - Coordinate frames:\n\
-  - These authored keyframes animate the ATTACHMENT OFFSET for that edge.\n\
-  - `delta` transforms are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
-  - The engine applies: animated_offset = base_offset * delta(t).\n\
+  - These authored clips animate the ATTACHMENT OFFSET for that edge.\n\
   - JOIN frame axes: +X = join_right, +Y = join_up, +Z = join_forward.\n\
+  - For `clip.kind=loop|once|ping_pong`:\n\
+    - `delta` transforms are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
+    - The engine applies: animated_offset = base_offset * delta(t).\n\
     - `rot_quat_xyzw=[x,y,z,w]` is in the JOIN frame; the rotation axis is proportional to `[x,y,z]` (normalized).\n\
     - This does NOT restrict you to axis-aligned rotations; any axis vector in join frame is allowed.\n\
+  - For `clip.kind=spin`:\n\
+    - You MUST include `axis_space`: \"join\" | \"child_local\".\n\
+    - Plain words: \"join\" means \"spin around the joint axes\"; \"child_local\" means \"spin around the model's own axes\".\n\
+    - If `axis_space=\"join\"`, `axis` is expressed in the JOIN frame.\n\
+    - If `axis_space=\"child_local\"`, `axis` is expressed in the CHILD component's local frame, and the engine rebases it through the child anchor.\n\
 - Hinge joints (IMPORTANT):\n\
   - If an edge's attachment joint is `kind=hinge`, `axis_join` is expressed in the JOIN frame.\n\
   - Any authored rotation MUST be a pure twist about `axis_join` (no off-axis swing), or motion validation will fail with `hinge_off_axis`.\n\
+  - For hinge edges, prefer `clip.kind=spin` with `axis_space=\"join\"` and `axis` aligned (or anti-aligned) with `axis_join`.\n\
 - Fixed joints (diagnostic):\n\
   - If an edge's attachment joint is `kind=fixed`, any authored rotation will trigger a motion validation warning `fixed_joint_rotates`.\n\
     - Only rotate fixed joints if it is intentional, or if the articulation metadata must be updated elsewhere.\n\
@@ -1617,7 +1627,10 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
 
     let mut out = String::new();
     out.push_str("Goal: author explicit per-edge animation clips.\n");
-    if let Some(summary) = image_object_summary.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(summary) = image_object_summary
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         out.push_str("Reference photo main-object summary (raw images not available):\n");
         out.push_str(summary);
         out.push('\n');

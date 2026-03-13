@@ -472,6 +472,12 @@ enum SceneDatPartAnimationDriver {
     AttackTime = 3,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
+enum SceneDatPartAnimationSpinAxisSpace {
+    Join = 0,
+    ChildLocal = 1,
+}
+
 mod scene_dat_part_animation {
     use super::*;
 
@@ -506,6 +512,8 @@ struct SceneDatPartAnimationSpin {
     axis_z: f32,
     #[prost(float, tag = "4")]
     radians_per_unit: f32,
+    #[prost(enumeration = "SceneDatPartAnimationSpinAxisSpace", tag = "5")]
+    axis_space: i32,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1153,11 +1161,20 @@ fn part_animation_spec_to_dat(spec: &PartAnimationSpec) -> SceneDatPartAnimation
         PartAnimationDef::Spin {
             axis,
             radians_per_unit,
+            axis_space,
         } => scene_dat_part_animation::Kind::Spin(SceneDatPartAnimationSpin {
             axis_x: axis.x,
             axis_y: axis.y,
             axis_z: axis.z,
             radians_per_unit: *radians_per_unit,
+            axis_space: match axis_space {
+                crate::object::registry::PartAnimationSpinAxisSpace::Join => {
+                    SceneDatPartAnimationSpinAxisSpace::Join as i32
+                }
+                crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal => {
+                    SceneDatPartAnimationSpinAxisSpace::ChildLocal as i32
+                }
+            },
         }),
     };
 
@@ -1262,9 +1279,17 @@ fn part_animation_spec_from_dat(animation: &SceneDatPartAnimation) -> Option<Par
             {
                 return None;
             }
+            let axis_space =
+                match SceneDatPartAnimationSpinAxisSpace::try_from(spin.axis_space).ok() {
+                    Some(SceneDatPartAnimationSpinAxisSpace::ChildLocal) => {
+                        crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal
+                    }
+                    _ => crate::object::registry::PartAnimationSpinAxisSpace::Join,
+                };
             PartAnimationDef::Spin {
                 axis,
                 radians_per_unit,
+                axis_space,
             }
         }
     };
@@ -2574,28 +2599,44 @@ mod tests {
                     parent_anchor: "mount".to_string().into(),
                     child_anchor: "origin".to_string().into(),
                 }),
-                animations: vec![PartAnimationSlot {
-                    channel: "move".to_string().into(),
-                    spec: PartAnimationSpec {
-                        driver: PartAnimationDriver::MovePhase,
-                        speed_scale: 1.25,
-                        time_offset_units: 0.4,
-                        clip: PartAnimationDef::Loop {
-                            duration_secs: 2.0,
-                            keyframes: vec![
-                                PartAnimationKeyframeDef {
-                                    time_secs: 0.0,
-                                    delta: Transform::IDENTITY,
-                                },
-                                PartAnimationKeyframeDef {
-                                    time_secs: 1.0,
-                                    delta: Transform::IDENTITY
-                                        .with_rotation(Quat::from_rotation_y(0.5)),
-                                },
-                            ],
+                animations: vec![
+                    PartAnimationSlot {
+                        channel: "move".to_string().into(),
+                        spec: PartAnimationSpec {
+                            driver: PartAnimationDriver::MovePhase,
+                            speed_scale: 1.25,
+                            time_offset_units: 0.4,
+                            clip: PartAnimationDef::Loop {
+                                duration_secs: 2.0,
+                                keyframes: vec![
+                                    PartAnimationKeyframeDef {
+                                        time_secs: 0.0,
+                                        delta: Transform::IDENTITY,
+                                    },
+                                    PartAnimationKeyframeDef {
+                                        time_secs: 1.0,
+                                        delta: Transform::IDENTITY
+                                            .with_rotation(Quat::from_rotation_y(0.5)),
+                                    },
+                                ],
+                            },
                         },
                     },
-                }],
+                    PartAnimationSlot {
+                        channel: "ambient".to_string().into(),
+                        spec: PartAnimationSpec {
+                            driver: PartAnimationDriver::Always,
+                            speed_scale: 2.0,
+                            time_offset_units: 0.0,
+                            clip: PartAnimationDef::Spin {
+                                axis: Vec3::Z,
+                                radians_per_unit: 3.5,
+                                axis_space:
+                                    crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal,
+                            },
+                        },
+                    },
+                ],
                 transform: Transform::from_translation(Vec3::new(0.1, 0.2, 0.3))
                     .with_rotation(Quat::from_rotation_x(0.25))
                     .with_scale(Vec3::new(1.0, 2.0, 3.0)),
@@ -2680,7 +2721,7 @@ mod tests {
         );
         assert!((part.transform.scale - Vec3::new(1.0, 2.0, 3.0)).length_squared() < 1e-6);
 
-        assert_eq!(part.animations.len(), 1);
+        assert_eq!(part.animations.len(), 2);
         let slot = part
             .animations
             .iter()
@@ -2709,6 +2750,31 @@ mod tests {
                 );
             }
             _ => panic!("expected loop animation"),
+        }
+
+        let slot = part
+            .animations
+            .iter()
+            .find(|slot| slot.channel.as_ref() == "ambient")
+            .expect("ambient animation should roundtrip");
+        let animation = &slot.spec;
+        assert_eq!(animation.driver, PartAnimationDriver::Always);
+        assert!((animation.speed_scale - 2.0).abs() < 1e-6);
+        assert!((animation.time_offset_units - 0.0).abs() < 1e-6);
+        match &animation.clip {
+            PartAnimationDef::Spin {
+                axis,
+                radians_per_unit,
+                axis_space,
+            } => {
+                assert!((*axis - Vec3::Z).length_squared() < 1e-6);
+                assert!((*radians_per_unit - 3.5).abs() < 1e-6);
+                assert_eq!(
+                    *axis_space,
+                    crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal
+                );
+            }
+            _ => panic!("expected spin animation"),
         }
 
         let projectile = decoded

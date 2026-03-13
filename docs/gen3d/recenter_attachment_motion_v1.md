@@ -53,8 +53,11 @@ motion with `llm_generate_motion_authoring_v1`.
 
 ## Spin clips
 
-`spin` clips are only supported on hinge edges when the clip axis is aligned (or anti-aligned)
-with the hinge `axis_join` and `radians_per_unit` is non-zero. Otherwise, the tool refuses to
-apply, because the exact left-multiplication `B^{-1} * delta(t)` cannot be represented as a `spin`
-with a single fixed axis.
+`spin` clips are only supported on hinge edges when:
 
+- `axis_space="join"` (the axis is in the hinge’s join frame),
+- the clip `axis` is aligned (or anti-aligned) with the hinge `axis_join`,
+- `radians_per_unit` is non-zero.
+
+Otherwise, the tool refuses to apply, because the exact left-multiplication `B^{-1} * delta(t)`
+cannot be represented as a `spin` with a single fixed axis.
