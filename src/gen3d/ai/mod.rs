@@ -14,6 +14,7 @@ mod agent_tool_poll;
 mod agent_utils;
 mod ai_service;
 mod artifacts;
+mod basis_from_up_forward;
 mod claude;
 mod convert;
 mod copy_component;

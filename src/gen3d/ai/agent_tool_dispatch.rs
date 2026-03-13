@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_COPY_COMPONENT,
+    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_BASIS_FROM_UP_FORWARD,
+    TOOL_ID_COPY_COMPONENT,
     TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE,
     TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS,
     TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
@@ -39,6 +40,7 @@ use super::agent_review_images::{
 };
 use super::agent_step::ToolCallOutcome;
 use super::agent_utils::{build_component_subset_workspace_defs, sanitize_prefix};
+use super::basis_from_up_forward::basis_from_up_forward_v1;
 use super::artifacts::{
     append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact,
 };
@@ -352,6 +354,74 @@ pub(super) fn execute_tool_call(
                 call.tool_id,
                 serde_json::json!({ "tool": tool }),
             ))
+        }
+        TOOL_ID_BASIS_FROM_UP_FORWARD => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct BasisFromUpForwardArgsV1 {
+                #[serde(default)]
+                version: u32,
+                up: [f32; 3],
+                #[serde(default)]
+                forward_hint: Option<[f32; 3]>,
+            }
+
+            let mut args: BasisFromUpForwardArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!(
+                            "Invalid args for `{TOOL_ID_BASIS_FROM_UP_FORWARD}`: {err}. Expected: {{ up:[x,y,z], forward_hint?:[x,y,z] }}."
+                        ),
+                    ));
+                }
+            };
+            if args.version == 0 {
+                args.version = 1;
+            }
+            if args.version != 1 {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "Unsupported `{TOOL_ID_BASIS_FROM_UP_FORWARD}` version {}.",
+                        args.version
+                    ),
+                ));
+            }
+
+            let up_in = Vec3::new(args.up[0], args.up[1], args.up[2]);
+            let forward_hint = args
+                .forward_hint
+                .map(|arr| Vec3::new(arr[0], arr[1], arr[2]));
+            let basis = match basis_from_up_forward_v1(up_in, forward_hint) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("`{TOOL_ID_BASIS_FROM_UP_FORWARD}`: {err}"),
+                    ));
+                }
+            };
+
+            let json = serde_json::json!({
+                "version": 1,
+                "input": {
+                    "up": args.up,
+                    "forward_hint": args.forward_hint,
+                },
+                "forward": [basis.forward.x, basis.forward.y, basis.forward.z],
+                "up": [basis.up.x, basis.up.y, basis.up.z],
+                "right": [basis.right.x, basis.right.y, basis.right.z],
+                "forward_source": basis.forward_source,
+                "fallback_axis": basis.fallback_axis,
+                "notes": basis.notes,
+            });
+
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_GET_USER_INPUTS => ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
             call.call_id,

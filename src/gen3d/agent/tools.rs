@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 pub(crate) const TOOL_ID_GET_TOOL_DETAIL: &str = "get_tool_detail_v1";
+pub(crate) const TOOL_ID_BASIS_FROM_UP_FORWARD: &str = "basis_from_up_forward_v1";
 
 pub(crate) const TOOL_ID_GET_USER_INPUTS: &str = "get_user_inputs_v2";
 pub(crate) const TOOL_ID_GET_STATE_SUMMARY: &str = "get_state_summary_v1";
@@ -76,6 +77,14 @@ impl Gen3dToolRegistryV1 {
                     "Read-only: tool introspection (args_schema/args_example) for one tool_id.",
                 args_schema: "{ tool_id: string }",
                 args_example: serde_json::json!({ "tool_id": "apply_draft_ops_v1" }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_BASIS_FROM_UP_FORWARD,
+                title: "Basis from up/forward",
+                one_line_summary:
+                    "Read-only: compute a valid orthonormal basis `{forward, up, right}` from an `up` axis and optional `forward_hint` (for authoring part/anchor rotations). Errors on degenerate inputs.",
+                args_schema: "{ version?: 1, up: [x,y,z], forward_hint?: [x,y,z] }",
+                args_example: serde_json::json!({ "up": [0.0, 1.0, 0.0], "forward_hint": [0.0, 0.0, 1.0] }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_GET_USER_INPUTS,

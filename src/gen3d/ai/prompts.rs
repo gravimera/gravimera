@@ -518,6 +518,11 @@ pub(super) fn build_gen3d_component_user_text(
          If the AABB axes appear permuted relative to `target_size`, the engine will reject the draft and request regeneration.\n\
          Attachment frame rule: parent/child anchors describe the SAME join frame but in different component-local coordinates; do NOT force them to have identical numeric vectors.\n\
          Avoid 180° opposition (that flips the child). If you need a flip, encode it via `attach_to.offset` rotation in the PLAN (not by reversing anchors).\n\
+         Primitive axis reminder (IMPORTANT):\n\
+         - For `cylinder` and `cone`, the shape's length/height axis is the part's local +Y axis.\n\
+           - Use `scale.y` to control length/height.\n\
+           - Use `scale.x` and `scale.z` to control thickness (keep x≈z for round cross-sections).\n\
+           - To aim a cylinder/cone along a direction D, set part `up = D` and choose any perpendicular `forward`.\n\
          Convention: the component center must be at local [0,0,0].\n\
          The engine will not auto-adjust placement.\n\
              Avoid z-fighting: do NOT place two primitives so any of their planar faces are coplanar AND overlap in area.\n\
@@ -1010,6 +1015,7 @@ pub(super) fn build_gen3d_component_system_instructions() -> String {
          - Use units roughly in meters; keep scale consistent with the plan.\n\
          - Component center should be near the origin.\n\
          - Transform semantics: `scale` is a 3D size vector in the part's LOCAL axes (+X right, +Y up, +Z forward), and it rotates with the part when you provide `forward`/`up`.\n\
+         - Primitive axis reminder: for `cylinder` and `cone`, the mesh's length/height axis is the part's local +Y axis (so use `scale.y` for length/height and aim it by setting `up`).\n\
          - The component's overall local AABB should be close to the plan's `target_size` per-axis (do not swap/permutate axes).\n\
          - Output only the JSON object; no markdown.\n"
     )
