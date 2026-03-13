@@ -445,7 +445,7 @@ These are defense-in-depth and “contract drift” hardening steps. They are op
 - [x] Include KV provenance (`written_by`) in Info KV tool outputs so the agent can trace which tool/call produced a value.
 - [x] Keep prompt ↔ tool contracts aligned for review images:
   - Do not allow unsupported args (example: remove `include_original_images` if it always errors).
-  - Provide a non-empty default call pattern that satisfies the “no empty `{}` args” prompt rule (example: `preview_blob_ids: []` means “use the latest render cache”).
+  - Provide a non-empty default call pattern that satisfies the “no empty `{}` args” prompt rule (example: `{\"preview_blob_ids\":[]}` means “use the latest render cache”).
 
 ## Code Review Guidance (Prompt ↔ Tool Contract Mismatch Prevention)
 
