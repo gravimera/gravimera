@@ -230,7 +230,7 @@ impl Gen3dToolRegistryV1 {
                 one_line_summary:
                     "Read-only: list recent Info Store events with filters (paged; bounded; returns data_preview).",
                 args_schema:
-                    "{ filters?: { kind?: string, tool_id?: string, call_id?: string, min_ts_ms?: number, max_ts_ms?: number, attempt?: number, pass?: number }, sort?: \"ts_desc\"|\"ts_asc\", page?: { limit?: number, cursor?: string } }",
+                    "{ filters?: { kind?: \"tool_call_start\"|\"tool_call_result\"|\"engine_log\"|\"budget_stop\"|\"warning\"|\"error\", tool_id?: string, call_id?: string, min_ts_ms?: number, max_ts_ms?: number, attempt?: number, pass?: number }, sort?: \"ts_desc\"|\"ts_asc\", page?: { limit?: number, cursor?: string } }",
                 args_example: serde_json::json!({
                     "filters": { "kind": "tool_call_result" },
                     "sort": "ts_desc",
@@ -251,7 +251,7 @@ impl Gen3dToolRegistryV1 {
                 one_line_summary:
                     "Read-only: substring search over Info Store event messages (paged; bounded).",
                 args_schema:
-                    "{ query: string, filters?: { kind?: string, attempt?: number, pass?: number }, page?: { limit?: number, cursor?: string } }",
+                    "{ query: string, filters?: { kind?: \"tool_call_start\"|\"tool_call_result\"|\"engine_log\"|\"budget_stop\"|\"warning\"|\"error\", attempt?: number, pass?: number }, page?: { limit?: number, cursor?: string } }",
                 args_example: serde_json::json!({
                     "query": "ERROR",
                     "filters": { "kind": "error" },

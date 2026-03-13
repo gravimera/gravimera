@@ -34,8 +34,6 @@ pub(super) fn parse_review_preview_blob_ids_from_args(args: &serde_json::Value) 
         &[
             "preview_blob_ids",
             "blob_ids",
-            "preview_ids",
-            "preview_blobs",
         ],
     )
 }
