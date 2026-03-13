@@ -21,14 +21,14 @@ User-visible outcome: A user can run a preserve-mode edit like “add a hat” a
 ## Progress
 
 - [x] (2026-03-14 04:33Z) Write this ExecPlan based on investigation of run `6689cf3e-9c92-47e4-86ac-fb1b18f4e5c0`.
-- [ ] Preserve existing `attach_to.joint` during preserve-mode plan acceptance (fix root cause).
-- [ ] Improve preserve-mode planning context so the LLM sees joint metadata (optional but recommended).
-- [ ] Make “regen-only but QA-gated” review deltas return an actionable tool error (avoid deadlocks).
-- [ ] Make read-only inspection tools return bounded “next-step payloads” (recipes/templates) for common deterministic fixes (recolor, nudge attachment).
-- [ ] Add focused unit tests for joint preservation and QA-gated regen diagnostics.
-- [ ] Update docs under `docs/gen3d/` to match the new semantics and tool result shapes.
-- [ ] Run `cargo test` and the required rendered smoke test.
-- [ ] Commit with a clear message.
+- [x] (2026-03-14) Preserve existing `attach_to.joint` during preserve-mode plan acceptance (fix root cause).
+- [x] (2026-03-14) Improve preserve-mode planning context so the LLM sees joint metadata.
+- [x] (2026-03-14) Make “regen-only but QA-gated” review deltas return an actionable tool error (avoid deadlocks).
+- [x] (2026-03-14) Make read-only inspection tools return bounded “next-step payloads” (recipes/templates) for common deterministic fixes (recolor, nudge attachment).
+- [x] (2026-03-14) Add focused unit tests for joint preservation and QA-gated regen diagnostics.
+- [x] (2026-03-14) Update docs under `docs/gen3d/` to match the new semantics and tool result shapes.
+- [x] (2026-03-14) Run `cargo test` and the required rendered smoke test.
+- [x] (2026-03-14) Commit with a clear message.
 
 ## Surprises & Discoveries
 
@@ -40,6 +40,9 @@ User-visible outcome: A user can run a preserve-mode edit like “add a hat” a
 
 - Observation: The agent can enter an inspection loop when `llm_review_delta_v1` proposes only a regeneration that is blocked by the QA gate, because the resulting tool outcome is not strongly “actionable” (it returns “ok” with blocked indices), and the agent keeps trying to gather more read-only info.
   Evidence: `~/.gravimera/cache/gen3d/6689cf3e-9c92-47e4-86ac-fb1b18f4e5c0/attempt_0/pass_16/gen3d_run.log` ends with `no_progress_guard_stop tries=1 inspection_steps=12` after repeated `get_scene_graph_summary_v1` / `query_component_parts_v1`.
+
+- Observation: `query_component_parts_v1` previously returned primitive mesh names in a debug format (`UnitCube`) that was not directly usable as `apply_draft_ops_v1` input (which expects canonical strings like `cube` / `unit_cube`).
+  Outcome: The tool now includes `primitive.mesh_apply` and bounded `recipes` to make deterministic edits copy/pasteable.
 
 ## Decision Log
 
@@ -57,7 +60,7 @@ User-visible outcome: A user can run a preserve-mode edit like “add a hat” a
 
 ## Outcomes & Retrospective
 
-- (placeholder; fill during implementation) Expected: preserve-mode edits no longer drop joints; the agent converges more reliably when QA gates prevent regen; tool results provide copy/pasteable next-step payloads.
+- Implemented (2026-03-14): preserve-mode edits no longer drop joints; QA-gated regen-only review deltas return an actionable error; `query_component_parts_v1` returns bounded copy/pasteable next-step payloads (`recipes`) and canonical primitive mesh strings (`mesh_apply`).
 
 ## Context and Orientation
 
@@ -194,4 +197,3 @@ Investigation artifacts (not to be checked in; local cache only):
 
 - No new external crates are required.
 - Tool changes must follow `docs/agent_skills/tool_authoring_rules.md` (deterministic, versioned contracts, bounded outputs, actionable results/errors, no silent mutation).
-

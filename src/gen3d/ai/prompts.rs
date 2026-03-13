@@ -345,6 +345,37 @@ Hard requirements:\n\
                     s.y,
                     s.z
                 ));
+                if let Some(joint) = att.joint.as_ref() {
+                    let kind = match joint.kind {
+                        AiJointKindJson::Fixed => "fixed",
+                        AiJointKindJson::Hinge => "hinge",
+                        AiJointKindJson::Ball => "ball",
+                        AiJointKindJson::Free => "free",
+                        AiJointKindJson::Unknown => "unknown",
+                    };
+                    out.push_str(&format!(" joint.kind={kind}"));
+                    if let Some(axis) = joint.axis_join {
+                        out.push_str(&format!(
+                            " joint.axis_join=[{:.3},{:.3},{:.3}]",
+                            axis[0], axis[1], axis[2]
+                        ));
+                    }
+                    if let Some([min_deg, max_deg]) = joint.limits_degrees {
+                        out.push_str(&format!(
+                            " joint.limits_degrees=[{min_deg:.1},{max_deg:.1}]"
+                        ));
+                    }
+                    if let Some([min_deg, max_deg]) = joint.swing_limits_degrees {
+                        out.push_str(&format!(
+                            " joint.swing_limits_degrees=[{min_deg:.1},{max_deg:.1}]"
+                        ));
+                    }
+                    if let Some([min_deg, max_deg]) = joint.twist_limits_degrees {
+                        out.push_str(&format!(
+                            " joint.twist_limits_degrees=[{min_deg:.1},{max_deg:.1}]"
+                        ));
+                    }
+                }
             }
             out.push_str(&format!(
                 " planned_size=[{:.3},{:.3},{:.3}]",

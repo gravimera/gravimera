@@ -1186,6 +1186,11 @@ pub(super) fn query_component_parts_v1(
 
     let mut out_parts: Vec<serde_json::Value> = Vec::new();
     let mut truncated = false;
+    const SAMPLE_RECOLOR_MAX: usize = 8;
+    let mut recolor_samples: Vec<serde_json::Value> = Vec::new();
+    let mut transform_sample: Option<serde_json::Value> = None;
+    let mut recolorable_primitives_total: usize = 0;
+    let mut primitives_with_part_id_total: usize = 0;
     for (part_index, part) in def.parts.iter().enumerate() {
         let kind_str = match &part.kind {
             ObjectPartKind::Primitive { .. } => "primitive",
@@ -1201,6 +1206,9 @@ pub(super) fn query_component_parts_v1(
         }
 
         let part_id_uuid = part.part_id.map(|id| Uuid::from_u128(id).to_string());
+        if kind_str == "primitive" && part_id_uuid.is_some() {
+            primitives_with_part_id_total = primitives_with_part_id_total.saturating_add(1);
+        }
         let t = part.transform;
         let mut json = serde_json::Map::new();
         json.insert("part_index".into(), serde_json::json!(part_index));
@@ -1208,6 +1216,8 @@ pub(super) fn query_component_parts_v1(
         json.insert(
             "part_id_uuid".into(),
             part_id_uuid
+                .as_ref()
+                .cloned()
                 .map(serde_json::Value::String)
                 .unwrap_or(serde_json::Value::Null),
         );
@@ -1235,6 +1245,16 @@ pub(super) fn query_component_parts_v1(
                         color,
                         unlit,
                     } => {
+                        let mesh_apply = match mesh {
+                            MeshKey::UnitCube => Some("cube"),
+                            MeshKey::UnitCylinder => Some("cylinder"),
+                            MeshKey::UnitCone => Some("cone"),
+                            MeshKey::UnitSphere => Some("sphere"),
+                            MeshKey::UnitCapsule => Some("capsule"),
+                            MeshKey::UnitConicalFrustum => Some("conical_frustum"),
+                            MeshKey::UnitTorus => Some("torus"),
+                            _ => None,
+                        };
                         let srgba = color.to_srgba();
                         let params_json = match params {
                             None => serde_json::Value::Null,
@@ -1265,8 +1285,41 @@ pub(super) fn query_component_parts_v1(
                                 "major_radius": major_radius,
                             }),
                         };
+                        if let (Some(part_id_uuid), Some(mesh_apply)) =
+                            (part_id_uuid.as_ref(), mesh_apply)
+                        {
+                            recolorable_primitives_total =
+                                recolorable_primitives_total.saturating_add(1);
+                            if recolor_samples.len() < SAMPLE_RECOLOR_MAX {
+                                recolor_samples.push(serde_json::json!({
+                                    "kind": "update_primitive_part",
+                                    "component": component.as_str(),
+                                    "part_id_uuid": part_id_uuid,
+                                    "set_primitive": {
+                                        "mesh": mesh_apply,
+                                        "params": params_json.clone(),
+                                        // Example color. Change this (and replicate the op) as needed.
+                                        "color_rgba": [0.20, 0.40, 0.80, 1.00],
+                                        "unlit": *unlit,
+                                    },
+                                }));
+                            }
+                            if transform_sample.is_none() {
+                                transform_sample = Some(serde_json::json!({
+                                    "kind": "update_primitive_part",
+                                    "component": component.as_str(),
+                                    "part_id_uuid": part_id_uuid,
+                                    "set_transform": {
+                                        "pos": [t.translation.x, t.translation.y, t.translation.z],
+                                        "rot_quat_xyzw": [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                                        "scale": [t.scale.x, t.scale.y, t.scale.z],
+                                    },
+                                }));
+                            }
+                        }
                         serde_json::json!({
                             "mesh": format!("{mesh:?}"),
+                            "mesh_apply": mesh_apply,
                             "params": params_json,
                             "color_rgba": [srgba.red, srgba.green, srgba.blue, srgba.alpha],
                             "unlit": unlit,
@@ -1326,6 +1379,40 @@ pub(super) fn query_component_parts_v1(
         .position(|c| c.name == component)
         .map(|idx| idx as u32);
 
+    let mut recipes: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    let recolor_sample_total = recolor_samples.len();
+    if !recolor_samples.is_empty() {
+        recipes.insert(
+            "recolor_sample".into(),
+            serde_json::json!({
+                "tool_id": "apply_draft_ops_v1",
+                "note": "Recolor a few sample primitives. Update color_rgba and replicate for more parts as needed. For `update_primitive_part.set_primitive`, keep mesh+params unchanged; only change color_rgba/unlit.",
+                "args": {
+                    "version": 1,
+                    "atomic": true,
+                    "if_assembly_rev": job.assembly_rev(),
+                    "ops": recolor_samples,
+                },
+            }),
+        );
+    }
+    let transform_sample_total = transform_sample.as_ref().map(|_| 1).unwrap_or(0);
+    if let Some(sample) = transform_sample {
+        recipes.insert(
+            "update_transform_sample".into(),
+            serde_json::json!({
+                "tool_id": "apply_draft_ops_v1",
+                "note": "Update a primitive part transform (absolute set). Edit pos/rot_quat_xyzw/scale as needed.",
+                "args": {
+                    "version": 1,
+                    "atomic": true,
+                    "if_assembly_rev": job.assembly_rev(),
+                    "ops": [sample],
+                },
+            }),
+        );
+    }
+
     let result = serde_json::json!({
         "ok": true,
         "version": 1,
@@ -1333,8 +1420,21 @@ pub(super) fn query_component_parts_v1(
         "component_index": component_index,
         "component_id_uuid": Uuid::from_u128(object_id).to_string(),
         "active_workspace": job.active_workspace_id(),
+        "assembly_rev": job.assembly_rev(),
         "parts": out_parts,
         "truncated": truncated,
+        "editability": {
+            "primitives_with_part_id_total": primitives_with_part_id_total,
+            "recolorable_primitives_total": recolorable_primitives_total,
+            "recolor_sample_total": recolor_sample_total,
+            "update_transform_sample_total": transform_sample_total,
+        },
+        "hints": [
+            "For recolor: use apply_draft_ops_v1 with kind=update_primitive_part and set_primitive (mesh+params required; change only color_rgba/unlit).",
+            "Edits require part_id_uuid. If part_id_uuid is null, that part is not directly editable via apply_draft_ops_v1.",
+            "All transforms in apply_draft_ops_v1 are absolute sets (not additive deltas).",
+        ],
+        "recipes": recipes,
     });
 
     if let Some(dir) = job.pass_dir_path() {

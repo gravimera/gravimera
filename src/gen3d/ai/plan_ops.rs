@@ -826,6 +826,7 @@ fn apply_plan_acceptance(
                     && new_att.child_anchor.trim() == old_att.child_anchor.trim();
                 if same_interface {
                     new_att.animations = old_att.animations.clone();
+                    new_att.joint = old_att.joint.clone();
                 }
             }
         }
@@ -1200,6 +1201,9 @@ pub(super) fn apply_plan_ops_v1(
 mod tests {
     use super::*;
     use crate::gen3d::ai::schema::AiMobilityJson;
+    use crate::gen3d::ai::schema::{AiJointJson, AiJointKindJson};
+    use crate::object::registry::{MeshKey, ObjectPartDef, PrimitiveVisualDef};
+    use uuid::Uuid;
 
     fn make_plan_with_missing_parent() -> AiPlanJsonV1 {
         AiPlanJsonV1 {
@@ -1352,5 +1356,118 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         assert!(error.contains("referenced"));
+    }
+
+    fn make_plan_with_tail_joint(joint: Option<AiJointJson>) -> AiPlanJsonV1 {
+        AiPlanJsonV1 {
+            version: 8,
+            rig: None,
+            mobility: AiMobilityJson::Static,
+            attack: None,
+            aim: None,
+            collider: None,
+            assembly_notes: "test".into(),
+            root_component: None,
+            reuse_groups: Vec::new(),
+            components: vec![
+                AiPlanComponentJson {
+                    name: "body".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [1.0, 1.0, 1.0],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: None,
+                },
+                AiPlanComponentJson {
+                    name: "tail".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [0.2, 0.2, 0.6],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: Some(AiPlanAttachmentJson {
+                        parent: "body".into(),
+                        parent_anchor: "origin".into(),
+                        child_anchor: "origin".into(),
+                        offset: None,
+                        joint,
+                    }),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn preserve_mode_acceptance_preserves_attachment_joint_when_interface_unchanged() {
+        let hinge = AiJointJson {
+            kind: AiJointKindJson::Hinge,
+            axis_join: Some([0.0, 1.0, 0.0]),
+            limits_degrees: Some([-45.0, 45.0]),
+            swing_limits_degrees: None,
+            twist_limits_degrees: None,
+        };
+
+        let mut job = Gen3dAiJob::default();
+        let mut draft = Gen3dDraft { defs: Vec::new() };
+
+        let plan_with_joint = make_plan_with_tail_joint(Some(hinge.clone()));
+        let (planned_old, notes_old, mut defs_old) =
+            convert::ai_plan_to_initial_draft_defs(plan_with_joint).expect("plan should convert");
+        job.planned_components = planned_old;
+        job.assembly_notes = notes_old;
+
+        // Mark the draft as already-generated so preserve-mode acceptance merges metadata.
+        let body_id = crate::object::registry::builtin_object_id("gravimera/gen3d/component/body");
+        let body_def = defs_old
+            .iter_mut()
+            .find(|def| def.object_id == body_id)
+            .expect("expected body def");
+        body_def.parts.push(
+            ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(0.5, 0.5, 0.5),
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )
+            .with_part_id(Uuid::new_v4().as_u128()),
+        );
+        draft.defs = defs_old;
+
+        let plan_without_joint = make_plan_with_tail_joint(None);
+        let (planned_new, notes_new, defs_new) =
+            convert::ai_plan_to_initial_draft_defs(plan_without_joint)
+                .expect("plan should convert");
+
+        apply_plan_acceptance(
+            &mut job,
+            &mut draft,
+            true,
+            planned_new,
+            notes_new,
+            defs_new,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("acceptance should succeed");
+
+        let tail = job
+            .planned_components
+            .iter()
+            .find(|c| c.name == "tail")
+            .expect("expected tail");
+        let preserved = tail
+            .attach_to
+            .as_ref()
+            .and_then(|att| att.joint.as_ref())
+            .expect("expected joint to be preserved");
+        assert_eq!(preserved.kind, AiJointKindJson::Hinge);
+        assert_eq!(preserved.axis_join, hinge.axis_join);
+        assert_eq!(preserved.limits_degrees, hinge.limits_degrees);
     }
 }

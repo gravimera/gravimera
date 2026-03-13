@@ -25,6 +25,9 @@ When preserve mode is enabled **and** the current draft already contains generat
   - `allow_rewire`: allow rewiring only an explicit allow-list (`constraints.rewire_components`); all other existing components remain frozen.
 - The engine merges plan metadata into the existing draft **without overwriting existing primitive/model geometry** for already-generated components.
 - Existing anchor frames are preserved for existing anchor names; the plan may add new anchors (new names) deterministically.
+- Existing motion metadata is preserved when the attachment interface is unchanged (same `attach_to.parent` + `parent_anchor` + `child_anchor`):
+  - `attach_to.joint` is preserved (prevents accidental articulation drift, e.g. tails/wings changing when adding a hat).
+  - `attach_to.animations` is preserved (existing motion slots are not dropped by replans).
 
 If the plan violates the guardrails (including the selected edit policy), `llm_generate_plan_v1` returns a tool error and the draft is left unchanged.
 
@@ -67,8 +70,9 @@ Notes:
   - `SetAnchorTransform` (adjust a join frame), and
   - primitive part ops (add/remove/update geometry).
 - If you want to deterministically **recolor** already-generated geometry (without regeneration):
-  1) Call `query_component_parts_v1` to get `part_id_uuid` + current `primitive.color_rgba`, then
+  1) Call `query_component_parts_v1` to get `part_id_uuid` + current primitive metadata (`primitive.mesh_apply` + `primitive.params` + `primitive.color_rgba`), then
   2) Call `apply_draft_ops_v1` with `update_primitive_part` and set `set_primitive.color_rgba` for the target `part_id_uuid`.
+  - Tip: `query_component_parts_v1` includes bounded `recipes` with copy/pasteable `apply_draft_ops_v1` payloads for recolor and transform edits.
 - If you want to change animation clips, prefer `llm_generate_motion_authoring_v1` (or `apply_draft_ops_v1` animation slot ops).
 
 ## Preserve Mode (Generation Tools)

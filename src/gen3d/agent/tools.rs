@@ -154,7 +154,7 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_QUERY_COMPONENT_PARTS,
                 title: "Query component parts",
-                one_line_summary: "Read-only: list component parts (primitive mesh/color + part_id_uuid + transforms); writes into Info Store KV as `ws.<id>.component_parts.<component>` and returns `info_kv` ref.",
+                one_line_summary: "Read-only: list component parts (primitive mesh/color + mesh_apply + part_id_uuid + transforms) and includes bounded `recipes` (copy/pasteable apply_draft_ops_v1 payloads); writes into Info Store KV as `ws.<id>.component_parts.<component>` and returns `info_kv` ref.",
                 args_schema:
                     "{ version?: 1, component?: string, component_index?: number, include_non_primitives?: bool, max_parts?: number }",
                 args_example: serde_json::json!({ "component": "torso", "max_parts": 128 }),

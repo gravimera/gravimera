@@ -84,6 +84,22 @@ fn bucket_review_delta_regen_requests(
     buckets
 }
 
+fn is_review_delta_qa_gated_regen_only(
+    delta_requested_regen: bool,
+    regen_buckets: &ReviewDeltaRegenBuckets,
+    delta_has_non_regen_actions: bool,
+    replan_reason_is_none: bool,
+    _apply_had_actions: bool,
+) -> bool {
+    // IMPORTANT: `apply.had_actions` can be true when a review delta requested regeneration (even
+    // if regen is QA-gated and nothing can be applied). Do not gate this diagnostic on it.
+    delta_requested_regen
+        && regen_buckets.allowed.is_empty()
+        && !regen_buckets.blocked_due_to_qa_gate.is_empty()
+        && !delta_has_non_regen_actions
+        && replan_reason_is_none
+}
+
 fn maybe_spawn_descriptor_meta_after_plan(
     workshop: &Gen3dWorkshop,
     job: &mut Gen3dAiJob,
@@ -1858,12 +1874,13 @@ pub(super) fn poll_agent_tool(
                                         && !delta_has_non_regen_actions
                                         && apply.replan_reason.is_none();
 
-                                    let qa_gated_regen_only = delta_requested_regen
-                                        && regen_buckets.allowed.is_empty()
-                                        && !regen_buckets.blocked_due_to_qa_gate.is_empty()
-                                        && !delta_has_non_regen_actions
-                                        && apply.replan_reason.is_none()
-                                        && !apply.had_actions;
+                                    let qa_gated_regen_only = is_review_delta_qa_gated_regen_only(
+                                        delta_requested_regen,
+                                        &regen_buckets,
+                                        delta_has_non_regen_actions,
+                                        apply.replan_reason.is_none(),
+                                        apply.had_actions,
+                                    );
 
                                     if qa_gated_regen_only {
                                         job.agent.rendered_since_last_review = false;
@@ -2438,6 +2455,19 @@ mod tests {
         assert_eq!(buckets.allowed, Vec::<usize>::new());
         assert_eq!(buckets.skipped_due_to_budget, Vec::<usize>::new());
         assert_eq!(buckets.blocked_due_to_qa_gate, vec![1]);
+    }
+
+    #[test]
+    fn qa_gated_regen_only_triggers_even_if_apply_reports_had_actions() {
+        let regen_buckets = ReviewDeltaRegenBuckets {
+            allowed: Vec::new(),
+            skipped_due_to_budget: Vec::new(),
+            blocked_due_to_qa_gate: vec![1],
+        };
+        assert!(
+            is_review_delta_qa_gated_regen_only(true, &regen_buckets, false, true, true),
+            "QA-gated regen-only should not depend on apply.had_actions"
+        );
     }
 
     #[test]
