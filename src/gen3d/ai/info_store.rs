@@ -299,6 +299,43 @@ fn validate_kv_key(namespace: &str, key: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_and_validate_blob_relative_path(relative_path: &str) -> Result<String, String> {
+    use std::path::Component;
+
+    let relative_path = relative_path.trim();
+    if relative_path.is_empty() {
+        return Err("Blob storage relative_path is empty.".into());
+    }
+    if relative_path.as_bytes().len() > 4096 {
+        return Err("Blob storage relative_path is too long.".into());
+    }
+    if relative_path.contains('\0') {
+        return Err("Blob storage relative_path contains NUL byte.".into());
+    }
+
+    let normalized = relative_path.replace('\\', "/");
+    let path = Path::new(normalized.as_str());
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) => {
+                return Err("Blob storage relative_path must not contain a Windows path prefix.".into());
+            }
+            Component::RootDir => {
+                return Err("Blob storage relative_path must be a relative path (no leading '/').".into());
+            }
+            Component::ParentDir => {
+                return Err("Blob storage relative_path must not contain '..'.".into());
+            }
+            Component::CurDir => {
+                return Err("Blob storage relative_path must not contain '.' segments.".into());
+            }
+            Component::Normal(_) => {}
+        }
+    }
+
+    Ok(normalized)
+}
+
 pub(super) struct Gen3dInfoStore {
     run_dir: PathBuf,
     kv_path: PathBuf,
@@ -496,6 +533,19 @@ impl Gen3dInfoStore {
         if self.blobs_by_id.contains_key(&blob.blob_id) {
             return Err(format!("Duplicate blob_id {} in store.", blob.blob_id));
         }
+        let mut blob = blob;
+        match &mut blob.storage {
+            InfoBlobStorageV1::RunCacheFile { relative_path } => {
+                let normalized = normalize_and_validate_blob_relative_path(relative_path.as_str())
+                    .map_err(|err| {
+                        format!(
+                            "Invalid blob.storage.relative_path for blob_id {}: {err}",
+                            blob.blob_id
+                        )
+                    })?;
+                *relative_path = normalized;
+            }
+        }
         let idx = self.blobs.len();
         self.blobs.push(blob.clone());
         self.blobs_by_id.insert(blob.blob_id.clone(), idx);
@@ -641,6 +691,14 @@ impl Gen3dInfoStore {
         labels: Vec<String>,
         relative_path: String,
     ) -> Result<InfoBlob, String> {
+        let raw_relative_path = relative_path;
+        let relative_path =
+            normalize_and_validate_blob_relative_path(raw_relative_path.as_str()).map_err(|err| {
+                format!(
+                    "Invalid blob relative_path `{}`: {err}",
+                    raw_relative_path.trim()
+                )
+            })?;
         let blob = InfoBlob {
             blob_id: Uuid::new_v4().to_string(),
             created_at_ms: now_ms(),
@@ -659,16 +717,23 @@ impl Gen3dInfoStore {
         Ok(blob)
     }
 
-    pub(super) fn resolve_blob_run_cache_path(&self, blob_id: &str) -> Option<PathBuf> {
-        let blob = self.blob_by_id(blob_id)?;
+    pub(super) fn resolve_blob_run_cache_path(&self, blob_id: &str) -> Result<PathBuf, String> {
+        let blob_id = blob_id.trim();
+        if blob_id.is_empty() {
+            return Err("Missing blob_id.".into());
+        }
+        let blob = self.blob_by_id(blob_id).ok_or_else(|| {
+            format!(
+                "Unknown blob_id `{blob_id}`. Call `render_preview_v1` first (or use `info_blobs_list_v1` to discover recent blobs)."
+            )
+        })?;
         match &blob.storage {
             InfoBlobStorageV1::RunCacheFile { relative_path } => {
-                let rel = relative_path.trim();
-                if rel.is_empty() {
-                    return None;
-                }
-                let path = self.run_dir.join(rel);
-                Some(path)
+                let rel =
+                    normalize_and_validate_blob_relative_path(relative_path.as_str()).map_err(|err| {
+                        format!("Invalid blob storage path for blob_id `{blob_id}`: {err}")
+                    })?;
+                Ok(self.run_dir.join(rel))
             }
         }
     }
@@ -818,6 +883,73 @@ mod tests {
         }
 
         assert_eq!(collected, items);
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn blob_relative_path_validation_rejects_absolute_and_traversal() {
+        let run_dir = make_temp_dir("gravimera_info_store_blob_path_test");
+        let mut store = Gen3dInfoStore::open_or_create(&run_dir).expect("open store");
+
+        let err = store
+            .register_blob_file(0, 1, 1, "image/png", 1, Vec::new(), "../evil.png".into())
+            .expect_err("should reject traversal");
+        assert!(err.contains(".."), "{err}");
+
+        let err = store
+            .register_blob_file(0, 1, 1, "image/png", 1, Vec::new(), "/abs.png".into())
+            .expect_err("should reject absolute");
+        assert!(err.contains("relative"), "{err}");
+
+        let blob = store
+            .register_blob_file(
+                0,
+                1,
+                1,
+                "image/png",
+                1,
+                Vec::new(),
+                "attempt_0/pass_1/render.png".into(),
+            )
+            .expect("should accept sane relative path");
+        let resolved = store
+            .resolve_blob_run_cache_path(blob.blob_id.as_str())
+            .expect("resolve sane relative path");
+        assert_eq!(resolved, run_dir.join("attempt_0/pass_1/render.png"));
+
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn rebuild_rejects_blob_relative_path_traversal_on_disk() {
+        let run_dir = make_temp_dir("gravimera_info_store_blob_disk_validation_test");
+        let store_dir = run_dir.join("info_store_v1");
+        std::fs::create_dir_all(&store_dir).expect("create store dir");
+        let blobs_path = store_dir.join("blobs.jsonl");
+        std::fs::write(
+            &blobs_path,
+            serde_json::json!({
+                "blob_id": "00000000-0000-0000-0000-00000000badd",
+                "created_at_ms": 0,
+                "attempt": 0,
+                "pass": 0,
+                "assembly_rev": 0,
+                "content_type": "image/png",
+                "bytes": 1,
+                "labels": [],
+                "storage": { "kind": "run_cache_file", "relative_path": "../evil.png" },
+            })
+            .to_string()
+                + "\n",
+        )
+        .expect("write blobs.jsonl");
+
+        let err = match Gen3dInfoStore::open_or_create(&run_dir) {
+            Ok(_) => panic!("expected open_or_create to reject invalid blob record"),
+            Err(err) => err,
+        };
+        assert!(err.contains("relative_path"), "{err}");
+
         let _ = std::fs::remove_dir_all(&run_dir);
     }
 

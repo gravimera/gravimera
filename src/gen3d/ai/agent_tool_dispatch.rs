@@ -1235,20 +1235,39 @@ pub(super) fn execute_tool_call(
                     }
                 }
 
-                items.push(serde_json::json!({
-                    "namespace": k.namespace.as_str(),
-                    "key": k.key.as_str(),
-                    "latest": {
-                        "kv_rev": rec.kv_rev,
-                        "written_at_ms": rec.written_at_ms,
-                        "attempt": rec.attempt,
-                        "pass": rec.pass,
-                        "assembly_rev": rec.assembly_rev,
-                        "workspace_id": rec.workspace_id.as_str(),
-                        "summary": rec.summary.as_str(),
-                        "bytes": rec.bytes,
-                    }
-                }));
+                let mut latest = serde_json::Map::new();
+                latest.insert("kv_rev".into(), serde_json::json!(rec.kv_rev));
+                latest.insert("written_at_ms".into(), serde_json::json!(rec.written_at_ms));
+                latest.insert("attempt".into(), serde_json::json!(rec.attempt));
+                latest.insert("pass".into(), serde_json::json!(rec.pass));
+                latest.insert("assembly_rev".into(), serde_json::json!(rec.assembly_rev));
+                latest.insert(
+                    "workspace_id".into(),
+                    serde_json::Value::String(rec.workspace_id.clone()),
+                );
+                latest.insert(
+                    "summary".into(),
+                    serde_json::Value::String(rec.summary.clone()),
+                );
+                latest.insert("bytes".into(), serde_json::json!(rec.bytes));
+                if let Some(prov) = rec.written_by.as_ref() {
+                    latest.insert(
+                        "written_by".into(),
+                        serde_json::json!({
+                            "tool_id": prov.tool_id.as_str(),
+                            "call_id": prov.call_id.as_str(),
+                        }),
+                    );
+                }
+
+                let mut item = serde_json::Map::new();
+                item.insert(
+                    "namespace".into(),
+                    serde_json::Value::String(k.namespace.clone()),
+                );
+                item.insert("key".into(), serde_json::Value::String(k.key.clone()));
+                item.insert("latest".into(), serde_json::Value::Object(latest));
+                items.push(serde_json::Value::Object(item));
             }
 
             if sort == "key_asc" {
@@ -1393,16 +1412,31 @@ pub(super) fn execute_tool_call(
 
             let mut items: Vec<serde_json::Value> = Vec::with_capacity(records.len());
             for rec in records {
-                items.push(serde_json::json!({
-                    "kv_rev": rec.kv_rev,
-                    "written_at_ms": rec.written_at_ms,
-                    "attempt": rec.attempt,
-                    "pass": rec.pass,
-                    "assembly_rev": rec.assembly_rev,
-                    "workspace_id": rec.workspace_id.as_str(),
-                    "summary": rec.summary.as_str(),
-                    "bytes": rec.bytes,
-                }));
+                let mut item = serde_json::Map::new();
+                item.insert("kv_rev".into(), serde_json::json!(rec.kv_rev));
+                item.insert("written_at_ms".into(), serde_json::json!(rec.written_at_ms));
+                item.insert("attempt".into(), serde_json::json!(rec.attempt));
+                item.insert("pass".into(), serde_json::json!(rec.pass));
+                item.insert("assembly_rev".into(), serde_json::json!(rec.assembly_rev));
+                item.insert(
+                    "workspace_id".into(),
+                    serde_json::Value::String(rec.workspace_id.clone()),
+                );
+                item.insert(
+                    "summary".into(),
+                    serde_json::Value::String(rec.summary.clone()),
+                );
+                item.insert("bytes".into(), serde_json::json!(rec.bytes));
+                if let Some(prov) = rec.written_by.as_ref() {
+                    item.insert(
+                        "written_by".into(),
+                        serde_json::json!({
+                            "tool_id": prov.tool_id.as_str(),
+                            "call_id": prov.call_id.as_str(),
+                        }),
+                    );
+                }
+                items.push(serde_json::Value::Object(item));
             }
 
             let params_sig = store.stable_params_sig(&serde_json::json!({
@@ -1580,20 +1614,38 @@ pub(super) fn execute_tool_call(
 
             let mut out = serde_json::Map::new();
             out.insert("ok".into(), serde_json::Value::Bool(true));
-            out.insert(
-                "record".into(),
+            let mut record_json = serde_json::Map::new();
+            record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
+            record_json.insert("written_at_ms".into(), serde_json::json!(record.written_at_ms));
+            record_json.insert("attempt".into(), serde_json::json!(record.attempt));
+            record_json.insert("pass".into(), serde_json::json!(record.pass));
+            record_json.insert("assembly_rev".into(), serde_json::json!(record.assembly_rev));
+            record_json.insert(
+                "workspace_id".into(),
+                serde_json::Value::String(record.workspace_id.clone()),
+            );
+            record_json.insert(
+                "key".into(),
                 serde_json::json!({
-                    "kv_rev": record.kv_rev,
-                    "written_at_ms": record.written_at_ms,
-                    "attempt": record.attempt,
-                    "pass": record.pass,
-                    "assembly_rev": record.assembly_rev,
-                    "workspace_id": record.workspace_id.as_str(),
-                    "key": { "namespace": record.key.namespace.as_str(), "key": record.key.key.as_str() },
-                    "summary": record.summary.as_str(),
-                    "bytes": record.bytes,
+                    "namespace": record.key.namespace.as_str(),
+                    "key": record.key.key.as_str(),
                 }),
             );
+            record_json.insert(
+                "summary".into(),
+                serde_json::Value::String(record.summary.clone()),
+            );
+            record_json.insert("bytes".into(), serde_json::json!(record.bytes));
+            if let Some(prov) = record.written_by.as_ref() {
+                record_json.insert(
+                    "written_by".into(),
+                    serde_json::json!({
+                        "tool_id": prov.tool_id.as_str(),
+                        "call_id": prov.call_id.as_str(),
+                    }),
+                );
+            }
+            out.insert("record".into(), serde_json::Value::Object(record_json));
             out.insert("value".into(), selected);
             out.insert("truncated".into(), serde_json::Value::Bool(false));
             if let Some(ptr) = json_pointer {
@@ -1763,19 +1815,31 @@ pub(super) fn execute_tool_call(
                 out.insert("namespace".into(), serde_json::Value::String(namespace));
                 out.insert("key".into(), serde_json::Value::String(key));
                 out.insert("ok".into(), serde_json::Value::Bool(true));
-                out.insert(
-                    "record".into(),
-                    serde_json::json!({
-                        "kv_rev": record.kv_rev,
-                        "written_at_ms": record.written_at_ms,
-                        "attempt": record.attempt,
-                        "pass": record.pass,
-                        "assembly_rev": record.assembly_rev,
-                        "workspace_id": record.workspace_id.as_str(),
-                        "summary": record.summary.as_str(),
-                        "bytes": record.bytes,
-                    }),
+                let mut record_json = serde_json::Map::new();
+                record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
+                record_json.insert("written_at_ms".into(), serde_json::json!(record.written_at_ms));
+                record_json.insert("attempt".into(), serde_json::json!(record.attempt));
+                record_json.insert("pass".into(), serde_json::json!(record.pass));
+                record_json.insert("assembly_rev".into(), serde_json::json!(record.assembly_rev));
+                record_json.insert(
+                    "workspace_id".into(),
+                    serde_json::Value::String(record.workspace_id.clone()),
                 );
+                record_json.insert(
+                    "summary".into(),
+                    serde_json::Value::String(record.summary.clone()),
+                );
+                record_json.insert("bytes".into(), serde_json::json!(record.bytes));
+                if let Some(prov) = record.written_by.as_ref() {
+                    record_json.insert(
+                        "written_by".into(),
+                        serde_json::json!({
+                            "tool_id": prov.tool_id.as_str(),
+                            "call_id": prov.call_id.as_str(),
+                        }),
+                    );
+                }
+                out.insert("record".into(), serde_json::Value::Object(record_json));
                 out.insert("value".into(), selected);
                 out.insert("truncated".into(), serde_json::Value::Bool(false));
                 if let Some(ptr) = json_pointer {

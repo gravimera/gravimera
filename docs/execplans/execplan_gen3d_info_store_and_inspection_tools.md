@@ -29,6 +29,7 @@ This system is generic (no object-specific heuristics) and follows the tool cont
 - [x] (2026-03-13) Add unit tests + a small regression harness under `test/` proving paging/sorting and “latest” retrieval work without truncation bugs.
 - [x] (2026-03-13) Run tests and the required rendered smoke test.
 - [x] (2026-03-13) Commit the implementation with a clear message.
+- [x] (2026-03-14) Follow-ups: harden blob path resolution (reject absolute/traversal) and include KV provenance (`written_by`) in Info KV tool outputs.
 
 ## Surprises & Discoveries
 
@@ -68,6 +69,8 @@ This system is generic (no object-specific heuristics) and follows the tool cont
 - Outcome: Deterministic tools write required KV keys and return stable KV refs (`info_kv` / `plan_template_kv`), and rendering returns opaque `blob_id`s (no paths).
 - Outcome: Tool call start/result and best-effort stops are recorded as Info Store events and can be queried via `info_events_*`.
 - Outcome: The run cache directory remains for human debugging, but the agent tool surface is no longer file-oriented and avoids leaking run-cache paths.
+- Outcome: Blob storage paths are validated as relative/no-traversal as a defense-in-depth guard; resolving a `blob_id` cannot escape the run dir.
+- Outcome: KV inspection tools include `written_by` provenance (tool_id + call_id) when available, making it easy to trace “who wrote this KV”.
 
 ## Context and Orientation
 

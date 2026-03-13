@@ -102,13 +102,7 @@ pub(super) fn start_agent_llm_review_delta_call(
                 let store = job.ensure_info_store()?;
                 let mut out = Vec::with_capacity(selected_blob_ids.len());
                 for blob_id in &selected_blob_ids {
-                    let Some(path) = store.resolve_blob_run_cache_path(blob_id.as_str()) else {
-                        return Err(format!(
-                            "Unknown preview_blob_id `{}`. Call `render_preview_v1` first (or use `info_blobs_list_v1` to discover recent blobs).",
-                            blob_id
-                        ));
-                    };
-                    out.push(path);
+                    out.push(store.resolve_blob_run_cache_path(blob_id.as_str())?);
                 }
                 out
             };
