@@ -85,7 +85,7 @@ Rules:\n\
   - Avoid calling llm_review_delta_v1 after every single component if you can generate a batch first.\n\
   - If review_appearance=true: after any render_preview_v1, immediately call llm_review_delta_v1 using the rendered images.\n\
 - Do NOT use placeholder references like `$CALL_1.blob_ids[0]` in tool args; the engine does not substitute tool outputs into later tool calls.\n\
-  To review the latest render, call llm_review_delta_v1 with no `preview_blob_ids` (it will use the latest render cache).\n\
+  To review the latest render, call llm_review_delta_v1 with `preview_blob_ids: []` (an empty list means: use the latest render cache).\n\
   - If review_appearance=true: do not finish a run without reviewing the latest renders.\n\
   - For vehicles/wheeled objects, always include TOP and BOTTOM views (they reveal wheel/axle/undercarriage issues). A good default is: views=[\"front\",\"left_back\",\"right_back\",\"top\",\"bottom\"].\n\
   - For speed, prefer smaller preview renders during iteration (example: render_preview_v1 image_size=768). Only increase resolution if you truly need extra detail.\n\

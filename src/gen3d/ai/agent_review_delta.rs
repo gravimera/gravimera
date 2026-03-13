@@ -40,16 +40,6 @@ pub(super) fn start_agent_llm_review_delta_call(
     if review_appearance && preview_blob_ids.is_empty() {
         preview_blob_ids = job.agent.last_render_blob_ids.clone();
     }
-    let include_original_images_requested = call
-        .args
-        .get("include_original_images")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if include_original_images_requested {
-        return Err(
-            "`include_original_images=true` is not supported: user reference photos are pre-summarized into text and are not sent to the LLM. Use the prompt + image summary only (and optionally preview renders when review_appearance=true).".into(),
-        );
-    }
 
     let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
     let scene_graph_summary = super::build_gen3d_scene_graph_summary(

@@ -30,6 +30,7 @@ This system is generic (no object-specific heuristics) and follows the tool cont
 - [x] (2026-03-13) Run tests and the required rendered smoke test.
 - [x] (2026-03-13) Commit the implementation with a clear message.
 - [x] (2026-03-14) Follow-ups: harden blob path resolution (reject absolute/traversal) and include KV provenance (`written_by`) in Info KV tool outputs.
+- [x] (2026-03-14) Follow-ups: align `llm_review_delta_v1` prompt + tool contract (avoid empty-args mismatch); remove unsupported `include_original_images` arg.
 
 ## Surprises & Discoveries
 
@@ -430,6 +431,21 @@ Example transcripts (indented, no code fences):
     result ok blob_ids=7 static_blob_ids=5 motion_sheet_blob_ids.move="<blob_id>" motion_sheet_blob_ids.attack=null
     tool_call llm_review_delta_v1 args={"preview_blob_ids":["<blob_id_front>","<blob_id_left_back>","<blob_id_right_back>","<blob_id_top>","<blob_id_bottom>"]}
     result ok (applied tweak ops, or returned pending regen indices)
+
+- `llm_review_delta_v1` reviewing the latest render cache (no explicit ids):
+
+    tool_call llm_review_delta_v1 args={"preview_blob_ids":[]}
+    result ok (uses latest render cache if review_appearance=true)
+
+## Follow-ups (optional)
+
+These are defense-in-depth and “contract drift” hardening steps. They are optional in the sense that the core Info Store works without them, but they reduce regressions in real agent runs.
+
+- [x] Harden blob path resolution: reject absolute paths and `..` traversal even if a blob record is malformed.
+- [x] Include KV provenance (`written_by`) in Info KV tool outputs so the agent can trace which tool/call produced a value.
+- [x] Keep prompt ↔ tool contracts aligned for review images:
+  - Do not allow unsupported args (example: remove `include_original_images` if it always errors).
+  - Provide a non-empty default call pattern that satisfies the “no empty `{}` args” prompt rule (example: `preview_blob_ids: []` means “use the latest render cache”).
 
 ## Code Review Guidance (Prompt ↔ Tool Contract Mismatch Prevention)
 

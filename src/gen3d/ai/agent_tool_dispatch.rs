@@ -4476,16 +4476,20 @@ pub(super) fn execute_tool_call(
                         "Deprecated args.preview_images/args.preview_paths. Use args.preview_blob_ids (blob ids from render_preview_v1 / info_blobs_list_v1).".into(),
                     ));
                 }
+                if obj.contains_key("include_original_images") {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        "Unsupported args.include_original_images. User reference photos are summarized into text and are not sent to the LLM; omit this key.".into(),
+                    ));
+                }
                 for key in obj.keys() {
-                    if key != "preview_blob_ids"
-                        && key != "blob_ids"
-                        && key != "include_original_images"
-                    {
+                    if key != "preview_blob_ids" && key != "blob_ids" {
                         return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                             call.call_id,
                             call.tool_id,
                             format!(
-                                "Unknown args key `{key}`. Allowed keys: preview_blob_ids, blob_ids, include_original_images."
+                                "Unknown args key `{key}`. Allowed keys: preview_blob_ids, blob_ids."
                             ),
                         ));
                     }

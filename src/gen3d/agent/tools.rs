@@ -438,10 +438,10 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 tool_id: TOOL_ID_LLM_REVIEW_DELTA,
                 title: "LLM: review delta",
                 one_line_summary:
-                    "LLM+mutates: apply deterministic tweak ops; may request component regen indices (some may be budget/QA-gated).",
+                    "LLM+mutates: apply deterministic tweak ops; may request component regen indices (some may be budget/QA-gated). Use `preview_blob_ids` (or `blob_ids`) for explicit renders; pass `preview_blob_ids: []` to use the latest render cache.",
                 args_schema:
-                    "{ preview_blob_ids?: string[], blob_ids?: string[], include_original_images?: bool }",
-                args_example: serde_json::json!({}),
+                    "{ preview_blob_ids?: string[], blob_ids?: string[] }",
+                args_example: serde_json::json!({ "preview_blob_ids": [] }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_RENDER_PREVIEW,
