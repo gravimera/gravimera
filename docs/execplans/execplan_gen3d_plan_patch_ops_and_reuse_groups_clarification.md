@@ -18,14 +18,14 @@ User-visible outcome: Gen3D planning converges faster and with fewer redundant L
 
 ## Progress
 
-- [ ] (2026-03-14) Clarify `reuse_groups` semantics in the plan system prompt.
-- [ ] (2026-03-14) Extend plan inspection diagnostics to report missing referenced component names (not just unknown parents).
-- [ ] (2026-03-14) Add `apply_plan_ops_v1` (deterministic) to patch a pending rejected plan attempt and revalidate.
-- [ ] (2026-03-14) Add optional FixIt suggestions (bounded) to `inspect_plan_v1` for repairs that are logically forced by the rejected plan’s explicit intent.
-- [ ] (2026-03-14) Update agent prompt + docs so the new tool is discoverable (suggestions only; do not hardcode a flow).
-- [ ] (2026-03-14) Add unit tests for new inspection errors and plan-op application.
-- [ ] (2026-03-14) Run `cargo test` and the required rendered smoke test.
-- [ ] (2026-03-14) Commit with a clear message.
+- [x] (2026-03-14) Clarify `reuse_groups` semantics in the plan system prompt.
+- [x] (2026-03-14) Extend plan inspection diagnostics to report missing referenced component names (not just unknown parents).
+- [x] (2026-03-14) Add `apply_plan_ops_v1` (deterministic) to patch a pending rejected plan attempt and revalidate.
+- [x] (2026-03-14) Add optional FixIt suggestions (bounded) to `inspect_plan_v1` for repairs that are logically forced by the rejected plan’s explicit intent.
+- [x] (2026-03-14) Update agent prompt + docs so the new tool is discoverable (suggestions only; do not hardcode a flow).
+- [x] (2026-03-14) Add unit tests for new inspection errors and plan-op application.
+- [x] (2026-03-14) Run `cargo test` and the required rendered smoke test.
+- [x] (2026-03-14) Commit with a clear message.
 
 ## Surprises & Discoveries
 
@@ -34,6 +34,9 @@ User-visible outcome: Gen3D planning converges faster and with fewer redundant L
 
 - Observation: The current semantic error surface (“unknown parent”) points at the symptom (`attach_to.parent` missing) but not the root cause (“you referenced a reuse target that does not exist as a component”).
   Evidence: The warning was `AI plan: component laser_cannon attach_to parent arm_lower_r not found.`; `inspect_plan_v1` reported `unknown_parent` with empty suggestions because there were no existing components (fresh plan).
+
+- Observation: Returning `inspect_plan_v1`-style computed structural errors as part of `apply_plan_ops_v1` results makes the mutation tool actionable without forcing an extra tool call.
+  Evidence: `apply_plan_ops_v1` returns `new_errors[]` that includes semantic validation errors plus bounded structural errors/fixits derived from `inspect_plan_v1`.
 
 ## Decision Log
 
@@ -49,9 +52,22 @@ User-visible outcome: Gen3D planning converges faster and with fewer redundant L
   Rationale: Preventing a class of plan errors is cheaper than repairing them; the prompt is the first line of defense.
   Date/Author: 2026-03-14 / flow + agent
 
+- Decision: `apply_plan_ops_v1` commits patched pending plans even when still semantically invalid (unless `dry_run=true`), and returns bounded diagnostics for iterative patching.
+  Rationale: This matches the toolchain model: explicit edits + deterministic revalidation + actionable diagnostics, without needing full replans.
+  Date/Author: 2026-03-14 / agent
+
 ## Outcomes & Retrospective
 
-- (TBD) At completion: summarize how often semantic plan failures are repairable via PlanOps without full replans, and record any new failure modes discovered.
+- Outcome (2026-03-14): Gen3D planning repairs can be expressed as explicit PlanOps instead of full replans.
+  - Prompt: `reuse_groups` semantics clarified so targets/sources must also exist in `components[]`.
+  - Diagnostics: `inspect_plan_v1` now reports `missing_component_reference` (attach_to / aim / muzzle / reuse_groups) and can return bounded FixIts (`analysis.fixits[]`) only when forced.
+  - Mutation: `apply_plan_ops_v1` applies explicit ops to `job.pending_plan_attempt.plan`, revalidates, and accepts the plan when valid (clearing `pending_plan_attempt`), with audit artifacts and bounded diffs/errors.
+  - Tests: added unit tests for the new diagnostics and plan-op application; smoke test confirmed the game starts cleanly.
+
+## ExecPlan Change Notes
+
+- 2026-03-14: Marked completed milestones and recorded outcomes/decisions based on the implemented tool + diagnostics changes.
+
 
 ## Context and Orientation
 
@@ -244,4 +260,3 @@ All changes are safe to apply repeatedly. If tests or smoke fail:
   - bounded outputs,
   - actionable results and errors,
   - no silent mutation.
-

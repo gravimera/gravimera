@@ -870,6 +870,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
           - Optional: top-level `rig.move_cycle_m` defines meters-per-cycle for locomotion.\n\n\
          Reuse groups (IMPORTANT for speed + consistency):\n\
          - If multiple components should share the SAME geometry (wheels, repeated legs, mirrored parts, numbered sets like `leg_0..leg_7`), declare `reuse_groups`.\n\
+         - `reuse_groups` is ONLY an optimization for how geometry is generated. It does NOT declare components.\n\
+         - Every `reuse_groups[].source` and every name in `reuse_groups[].targets[]` MUST ALSO appear as a component in `components[]`.\n\
+         - If a component name is referenced anywhere (`attach_to.parent`, `aim.components`, `attack.muzzle.component`, `reuse_groups`), it MUST exist in `components[]`.\n\
          - The engine can then generate only the unique components + the declared reuse sources, and fill the remaining targets via deterministic copy.\n\
          - This does NOT change the attachment tree; it only affects how missing geometry gets produced.\n\
          - Reuse targets are allowed (and expected) to differ in per-target `attach_to.offset` (radial/mirrored placement).\n\

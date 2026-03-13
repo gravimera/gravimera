@@ -538,6 +538,7 @@ pub(super) fn inspect_pending_plan_attempt_v1(
             "analysis": {
                 "ok": true,
                 "errors": [],
+                "fixits": [],
                 "hints": [
                     "If llm_generate_plan_v1 fails semantically (unknown parent, root mismatch, preserve missing names), use this tool immediately instead of get_scene_graph_summary_v1.",
                     "For preserve mode, prefer get_plan_template_v1 + llm_generate_plan_v1.plan_template_kv to reduce invalid plans."
@@ -565,6 +566,7 @@ pub(super) fn inspect_pending_plan_attempt_v1(
     duplicates.dedup();
 
     let mut errors: Vec<serde_json::Value> = Vec::new();
+    let mut fixits: Vec<serde_json::Value> = Vec::new();
 
     if !duplicates.is_empty() {
         errors.push(serde_json::json!({
@@ -628,6 +630,70 @@ pub(super) fn inspect_pending_plan_attempt_v1(
     // Unknown parents can be detected without full conversion.
     let plan_name_set: std::collections::HashSet<&str> =
         plan_names.iter().map(|s| s.as_str()).collect();
+
+    // Enumerate missing referenced component names beyond attach_to.parent.
+    // This stays purely structural and deterministic (no heuristics).
+    let mut component_refs: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    {
+        let mut add_ref = |name: &str, location: &str| {
+            let name = name.trim();
+            if name.is_empty() {
+                return;
+            }
+            let location = location.trim();
+            if location.is_empty() {
+                return;
+            }
+            component_refs
+                .entry(name.to_string())
+                .or_default()
+                .insert(location.to_string());
+        };
+
+        for comp in pending.plan.components.iter() {
+            let Some(att) = comp.attach_to.as_ref() else {
+                continue;
+            };
+            add_ref(att.parent.as_str(), "attach_to.parent");
+        }
+        if let Some(aim) = pending.plan.aim.as_ref() {
+            for name in aim.components.iter() {
+                add_ref(name.as_str(), "aim.components");
+            }
+        }
+        if let Some(attack) = pending.plan.attack.as_ref() {
+            match attack {
+                super::schema::AiAttackJson::RangedProjectile { muzzle, .. } => {
+                    if let Some(muzzle) = muzzle.as_ref() {
+                        add_ref(muzzle.component.as_str(), "attack.muzzle.component");
+                    }
+                }
+                _ => {}
+            }
+        }
+        for group in pending.plan.reuse_groups.iter() {
+            add_ref(group.source.as_str(), "reuse_groups.source");
+            for target in group.targets.iter() {
+                add_ref(target.as_str(), "reuse_groups.targets");
+            }
+        }
+    }
+
+    let plan_component_names_sample: Vec<String> = plan_names.iter().cloned().take(24).collect();
+    for (missing, locations) in component_refs.iter() {
+        if plan_name_set.contains(missing.as_str()) {
+            continue;
+        }
+        let referenced_by: Vec<String> = locations.iter().cloned().take(12).collect();
+        errors.push(serde_json::json!({
+            "kind": "missing_component_reference",
+            "name": missing,
+            "referenced_by": referenced_by,
+            "plan_component_names_sample": plan_component_names_sample.clone(),
+        }));
+    }
+
     for comp in pending.plan.components.iter() {
         let Some(att) = comp.attach_to.as_ref() else {
             continue;
@@ -743,6 +809,69 @@ pub(super) fn inspect_pending_plan_attempt_v1(
         }
     }
 
+    // Optional FixIts (suggestions only; no mutation). Only suggest when the repair is forced
+    // by explicit plan intent (compiler-style diagnostics; no heuristics).
+    //
+    // If a reuse target is referenced elsewhere but missing from components[], the plan
+    // necessarily intends that component to exist. Suggest adding a stub component; the agent
+    // must still wire it into the attachment tree.
+    if !component_refs.is_empty() && !pending.plan.reuse_groups.is_empty() {
+        let mut suggested: Vec<String> = Vec::new();
+        for (missing, locations) in component_refs.iter() {
+            if plan_name_set.contains(missing.as_str()) {
+                continue;
+            }
+            let in_reuse_targets = locations.iter().any(|loc| loc == "reuse_groups.targets");
+            if !in_reuse_targets {
+                continue;
+            }
+            let referenced_elsewhere = locations.iter().any(|loc| {
+                loc == "attach_to.parent"
+                    || loc == "aim.components"
+                    || loc == "attack.muzzle.component"
+            });
+            if !referenced_elsewhere {
+                continue;
+            }
+            suggested.push(missing.clone());
+        }
+        suggested.sort();
+        suggested.dedup();
+        suggested.truncate(8);
+
+        for missing in suggested {
+            let mut size = [0.0_f32, 0.0_f32, 0.0_f32];
+            for group in pending.plan.reuse_groups.iter() {
+                let source = group.source.trim();
+                if source.is_empty() {
+                    continue;
+                }
+                let is_target = group.targets.iter().any(|t| t.trim() == missing.as_str());
+                if !is_target {
+                    continue;
+                }
+                if let Some(source_comp) = plan_component_by_name.get(source).copied() {
+                    size = source_comp.size;
+                }
+                break;
+            }
+
+            fixits.push(serde_json::json!({
+                "title": format!("Add missing component `{}` (stub)", missing),
+                "notes": "Suggestion only. You will likely still need to set attach_to (and any required anchors) so the plan forms a valid attachment tree.",
+                "ops": [
+                    {
+                        "kind": "add_component",
+                        "name": missing,
+                        "size": size,
+                        "anchors": [],
+                        "contacts": [],
+                    }
+                ],
+            }));
+        }
+    }
+
     serde_json::json!({
         "version": 1,
         "has_pending_plan": true,
@@ -763,10 +892,12 @@ pub(super) fn inspect_pending_plan_attempt_v1(
         "analysis": {
             "ok": errors.is_empty(),
             "errors": errors,
+            "fixits": fixits,
             "hints": [
                 "Component/parent names must match EXACTLY (case-sensitive).",
                 "In preserve mode: include ALL existing component names and keep the same root component.",
                 "Attachment anchors must exist: child_anchor/parent_anchor may be `origin` (implicit) or a named anchor listed under that component. If anchors are missing in preserve mode, prefer get_plan_template_v1 so existing anchors are included.",
+                "If the fix is local/deterministic (rename a parent, add a missing component definition, add missing anchors), prefer apply_plan_ops_v1 instead of rerunning llm_generate_plan_v1.",
                 "If you need a safe starting point: run get_plan_template_v1, then pass llm_generate_plan_v1.plan_template_kv."
             ],
         }
@@ -777,7 +908,9 @@ pub(super) fn inspect_pending_plan_attempt_v1(
 mod tests {
     use super::*;
     use crate::gen3d::ai::schema::{
-        AiMobilityJson, AiPlanAttachmentJson, AiPlanComponentJson, AiPlanJsonV1,
+        AiAimJson, AiAnchorRefJson, AiAttackJson, AiMobilityJson, AiPlanAttachmentJson,
+        AiPlanComponentJson, AiPlanJsonV1, AiReuseAlignmentJson, AiReuseGroupJson,
+        AiReuseGroupKindJson,
     };
 
     fn dummy_component(name: &str, parent: Option<&str>) -> Gen3dPlannedComponent {
@@ -1017,5 +1150,253 @@ mod tests {
         assert!(errors
             .iter()
             .any(|e| e.get("kind").and_then(|v| v.as_str()) == Some("preserve_root_changed")));
+    }
+
+    fn pending_attempt_for_plan(plan: AiPlanJsonV1) -> Gen3dPendingPlanAttempt {
+        Gen3dPendingPlanAttempt {
+            call_id: "call_test".into(),
+            error: "semantic error".into(),
+            preserve_existing_components: false,
+            preserve_edit_policy: None,
+            rewire_components: Vec::new(),
+            existing_component_names: Vec::new(),
+            existing_root_component: None,
+            plan,
+        }
+    }
+
+    fn find_missing_component_ref_error<'a>(
+        errors: &'a [serde_json::Value],
+        name: &str,
+    ) -> Option<&'a serde_json::Value> {
+        errors.iter().find(|e| {
+            e.get("kind").and_then(|v| v.as_str()) == Some("missing_component_reference")
+                && e.get("name").and_then(|v| v.as_str()) == Some(name)
+        })
+    }
+
+    #[test]
+    fn inspect_reports_missing_component_reference_from_attach_to_parent() {
+        let plan = dummy_plan(
+            vec![
+                AiPlanComponentJson {
+                    name: "body".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [1.0, 1.0, 1.0],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: None,
+                },
+                AiPlanComponentJson {
+                    name: "gun".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [0.2, 0.2, 0.6],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: Some(AiPlanAttachmentJson {
+                        parent: "arm_lower_r".into(),
+                        parent_anchor: "origin".into(),
+                        child_anchor: "origin".into(),
+                        offset: None,
+                        joint: None,
+                    }),
+                },
+            ],
+            Some("body"),
+        );
+
+        let pending = pending_attempt_for_plan(plan);
+        let report = inspect_pending_plan_attempt_v1(Some(&pending), &[], false);
+        let errors = report
+            .get("analysis")
+            .and_then(|v| v.get("errors"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let err = find_missing_component_ref_error(&errors, "arm_lower_r")
+            .expect("missing missing_component_reference error");
+        let referenced_by: Vec<&str> = err
+            .get("referenced_by")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert!(referenced_by.contains(&"attach_to.parent"));
+    }
+
+    #[test]
+    fn inspect_reports_missing_component_reference_from_aim_components() {
+        let mut plan = dummy_plan(
+            vec![AiPlanComponentJson {
+                name: "body".into(),
+                purpose: String::new(),
+                modeling_notes: String::new(),
+                size: [1.0, 1.0, 1.0],
+                anchors: Vec::new(),
+                contacts: Vec::new(),
+                attach_to: None,
+            }],
+            Some("body"),
+        );
+        plan.aim = Some(AiAimJson {
+            max_yaw_delta_degrees: None,
+            components: vec!["turret".into()],
+        });
+
+        let pending = pending_attempt_for_plan(plan);
+        let report = inspect_pending_plan_attempt_v1(Some(&pending), &[], false);
+        let errors = report
+            .get("analysis")
+            .and_then(|v| v.get("errors"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let err =
+            find_missing_component_ref_error(&errors, "turret").expect("missing error for turret");
+        let referenced_by: Vec<&str> = err
+            .get("referenced_by")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert!(referenced_by.contains(&"aim.components"));
+    }
+
+    #[test]
+    fn inspect_reports_missing_component_reference_from_attack_muzzle_component() {
+        let mut plan = dummy_plan(
+            vec![AiPlanComponentJson {
+                name: "body".into(),
+                purpose: String::new(),
+                modeling_notes: String::new(),
+                size: [1.0, 1.0, 1.0],
+                anchors: Vec::new(),
+                contacts: Vec::new(),
+                attach_to: None,
+            }],
+            Some("body"),
+        );
+        plan.attack = Some(AiAttackJson::RangedProjectile {
+            cooldown_secs: None,
+            muzzle: Some(AiAnchorRefJson {
+                component: "muzzle_comp".into(),
+                anchor: "muzzle".into(),
+            }),
+            projectile: None,
+        });
+
+        let pending = pending_attempt_for_plan(plan);
+        let report = inspect_pending_plan_attempt_v1(Some(&pending), &[], false);
+        let errors = report
+            .get("analysis")
+            .and_then(|v| v.get("errors"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let err = find_missing_component_ref_error(&errors, "muzzle_comp")
+            .expect("missing error for muzzle_comp");
+        let referenced_by: Vec<&str> = err
+            .get("referenced_by")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert!(referenced_by.contains(&"attack.muzzle.component"));
+    }
+
+    #[test]
+    fn inspect_reports_missing_component_reference_from_reuse_groups_targets() {
+        let mut plan = dummy_plan(
+            vec![
+                AiPlanComponentJson {
+                    name: "torso".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [1.0, 1.0, 1.0],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: None,
+                },
+                AiPlanComponentJson {
+                    name: "arm_lower_l".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [0.2, 0.2, 0.2],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: Some(AiPlanAttachmentJson {
+                        parent: "torso".into(),
+                        parent_anchor: "origin".into(),
+                        child_anchor: "origin".into(),
+                        offset: None,
+                        joint: None,
+                    }),
+                },
+            ],
+            Some("torso"),
+        );
+        plan.reuse_groups = vec![AiReuseGroupJson {
+            kind: AiReuseGroupKindJson::Component,
+            source: "arm_lower_l".into(),
+            targets: vec!["arm_lower_r".into()],
+            alignment: AiReuseAlignmentJson::MirrorMountX,
+            mode: None,
+            anchors: None,
+        }];
+
+        let pending = pending_attempt_for_plan(plan);
+        let report = inspect_pending_plan_attempt_v1(Some(&pending), &[], false);
+        let errors = report
+            .get("analysis")
+            .and_then(|v| v.get("errors"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let err = find_missing_component_ref_error(&errors, "arm_lower_r")
+            .expect("missing error for arm_lower_r");
+        let referenced_by: Vec<&str> = err
+            .get("referenced_by")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert!(referenced_by.contains(&"reuse_groups.targets"));
+    }
+
+    const FIXTURE_REUSE_TARGET_MISSING_COMPONENT: &str = r#"
+{
+  "version": 8,
+  "mobility": { "kind": "static" },
+  "reuse_groups": [
+    { "kind": "component", "source": "arm_lower_l", "targets": ["arm_lower_r"], "alignment": "mirror_mount_x" }
+  ],
+  "components": [
+    { "name": "torso", "size": [1.0, 1.0, 1.0] },
+    { "name": "arm_lower_l", "size": [0.2, 0.2, 0.2], "attach_to": { "parent": "torso", "parent_anchor": "origin", "child_anchor": "origin" } },
+    { "name": "laser", "size": [0.2, 0.2, 0.6], "attach_to": { "parent": "arm_lower_r", "parent_anchor": "origin", "child_anchor": "origin" } }
+  ]
+}
+"#;
+
+    #[test]
+    fn inspect_fixture_reuse_target_referenced_but_missing_component() {
+        let plan: AiPlanJsonV1 =
+            serde_json::from_str(FIXTURE_REUSE_TARGET_MISSING_COMPONENT).expect("fixture parses");
+        let pending = pending_attempt_for_plan(plan);
+        let report = inspect_pending_plan_attempt_v1(Some(&pending), &[], false);
+        let errors = report
+            .get("analysis")
+            .and_then(|v| v.get("errors"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let err = find_missing_component_ref_error(&errors, "arm_lower_r")
+            .expect("missing error for arm_lower_r");
+        let referenced_by: Vec<&str> = err
+            .get("referenced_by")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert!(referenced_by.contains(&"reuse_groups.targets"));
+        assert!(referenced_by.contains(&"attach_to.parent"));
     }
 }

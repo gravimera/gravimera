@@ -26,6 +26,7 @@ pub(crate) const TOOL_ID_INFO_EVENTS_SEARCH: &str = "info_events_search_v1";
 pub(crate) const TOOL_ID_INFO_BLOBS_LIST: &str = "info_blobs_list_v1";
 pub(crate) const TOOL_ID_INFO_BLOBS_GET: &str = "info_blobs_get_v1";
 pub(crate) const TOOL_ID_APPLY_DRAFT_OPS: &str = "apply_draft_ops_v1";
+pub(crate) const TOOL_ID_APPLY_PLAN_OPS: &str = "apply_plan_ops_v1";
 pub(crate) const TOOL_ID_RECENTER_ATTACHMENT_MOTION: &str = "recenter_attachment_motion_v1";
 pub(crate) const TOOL_ID_SNAPSHOT: &str = "snapshot_v1";
 pub(crate) const TOOL_ID_LIST_SNAPSHOTS: &str = "list_snapshots_v1";
@@ -111,6 +112,36 @@ impl Gen3dToolRegistryV1 {
                     "Read-only: inspect the last rejected llm_generate_plan_v1 output and return semantic errors + preserve-mode constraints (names/root/policy).",
                 args_schema: "{ version?: 1 }",
                 args_example: serde_json::json!({ "version": 1 }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_APPLY_PLAN_OPS,
+                title: "Apply plan ops",
+                one_line_summary:
+                    "Mutates pending plan: apply deterministic ops to the last rejected llm_generate_plan_v1 plan attempt (job.pending_plan_attempt), revalidate, and accept if valid (clears pending_plan_attempt). Writes plan_ops.jsonl + apply_plan_ops_last.json.",
+                args_schema:
+                    "{ version?: 1, dry_run?: bool, ops: PlanOp[] }\n\
+\n\
+PlanOp =\n\
+  | { kind:\"add_component\", name:string, size:[number,number,number], purpose?:string, modeling_notes?:string, anchors?:Anchor[], contacts?:Contact[], attach_to?:Attachment }\n\
+  | { kind:\"remove_component\", name:string }\n\
+  | { kind:\"set_attach_to\", component:string, set_attach_to: Attachment|null }\n\
+  | { kind:\"set_anchor\", component:string, anchor:Anchor }\n\
+  | { kind:\"set_aim_components\", components:string[] }\n\
+  | { kind:\"set_attack_muzzle\", component:string, anchor:string }\n\
+  | { kind:\"set_reuse_groups\", reuse_groups:ReuseGroup[] }\n\
+\n\
+Anchor = { name:string, pos:[number,number,number], forward:[number,number,number], up:[number,number,number] }\n\
+Contact = { name:string, kind:\"ground\", anchor:string, stance?: { phase_01:number, duty_factor_01:number } }\n\
+Attachment = { parent:string, parent_anchor:string, child_anchor:string, offset?: { pos?:[number,number,number], forward?:[number,number,number], up?:[number,number,number], rot_frame?:\"join\"|\"parent\", rot_quat_xyzw?:[number,number,number,number], scale?:[number,number,number] }, joint?: Joint }\n\
+Joint = { kind:\"fixed\"|\"hinge\"|\"ball\"|\"free\", axis_join?:[number,number,number], limits_degrees?:[number,number], swing_limits_degrees?:[number,number], twist_limits_degrees?:[number,number] }\n\
+ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string, mode?:string, anchors?:string }",
+                args_example: serde_json::json!({
+                    "dry_run": true,
+                    "ops": [
+                        { "kind": "add_component", "name": "arm_lower_r", "size": [0.3, 0.2, 0.2] },
+                        { "kind": "set_attach_to", "component": "arm_lower_r", "set_attach_to": { "parent": "torso", "parent_anchor": "shoulder_r", "child_anchor": "mount", "offset": { "pos": [0.0, 0.0, 0.0] } } }
+                    ]
+                }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_GET_PLAN_TEMPLATE,

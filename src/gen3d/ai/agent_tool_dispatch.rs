@@ -4,23 +4,22 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
-    TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE,
-    TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_DIFF_WORKSPACES,
+    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_COPY_COMPONENT,
+    TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE,
+    TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS,
+    TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
+    TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_GET_USER_INPUTS,
     TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST, TOOL_ID_INFO_EVENTS_GET,
     TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH, TOOL_ID_INFO_KV_GET,
     TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS,
-    TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY,
-    TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_GET_USER_INPUTS, TOOL_ID_INSPECT_PLAN,
-    TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT,
+    TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT,
     TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MERGE_WORKSPACE,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
-    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION,
-    TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
-    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK,
-    TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_SUGGEST_MOTION_REPAIRS,
-    TOOL_ID_VALIDATE,
+    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
+    TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -697,19 +696,23 @@ pub(super) fn execute_tool_call(
                         call_id: call.call_id.clone(),
                     }),
                 ),
-                Err(err) => return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    format!("Failed to open Info Store: {err}"),
-                )),
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Failed to open Info Store: {err}"),
+                    ))
+                }
             };
             let record = match record {
                 Ok(v) => v,
-                Err(err) => return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    err,
-                )),
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ))
+                }
             };
 
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
@@ -1075,8 +1078,14 @@ pub(super) fn execute_tool_call(
 
             // Also persist validate/smoke individually so agents can fetch them via stable keys even
             // when they only run `qa_v1`.
-            let validate_json = json.get("validate").cloned().unwrap_or(serde_json::Value::Null);
-            let smoke_json = json.get("smoke").cloned().unwrap_or(serde_json::Value::Null);
+            let validate_json = json
+                .get("validate")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let smoke_json = json
+                .get("smoke")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
             let validate_key = format!("ws.{workspace_id}.validate");
             let smoke_key = format!("ws.{workspace_id}.smoke");
             let qa_key = format!("ws.{workspace_id}.qa");
@@ -1108,7 +1117,10 @@ pub(super) fn execute_tool_call(
                 }
             }
             if smoke_json != serde_json::Value::Null {
-                let smoke_ok = smoke_json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                let smoke_ok = smoke_json
+                    .get("ok")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let smoke_issues = smoke_json
                     .get("issues")
                     .and_then(|v| v.as_array())
@@ -1131,8 +1143,16 @@ pub(super) fn execute_tool_call(
                 }
             }
 
-            let error_count = json.get("errors").and_then(|v| v.as_array()).map(|v| v.len()).unwrap_or(0);
-            let warning_count = json.get("warnings").and_then(|v| v.as_array()).map(|v| v.len()).unwrap_or(0);
+            let error_count = json
+                .get("errors")
+                .and_then(|v| v.as_array())
+                .map(|v| v.len())
+                .unwrap_or(0);
+            let warning_count = json
+                .get("warnings")
+                .and_then(|v| v.as_array())
+                .map(|v| v.len())
+                .unwrap_or(0);
             let qa_record = match info_kv_put_for_tool(
                 job,
                 workspace_id.as_str(),
@@ -1323,8 +1343,13 @@ pub(super) fn execute_tool_call(
                     ));
                 }
             };
-            let page =
-                store.page_out(&items, TOOL_ID_INFO_KV_LIST_KEYS, params_sig.as_str(), limit, offset);
+            let page = store.page_out(
+                &items,
+                TOOL_ID_INFO_KV_LIST_KEYS,
+                params_sig.as_str(),
+                limit,
+                offset,
+            );
 
             let mut out = serde_json::Map::new();
             out.insert("ok".into(), serde_json::Value::Bool(true));
@@ -1523,10 +1548,7 @@ pub(super) fn execute_tool_call(
                 ));
             }
 
-            let max_bytes = args
-                .max_bytes
-                .unwrap_or(64 * 1024)
-                .clamp(1024, 512 * 1024) as usize;
+            let max_bytes = args.max_bytes.unwrap_or(64 * 1024).clamp(1024, 512 * 1024) as usize;
 
             let selector_kind = args
                 .selector
@@ -1546,7 +1568,13 @@ pub(super) fn execute_tool_call(
                 }
             };
 
-            let record = match select_kv_record(store, namespace, key, selector_kind.as_str(), args.selector.as_ref()) {
+            let record = match select_kv_record(
+                store,
+                namespace,
+                key,
+                selector_kind.as_str(),
+                args.selector.as_ref(),
+            ) {
                 Ok(v) => v,
                 Err(err) => {
                     return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -1575,9 +1603,11 @@ pub(super) fn execute_tool_call(
                 .map(str::to_string);
 
             let selected = if let Some(ptr) = json_pointer.as_deref() {
-                record.value.pointer(ptr).cloned().ok_or_else(|| {
-                    format!("JSON pointer not found in KV value: {ptr}")
-                })
+                record
+                    .value
+                    .pointer(ptr)
+                    .cloned()
+                    .ok_or_else(|| format!("JSON pointer not found in KV value: {ptr}"))
             } else {
                 Ok(record.value.clone())
             };
@@ -1616,10 +1646,16 @@ pub(super) fn execute_tool_call(
             out.insert("ok".into(), serde_json::Value::Bool(true));
             let mut record_json = serde_json::Map::new();
             record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
-            record_json.insert("written_at_ms".into(), serde_json::json!(record.written_at_ms));
+            record_json.insert(
+                "written_at_ms".into(),
+                serde_json::json!(record.written_at_ms),
+            );
             record_json.insert("attempt".into(), serde_json::json!(record.attempt));
             record_json.insert("pass".into(), serde_json::json!(record.pass));
-            record_json.insert("assembly_rev".into(), serde_json::json!(record.assembly_rev));
+            record_json.insert(
+                "assembly_rev".into(),
+                serde_json::json!(record.assembly_rev),
+            );
             record_json.insert(
                 "workspace_id".into(),
                 serde_json::Value::String(record.workspace_id.clone()),
@@ -1732,10 +1768,8 @@ pub(super) fn execute_tool_call(
                     continue;
                 }
 
-                let max_bytes = item
-                    .max_bytes
-                    .unwrap_or(64 * 1024)
-                    .clamp(1024, 512 * 1024) as usize;
+                let max_bytes =
+                    item.max_bytes.unwrap_or(64 * 1024).clamp(1024, 512 * 1024) as usize;
 
                 let record = match select_kv_record(
                     store,
@@ -1817,10 +1851,16 @@ pub(super) fn execute_tool_call(
                 out.insert("ok".into(), serde_json::Value::Bool(true));
                 let mut record_json = serde_json::Map::new();
                 record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
-                record_json.insert("written_at_ms".into(), serde_json::json!(record.written_at_ms));
+                record_json.insert(
+                    "written_at_ms".into(),
+                    serde_json::json!(record.written_at_ms),
+                );
                 record_json.insert("attempt".into(), serde_json::json!(record.attempt));
                 record_json.insert("pass".into(), serde_json::json!(record.pass));
-                record_json.insert("assembly_rev".into(), serde_json::json!(record.assembly_rev));
+                record_json.insert(
+                    "assembly_rev".into(),
+                    serde_json::json!(record.assembly_rev),
+                );
                 record_json.insert(
                     "workspace_id".into(),
                     serde_json::Value::String(record.workspace_id.clone()),
@@ -2025,9 +2065,17 @@ pub(super) fn execute_tool_call(
             }
 
             if sort == "ts_asc" {
-                events.sort_by(|a, b| a.ts_ms.cmp(&b.ts_ms).then_with(|| a.event_id.cmp(&b.event_id)));
+                events.sort_by(|a, b| {
+                    a.ts_ms
+                        .cmp(&b.ts_ms)
+                        .then_with(|| a.event_id.cmp(&b.event_id))
+                });
             } else {
-                events.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms).then_with(|| b.event_id.cmp(&a.event_id)));
+                events.sort_by(|a, b| {
+                    b.ts_ms
+                        .cmp(&a.ts_ms)
+                        .then_with(|| b.event_id.cmp(&a.event_id))
+                });
             }
 
             let params_sig = store.stable_params_sig(&serde_json::json!({
@@ -2071,7 +2119,8 @@ pub(super) fn execute_tool_call(
                 let data_preview = if ev.data.is_null() {
                     serde_json::Value::Null
                 } else {
-                    let json = serde_json::to_string(&ev.data).unwrap_or_else(|_| ev.data.to_string());
+                    let json =
+                        serde_json::to_string(&ev.data).unwrap_or_else(|_| ev.data.to_string());
                     serde_json::Value::String(truncate_chars(&json, 2000))
                 };
                 let mut item = serde_json::Map::new();
@@ -2082,12 +2131,21 @@ pub(super) fn execute_tool_call(
                 item.insert("assembly_rev".into(), serde_json::json!(ev.assembly_rev));
                 item.insert("kind".into(), serde_json::json!(ev.kind));
                 if let Some(tool_id) = ev.tool_id.as_deref() {
-                    item.insert("tool_id".into(), serde_json::Value::String(tool_id.to_string()));
+                    item.insert(
+                        "tool_id".into(),
+                        serde_json::Value::String(tool_id.to_string()),
+                    );
                 }
                 if let Some(call_id) = ev.call_id.as_deref() {
-                    item.insert("call_id".into(), serde_json::Value::String(call_id.to_string()));
+                    item.insert(
+                        "call_id".into(),
+                        serde_json::Value::String(call_id.to_string()),
+                    );
                 }
-                item.insert("message".into(), serde_json::Value::String(truncate_chars(&ev.message, 400)));
+                item.insert(
+                    "message".into(),
+                    serde_json::Value::String(truncate_chars(&ev.message, 400)),
+                );
                 item.insert("data_preview".into(), data_preview);
                 items.push(serde_json::Value::Object(item));
             }
@@ -2127,10 +2185,7 @@ pub(super) fn execute_tool_call(
                 }
             };
 
-            let max_bytes = args
-                .max_bytes
-                .unwrap_or(64 * 1024)
-                .clamp(1024, 512 * 1024) as usize;
+            let max_bytes = args.max_bytes.unwrap_or(64 * 1024).clamp(1024, 512 * 1024) as usize;
 
             let store = match job.ensure_info_store() {
                 Ok(s) => s,
@@ -2204,12 +2259,21 @@ pub(super) fn execute_tool_call(
             out_event.insert("assembly_rev".into(), serde_json::json!(event.assembly_rev));
             out_event.insert("kind".into(), serde_json::json!(event.kind));
             if let Some(tool_id) = event.tool_id.as_deref() {
-                out_event.insert("tool_id".into(), serde_json::Value::String(tool_id.to_string()));
+                out_event.insert(
+                    "tool_id".into(),
+                    serde_json::Value::String(tool_id.to_string()),
+                );
             }
             if let Some(call_id) = event.call_id.as_deref() {
-                out_event.insert("call_id".into(), serde_json::Value::String(call_id.to_string()));
+                out_event.insert(
+                    "call_id".into(),
+                    serde_json::Value::String(call_id.to_string()),
+                );
             }
-            out_event.insert("message".into(), serde_json::Value::String(event.message.clone()));
+            out_event.insert(
+                "message".into(),
+                serde_json::Value::String(event.message.clone()),
+            );
             out_event.insert("data".into(), data);
 
             let mut out = serde_json::Map::new();
@@ -2355,7 +2419,8 @@ pub(super) fn execute_tool_call(
 
                 let mut matched = ev.message.contains(query);
                 if !matched && !ev.data.is_null() {
-                    let data = serde_json::to_string(&ev.data).unwrap_or_else(|_| ev.data.to_string());
+                    let data =
+                        serde_json::to_string(&ev.data).unwrap_or_else(|_| ev.data.to_string());
                     matched = data.contains(query);
                 }
                 if !matched {
@@ -2745,6 +2810,68 @@ pub(super) fn execute_tool_call(
                 key.as_str(),
                 json.clone(),
                 format!("apply draft ops (ok={ok} committed={committed})"),
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert(
+                    "info_kv".into(),
+                    info_kv_ref_json(INFO_KV_NAMESPACE_GEN3D, key.as_str(), record.kv_rev),
+                );
+            }
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
+        }
+        TOOL_ID_APPLY_PLAN_OPS => {
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+            let mut json = match super::plan_ops::apply_plan_ops_v1(
+                job,
+                draft,
+                Some(call_id.as_str()),
+                call.args,
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+
+            let accepted = json
+                .get("accepted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if accepted {
+                if let Some(def) = draft.root_def() {
+                    let max_dim = def.size.x.max(def.size.y).max(def.size.z).max(0.5);
+                    _preview.distance = (max_dim * 2.8 + 0.8).clamp(2.0, 250.0);
+                    _preview.pitch = super::super::GEN3D_PREVIEW_DEFAULT_PITCH;
+                    _preview.yaw = super::super::GEN3D_PREVIEW_DEFAULT_YAW;
+                    _preview.last_cursor = None;
+                }
+            }
+
+            let workspace_id = job.active_workspace_id().trim().to_string();
+            let key = format!("ws.{workspace_id}.apply_plan_ops_last");
+            let ok = json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let committed = json
+                .get("committed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let record = match info_kv_put_for_tool(
+                job,
+                workspace_id.as_str(),
+                tool_id.as_str(),
+                call_id.as_str(),
+                key.as_str(),
+                json.clone(),
+                format!("apply plan ops (ok={ok} committed={committed} accepted={accepted})"),
             ) {
                 Ok(v) => v,
                 Err(err) => {
@@ -5046,9 +5173,10 @@ mod tests {
             )
             .expect("kv put r3");
 
-        let latest = super::select_kv_record(&store, "gen3d", "ws.main.state_summary", "latest", None)
-            .expect("latest selector should not error")
-            .expect("expected record");
+        let latest =
+            super::select_kv_record(&store, "gen3d", "ws.main.state_summary", "latest", None)
+                .expect("latest selector should not error")
+                .expect("expected record");
         assert_eq!(latest.kv_rev, r3.kv_rev);
 
         let by_rev_selector = super::InfoKvSelectorArgsV1 {
