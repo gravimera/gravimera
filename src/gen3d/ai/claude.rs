@@ -13,7 +13,7 @@ use crate::openai_shared::{
 use super::artifacts::{
     append_gen3d_run_log, write_gen3d_json_artifact, write_gen3d_text_artifact,
 };
-use super::structured_outputs::Gen3dAiJsonSchemaKind;
+use super::structured_outputs::{json_schema_spec, Gen3dAiJsonSchemaKind};
 use super::{
     set_progress, truncate_for_ui, Gen3dAiApi, Gen3dAiProgress, Gen3dAiSessionState,
     Gen3dAiTextResponse,
@@ -27,6 +27,151 @@ const CURL_IDLE_TIMEOUT_SECS: u32 = 300;
 const CURL_HARD_TIMEOUT_SECS_DEFAULT: u32 = 1_200;
 
 const CLAUDE_MAX_TOKENS_DEFAULT: u32 = 8_192;
+const CLAUDE_ANTHROPIC_VERSION: &str = "2023-06-01";
+
+fn is_claude_structured_outputs_rejected(body: &str) -> bool {
+    let preview = body.trim().to_ascii_lowercase();
+    let mentions_feature = preview.contains("output_config")
+        || preview.contains("output format")
+        || preview.contains("output_format")
+        || preview.contains("json_schema")
+        || preview.contains("structured outputs")
+        || preview.contains("structured_outputs")
+        || preview.contains("schema");
+    if !mentions_feature {
+        return false;
+    }
+
+    preview.contains("unknown field")
+        || preview.contains("unrecognized field")
+        || preview.contains("unsupported")
+        || preview.contains("not supported")
+        || preview.contains("invalid")
+        || preview.contains("invalid argument")
+}
+
+fn transform_json_schema_for_claude(schema: serde_json::Value) -> serde_json::Value {
+    match schema {
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .into_iter()
+                .map(transform_json_schema_for_claude)
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => {
+            // Claude structured outputs have a stricter JSON schema subset (for example `maxItems`
+            // is not supported, and `additionalProperties` must be `false`). Our Gen3D schemas are
+            // shared across providers, so we transform them here instead of forking the schema set.
+            //
+            // References: `/Users/flow/Downloads/Claude Structured outputs.md`
+            if map.len() == 2
+                && map.get("type").and_then(|v| v.as_str()) == Some("object")
+                && map.get("additionalProperties").and_then(|v| v.as_bool()) == Some(true)
+            {
+                // `additionalProperties:true` is not supported. This currently only appears in the
+                // Gen3D agent-step schema for `actions[].args` (tool call args). Representing args
+                // as an untyped object would be rejected by Claude, so encode args as a string
+                // containing JSON (parsed later by the tool dispatcher).
+                return serde_json::json!({ "type": "string" });
+            }
+
+            let mut out = serde_json::Map::new();
+            for (key, value) in map {
+                match key.as_str() {
+                    // Unsupported array constraints.
+                    "maxItems" => continue,
+                    "minItems" => {
+                        if value.as_u64().is_some_and(|n| n <= 1) {
+                            out.insert(key, value);
+                        }
+                        continue;
+                    }
+                    // Unsupported numeric constraints.
+                    "minimum" | "maximum" | "multipleOf" | "exclusiveMinimum"
+                    | "exclusiveMaximum" => continue,
+                    // Unsupported string constraints.
+                    "minLength" | "maxLength" => continue,
+                    // Some structured-output implementations reject any `additionalProperties`
+                    // value besides `false`; keep only `false`.
+                    "additionalProperties" => {
+                        if value.as_bool() == Some(false) {
+                            out.insert(key, value);
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                out.insert(key, transform_json_schema_for_claude(value));
+            }
+            serde_json::Value::Object(out)
+        }
+        other => other,
+    }
+}
+
+fn build_claude_stream_messages_request_json(
+    expected_schema: Option<Gen3dAiJsonSchemaKind>,
+    include_output_json_schema: bool,
+    model: &str,
+    system_instructions: &str,
+    user_text: &str,
+    images: &[(&str, Vec<u8>)],
+    image_paths: &[PathBuf],
+) -> serde_json::Value {
+    let mut parts: Vec<serde_json::Value> = Vec::new();
+    parts.push(serde_json::json!({ "type": "text", "text": user_text }));
+    for (idx, (mime, bytes)) in images.iter().enumerate() {
+        let b64 = base64_encode(bytes);
+        let name = image_paths
+            .get(idx)
+            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
+            .unwrap_or("<unknown>");
+        parts.push(serde_json::json!({
+            "type": "text",
+            "text": format!("Image {}: {name}", idx + 1),
+        }));
+        parts.push(serde_json::json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime,
+                "data": b64,
+            }
+        }));
+    }
+
+    let mut req = serde_json::json!({
+        "model": model,
+        "max_tokens": CLAUDE_MAX_TOKENS_DEFAULT,
+        "stream": true,
+        "temperature": 0.2,
+        "messages": [
+            {
+                "role": "user",
+                "content": parts,
+            }
+        ]
+    });
+    if !system_instructions.trim().is_empty() {
+        req["system"] = serde_json::json!(system_instructions);
+    }
+
+    if include_output_json_schema {
+        if let Some(kind) = expected_schema {
+            let spec = json_schema_spec(kind);
+            let schema = transform_json_schema_for_claude(spec.schema);
+            req["output_config"] = serde_json::json!({
+                "format": {
+                    "type": "json_schema",
+                    "schema": schema,
+                }
+            });
+        }
+    }
+
+    req
+}
 
 #[derive(Clone, Copy, Debug)]
 struct CurlByteTimeouts {
@@ -324,10 +469,6 @@ pub(super) fn generate_text_via_claude(
     run_dir: Option<&Path>,
     artifact_prefix: &str,
 ) -> Result<Gen3dAiTextResponse, String> {
-    if require_structured_outputs && expected_schema.is_some() {
-        return Err("Gen3D requires strict Structured Outputs, but the Claude backend does not yet support schema-enforced JSON outputs. Use the OpenAI backend or disable [gen3d].require_structured_outputs.".into());
-    }
-
     if image_paths.len() > GEN3D_MAX_REQUEST_IMAGES {
         return Err(format!(
             "Too many images: {} (max {GEN3D_MAX_REQUEST_IMAGES})",
@@ -473,175 +614,205 @@ pub(super) fn generate_text_via_claude(
 
     set_progress(progress, "Requesting Claude…");
 
-    let mut parts: Vec<serde_json::Value> = Vec::new();
-    parts.push(serde_json::json!({ "type": "text", "text": user_text }));
-    for (idx, (mime, bytes)) in images.iter().enumerate() {
-        let b64 = base64_encode(bytes);
-        let name = image_paths
-            .get(idx)
-            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
-            .unwrap_or("<unknown>");
-        parts.push(serde_json::json!({
-            "type": "text",
-            "text": format!("Image {}: {name}", idx + 1),
-        }));
-        parts.push(serde_json::json!({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": mime,
-                "data": b64,
-            }
-        }));
-    }
-
-    let mut req = serde_json::json!({
-        "model": model,
-        "max_tokens": CLAUDE_MAX_TOKENS_DEFAULT,
-        "stream": true,
-        "temperature": 0.2,
-        "messages": [
-            {
-                "role": "user",
-                "content": parts,
-            }
-        ]
-    });
-    if !system_instructions.trim().is_empty() {
-        req["system"] = serde_json::json!(system_instructions);
-    }
-
-    write_gen3d_json_artifact(
-        run_dir,
-        format!("{artifact_prefix}_claude_request.json"),
-        &req,
-    );
-
-    let body =
-        serde_json::to_vec(&req).map_err(|err| format!("Claude: failed to encode JSON: {err}"))?;
-    debug!(
-        "Gen3D: sending Claude curl request (url={}, model={}, body_bytes={})",
-        url,
-        model,
-        body.len()
-    );
-
     let headers = curl_x_api_key_header_file(api_key)
         .map_err(|err| format!("Claude: failed to create curl auth header file: {err}"))?;
 
-    let mut cmd = std::process::Command::new("curl");
-    crate::system_proxy::apply_system_proxy_to_curl_command(&mut cmd, &url);
-    cmd.arg("-sS")
-        .arg("--no-buffer")
-        .arg("--connect-timeout")
-        .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
-        .arg("--max-time")
-        .arg(CURL_HARD_TIMEOUT_SECS_DEFAULT.to_string())
-        .arg("-X")
-        .arg("POST")
-        .arg("-H")
-        .arg("Content-Type: application/json")
-        .arg("-H")
-        .arg(headers.curl_header_arg())
-        .arg("-d")
-        .arg("@-")
-        .arg(&url)
-        .arg("-w")
-        .arg(CURL_HTTP_STATUS_WRITEOUT_ARG)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let child = cmd
-        .spawn()
-        .map_err(|err| format!("Claude: failed to start curl: {err}"))?;
-
-    let output = wait_curl_with_byte_timeouts(
-        child,
-        Some(&body),
-        CurlByteTimeouts {
-            first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
-            idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
-            hard: std::time::Duration::from_secs(CURL_HARD_TIMEOUT_SECS_DEFAULT.into()),
-        },
-        cancel_flag,
-        &url,
-    )?;
-
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if !output.status.success() {
-        append_gen3d_run_log(
-            run_dir,
-            format!(
-                "claude_curl_nonzero prefix={} status={} stderr_tail={}",
-                artifact_prefix,
-                output.status,
-                truncate_for_ui(stderr.trim(), 240)
-            ),
+    let mut include_output_json_schema = expected_schema.is_some();
+    let (body, status_code) = loop {
+        let req = build_claude_stream_messages_request_json(
+            expected_schema,
+            include_output_json_schema,
+            model,
+            system_instructions,
+            user_text,
+            &images,
+            image_paths,
         );
-        return Err(format!(
-            "Claude curl exited with non-zero status.\nURL: {url}\n{stderr}"
-        ));
-    }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let (body, status_code) = split_curl_http_status(&stdout, CURL_HTTP_STATUS_MARKER);
-    if status_code.is_none() {
-        warn!(
-            "Gen3D: missing HTTP status marker in Claude curl output (truncated): {}",
-            truncate_for_ui(stdout.trim(), 240)
+        let request_artifact = if include_output_json_schema {
+            format!("{artifact_prefix}_claude_request.json")
+        } else {
+            format!("{artifact_prefix}_claude_request_retry_no_schema.json")
+        };
+        write_gen3d_json_artifact(run_dir, request_artifact, &req);
+
+        let request_body = serde_json::to_vec(&req)
+            .map_err(|err| format!("Claude: failed to encode JSON: {err}"))?;
+        debug!(
+            "Gen3D: sending Claude curl request (url={}, model={}, body_bytes={})",
+            url,
+            model,
+            request_body.len()
         );
-    }
-    append_gen3d_run_log(
-        run_dir,
-        format!(
-            "claude_recv prefix={} http_status={} body_chars={}",
-            artifact_prefix,
-            status_code.unwrap_or(0),
-            body.chars().count()
-        ),
-    );
 
-    if let Some(code) = status_code {
-        if !(200..=299).contains(&code) {
+        let mut cmd = std::process::Command::new("curl");
+        crate::system_proxy::apply_system_proxy_to_curl_command(&mut cmd, &url);
+        cmd.arg("-sS")
+            .arg("--no-buffer")
+            .arg("--connect-timeout")
+            .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
+            .arg("--max-time")
+            .arg(CURL_HARD_TIMEOUT_SECS_DEFAULT.to_string())
+            .arg("-X")
+            .arg("POST")
+            .arg("-H")
+            .arg("Content-Type: application/json")
+            .arg("-H")
+            .arg(format!("anthropic-version: {}", CLAUDE_ANTHROPIC_VERSION))
+            .arg("-H")
+            .arg(headers.curl_header_arg())
+            .arg("-d")
+            .arg("@-")
+            .arg(&url)
+            .arg("-w")
+            .arg(CURL_HTTP_STATUS_WRITEOUT_ARG)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let child = cmd
+            .spawn()
+            .map_err(|err| format!("Claude: failed to start curl: {err}"))?;
+
+        let output = wait_curl_with_byte_timeouts(
+            child,
+            Some(&request_body),
+            CurlByteTimeouts {
+                first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+                idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
+                hard: std::time::Duration::from_secs(CURL_HARD_TIMEOUT_SECS_DEFAULT.into()),
+            },
+            cancel_flag,
+            &url,
+        )?;
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if !output.status.success() {
             append_gen3d_run_log(
                 run_dir,
                 format!(
-                    "claude_error prefix={} http_status={} body_preview={}",
+                    "claude_curl_nonzero prefix={} status={} stderr_tail={}",
                     artifact_prefix,
-                    code,
-                    truncate_for_ui(body.trim(), 240)
+                    output.status,
+                    truncate_for_ui(stderr.trim(), 240)
                 ),
             );
-            append_agent_trace_event_v1(
-                run_root_dir,
-                &AgentTraceEventV1::LlmResponse {
-                    artifact_prefix: artifact_prefix.to_string(),
-                    artifact_dir: run_dir
-                        .map(|d| d.display().to_string())
-                        .unwrap_or_else(|| "<none>".into()),
-                    api: "claude".into(),
-                    ok: false,
-                    total_tokens: None,
-                    error: Some(format!("HTTP {code}")),
-                },
-            );
             return Err(format!(
-                "Claude request failed (HTTP {code}).\nURL: {url}\n{}",
-                truncate_for_ui(body.trim(), 1200)
+                "Claude curl exited with non-zero status.\nURL: {url}\n{stderr}"
             ));
         }
-    }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let (body, status_code) = split_curl_http_status(&stdout, CURL_HTTP_STATUS_MARKER);
+        if status_code.is_none() {
+            warn!(
+                "Gen3D: missing HTTP status marker in Claude curl output (truncated): {}",
+                truncate_for_ui(stdout.trim(), 240)
+            );
+        }
+        append_gen3d_run_log(
+            run_dir,
+            format!(
+                "claude_recv prefix={} http_status={} body_chars={}",
+                artifact_prefix,
+                status_code.unwrap_or(0),
+                body.chars().count()
+            ),
+        );
+
+        if let Some(code) = status_code {
+            if !(200..=299).contains(&code) {
+                if include_output_json_schema
+                    && expected_schema.is_some()
+                    && code == 400
+                    && is_claude_structured_outputs_rejected(body)
+                {
+                    if require_structured_outputs {
+                        append_gen3d_run_log(
+                            run_dir,
+                            format!(
+                                "claude_structured_outputs_rejected prefix={} http_status={} body_preview={}",
+                                artifact_prefix,
+                                code,
+                                truncate_for_ui(body.trim(), 240)
+                            ),
+                        );
+                        append_agent_trace_event_v1(
+                            run_root_dir,
+                            &AgentTraceEventV1::LlmResponse {
+                                artifact_prefix: artifact_prefix.to_string(),
+                                artifact_dir: run_dir
+                                    .map(|d| d.display().to_string())
+                                    .unwrap_or_else(|| "<none>".into()),
+                                api: "claude".into(),
+                                ok: false,
+                                total_tokens: None,
+                                error: Some("Structured outputs rejected".into()),
+                            },
+                        );
+                        return Err(format!(
+                            "Gen3D requires structured outputs, but the Claude endpoint/model rejected `output_config.format`.\nURL: {url}\n{}",
+                            truncate_for_ui(body.trim(), 1200)
+                        ));
+                    }
+
+                    warn!(
+                        "Gen3D: Claude structured outputs rejected; retrying without output_config."
+                    );
+                    append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "claude_retry prefix={} reason=structured_outputs_rejected http_status={} body_preview={}",
+                            artifact_prefix,
+                            code,
+                            truncate_for_ui(body.trim(), 240)
+                        ),
+                    );
+                    include_output_json_schema = false;
+                    continue;
+                }
+
+                append_gen3d_run_log(
+                    run_dir,
+                    format!(
+                        "claude_error prefix={} http_status={} body_preview={}",
+                        artifact_prefix,
+                        code,
+                        truncate_for_ui(body.trim(), 240)
+                    ),
+                );
+                append_agent_trace_event_v1(
+                    run_root_dir,
+                    &AgentTraceEventV1::LlmResponse {
+                        artifact_prefix: artifact_prefix.to_string(),
+                        artifact_dir: run_dir
+                            .map(|d| d.display().to_string())
+                            .unwrap_or_else(|| "<none>".into()),
+                        api: "claude".into(),
+                        ok: false,
+                        total_tokens: None,
+                        error: Some(format!("HTTP {code}")),
+                    },
+                );
+                return Err(format!(
+                    "Claude request failed (HTTP {code}).\nURL: {url}\n{}",
+                    truncate_for_ui(body.trim(), 1200)
+                ));
+            }
+        }
+
+        break (body.to_string(), status_code);
+    };
 
     if let Some(run_dir) = run_dir {
         write_gen3d_text_artifact(
             Some(run_dir),
             format!("{artifact_prefix}_claude_raw.txt"),
-            body,
+            &body,
         );
     }
 
-    let (text_opt, total_tokens) = extract_claude_stream_output(body);
+    let (text_opt, total_tokens) = extract_claude_stream_output(&body);
     let text = text_opt.ok_or_else(|| {
         error!(
             "Gen3D: Claude stream returned no output text (prefix={}, http_status={})",
@@ -686,7 +857,10 @@ pub(super) fn generate_text_via_claude(
 
 #[cfg(test)]
 mod tests {
-    use super::extract_claude_stream_output;
+    use super::{
+        build_claude_stream_messages_request_json, extract_claude_stream_output,
+        transform_json_schema_for_claude,
+    };
 
     #[test]
     fn parses_stream_output_text_from_sse() {
@@ -712,5 +886,74 @@ data: {"type":"message_stop"}
         let (text, tokens) = extract_claude_stream_output(body);
         assert_eq!(text.unwrap(), "Hello world");
         assert_eq!(tokens, Some(52));
+    }
+
+    #[test]
+    fn transforms_schema_to_remove_unsupported_claude_features() {
+        let schema = serde_json::json!({
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3,
+        });
+        let transformed = transform_json_schema_for_claude(schema);
+        assert!(transformed.get("maxItems").is_none());
+        assert!(transformed.get("minItems").is_none());
+    }
+
+    #[test]
+    fn transforms_additional_properties_true_object_into_string_schema() {
+        let schema = serde_json::json!({ "type": "object", "additionalProperties": true });
+        let transformed = transform_json_schema_for_claude(schema);
+        assert_eq!(
+            transformed.get("type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+    }
+
+    #[test]
+    fn request_includes_output_config_when_schema_enabled() {
+        let req = build_claude_stream_messages_request_json(
+            Some(super::Gen3dAiJsonSchemaKind::PlanV1),
+            true,
+            "claude-test",
+            "",
+            "hi",
+            &[],
+            &[],
+        );
+
+        let format = req
+            .get("output_config")
+            .and_then(|v| v.get("format"))
+            .expect("output_config.format");
+        assert_eq!(
+            format.get("type").and_then(|v| v.as_str()),
+            Some("json_schema")
+        );
+        let schema = format.get("schema").expect("output_config.format.schema");
+        assert!(schema.is_object());
+
+        let serialized = serde_json::to_string(schema).expect("schema serialize");
+        assert!(!serialized.contains("maxItems"), "{serialized}");
+        assert!(
+            !serialized.contains("\"additionalProperties\":true"),
+            "{serialized}"
+        );
+    }
+
+    #[test]
+    fn request_omits_output_config_when_schema_disabled() {
+        let req = build_claude_stream_messages_request_json(
+            Some(super::Gen3dAiJsonSchemaKind::PlanV1),
+            false,
+            "claude-test",
+            "",
+            "hi",
+            &[],
+            &[],
+        );
+
+        assert!(req.get("output_config").is_none());
     }
 }

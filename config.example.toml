@@ -172,7 +172,9 @@ token = "YOUR_GEMINI_API_KEY_HERE"
 base_url = "https://api.anthropic.com/v1"
 
 # Any Claude model id (example below). See: https://docs.anthropic.com/claude/docs/models-overview
-model = "claude-3-5-sonnet-20241022"
+# Note: Gen3D schema-constrained calls use Structured Outputs (`output_config.format`), so use a
+# model that supports it (Claude 4.5+ per Anthropic docs).
+model = "claude-sonnet-4-5-20250929"
 
 # API token (sent as `x-api-key`). Can also be provided via env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`.
 token = "YOUR_CLAUDE_API_KEY_HERE"

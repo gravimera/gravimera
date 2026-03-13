@@ -46,6 +46,67 @@ use super::{
     Gen3dAiTextResponse,
 };
 
+fn normalize_tool_call_args(call: &mut Gen3dToolCallJsonV1) -> Result<(), String> {
+    let args = std::mem::take(&mut call.args);
+    match args {
+        serde_json::Value::Null => {
+            call.args = serde_json::json!({});
+            Ok(())
+        }
+        serde_json::Value::Object(_) => {
+            call.args = args;
+            Ok(())
+        }
+        serde_json::Value::String(text) => {
+            let text = text.trim();
+            if text.is_empty() || text == "null" {
+                call.args = serde_json::json!({});
+                return Ok(());
+            }
+
+            let parsed = serde_json::from_str::<serde_json::Value>(text)
+                .or_else(|_| json5::from_str::<serde_json::Value>(text))
+                .map_err(|err| {
+                    format!(
+                        "args was a string but could not be parsed as JSON. Provide an object like `{{}}`.\nError: {err}"
+                    )
+                })?;
+            match parsed {
+                serde_json::Value::Null => {
+                    call.args = serde_json::json!({});
+                    Ok(())
+                }
+                serde_json::Value::Object(_) => {
+                    call.args = parsed;
+                    Ok(())
+                }
+                other => Err(format!(
+                    "args string parsed, but was not an object (got {}). Provide an object like `{{}}`.",
+                    match other {
+                        serde_json::Value::Null => "null",
+                        serde_json::Value::Bool(_) => "bool",
+                        serde_json::Value::Number(_) => "number",
+                        serde_json::Value::String(_) => "string",
+                        serde_json::Value::Array(_) => "array",
+                        serde_json::Value::Object(_) => "object",
+                    }
+                )),
+            }
+        }
+        other => Err(format!(
+            "args must be an object (or a JSON string encoding an object), got {}.",
+            match other {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "bool",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Array(_) => "array",
+                serde_json::Value::Object(_) => "object",
+            }
+        )),
+    }
+}
+
 fn run_validate_v1(job: &mut Gen3dAiJob, draft: &Gen3dDraft) -> serde_json::Value {
     let json = super::build_gen3d_validate_results(&job.planned_components, draft);
     if let Some(dir) = job.pass_dir.as_deref() {
@@ -100,6 +161,15 @@ pub(super) fn execute_tool_call(
     >,
     call: Gen3dToolCallJsonV1,
 ) -> ToolCallOutcome {
+    let mut call = call;
+    if let Err(err) = normalize_tool_call_args(&mut call) {
+        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+            call.call_id,
+            call.tool_id,
+            err,
+        ));
+    }
+
     let registry = Gen3dToolRegistryV1::default();
     match call.tool_id.as_str() {
         TOOL_ID_GET_TOOL_DETAIL => {
@@ -2945,5 +3015,59 @@ pub(super) fn execute_tool_call(
             call.tool_id,
             "Unknown tool_id".into(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_tool_call_args;
+    use crate::gen3d::agent::Gen3dToolCallJsonV1;
+
+    #[test]
+    fn normalizes_null_args_to_empty_object() {
+        let mut call = Gen3dToolCallJsonV1 {
+            call_id: "call_1".into(),
+            tool_id: "qa_v1".into(),
+            args: serde_json::Value::Null,
+        };
+        normalize_tool_call_args(&mut call).expect("normalize");
+        assert!(call.args.is_object());
+        assert_eq!(call.args.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn parses_args_from_json_string_object() {
+        let mut call = Gen3dToolCallJsonV1 {
+            call_id: "call_1".into(),
+            tool_id: "get_tool_detail_v1".into(),
+            args: serde_json::Value::String("{\"tool_id\":\"qa_v1\"}".into()),
+        };
+        normalize_tool_call_args(&mut call).expect("normalize");
+        assert_eq!(
+            call.args.get("tool_id").and_then(|v| v.as_str()),
+            Some("qa_v1")
+        );
+    }
+
+    #[test]
+    fn rejects_args_string_that_is_not_object() {
+        let mut call = Gen3dToolCallJsonV1 {
+            call_id: "call_1".into(),
+            tool_id: "qa_v1".into(),
+            args: serde_json::Value::String("[1,2,3]".into()),
+        };
+        let err = normalize_tool_call_args(&mut call).expect_err("should reject");
+        assert!(err.contains("not an object"), "{err}");
+    }
+
+    #[test]
+    fn rejects_args_value_that_is_not_object() {
+        let mut call = Gen3dToolCallJsonV1 {
+            call_id: "call_1".into(),
+            tool_id: "qa_v1".into(),
+            args: serde_json::Value::Bool(true),
+        };
+        let err = normalize_tool_call_args(&mut call).expect_err("should reject");
+        assert!(err.contains("args must be an object"), "{err}");
     }
 }

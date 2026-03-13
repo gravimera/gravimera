@@ -33,6 +33,7 @@ Config notes:
   - OpenAI: `OPENAI_API_KEY`
   - Gemini: `X_GOOG_API_KEY` (or `GEMINI_API_KEY`)
   - Claude: `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`)
+- Claude: Gen3D uses Structured Outputs (`output_config.format`) when `[gen3d].require_structured_outputs = true` (default), so use a Claude model that supports structured outputs (Claude 4.5+ per Anthropic docs).
 - For offline/deterministic debug runs, you can use the built-in mock backend by setting `base_url = "mock://gen3d"` and omitting the token (debug/test builds only).
 - Reference fixtures: `tests/gen3d/config.toml` (OpenAI), `tests/gen3d/config_gemini.toml` (Gemini), and `tests/gen3d/config_claude.toml` (Claude).
 
