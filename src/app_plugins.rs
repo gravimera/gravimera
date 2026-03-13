@@ -387,6 +387,12 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_save_button
                     .after(crate::gen3d::gen3d_poll_ai_job)
                     .run_if(crate::automation::local_input_enabled),
+            )
+                .run_if(in_state(BuildScene::Preview)),
+        );
+        app.add_systems(
+            Update,
+            (
                 crate::gen3d::gen3d_images_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_images_scrollbar_drag
@@ -397,6 +403,9 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_tool_feedback_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_prompt_scroll_wheel
+                    .run_if(crate::automation::local_input_enabled),
+                crate::gen3d::gen3d_prompt_scrollbar_drag
+                    .after(crate::gen3d::gen3d_prompt_scroll_wheel)
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_animation_dropdown_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),

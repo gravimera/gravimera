@@ -107,6 +107,7 @@ pub(crate) fn enter_gen3d_mode(
     mut preview_state: ResMut<Gen3dPreview>,
     mut meta_state: ResMut<crate::motion_ui::MotionAlgorithmUiState>,
     mut meta_roots: Query<&mut Visibility, With<crate::motion_ui::MotionAlgorithmUiRoot>>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     if !job.is_running() {
         workshop.status = format!(
@@ -119,6 +120,7 @@ pub(crate) fn enter_gen3d_mode(
     workshop.prompt_focused = true;
     workshop.image_viewer = None;
     workshop.images_scrollbar_drag = None;
+    workshop.prompt_scrollbar_drag = None;
     workshop.side_tab = Gen3dSideTab::Status;
     workshop.side_panel_open = false;
     workshop.tool_feedback_unread = false;
@@ -130,6 +132,9 @@ pub(crate) fn enter_gen3d_mode(
     }
     if let Ok(mut visibility) = meta_roots.single_mut() {
         *visibility = Visibility::Hidden;
+    }
+    if let Ok(mut window) = windows.single_mut() {
+        window.ime_enabled = true;
     }
 
     let needs_setup = preview_state.target.is_none()
@@ -532,6 +537,7 @@ pub(crate) fn enter_gen3d_mode(
                                             ))
                                             .with_children(|track| {
                                                 track.spawn((
+                                                    Button,
                                                     Node {
                                                         position_type: PositionType::Absolute,
                                                         left: Val::Px(1.0),
@@ -697,6 +703,7 @@ pub(crate) fn enter_gen3d_mode(
 
                                         prompt_row
                                             .spawn((
+                                                Button,
                                                 Node {
                                                     width: Val::Px(8.0),
                                                     height: Val::Percent(100.0),
@@ -710,6 +717,7 @@ pub(crate) fn enter_gen3d_mode(
                                             ))
                                             .with_children(|track| {
                                                 track.spawn((
+                                                    Button,
                                                     Node {
                                                         position_type: PositionType::Absolute,
                                                         left: Val::Px(1.0),
@@ -1058,6 +1066,7 @@ pub(crate) fn exit_gen3d_mode(
         preview_state.animation_dropdown_open = false;
     }
     workshop.image_viewer = None;
+    workshop.prompt_scrollbar_drag = None;
 }
 
 pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
@@ -1209,8 +1218,13 @@ pub(crate) fn gen3d_prompt_scroll_wheel(
         (&ComputedNode, &UiGlobalTransform, &mut ScrollPosition),
         With<Gen3dPromptScrollPanel>,
     >,
+    workshop: Res<Gen3dWorkshop>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+    if workshop.prompt_scrollbar_drag.is_some() {
+        for _ in mouse_wheel.read() {}
         return;
     }
     let Ok(window) = windows.single() else {
@@ -1244,7 +1258,15 @@ pub(crate) fn gen3d_prompt_scroll_wheel(
     }
 
     let delta_px = delta_lines * 24.0;
-    scroll.y = (scroll.y - delta_px).max(0.0);
+    let panel_scale = node.inverse_scale_factor();
+    let viewport_h = node.size.y.max(0.0) * panel_scale;
+    let content_h = node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(0.0);
+    scroll.y = (scroll.y - delta_px).clamp(0.0, max_scroll);
 }
 
 pub(crate) fn gen3d_update_prompt_scrollbar_ui(
@@ -1266,9 +1288,11 @@ pub(crate) fn gen3d_update_prompt_scrollbar_ui(
         return;
     };
 
-    let viewport_h = panel.size.y.max(0.0);
-    let content_h = panel.content_size.y.max(0.0);
-    let track_h = track_node.size.y.max(1.0);
+    let panel_scale = panel.inverse_scale_factor();
+    let track_scale = track_node.inverse_scale_factor();
+    let viewport_h = panel.size.y.max(0.0) * panel_scale;
+    let content_h = panel.content_size.y.max(0.0) * panel_scale;
+    let track_h = track_node.size.y.max(1.0) * track_scale;
 
     if viewport_h < 1.0 || content_h < 1.0 {
         *track_vis = Visibility::Hidden;
@@ -1288,11 +1312,117 @@ pub(crate) fn gen3d_update_prompt_scrollbar_ui(
     let scroll_y = panel.scroll_position.y.clamp(0.0, max_scroll);
 
     let min_thumb_h = 14.0;
-    let thumb_h = (track_h * (viewport_h / content_h)).clamp(min_thumb_h, track_h);
-    let thumb_top = (track_h - thumb_h) * (scroll_y / max_scroll);
+    let thumb_h = (viewport_h * viewport_h / content_h).clamp(min_thumb_h, track_h);
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    let thumb_top = (max_thumb_top * (scroll_y / max_scroll)).clamp(0.0, max_thumb_top);
 
     thumb.top = Val::Px(thumb_top);
     thumb.height = Val::Px(thumb_h);
+}
+
+pub(crate) fn gen3d_prompt_scrollbar_drag(
+    build_scene: Res<State<BuildScene>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<Gen3dPromptScrollPanel>>,
+    tracks: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<Gen3dPromptScrollbarTrack>,
+    >,
+    thumbs: Query<(&Interaction, &ComputedNode, &Node), With<Gen3dPromptScrollbarThumb>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        workshop.prompt_scrollbar_drag = None;
+        return;
+    }
+
+    if !mouse_buttons.pressed(MouseButton::Left) {
+        workshop.prompt_scrollbar_drag = None;
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        return;
+    };
+    let Ok((panel_node, mut scroll)) = panels.single_mut() else {
+        return;
+    };
+    let Ok((track_node, track_transform, track_vis)) = tracks.single() else {
+        return;
+    };
+    if *track_vis == Visibility::Hidden {
+        workshop.prompt_scrollbar_drag = None;
+        return;
+    }
+    let Ok((interaction, thumb_node, thumb_layout)) = thumbs.single() else {
+        return;
+    };
+
+    let mouse_just_pressed = mouse_buttons.just_pressed(MouseButton::Left);
+    let track_clicked = matches!(track_vis, Visibility::Visible | Visibility::Inherited)
+        && track_node.contains_point(*track_transform, cursor)
+        && mouse_just_pressed;
+    if workshop.prompt_scrollbar_drag.is_none() && (mouse_just_pressed || *interaction == Interaction::Pressed) {
+        if let Some(local) = track_transform
+            .try_inverse()
+            .map(|transform| transform.transform_point2(cursor))
+        {
+            let track_scale = track_node.inverse_scale_factor();
+            let thumb_scale = thumb_node.inverse_scale_factor();
+            let cursor_in_track = (local.y + track_node.size.y * 0.5) * track_scale;
+            let thumb_top = match thumb_layout.top {
+                Val::Px(value) => value,
+                _ => 0.0,
+            };
+            let thumb_h = thumb_node.size.y.max(1.0) * thumb_scale;
+            let over_thumb = cursor_in_track >= thumb_top && cursor_in_track <= thumb_top + thumb_h;
+            if *interaction == Interaction::Pressed || (mouse_just_pressed && over_thumb) {
+                let grab_offset = (cursor_in_track - thumb_top).clamp(0.0, thumb_h);
+                workshop.prompt_scrollbar_drag = Some(Gen3dPromptScrollbarDrag { grab_offset });
+            } else if track_clicked {
+                let grab_offset = (cursor_in_track - thumb_top).clamp(0.0, thumb_h);
+                workshop.prompt_scrollbar_drag = Some(Gen3dPromptScrollbarDrag { grab_offset });
+            }
+        }
+    }
+
+    let Some(drag) = workshop.prompt_scrollbar_drag else {
+        return;
+    };
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
+    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        scroll.y = 0.0;
+        return;
+    }
+
+    let track_scale = track_node.inverse_scale_factor();
+    let thumb_scale = thumb_node.inverse_scale_factor();
+    let track_h = track_node.size.y.max(1.0) * track_scale;
+    let thumb_h = thumb_node.size.y.max(1.0) * thumb_scale;
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    if max_thumb_top <= 1e-4 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(1.0);
+
+    let Some(local) = track_transform
+        .try_inverse()
+        .map(|transform| transform.transform_point2(cursor))
+    else {
+        return;
+    };
+    let cursor_in_track = ((local.y + track_node.size.y * 0.5) * track_scale).clamp(0.0, track_h);
+    let thumb_top = (cursor_in_track - drag.grab_offset).clamp(0.0, max_thumb_top);
+
+    scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
 }
 
 pub(crate) fn gen3d_prompt_text_input(
@@ -1306,22 +1436,73 @@ pub(crate) fn gen3d_prompt_text_input(
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
-    if !workshop.prompt_focused {
-        keyboard.clear();
-        ime_events.clear();
-        return;
+    let mut accept_input = workshop.prompt_focused;
+    if accept_input {
+        if let Ok(mut window) = windows.single_mut() {
+            window.ime_enabled = true;
+        }
     }
 
     for event in ime_events.read() {
         if let Ime::Commit { value, .. } = event {
             if !value.is_empty() {
-                push_prompt_text(&mut workshop.prompt, value);
+                if !accept_input {
+                    accept_input = true;
+                    workshop.prompt_focused = true;
+                    if let Ok(mut window) = windows.single_mut() {
+                        window.ime_enabled = true;
+                    }
+                }
+                if accept_input {
+                    push_prompt_text(&mut workshop.prompt, value);
+                }
             }
         }
     }
 
     for event in keyboard.read() {
         if event.state != bevy::input::ButtonState::Pressed {
+            continue;
+        }
+        let mut handled = false;
+        if !accept_input {
+            if let Some(text) = &event.text {
+                if !text.is_empty() {
+                    accept_input = true;
+                    workshop.prompt_focused = true;
+                    if let Ok(mut window) = windows.single_mut() {
+                        window.ime_enabled = true;
+                    }
+                }
+            } else if matches!(event.key_code, KeyCode::KeyV) {
+                let modifier = keys.pressed(KeyCode::ControlLeft)
+                    || keys.pressed(KeyCode::ControlRight)
+                    || keys.pressed(KeyCode::SuperLeft)
+                    || keys.pressed(KeyCode::SuperRight);
+                if modifier {
+                    if let Some(text) = crate::clipboard::read_text() {
+                        accept_input = true;
+                        workshop.prompt_focused = true;
+                        if let Ok(mut window) = windows.single_mut() {
+                            window.ime_enabled = true;
+                        }
+                        if accept_input {
+                            push_prompt_text(&mut workshop.prompt, &text);
+                            handled = true;
+                        }
+                    }
+                }
+                if !accept_input {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            if !accept_input {
+                continue;
+            }
+        }
+        if handled {
             continue;
         }
         match event.key_code {
@@ -1856,6 +2037,7 @@ pub(crate) fn gen3d_update_ui_text(
     emoji_atlas: Res<EmojiAtlas>,
     asset_server: Res<AssetServer>,
     mut continue_buttons: Query<(&mut Node, &mut Visibility), With<Gen3dContinueButton>>,
+    mut prompt_scroll: Query<(&ComputedNode, &mut ScrollPosition), With<Gen3dPromptScrollPanel>>,
     mut texts: ParamSet<(
         Query<&mut Text, With<Gen3dStatusText>>,
         Query<&mut Text, With<Gen3dGenerateButtonText>>,
@@ -1864,6 +2046,7 @@ pub(crate) fn gen3d_update_ui_text(
     )>,
     rich_text: Query<Entity, With<Gen3dPromptRichText>>,
     mut last_prompt: Local<Option<String>>,
+    mut autoscroll_frames: Local<u8>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
@@ -1874,7 +2057,8 @@ pub(crate) fn gen3d_update_ui_text(
     } else {
         workshop.prompt.clone()
     };
-    if last_prompt.as_ref() != Some(&prompt_text) {
+    let prompt_changed = last_prompt.as_ref() != Some(&prompt_text);
+    if prompt_changed {
         if let Ok(entity) = rich_text.single() {
             set_rich_text_line(
                 &mut commands,
@@ -1888,6 +2072,29 @@ pub(crate) fn gen3d_update_ui_text(
                 None,
             );
             *last_prompt = Some(prompt_text.clone());
+        }
+    }
+    if prompt_changed && workshop.prompt_focused {
+        *autoscroll_frames = 3;
+    } else if !workshop.prompt_focused {
+        *autoscroll_frames = 0;
+    }
+
+    if *autoscroll_frames > 0 && workshop.prompt_scrollbar_drag.is_none() {
+        if let Ok((node, mut scroll)) = prompt_scroll.single_mut() {
+            let panel_scale = node.inverse_scale_factor();
+            let viewport_h = node.size.y.max(0.0) * panel_scale;
+            let content_h = node.content_size.y.max(0.0) * panel_scale;
+            if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+                scroll.y = 0.0;
+                *autoscroll_frames = 0;
+            } else {
+                let max_scroll = (content_h - viewport_h).max(0.0);
+                scroll.y = max_scroll;
+                *autoscroll_frames = (*autoscroll_frames).saturating_sub(1);
+            }
+        } else {
+            *autoscroll_frames = 0;
         }
     }
 
