@@ -1,9 +1,13 @@
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
+use bevy::window::Ime;
+use bevy::window::PrimaryWindow;
+use std::collections::HashMap;
 
 use crate::object::registry::ObjectLibrary;
 use crate::realm::ActiveRealmScene;
+use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
 use crate::scene_sources_runtime::{
     compile_scene_sources_all_layers, reload_scene_sources_in_workspace, scene_signature_summary,
     validate_scene_sources, SceneSourcesWorkspace, SceneWorldInstance,
@@ -11,7 +15,8 @@ use crate::scene_sources_runtime::{
 use crate::scene_store::SceneSaveRequest;
 use crate::scene_validation::{HardGateSpecV1, ScorecardSpecV1};
 use crate::types::{
-    BuildObject, Commandable, ObjectId, ObjectPrefabId, ObjectTint, Player, SceneLayerOwner,
+    BuildObject, Commandable, EmojiAtlas, ObjectId, ObjectPrefabId, ObjectTint, Player,
+    SceneLayerOwner, UiFonts,
 };
 
 const PANEL_Z_INDEX: i32 = 940;
@@ -163,7 +168,12 @@ pub(crate) struct SceneUiActionButton {
     action: SceneUiAction,
 }
 
-pub(crate) fn setup_scene_authoring_ui(mut commands: Commands) {
+pub(crate) fn setup_scene_authoring_ui(
+    mut commands: Commands,
+    ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
+) {
     commands
         .spawn((
             Node {
@@ -361,17 +371,30 @@ pub(crate) fn setup_scene_authoring_ui(mut commands: Commands) {
                 },
             ))
             .with_children(|b| {
-                b.spawn((
-                    Text::new(""),
-                    TextFont {
-                        font_size: 14.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                    SceneUiTextFieldText {
-                        field: SceneUiField::SceneDescription,
-                    },
-                ));
+                spawn_rich_text_line(
+                    b,
+                    "",
+                    &ui_fonts,
+                    &emoji_atlas,
+                    &asset_server,
+                    14.0,
+                    Color::srgb(0.92, 0.92, 0.96),
+                    (
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_wrap: FlexWrap::Wrap,
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::FlexStart,
+                            column_gap: Val::Px(1.0),
+                            row_gap: Val::Px(2.0),
+                            ..default()
+                        },
+                        SceneUiTextFieldText {
+                            field: SceneUiField::SceneDescription,
+                        },
+                    ),
+                    None,
+                );
             });
 
             // Actions.
@@ -820,6 +843,7 @@ pub(crate) fn scene_ui_update_realm_scene_button_styles(
 
 pub(crate) fn scene_ui_text_field_focus(
     mut state: ResMut<SceneAuthoringUiState>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut fields: Query<
         (&Interaction, &SceneUiTextField, &mut BackgroundColor),
         Changed<Interaction>,
@@ -833,6 +857,9 @@ pub(crate) fn scene_ui_text_field_focus(
             Interaction::Pressed => {
                 state.focused_field = field.field;
                 *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.78));
+                if let Ok(mut window) = windows.single_mut() {
+                    window.ime_enabled = true;
+                }
             }
             Interaction::Hovered => {
                 *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70));
@@ -844,6 +871,11 @@ pub(crate) fn scene_ui_text_field_focus(
                     0.65
                 };
                 *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, alpha));
+                if state.focused_field == SceneUiField::None {
+                    if let Ok(mut window) = windows.single_mut() {
+                        window.ime_enabled = false;
+                    }
+                }
             }
         }
     }
@@ -853,13 +885,28 @@ pub(crate) fn scene_ui_text_input(
     mut state: ResMut<SceneAuthoringUiState>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard: MessageReader<KeyboardInput>,
+    mut ime_events: MessageReader<Ime>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     if !state.open {
         keyboard.clear();
+        ime_events.clear();
         return;
     }
     if state.focused_field == SceneUiField::None {
         return;
+    }
+
+    for event in ime_events.read() {
+        if let Ime::Commit { value, .. } = event {
+            if !value.is_empty() {
+                let focused_field = state.focused_field;
+                let allow_newlines = focused_field == SceneUiField::SceneDescription;
+                let target = field_string_mut(&mut state, focused_field);
+                push_text(target, value, allow_newlines);
+                state.description_dirty = true;
+            }
+        }
     }
 
     for event in keyboard.read() {
@@ -877,6 +924,10 @@ pub(crate) fn scene_ui_text_input(
             }
             KeyCode::Escape => {
                 state.focused_field = SceneUiField::None;
+                if let Ok(mut window) = windows.single_mut() {
+                    window.ime_enabled = false;
+                }
+                ime_events.clear();
             }
             KeyCode::Enter | KeyCode::NumpadEnter => {
                 if allow_newlines {
@@ -884,6 +935,10 @@ pub(crate) fn scene_ui_text_input(
                     state.description_dirty = true;
                 } else {
                     state.focused_field = SceneUiField::None;
+                    if let Ok(mut window) = windows.single_mut() {
+                        window.ime_enabled = false;
+                    }
+                    ime_events.clear();
                 }
             }
             KeyCode::KeyV => {
@@ -1111,9 +1166,13 @@ pub(crate) fn scene_ui_action_buttons(
 }
 
 pub(crate) fn scene_ui_update_texts(
+    mut commands: Commands,
     state: Res<SceneAuthoringUiState>,
     active: Res<ActiveRealmScene>,
     build_ai: Res<crate::scene_build_ai::SceneBuildAiRuntime>,
+    ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
     mut realm_text: Query<&mut Text, With<SceneUiRealmDropdownButtonText>>,
     mut realm_list: Query<(&mut Node, &mut Visibility), With<SceneUiRealmDropdownList>>,
     mut status: Query<
@@ -1146,8 +1205,8 @@ pub(crate) fn scene_ui_update_texts(
             Without<SceneUiRealmDropdownButtonText>,
         ),
     >,
-    mut fields: Query<
-        (&SceneUiTextFieldText, &mut Text),
+    fields: Query<
+        (Entity, &SceneUiTextFieldText),
         (
             Without<SceneUiStatusText>,
             Without<SceneUiErrorText>,
@@ -1155,6 +1214,7 @@ pub(crate) fn scene_ui_update_texts(
             Without<SceneUiBuildProgressText>,
         ),
     >,
+    mut last_text: Local<HashMap<Entity, String>>,
 ) {
     if !state.open {
         return;
@@ -1186,7 +1246,7 @@ pub(crate) fn scene_ui_update_texts(
         **t = progress_summary.clone().into();
     }
 
-    for (field, mut text) in &mut fields {
+    for (entity, field) in &fields {
         let mut value = match field.field {
             SceneUiField::SceneDescription => state.description.clone(),
             SceneUiField::None => String::new(),
@@ -1198,7 +1258,25 @@ pub(crate) fn scene_ui_update_texts(
         if value.trim().is_empty() {
             value = "<click to edit; paste scene description; then press Build>".to_string();
         }
-        **text = value.into();
+
+        let needs_update = match last_text.get(&entity) {
+            Some(prev) => prev != &value,
+            None => true,
+        };
+        if needs_update {
+            set_rich_text_line(
+                &mut commands,
+                entity,
+                &value,
+                &ui_fonts,
+                &emoji_atlas,
+                &asset_server,
+                14.0,
+                Color::srgb(0.92, 0.92, 0.96),
+                None,
+            );
+            last_text.insert(entity, value);
+        }
     }
 }
 

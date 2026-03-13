@@ -2,12 +2,14 @@ use bevy::ecs::message::MessageWriter;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
+use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
 use std::path::PathBuf;
 
 use crate::realm::ActiveRealmScene;
+use crate::rich_text::set_rich_text_line;
 use crate::scene_store::SceneSaveRequest;
-use crate::types::{BuildScene, GameMode};
+use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 use crate::workspace_ui::{TopPanelTab, TopPanelUiState};
 
 const SCENE_NAME_MAX_CHARS: usize = 128;
@@ -349,6 +351,7 @@ pub(crate) fn scenes_panel_name_field_focus(
     build_scene: Res<State<BuildScene>>,
     top: Res<TopPanelUiState>,
     mut state: ResMut<ScenesPanelUiState>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut fields: Query<&Interaction, (Changed<Interaction>, With<AddSceneNameField>)>,
 ) {
     if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open {
@@ -358,6 +361,9 @@ pub(crate) fn scenes_panel_name_field_focus(
     for interaction in &mut fields {
         if matches!(*interaction, Interaction::Pressed) {
             state.focused_field = ScenesUiField::AddSceneName;
+            if let Ok(mut window) = windows.single_mut() {
+                window.ime_enabled = true;
+            }
         }
     }
 }
@@ -370,17 +376,29 @@ pub(crate) fn scenes_panel_text_input(
     mut state: ResMut<ScenesPanelUiState>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard: bevy::ecs::message::MessageReader<KeyboardInput>,
+    mut ime_events: bevy::ecs::message::MessageReader<Ime>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     if scene_ui.is_open() {
         keyboard.clear();
+        ime_events.clear();
         return;
     }
     if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open {
         keyboard.clear();
+        ime_events.clear();
         return;
     }
     if state.focused_field != ScenesUiField::AddSceneName {
         return;
+    }
+
+    for event in ime_events.read() {
+        if let Ime::Commit { value, .. } = event {
+            if !value.is_empty() {
+                push_text(&mut state.name, value);
+            }
+        }
     }
 
     for event in keyboard.read() {
@@ -395,9 +413,17 @@ pub(crate) fn scenes_panel_text_input(
             }
             KeyCode::Escape => {
                 state.focused_field = ScenesUiField::None;
+                if let Ok(mut window) = windows.single_mut() {
+                    window.ime_enabled = false;
+                }
+                ime_events.clear();
             }
             KeyCode::Enter | KeyCode::NumpadEnter => {
                 state.focused_field = ScenesUiField::None;
+                if let Ok(mut window) = windows.single_mut() {
+                    window.ime_enabled = false;
+                }
+                ime_events.clear();
             }
             KeyCode::KeyV => {
                 let modifier = keys.pressed(KeyCode::ControlLeft)
@@ -538,6 +564,10 @@ pub(crate) fn scenes_panel_scroll_wheel(
 
 pub(crate) fn scenes_panel_update_texts(
     state: Res<ScenesPanelUiState>,
+    mut commands: Commands,
+    ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
     mut texts: Query<
         (
             &mut Text,
@@ -546,13 +576,35 @@ pub(crate) fn scenes_panel_update_texts(
         ),
         Or<(With<AddSceneNameFieldText>, With<AddSceneErrorText>)>,
     >,
+    name_field: Query<Entity, With<AddSceneNameFieldText>>,
+    mut last_name: Local<Option<String>>,
 ) {
-    for (mut text, name, error) in &mut texts {
-        if name.is_some() {
-            *text = Text::new(state.name.clone());
-        } else if error.is_some() {
+    for (mut text, _name, error) in &mut texts {
+        if error.is_some() {
             *text = Text::new(state.error.clone().unwrap_or_default());
         }
+    }
+
+    let Some(entity) = name_field.iter().next() else {
+        return;
+    };
+    let needs_update = match last_name.as_ref() {
+        Some(prev) => prev != &state.name,
+        None => true,
+    };
+    if needs_update {
+        set_rich_text_line(
+            &mut commands,
+            entity,
+            &state.name,
+            &ui_fonts,
+            &emoji_atlas,
+            &asset_server,
+            14.0,
+            Color::srgb(0.92, 0.92, 0.96),
+            None,
+        );
+        *last_name = Some(state.name.clone());
     }
 }
 

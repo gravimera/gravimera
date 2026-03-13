@@ -5,6 +5,7 @@ use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
+use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
 
@@ -15,10 +16,11 @@ use crate::object::registry::ObjectLibrary;
 use crate::object::registry::{ColliderProfile, MobilityMode};
 use crate::object::visuals;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
+use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
 use crate::scene_store::SceneSaveRequest;
 use crate::types::{
     AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, GameMode, ObjectId,
-    ObjectPrefabId,
+    ObjectPrefabId, EmojiAtlas, UiFonts,
 };
 
 const PANEL_Z_INDEX: i32 = 930;
@@ -251,7 +253,12 @@ struct ModelLibraryPreviewSceneRoot;
 #[derive(Component)]
 pub(crate) struct ModelLibraryPreviewCamera;
 
-pub(crate) fn setup_model_library_ui(mut commands: Commands) {
+pub(crate) fn setup_model_library_ui(
+    mut commands: Commands,
+    ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
+) {
     commands
         .spawn((
             Node {
@@ -335,15 +342,28 @@ pub(crate) fn setup_model_library_ui(mut commands: Commands) {
                 ModelLibrarySearchField,
             ))
             .with_children(|field| {
-                field.spawn((
-                    Text::new("Search…"),
-                    TextFont {
-                        font_size: 14.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgba(0.80, 0.80, 0.86, 0.75)),
-                    ModelLibrarySearchFieldText,
-                ));
+                spawn_rich_text_line(
+                    field,
+                    "Search…",
+                    &ui_fonts,
+                    &emoji_atlas,
+                    &asset_server,
+                    14.0,
+                    Color::srgba(0.80, 0.80, 0.86, 0.75),
+                    (
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_wrap: FlexWrap::Wrap,
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(1.0),
+                            row_gap: Val::Px(2.0),
+                            ..default()
+                        },
+                        ModelLibrarySearchFieldText,
+                    ),
+                    None,
+                );
             });
 
             root.spawn((
@@ -445,6 +465,7 @@ pub(crate) fn model_library_update_visibility(
 
 pub(crate) fn model_library_search_field_focus(
     mut state: ResMut<ModelLibraryUiState>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut fields: Query<&Interaction, (Changed<Interaction>, With<ModelLibrarySearchField>)>,
 ) {
     if !state.is_open() {
@@ -454,6 +475,9 @@ pub(crate) fn model_library_search_field_focus(
     for interaction in &mut fields {
         if *interaction == Interaction::Pressed {
             state.search_focused = true;
+            if let Ok(mut window) = windows.single_mut() {
+                window.ime_enabled = true;
+            }
         }
     }
 }
@@ -462,9 +486,12 @@ pub(crate) fn model_library_search_text_input(
     mut state: ResMut<ModelLibraryUiState>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard: MessageReader<KeyboardInput>,
+    mut ime_events: MessageReader<Ime>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     if !state.is_open() {
         keyboard.clear();
+        ime_events.clear();
         return;
     }
     if !state.search_focused {
@@ -485,6 +512,14 @@ pub(crate) fn model_library_search_text_input(
         target.len() != before
     }
 
+    for event in ime_events.read() {
+        if let Ime::Commit { value, .. } = event {
+            if !value.is_empty() && push_text(&mut state.search_query, value) {
+                state.models_dirty = true;
+            }
+        }
+    }
+
     for event in keyboard.read() {
         if event.state != bevy::input::ButtonState::Pressed {
             continue;
@@ -501,9 +536,17 @@ pub(crate) fn model_library_search_text_input(
             }
             KeyCode::Escape => {
                 state.search_focused = false;
+                if let Ok(mut window) = windows.single_mut() {
+                    window.ime_enabled = false;
+                }
+                ime_events.clear();
             }
             KeyCode::Enter | KeyCode::NumpadEnter => {
                 state.search_focused = false;
+                if let Ok(mut window) = windows.single_mut() {
+                    window.ime_enabled = false;
+                }
+                ime_events.clear();
             }
             KeyCode::KeyV => {
                 let modifier = keys.pressed(KeyCode::ControlLeft)
@@ -537,12 +580,17 @@ pub(crate) fn model_library_search_text_input(
 }
 
 pub(crate) fn model_library_update_search_field_ui(
+    mut commands: Commands,
     state: Res<ModelLibraryUiState>,
+    ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
     mut fields: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         With<ModelLibrarySearchField>,
     >,
-    mut texts: Query<(&mut Text, &mut TextColor), With<ModelLibrarySearchFieldText>>,
+    rich_text: Query<Entity, With<ModelLibrarySearchFieldText>>,
+    mut last_text: Local<Option<(String, bool)>>,
 ) {
     if !state.is_open() {
         return;
@@ -577,17 +625,36 @@ pub(crate) fn model_library_update_search_field_ui(
     }
 
     let query = state.search_query.trim();
-    let (text_value, text_color) = if query.is_empty() {
-        ("Search…".to_string(), Color::srgba(0.80, 0.80, 0.86, 0.75))
+    let (text_value, hint) = if query.is_empty() {
+        ("Search…".to_string(), true)
     } else {
-        (query.to_string(), Color::srgba(0.92, 0.92, 0.96, 1.0))
+        (query.to_string(), false)
+    };
+    let text_color = if hint {
+        Color::srgba(0.80, 0.80, 0.86, 0.75)
+    } else {
+        Color::srgba(0.92, 0.92, 0.96, 1.0)
     };
 
-    for (mut text, mut color) in &mut texts {
-        if **text != text_value {
-            **text = text_value.clone();
+    let needs_update = match last_text.as_ref() {
+        Some((prev_text, prev_hint)) => prev_text != &text_value || *prev_hint != hint,
+        None => true,
+    };
+    if needs_update {
+        if let Ok(entity) = rich_text.single() {
+            set_rich_text_line(
+                &mut commands,
+                entity,
+                &text_value,
+                &ui_fonts,
+                &emoji_atlas,
+                &asset_server,
+                14.0,
+                text_color,
+                None,
+            );
+            *last_text = Some((text_value, hint));
         }
-        *color = TextColor(text_color);
     }
 }
 

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
-use crate::types::{BuildScene, GameMode};
+use crate::rich_text::spawn_rich_text_line;
+use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 use crate::workspace_scenes_ui::{
     AddSceneAddButton, AddSceneCancelButton, AddSceneErrorText, AddSceneNameField,
     AddSceneNameFieldText, AddScenePanelRoot, ScenesAddSceneButton, ScenesAddSceneButtonText,
@@ -170,7 +171,12 @@ pub(crate) struct WorkspaceSceneBuilderButtonText;
 #[derive(Component)]
 pub(crate) struct ScenesPanelRoot;
 
-pub(crate) fn setup_workspace_ui(mut commands: Commands) {
+pub(crate) fn setup_workspace_ui(
+    mut commands: Commands,
+    ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
+) {
     commands
         .spawn((
             Node {
@@ -439,15 +445,28 @@ pub(crate) fn setup_workspace_ui(mut commands: Commands) {
                             AddSceneNameField,
                         ))
                         .with_children(|b| {
-                            b.spawn((
-                                Text::new(""),
-                                TextFont {
-                                    font_size: 14.0,
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                AddSceneNameFieldText,
-                            ));
+                            spawn_rich_text_line(
+                                b,
+                                "",
+                                &ui_fonts,
+                                &emoji_atlas,
+                                &asset_server,
+                                14.0,
+                                Color::srgb(0.92, 0.92, 0.96),
+                                (
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        flex_wrap: FlexWrap::Wrap,
+                                        justify_content: JustifyContent::FlexStart,
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::Px(1.0),
+                                        row_gap: Val::Px(2.0),
+                                        ..default()
+                                    },
+                                    AddSceneNameFieldText,
+                                ),
+                                None,
+                            );
                         });
                     });
 
