@@ -21,6 +21,7 @@ This system is generic (no object-specific heuristics) and follows the tool cont
 ## Progress
 
 - [x] (2026-03-13 10:39Z) Write this ExecPlan and commit it.
+- [x] (2026-03-13 11:05Z) Review and refine the Info Store spec (bounds/defaults, blob label filters, and migration off file-based artifact refs).
 - [ ] Implement `Gen3dInfoStore` core types (KV, events, blobs) and persistence in the run cache directory.
 - [ ] Add Info Store read-only tools (`info_kv_*`, `info_events_*`, `info_blobs_*`) to the tool registry and dispatcher.
 - [ ] Migrate existing tools to write to the Info Store (and return KV/blob refs instead of paths where applicable).
@@ -40,6 +41,9 @@ This system is generic (no object-specific heuristics) and follows the tool cont
 - Observation: A real run can burn most of its 30-minute budget repeating “inspect/list/search” steps before the agent applies a deterministic fix, then later hits the time-budget stop during a long review call.
   Evidence: Run cache `~/.gravimera/cache/gen3d/99b577ae-e3a5-480e-ab2d-97b014a4ca5d` shows repeated inspection passes and stops with `Time budget exhausted` in `attempt_0/pass_51/gen3d_run.log`.
 
+- Observation: Even when `list_run_artifacts_v1` succeeds, prompt summarization often collapses the result down to `items=<N> truncated=<bool>` without including any `artifact_ref`s, so the agent cannot take the next step (read/search a specific file) unless it already knows the exact ref.
+  Evidence: In the run above, pass_43 user text shows `- list_run_artifacts_v1 (call_1): ok items=200 truncated=true` with no listed refs.
+
 ## Decision Log
 
 - Decision: Replace file-path based inspection tools with a run-scoped Info Store (KV + events + blobs), and remove filesystem paths from tool contracts (especially image paths).
@@ -48,6 +52,14 @@ This system is generic (no object-specific heuristics) and follows the tool cont
 
 - Decision: Prefer typed, domain-level navigation (components/attachments/parts) over generic “JSON tree browsing”.
   Rationale: The Gen3D model is not purely a tree; it is a graph (workspaces, linked components, attachment edges). Navigation should be explicit and bounded, with stable ids, rather than path-like JSON pointers as the primary mechanism.
+  Date/Author: 2026-03-13 / GPT-5.2
+
+- Decision: Enforce conservative default bounds and add multi-label blob filtering (`labels_any`/`labels_all`) so agents can deterministically fetch “the latest front render” without path inspection.
+  Rationale: In practice, “list everything and eyeball paths” is the main cause of inspection loops. Explicit bounds and label filters keep retrieval deterministic and cheap while preserving debuggability.
+  Date/Author: 2026-03-13 / GPT-5.2
+
+- Decision: Treat “artifact refs” as a path leak and migrate LLM tools that accept `*_artifact_ref` (notably plan templates) onto KV references.
+  Rationale: If a tool contract still requires a file ref, the agent will still be pushed into filesystem-shaped reasoning and prompts will drift. KV refs keep contracts stable and inspectable without exposing paths.
   Date/Author: 2026-03-13 / GPT-5.2
 
 ## Outcomes & Retrospective
@@ -120,12 +132,13 @@ In `src/gen3d/ai/info_store.rs`, define:
 1) KV:
 
    - `struct InfoKvKey { namespace: String, key: String }`
+   - `struct InfoProvenance { tool_id: String, call_id: String }`
    - `struct InfoKvRecord { kv_rev: u64, written_at_ms: u64, attempt: u32, pass: u32, assembly_rev: u32, workspace_id: String, key: InfoKvKey, value: serde_json::Value, summary: String, bytes: u64, written_by: Option<InfoProvenance> }`
 
 2) Events:
 
    - `enum InfoEventKind { ToolCallStart, ToolCallResult, EngineLog, BudgetStop, Warning, Error }` (exact set may evolve; keep it versioned internally)
-   - `struct InfoEvent { event_id: u64, ts_ms: u64, attempt: u32, pass: u32, assembly_rev: u32, kind: InfoEventKind, message: String, data: serde_json::Value }`
+   - `struct InfoEvent { event_id: u64, ts_ms: u64, attempt: u32, pass: u32, assembly_rev: u32, kind: InfoEventKind, tool_id: Option<String>, call_id: Option<String>, message: String, data: serde_json::Value }`
 
 3) Blobs:
 
@@ -138,12 +151,56 @@ In `src/gen3d/ai/info_store.rs`, define:
    - `struct InfoPageOut<T> { items: Vec<T>, next_cursor: Option<String>, truncated: bool }`
    - Cursors must be opaque strings returned by the tool. The implementation may encode offsets or `(ts,id)` tuples, but callers must treat it as opaque.
 
-Persistence decision (to implement): store must be recoverable from the run cache directory. Use either:
+Persistence decision (selected): store must be recoverable from the run cache directory. Use **append-only JSONL files** under the run dir:
 
-- A small number of append-only JSONL files (KV, events, blobs), or
-- A single SQLite database under the run dir.
+- `info_store_v1/kv.jsonl`
+- `info_store_v1/events.jsonl`
+- `info_store_v1/blobs.jsonl`
 
-Do not introduce external services. If adding SQLite, keep it embedded and deterministic; document migration and include unit tests.
+Rationale: JSONL keeps dependencies minimal, is deterministic, and matches existing run-cache debugging patterns. The system can keep an in-memory index for fast lookups during a run and rebuild the index by replaying JSONL on resume.
+
+### Bounds and defaults (must be enforced in tools)
+
+These are intentionally conservative. If a future change requires bigger bounds, bump tool versions or add explicit opt-in flags; do not silently increase worst-case output size.
+
+- KV:
+  - `info_kv_*_v1.page.limit`: default 50, max 200.
+  - `info_kv_get_v1.max_bytes`: default 64 KiB, max 512 KiB.
+  - `info_kv_get_many_v1.max_items`: default 20, max 50.
+- Events:
+  - `info_events_*_v1.page.limit`: default 100, max 500 (events are small; list calls still return bounded `data_preview`).
+  - `info_events_search_v1.query`: max length 256 bytes.
+  - `info_events_get_v1.max_bytes`: default 64 KiB, max 512 KiB.
+- Blobs:
+  - `info_blobs_list_v1.page.limit`: default 50, max 200.
+  - `info_blobs_list_v1.filters.labels_*`: arrays capped at 8 labels; each label max 64 bytes.
+
+All list tools must include a deterministic total order for paging (and must encode the sort + filter parameters into the opaque cursor, rejecting mismatched reuse).
+
+### KV key naming + required keys (agent-facing stability)
+
+The Info Store is only useful if keys are stable and predictable. Treat KV keys like API endpoints: once referenced in prompts/docs/tests, changing them requires a deliberate migration and likely a tool version bump.
+
+Key conventions:
+
+- `namespace` should be a small, stable set. Start with a single namespace: `gen3d`.
+- `key` must be ASCII, lowercase, and separator-based (recommend `.`). No whitespace. Max 128 bytes.
+- Keys must be workspace-scoped without requiring extra tool args. Encode workspace id in the key:
+  - Prefix every key with `ws.<workspace_id>.`
+  - Example: `ws.main.scene_graph_summary`
+
+Minimum required keys (written by deterministic tools during normal runs):
+
+- `ws.<id>.state_summary` (written by `get_state_summary_v1`)
+- `ws.<id>.scene_graph_summary` (written by `get_scene_graph_summary_v1`)
+- `ws.<id>.qa` (written by `qa_v1`)
+- `ws.<id>.validate` (written by `validate_v1`)
+- `ws.<id>.smoke` (written by `smoke_check_v1`)
+- `ws.<id>.apply_draft_ops_last` (written by `apply_draft_ops_v1`)
+- `ws.<id>.component_parts.<component_name>` (written by `query_component_parts_v1`, bounded by `max_parts`)
+- `ws.<id>.plan_template.preserve_mode.v1` (written by `get_plan_template_v1` once migrated off `*_artifact_ref`)
+
+KV `summary` must be short and stable (recommend <= 160 bytes) and should mention what changed or what the record contains (for example: “scene graph summary (components=12 attachments=11)”, “qa ok=false errors=2 warnings=1”).
 
 ### New agent tools (contracts)
 
@@ -180,19 +237,47 @@ Add these tool ids (all read-only; all bounded; all return `truncated` + `next_c
      `{ ok: true, record: { kv_rev, written_at_ms, attempt, pass, assembly_rev, workspace_id, key: {namespace,key}, summary, bytes }, value: any, truncated: bool, json_pointer?: string }`
 
    Notes:
-   - If `max_bytes` is exceeded, return `truncated=true` and include an actionable error message suggesting `json_pointer` or a smaller projection. Do not silently return partial JSON.
+   - `kv_rev` must be unique and monotonically increasing within a run. `latest` selects by greatest `kv_rev`.
+   - If `max_bytes` is exceeded, return `ok:false` with an actionable error telling the agent to use `json_pointer` (or request a smaller projection). Do not return partial JSON.
+   - Selector tie-breaks must be deterministic:
+     - `latest`: choose the record with the greatest `kv_rev`.
+     - `as_of_assembly_rev`: choose the record with the greatest `assembly_rev <= requested`, then greatest `kv_rev`.
+     - `as_of_pass`: choose the record with the greatest `pass <= requested`, then greatest `kv_rev`.
 
-4) `info_events_list_v1`
+4) `info_kv_get_many_v1`
+
+   Summary: “Read-only: fetch multiple KV values by key list, using a shared selector; returns per-key records or per-key errors, bounded.”
+
+   Args schema:
+     `{ items: [{ namespace: string, key: string, json_pointer?: string, max_bytes?: number }], selector?: { kind: "latest"|"kv_rev"|"as_of_assembly_rev"|"as_of_pass", kv_rev?: number, assembly_rev?: number, pass?: number }, max_items?: number }`
+
+   Result shape:
+     `{ ok: true, items: [{ namespace, key, ok: bool, record?: { kv_rev, written_at_ms, attempt, pass, assembly_rev, workspace_id, summary, bytes }, value?: any, truncated?: bool, error?: string }], truncated: bool }`
+
+5) `info_events_list_v1`
 
    Summary: “Read-only: list recent Info Store events with filters; supports paging and sorting.”
 
    Args schema:
-     `{ filters?: { kind?: string, tool_id?: string, min_ts_ms?: number, max_ts_ms?: number, attempt?: number, pass?: number }, sort?: "ts_desc"|"ts_asc", page?: { limit?: number, cursor?: string } }`
+     `{ filters?: { kind?: string, tool_id?: string, call_id?: string, min_ts_ms?: number, max_ts_ms?: number, attempt?: number, pass?: number }, sort?: "ts_desc"|"ts_asc", page?: { limit?: number, cursor?: string } }`
 
    Result shape:
-     `{ ok: true, items: [{ event_id, ts_ms, attempt, pass, assembly_rev, kind, message, data }], next_cursor?: string, truncated: bool }`
+     `{ ok: true, items: [{ event_id, ts_ms, attempt, pass, assembly_rev, kind, tool_id?: string, call_id?: string, message, data_preview }], next_cursor?: string, truncated: bool }`
 
-5) `info_events_search_v1`
+   Notes:
+   - `data_preview` must be bounded (for example: selected fields + truncated JSON string). Do not return arbitrarily large blobs of tool results in list calls.
+
+6) `info_events_get_v1`
+
+   Summary: “Read-only: fetch one event by id; optional JSON pointer projection for the event `data`.”
+
+   Args schema:
+     `{ event_id: number, json_pointer?: string, max_bytes?: number }`
+
+   Result shape:
+     `{ ok: true, event: { event_id, ts_ms, attempt, pass, assembly_rev, kind, tool_id?: string, call_id?: string, message, data }, truncated: bool, json_pointer?: string }`
+
+7) `info_events_search_v1`
 
    Summary: “Read-only: substring search over event messages (and optionally selected data fields), bounded and paged.”
 
@@ -202,15 +287,25 @@ Add these tool ids (all read-only; all bounded; all return `truncated` + `next_c
    Result shape:
      `{ ok: true, matches: [{ event_id, ts_ms, kind, message_excerpt }], next_cursor?: string, truncated: bool }`
 
-6) `info_blobs_list_v1`
+8) `info_blobs_list_v1`
 
    Summary: “Read-only: list blobs (opaque ids for images/sheets) with metadata; supports paging and sorting.”
 
    Args schema:
-     `{ filters?: { label_prefix?: string, content_type_prefix?: string, attempt?: number, pass?: number }, sort?: "created_desc"|"created_asc", page?: { limit?: number, cursor?: string } }`
+     `{ filters?: { label_prefix?: string, labels_any?: string[], labels_all?: string[], content_type_prefix?: string, attempt?: number, pass?: number }, sort?: "created_desc"|"created_asc", page?: { limit?: number, cursor?: string } }`
 
    Result shape:
      `{ ok: true, items: [{ blob_id, created_at_ms, attempt, pass, assembly_rev, content_type, bytes, labels }], next_cursor?: string, truncated: bool }`
+
+9) `info_blobs_get_v1`
+
+   Summary: “Read-only: fetch one blob’s metadata by id (no bytes).”
+
+   Args schema:
+     `{ blob_id: string }`
+
+   Result shape:
+     `{ ok: true, blob: { blob_id, created_at_ms, attempt, pass, assembly_rev, content_type, bytes, labels } }`
 
 ### Tool migrations (contract updates)
 
@@ -219,14 +314,26 @@ To fully “remove the file-based solution” from tool contracts, update these 
 - `render_preview_v1`:
   - Replace returned `images: string[]` (paths) with `blob_ids: string[]`.
   - Keep writing image files to the run cache directory for humans, but do not return paths to the agent.
+  - Standardize blob `labels` so the agent can pick views deterministically without reading paths:
+    - `kind:render_preview`
+    - `workspace:<workspace_id>`
+    - `view:front|left_back|right_back|top|bottom`
+    - `kind:motion_sheet` + `motion:move|attack` when applicable
 
 - `llm_review_delta_v1`:
-  - Replace `preview_images?: string[]` with `preview_blob_ids?: string[]`.
+  - Replace `preview_images?: string[]` with `preview_blob_ids?: string[]` (array of blob ids).
   - Default behavior (“use last render”) should use blob ids, not paths.
 
 - `get_state_summary_v1`:
   - Replace `last_render_images: string[]` with `last_render_blob_ids: string[]`.
   - Keep an internal/human debug escape hatch only if required, but do not show raw paths in the agent prompt.
+
+To fully remove file-based “artifact refs” from tool contracts (not just the *listing/search* tools), also migrate:
+
+- `get_plan_template_v1` + `llm_generate_plan_v1`:
+  - Replace `plan_template_artifact_ref?: string` with `plan_template_kv?: { namespace: string, key: string, selector?: ... }` (or equivalent stable KV reference).
+  - Store the template JSON in KV (example key: `ws.<workspace_id>.plan_template.preserve_mode.v1`) so the agent can fetch/inspect it via `info_kv_get_v1` and the LLM plan tool can load it without touching paths.
+  - If preserving a “copy+edit template” workflow is important, return a new KV key or `kv_rev` that the agent can modify via the existing deterministic patch workflows (no ad-hoc filesystem editing).
 
 Update `src/gen3d/ai/agent_prompt.rs` to remove instructions that mention `list_run_artifacts_v1` / `read_artifact_v1` / `search_artifacts_v1`, and instead teach the agent:
 
@@ -278,7 +385,7 @@ Acceptance is user-visible behavior:
 
 ## Idempotence and Recovery
 
-- If the Info Store persistence format changes during implementation (for example JSONL → SQLite), bump internal versions and provide a deterministic rebuild path (“re-index the run cache directory into a fresh store”) that is safe to run multiple times.
+- If the Info Store persistence format changes in the future (for example JSONL → SQLite), bump the on-disk store directory name (for example `info_store_v2/`) and provide a deterministic rebuild/conversion path (“replay old JSONL into the new store”) that is safe to run multiple times.
 - Keep a temporary compatibility shim (optional) only while migrating callers; remove it before completing the plan since backwards compatibility is not required.
 
 ## Artifacts and Notes
@@ -289,3 +396,37 @@ When implementing, include small example transcripts in this section (indented, 
 - `info_kv_get_v1` retrieving `scene_graph_summary` with `selector.kind="latest"`.
 - `info_events_search_v1` finding a recent tool error.
 - `render_preview_v1` returning blob ids, and `llm_review_delta_v1` consuming them.
+
+## Code Review Guidance (Prompt ↔ Tool Contract Mismatch Prevention)
+
+This change touches the agent prompt, the tool registry, tool argument parsing, and tool result shapes. Most regressions in Gen3D “agent loops” come from mismatches between these layers. During review, treat tool contracts like compiler interfaces: contract-first, versioned, and test-backed.
+
+Reviewers should verify (in the same PR) that:
+
+1) Tool registry, parsing, and examples match.
+
+   - `src/gen3d/agent/tools.rs` includes every new/changed tool id with `args_schema` and `args_example` that only uses accepted keys (watch for `#[serde(deny_unknown_fields)]`).
+   - `src/gen3d/ai/agent_tool_dispatch.rs` (and helper arg parsers) accept exactly those keys and produce actionable errors for missing/unknown keys.
+
+2) Prompt text matches the tool contract (no drift).
+
+   - `src/gen3d/ai/agent_prompt.rs` and any tool-specific prompts mention the correct tool ids and argument names.
+   - If an arg key changes (example: `preview_images` → `preview_blob_ids`), update prompt text in the same patch and add a unit test that asserts the prompt contains the new signature and does not mention removed tools.
+
+3) Results remain actionable and bounded.
+
+   - List tools return `next_cursor` + `truncated` and do not dump large payloads (use `data_preview` and `*_get_v1` tools for full retrieval).
+   - `*_get_v1` tools enforce `max_bytes` and fail with an actionable message when exceeded (suggest `json_pointer`), rather than silently truncating JSON.
+   - All returned records include the identifiers needed for follow-up actions (`kv_rev`, `event_id`, `blob_id`) plus provenance (`attempt`, `pass`, `assembly_rev`, `workspace_id`, `tool_id`/`call_id` where applicable).
+
+4) No path leaks and no silent mutation.
+
+   - Tool results and the agent prompt must not contain absolute run-cache paths. Add a test that asserts prompt text does not contain `/.gravimera/cache/gen3d/`.
+   - Tool results and the agent prompt must not contain file-based refs (`artifact_ref`, `plan_template_artifact_ref`, `preview_images`) once migrations are complete. Add tests that assert prompt text does not mention `list_run_artifacts_v1` / `read_artifact_v1` / `search_artifacts_v1` and does not contain `artifact_ref`.
+   - Read-only tools must not mutate state. Mutation tools must return diffs and record an event describing what changed.
+
+5) Smoke test is run for safety.
+
+   - `tmpdir=$(mktemp -d); GRAVIMERA_HOME=\"$tmpdir/.gravimera\" cargo run -- --rendered-seconds 2`
+
+This guidance is derived from `docs/agent_skills/tool_authoring_rules.md` and `docs/agent_skills/prompt_tool_contract_review.md`, but is embedded here so reviewers can apply it without context switching.
