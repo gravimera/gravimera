@@ -68,7 +68,7 @@ In practice, the agent usually gets good results by calling:
 - `llm_generate_component_v1` (generate one component’s primitives + anchors)
 - `render_preview_v1` (optional; appearance review) + `validate_v1` / `smoke_check_v1` (structural checks)
 - `llm_review_delta_v1` (apply machine-appliable tweaks / request replan / request regen)
-  - If `preview_images` is omitted and `[gen3d].review_appearance = true`, the engine uses the latest *engine-rendered* preview PNGs; if those are missing or stale for the current `assembly_rev`, it auto-captures a minimal set of review renders (and only captures motion sheets when motion validation reports errors) before calling the model.
+  - If `preview_blob_ids` is omitted and `[gen3d].review_appearance = true`, the engine uses the latest *engine-rendered* preview blobs; if those are missing or stale for the current `assembly_rev`, it auto-captures a minimal set of review renders (and only captures motion sheets when motion validation reports errors) before calling the model.
   - User reference photos are never used as preview images.
 
 Plan-level reuse:

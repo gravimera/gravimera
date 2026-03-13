@@ -1,6 +1,6 @@
 # `get_plan_template_v1` (Gen3D tool)
 
-`get_plan_template_v1` is a **read-only** Gen3D tool that writes an engine-generated **plan JSON template** into the run cache and returns an `artifact_ref`.
+`get_plan_template_v1` is a **read-only** Gen3D tool that writes an engine-generated **plan JSON template** into the **Info Store (KV)** and returns a `plan_template_kv` reference.
 
 The intent is to give the agent a deterministic “starting JSON” for preserve-mode replans so the model doesn’t forget required existing component names, accidentally change the root, or invent parent names.
 
@@ -27,7 +27,7 @@ The template is intended to be **copied and minimally edited** by `llm_generate_
 
 The tool returns:
 
-- `artifact_ref`: relative path under the run directory (use as an input to other tools),
+- `plan_template_kv`: KV reference (namespace + key + selector) that can be inspected via `info_kv_get_v1` and passed into `llm_generate_plan_v1`,
 - `bytes`: size of the written JSON,
 - `components_total`: number of components in the template.
 
@@ -35,7 +35,7 @@ The tool returns:
 
 `llm_generate_plan_v1` accepts:
 
-- `plan_template_artifact_ref` (string)
+- `plan_template_kv` (KV reference)
 
 Recommended flow in preserve mode:
 
@@ -44,7 +44,6 @@ Recommended flow in preserve mode:
 
    - `constraints.preserve_existing_components=true`
    - your chosen `constraints.preserve_edit_policy`
-   - `plan_template_artifact_ref` set to the returned `artifact_ref`
+   - `plan_template_kv` set to the returned `plan_template_kv`
 
 The engine injects the template JSON into the plan prompt as “copy+edit” context. The engine does **not** apply any edits silently; the plan is still produced by the model and validated normally.
-

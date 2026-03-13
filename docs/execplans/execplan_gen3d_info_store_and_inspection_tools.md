@@ -22,13 +22,13 @@ This system is generic (no object-specific heuristics) and follows the tool cont
 
 - [x] (2026-03-13 10:39Z) Write this ExecPlan and commit it.
 - [x] (2026-03-13 11:05Z) Review and refine the Info Store spec (bounds/defaults, blob label filters, and migration off file-based artifact refs).
-- [ ] Implement `Gen3dInfoStore` core types (KV, events, blobs) and persistence in the run cache directory.
-- [ ] Add Info Store read-only tools (`info_kv_*`, `info_events_*`, `info_blobs_*`) to the tool registry and dispatcher.
-- [ ] Migrate existing tools to write to the Info Store (and return KV/blob refs instead of paths where applicable).
-- [ ] Remove file-based artifact tools from the agent tool list (`list_run_artifacts_v1`, `read_artifact_v1`, `search_artifacts_v1`) and update the agent prompt/docs accordingly.
-- [ ] Add unit tests + a small regression harness under `test/` proving paging/sorting and “latest” retrieval work without truncation bugs.
-- [ ] Run tests and the required rendered smoke test.
-- [ ] Commit the implementation with a clear message.
+- [x] (2026-03-13) Implement `Gen3dInfoStore` core types (KV, events, blobs) and persistence in the run cache directory.
+- [x] (2026-03-13) Add Info Store read-only tools (`info_kv_*`, `info_events_*`, `info_blobs_*`) to the tool registry and dispatcher.
+- [x] (2026-03-13) Migrate existing tools to write to the Info Store (and return KV/blob refs instead of paths where applicable).
+- [x] (2026-03-13) Remove file-based artifact tools from the agent tool list (`list_run_artifacts_v1`, `read_artifact_v1`, `search_artifacts_v1`) and update the agent prompt/docs accordingly.
+- [x] (2026-03-13) Add unit tests + a small regression harness under `test/` proving paging/sorting and “latest” retrieval work without truncation bugs.
+- [x] (2026-03-13) Run tests and the required rendered smoke test.
+- [x] (2026-03-13) Commit the implementation with a clear message.
 
 ## Surprises & Discoveries
 
@@ -64,26 +64,37 @@ This system is generic (no object-specific heuristics) and follows the tool cont
 
 ## Outcomes & Retrospective
 
-- Outcome (planned): The agent no longer calls `list_run_artifacts_v1` / `search_artifacts_v1` to find “latest scene graph summary”; it uses `info_kv_get_v1` with an explicit selector (or calls `get_scene_graph_summary_v1` directly).
-- Outcome (planned): Any tool that produces “inspectable” output also registers it in the Info Store and returns stable references (KV record refs and blob ids), enabling deterministic follow-up calls.
-- Outcome (planned): The run cache directory remains for human debugging, but the agent tool surface is no longer file-oriented.
+- Outcome: The agent no longer calls file-based artifact tools to locate “latest” outputs; it uses Info Store KV (`info_kv_get_v1`) and Info Store blobs (`info_blobs_list_v1`) instead.
+- Outcome: Deterministic tools write required KV keys and return stable KV refs (`info_kv` / `plan_template_kv`), and rendering returns opaque `blob_id`s (no paths).
+- Outcome: Tool call start/result and best-effort stops are recorded as Info Store events and can be queried via `info_events_*`.
+- Outcome: The run cache directory remains for human debugging, but the agent tool surface is no longer file-oriented and avoids leaking run-cache paths.
 
 ## Context and Orientation
 
-### What exists today
+### What existed before
 
-Gen3D’s agent-facing “artifact inspection” tools are implemented in:
+Gen3D’s agent-facing “artifact inspection” tools were implemented in:
 
 - `src/gen3d/ai/artifacts.rs`:
   - `list_run_artifacts_v1()` returns run-cache files under an optional prefix.
   - `read_artifact_v1()` reads head/tail bytes of a file and optionally parses JSON.
   - `search_artifacts_v1()` does bounded substring search over file contents.
 
-These tools are exposed to the agent via:
+These tools were exposed to the agent via:
 
 - `src/gen3d/agent/tools.rs` (tool registry + args_schema + args_example).
 - `src/gen3d/ai/agent_tool_dispatch.rs` (tool dispatcher match arms).
-- `src/gen3d/ai/agent_prompt.rs` (system instructions currently tell the agent to inspect artifacts/logs via these tools).
+- `src/gen3d/ai/agent_prompt.rs` (system instructions told the agent to inspect artifacts/logs via these tools).
+
+### What exists now
+
+Gen3D’s agent-facing inspection uses the Info Store tools:
+
+- KV: `info_kv_list_keys_v1` / `info_kv_list_history_v1` / `info_kv_get_v1` / `info_kv_get_many_v1`
+- Events: `info_events_list_v1` / `info_events_search_v1` / `info_events_get_v1`
+- Blobs: `info_blobs_list_v1` / `info_blobs_get_v1`
+
+The file-oriented artifact helpers remain for human debugging, but are no longer exposed as agent tools.
 
 Gen3D “passes” write many files into the run cache directory under:
 
@@ -390,12 +401,32 @@ Acceptance is user-visible behavior:
 
 ## Artifacts and Notes
 
-When implementing, include small example transcripts in this section (indented, no code fences) showing:
+Example transcripts (indented, no code fences):
 
-- `info_kv_list_keys_v1` returning keys with latest metadata and `next_cursor`.
-- `info_kv_get_v1` retrieving `scene_graph_summary` with `selector.kind="latest"`.
-- `info_events_search_v1` finding a recent tool error.
-- `render_preview_v1` returning blob ids, and `llm_review_delta_v1` consuming them.
+- `info_kv_list_keys_v1` returning keys with latest metadata and `next_cursor`:
+
+    tool_call info_kv_list_keys_v1 args={"namespace":"gen3d","key_prefix":"ws.main.","sort":"last_written_desc","page":{"limit":2}}
+    result ok items=2 truncated=true next_cursor="<opaque>"
+    result.items[0].key="ws.main.qa" latest.kv_rev=123
+    result.items[1].key="ws.main.scene_graph_summary" latest.kv_rev=122
+
+- `info_kv_get_v1` retrieving `scene_graph_summary` with `selector.kind="latest"`:
+
+    tool_call info_kv_get_v1 args={"namespace":"gen3d","key":"ws.main.scene_graph_summary","selector":{"kind":"latest"},"json_pointer":"/components_total"}
+    result ok record.kv_rev=122 value=12 truncated=false
+
+- `info_events_search_v1` finding a recent tool error:
+
+    tool_call info_events_search_v1 args={"query":"Unknown args key","filters":{"kind":"tool_call_result"},"page":{"limit":5}}
+    result ok matches=1 truncated=false
+    result.matches[0].event_id=77 kind="tool_call_result"
+
+- `render_preview_v1` returning blob ids, and `llm_review_delta_v1` consuming them:
+
+    tool_call render_preview_v1 args={"views":["front","left_back","right_back","top","bottom"],"resolution":960,"include_motion_sheets":true}
+    result ok blob_ids=7 static_blob_ids=5 motion_sheet_blob_ids.move="<blob_id>" motion_sheet_blob_ids.attack=null
+    tool_call llm_review_delta_v1 args={"preview_blob_ids":["<blob_id_front>","<blob_id_left_back>","<blob_id_right_back>","<blob_id_top>","<blob_id_bottom>"]}
+    result ok (applied tweak ops, or returned pending regen indices)
 
 ## Code Review Guidance (Prompt ↔ Tool Contract Mismatch Prevention)
 

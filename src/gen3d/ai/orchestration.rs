@@ -3065,6 +3065,13 @@ pub(super) fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: 
     }
     job.cancel_flag = None;
     abort_pending_agent_tool_call(job, format!("Run failed: {err}"));
+    job.append_info_event_best_effort(
+        super::info_store::InfoEventKindV1::Error,
+        None,
+        None,
+        format!("Run failed: {}", truncate_for_ui(err.trim(), 600)),
+        serde_json::json!({ "error": err.trim() }),
+    );
     workshop.error = Some(err);
     workshop.status = "Build failed.".into();
     job.finish_run_metrics();
@@ -3116,6 +3123,17 @@ fn abort_pending_agent_tool_call(job: &mut Gen3dAiJob, reason: String) {
             truncate_for_ui(reason.trim(), 360)
         ),
     );
+    job.append_info_event_best_effort(
+        super::info_store::InfoEventKindV1::ToolCallResult,
+        Some(call.tool_id.clone()),
+        Some(call.call_id.clone()),
+        format!(
+            "Tool call aborted: {}: {}",
+            call.tool_id,
+            truncate_for_ui(reason.trim(), 240)
+        ),
+        serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+    );
     job.agent.step_tool_results.push(result);
     job.agent.pending_llm_tool = None;
     job.agent.pending_component_batch = None;
@@ -3142,6 +3160,16 @@ pub(super) fn finish_job_best_effort(
     append_gen3d_run_log(
         job.artifact_dir(),
         format!("budget_stop reason={}", truncate_for_ui(&reason, 600)),
+    );
+    job.append_info_event_best_effort(
+        super::info_store::InfoEventKindV1::BudgetStop,
+        None,
+        None,
+        format!(
+            "Budget stop: {}",
+            truncate_for_ui(reason.trim(), 600)
+        ),
+        serde_json::json!({ "reason": reason.trim() }),
     );
     abort_pending_agent_tool_call(job, format!("Run stopped (best effort): {reason}"));
 

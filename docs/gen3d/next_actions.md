@@ -133,20 +133,20 @@ Goal: enable many “Continue” iterations without blowing up LLM context windo
 Principles:
 
 - **Prefer stateless requests**: each agent step/tool call should be solvable from a compact
-  `state_summary` + on-demand artifact reads, not by growing hidden conversation state.
-- **History is pull-based**: the engine writes detailed artifacts; the agent fetches only what it
-  needs via bounded read/search tools instead of embedding long histories in every prompt.
+  `state_summary` + on-demand Info Store reads (KV/events/blobs), not by growing hidden conversation state.
+- **History is pull-based**: the engine writes detailed Info Store records (KV/events/blobs) and human-readable artifacts; the agent fetches only what it
+  needs via bounded Info Store tools instead of embedding long histories in every prompt.
 - **Diffs over dumps**: prefer small “what changed” summaries and transaction logs over resending
   full plan/draft JSON blobs repeatedly.
 - **Strict caps everywhere**: cap recent tool results included inline; cap images per request and
-  prefer low-res renders during iteration; cap artifact read sizes.
+  prefer low-res renders during iteration; cap KV/event get sizes.
 
 Implementation implications (later):
 
 - Avoid relying on provider conversation continuation (`previous_response_id` / chat history) as the
-  primary memory mechanism; keep memory explicit and inspectable via artifacts.
+  primary memory mechanism; keep memory explicit and inspectable via Info Store + artifacts.
 - Make `get_state_summary_v1` the canonical compact “working set” input for the agent.
-- Add `list_run_artifacts_v1` / `read_artifact_v1` / `search_artifacts_v1` (bounded, run-dir scoped).
+- Use Info Store inspection tools: `info_kv_*`, `info_events_*`, `info_blobs_*` (bounded, paged, run-scoped).
 
 ## Pre-implementation contracts (write down before coding)
 
@@ -169,10 +169,10 @@ Minimum fields (names TBD, but semantics should be stable):
   - `review_pending`
   - `motion_validation_failed` (may become warn-only once motion mapping is removed)
   - `async_tasks_in_flight`
-  - `draft_empty` (no primitives)
-- `qa`: `{ last_run_pass, ok, error_count, warning_count, artifact_ref }`
-- `review`: `{ last_run_pass, pending, last_ok, artifact_ref }` (if review is used)
-- `motion_validation`: `{ last_run_pass, ok, artifact_ref }` (if smoke-check includes it)
+- `draft_empty` (no primitives)
+- `qa`: `{ last_run_pass, ok, error_count, warning_count, info_kv_key }`
+- `review`: `{ last_run_pass, pending, last_ok, last_render_blob_ids }` (if review is used)
+- `motion_validation`: `{ last_run_pass, ok, info_kv_key }` (if smoke-check includes it)
 
 Rule: the engine must *never* infer intent from these flags. They are purely for visibility and
 tool-driven decisions by the agent/human.
@@ -215,32 +215,29 @@ If we adopt the “source bundle” approach, define:
 - size limits / compression policy,
 - versioning and migration rules (`gen3d_source_v1`, etc.).
 
-### Contract: artifact tools (security + bounds)
+### Contract: Info Store inspection tools (bounds)
 
-For `list_run_artifacts_v1` / `read_artifact_v1` / `search_artifacts_v1`, define:
-- run-dir scoping rules (no arbitrary paths; reject `..`),
-- default caps (bytes/lines/results),
-- stable “artifact_ref” format returned by tools and stored in status (relative path? opaque id?).
+Gen3D uses a run-scoped Info Store (KV + events + blobs) for agent inspection (no filesystem paths).
 
-Suggested default caps (tune later):
-- `read_artifact_v1.max_bytes`: 64 KiB (hard cap)
-- `read_artifact_v1.tail_lines`: 200
-- `search_artifacts_v1.max_matches`: 200
-- `list_run_artifacts_v1.max_items`: 500
+Suggested default caps (tune later; bump tool versions for breaking changes):
+
+- KV: `info_kv_*_v1.page.limit` default 50 max 200; `info_kv_get_v1.max_bytes` default 64 KiB max 512 KiB.
+- Events: `info_events_*_v1.page.limit` default 100 max 500; `info_events_search_v1.query` max 256 bytes; `info_events_get_v1.max_bytes` default 64 KiB max 512 KiB.
+- Blobs: `info_blobs_list_v1.page.limit` default 50 max 200; label filter arrays capped (to keep tool output bounded).
 
 ### Contract: deterministic async + parallelism
 
 If we introduce `start_task_v1` / `poll_task_v1` / `cancel_task_v1`, define:
 - which tasks are allowed to run concurrently,
 - how results are applied deterministically (declared order; op log),
-- what happens when Stop cancels tasks (artifact + status updates).
+- what happens when Stop cancels tasks (events + status updates).
 
 ### Phase 1: observability (read the “repo”)
 
-- Artifact index + bounded reads:
-  - `list_run_artifacts_v1`: enumerate artifacts for the current run/pass (JSON/JSONL/TXT/PNG) with sizes + timestamps.
-  - `read_artifact_v1`: bounded reads (`max_bytes`, `tail_lines`, `json_pointer`, `jsonl_range`), scoped to the current run dir only.
-  - `search_artifacts_v1`: bounded substring search across run artifacts (scoped) to find errors/issue kinds quickly.
+- Info Store inspection (preferred for agents):
+  - KV: `info_kv_list_keys_v1` / `info_kv_list_history_v1` / `info_kv_get_v1`
+  - Events: `info_events_list_v1` / `info_events_search_v1` / `info_events_get_v1`
+  - Blobs: `info_blobs_list_v1` / `info_blobs_get_v1`
 - Structured queries over the current draft (avoid forcing the agent to parse huge JSON blobs):
   - `query_components_v1` (filter by name/id/generated/missing),
   - `query_anchors_v1` (filter by component + anchor name),
@@ -306,14 +303,14 @@ Goal: one call that returns a combined, compact QA verdict.
   - `{ ok, validate: {...}, smoke: {...}, errors: [...], warnings: [...] }`
 - Writes artifacts to the run dir the same way the underlying tools do.
 
-### 2) Artifact inspection tools (Codex-like “read the files”)
+### 2) Info Store inspection tools (agent-facing)
 
 Goal: let the agent learn from its own history without re-prompting the user.
 
 Candidates:
-- `list_run_artifacts_v1`: enumerate recent artifacts (JSON/JSONL/TXT/PNGs) for the current run/pass.
-- `read_artifact_v1`: read bounded slices (e.g. `max_bytes`, `tail_lines`, `json_pointer`) from JSON/JSONL/TXT artifacts.
-  - Must be sandboxed to the current run dir (no arbitrary FS reads).
+- KV (structured summaries + history): `info_kv_list_keys_v1` / `info_kv_list_history_v1` / `info_kv_get_v1`
+- Events (tool call start/results + budget stops): `info_events_list_v1` / `info_events_search_v1` / `info_events_get_v1`
+- Blobs (renders/motion sheets by labels): `info_blobs_list_v1` / `info_blobs_get_v1`
 
 ### 3) Generic async tasks + monitoring (beyond today’s ad-hoc async)
 

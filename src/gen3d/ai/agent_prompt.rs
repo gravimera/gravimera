@@ -1,15 +1,13 @@
-use std::path::PathBuf;
-
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     Gen3dToolDescriptorV1, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
     TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_TOOL_DETAIL,
-    TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_RUN_ARTIFACTS, TOOL_ID_LLM_GENERATE_COMPONENT,
+    TOOL_ID_INSPECT_PLAN, TOOL_ID_LLM_GENERATE_COMPONENT,
     TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
     TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
-    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_READ_ARTIFACT, TOOL_ID_RECENTER_ATTACHMENT_MOTION,
-    TOOL_ID_RENDER_PREVIEW, TOOL_ID_SEARCH_ARTIFACTS, TOOL_ID_SMOKE_CHECK,
+    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION,
+    TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK,
     TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
@@ -86,8 +84,8 @@ Rules:\n\
     - The engine will end the step after a successful llm_generate_plan_v1 even if you requested more actions.\n\
   - Avoid calling llm_review_delta_v1 after every single component if you can generate a batch first.\n\
   - If review_appearance=true: after any render_preview_v1, immediately call llm_review_delta_v1 using the rendered images.\n\
-- Do NOT use placeholder paths like `$CALL_1.images[0]` in tool args; the engine does not substitute tool outputs into later tool calls.\n\
-  To review the latest render, call llm_review_delta_v1 with no `preview_images` (it will use the latest render cache).\n\
+- Do NOT use placeholder references like `$CALL_1.blob_ids[0]` in tool args; the engine does not substitute tool outputs into later tool calls.\n\
+  To review the latest render, call llm_review_delta_v1 with no `preview_blob_ids` (it will use the latest render cache).\n\
   - If review_appearance=true: do not finish a run without reviewing the latest renders.\n\
   - For vehicles/wheeled objects, always include TOP and BOTTOM views (they reveal wheel/axle/undercarriage issues). A good default is: views=[\"front\",\"left_back\",\"right_back\",\"top\",\"bottom\"].\n\
   - For speed, prefer smaller preview renders during iteration (example: render_preview_v1 image_size=768). Only increase resolution if you truly need extra detail.\n\
@@ -108,7 +106,7 @@ Rules:\n\
     - For rewires, set `preserve_edit_policy` to `allow_rewire` and provide `constraints.rewire_components` as an explicit allow-list.\n\
   - Preserve-mode planning helpers (no silent mutation):\n\
     - If `llm_generate_plan_v1` fails with a semantic error (unknown parent/root, missing required names, policy diff rejection), call `inspect_plan_v1` next (NOT `get_scene_graph_summary_v1`).\n\
-    - If preserve-mode replanning keeps failing, call `get_plan_template_v1`, then re-run `llm_generate_plan_v1` with `plan_template_artifact_ref` set to the returned `artifact_ref`.\n\
+    - If preserve-mode replanning keeps failing, call `get_plan_template_v1`, then re-run `llm_generate_plan_v1` with `plan_template_kv` set to the returned `plan_template_kv`.\n\
   - To explicitly regenerate already-generated components in preserve mode, pass force=true (regen budgets still apply).\n\
   - IMPORTANT: `force=true` regeneration is ONLY allowed when the latest QA indicates errors.\n\
     - The engine refuses force-regeneration unless `state_summary.qa.last_validate_ok=false` OR `state_summary.qa.last_smoke_ok=false`.\n\
@@ -132,7 +130,10 @@ Rules:\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\
 - IMPORTANT: A \"done\" action ENDS the Build run immediately. Only use \"done\" when you want to stop NOW.\n\
   If you want the run to continue, DO NOT include a \"done\" action; the engine will request another step automatically.\n\
-- To inspect past artifacts/logs for this run, use list_run_artifacts_v1 / read_artifact_v1 / search_artifacts_v1.\n"
+- To inspect run outputs, use Info Store tools:\n\
+  - KV (structured latest state): info_kv_get_v1 / info_kv_list_keys_v1\n\
+  - Events (tool logs/errors): info_events_list_v1 / info_events_search_v1 / info_events_get_v1\n\
+  - Blobs (render previews): info_blobs_list_v1 / info_blobs_get_v1\n"
         .to_string()
 }
 
@@ -615,29 +616,29 @@ pub(super) fn build_agent_user_text(
                 }
             }
             TOOL_ID_RENDER_PREVIEW => {
-                let images = value
-                    .get("images")
+                let blob_ids = value
+                    .get("blob_ids")
                     .and_then(|v| v.as_array())
                     .map(|a| a.len());
-                let static_images = value
-                    .get("static_images")
+                let static_blob_ids = value
+                    .get("static_blob_ids")
                     .and_then(|v| v.as_array())
                     .map(|a| a.len());
-                let motion_sheets = value.get("motion_sheets");
-                let has_move_sheet = motion_sheets
+                let motion_sheet_blob_ids = value.get("motion_sheet_blob_ids");
+                let has_move_sheet = motion_sheet_blob_ids
                     .and_then(|v| v.get("move"))
                     .and_then(|v| v.as_str())
                     .is_some();
-                let has_attack_sheet = motion_sheets
+                let has_attack_sheet = motion_sheet_blob_ids
                     .and_then(|v| v.get("attack"))
                     .and_then(|v| v.as_str())
                     .is_some();
                 out.push_str("ok");
-                if let Some(images) = images {
-                    out.push_str(&format!(" images={images}"));
+                if let Some(blob_ids) = blob_ids {
+                    out.push_str(&format!(" blob_ids={blob_ids}"));
                 }
-                if let Some(static_images) = static_images {
-                    out.push_str(&format!(" static_images={static_images}"));
+                if let Some(static_blob_ids) = static_blob_ids {
+                    out.push_str(&format!(" static_blob_ids={static_blob_ids}"));
                 }
                 if has_move_sheet || has_attack_sheet {
                     out.push_str(&format!(
@@ -775,58 +776,26 @@ pub(super) fn build_agent_user_text(
                     out.push_str(&format!(" truncated={truncated}"));
                 }
             }
-            TOOL_ID_LIST_RUN_ARTIFACTS => {
-                let items = value
-                    .get("items")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len());
-                let truncated = value.get("truncated").and_then(|v| v.as_bool());
-                out.push_str("ok");
-                if let Some(items) = items {
-                    out.push_str(&format!(" items={items}"));
-                }
-                if let Some(truncated) = truncated {
-                    out.push_str(&format!(" truncated={truncated}"));
-                }
-            }
-            TOOL_ID_READ_ARTIFACT => {
-                let artifact_ref = value.get("artifact_ref").and_then(|v| v.as_str());
-                let truncated = value.get("truncated").and_then(|v| v.as_bool());
-                out.push_str("ok");
-                if let Some(artifact_ref) = artifact_ref {
-                    out.push_str(&format!(
-                        " artifact_ref={}",
-                        truncate_for_prompt(artifact_ref, 120)
-                    ));
-                }
-                if let Some(truncated) = truncated {
-                    out.push_str(&format!(" truncated={truncated}"));
-                }
-            }
-            TOOL_ID_SEARCH_ARTIFACTS => {
-                let matches_len = value
-                    .get("matches")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len());
-                let truncated = value.get("truncated").and_then(|v| v.as_bool());
-                out.push_str("ok");
-                if let Some(matches_len) = matches_len {
-                    out.push_str(&format!(" matches={matches_len}"));
-                }
-                if let Some(truncated) = truncated {
-                    out.push_str(&format!(" truncated={truncated}"));
-                }
-            }
             TOOL_ID_GET_PLAN_TEMPLATE => {
-                let artifact_ref = value.get("artifact_ref").and_then(|v| v.as_str());
+                let plan_template_kv = value.get("plan_template_kv");
+                let kv_key = plan_template_kv
+                    .and_then(|v| v.get("key"))
+                    .and_then(|v| v.as_str());
+                let kv_rev = plan_template_kv
+                    .and_then(|v| v.get("selector"))
+                    .and_then(|v| v.get("kv_rev"))
+                    .and_then(|v| v.as_u64());
                 let bytes = value.get("bytes").and_then(|v| v.as_u64());
                 let components_total = value.get("components_total").and_then(|v| v.as_u64());
                 out.push_str("ok");
-                if let Some(artifact_ref) = artifact_ref {
+                if let Some(kv_key) = kv_key {
                     out.push_str(&format!(
-                        " artifact_ref={}",
-                        truncate_for_prompt(artifact_ref, 120)
+                        " plan_template_kv={}",
+                        truncate_for_prompt(kv_key, 96)
                     ));
+                }
+                if let Some(kv_rev) = kv_rev {
+                    out.push_str(&format!(" kv_rev={kv_rev}"));
                 }
                 if let Some(bytes) = bytes {
                     out.push_str(&format!(" bytes={bytes}"));
@@ -1509,17 +1478,16 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
                 "remaining_run_tokens": token_budget_remaining,
             },
         },
-        "last_render_images": job
+        "last_render_blob_ids": job
             .agent
-            .last_render_images
+            .last_render_blob_ids
             .iter()
             .rev()
             .take(12)
             .cloned()
-            .collect::<Vec<PathBuf>>()
+            .collect::<Vec<String>>()
             .into_iter()
             .rev()
-            .map(|p| p.display().to_string())
             .collect::<Vec<String>>(),
         "active_workspace": job.agent.active_workspace_id.as_str(),
         "workspaces": workspaces_json,
@@ -1559,6 +1527,62 @@ mod tests {
     }
 
     #[test]
+    fn agent_prompt_does_not_mention_removed_artifact_tools_or_paths() {
+        let system = build_agent_system_instructions();
+        for forbidden in [
+            "list_run_artifacts_v1",
+            "read_artifact_v1",
+            "search_artifacts_v1",
+            "artifact_ref",
+            "plan_template_artifact_ref",
+            "preview_images",
+            "/.gravimera/cache/gen3d/",
+        ] {
+            assert!(
+                !system.contains(forbidden),
+                "system instructions should not contain {forbidden:?}"
+            );
+        }
+
+        let config = AppConfig::default();
+        let job = Gen3dAiJob::default();
+        let workshop = Gen3dWorkshop::default();
+        let registry = Gen3dToolRegistryV1::default();
+        let user_text =
+            build_agent_user_text(&config, &job, &workshop, serde_json::json!({}), &[], &registry);
+        for forbidden in [
+            "list_run_artifacts_v1",
+            "read_artifact_v1",
+            "search_artifacts_v1",
+            "artifact_ref",
+            "plan_template_artifact_ref",
+            "preview_images",
+            "/.gravimera/cache/gen3d/",
+        ] {
+            assert!(
+                !user_text.contains(forbidden),
+                "user text should not contain {forbidden:?}"
+            );
+        }
+
+        let tool_ids = registry
+            .list()
+            .into_iter()
+            .map(|d| d.tool_id.to_string())
+            .collect::<Vec<_>>();
+        for forbidden in [
+            "list_run_artifacts_v1",
+            "read_artifact_v1",
+            "search_artifacts_v1",
+        ] {
+            assert!(
+                !tool_ids.iter().any(|t| t == forbidden),
+                "tool registry should not include {forbidden:?}"
+            );
+        }
+    }
+
+    #[test]
     fn agent_user_text_includes_tool_args_signatures() {
         let config = AppConfig::default();
         let job = Gen3dAiJob::default();
@@ -1579,7 +1603,7 @@ mod tests {
             .lines()
             .any(|line| line.contains("- qa_v1:") && line.contains("args={}")));
         assert!(text.lines().any(|line| {
-            line.contains("- search_artifacts_v1:") && line.contains("args={ query: string")
+            line.contains("- info_events_search_v1:") && line.contains("args={ query: string")
         }));
     }
 
@@ -1592,7 +1616,7 @@ mod tests {
 
         let recent_tool_results = vec![Gen3dToolResultJsonV1::err(
             "call_1".to_string(),
-            "search_artifacts_v1".to_string(),
+            "info_events_search_v1".to_string(),
             "Missing args.query".to_string(),
         )];
 
@@ -1606,7 +1630,7 @@ mod tests {
         );
 
         assert!(text.contains("Recent tool results (previous step, compact):"));
-        assert!(text.contains("search_artifacts_v1 (call_1): ERROR: Missing args.query"));
+        assert!(text.contains("info_events_search_v1 (call_1): ERROR: Missing args.query"));
         assert!(text.contains("expected_args={ query: string"));
         assert!(text.contains("required_keys=[\"query\"]"));
         assert!(text.contains("example="));

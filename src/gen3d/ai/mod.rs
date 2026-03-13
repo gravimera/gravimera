@@ -21,6 +21,7 @@ mod draft_ops;
 mod edit_bundle;
 mod gemini;
 mod headless_prefab;
+mod info_store;
 mod job;
 mod motion_recenter;
 mod motion_repairs;

@@ -9,6 +9,7 @@ use crate::object::registry::PartAnimationSlot;
 use crate::threaded_result::SharedResult;
 
 use super::ai_service::Gen3dAiServiceConfig;
+use super::info_store::{Gen3dInfoStore, InfoEventKindV1};
 use super::reuse_groups;
 use super::schema::*;
 
@@ -146,7 +147,7 @@ pub(super) struct Gen3dAgentState {
     pub(super) ever_reviewed: bool,
     pub(super) ever_validated: bool,
     pub(super) ever_smoke_checked: bool,
-    pub(super) last_render_images: Vec<PathBuf>,
+    pub(super) last_render_blob_ids: Vec<String>,
     pub(super) last_render_assembly_rev: Option<u32>,
     pub(super) active_workspace_id: String,
     pub(super) workspaces: std::collections::HashMap<String, Gen3dAgentWorkspace>,
@@ -189,7 +190,7 @@ impl Default for Gen3dAgentState {
             ever_reviewed: false,
             ever_validated: false,
             ever_smoke_checked: false,
-            last_render_images: Vec::new(),
+            last_render_blob_ids: Vec::new(),
             last_render_assembly_rev: None,
             active_workspace_id: "main".to_string(),
             workspaces: std::collections::HashMap::new(),
@@ -525,6 +526,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) user_image_object_summary: Option<Gen3dUserImageObjectSummary>,
     pub(super) run_dir: Option<PathBuf>,
     pub(super) pass_dir: Option<PathBuf>,
+    pub(super) info_store: Option<Gen3dInfoStore>,
     pub(super) log_sinks: Option<crate::app::Gen3dLogSinks>,
     pub(super) session: Gen3dAiSessionState,
     pub(super) planned_components: Vec<Gen3dPlannedComponent>,
@@ -636,6 +638,96 @@ impl Gen3dAiJob {
 
     pub(crate) fn pass_dir_path(&self) -> Option<&Path> {
         self.pass_dir.as_deref()
+    }
+
+    pub(super) fn info_store(&self) -> Option<&Gen3dInfoStore> {
+        self.info_store.as_ref()
+    }
+
+    pub(super) fn ensure_info_store(&mut self) -> Result<&mut Gen3dInfoStore, String> {
+        let run_dir = self
+            .run_dir
+            .as_deref()
+            .ok_or_else(|| "No active Gen3D run (missing run_dir).".to_string())?;
+        let needs_reload = self
+            .info_store
+            .as_ref()
+            .map(|s| s.run_dir() != run_dir)
+            .unwrap_or(true);
+        if needs_reload {
+            self.info_store = Some(Gen3dInfoStore::open_or_create(run_dir)?);
+        }
+        Ok(self
+            .info_store
+            .as_mut()
+            .expect("ensure_info_store sets info_store"))
+    }
+
+    pub(super) fn append_info_event_best_effort(
+        &mut self,
+        kind: InfoEventKindV1,
+        tool_id: Option<String>,
+        call_id: Option<String>,
+        message: String,
+        data: serde_json::Value,
+    ) {
+        fn redact_run_dir_paths_in_string(s: &str, run_dir_display: &str, run_dir_slashes: &str) -> String {
+            let mut out = s.to_string();
+            if !run_dir_display.is_empty() {
+                out = out.replace(run_dir_display, "<gen3d_run_dir>");
+            }
+            if run_dir_slashes != run_dir_display && !run_dir_slashes.is_empty() {
+                out = out.replace(run_dir_slashes, "<gen3d_run_dir>");
+            }
+            out
+        }
+
+        fn redact_run_dir_paths_in_json(
+            value: &mut serde_json::Value,
+            run_dir_display: &str,
+            run_dir_slashes: &str,
+        ) {
+            match value {
+                serde_json::Value::String(s) => {
+                    *s = redact_run_dir_paths_in_string(s, run_dir_display, run_dir_slashes);
+                }
+                serde_json::Value::Array(arr) => {
+                    for v in arr {
+                        redact_run_dir_paths_in_json(v, run_dir_display, run_dir_slashes);
+                    }
+                }
+                serde_json::Value::Object(obj) => {
+                    for v in obj.values_mut() {
+                        redact_run_dir_paths_in_json(v, run_dir_display, run_dir_slashes);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let attempt = self.attempt;
+        let pass = self.pass;
+        let assembly_rev = self.assembly_rev;
+        let Ok(store) = self.ensure_info_store() else {
+            return;
+        };
+
+        let run_dir_display = store.run_dir().display().to_string();
+        let run_dir_slashes = run_dir_display.replace('\\', "/");
+        let message = redact_run_dir_paths_in_string(message.as_str(), run_dir_display.as_str(), run_dir_slashes.as_str());
+        let mut data = data;
+        redact_run_dir_paths_in_json(&mut data, run_dir_display.as_str(), run_dir_slashes.as_str());
+
+        let _ = store.append_event(
+            attempt,
+            pass,
+            assembly_rev,
+            kind,
+            tool_id,
+            call_id,
+            message,
+            data,
+        );
     }
 
     pub(crate) fn run_id(&self) -> Option<Uuid> {

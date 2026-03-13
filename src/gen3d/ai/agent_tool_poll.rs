@@ -1,5 +1,6 @@
 use bevy::log::{debug, warn};
 use bevy::prelude::*;
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -13,8 +14,8 @@ use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::agent_component_batch::poll_agent_component_batch;
 use super::agent_regen_budget::{ensure_agent_regen_budget_len, regen_budget_allows};
 use super::agent_review_images::{
-    motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
-    select_review_preview_images, validate_review_images_for_llm,
+    motion_sheets_needed_from_smoke_results, parse_review_preview_blob_ids_from_args,
+    select_review_preview_blob_ids, validate_review_images_for_llm,
 };
 use super::agent_utils::{note_observable_tool_result, sanitize_prefix, truncate_json_for_log};
 use super::artifacts::{
@@ -275,6 +276,28 @@ pub(super) fn poll_agent_tool(
                     tool_result.error.as_deref().unwrap_or("<none>")
                 );
             }
+            let message = if tool_result.ok {
+                format!("Tool call ok: {}", tool_result.tool_id)
+            } else {
+                let err = tool_result.error.as_deref().unwrap_or("").trim();
+                let first_line = err.split('\n').next().unwrap_or("");
+                if first_line.is_empty() {
+                    format!("Tool call error: {}", tool_result.tool_id)
+                } else {
+                    format!(
+                        "Tool call error: {}: {}",
+                        tool_result.tool_id,
+                        super::truncate_for_ui(first_line, 240)
+                    )
+                }
+            };
+            job.append_info_event_best_effort(
+                super::info_store::InfoEventKindV1::ToolCallResult,
+                Some(tool_result.tool_id.clone()),
+                Some(tool_result.call_id.clone()),
+                message,
+                serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
+            );
             note_observable_tool_result(job, &tool_result);
             job.agent.step_tool_results.push(tool_result);
 
@@ -815,7 +838,7 @@ pub(super) fn poll_agent_tool(
                                     job.agent.active_workspace_id = "main".to_string();
                                     job.agent.next_workspace_seq = 1;
                                     job.agent.rendered_since_last_review = false;
-                                    job.agent.last_render_images.clear();
+                                    job.agent.last_render_blob_ids.clear();
                                     job.agent.last_render_assembly_rev = None;
                                     job.agent.pending_regen_component_indices.clear();
                                     job.agent
@@ -925,7 +948,7 @@ pub(super) fn poll_agent_tool(
                                         call.call_id.clone(),
                                         call.tool_id.clone(),
                                         format!(
-                                            "{err}\nHint: This is a semantic plan error (not JSON/schema). Run `inspect_plan_v1` for computed constraints, or use `get_plan_template_v1` + llm_generate_plan_v1.plan_template_artifact_ref to replan safely."
+                                            "{err}\nHint: This is a semantic plan error (not JSON/schema). Run `inspect_plan_v1` for computed constraints, or use `get_plan_template_v1` + llm_generate_plan_v1.plan_template_kv to replan safely."
                                         ),
                                     )
                                 }
@@ -938,13 +961,39 @@ pub(super) fn poll_agent_tool(
 	                                let system = super::prompts::build_gen3d_plan_system_instructions();
 	                                let prompt_override =
 	                                    call.args.get("prompt").and_then(|v| v.as_str());
-	                                let style_hint = call.args.get("style").and_then(|v| v.as_str());
-	                                let plan_template_artifact_ref = call
-	                                    .args
-	                                    .get("plan_template_artifact_ref")
-	                                    .and_then(|v| v.as_str())
-	                                    .map(|s| s.trim().to_string())
-	                                    .filter(|s| !s.is_empty());
+		                                let style_hint = call.args.get("style").and_then(|v| v.as_str());
+		                                #[derive(Debug, Deserialize)]
+		                                #[serde(deny_unknown_fields)]
+		                                struct InfoKvSelectorArgsV1 {
+		                                    kind: String,
+		                                    #[serde(default)]
+		                                    kv_rev: Option<u64>,
+		                                    #[serde(default)]
+		                                    assembly_rev: Option<u32>,
+		                                    #[serde(default)]
+		                                    pass: Option<u32>,
+		                                }
+		                                #[derive(Debug, Deserialize)]
+		                                #[serde(deny_unknown_fields)]
+		                                struct PlanTemplateKvRefArgsV1 {
+		                                    namespace: String,
+		                                    key: String,
+		                                    #[serde(default)]
+		                                    selector: Option<InfoKvSelectorArgsV1>,
+		                                }
+		                                let plan_template_kv: Option<PlanTemplateKvRefArgsV1> =
+		                                    match call.args.get("plan_template_kv").cloned() {
+		                                        Some(value) => match serde_json::from_value(value) {
+		                                            Ok(v) => Some(v),
+		                                            Err(err) => {
+		                                                warn!(
+		                                                    "Gen3D: invalid plan_template_kv for schema repair: {err}"
+		                                                );
+		                                                None
+		                                            }
+		                                        },
+		                                        None => None,
+		                                    };
 	                                let mut required_component_names: Vec<String> = call
 	                                    .args
 	                                    .get("components")
@@ -965,68 +1014,137 @@ pub(super) fn poll_agent_tool(
                                     );
                                 }
 
-	                                let prompt_text = prompt_override
-	                                    .map(|s| s.trim())
-	                                    .filter(|s| !s.is_empty())
-	                                    .unwrap_or(job.user_prompt_raw.as_str());
-	                                let preserve_edit_policy = preserve_edit_policy_raw
-	                                    .map(|s| s.trim())
-	                                    .filter(|s| !s.is_empty())
-	                                    .unwrap_or("additive");
+		                                let prompt_text = prompt_override
+		                                    .map(|s| s.trim())
+		                                    .filter(|s| !s.is_empty())
+		                                    .map(str::to_string)
+		                                    .unwrap_or_else(|| job.user_prompt_raw.clone());
+		                                let preserve_edit_policy = preserve_edit_policy_raw
+		                                    .map(|s| s.trim())
+		                                    .filter(|s| !s.is_empty())
+		                                    .unwrap_or("additive");
 
-	                                let plan_template_json: Option<serde_json::Value> =
-	                                    if let Some(template_ref) =
-	                                        plan_template_artifact_ref.as_deref()
-	                                    {
-	                                        job.run_dir
-	                                            .as_deref()
-	                                            .and_then(|run_dir| {
-	                                                super::artifacts::read_artifact_v1(
-	                                                    run_dir,
-	                                                    template_ref,
-	                                                    64 * 1024,
-	                                                    None,
-	                                                    None,
-	                                                )
-	                                                .ok()
-	                                            })
-	                                            .and_then(|v| {
-	                                                let truncated = v
-	                                                    .get("truncated")
-	                                                    .and_then(|v| v.as_bool())
-	                                                    .unwrap_or(false);
-	                                                (!truncated).then(|| v.get("json").cloned())
-	                                            })
-	                                            .flatten()
-	                                    } else {
-	                                        None
-	                                    };
+		                                let plan_template_json: Option<serde_json::Value> = (|| {
+		                                    fn select_record<'a>(
+		                                        store: &'a super::info_store::Gen3dInfoStore,
+		                                        namespace: &str,
+		                                        key: &str,
+		                                        selector_kind: &str,
+		                                        selector: Option<&InfoKvSelectorArgsV1>,
+		                                    ) -> Option<&'a super::info_store::InfoKvRecord> {
+		                                        match selector_kind {
+		                                            "latest" => store.kv_latest_record(namespace, key),
+		                                            "kv_rev" => {
+		                                                let rev = selector.and_then(|s| s.kv_rev)?;
+		                                                store
+		                                                    .kv_record_by_rev(rev)
+		                                                    .filter(|r| {
+		                                                        r.key.namespace == namespace
+		                                                            && r.key.key == key
+		                                                    })
+		                                            }
+		                                            "as_of_assembly_rev" => {
+		                                                let target =
+		                                                    selector.and_then(|s| s.assembly_rev)?;
+		                                                let mut best: Option<&super::info_store::InfoKvRecord> =
+		                                                    None;
+		                                                for rec in store.kv_records_for_key(namespace, key) {
+		                                                    if rec.assembly_rev > target {
+		                                                        continue;
+		                                                    }
+		                                                    best = match best {
+		                                                        None => Some(rec),
+		                                                        Some(prev) => {
+		                                                            if rec.assembly_rev > prev.assembly_rev
+		                                                                || (rec.assembly_rev
+		                                                                    == prev.assembly_rev
+		                                                                    && rec.kv_rev > prev.kv_rev)
+		                                                            {
+		                                                                Some(rec)
+		                                                            } else {
+		                                                                Some(prev)
+		                                                            }
+		                                                        }
+		                                                    };
+		                                                }
+		                                                best
+		                                            }
+		                                            "as_of_pass" => {
+		                                                let target = selector.and_then(|s| s.pass)?;
+		                                                let mut best: Option<&super::info_store::InfoKvRecord> =
+		                                                    None;
+		                                                for rec in store.kv_records_for_key(namespace, key) {
+		                                                    if rec.pass > target {
+		                                                        continue;
+		                                                    }
+		                                                    best = match best {
+		                                                        None => Some(rec),
+		                                                        Some(prev) => {
+		                                                            if rec.pass > prev.pass
+		                                                                || (rec.pass == prev.pass
+		                                                                    && rec.kv_rev > prev.kv_rev)
+		                                                            {
+		                                                                Some(rec)
+		                                                            } else {
+		                                                                Some(prev)
+		                                                            }
+		                                                        }
+		                                                    };
+		                                                }
+		                                                best
+		                                            }
+		                                            _ => None,
+		                                        }
+		                                    }
+
+		                                    let kv_ref = plan_template_kv.as_ref()?;
+		                                    let namespace = kv_ref.namespace.trim();
+		                                    let key = kv_ref.key.trim();
+		                                    if namespace.is_empty() || key.is_empty() {
+		                                        return None;
+		                                    }
+		                                    let selector_kind = kv_ref
+		                                        .selector
+		                                        .as_ref()
+		                                        .map(|s| s.kind.trim())
+		                                        .filter(|s| !s.is_empty())
+		                                        .unwrap_or("latest");
+		                                    let store = job.ensure_info_store().ok()?;
+		                                    let record = select_record(
+		                                        store,
+		                                        namespace,
+		                                        key,
+		                                        selector_kind,
+		                                        kv_ref.selector.as_ref(),
+		                                    )?;
+		                                    (record.bytes <= 64 * 1024).then_some(record.value.clone())
+		                                })();
 
 	                                let image_object_summary = job
 	                                    .user_image_object_summary
 	                                    .as_ref()
 	                                    .map(|s| s.text.as_str());
-	                                let user_text = if preserve_existing_components
-	                                    && !job.planned_components.is_empty()
-	                                {
-	                                    super::prompts::build_gen3d_plan_user_text_preserve_existing_components(
-	                                        prompt_text,
-	                                        image_object_summary,
-	                                        workshop.speed_mode,
-	                                        style_hint,
-	                                        &job.planned_components,
+		                                let user_text = if preserve_existing_components
+		                                    && !job.planned_components.is_empty()
+		                                {
+		                                    super::prompts::build_gen3d_plan_user_text_preserve_existing_components(
+		                                        prompt_text.as_str(),
+		                                        image_object_summary,
+		                                        workshop.speed_mode,
+		                                        style_hint,
+		                                        &job.planned_components,
 	                                        &job.assembly_notes,
 	                                        preserve_edit_policy,
 	                                        &rewire_components,
 	                                        plan_template_json.as_ref(),
 	                                    )
-	                                } else {
-	                                    super::prompts::build_gen3d_plan_user_text_with_hints(
-	                                        prompt_text,
-	                                        image_object_summary,
-	                                        workshop.speed_mode,
-	                                        style_hint,
-	                                        &required_component_names,
+		                                } else {
+		                                    super::prompts::build_gen3d_plan_user_text_with_hints(
+		                                        prompt_text.as_str(),
+		                                        image_object_summary,
+		                                        workshop.speed_mode,
+		                                        style_hint,
+		                                        &required_component_names,
 	                                    )
 	                                };
 
@@ -1875,50 +1993,80 @@ pub(super) fn poll_agent_tool(
                                                 &smoke_results,
                                             );
 
-                                            let mut preview_images = if review_appearance {
-                                                parse_review_preview_images_from_args(&call.args)
+                                            let mut preview_blob_ids = if review_appearance {
+                                                parse_review_preview_blob_ids_from_args(&call.args)
                                             } else {
                                                 Vec::new()
                                             };
-                                            let preview_images_were_explicit =
-                                                !preview_images.is_empty();
-                                            if review_appearance && preview_images.is_empty() {
-                                                preview_images =
-                                                    job.agent.last_render_images.clone();
+                                            let preview_blob_ids_were_explicit =
+                                                !preview_blob_ids.is_empty();
+                                            if review_appearance && preview_blob_ids.is_empty() {
+                                                preview_blob_ids =
+                                                    job.agent.last_render_blob_ids.clone();
                                             }
 
-                                            let mut images_to_send: Vec<PathBuf> = Vec::new();
+                                            let mut selected_blob_ids: Vec<String> = Vec::new();
                                             if review_appearance {
                                                 let (include_move_sheet, include_attack_sheet) =
                                                     motion_sheets_needed_from_smoke_results(
                                                         &smoke_results,
                                                     );
-                                                if !preview_images_were_explicit {
-                                                    preview_images = select_review_preview_images(
-                                                        &preview_images,
-                                                        include_move_sheet,
-                                                        include_attack_sheet,
-                                                    );
+                                                if preview_blob_ids_were_explicit {
+                                                    selected_blob_ids = preview_blob_ids;
+                                                } else {
+                                                    match job.ensure_info_store() {
+                                                        Ok(store) => {
+                                                            selected_blob_ids =
+                                                                select_review_preview_blob_ids(
+                                                                    store,
+                                                                    &preview_blob_ids,
+                                                                    include_move_sheet,
+                                                                    include_attack_sheet,
+                                                                );
+                                                        }
+                                                        Err(err) => {
+                                                            selected_blob_ids.clear();
+                                                            warn!(
+                                                                "Gen3D: review-delta schema repair could not open info store: {err}"
+                                                            );
+                                                        }
+                                                    }
                                                 }
-                                                images_to_send.extend(preview_images);
-                                                if images_to_send.len()
-                                                    > GEN3D_MAX_REQUEST_IMAGES
+                                                if selected_blob_ids.len() > GEN3D_MAX_REQUEST_IMAGES
                                                 {
-                                                    images_to_send
+                                                    selected_blob_ids
                                                         .truncate(GEN3D_MAX_REQUEST_IMAGES);
                                                 }
                                             }
 
-	                                            let images_to_send = if images_to_send.is_empty() {
-	                                                Ok(images_to_send)
-	                                            } else {
-	                                                match job.run_dir.as_deref() {
-	                                                    Some(run_dir) => {
-	                                                        validate_review_images_for_llm(run_dir, &images_to_send)
-	                                                    }
-	                                                    None => Err("Internal error: missing Gen3D run_dir for preview images.".to_string()),
-	                                                }
-	                                            };
+                                            let images_to_send: Result<Vec<PathBuf>, String> = (|| {
+                                                if selected_blob_ids.is_empty() {
+                                                    return Ok(Vec::new());
+                                                }
+
+                                                let run_dir = job.run_dir.clone().ok_or_else(|| {
+                                                    "Internal error: missing Gen3D run_dir for preview blobs."
+                                                        .to_string()
+                                                })?;
+                                                let store = job.ensure_info_store().map_err(|err| {
+                                                    format!(
+                                                        "Internal error: failed to open info store: {err}"
+                                                    )
+                                                })?;
+                                                let mut paths: Vec<PathBuf> =
+                                                    Vec::with_capacity(selected_blob_ids.len());
+                                                for blob_id in &selected_blob_ids {
+                                                    let Some(path) = store
+                                                        .resolve_blob_run_cache_path(blob_id.as_str())
+                                                    else {
+                                                        return Err(format!(
+                                                            "Unknown preview_blob_id `{blob_id}`."
+                                                        ));
+                                                    };
+                                                    paths.push(path);
+                                                }
+                                                validate_review_images_for_llm(run_dir.as_path(), &paths)
+                                            })();
 
 	                                            match images_to_send {
 	                                                Ok(images_to_send) => {
@@ -2003,47 +2151,72 @@ pub(super) fn poll_agent_tool(
                                     &smoke_results,
                                 );
 
-                                let mut preview_images = if review_appearance {
-                                    parse_review_preview_images_from_args(&call.args)
+                                let mut preview_blob_ids = if review_appearance {
+                                    parse_review_preview_blob_ids_from_args(&call.args)
                                 } else {
                                     Vec::new()
                                 };
-                                let preview_images_were_explicit = !preview_images.is_empty();
-                                if review_appearance && preview_images.is_empty() {
-                                    preview_images = job.agent.last_render_images.clone();
+                                let preview_blob_ids_were_explicit = !preview_blob_ids.is_empty();
+                                if review_appearance && preview_blob_ids.is_empty() {
+                                    preview_blob_ids = job.agent.last_render_blob_ids.clone();
                                 }
 
-                                let mut images_to_send: Vec<PathBuf> = Vec::new();
+                                let mut selected_blob_ids: Vec<String> = Vec::new();
                                 if review_appearance {
                                     let (include_move_sheet, include_attack_sheet) =
                                         motion_sheets_needed_from_smoke_results(&smoke_results);
-                                    if !preview_images_were_explicit {
-                                        preview_images = select_review_preview_images(
-                                            &preview_images,
-                                            include_move_sheet,
-                                            include_attack_sheet,
-                                        );
+                                    if preview_blob_ids_were_explicit {
+                                        selected_blob_ids = preview_blob_ids;
+                                    } else {
+                                        match job.ensure_info_store() {
+                                            Ok(store) => {
+                                                selected_blob_ids = select_review_preview_blob_ids(
+                                                    store,
+                                                    &preview_blob_ids,
+                                                    include_move_sheet,
+                                                    include_attack_sheet,
+                                                );
+                                            }
+                                            Err(err) => {
+                                                selected_blob_ids.clear();
+                                                warn!(
+                                                    "Gen3D: review-delta schema repair could not open info store: {err}"
+                                                );
+                                            }
+                                        }
                                     }
-
-                                    images_to_send.extend(preview_images);
-                                    if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
-                                        images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
+                                    if selected_blob_ids.len() > GEN3D_MAX_REQUEST_IMAGES {
+                                        selected_blob_ids.truncate(GEN3D_MAX_REQUEST_IMAGES);
                                     }
                                 }
 
-	                                let images_to_send = if images_to_send.is_empty() {
-	                                    Ok(images_to_send)
-	                                } else {
-	                                    match job.run_dir.as_deref() {
-	                                        Some(run_dir) => {
-	                                            validate_review_images_for_llm(run_dir, &images_to_send)
-	                                        }
-	                                        None => Err(
-	                                            "Internal error: missing Gen3D run_dir for preview images."
-	                                                .to_string(),
-	                                        ),
-	                                    }
-	                                };
+                                let images_to_send: Result<Vec<PathBuf>, String> = (|| {
+                                    if selected_blob_ids.is_empty() {
+                                        return Ok(Vec::new());
+                                    }
+
+                                    let run_dir = job.run_dir.clone().ok_or_else(|| {
+                                        "Internal error: missing Gen3D run_dir for preview blobs."
+                                            .to_string()
+                                    })?;
+                                    let store = job.ensure_info_store().map_err(|err| {
+                                        format!("Internal error: failed to open info store: {err}")
+                                    })?;
+                                    let mut paths: Vec<PathBuf> =
+                                        Vec::with_capacity(selected_blob_ids.len());
+                                    for blob_id in &selected_blob_ids {
+                                        let Some(path) =
+                                            store.resolve_blob_run_cache_path(blob_id.as_str())
+                                        else {
+                                            return Err(format!(
+                                                "Unknown preview_blob_id `{}`. Call `render_preview_v1` first (or use `info_blobs_list_v1` to discover recent blobs).",
+                                                blob_id
+                                            ));
+                                        };
+                                        paths.push(path);
+                                    }
+                                    validate_review_images_for_llm(run_dir.as_path(), &paths)
+                                })();
 
 	                                match images_to_send {
 	                                    Ok(images_to_send) => {
@@ -2137,6 +2310,28 @@ pub(super) fn poll_agent_tool(
             tool_result.error.as_deref().unwrap_or("<none>")
         );
     }
+    let message = if tool_result.ok {
+        format!("Tool call ok: {}", tool_result.tool_id)
+    } else {
+        let err = tool_result.error.as_deref().unwrap_or("").trim();
+        let first_line = err.split('\n').next().unwrap_or("");
+        if first_line.is_empty() {
+            format!("Tool call error: {}", tool_result.tool_id)
+        } else {
+            format!(
+                "Tool call error: {}: {}",
+                tool_result.tool_id,
+                super::truncate_for_ui(first_line, 240)
+            )
+        }
+    };
+    job.append_info_event_best_effort(
+        super::info_store::InfoEventKindV1::ToolCallResult,
+        Some(tool_result.tool_id.clone()),
+        Some(tool_result.call_id.clone()),
+        message,
+        serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
+    );
     let tool_id_for_guard = tool_result.tool_id.clone();
     let tool_ok_for_guard = tool_result.ok;
     if tool_ok_for_guard && tool_id_for_guard == TOOL_ID_LLM_GENERATE_PLAN {
@@ -2147,6 +2342,16 @@ pub(super) fn poll_agent_tool(
 
     if let Some(reason) = stop_best_effort_after_tool.take() {
         workshop.error = None;
+        job.append_info_event_best_effort(
+            super::info_store::InfoEventKindV1::BudgetStop,
+            None,
+            None,
+            format!(
+                "Budget stop: {}",
+                super::truncate_for_ui(reason.trim(), 600)
+            ),
+            serde_json::json!({ "reason": reason.trim() }),
+        );
         let status = format!(
             "Build finished (best effort).\nReason: {}",
             super::truncate_for_ui(reason.trim(), 600)

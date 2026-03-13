@@ -540,7 +540,7 @@ pub(super) fn inspect_pending_plan_attempt_v1(
                 "errors": [],
                 "hints": [
                     "If llm_generate_plan_v1 fails semantically (unknown parent, root mismatch, preserve missing names), use this tool immediately instead of get_scene_graph_summary_v1.",
-                    "For preserve mode, prefer get_plan_template_v1 + llm_generate_plan_v1.plan_template_artifact_ref to reduce invalid plans."
+                    "For preserve mode, prefer get_plan_template_v1 + llm_generate_plan_v1.plan_template_kv to reduce invalid plans."
                 ],
             }
         });
@@ -767,7 +767,7 @@ pub(super) fn inspect_pending_plan_attempt_v1(
                 "Component/parent names must match EXACTLY (case-sensitive).",
                 "In preserve mode: include ALL existing component names and keep the same root component.",
                 "Attachment anchors must exist: child_anchor/parent_anchor may be `origin` (implicit) or a named anchor listed under that component. If anchors are missing in preserve mode, prefer get_plan_template_v1 so existing anchors are included.",
-                "If you need a safe starting point: run get_plan_template_v1, then pass llm_generate_plan_v1.plan_template_artifact_ref."
+                "If you need a safe starting point: run get_plan_template_v1, then pass llm_generate_plan_v1.plan_template_kv."
             ],
         }
     })

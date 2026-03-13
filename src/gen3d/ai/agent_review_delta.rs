@@ -7,8 +7,8 @@ use crate::threaded_result::{new_shared_result, SharedResult};
 
 use super::super::state::Gen3dDraft;
 use super::agent_review_images::{
-    motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
-    select_review_preview_images, validate_review_images_for_llm,
+    motion_sheets_needed_from_smoke_results, parse_review_preview_blob_ids_from_args,
+    select_review_preview_blob_ids, validate_review_images_for_llm,
 };
 use super::agent_utils::sanitize_prefix;
 use super::artifacts::write_gen3d_json_artifact;
@@ -31,14 +31,14 @@ pub(super) fn start_agent_llm_review_delta_call(
         return Err("Missing pass dir".into());
     };
 
-    let mut preview_images = if review_appearance {
-        parse_review_preview_images_from_args(&call.args)
+    let mut preview_blob_ids = if review_appearance {
+        parse_review_preview_blob_ids_from_args(&call.args)
     } else {
         Vec::new()
     };
-    let preview_images_were_explicit = !preview_images.is_empty();
-    if review_appearance && preview_images.is_empty() {
-        preview_images = job.agent.last_render_images.clone();
+    let preview_blob_ids_were_explicit = !preview_blob_ids.is_empty();
+    if review_appearance && preview_blob_ids.is_empty() {
+        preview_blob_ids = job.agent.last_render_blob_ids.clone();
     }
     let include_original_images_requested = call
         .args
@@ -73,23 +73,47 @@ pub(super) fn start_agent_llm_review_delta_call(
     if review_appearance {
         let (include_move_sheet, include_attack_sheet) =
             motion_sheets_needed_from_smoke_results(&smoke_results);
-        if !preview_images_were_explicit {
-            preview_images = select_review_preview_images(
-                &preview_images,
-                include_move_sheet,
-                include_attack_sheet,
-            );
-        }
-        images_to_send.extend(preview_images);
-        if images_to_send.len() > GEN3D_MAX_REQUEST_IMAGES {
-            images_to_send.truncate(GEN3D_MAX_REQUEST_IMAGES);
-        }
-    }
-    if review_appearance && !images_to_send.is_empty() {
-        let Some(run_dir) = job.run_dir.as_deref() else {
-            return Err("Missing run dir (needed to validate preview image paths).".into());
+
+        let selected_blob_ids = {
+            let store = job.ensure_info_store()?;
+            if preview_blob_ids_were_explicit {
+                preview_blob_ids.clone()
+            } else {
+                select_review_preview_blob_ids(
+                    store,
+                    &preview_blob_ids,
+                    include_move_sheet,
+                    include_attack_sheet,
+                )
+            }
         };
-        images_to_send = validate_review_images_for_llm(run_dir, &images_to_send)?;
+
+        let mut selected_blob_ids = selected_blob_ids;
+        if selected_blob_ids.len() > GEN3D_MAX_REQUEST_IMAGES {
+            selected_blob_ids.truncate(GEN3D_MAX_REQUEST_IMAGES);
+        }
+
+        if !selected_blob_ids.is_empty() {
+            let run_dir = job
+                .run_dir
+                .clone()
+                .ok_or_else(|| "Missing run dir (needed to resolve preview_blob_ids).".to_string())?;
+            let resolved = {
+                let store = job.ensure_info_store()?;
+                let mut out = Vec::with_capacity(selected_blob_ids.len());
+                for blob_id in &selected_blob_ids {
+                    let Some(path) = store.resolve_blob_run_cache_path(blob_id.as_str()) else {
+                        return Err(format!(
+                            "Unknown preview_blob_id `{}`. Call `render_preview_v1` first (or use `info_blobs_list_v1` to discover recent blobs).",
+                            blob_id
+                        ));
+                    };
+                    out.push(path);
+                }
+                out
+            };
+            images_to_send = validate_review_images_for_llm(run_dir.as_path(), &resolved)?;
+        }
     }
 
     if let Some(dir) = job.pass_dir.as_deref() {

@@ -1040,6 +1040,13 @@ pub(super) fn execute_agent_actions(
                     call.tool_id,
                     truncate_json_for_log(&call.args, 600)
                 );
+                job.append_info_event_best_effort(
+                    super::info_store::InfoEventKindV1::ToolCallStart,
+                    Some(call.tool_id.clone()),
+                    Some(call.call_id.clone()),
+                    format!("Tool call start: {}", call.tool_id),
+                    serde_json::json!({ "args": call.args.clone() }),
+                );
 
                 match execute_tool_call(
                     config,
@@ -1116,6 +1123,28 @@ pub(super) fn execute_agent_actions(
                             job.pass_dir.as_deref(),
                             "tool_results.jsonl",
                             &serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+                        );
+                        let message = if result.ok {
+                            format!("Tool call ok: {}", result.tool_id)
+                        } else {
+                            let err = result.error.as_deref().unwrap_or("").trim();
+                            let first_line = err.split('\n').next().unwrap_or("");
+                            if first_line.is_empty() {
+                                format!("Tool call error: {}", result.tool_id)
+                            } else {
+                                format!(
+                                    "Tool call error: {}: {}",
+                                    result.tool_id,
+                                    super::truncate_for_ui(first_line, 240)
+                                )
+                            }
+                        };
+                        job.append_info_event_best_effort(
+                            super::info_store::InfoEventKindV1::ToolCallResult,
+                            Some(result.tool_id.clone()),
+                            Some(result.call_id.clone()),
+                            message,
+                            serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
                         );
                         note_observable_tool_result(job, &result);
                         job.agent.step_tool_results.push(result);

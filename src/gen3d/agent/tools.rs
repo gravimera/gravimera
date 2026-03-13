@@ -15,9 +15,16 @@ pub(crate) const TOOL_ID_SMOKE_CHECK: &str = "smoke_check_v1";
 pub(crate) const TOOL_ID_MOTION_METRICS: &str = "motion_metrics_v1";
 pub(crate) const TOOL_ID_SUGGEST_MOTION_REPAIRS: &str = "suggest_motion_repairs_v1";
 pub(crate) const TOOL_ID_QA: &str = "qa_v1";
-pub(crate) const TOOL_ID_LIST_RUN_ARTIFACTS: &str = "list_run_artifacts_v1";
-pub(crate) const TOOL_ID_READ_ARTIFACT: &str = "read_artifact_v1";
-pub(crate) const TOOL_ID_SEARCH_ARTIFACTS: &str = "search_artifacts_v1";
+
+pub(crate) const TOOL_ID_INFO_KV_LIST_KEYS: &str = "info_kv_list_keys_v1";
+pub(crate) const TOOL_ID_INFO_KV_LIST_HISTORY: &str = "info_kv_list_history_v1";
+pub(crate) const TOOL_ID_INFO_KV_GET: &str = "info_kv_get_v1";
+pub(crate) const TOOL_ID_INFO_KV_GET_MANY: &str = "info_kv_get_many_v1";
+pub(crate) const TOOL_ID_INFO_EVENTS_LIST: &str = "info_events_list_v1";
+pub(crate) const TOOL_ID_INFO_EVENTS_GET: &str = "info_events_get_v1";
+pub(crate) const TOOL_ID_INFO_EVENTS_SEARCH: &str = "info_events_search_v1";
+pub(crate) const TOOL_ID_INFO_BLOBS_LIST: &str = "info_blobs_list_v1";
+pub(crate) const TOOL_ID_INFO_BLOBS_GET: &str = "info_blobs_get_v1";
 pub(crate) const TOOL_ID_APPLY_DRAFT_OPS: &str = "apply_draft_ops_v1";
 pub(crate) const TOOL_ID_RECENTER_ATTACHMENT_MOTION: &str = "recenter_attachment_motion_v1";
 pub(crate) const TOOL_ID_SNAPSHOT: &str = "snapshot_v1";
@@ -109,14 +116,14 @@ impl Gen3dToolRegistryV1 {
                 tool_id: TOOL_ID_GET_PLAN_TEMPLATE,
                 title: "Get plan template",
                 one_line_summary:
-                    "Read-only: write a preserve-mode plan template JSON artifact (copy+edit) and return artifact_ref for llm_generate_plan_v1.plan_template_artifact_ref.",
+                    "Read-only: write a preserve-mode plan template into the Info Store (KV) for safe copy+edit preserve-mode replans.",
                 args_schema: "{ version?: 1 }",
                 args_example: serde_json::json!({ "version": 1 }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_QUERY_COMPONENT_PARTS,
                 title: "Query component parts",
-                one_line_summary: "Read-only: list component parts (primitive mesh/color + part_id_uuid + transforms); writes `component_parts_<name>.json`.",
+                one_line_summary: "Read-only: list component parts (primitive mesh/color + part_id_uuid + transforms); writes into Info Store KV as `ws.<id>.component_parts.<component>` and returns `info_kv` ref.",
                 args_schema:
                     "{ version?: 1, component?: string, component_index?: number, include_non_primitives?: bool, max_parts?: number }",
                 args_example: serde_json::json!({ "component": "torso", "max_parts": 128 }),
@@ -160,27 +167,116 @@ impl Gen3dToolRegistryV1 {
                 args_example: serde_json::json!({}),
             },
             Gen3dToolDescriptorV1 {
-                tool_id: TOOL_ID_LIST_RUN_ARTIFACTS,
-                title: "List run artifacts",
-                one_line_summary: "Read-only: list bounded run artifacts under a prefix (scoped).",
-                args_schema: "{ path_prefix?: string, max_items?: number }",
-                args_example: serde_json::json!({ "path_prefix": "attempt_0/", "max_items": 200 }),
+                tool_id: TOOL_ID_INFO_KV_LIST_KEYS,
+                title: "Info KV: list keys",
+                one_line_summary:
+                    "Read-only: list Info Store KV keys with latest metadata (paged; bounded).",
+                args_schema:
+                    "{ namespace?: string, key_prefix?: string, sort?: \"key_asc\"|\"last_written_desc\", page?: { limit?: number, cursor?: string } }",
+                args_example: serde_json::json!({
+                    "namespace": "gen3d",
+                    "key_prefix": "ws.main.",
+                    "sort": "last_written_desc",
+                    "page": { "limit": 50 }
+                }),
             },
             Gen3dToolDescriptorV1 {
-                tool_id: TOOL_ID_READ_ARTIFACT,
-                title: "Read artifact",
-                one_line_summary: "Read-only: read a bounded slice of a run artifact (ex: `tool_results.jsonl`, `scene_graph_summary.json`, `component_parts_*.json`).",
+                tool_id: TOOL_ID_INFO_KV_LIST_HISTORY,
+                title: "Info KV: list history",
+                one_line_summary:
+                    "Read-only: list historical KV revisions for one key (paged; bounded).",
                 args_schema:
-                    "{ artifact_ref: string, max_bytes?: number, tail_lines?: number, json_pointer?: string }",
-                args_example: serde_json::json!({ "artifact_ref": "attempt_0/pass_0/gravimera.log", "tail_lines": 200 }),
+                    "{ namespace: string, key: string, sort?: \"rev_desc\"|\"rev_asc\", page?: { limit?: number, cursor?: string } }",
+                args_example: serde_json::json!({
+                    "namespace": "gen3d",
+                    "key": "ws.main.scene_graph_summary",
+                    "sort": "rev_desc",
+                    "page": { "limit": 50 }
+                }),
             },
             Gen3dToolDescriptorV1 {
-                tool_id: TOOL_ID_SEARCH_ARTIFACTS,
-                title: "Search artifacts",
-                one_line_summary: "Read-only: search run artifacts for a substring (scoped; bounded).",
+                tool_id: TOOL_ID_INFO_KV_GET,
+                title: "Info KV: get",
+                one_line_summary:
+                    "Read-only: fetch a KV value by key + selector (latest/kv_rev/as-of); bounded by max_bytes.",
                 args_schema:
-                    "{ query: string, path_prefix?: string, max_matches?: number, max_bytes_per_file?: number }",
-                args_example: serde_json::json!({ "query": "ERROR", "path_prefix": "attempt_0/" }),
+                    "{ namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }, json_pointer?: string, max_bytes?: number }",
+                args_example: serde_json::json!({
+                    "namespace": "gen3d",
+                    "key": "ws.main.scene_graph_summary",
+                    "selector": { "kind": "latest" },
+                    "json_pointer": "/components_total"
+                }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_INFO_KV_GET_MANY,
+                title: "Info KV: get many",
+                one_line_summary:
+                    "Read-only: fetch multiple KV values with a shared selector; returns per-key errors; bounded.",
+                args_schema:
+                    "{ items: { namespace: string, key: string, json_pointer?: string, max_bytes?: number }[], selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }, max_items?: number }",
+                args_example: serde_json::json!({
+                    "selector": { "kind": "latest" },
+                    "items": [
+                        { "namespace": "gen3d", "key": "ws.main.state_summary" },
+                        { "namespace": "gen3d", "key": "ws.main.qa" },
+                        { "namespace": "gen3d", "key": "ws.main.scene_graph_summary", "json_pointer": "/components_total" }
+                    ]
+                }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_INFO_EVENTS_LIST,
+                title: "Info events: list",
+                one_line_summary:
+                    "Read-only: list recent Info Store events with filters (paged; bounded; returns data_preview).",
+                args_schema:
+                    "{ filters?: { kind?: string, tool_id?: string, call_id?: string, min_ts_ms?: number, max_ts_ms?: number, attempt?: number, pass?: number }, sort?: \"ts_desc\"|\"ts_asc\", page?: { limit?: number, cursor?: string } }",
+                args_example: serde_json::json!({
+                    "filters": { "kind": "tool_call_result" },
+                    "sort": "ts_desc",
+                    "page": { "limit": 100 }
+                }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_INFO_EVENTS_GET,
+                title: "Info events: get",
+                one_line_summary:
+                    "Read-only: fetch one Info Store event by event_id (bounded by max_bytes).",
+                args_schema: "{ event_id: number, json_pointer?: string, max_bytes?: number }",
+                args_example: serde_json::json!({ "event_id": 1 }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_INFO_EVENTS_SEARCH,
+                title: "Info events: search",
+                one_line_summary:
+                    "Read-only: substring search over Info Store event messages (paged; bounded).",
+                args_schema:
+                    "{ query: string, filters?: { kind?: string, attempt?: number, pass?: number }, page?: { limit?: number, cursor?: string } }",
+                args_example: serde_json::json!({
+                    "query": "ERROR",
+                    "filters": { "kind": "error" },
+                    "page": { "limit": 100 }
+                }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_INFO_BLOBS_LIST,
+                title: "Info blobs: list",
+                one_line_summary:
+                    "Read-only: list blobs (opaque ids for images/sheets) with metadata (paged; bounded).",
+                args_schema:
+                    "{ filters?: { label_prefix?: string, labels_any?: string[], labels_all?: string[], content_type_prefix?: string, attempt?: number, pass?: number }, sort?: \"created_desc\"|\"created_asc\", page?: { limit?: number, cursor?: string } }",
+                args_example: serde_json::json!({
+                    "filters": { "labels_all": ["kind:render_preview", "workspace:main"] },
+                    "sort": "created_desc",
+                    "page": { "limit": 50 }
+                }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_INFO_BLOBS_GET,
+                title: "Info blobs: get",
+                one_line_summary: "Read-only: fetch one blob’s metadata by blob_id (no bytes).",
+                args_schema: "{ blob_id: string }",
+                args_example: serde_json::json!({ "blob_id": "00000000-0000-0000-0000-000000000000" }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_APPLY_DRAFT_OPS,
@@ -306,7 +402,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 one_line_summary:
                     "LLM+mutates: generate/replace the component plan; preserve-mode diffs are policy-validated (constraints.preserve_edit_policy).",
                 args_schema:
-                    "{ prompt?: string, style?: string, plan_template_artifact_ref?: string, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, components?: string[] }",
+                    "{ prompt?: string, style?: string, plan_template_kv?: { namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number } }, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, components?: string[] }",
                 args_example: serde_json::json!({
                     "constraints": {
                         "preserve_existing_components": true,
@@ -344,13 +440,13 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 one_line_summary:
                     "LLM+mutates: apply deterministic tweak ops; may request component regen indices (some may be budget/QA-gated).",
                 args_schema:
-                    "{ preview_images?: string[], include_original_images?: bool }",
+                    "{ preview_blob_ids?: string[], include_original_images?: bool }",
                 args_example: serde_json::json!({}),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_RENDER_PREVIEW,
                 title: "Render preview",
-                one_line_summary: "Side-effect: render deterministic preview images to the run cache (no draft mutation).",
+                one_line_summary: "Side-effect: render deterministic preview images and register them as Info Store blobs (no draft mutation); returns `blob_ids` (no paths).",
                 args_schema:
                     "{ views?: string[], image_size?: number, resolution?: number, width?: number, height?: number, overlay?: string, prefix?: string, include_motion_sheets?: bool }",
                 args_example: serde_json::json!({ "views": ["front", "left_back", "right_back", "top", "bottom"], "image_size": 768 }),

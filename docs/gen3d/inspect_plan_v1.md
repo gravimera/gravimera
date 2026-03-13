@@ -35,6 +35,6 @@ Notes:
 
 ## Recommended follow-ups
 
-- If the error is preserve-mode “missing names/root”: call `get_plan_template_v1`, then re-run `llm_generate_plan_v1` with `plan_template_artifact_ref`.
+- If the error is preserve-mode “missing names/root”: call `get_plan_template_v1`, then re-run `llm_generate_plan_v1` with `plan_template_kv`.
 - If the error is “unknown parent”: fix the plan to use an existing component name exactly (case-sensitive); consider using the template as a starting point.
 - If the error is a preserve edit-policy violation: either broaden `constraints.preserve_edit_policy`, use `apply_draft_ops_v1`, or disable preserve mode for a full rebuild.

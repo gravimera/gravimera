@@ -24,8 +24,8 @@ use super::agent_prompt::{build_agent_system_instructions, build_agent_user_text
 use super::agent_render_capture::poll_agent_render_capture;
 #[cfg(test)]
 use super::agent_review_images::{
-    motion_sheets_needed_from_smoke_results, parse_review_preview_images_from_args,
-    review_capture_dimensions_for_max_dim, select_review_preview_images,
+    motion_sheets_needed_from_smoke_results, parse_review_preview_blob_ids_from_args,
+    review_capture_dimensions_for_max_dim, select_review_preview_blob_ids,
 };
 use super::agent_step::poll_agent_descriptor_meta;
 use super::agent_step::{execute_agent_actions, poll_agent_pass_snapshot_capture, poll_agent_step};
@@ -365,11 +365,34 @@ pub(super) fn spawn_agent_step_request(
 
     let registry = Gen3dToolRegistryV1::default();
     let system = build_agent_system_instructions();
+    let state_summary = draft_summary(config, job);
+    {
+        let attempt = job.attempt;
+        let pass = job.pass;
+        let assembly_rev = job.assembly_rev;
+        let workspace_id = job.active_workspace_id().trim().to_string();
+        let key = format!("ws.{workspace_id}.state_summary");
+        if let Ok(store) = job.ensure_info_store() {
+            if let Err(err) = store.kv_put(
+                attempt,
+                pass,
+                assembly_rev,
+                workspace_id.as_str(),
+                "gen3d",
+                key.as_str(),
+                state_summary.clone(),
+                "state summary".into(),
+                None,
+            ) {
+                debug!("Gen3D: failed to write state_summary to Info Store: {err}");
+            }
+        }
+    }
     let user_text = build_agent_user_text(
         config,
         job,
         workshop,
-        draft_summary(config, job),
+        state_summary,
         &job.agent.step_tool_results,
         &registry,
     );
@@ -448,53 +471,237 @@ mod tests {
     }
 
     #[test]
-    fn select_review_preview_images_prefers_five_static_views() {
-        let images = vec![
-            PathBuf::from("render_front.png"),
-            PathBuf::from("render_left_back.png"),
-            PathBuf::from("render_right_back.png"),
-            PathBuf::from("render_top.png"),
-            PathBuf::from("render_bottom.png"),
-            PathBuf::from("move_sheet.png"),
-            PathBuf::from("attack_sheet.png"),
+    fn select_review_preview_blobs_prefers_five_static_views() {
+        let run_dir =
+            std::env::temp_dir().join(format!("gravimera_gen3d_review_blob_select_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&run_dir).expect("create run dir");
+        let mut store =
+            super::super::info_store::Gen3dInfoStore::open_or_create(&run_dir).expect("open store");
+
+        let front = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:front".into()],
+                "render_front.png".into(),
+            )
+            .expect("register front")
+            .blob_id;
+        let left_back = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:left_back".into()],
+                "render_left_back.png".into(),
+            )
+            .expect("register left_back")
+            .blob_id;
+        let right_back = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:right_back".into()],
+                "render_right_back.png".into(),
+            )
+            .expect("register right_back")
+            .blob_id;
+        let top = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:top".into()],
+                "render_top.png".into(),
+            )
+            .expect("register top")
+            .blob_id;
+        let bottom = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:bottom".into()],
+                "render_bottom.png".into(),
+            )
+            .expect("register bottom")
+            .blob_id;
+        let move_sheet = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:motion_sheet".into(), "motion:move".into()],
+                "move_sheet.png".into(),
+            )
+            .expect("register move_sheet")
+            .blob_id;
+        let attack_sheet = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:motion_sheet".into(), "motion:attack".into()],
+                "attack_sheet.png".into(),
+            )
+            .expect("register attack_sheet")
+            .blob_id;
+
+        let preview_blob_ids = vec![
+            front.clone(),
+            left_back.clone(),
+            right_back.clone(),
+            top.clone(),
+            bottom.clone(),
+            move_sheet,
+            attack_sheet,
         ];
-        let selected = select_review_preview_images(&images, false, false);
+        let selected = select_review_preview_blob_ids(&store, &preview_blob_ids, false, false);
         assert_eq!(
             selected,
             vec![
-                PathBuf::from("render_front.png"),
-                PathBuf::from("render_left_back.png"),
-                PathBuf::from("render_right_back.png"),
-                PathBuf::from("render_top.png"),
-                PathBuf::from("render_bottom.png"),
+                front,
+                left_back,
+                right_back,
+                top,
+                bottom,
             ]
         );
+        let _ = std::fs::remove_dir_all(&run_dir);
     }
 
     #[test]
-    fn select_review_preview_images_includes_motion_sheets_when_requested() {
-        let images = vec![
-            PathBuf::from("render_front.png"),
-            PathBuf::from("render_left_back.png"),
-            PathBuf::from("render_right_back.png"),
-            PathBuf::from("render_top.png"),
-            PathBuf::from("render_bottom.png"),
-            PathBuf::from("move_sheet.png"),
-            PathBuf::from("attack_sheet.png"),
+    fn select_review_preview_blobs_includes_motion_sheets_when_requested() {
+        let run_dir =
+            std::env::temp_dir().join(format!("gravimera_gen3d_review_blob_select_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&run_dir).expect("create run dir");
+        let mut store =
+            super::super::info_store::Gen3dInfoStore::open_or_create(&run_dir).expect("open store");
+
+        let front = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:front".into()],
+                "render_front.png".into(),
+            )
+            .expect("register front")
+            .blob_id;
+        let left_back = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:left_back".into()],
+                "render_left_back.png".into(),
+            )
+            .expect("register left_back")
+            .blob_id;
+        let right_back = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:right_back".into()],
+                "render_right_back.png".into(),
+            )
+            .expect("register right_back")
+            .blob_id;
+        let top = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:top".into()],
+                "render_top.png".into(),
+            )
+            .expect("register top")
+            .blob_id;
+        let bottom = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:render_preview".into(), "view:bottom".into()],
+                "render_bottom.png".into(),
+            )
+            .expect("register bottom")
+            .blob_id;
+        let move_sheet = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:motion_sheet".into(), "motion:move".into()],
+                "move_sheet.png".into(),
+            )
+            .expect("register move_sheet")
+            .blob_id;
+        let attack_sheet = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:motion_sheet".into(), "motion:attack".into()],
+                "attack_sheet.png".into(),
+            )
+            .expect("register attack_sheet")
+            .blob_id;
+
+        let preview_blob_ids = vec![
+            front.clone(),
+            left_back.clone(),
+            right_back.clone(),
+            top.clone(),
+            bottom.clone(),
+            move_sheet.clone(),
+            attack_sheet.clone(),
         ];
-        let selected = select_review_preview_images(&images, true, true);
+        let selected = select_review_preview_blob_ids(&store, &preview_blob_ids, true, true);
         assert_eq!(
             selected,
             vec![
-                PathBuf::from("render_front.png"),
-                PathBuf::from("render_left_back.png"),
-                PathBuf::from("render_right_back.png"),
-                PathBuf::from("render_top.png"),
-                PathBuf::from("render_bottom.png"),
-                PathBuf::from("move_sheet.png"),
-                PathBuf::from("attack_sheet.png"),
+                front,
+                left_back,
+                right_back,
+                top,
+                bottom,
+                move_sheet,
+                attack_sheet,
             ]
         );
+        let _ = std::fs::remove_dir_all(&run_dir);
     }
 
     #[test]
@@ -505,13 +712,42 @@ mod tests {
     }
 
     #[test]
-    fn select_review_preview_images_falls_back_when_only_motion_present() {
-        let images = vec![
-            PathBuf::from("move_sheet.png"),
-            PathBuf::from("attack_sheet.png"),
-        ];
-        let selected = select_review_preview_images(&images, false, false);
-        assert_eq!(selected, images);
+    fn select_review_preview_blobs_falls_back_when_only_motion_present() {
+        let run_dir =
+            std::env::temp_dir().join(format!("gravimera_gen3d_review_blob_select_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&run_dir).expect("create run dir");
+        let mut store =
+            super::super::info_store::Gen3dInfoStore::open_or_create(&run_dir).expect("open store");
+
+        let move_sheet = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:motion_sheet".into(), "motion:move".into()],
+                "move_sheet.png".into(),
+            )
+            .expect("register move_sheet")
+            .blob_id;
+        let attack_sheet = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:motion_sheet".into(), "motion:attack".into()],
+                "attack_sheet.png".into(),
+            )
+            .expect("register attack_sheet")
+            .blob_id;
+
+        let preview_blob_ids = vec![move_sheet.clone(), attack_sheet.clone()];
+        let selected = select_review_preview_blob_ids(&store, &preview_blob_ids, false, false);
+        assert_eq!(selected, preview_blob_ids);
+        let _ = std::fs::remove_dir_all(&run_dir);
     }
 
     #[test]
@@ -848,18 +1084,15 @@ mod tests {
     }
 
     #[test]
-    fn gen3d_review_preview_image_args_ignore_tool_placeholders() {
+    fn gen3d_review_preview_blob_args_ignore_tool_placeholders() {
         let args = serde_json::json!({
-            "preview_images": [
-                "$CALL_1.images[0]",
-                "$CALL_2.render_paths[0]",
+            "preview_blob_ids": [
+                "$CALL_1.blob_ids[0]",
+                "$CALL_2.static_blob_ids[0]",
             ]
         });
-        let paths = parse_review_preview_images_from_args(&args);
-        assert!(
-            paths.is_empty(),
-            "expected placeholder-only paths to be ignored"
-        );
+        let ids = parse_review_preview_blob_ids_from_args(&args);
+        assert!(ids.is_empty(), "expected placeholder-only ids to be ignored");
     }
 
     #[test]

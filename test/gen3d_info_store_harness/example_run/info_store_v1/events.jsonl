@@ -1,0 +1,2 @@
+{"event_id":1,"ts_ms":1700000000050,"attempt":0,"pass":1,"assembly_rev":2,"kind":"tool_call_start","tool_id":"qa_v1","call_id":"call_3","message":"Tool call start: qa_v1","data":{"args":{}}}
+{"event_id":2,"ts_ms":1700000000250,"attempt":0,"pass":1,"assembly_rev":2,"kind":"tool_call_result","tool_id":"qa_v1","call_id":"call_3","message":"Tool call ok: qa_v1","data":{"call_id":"call_3","tool_id":"qa_v1","ok":true,"result":{"ok":true},"error":null}}

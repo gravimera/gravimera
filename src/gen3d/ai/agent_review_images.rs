@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
-pub(super) fn parse_paths_array_from_args(args: &serde_json::Value, keys: &[&str]) -> Vec<PathBuf> {
+pub(super) fn parse_strings_array_from_args(
+    args: &serde_json::Value,
+    keys: &[&str],
+) -> Vec<String> {
     for key in keys {
         let Some(arr) = args.get(*key).and_then(|v| v.as_array()) else {
             continue;
@@ -11,12 +14,12 @@ pub(super) fn parse_paths_array_from_args(args: &serde_json::Value, keys: &[&str
                 continue;
             };
             // Some models attempt to reference previous tool results using placeholders like
-            // `$CALL_1.images[0]`. Gravimera does not support templating tool outputs into args.
-            // Ignore these placeholders and fall back to the latest rendered images in cache.
+            // `$CALL_1.blob_ids[0]`. Gravimera does not support templating tool outputs into args.
+            // Ignore these placeholders and fall back to the latest rendered blobs in cache.
             if s.starts_with('$') {
                 continue;
             }
-            out.push(PathBuf::from(s));
+            out.push(s.to_string());
         }
         if !out.is_empty() {
             return out;
@@ -25,15 +28,14 @@ pub(super) fn parse_paths_array_from_args(args: &serde_json::Value, keys: &[&str
     Vec::new()
 }
 
-pub(super) fn parse_review_preview_images_from_args(args: &serde_json::Value) -> Vec<PathBuf> {
-    parse_paths_array_from_args(
+pub(super) fn parse_review_preview_blob_ids_from_args(args: &serde_json::Value) -> Vec<String> {
+    parse_strings_array_from_args(
         args,
         &[
-            "preview_images",
-            "images",
-            "image_paths",
-            "paths",
-            "preview_image_paths",
+            "preview_blob_ids",
+            "blob_ids",
+            "preview_ids",
+            "preview_blobs",
         ],
     )
 }
@@ -91,23 +93,6 @@ pub(super) fn validate_review_images_for_llm(run_dir: &Path, paths: &[PathBuf]) 
     Ok(out)
 }
 
-fn file_name_lower(path: &Path) -> Option<String> {
-    path.file_name()
-        .and_then(|s| s.to_str())
-        .map(|s| s.trim().to_ascii_lowercase())
-        .filter(|s| !s.is_empty())
-}
-
-fn is_motion_preview_image(path: &Path) -> bool {
-    let Some(name) = file_name_lower(path) else {
-        return false;
-    };
-    name.contains("move_sheet")
-        || name.contains("attack_sheet")
-        || name.contains("move_frame")
-        || name.contains("attack_frame")
-}
-
 pub(super) fn motion_sheets_needed_from_smoke_results(
     smoke_results: &serde_json::Value,
 ) -> (bool, bool) {
@@ -153,70 +138,85 @@ pub(super) fn motion_sheets_needed_from_smoke_results(
     (include_move_sheet || !motion_ok, include_attack_sheet)
 }
 
-pub(super) fn select_review_preview_images(
-    preview_images: &[PathBuf],
+pub(super) fn select_review_preview_blob_ids(
+    store: &super::info_store::Gen3dInfoStore,
+    preview_blob_ids: &[String],
     include_move_sheet: bool,
     include_attack_sheet: bool,
-) -> Vec<PathBuf> {
+) -> Vec<String> {
+    fn has_label(blob: &super::info_store::InfoBlob, label: &str) -> bool {
+        blob.labels.iter().any(|l| l == label)
+    }
+
     // Default policy for "routine" visual reviews:
     // - Prefer 5 static render views (front/left_back/right_back/top/bottom).
     // - Only include the relevant motion sheet(s) when smoke_check reports motion/attack issues.
-    let preferred_static = [
-        "render_front.png",
-        "render_left_back.png",
-        "render_right_back.png",
-        "render_top.png",
-        "render_bottom.png",
-    ];
+    let preferred_views = ["front", "left_back", "right_back", "top", "bottom"];
 
-    let mut out: Vec<PathBuf> = Vec::new();
-    for desired in preferred_static {
-        if let Some(p) = preview_images
-            .iter()
-            .find(|p| file_name_lower(p).as_deref() == Some(desired))
-        {
-            out.push(p.clone());
+    let mut out: Vec<String> = Vec::new();
+    for view in preferred_views {
+        let want_kind = "kind:render_preview";
+        let want_view = format!("view:{view}");
+        if let Some(id) = preview_blob_ids.iter().find(|id| {
+            store
+                .blob_by_id(id.as_str())
+                .map(|blob| has_label(blob, want_kind) && has_label(blob, want_view.as_str()))
+                .unwrap_or(false)
+        }) {
+            out.push(id.clone());
         }
     }
 
     if out.is_empty() {
-        for p in preview_images {
+        for id in preview_blob_ids {
             if out.len() >= 5 {
                 break;
             }
-            if is_motion_preview_image(p) {
+            let is_motion_sheet = store
+                .blob_by_id(id.as_str())
+                .map(|blob| has_label(blob, "kind:motion_sheet"))
+                .unwrap_or(false);
+            if is_motion_sheet {
                 continue;
             }
-            out.push(p.clone());
+            out.push(id.clone());
         }
     }
 
     if out.is_empty() {
-        out.extend(preview_images.iter().take(5).cloned());
+        out.extend(preview_blob_ids.iter().take(5).cloned());
     }
 
-    if include_move_sheet
-        && !out
-            .iter()
-            .any(|p| file_name_lower(p).as_deref() == Some("move_sheet.png"))
-    {
-        if let Some(p) = preview_images
-            .iter()
-            .find(|p| file_name_lower(p).as_deref() == Some("move_sheet.png"))
-        {
-            out.push(p.clone());
+    if include_move_sheet && !out.iter().any(|id| {
+        store
+            .blob_by_id(id.as_str())
+            .map(|blob| has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:move"))
+            .unwrap_or(false)
+    }) {
+        if let Some(id) = preview_blob_ids.iter().find(|id| {
+            store
+                .blob_by_id(id.as_str())
+                .map(|blob| has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:move"))
+                .unwrap_or(false)
+        }) {
+            out.push(id.clone());
         }
     }
-    if include_attack_sheet
-        && !out
-            .iter()
-            .any(|p| file_name_lower(p).as_deref() == Some("attack_sheet.png"))
-    {
-        if let Some(p) = preview_images
-            .iter()
-            .find(|p| file_name_lower(p).as_deref() == Some("attack_sheet.png"))
-        {
-            out.push(p.clone());
+    if include_attack_sheet && !out.iter().any(|id| {
+        store
+            .blob_by_id(id.as_str())
+            .map(|blob| has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:attack"))
+            .unwrap_or(false)
+    }) {
+        if let Some(id) = preview_blob_ids.iter().find(|id| {
+            store
+                .blob_by_id(id.as_str())
+                .map(|blob| {
+                    has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:attack")
+                })
+                .unwrap_or(false)
+        }) {
+            out.push(id.clone());
         }
     }
 
