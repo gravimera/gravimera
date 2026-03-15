@@ -81,7 +81,7 @@ pub(super) fn setup_preview_scene(
             color: Color::srgb(1.0, 0.97, 0.94),
             ..default()
         },
-        Transform::from_xyz(10.0, 18.0, 8.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(10.0, 18.0, -8.0).looking_at(Vec3::ZERO, Vec3::Y),
         bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_LAYER),
         Gen3dPreviewLight,
     ));

@@ -1098,7 +1098,7 @@ fn spawn_model_library_preview_scene(
 
     let lights = [
         (
-            Vec3::new(10.0, 18.0, 8.0),
+            Vec3::new(10.0, 18.0, -8.0),
             16_000.0,
             true,
             Color::srgb(1.0, 0.97, 0.94),

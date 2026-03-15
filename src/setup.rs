@@ -362,7 +362,7 @@ pub(crate) fn setup_rendered(
             illuminance: 18_000.0,
             ..default()
         },
-        Transform::from_xyz(8.0, 18.0, 8.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(8.0, 18.0, -8.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
     commands.spawn((
