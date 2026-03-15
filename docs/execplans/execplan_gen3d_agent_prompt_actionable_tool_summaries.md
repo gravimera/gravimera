@@ -10,6 +10,11 @@ Gen3D is a tool-driven agent loop. The agent decides what to do next based on a 
 
 After this change, the Gen3D agent prompt will expose *actionable* (copy/pasteable) payloads for deterministic repair tools (notably `suggest_motion_repairs_v1`), and it will expose the minimum required navigation fields for Info Store tools (notably `info_events_list_v1`). This enables the agent (or a human operator) to apply one explicit mutation step (typically `apply_draft_ops_v1`) rather than looping QA, while keeping the prompt size bounded to avoid blowing up LLM context.
 
+Info Store browsing should be treated as stateless paging:
+
+- list/search tools return IDs + a paging cursor (`next_cursor`) under strict bounds
+- get tools fetch the exact payload for one ID (`event_id`, `kv_rev`, `blob_id`) optionally using `json_pointer` + `max_bytes`
+
 ## Progress
 
 - [x] (2026-03-16 01:03Z) Write ExecPlan, capture the root-cause evidence, and define bounded summarization rules.
@@ -36,6 +41,10 @@ After this change, the Gen3D agent prompt will expose *actionable* (copy/pasteab
 
 - Decision: Do not dump full JSON blobs into the prompt by default; implement strict per-tool character budgets and omit payloads that exceed them.
   Rationale: Tool outputs can be large. The agent only needs a small subset to act; the rest should be available via deterministic fetch tools.
+  Date/Author: 2026-03-16 / Codex CLI agent
+
+- Decision: For paged list/search tools, include the exact `next_cursor` token (never truncate it); if the summary budget is tight, drop less-critical fields (messages/items) before omitting the cursor.
+  Rationale: Paging is only deterministic if the agent can pass back the cursor. A `next_cursor=true/false` flag is not actionable.
   Date/Author: 2026-03-16 / Codex CLI agent
 
 ## Outcomes & Retrospective
@@ -96,12 +105,14 @@ The summary must:
 - Include `items=<n>`.
 - Include, for up to the first 3 items:
   - `event_id`
-  - `tool_id` (or equivalent)
+  - `kind`
+  - `tool_id` if present
+  - `call_id` if present
   - `pass`
-  - a short `message` (truncated)
-  - `ok` if present
-- Include whether `next_cursor` is present (so the agent knows paging is possible).
-- Never include the full `data_preview` payload; at most include a very short prefix and the total preview length.
+  - a short `message` snippet (single-line; aggressively truncated)
+- Include `next_cursor` as an **exact** string when present (so the agent can page deterministically by re-calling with `page.cursor=next_cursor`).
+- If the summary budget is tight, drop less-critical fields (messages/items) before omitting the cursor; never truncate the cursor token.
+- Never include `data_preview` in the prompt summary; use `info_events_get_v1` with `event_id` (+ `json_pointer` + `max_bytes`) to fetch details.
 
 This makes the Info Store usable without inflating the prompt, and it unlocks targeted follow-ups like `info_events_get_v1` with a specific `event_id` and `json_pointer`.
 
@@ -114,8 +125,8 @@ Prioritize (because they are navigation primitives and frequent in loops):
 - `info_kv_get_v1`: include `namespace/key`, `kv_rev`, `record.summary`, and a tiny value summary if it has `ok/errors/warnings`.
 - `info_events_get_v1`: include `event_id`, `kind`, `tool_id`, `pass`, and whether content is truncated; avoid full payload.
 - `info_events_search_v1`: mirror `info_events_list_v1` summarization rules.
-- `info_kv_list_keys_v1`, `info_kv_list_history_v1`, `info_kv_get_many_v1`: include counts and cursor presence, plus a small sample of keys/revs.
-- `info_blobs_list_v1`, `info_blobs_get_v1`: include `blob_id`, `bytes`, and a short label/kind, plus cursor presence.
+- `info_kv_list_keys_v1`, `info_kv_list_history_v1`, `info_kv_get_many_v1`: include counts and `next_cursor` token when present, plus a small sample of keys/revs.
+- `info_blobs_list_v1`, `info_blobs_get_v1`: include `blob_id`, `bytes`, and a short label/kind, plus `next_cursor` token when present.
 
 Also verify mutation tools remain easy to confirm:
 
@@ -127,6 +138,8 @@ Add Rust unit tests that build representative `Gen3dToolResultJsonV1` payloads a
 
 - `suggest_motion_repairs_v1` summary contains at least one exact `apply_draft_ops_args` JSON when the patch is small.
 - `info_events_list_v1` summary contains `event_id` for listed items.
+- If `info_events_list_v1` includes `next_cursor`, the summary includes the exact token (not just a boolean).
+- `info_events_list_v1` summary does not include `data_preview`.
 - Each new summary respects the per-tool character budgets.
 
 If practical, also add one test for `build_agent_user_text` that ensures the “Recent tool results” section remains bounded when given 16 results, and that it includes the required navigation fields for Info Store flows.
@@ -155,6 +168,7 @@ Acceptance criteria (human-verifiable):
 
 - When `suggest_motion_repairs_v1` returns small patch suggestions (single-op `apply_draft_ops_args`), the agent prompt’s “Recent tool results” line(s) include the exact JSON needed to call `apply_draft_ops_v1` without extra fetch steps.
 - When `info_events_list_v1` is called, the agent prompt summary includes `event_id` values so a follow-up `info_events_get_v1` call is possible without guessing.
+- When `info_events_list_v1` returns `next_cursor`, the agent prompt summary includes the exact cursor token so a follow-up page can be fetched without guessing.
 - The prompt remains bounded:
   - `suggest_motion_repairs_v1` summary never exceeds 3,000 characters.
   - `info_events_list_v1` summary never exceeds 800 characters.
@@ -179,7 +193,7 @@ Example of the intended “actionable but bounded” style for a suggestion tool
 
 Example of the intended “navigation-first” style for `info_events_list_v1`:
 
-    - info_events_list_v1 (call_1): ok items=1 first=[{event_id:16,tool_id:suggest_motion_repairs_v1,pass:7,ok:true,message:\"Tool call ok: ...\"}] next_cursor=true
+    - info_events_list_v1 (call_1): ok items=1 first=[{event_id:16,kind:tool_call_result,tool_id:suggest_motion_repairs_v1,call_id:call_1,pass:7,message:\"Tool call ok: ...\"}] next_cursor=\"<opaque_cursor>\"
 
 ## Interfaces and Dependencies
 
@@ -197,4 +211,3 @@ The implementation should be limited to agent-prompt summarization and its tests
 
 - Unit tests
   - Add tests adjacent to `src/gen3d/ai/agent_prompt.rs` (follow existing test layout in the crate).
-
