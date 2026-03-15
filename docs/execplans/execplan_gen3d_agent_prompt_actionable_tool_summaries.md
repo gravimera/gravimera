@@ -20,6 +20,7 @@ Info Store browsing should be treated as stateless paging:
 - [x] (2026-03-16 01:03Z) Write ExecPlan, capture the root-cause evidence, and define bounded summarization rules.
 - [ ] Implement actionable `suggest_motion_repairs_v1` summaries (bounded; no silent apply).
 - [ ] Implement actionable Info Store summaries (start with `info_events_list_v1`).
+- [ ] Make `get_scene_graph_summary_v1` summaries tail-safe + include `info_kv` ref (prevents attachment-edge truncation loops).
 - [ ] Audit remaining tools for “actionability vs size” and patch summaries as needed.
 - [ ] Add unit tests for prompt summarization budgets and key fields.
 - [ ] Run rendered smoke test and commit.
@@ -28,6 +29,12 @@ Info Store browsing should be treated as stateless paging:
 
 - Observation: The agent can call a tool that returns ready-to-apply `apply_draft_ops_v1` patches, but the prompt compaction currently hides those patches and/or hides the `event_id` needed to fetch them from the Info Store.
   Evidence: A `suggest_motion_repairs_v1` tool result can be summarized as only `suggestions=<N> truncated=true`, which does not include any `apply_draft_ops_args`, leaving the agent unable to proceed without additional inspection calls. In the same flow, `info_events_list_v1` can be summarized as only `keys=[...]`, which hides `event_id` so the agent cannot call `info_events_get_v1` to retrieve the payload.
+
+- Observation: Even when a tool provides a deterministic pointer to full data (like `info_kv`), a keys-only summary can still cause inspection loops.
+  Evidence: In one run, the agent repeatedly called `info_kv_get_v1` for `ws.main.scene_graph_summary` (with `json_pointer=/attachment_edges`), but the prompt summary only showed `ok keys=[...]` without `namespace/key/kv_rev/json_pointer` or any value preview, so the agent learned nothing and kept re-calling inspection tools.
+
+- Observation: Head-only sampling can hide the only relevant edge when new attachments are appended near the end.
+  Evidence: `get_scene_graph_summary_v1` can return `attachment_edges` where newly added components appear at the end (ex: `grass_bundle->body.grass_bundle_attach`). A summary that prints only the first N edges (and then truncates) can omit the new edge, causing repeated “inspect scene graph” loops.
 
 ## Decision Log
 
@@ -45,6 +52,14 @@ Info Store browsing should be treated as stateless paging:
 
 - Decision: For paged list/search tools, include the exact `next_cursor` token (never truncate it); if the summary budget is tight, drop less-critical fields (messages/items) before omitting the cursor.
   Rationale: Paging is only deterministic if the agent can pass back the cursor. A `next_cursor=true/false` flag is not actionable.
+  Date/Author: 2026-03-16 / Codex CLI agent
+
+- Decision: For any tool result that includes an `info_kv` / `info_events` / `info_blobs` reference, include that reference in the summary (namespace/key + selector.kv_rev OR event_id OR blob_id).
+  Rationale: When inline samples are truncated, the reference is the deterministic path to retrieve full content without heuristics.
+  Date/Author: 2026-03-16 / Codex CLI agent
+
+- Decision: For list-like fields (edges, ids, items), use deterministic head+tail sampling instead of head-only sampling.
+  Rationale: Head-only sampling can omit the newly-added or most-relevant items that tend to appear near the end (while head+tail remains generic and bounded).
   Date/Author: 2026-03-16 / Codex CLI agent
 
 ## Outcomes & Retrospective
@@ -116,6 +131,23 @@ The summary must:
 
 This makes the Info Store usable without inflating the prompt, and it unlocks targeted follow-ups like `info_events_get_v1` with a specific `event_id` and `json_pointer`.
 
+### 2b) Make `get_scene_graph_summary_v1` summaries tail-safe + include `info_kv` ref (bounded)
+
+In `src/gen3d/ai/agent_prompt.rs` within `summarize_tool_result`, adjust the `TOOL_ID_GET_SCENE_GRAPH_SUMMARY` branch so it remains actionable even when `attachment_edges` is long.
+
+The summary must:
+
+- Always include `components=<n>` and `attachment_edges_total=<n>` when `attachment_edges` is present.
+- Include the `info_kv` reference when present (print `namespace`, `key`, and `selector.kv_rev` at minimum) so the agent can fetch full details via `info_kv_get_v1` if the inline sample is insufficient.
+- Print a bounded `attachment_edges_sample` using deterministic head+tail sampling:
+  - If total <= 12, include all edges.
+  - Else include the first 6 and the last 6 edges (preserving order within each chunk).
+  - If the summary budget is tight, reduce edge sample count before dropping `info_kv` or total counts.
+
+Success condition for a common loop:
+
+- If a newly-added attachment edge is appended near the end (ex: `grass_bundle->body.grass_bundle_attach`), it still appears in the prompt summary without requiring repeated inspection calls.
+
 ### 3) Comprehensive check: audit other tools and add minimal “actionable fields” summaries where needed
 
 Do a one-by-one audit of all tools in `src/gen3d/agent/tools.rs` against `summarize_tool_result` coverage. For each tool, decide whether the generic fallback (“keys-only”) is sufficient for making the next decision. If not sufficient, add a dedicated summarizer that prints only the minimal fields required for the next deterministic action.
@@ -127,6 +159,8 @@ Prioritize (because they are navigation primitives and frequent in loops):
 - `info_events_search_v1`: mirror `info_events_list_v1` summarization rules.
 - `info_kv_list_keys_v1`, `info_kv_list_history_v1`, `info_kv_get_many_v1`: include counts and `next_cursor` token when present, plus a small sample of keys/revs.
 - `info_blobs_list_v1`, `info_blobs_get_v1`: include `blob_id`, `bytes`, and a short label/kind, plus `next_cursor` token when present.
+- `render_preview_v1`: include a small sample of `blob_ids` / `static_blob_ids` (ids are required to pass into `llm_review_delta_v1` and/or fetch via `info_blobs_get_v1`).
+- `snapshot_v1` / `list_snapshots_v1` / `diff_snapshots_v1`: include `snapshot_id`/`label`/`assembly_rev` and a bounded “what changed” summary (diff-like), otherwise agents re-run snapshot tools just to rediscover ids.
 
 Also verify mutation tools remain easy to confirm:
 
