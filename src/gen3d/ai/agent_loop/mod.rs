@@ -8,7 +8,9 @@ use crate::config::AppConfig;
 use crate::gen3d::agent::Gen3dToolResultJsonV1;
 use crate::gen3d::agent::{append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolRegistryV1};
 
-use super::artifacts::{append_gen3d_run_log, write_gen3d_json_artifact, write_gen3d_text_artifact};
+use super::artifacts::{
+    append_gen3d_run_log, write_gen3d_json_artifact, write_gen3d_text_artifact,
+};
 use super::{
     fail_job, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
     Gen3dAiTextResponse,
@@ -228,7 +230,11 @@ fn truncate_text_to_max_words_preserving_whitespace(
     (out, false, words_out)
 }
 
-fn poll_agent_user_image_summary(config: &AppConfig, workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {
+fn poll_agent_user_image_summary(
+    config: &AppConfig,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+) {
     if job.user_images.is_empty() {
         job.phase = Gen3dAiPhase::AgentWaitingStep;
         if let Some(pass_dir) = job.pass_dir.clone() {
@@ -265,7 +271,11 @@ fn poll_agent_user_image_summary(config: &AppConfig, workshop: &mut Gen3dWorksho
     }
 
     let Some(shared) = job.shared_result.as_ref() else {
-        fail_job(workshop, job, "Internal error: missing Gen3D shared_result.");
+        fail_job(
+            workshop,
+            job,
+            "Internal error: missing Gen3D shared_result.",
+        );
         return;
     };
     let Some(result) = take_shared_result(shared) else {
@@ -471,8 +481,10 @@ mod tests {
 
     #[test]
     fn select_review_preview_blobs_prefers_five_static_views() {
-        let run_dir =
-            std::env::temp_dir().join(format!("gravimera_gen3d_review_blob_select_{}", Uuid::new_v4()));
+        let run_dir = std::env::temp_dir().join(format!(
+            "gravimera_gen3d_review_blob_select_{}",
+            Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&run_dir).expect("create run dir");
         let mut store =
             super::super::info_store::Gen3dInfoStore::open_or_create(&run_dir).expect("open store");
@@ -572,23 +584,16 @@ mod tests {
             attack_sheet,
         ];
         let selected = select_review_preview_blob_ids(&store, &preview_blob_ids, false, false);
-        assert_eq!(
-            selected,
-            vec![
-                front,
-                left_back,
-                right_back,
-                top,
-                bottom,
-            ]
-        );
+        assert_eq!(selected, vec![front, left_back, right_back, top, bottom,]);
         let _ = std::fs::remove_dir_all(&run_dir);
     }
 
     #[test]
     fn select_review_preview_blobs_includes_motion_sheets_when_requested() {
-        let run_dir =
-            std::env::temp_dir().join(format!("gravimera_gen3d_review_blob_select_{}", Uuid::new_v4()));
+        let run_dir = std::env::temp_dir().join(format!(
+            "gravimera_gen3d_review_blob_select_{}",
+            Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&run_dir).expect("create run dir");
         let mut store =
             super::super::info_store::Gen3dInfoStore::open_or_create(&run_dir).expect("open store");
@@ -712,8 +717,10 @@ mod tests {
 
     #[test]
     fn select_review_preview_blobs_falls_back_when_only_motion_present() {
-        let run_dir =
-            std::env::temp_dir().join(format!("gravimera_gen3d_review_blob_select_{}", Uuid::new_v4()));
+        let run_dir = std::env::temp_dir().join(format!(
+            "gravimera_gen3d_review_blob_select_{}",
+            Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&run_dir).expect("create run dir");
         let mut store =
             super::super::info_store::Gen3dInfoStore::open_or_create(&run_dir).expect("open store");
@@ -1091,7 +1098,10 @@ mod tests {
             ]
         });
         let ids = parse_review_preview_blob_ids_from_args(&args);
-        assert!(ids.is_empty(), "expected placeholder-only ids to be ignored");
+        assert!(
+            ids.is_empty(),
+            "expected placeholder-only ids to be ignored"
+        );
     }
 
     #[test]

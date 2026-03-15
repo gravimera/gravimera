@@ -76,7 +76,11 @@ pub(super) fn poll_agent_render_capture(
         }
 
         let Some(run_dir) = job.run_dir.clone() else {
-            fail_job(workshop, job, "Internal error: missing run_dir for render capture.");
+            fail_job(
+                workshop,
+                job,
+                "Internal error: missing run_dir for render capture.",
+            );
             return None;
         };
         let attempt = job.attempt;
@@ -96,7 +100,11 @@ pub(super) fn poll_agent_render_capture(
             let store = match job.ensure_info_store() {
                 Ok(s) => s,
                 Err(err) => {
-                    fail_job(workshop, job, format!("Internal error: failed to open info store: {err}"));
+                    fail_job(
+                        workshop,
+                        job,
+                        format!("Internal error: failed to open info store: {err}"),
+                    );
                     return None;
                 }
             };
@@ -105,7 +113,10 @@ pub(super) fn poll_agent_render_capture(
                 let meta = match std::fs::metadata(path) {
                     Ok(v) => v,
                     Err(err) => {
-                        error = Some(format!("Failed to stat render output {}: {err}", path.display()));
+                        error = Some(format!(
+                            "Failed to stat render output {}: {err}",
+                            path.display()
+                        ));
                         break;
                     }
                 };

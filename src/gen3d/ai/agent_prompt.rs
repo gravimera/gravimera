@@ -4,8 +4,8 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
     TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_INSPECT_PLAN, TOOL_ID_LLM_GENERATE_COMPONENT,
     TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
-    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
     TOOL_ID_SMOKE_CHECK, TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
 };
@@ -105,6 +105,7 @@ Rules:\n\
     - For rewires, set `preserve_edit_policy` to `allow_rewire` and provide `constraints.rewire_components` as an explicit allow-list.\n\
 	  - Preserve-mode planning helpers (no silent mutation):\n\
 	    - If `llm_generate_plan_v1` fails with a semantic error (unknown parent/root, missing required names, policy diff rejection), call `inspect_plan_v1` next (NOT `get_scene_graph_summary_v1`).\n\
+	    - If your preserve-mode plan change is local (small bounded edit), you MAY prefer `llm_generate_plan_ops_v1` (diff-first replanning) instead of re-emitting the full plan via `llm_generate_plan_v1`.\n\
 	    - If the fix is local/deterministic (rename a parent, add a missing component definition, add missing anchors), you MAY call `apply_plan_ops_v1` to patch and revalidate (base_plan=\"pending\" patches the pending rejected attempt; base_plan=\"current\" patches the current accepted plan) instead of rerunning `llm_generate_plan_v1`.\n\
 	    - Preserve-mode replanning with an existing plan requires a template:\n\
 	      - Call `get_plan_template_v1` first (mode=\"auto\"), then call `llm_generate_plan_v1` with `plan_template_kv`.\n\
@@ -452,6 +453,26 @@ pub(super) fn build_agent_user_text(
                 }
                 if let Some(plan_hash) = plan_hash {
                     out.push_str(&format!(" plan_hash={plan_hash}"));
+                }
+            }
+            TOOL_ID_LLM_GENERATE_PLAN_OPS => {
+                let accepted = value.get("accepted").and_then(|v| v.as_bool());
+                let ops_total = value.get("ops_total").and_then(|v| v.as_u64());
+                let touched = value
+                    .get("diff_summary")
+                    .and_then(|v| v.get("touched_components"))
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
+
+                out.push_str("ok");
+                if let Some(accepted) = accepted {
+                    out.push_str(&format!(" accepted={accepted}"));
+                }
+                if let Some(ops_total) = ops_total {
+                    out.push_str(&format!(" ops_total={ops_total}"));
+                }
+                if let Some(touched) = touched {
+                    out.push_str(&format!(" touched={touched}"));
                 }
             }
             TOOL_ID_LLM_GENERATE_COMPONENT => {

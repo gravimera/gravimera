@@ -19,11 +19,12 @@ User-visible outcome: preserve-mode edit requests like “add a hat” converge 
 ## Progress
 
 - [x] (2026-03-15) Create this ExecPlan capturing the diff-first approach, risks, and concrete implementation steps.
-- [ ] Define the `llm_generate_plan_ops_v1` tool contract (args/result/errors) and align prompt/tool registry/docs.
-- [ ] Implement `llm_generate_plan_ops_v1` end-to-end (dispatch → structured outputs schema → poll/apply → artifacts).
-- [ ] Add offline regression tests for scope enforcement, preserve-policy enforcement, and “no data loss” vs. lean templates.
-- [ ] Update `docs/gen3d/` to document the new tool and recommended flows.
-- [ ] Run `cargo test` and the required rendered smoke test, then commit with a clear message.
+- [x] (2026-03-16) Define the `llm_generate_plan_ops_v1` tool contract (args/result/errors) and align prompt/tool registry/docs.
+- [x] (2026-03-16) Implement `llm_generate_plan_ops_v1` end-to-end (dispatch → structured outputs schema → poll/apply → artifacts).
+- [x] (2026-03-16) Add offline regression tests for scope enforcement, preserve-policy enforcement, and “no data loss” vs. lean templates.
+- [x] (2026-03-16) Update `docs/gen3d/` to document the new tool and recommended flows.
+- [x] (2026-03-16) Run `cargo test`.
+- [ ] Run the required rendered smoke test, then commit with a clear message.
 
 ## Surprises & Discoveries
 
@@ -35,6 +36,9 @@ User-visible outcome: preserve-mode edit requests like “add a hat” converge 
 
 - Observation: `apply_plan_ops_v1` already enforces preserve-mode edit policy constraints deterministically and produces actionable diagnostics, but it is scoped to “pending rejected plan attempts”.
   Evidence: `src/gen3d/ai/plan_ops.rs` `preserve_error_for_plan_apply(...)` and the tool doc `docs/gen3d/apply_plan_ops_v1.md`.
+
+- Observation: `AiPlanJsonV1` (the internal typed plan JSON struct) is `Deserialize`-only, so writing plan snapshots as JSON artifacts is easiest when using the existing “full-fidelity plan snapshot” `serde_json::Value` produced by `build_preserve_mode_plan_template_json_v8(...)`.
+  Evidence: `cargo test` initially failed with a `serde::Serialize` bound error when attempting `serde_json::to_value(&AiPlanJsonV1)`.
 
 ## Regression Risks (and mitigations)
 
@@ -60,6 +64,14 @@ User-visible outcome: preserve-mode edit requests like “add a hat” converge 
 - Decision: Apply ops to a full-fidelity base plan snapshot derived from engine state; use `plan_template_kv` only as prompt context.
   Rationale: Prevents silent data loss when the prompt template is truncated, while still enabling bounded prompt injection and template-first correctness.
   Date/Author: 2026-03-15 / GPT-5.2
+
+- Decision: In v1, require preserve mode for `llm_generate_plan_ops_v1` (`constraints.preserve_existing_components=true`) and require an existing accepted plan.
+  Rationale: This tool is intended for seeded edit sessions; allowing non-preserve acceptance is a footgun (it can overwrite geometry) and does not match the “diff-first preserve replanning” purpose.
+  Date/Author: 2026-03-16 / GPT-5.2
+
+- Decision: Scope enforcement treats any reference to an existing component name inside ops (including `attach_to.parent`, `aim.components`, `attack.muzzle.component`, `reuse_groups` references) as “touching” that component for allow-list checks.
+  Rationale: This is deterministic and generic (no intent inference), and makes the allow-list meaning unambiguous for agents: if you mention it, include it in scope.
+  Date/Author: 2026-03-16 / GPT-5.2
 
 ## Outcomes & Retrospective
 
@@ -299,3 +311,6 @@ Write large debugging artifacts only under `pass/` (disk), not in tool JSON resu
   - actionable errors with deterministic next steps,
   - no heuristics: scope is explicit and enforced; no “auto pick components to edit”.
 
+---
+
+Plan update note (2026-03-16): Mark milestones complete through `cargo test`, recorded implementation discoveries/decisions (preserve-mode-only gate, scope touch semantics, `AiPlanJsonV1` serialization constraint), and left the rendered smoke test + commit as the remaining work.

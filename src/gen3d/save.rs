@@ -1145,8 +1145,14 @@ mod tests {
         let ColliderProfile::AabbXZ { half_extents } = saved_root.collider else {
             panic!("expected AabbXZ collider");
         };
-        assert!((half_extents.x - 0.5).abs() < 1e-6, "half_extents={half_extents:?}");
-        assert!((half_extents.y - 0.5).abs() < 1e-6, "half_extents={half_extents:?}");
+        assert!(
+            (half_extents.x - 0.5).abs() < 1e-6,
+            "half_extents={half_extents:?}"
+        );
+        assert!(
+            (half_extents.y - 0.5).abs() < 1e-6,
+            "half_extents={half_extents:?}"
+        );
     }
 }
 

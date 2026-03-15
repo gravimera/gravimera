@@ -564,8 +564,12 @@ pub(crate) fn enter_gen3d_mode(
                                                     border: UiRect::all(Val::Px(1.0)),
                                                     ..default()
                                                 },
-                                                BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70)),
-                                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.70)),
+                                                BackgroundColor(Color::srgba(
+                                                    0.03, 0.03, 0.04, 0.70,
+                                                )),
+                                                BorderColor::all(Color::srgba(
+                                                    0.25, 0.25, 0.30, 0.70,
+                                                )),
                                                 Visibility::Inherited,
                                                 Gen3dSideTabButton::new(Gen3dSideTab::Status),
                                             ))
@@ -578,7 +582,9 @@ pub(crate) fn enter_gen3d_mode(
                                                     },
                                                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                                                     Visibility::Inherited,
-                                                    Gen3dSideTabButtonText::new(Gen3dSideTab::Status),
+                                                    Gen3dSideTabButtonText::new(
+                                                        Gen3dSideTab::Status,
+                                                    ),
                                                 ));
                                             });
 
@@ -592,8 +598,12 @@ pub(crate) fn enter_gen3d_mode(
                                                     border: UiRect::all(Val::Px(1.0)),
                                                     ..default()
                                                 },
-                                                BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70)),
-                                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.70)),
+                                                BackgroundColor(Color::srgba(
+                                                    0.03, 0.03, 0.04, 0.70,
+                                                )),
+                                                BorderColor::all(Color::srgba(
+                                                    0.25, 0.25, 0.30, 0.70,
+                                                )),
                                                 Visibility::Inherited,
                                                 Gen3dSideTabButton::new(Gen3dSideTab::ToolFeedback),
                                             ))
@@ -606,7 +616,9 @@ pub(crate) fn enter_gen3d_mode(
                                                     },
                                                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                                                     Visibility::Inherited,
-                                                    Gen3dSideTabButtonText::new(Gen3dSideTab::ToolFeedback),
+                                                    Gen3dSideTabButtonText::new(
+                                                        Gen3dSideTab::ToolFeedback,
+                                                    ),
                                                 ));
                                             });
                                         });
@@ -661,8 +673,12 @@ pub(crate) fn enter_gen3d_mode(
                                                     position_type: PositionType::Relative,
                                                     ..default()
                                                 },
-                                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
-                                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                BackgroundColor(Color::srgba(
+                                                    0.02, 0.02, 0.03, 0.45,
+                                                )),
+                                                BorderColor::all(Color::srgba(
+                                                    0.25, 0.25, 0.30, 0.65,
+                                                )),
                                                 Visibility::Hidden,
                                                 Gen3dStatusScrollbarTrack,
                                             ))
@@ -677,7 +693,9 @@ pub(crate) fn enter_gen3d_mode(
                                                         height: Val::Px(18.0),
                                                         ..default()
                                                     },
-                                                    BackgroundColor(Color::srgba(0.85, 0.88, 0.95, 0.85)),
+                                                    BackgroundColor(Color::srgba(
+                                                        0.85, 0.88, 0.95, 0.85,
+                                                    )),
                                                     Visibility::Inherited,
                                                     Gen3dStatusScrollbarThumb,
                                                 ));
@@ -723,8 +741,12 @@ pub(crate) fn enter_gen3d_mode(
                                                         border: UiRect::all(Val::Px(1.0)),
                                                         ..default()
                                                     },
-                                                    BackgroundColor(Color::srgba(0.06, 0.10, 0.16, 0.80)),
-                                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                    BackgroundColor(Color::srgba(
+                                                        0.06, 0.10, 0.16, 0.80,
+                                                    )),
+                                                    BorderColor::all(Color::srgba(
+                                                        0.25, 0.25, 0.30, 0.65,
+                                                    )),
                                                     Visibility::Inherited,
                                                     Gen3dCopyFeedbackCodexButton,
                                                 ))
@@ -750,8 +772,12 @@ pub(crate) fn enter_gen3d_mode(
                                                         border: UiRect::all(Val::Px(1.0)),
                                                         ..default()
                                                     },
-                                                    BackgroundColor(Color::srgba(0.08, 0.10, 0.12, 0.78)),
-                                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                    BackgroundColor(Color::srgba(
+                                                        0.08, 0.10, 0.12, 0.78,
+                                                    )),
+                                                    BorderColor::all(Color::srgba(
+                                                        0.25, 0.25, 0.30, 0.65,
+                                                    )),
                                                     Visibility::Inherited,
                                                     Gen3dCopyFeedbackJsonButton,
                                                 ))
@@ -815,8 +841,12 @@ pub(crate) fn enter_gen3d_mode(
                                                         position_type: PositionType::Relative,
                                                         ..default()
                                                     },
-                                                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
-                                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                    BackgroundColor(Color::srgba(
+                                                        0.02, 0.02, 0.03, 0.45,
+                                                    )),
+                                                    BorderColor::all(Color::srgba(
+                                                        0.25, 0.25, 0.30, 0.65,
+                                                    )),
                                                     Visibility::Hidden,
                                                     Gen3dToolFeedbackScrollbarTrack,
                                                 ))
@@ -830,16 +860,18 @@ pub(crate) fn enter_gen3d_mode(
                                                             height: Val::Px(18.0),
                                                             ..default()
                                                         },
-                                                        BackgroundColor(Color::srgba(0.85, 0.88, 0.95, 0.85)),
+                                                        BackgroundColor(Color::srgba(
+                                                            0.85, 0.88, 0.95, 0.85,
+                                                        )),
                                                         Visibility::Inherited,
                                                         Gen3dToolFeedbackScrollbarThumb,
                                                     ));
                                                 });
                                             });
                                         });
-
                                 });
-                        });
+                        },
+                    );
 
                     panel
                         .spawn((
@@ -1092,8 +1124,12 @@ pub(crate) fn enter_gen3d_mode(
                                                     position_type: PositionType::Relative,
                                                     ..default()
                                                 },
-                                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
-                                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                                BackgroundColor(Color::srgba(
+                                                    0.02, 0.02, 0.03, 0.45,
+                                                )),
+                                                BorderColor::all(Color::srgba(
+                                                    0.25, 0.25, 0.30, 0.65,
+                                                )),
                                                 Visibility::Hidden,
                                                 Gen3dPromptScrollbarTrack,
                                             ))
@@ -1108,7 +1144,9 @@ pub(crate) fn enter_gen3d_mode(
                                                         height: Val::Px(18.0),
                                                         ..default()
                                                     },
-                                                    BackgroundColor(Color::srgba(0.85, 0.88, 0.95, 0.85)),
+                                                    BackgroundColor(Color::srgba(
+                                                        0.85, 0.88, 0.95, 0.85,
+                                                    )),
                                                     Gen3dPromptScrollbarThumb,
                                                 ));
                                             });
@@ -1118,129 +1156,127 @@ pub(crate) fn enter_gen3d_mode(
                     });
                 });
 
-                bar.spawn((
-                    Node {
-                        width: Val::Px(240.0),
-                        height: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(8.0),
-                        ..default()
-                    },
-                ))
-                .with_children(|column| {
-                    column
-                        .spawn((
-                            Button,
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Px(42.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(1.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
-                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                            Gen3dClearPromptButton,
-                        ))
-                        .with_children(|button| {
-                            button.spawn((
-                                Text::new("Clear Prompt"),
-                                TextFont {
-                                    font_size: 14.0,
+                bar.spawn((Node {
+                    width: Val::Px(240.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(8.0),
+                    ..default()
+                },))
+                    .with_children(|column| {
+                        column
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(42.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
                                     ..default()
                                 },
-                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                Gen3dClearPromptButtonText,
-                            ));
-                        });
+                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                Gen3dClearPromptButton,
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("Clear Prompt"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                    Gen3dClearPromptButtonText,
+                                ));
+                            });
 
-                    column
-                        .spawn((
-                            Button,
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Px(52.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(1.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.08, 0.14, 0.10, 0.85)),
-                            BorderColor::all(Color::srgb(0.25, 0.80, 0.45)),
-                            Outline {
-                                width: Val::Px(1.0),
-                                color: Color::srgb(0.25, 0.80, 0.45),
-                                offset: Val::Px(0.0),
-                            },
-                            Gen3dGenerateButton,
-                        ))
-                        .with_children(|button| {
-                            button.spawn((
-                                Text::new("Build"),
-                                TextFont {
-                                    font_size: 18.0,
+                        column
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(52.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
                                     ..default()
                                 },
-                                TextColor(Color::srgb(0.70, 1.0, 0.82)),
-                                Gen3dGenerateButtonText,
-                            ));
-                        });
+                                BackgroundColor(Color::srgba(0.08, 0.14, 0.10, 0.85)),
+                                BorderColor::all(Color::srgb(0.25, 0.80, 0.45)),
+                                Outline {
+                                    width: Val::Px(1.0),
+                                    color: Color::srgb(0.25, 0.80, 0.45),
+                                    offset: Val::Px(0.0),
+                                },
+                                Gen3dGenerateButton,
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("Build"),
+                                    TextFont {
+                                        font_size: 18.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.70, 1.0, 0.82)),
+                                    Gen3dGenerateButtonText,
+                                ));
+                            });
 
-                    column
-                        .spawn((
-                            Button,
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Px(42.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(1.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.06, 0.11, 0.08, 0.80)),
-                            BorderColor::all(Color::srgb(0.20, 0.65, 0.35)),
-                            Gen3dContinueButton,
-                        ))
-                        .with_children(|button| {
-                            button.spawn((
-                                Text::new("Continue"),
-                                TextFont {
-                                    font_size: 16.0,
+                        column
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(42.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
                                     ..default()
                                 },
-                                TextColor(Color::srgb(0.70, 1.0, 0.82)),
-                                Gen3dContinueButtonText,
-                            ));
-                        });
+                                BackgroundColor(Color::srgba(0.06, 0.11, 0.08, 0.80)),
+                                BorderColor::all(Color::srgb(0.20, 0.65, 0.35)),
+                                Gen3dContinueButton,
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("Continue"),
+                                    TextFont {
+                                        font_size: 16.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.70, 1.0, 0.82)),
+                                    Gen3dContinueButtonText,
+                                ));
+                            });
 
-                    column
-                        .spawn((
-                            Button,
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Px(42.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(1.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.06, 0.10, 0.16, 0.80)),
-                            BorderColor::all(Color::srgb(0.30, 0.55, 0.95)),
-                            Gen3dSaveButton,
-                        ))
-                        .with_children(|button| {
-                            button.spawn((
-                                Text::new("Save"),
-                                TextFont {
-                                    font_size: 16.0,
+                        column
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(42.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
                                     ..default()
                                 },
-                                TextColor(Color::srgb(0.82, 0.90, 1.0)),
-                                Gen3dSaveButtonText,
-                            ));
-                        });
-                });
+                                BackgroundColor(Color::srgba(0.06, 0.10, 0.16, 0.80)),
+                                BorderColor::all(Color::srgb(0.30, 0.55, 0.95)),
+                                Gen3dSaveButton,
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("Save"),
+                                    TextFont {
+                                        font_size: 16.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.82, 0.90, 1.0)),
+                                    Gen3dSaveButtonText,
+                                ));
+                            });
+                    });
             });
 
             // Hover tooltip for thumbnails (shown near cursor).

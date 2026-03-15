@@ -25,6 +25,7 @@ pub(super) enum Gen3dAiMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dAgentLlmToolKind {
     GeneratePlan,
+    GeneratePlanOps,
     GenerateComponent { component_idx: usize },
     GenerateComponentsBatch,
     GenerateMotionAuthoring,
@@ -665,7 +666,11 @@ impl Gen3dAiJob {
         message: String,
         data: serde_json::Value,
     ) {
-        fn redact_run_dir_paths_in_string(s: &str, run_dir_display: &str, run_dir_slashes: &str) -> String {
+        fn redact_run_dir_paths_in_string(
+            s: &str,
+            run_dir_display: &str,
+            run_dir_slashes: &str,
+        ) -> String {
             let mut out = s.to_string();
             if !run_dir_display.is_empty() {
                 out = out.replace(run_dir_display, "<gen3d_run_dir>");
@@ -708,9 +713,17 @@ impl Gen3dAiJob {
 
         let run_dir_display = store.run_dir().display().to_string();
         let run_dir_slashes = run_dir_display.replace('\\', "/");
-        let message = redact_run_dir_paths_in_string(message.as_str(), run_dir_display.as_str(), run_dir_slashes.as_str());
+        let message = redact_run_dir_paths_in_string(
+            message.as_str(),
+            run_dir_display.as_str(),
+            run_dir_slashes.as_str(),
+        );
         let mut data = data;
-        redact_run_dir_paths_in_json(&mut data, run_dir_display.as_str(), run_dir_slashes.as_str());
+        redact_run_dir_paths_in_json(
+            &mut data,
+            run_dir_display.as_str(),
+            run_dir_slashes.as_str(),
+        );
 
         let _ = store.append_event(
             attempt,

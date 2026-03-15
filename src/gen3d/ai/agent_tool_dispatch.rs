@@ -14,13 +14,13 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_LIST_HISTORY,
     TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS,
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
-    TOOL_ID_MOTION_METRICS, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS,
-    TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
-    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK,
-    TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_SUGGEST_MOTION_REPAIRS,
-    TOOL_ID_VALIDATE,
+    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
+    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MERGE_WORKSPACE,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
+    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
+    TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -491,9 +491,9 @@ fn should_require_plan_template_kv_for_preserve_replan(
     preserve_existing_components && planned_components_len > 0 && !plan_template_kv_present
 }
 
-fn preserve_replan_missing_template_error() -> String {
+fn preserve_replan_missing_template_error(tool_id: &str) -> String {
     format!(
-        "Preserve-mode replanning requires `plan_template_kv`. Call `{TOOL_ID_GET_PLAN_TEMPLATE}` first, then retry `{TOOL_ID_LLM_GENERATE_PLAN}` with the returned `plan_template_kv`."
+        "Preserve-mode replanning requires `plan_template_kv`. Call `{TOOL_ID_GET_PLAN_TEMPLATE}` first, then retry `{tool_id}` with the returned `plan_template_kv`."
     )
 }
 
@@ -4158,7 +4158,7 @@ pub(super) fn execute_tool_call(
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    preserve_replan_missing_template_error(),
+                    preserve_replan_missing_template_error(TOOL_ID_LLM_GENERATE_PLAN),
                 ));
             }
             let preserve_edit_policy = call
@@ -4354,6 +4354,289 @@ pub(super) fn execute_tool_call(
             );
             job.agent.pending_tool_call = Some(call);
             job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::GeneratePlan);
+            job.phase = Gen3dAiPhase::AgentWaitingTool;
+            ToolCallOutcome::StartedAsync
+        }
+        TOOL_ID_LLM_GENERATE_PLAN_OPS => {
+            let Some(ai) = job.ai.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing AI config".into(),
+                ));
+            };
+            let Some(pass_dir) = job.pass_dir.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing pass dir".into(),
+                ));
+            };
+
+            if job.planned_components.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "{TOOL_ID_LLM_GENERATE_PLAN_OPS} requires an existing accepted plan. Run `{TOOL_ID_LLM_GENERATE_PLAN}` first."
+                    ),
+                ));
+            }
+
+            let system = super::prompts::build_gen3d_plan_ops_system_instructions();
+            let prompt_override = call.args.get("prompt").and_then(|v| v.as_str());
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct PlanTemplateKvRefArgsV1 {
+                namespace: String,
+                key: String,
+                #[serde(default)]
+                selector: Option<InfoKvSelectorArgsV1>,
+            }
+
+            let plan_template_kv: Option<PlanTemplateKvRefArgsV1> =
+                match call.args.get("plan_template_kv").cloned() {
+                    Some(value) => match serde_json::from_value(value) {
+                        Ok(v) => Some(v),
+                        Err(err) => {
+                            return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                                call.call_id,
+                                call.tool_id,
+                                format!("Invalid args.plan_template_kv: {err}"),
+                            ));
+                        }
+                    },
+                    None => None,
+                };
+
+            let preserve_existing_components = call
+                .args
+                .get("constraints")
+                .and_then(|v| v.get("preserve_existing_components"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(job.preserve_existing_components_mode);
+            if !preserve_existing_components {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "{TOOL_ID_LLM_GENERATE_PLAN_OPS} is intended for preserve-mode diff-first replanning. Set constraints.preserve_existing_components=true, or use `{TOOL_ID_LLM_GENERATE_PLAN}` for a full replan."
+                    ),
+                ));
+            }
+            if should_require_plan_template_kv_for_preserve_replan(
+                preserve_existing_components,
+                job.planned_components.len(),
+                plan_template_kv.is_some(),
+            ) {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    preserve_replan_missing_template_error(TOOL_ID_LLM_GENERATE_PLAN_OPS),
+                ));
+            }
+
+            let preserve_edit_policy = call
+                .args
+                .get("constraints")
+                .and_then(|v| v.get("preserve_edit_policy"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("additive");
+            let preserve_edit_policy_is_valid = matches!(
+                preserve_edit_policy,
+                "additive" | "allow_offsets" | "allow_rewire"
+            );
+            if preserve_existing_components && !preserve_edit_policy_is_valid {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "Invalid constraints.preserve_edit_policy={preserve_edit_policy:?}. Expected one of: \"additive\", \"allow_offsets\", \"allow_rewire\"."
+                    ),
+                ));
+            }
+            let rewire_components: Vec<String> = call
+                .args
+                .get("constraints")
+                .and_then(|v| v.get("rewire_components"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            let scope_components: Vec<String> = call
+                .args
+                .get("scope_components")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if scope_components.len() > 64 {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "scope_components is too large ({} > max 64)",
+                        scope_components.len()
+                    ),
+                ));
+            }
+
+            let max_ops = call
+                .args
+                .get("max_ops")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(32)
+                .clamp(1, 64) as usize;
+
+            let plan_template_json: Option<serde_json::Value> = if let Some(kv_ref) =
+                plan_template_kv.as_ref()
+            {
+                if !preserve_existing_components || job.planned_components.is_empty() {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        "`plan_template_kv` requires preserve mode (constraints.preserve_existing_components=true) and an existing plan."
+                            .into(),
+                    ));
+                }
+
+                let namespace = kv_ref.namespace.trim();
+                let key = kv_ref.key.trim();
+                if namespace.is_empty() || key.is_empty() {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        "plan_template_kv.namespace and plan_template_kv.key are required.".into(),
+                    ));
+                }
+
+                let selector_kind = kv_ref
+                    .selector
+                    .as_ref()
+                    .map(|s| s.kind.trim())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("latest");
+
+                let store = match job.ensure_info_store() {
+                    Ok(s) => s,
+                    Err(err) => {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call.call_id,
+                            call.tool_id,
+                            err,
+                        ));
+                    }
+                };
+                let record = match select_kv_record(
+                    store,
+                    namespace,
+                    key,
+                    selector_kind,
+                    kv_ref.selector.as_ref(),
+                ) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call.call_id,
+                            call.tool_id,
+                            err,
+                        ));
+                    }
+                };
+                let Some(record) = record else {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!(
+                            "plan_template_kv not found: namespace={namespace:?} key={key:?}. Call `{TOOL_ID_GET_PLAN_TEMPLATE}` first."
+                        ),
+                    ));
+                };
+                if record.bytes > 64 * 1024 {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!(
+                            "plan_template_kv is too large ({} bytes). Re-generate a smaller template via `{TOOL_ID_GET_PLAN_TEMPLATE}` (mode=\"auto\" or mode=\"lean\") and retry.",
+                            record.bytes
+                        ),
+                    ));
+                }
+
+                Some(record.value.clone())
+            } else {
+                None
+            };
+
+            let prompt_text = prompt_override
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(job.user_prompt_raw.as_str());
+
+            let image_object_summary = job
+                .user_image_object_summary
+                .as_ref()
+                .map(|s| s.text.as_str());
+
+            let user_text =
+                super::prompts::build_gen3d_plan_ops_user_text_preserve_existing_components(
+                    prompt_text,
+                    image_object_summary,
+                    workshop.speed_mode,
+                    None,
+                    &job.planned_components,
+                    &job.assembly_notes,
+                    preserve_edit_policy,
+                    &rewire_components,
+                    plan_template_json.as_ref(),
+                    &scope_components,
+                    max_ops,
+                );
+
+            let reasoning_effort = super::openai::cap_reasoning_effort(
+                ai.model_reasoning_effort(),
+                &config.gen3d_reasoning_effort_plan,
+            );
+
+            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+            job.shared_result = Some(shared.clone());
+            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+                message: "Generating plan ops…".into(),
+            }));
+            job.shared_progress = Some(progress.clone());
+            set_progress(&progress, "Calling model for plan ops…");
+            job.agent.pending_llm_repair_attempt = 0;
+
+            spawn_gen3d_ai_text_thread(
+                shared,
+                progress,
+                job.cancel_flag.clone(),
+                job.session.clone(),
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanOpsV1),
+                config.gen3d_require_structured_outputs,
+                ai,
+                reasoning_effort,
+                system,
+                user_text,
+                Vec::new(),
+                pass_dir,
+                sanitize_prefix(&format!("tool_plan_ops_{}", &call.call_id)),
+            );
+            job.agent.pending_tool_call = Some(call);
+            job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::GeneratePlanOps);
             job.phase = Gen3dAiPhase::AgentWaitingTool;
             ToolCallOutcome::StartedAsync
         }
@@ -5886,7 +6169,7 @@ mod tests {
             true, 3, true
         ));
 
-        let msg = super::preserve_replan_missing_template_error();
+        let msg = super::preserve_replan_missing_template_error(super::TOOL_ID_LLM_GENERATE_PLAN);
         assert!(
             msg.contains(super::TOOL_ID_GET_PLAN_TEMPLATE)
                 && msg.contains(super::TOOL_ID_LLM_GENERATE_PLAN)

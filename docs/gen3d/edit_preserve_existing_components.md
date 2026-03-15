@@ -15,6 +15,12 @@ Preserve mode is requested by calling:
 
 - `llm_generate_plan_v1` with `constraints.preserve_existing_components=true`
 
+For small, local preserve-mode plan edits (diff-first replanning), you may also use:
+
+- `llm_generate_plan_ops_v1` (generates a bounded PlanOps patch and the engine applies it deterministically to the current accepted plan)
+  - Preserve-mode replanning with an existing plan still requires `plan_template_kv` (call `get_plan_template_v1` first).
+  - Optional `scope_components` rejects ops that touch out-of-scope existing components.
+
 When preserve mode is enabled **and** the current draft already contains generated geometry, the engine applies additional guardrails and merges instead of overwriting:
 
 - The new plan **must** include **all existing component names** (no renames/deletes).
@@ -52,6 +58,7 @@ Related docs:
 
 - `docs/gen3d/inspect_plan_v1.md`
 - `docs/gen3d/get_plan_template_v1.md`
+- `docs/gen3d/llm_generate_plan_ops_v1.md`
 
 Examples (tool args):
 

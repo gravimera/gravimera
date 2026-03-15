@@ -84,10 +84,9 @@ pub(super) fn start_agent_llm_review_delta_call(
         }
 
         if !selected_blob_ids.is_empty() {
-            let run_dir = job
-                .run_dir
-                .clone()
-                .ok_or_else(|| "Missing run dir (needed to resolve preview_blob_ids).".to_string())?;
+            let run_dir = job.run_dir.clone().ok_or_else(|| {
+                "Missing run dir (needed to resolve preview_blob_ids).".to_string()
+            })?;
             let resolved = {
                 let store = job.ensure_info_store()?;
                 let mut out = Vec::with_capacity(selected_blob_ids.len());

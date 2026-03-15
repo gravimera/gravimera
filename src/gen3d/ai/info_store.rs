@@ -228,8 +228,8 @@ fn encode_offset_cursor(kind: &str, params_sig: &str, offset: usize) -> String {
 
 fn decode_offset_cursor(kind: &str, params_sig: &str, cursor: &str) -> Result<usize, String> {
     let raw = b64_urlsafe_decode(cursor)?;
-    let decoded: OffsetCursorV1 = serde_json::from_slice(&raw)
-        .map_err(|err| format!("Cursor is not valid JSON: {err}"))?;
+    let decoded: OffsetCursorV1 =
+        serde_json::from_slice(&raw).map_err(|err| format!("Cursor is not valid JSON: {err}"))?;
     if decoded.v != 1 {
         return Err(format!("Unsupported cursor version {}.", decoded.v));
     }
@@ -242,7 +242,13 @@ fn decode_offset_cursor(kind: &str, params_sig: &str, cursor: &str) -> Result<us
     Ok(decoded.offset)
 }
 
-fn page_slice<T: Clone>(items: &[T], kind: &str, params_sig: &str, limit: usize, offset: usize) -> InfoPageOut<T> {
+fn page_slice<T: Clone>(
+    items: &[T],
+    kind: &str,
+    params_sig: &str,
+    limit: usize,
+    offset: usize,
+) -> InfoPageOut<T> {
     if offset >= items.len() {
         return InfoPageOut {
             items: Vec::new(),
@@ -318,10 +324,14 @@ fn normalize_and_validate_blob_relative_path(relative_path: &str) -> Result<Stri
     for component in path.components() {
         match component {
             Component::Prefix(_) => {
-                return Err("Blob storage relative_path must not contain a Windows path prefix.".into());
+                return Err(
+                    "Blob storage relative_path must not contain a Windows path prefix.".into(),
+                );
             }
             Component::RootDir => {
-                return Err("Blob storage relative_path must be a relative path (no leading '/').".into());
+                return Err(
+                    "Blob storage relative_path must be a relative path (no leading '/').".into(),
+                );
             }
             Component::ParentDir => {
                 return Err("Blob storage relative_path must not contain '..'.".into());
@@ -416,9 +426,8 @@ impl Gen3dInfoStore {
         self.next_event_id = 1;
 
         if self.kv_path.exists() {
-            let text = std::fs::read_to_string(&self.kv_path).map_err(|err| {
-                format!("Failed to read {}: {err}", self.kv_path.display())
-            })?;
+            let text = std::fs::read_to_string(&self.kv_path)
+                .map_err(|err| format!("Failed to read {}: {err}", self.kv_path.display()))?;
             for (line_idx, line) in text.lines().enumerate() {
                 let line = line.trim();
                 if line.is_empty() {
@@ -436,9 +445,8 @@ impl Gen3dInfoStore {
         }
 
         if self.events_path.exists() {
-            let text = std::fs::read_to_string(&self.events_path).map_err(|err| {
-                format!("Failed to read {}: {err}", self.events_path.display())
-            })?;
+            let text = std::fs::read_to_string(&self.events_path)
+                .map_err(|err| format!("Failed to read {}: {err}", self.events_path.display()))?;
             for (line_idx, line) in text.lines().enumerate() {
                 let line = line.trim();
                 if line.is_empty() {
@@ -456,9 +464,8 @@ impl Gen3dInfoStore {
         }
 
         if self.blobs_path.exists() {
-            let text = std::fs::read_to_string(&self.blobs_path).map_err(|err| {
-                format!("Failed to read {}: {err}", self.blobs_path.display())
-            })?;
+            let text = std::fs::read_to_string(&self.blobs_path)
+                .map_err(|err| format!("Failed to read {}: {err}", self.blobs_path.display()))?;
             for (line_idx, line) in text.lines().enumerate() {
                 let line = line.trim();
                 if line.is_empty() {
@@ -479,7 +486,8 @@ impl Gen3dInfoStore {
     }
 
     fn append_jsonl(&self, path: &Path, value: &serde_json::Value) -> Result<(), String> {
-        let line = serde_json::to_string(value).map_err(|err| format!("Failed to serialize JSON: {err}"))?;
+        let line = serde_json::to_string(value)
+            .map_err(|err| format!("Failed to serialize JSON: {err}"))?;
         let mut line = line;
         line.push('\n');
         let mut file = std::fs::OpenOptions::new()
@@ -513,7 +521,10 @@ impl Gen3dInfoStore {
                 self.kv_latest_by_key.insert(record.key.clone(), idx);
             }
         }
-        self.kv_by_key.entry(record.key.clone()).or_default().push(idx);
+        self.kv_by_key
+            .entry(record.key.clone())
+            .or_default()
+            .push(idx);
         self.next_kv_rev = self.next_kv_rev.max(record.kv_rev.saturating_add(1));
         Ok(())
     }
@@ -603,7 +614,8 @@ impl Gen3dInfoStore {
     }
 
     pub(super) fn kv_latest_entries(&self) -> Vec<(&InfoKvKey, &InfoKvRecord)> {
-        let mut out: Vec<(&InfoKvKey, &InfoKvRecord)> = Vec::with_capacity(self.kv_latest_by_key.len());
+        let mut out: Vec<(&InfoKvKey, &InfoKvRecord)> =
+            Vec::with_capacity(self.kv_latest_by_key.len());
         for (key, idx) in self.kv_latest_by_key.iter() {
             if let Some(record) = self.kv_records.get(*idx) {
                 out.push((key, record));
@@ -620,7 +632,10 @@ impl Gen3dInfoStore {
         let Some(indices) = self.kv_by_key.get(&k) else {
             return Vec::new();
         };
-        indices.iter().filter_map(|&idx| self.kv_records.get(idx)).collect()
+        indices
+            .iter()
+            .filter_map(|&idx| self.kv_records.get(idx))
+            .collect()
     }
 
     pub(super) fn kv_record_by_rev(&self, kv_rev: u64) -> Option<&InfoKvRecord> {
@@ -688,13 +703,13 @@ impl Gen3dInfoStore {
         relative_path: String,
     ) -> Result<InfoBlob, String> {
         let raw_relative_path = relative_path;
-        let relative_path =
-            normalize_and_validate_blob_relative_path(raw_relative_path.as_str()).map_err(|err| {
-                format!(
-                    "Invalid blob relative_path `{}`: {err}",
-                    raw_relative_path.trim()
-                )
-            })?;
+        let relative_path = normalize_and_validate_blob_relative_path(raw_relative_path.as_str())
+            .map_err(|err| {
+            format!(
+                "Invalid blob relative_path `{}`: {err}",
+                raw_relative_path.trim()
+            )
+        })?;
         let blob = InfoBlob {
             blob_id: Uuid::new_v4().to_string(),
             created_at_ms: now_ms(),
@@ -725,8 +740,8 @@ impl Gen3dInfoStore {
         })?;
         match &blob.storage {
             InfoBlobStorageV1::RunCacheFile { relative_path } => {
-                let rel =
-                    normalize_and_validate_blob_relative_path(relative_path.as_str()).map_err(|err| {
+                let rel = normalize_and_validate_blob_relative_path(relative_path.as_str())
+                    .map_err(|err| {
                         format!("Invalid blob storage path for blob_id `{blob_id}`: {err}")
                     })?;
                 Ok(self.run_dir.join(rel))
@@ -786,7 +801,10 @@ mod tests {
         let kind = "kv_keys";
         let params_sig = "{\"sort\":\"key_asc\"}";
         let cursor = encode_offset_cursor(kind, params_sig, 123);
-        assert_eq!(decode_offset_cursor(kind, params_sig, cursor.as_str()).unwrap(), 123);
+        assert_eq!(
+            decode_offset_cursor(kind, params_sig, cursor.as_str()).unwrap(),
+            123
+        );
         assert!(decode_offset_cursor("events", params_sig, cursor.as_str()).is_err());
         assert!(decode_offset_cursor(kind, "{\"sort\":\"ts_desc\"}", cursor.as_str()).is_err());
     }

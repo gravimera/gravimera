@@ -13,8 +13,8 @@ use crate::object::registry::builtin_object_id;
 
 const GEN3D_MAX_IMAGES: usize = 3;
 const GEN3D_MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024; // < 5 MiB each.
-// Some Gen3D steps include extra internal preview renders in addition to user reference images.
-// Keep a slightly higher cap for a single OpenAI request.
+                                                    // Some Gen3D steps include extra internal preview renders in addition to user reference images.
+                                                    // Keep a slightly higher cap for a single OpenAI request.
 const GEN3D_REVIEW_VIEW_IMAGES: usize = 9; // 6 horizontal + 1 top + 2 motion sheets
 const GEN3D_MAX_REQUEST_IMAGES: usize = GEN3D_MAX_IMAGES + GEN3D_REVIEW_VIEW_IMAGES;
 const GEN3D_MAX_PARTS: usize = 1024;
@@ -167,7 +167,7 @@ pub(crate) use ui::{
     gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
     gen3d_rebuild_preview_animation_dropdown_options_ui,
     gen3d_side_panel_toggle_button, gen3d_update_preview_animation_dropdown_ui,
-    gen3d_update_preview_panel_image_fit,
-    gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
-    handle_gen3d_toggle_button, spawn_gen3d_preview_panel, update_gen3d_toggle_button_label,
+    gen3d_update_preview_panel_image_fit, gen3d_update_prompt_scrollbar_ui,
+    gen3d_update_side_panel_ui, gen3d_update_ui_text, handle_gen3d_toggle_button,
+    spawn_gen3d_preview_panel, update_gen3d_toggle_button_label,
 };

@@ -707,6 +707,7 @@ fn apply_ops_inner(
 }
 
 fn preserve_error_for_plan_apply(
+    tool_id: &str,
     can_preserve_geometry: bool,
     preserve_edit_policy_raw: Option<&str>,
     rewire_components: &[String],
@@ -739,7 +740,7 @@ fn preserve_error_for_plan_apply(
     missing.sort();
     if !missing.is_empty() {
         return Some(format!(
-            "apply_plan_ops_v1 preserve_existing_components=true requires the plan to include ALL existing component names. Missing: {missing:?}"
+            "{tool_id} preserve_existing_components=true requires the plan to include ALL existing component names. Missing: {missing:?}"
         ));
     }
 
@@ -755,7 +756,7 @@ fn preserve_error_for_plan_apply(
             .unwrap_or("");
         if new_root_name != old_root_name.as_str() {
             return Some(format!(
-                "apply_plan_ops_v1 preserve_existing_components=true must keep the same root component. Old root=`{}`, new root=`{}`",
+                "{tool_id} preserve_existing_components=true must keep the same root component. Old root=`{}`, new root=`{}`",
                 old_root_name, new_root_name
             ));
         }
@@ -773,7 +774,7 @@ fn preserve_error_for_plan_apply(
 
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
-        "apply_plan_ops_v1 preserve_existing_components=true edit_policy={} rejected plan diff:",
+        "{tool_id} preserve_existing_components=true edit_policy={} rejected plan diff:",
         preserve_edit_policy.as_str()
     ));
     for v in violations.iter().take(24) {
@@ -1126,6 +1127,7 @@ pub(super) fn apply_plan_ops_v1(
                 && !job.planned_components.is_empty()
                 && draft.total_non_projectile_primitive_parts() > 0;
             if let Some(err) = preserve_error_for_plan_apply(
+                "apply_plan_ops_v1",
                 can_preserve_geometry,
                 preserve_edit_policy_raw,
                 &rewire_components,
@@ -1285,6 +1287,436 @@ pub(super) fn apply_plan_ops_v1(
         );
         super::artifacts::write_gen3d_json_artifact(Some(dir), filename, &result);
         super::artifacts::write_gen3d_json_artifact(Some(dir), "apply_plan_ops_last.json", &result);
+    }
+
+    Ok(result)
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedPlanOpsJsonV1 {
+    version: u32,
+    ops: Vec<PlanOpJsonV1>,
+}
+
+fn touched_component_names_for_scope(ops: &[PlanOpJsonV1]) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::<String>::new();
+    for op in ops.iter() {
+        match op {
+            PlanOpJsonV1::AddComponent {
+                name, attach_to, ..
+            } => {
+                let name = name.trim();
+                if !name.is_empty() {
+                    out.insert(name.to_string());
+                }
+                if let Some(att) = attach_to.as_ref() {
+                    let parent = att.parent.trim();
+                    if !parent.is_empty() {
+                        out.insert(parent.to_string());
+                    }
+                }
+            }
+            PlanOpJsonV1::RemoveComponent { name } => {
+                let name = name.trim();
+                if !name.is_empty() {
+                    out.insert(name.to_string());
+                }
+            }
+            PlanOpJsonV1::SetAttachTo {
+                component,
+                set_attach_to,
+            } => {
+                let component = component.trim();
+                if !component.is_empty() {
+                    out.insert(component.to_string());
+                }
+                if let Some(att) = set_attach_to.as_ref() {
+                    let parent = att.parent.trim();
+                    if !parent.is_empty() {
+                        out.insert(parent.to_string());
+                    }
+                }
+            }
+            PlanOpJsonV1::SetAnchor { component, .. } => {
+                let component = component.trim();
+                if !component.is_empty() {
+                    out.insert(component.to_string());
+                }
+            }
+            PlanOpJsonV1::SetAimComponents { components } => {
+                for name in components.iter() {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        out.insert(name.to_string());
+                    }
+                }
+            }
+            PlanOpJsonV1::SetAttackMuzzle { component, .. } => {
+                let component = component.trim();
+                if !component.is_empty() {
+                    out.insert(component.to_string());
+                }
+            }
+            PlanOpJsonV1::SetReuseGroups { reuse_groups } => {
+                for group in reuse_groups.iter() {
+                    let src = group.source.trim();
+                    if !src.is_empty() {
+                        out.insert(src.to_string());
+                    }
+                    for tgt in group.targets.iter() {
+                        let tgt = tgt.trim();
+                        if !tgt.is_empty() {
+                            out.insert(tgt.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+pub(super) fn apply_llm_generate_plan_ops_v1(
+    job: &mut Gen3dAiJob,
+    draft: &mut Gen3dDraft,
+    call_id: Option<&str>,
+    preserve_existing_components: bool,
+    preserve_edit_policy_raw: Option<&str>,
+    rewire_components: Vec<String>,
+    scope_components: Vec<String>,
+    max_ops: usize,
+    text: &str,
+) -> Result<serde_json::Value, String> {
+    if job.planned_components.is_empty() {
+        return Err(
+            "llm_generate_plan_ops_v1 requires an existing accepted plan. Run llm_generate_plan_v1 first."
+                .into(),
+        );
+    }
+    if !preserve_existing_components {
+        return Err(
+            "llm_generate_plan_ops_v1 requires preserve mode (constraints.preserve_existing_components=true)."
+                .into(),
+        );
+    }
+
+    let max_ops = max_ops.clamp(1, 64);
+
+    let json_text = super::parse::extract_json_object(text).unwrap_or_else(|| text.to_string());
+    let json_text = json_text.trim();
+    let payload_value: serde_json::Value = serde_json::from_str(json_text)
+        .map_err(|err| format!("llm_generate_plan_ops_v1: Failed to parse JSON: {err}"))?;
+    let payload_value_for_artifact = payload_value.clone();
+    let payload: GeneratedPlanOpsJsonV1 = serde_json::from_value(payload_value)
+        .map_err(|err| format!("llm_generate_plan_ops_v1: AI JSON schema error: {err}"))?;
+    if payload.version != 1 {
+        return Err(format!(
+            "llm_generate_plan_ops_v1: Unsupported version {} (expected 1)",
+            payload.version
+        ));
+    }
+    if payload.ops.len() > max_ops {
+        return Err(format!(
+            "llm_generate_plan_ops_v1: too many ops ({} > max_ops={max_ops}). Output fewer ops or increase max_ops (max 64).",
+            payload.ops.len()
+        ));
+    }
+    if payload.ops.len() > 64 {
+        return Err("llm_generate_plan_ops_v1: too many ops (max 64)".into());
+    }
+    let ops_total = payload.ops.len();
+
+    if let Some(dir) = job.pass_dir_path() {
+        let filename = format!(
+            "plan_ops_generated_{}.json",
+            sanitize_prefix(call_id.unwrap_or(""))
+        );
+        super::artifacts::write_gen3d_json_artifact(
+            Some(dir),
+            &filename,
+            &payload_value_for_artifact,
+        );
+        super::artifacts::write_gen3d_json_artifact(
+            Some(dir),
+            "plan_ops_generated.json",
+            &payload_value_for_artifact,
+        );
+    }
+
+    let scope_components: Vec<String> = scope_components
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let plan_json = super::plan_tools::build_preserve_mode_plan_template_json_v8(
+        draft,
+        &job.planned_components,
+        &job.assembly_notes,
+        job.plan_collider.as_ref(),
+        job.rig_move_cycle_m,
+        &job.reuse_groups,
+    )?;
+    let plan_before: AiPlanJsonV1 = serde_json::from_value(plan_json.clone()).map_err(|err| {
+        format!("llm_generate_plan_ops_v1: failed to parse current plan snapshot: {err}")
+    })?;
+
+    let mut existing_component_names: Vec<String> = job
+        .planned_components
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    existing_component_names.sort();
+    existing_component_names.dedup();
+    let existing_names_set: std::collections::HashSet<String> =
+        existing_component_names.iter().cloned().collect();
+    let existing_root_component = job
+        .planned_components
+        .iter()
+        .find(|c| c.attach_to.is_none())
+        .map(|c| c.name.clone());
+
+    let touched = touched_component_names_for_scope(&payload.ops);
+    let mut touched_existing: Vec<String> = touched
+        .iter()
+        .filter(|name| existing_names_set.contains(*name))
+        .cloned()
+        .collect();
+    touched_existing.sort();
+    touched_existing.dedup();
+
+    let mut scope_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for name in scope_components.iter() {
+        scope_set.insert(name.clone());
+    }
+    let mut out_of_scope: Vec<String> = Vec::new();
+    if !scope_components.is_empty() {
+        for name in touched_existing.iter() {
+            if !scope_set.contains(name) {
+                out_of_scope.push(name.clone());
+            }
+        }
+    }
+
+    let assembly_rev_before = job.assembly_rev();
+    let summary_before = plan_summary_json(&plan_before);
+
+    if !out_of_scope.is_empty() {
+        let err = format!(
+            "llm_generate_plan_ops_v1 scope_components rejected ops touching out-of-scope existing components: {out_of_scope:?}\n\
+Hint: include these names in scope_components, or omit scope_components, or use `llm_generate_plan_v1` for wide edits."
+        );
+        let result = serde_json::json!({
+            "ok": false,
+            "version": 1,
+            "accepted": false,
+            "committed": false,
+            "assembly_rev_before": assembly_rev_before,
+            "new_assembly_rev": job.assembly_rev(),
+            "ops_total": ops_total,
+            "diff_summary": serde_json::Value::Null,
+            "new_plan_summary": summary_before,
+            "new_errors": [{
+                "kind": "scope_violation",
+                "error": err,
+                "scope_components_total": scope_components.len(),
+                "scope_components_sample": scope_components.iter().cloned().take(32).collect::<Vec<_>>(),
+                "touched_existing_components_total": touched_existing.len(),
+                "touched_existing_components_sample": touched_existing.iter().cloned().take(32).collect::<Vec<_>>(),
+                "out_of_scope_components": out_of_scope,
+            }],
+        });
+
+        if let Some(dir) = job.pass_dir_path() {
+            let filename = format!(
+                "plan_ops_apply_last_{}.json",
+                sanitize_prefix(call_id.unwrap_or(""))
+            );
+            super::artifacts::write_gen3d_json_artifact(Some(dir), &filename, &result);
+            super::artifacts::write_gen3d_json_artifact(
+                Some(dir),
+                "plan_ops_apply_last.json",
+                &result,
+            );
+            super::artifacts::write_gen3d_json_artifact(
+                Some(dir),
+                "plan_ops_plan_before.json",
+                &plan_json,
+            );
+        }
+        return Ok(result);
+    }
+
+    let plan_before_serialized = plan_json;
+
+    let mut plan_after = plan_before.clone();
+    let ops = payload.ops;
+    let ops_total = ops.len();
+    let (applied_ops, rejected_ops, state) = apply_ops_inner(ops, &mut plan_after);
+
+    let summary_after = plan_summary_json(&plan_after);
+    let diff_summary = serde_json::json!({
+        "components": {
+            "added": state.components_added,
+            "removed": state.components_removed,
+        },
+        "attachments_set": state.attachments_set,
+        "anchors_upserted": state.anchors_upserted,
+        "aim_set": state.aim_set,
+        "attack_muzzle_set": state.muzzle_set,
+        "reuse_groups_set": state.reuse_groups_set,
+        "touched_components": state.touched_components.iter().cloned().take(32).collect::<Vec<_>>(),
+    });
+
+    let can_preserve_geometry = preserve_existing_components
+        && !job.planned_components.is_empty()
+        && draft.total_non_projectile_primitive_parts() > 0;
+
+    let mut accepted = false;
+    let mut new_errors: Vec<serde_json::Value> = Vec::new();
+
+    match convert::ai_plan_to_initial_draft_defs(plan_after.clone()) {
+        Ok((planned_components, notes, defs)) => {
+            let rig_move_cycle_m = plan_after
+                .rig
+                .as_ref()
+                .and_then(|r| r.move_cycle_m)
+                .filter(|v| v.is_finite())
+                .map(f32::abs)
+                .filter(|v| *v > 1e-3);
+            let plan_collider = plan_after.collider.clone();
+            let (validated_reuse_groups, reuse_warnings) =
+                reuse_groups::validate_reuse_groups(&plan_after.reuse_groups, &planned_components);
+
+            if let Some(err) = preserve_error_for_plan_apply(
+                "llm_generate_plan_ops_v1",
+                can_preserve_geometry,
+                preserve_edit_policy_raw,
+                &rewire_components,
+                &job.planned_components,
+                &planned_components,
+            ) {
+                new_errors.push(serde_json::json!({
+                    "kind": "preserve_mode_rejection",
+                    "error": err,
+                }));
+            } else {
+                match apply_plan_acceptance(
+                    job,
+                    draft,
+                    preserve_existing_components,
+                    planned_components,
+                    notes,
+                    defs,
+                    rig_move_cycle_m,
+                    plan_collider,
+                    validated_reuse_groups,
+                    reuse_warnings,
+                ) {
+                    Ok(()) => {
+                        accepted = true;
+                    }
+                    Err(err) => {
+                        new_errors.push(serde_json::json!({
+                            "kind": "apply_error",
+                            "error": err,
+                        }));
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            new_errors.push(serde_json::json!({
+                "kind": "semantic_validation_error",
+                "error": err,
+            }));
+        }
+    }
+
+    if !accepted {
+        let pending_for_inspect = Gen3dPendingPlanAttempt {
+            call_id: call_id.unwrap_or("llm_generate_plan_ops_v1").to_string(),
+            error: new_errors
+                .iter()
+                .find_map(|v| v.get("error").and_then(|e| e.as_str()))
+                .unwrap_or("plan ops apply rejected")
+                .to_string(),
+            preserve_existing_components,
+            preserve_edit_policy: preserve_edit_policy_raw
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            rewire_components: rewire_components.clone(),
+            existing_component_names: existing_component_names.clone(),
+            existing_root_component: existing_root_component.clone(),
+            plan: plan_after.clone(),
+        };
+
+        let inspect = super::plan_tools::inspect_pending_plan_attempt_v1(
+            Some(&pending_for_inspect),
+            &job.planned_components,
+            job.preserve_existing_components_mode,
+        );
+        if let Some(errors) = inspect
+            .get("analysis")
+            .and_then(|v| v.get("errors"))
+            .and_then(|v| v.as_array())
+        {
+            for err in errors.iter().take(24) {
+                new_errors.push(err.clone());
+            }
+        }
+        if let Some(fixits) = inspect
+            .get("analysis")
+            .and_then(|v| v.get("fixits"))
+            .and_then(|v| v.as_array())
+        {
+            for fixit in fixits.iter().take(8) {
+                new_errors.push(serde_json::json!({
+                    "kind": "fixit",
+                    "fixit": fixit,
+                }));
+            }
+        }
+
+        job.pending_plan_attempt = Some(pending_for_inspect);
+    }
+    let committed = true;
+
+    let assembly_rev_after = job.assembly_rev();
+    let ok = accepted && rejected_ops.is_empty();
+
+    let result = serde_json::json!({
+        "ok": ok,
+        "version": 1,
+        "accepted": accepted,
+        "committed": committed,
+        "assembly_rev_before": assembly_rev_before,
+        "new_assembly_rev": assembly_rev_after,
+        "ops_total": ops_total,
+        "applied_ops": applied_ops,
+        "rejected_ops": rejected_ops,
+        "diff_summary": diff_summary,
+        "plan_before_after": {
+            "before": summary_before,
+            "after": summary_after,
+        },
+        "new_plan_summary": summary_after,
+        "new_errors": if accepted { serde_json::Value::Null } else { serde_json::Value::Array(new_errors) },
+    });
+
+    if let Some(dir) = job.pass_dir_path() {
+        let filename = format!(
+            "plan_ops_apply_last_{}.json",
+            sanitize_prefix(call_id.unwrap_or(""))
+        );
+        super::artifacts::write_gen3d_json_artifact(Some(dir), &filename, &result);
+        super::artifacts::write_gen3d_json_artifact(Some(dir), "plan_ops_apply_last.json", &result);
+        super::artifacts::write_gen3d_json_artifact(
+            Some(dir),
+            "plan_ops_plan_before.json",
+            &plan_before_serialized,
+        );
     }
 
     Ok(result)
@@ -1595,6 +2027,283 @@ mod tests {
             pending.error
         );
         assert!(pending.plan.components.iter().any(|c| c.name == "bad"));
+    }
+
+    #[test]
+    fn llm_generate_plan_ops_scope_rejects_out_of_scope_existing_components() {
+        let mut job = Gen3dAiJob::default();
+        let mut draft = Gen3dDraft { defs: Vec::new() };
+
+        let plan = make_simple_current_plan();
+        let (planned, notes, defs) =
+            convert::ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+        job.planned_components = planned;
+        job.assembly_notes = notes;
+        job.preserve_existing_components_mode = true;
+        draft.defs = defs;
+
+        assert!(job.pending_plan_attempt.is_none());
+
+        let text = r#"
+        {
+          "version": 1,
+          "ops": [
+            { "kind": "set_attach_to", "component": "torso", "set_attach_to": null }
+          ]
+        }
+        "#;
+
+        let result = apply_llm_generate_plan_ops_v1(
+            &mut job,
+            &mut draft,
+            Some("call_plan_ops"),
+            true,
+            Some("additive"),
+            Vec::new(),
+            vec!["head".into()],
+            32,
+            text,
+        )
+        .expect("tool should return result JSON");
+
+        assert!(!result
+            .get("accepted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false));
+        assert!(!result
+            .get("committed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true));
+        assert!(job.pending_plan_attempt.is_none());
+
+        let err = result
+            .get("new_errors")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("error"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(err.contains("out-of-scope"), "{err}");
+        assert!(err.contains("scope_components"), "{err}");
+    }
+
+    fn make_three_component_chain_plan() -> AiPlanJsonV1 {
+        AiPlanJsonV1 {
+            version: 8,
+            rig: None,
+            mobility: AiMobilityJson::Static,
+            attack: None,
+            aim: None,
+            collider: None,
+            assembly_notes: "test".into(),
+            root_component: Some("torso".into()),
+            reuse_groups: Vec::new(),
+            components: vec![
+                AiPlanComponentJson {
+                    name: "torso".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [1.0, 1.0, 1.0],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: None,
+                },
+                AiPlanComponentJson {
+                    name: "neck".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [0.2, 0.2, 0.2],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: Some(AiPlanAttachmentJson {
+                        parent: "torso".into(),
+                        parent_anchor: "origin".into(),
+                        child_anchor: "origin".into(),
+                        offset: None,
+                        joint: None,
+                    }),
+                },
+                AiPlanComponentJson {
+                    name: "head".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [0.5, 0.5, 0.5],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: Some(AiPlanAttachmentJson {
+                        parent: "neck".into(),
+                        parent_anchor: "origin".into(),
+                        child_anchor: "origin".into(),
+                        offset: None,
+                        joint: None,
+                    }),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn llm_generate_plan_ops_enforces_preserve_policy_for_disallowed_rewire() {
+        let mut job = Gen3dAiJob::default();
+        let mut draft = Gen3dDraft { defs: Vec::new() };
+
+        let plan = make_three_component_chain_plan();
+        let (planned, notes, mut defs) =
+            convert::ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+        job.planned_components = planned;
+        job.assembly_notes = notes;
+        job.preserve_existing_components_mode = true;
+
+        // Mark the draft as already-generated so preserve-mode validation runs.
+        let torso_id =
+            crate::object::registry::builtin_object_id("gravimera/gen3d/component/torso");
+        let torso_def = defs
+            .iter_mut()
+            .find(|def| def.object_id == torso_id)
+            .expect("expected torso def");
+        torso_def.parts.push(
+            ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(0.5, 0.5, 0.5),
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )
+            .with_part_id(Uuid::new_v4().as_u128()),
+        );
+        draft.defs = defs;
+
+        let text = r#"
+        {
+          "version": 1,
+          "ops": [
+            {
+              "kind": "set_attach_to",
+              "component": "head",
+              "set_attach_to": { "parent": "torso", "parent_anchor": "origin", "child_anchor": "origin" }
+            }
+          ]
+        }
+        "#;
+
+        let result = apply_llm_generate_plan_ops_v1(
+            &mut job,
+            &mut draft,
+            Some("call_plan_ops"),
+            true,
+            Some("additive"),
+            Vec::new(),
+            Vec::new(),
+            32,
+            text,
+        )
+        .expect("tool should return result JSON");
+
+        assert!(!result
+            .get("accepted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false));
+        assert!(job.pending_plan_attempt.is_some());
+
+        let errors = result
+            .get("new_errors")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let preserve_err = errors
+            .iter()
+            .find(|e| e.get("kind").and_then(|v| v.as_str()) == Some("preserve_mode_rejection"))
+            .and_then(|e| e.get("error").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        assert!(
+            preserve_err.contains("edit_policy=additive rejected plan diff"),
+            "{preserve_err}"
+        );
+        assert!(preserve_err.contains("component=head"), "{preserve_err}");
+        assert!(
+            preserve_err.contains("attach_to.(parent,parent_anchor,child_anchor)"),
+            "{preserve_err}"
+        );
+    }
+
+    #[test]
+    fn llm_generate_plan_ops_preserves_notes_on_unrelated_patch() {
+        let mut job = Gen3dAiJob::default();
+        let mut draft = Gen3dDraft { defs: Vec::new() };
+
+        let plan = make_simple_current_plan();
+        let (mut planned, _notes, mut defs) =
+            convert::ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+
+        planned[0].modeling_notes = "torso modeling notes keep".into();
+        planned[1].modeling_notes = "head modeling notes keep".into();
+
+        job.planned_components = planned;
+        job.assembly_notes = "assembly notes keep".into();
+        job.preserve_existing_components_mode = true;
+
+        // Mark the draft as already-generated so preserve-mode merge path is used.
+        let torso_id =
+            crate::object::registry::builtin_object_id("gravimera/gen3d/component/torso");
+        let torso_def = defs
+            .iter_mut()
+            .find(|def| def.object_id == torso_id)
+            .expect("expected torso def");
+        torso_def.parts.push(
+            ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(0.5, 0.5, 0.5),
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )
+            .with_part_id(Uuid::new_v4().as_u128()),
+        );
+        draft.defs = defs;
+
+        let text = r#"
+        {
+          "version": 1,
+          "ops": [
+            { "kind": "add_component", "name": "hat", "size": [0.3, 0.2, 0.3] },
+            {
+              "kind": "set_attach_to",
+              "component": "hat",
+              "set_attach_to": { "parent": "head", "parent_anchor": "origin", "child_anchor": "origin" }
+            }
+          ]
+        }
+        "#;
+
+        let result = apply_llm_generate_plan_ops_v1(
+            &mut job,
+            &mut draft,
+            Some("call_plan_ops"),
+            true,
+            Some("additive"),
+            Vec::new(),
+            Vec::new(),
+            32,
+            text,
+        )
+        .expect("tool should return result JSON");
+
+        assert!(result
+            .get("accepted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false));
+        assert_eq!(job.assembly_notes.trim(), "assembly notes keep");
+        let torso = job
+            .planned_components
+            .iter()
+            .find(|c| c.name == "torso")
+            .expect("expected torso");
+        assert_eq!(torso.modeling_notes.trim(), "torso modeling notes keep");
+        assert!(job.planned_components.iter().any(|c| c.name == "hat"));
     }
 
     fn make_plan_with_tail_joint(joint: Option<AiJointJson>) -> AiPlanJsonV1 {

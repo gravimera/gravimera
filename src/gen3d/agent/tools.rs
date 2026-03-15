@@ -40,6 +40,7 @@ pub(crate) const TOOL_ID_MIRROR_COMPONENT_SUBTREE: &str = "mirror_component_subt
 pub(crate) const TOOL_ID_DETACH_COMPONENT: &str = "detach_component_v1";
 
 pub(crate) const TOOL_ID_LLM_GENERATE_PLAN: &str = "llm_generate_plan_v1";
+pub(crate) const TOOL_ID_LLM_GENERATE_PLAN_OPS: &str = "llm_generate_plan_ops_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENT: &str = "llm_generate_component_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENTS: &str = "llm_generate_components_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_MOTION_AUTHORING: &str = "llm_generate_motion_authoring_v1";
@@ -449,6 +450,23 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                     "constraints": {
                         "preserve_existing_components": false
                     }
+                }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_LLM_GENERATE_PLAN_OPS,
+                title: "LLM: generate plan ops",
+                one_line_summary:
+                    "LLM+mutates: generate a bounded PlanOps patch and deterministically apply it to the current accepted plan (preserve-mode diff-first replanning). Requires constraints.preserve_existing_components=true, an existing plan, and plan_template_kv (call get_plan_template_v1 first). Optional scope_components rejects ops that touch out-of-scope existing components. Writes plan_ops_generated.json + plan_ops_apply_last.json artifacts under pass/.",
+                args_schema:
+                    "{ prompt?: string, plan_template_kv?: { namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number } }, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, scope_components?: string[], max_ops?: number }",
+                args_example: serde_json::json!({
+                    "constraints": {
+                        "preserve_existing_components": true,
+                        "preserve_edit_policy": "additive"
+                    },
+                    "plan_template_kv": { "namespace": "gen3d", "key": "ws.main.plan_template.preserve_mode.v1", "selector": { "kind": "latest" } },
+                    "scope_components": ["head"],
+                    "max_ops": 16
                 }),
             },
             Gen3dToolDescriptorV1 {

@@ -803,6 +803,14 @@ mod tests {
         assert!(text.contains("`joint` is ONLY allowed inside `attach_to`"));
         assert!(text.contains("Do NOT output a component-level field named \"joint\""));
     }
+
+    #[test]
+    fn gen3d_plan_ops_system_instructions_disallow_full_plan_json() {
+        let text = build_gen3d_plan_ops_system_instructions();
+        assert!(text.contains("Do NOT output a full plan JSON"));
+        assert!(text.contains("\"version\":1"));
+        assert!(text.contains("\"ops\""));
+    }
 }
 
 pub(super) fn build_gen3d_plan_system_instructions() -> String {
@@ -979,6 +987,253 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - Keep names simple; no spaces.\n\
          - Output only the JSON object; no markdown.\n"
     )
+}
+
+pub(super) fn build_gen3d_plan_ops_system_instructions() -> String {
+    "You are a 3D modeling assistant.\n\
+Return STRICT JSON for a PlanOps patch.\n\n\
+Output format:\n\
+- Return ONLY one JSON object matching schema `gen3d_plan_ops_v1`.\n\
+- Do NOT output a full plan JSON. Output ONLY: {\"version\":1,\"ops\":[ ... ]}.\n\
+- Prefer the smallest valid patch (minimal ops; avoid touching unrelated components/fields).\n\
+"
+    .to_string()
+}
+
+pub(super) fn build_gen3d_plan_ops_user_text_preserve_existing_components(
+    raw_prompt: &str,
+    image_object_summary: Option<&str>,
+    speed: Gen3dSpeedMode,
+    style_hint: Option<&str>,
+    existing_components: &[Gen3dPlannedComponent],
+    existing_assembly_notes: &str,
+    preserve_edit_policy: &str,
+    rewire_components: &[String],
+    plan_template: Option<&serde_json::Value>,
+    scope_components: &[String],
+    max_ops: usize,
+) -> String {
+    let max_ops = max_ops.clamp(1, 64);
+
+    let mut out = String::new();
+    out.push_str(
+        "EDIT MODE (diff-first patch): You are patching an ALREADY-GENERATED Gen3D plan using PlanOps.\n\
+Hard requirements:\n\
+- Keep ALL existing component names; do NOT rename or delete existing components.\n\
+- Preserve existing geometry: avoid requiring regeneration of existing components unless strictly necessary.\n\
+- Keep mobility/attack/aim/collider unchanged unless the user request requires changing behavior.\n\
+- Output ONLY a single JSON object: {\"version\":1,\"ops\":[...]}.\n\
+- Do NOT output the full plan JSON.\n\
+",
+    );
+
+    out.push_str("\nPreserve-mode edit policy:\n- preserve_edit_policy: ");
+    out.push_str(preserve_edit_policy.trim());
+    out.push('\n');
+    if preserve_edit_policy.trim() == "allow_rewire" {
+        out.push_str("- rewire_components (explicit allow-list): ");
+        if rewire_components.is_empty() {
+            out.push_str("(none)\n");
+        } else {
+            for (idx, name) in rewire_components.iter().take(24).enumerate() {
+                if idx > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(name.trim());
+            }
+            if rewire_components.len() > 24 {
+                out.push_str(", …");
+            }
+            out.push('\n');
+        }
+    }
+
+    out.push_str("\nScope enforcement:\n");
+    if scope_components.is_empty() {
+        out.push_str("- scope_components: (none; you may touch any existing component)\n");
+    } else {
+        out.push_str("- scope_components (existing components allow-list): ");
+        let mut first = true;
+        for name in scope_components.iter().take(32) {
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            if !first {
+                out.push_str(", ");
+            }
+            first = false;
+            out.push_str(name);
+        }
+        if scope_components.len() > 32 {
+            out.push_str(", …");
+        }
+        out.push('\n');
+        out.push_str("- IMPORTANT: Do NOT output ops that touch existing components outside scope_components.\n");
+        out.push_str("- You MAY add new components (new names are allowed).\n");
+    }
+
+    out.push_str(&format!(
+        "\nHard cap: at most {} total components after patch.\n",
+        super::max_components_for_speed(speed)
+    ));
+    out.push_str(&format!("- Output at most {max_ops} ops.\n"));
+
+    if !existing_assembly_notes.trim().is_empty() {
+        out.push_str("\nExisting assembly_notes (context; keep consistent unless needed):\n");
+        out.push_str(existing_assembly_notes.trim());
+        out.push('\n');
+    }
+
+    out.push_str("\nExisting component snapshot (names + interfaces):\n");
+    out.push_str("Note: some seeded components can have `actual_size` != `planned_size`. When adding new anchors/components, use `actual_size` for scale.\n");
+    if existing_components.is_empty() {
+        out.push_str("- (none)\n");
+    } else {
+        for comp in existing_components
+            .iter()
+            .take(GEN3D_MAX_COMPONENTS.min(64))
+        {
+            let is_root = comp.attach_to.is_none();
+            out.push_str("- ");
+            out.push_str(comp.name.as_str());
+            if is_root {
+                out.push_str(" (root)");
+            } else if let Some(att) = comp.attach_to.as_ref() {
+                let t = att.offset.translation;
+                let r = att.offset.rotation;
+                let s = att.offset.scale;
+                out.push_str(&format!(
+                    " attach_to parent={} parent_anchor={} child_anchor={} offset.pos=[{:.6},{:.6},{:.6}] offset.rot_quat_xyzw=[{:.6},{:.6},{:.6},{:.6}] offset.scale=[{:.6},{:.6},{:.6}]",
+                    att.parent,
+                    att.parent_anchor,
+                    att.child_anchor,
+                    t.x,
+                    t.y,
+                    t.z,
+                    r.x,
+                    r.y,
+                    r.z,
+                    r.w,
+                    s.x,
+                    s.y,
+                    s.z
+                ));
+                if let Some(joint) = att.joint.as_ref() {
+                    let kind = match joint.kind {
+                        AiJointKindJson::Fixed => "fixed",
+                        AiJointKindJson::Hinge => "hinge",
+                        AiJointKindJson::Ball => "ball",
+                        AiJointKindJson::Free => "free",
+                        AiJointKindJson::Unknown => "unknown",
+                    };
+                    out.push_str(&format!(" joint.kind={kind}"));
+                }
+            }
+            out.push_str(&format!(
+                " planned_size=[{:.3},{:.3},{:.3}]",
+                comp.planned_size.x, comp.planned_size.y, comp.planned_size.z
+            ));
+            if let Some(actual) = comp.actual_size {
+                out.push_str(&format!(
+                    " actual_size=[{:.3},{:.3},{:.3}]",
+                    actual.x, actual.y, actual.z
+                ));
+            }
+            out.push('\n');
+
+            if !comp.anchors.is_empty() {
+                out.push_str("  anchors: [");
+                let mut first = true;
+                for a in comp.anchors.iter().take(24) {
+                    let name = a.name.as_ref().trim();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    if !first {
+                        out.push_str(", ");
+                    }
+                    first = false;
+                    out.push_str(name);
+                }
+                if comp.anchors.len() > 24 {
+                    out.push_str(", …");
+                }
+                out.push_str("]\n");
+            }
+        }
+    }
+
+    if let Some(template) = plan_template {
+        out.push_str("\nPlan template (engine-generated; read-only context):\n");
+        out.push_str(&serde_json::to_string(template).unwrap_or_else(|_| template.to_string()));
+        out.push('\n');
+    }
+
+    out.push_str("\n---\n\n");
+
+    out.push_str(
+        "PlanOps patching:\n\
+- Return ONLY: {\"version\":1,\"ops\":[ ... ]}.\n\
+- Prefer minimal ops; avoid restating or replacing large plan structures.\n\
+- Allowed PlanOp.kind values:\n\
+  - add_component\n\
+  - remove_component\n\
+  - set_attach_to\n\
+  - set_anchor\n\
+  - set_aim_components\n\
+  - set_attack_muzzle\n\
+  - set_reuse_groups\n\
+",
+    );
+    match preserve_edit_policy.trim() {
+        "additive" => {
+            out.push_str(
+                "Policy details (additive):\n\
+- Do NOT rewire existing components (do not change attach_to.parent / parent_anchor / child_anchor).\n\
+- Do NOT move existing components (do not change attach_to.offset).\n\
+- Only add new components and/or add new anchors.\n\
+- For repositioning, use `apply_draft_ops_v1` instead of replanning.\n",
+            );
+        }
+        "allow_offsets" => {
+            out.push_str(
+                "Policy details (allow_offsets):\n\
+- Do NOT rewire existing components (do not change attach_to.parent / parent_anchor / child_anchor).\n\
+- You MAY change attach_to.offset for existing components to adjust placement.\n\
+- Only add new components and/or add new anchors.\n",
+            );
+        }
+        "allow_rewire" => {
+            out.push_str(
+                "Policy details (allow_rewire):\n\
+- You MAY rewire ONLY the components named in `rewire_components` (explicit allow-list).\n\
+- For all other existing components, do NOT rewire and do NOT change offsets.\n",
+            );
+        }
+        _ => {}
+    }
+
+    out.push_str(
+        "Join frame reminder:\n\
+- For EVERY attachment, the join anchor axes must be in the same hemisphere:\n\
+  dot(parent_anchor.forward, child_anchor.forward) > 0 AND dot(parent_anchor.up, child_anchor.up) > 0.\n\
+- If you need a flip, encode it via `attach_to.offset` rotation; do NOT rely on opposed anchors.\n\
+- If you author any `attach_to.offset` rotation (`forward`/`up` or `rot_quat_xyzw`), you MUST set `attach_to.offset.rot_frame` explicitly (`join` or `parent`) or the engine will reject the plan.\n",
+    );
+
+    out.push_str(&format!("Speed mode: {}.\n", speed.label()));
+
+    if let Some(style) = style_hint.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        out.push_str("Additional style preference (use this unless the user notes forbid it): ");
+        out.push_str(style);
+        out.push('\n');
+    }
+    out.push_str(&build_gen3d_effective_user_prompt(
+        raw_prompt,
+        image_object_summary,
+    ));
+    out
 }
 
 pub(super) fn build_gen3d_component_system_instructions() -> String {

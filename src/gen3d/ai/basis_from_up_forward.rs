@@ -58,7 +58,9 @@ pub(super) fn basis_from_up_forward_v1(
             let proj = hint - up * hint.dot(up);
             if proj.length_squared() <= EPS {
                 let (f, axis_name) = choose_forward_perpendicular_to(up);
-                notes.push("forward_hint was parallel to up; used deterministic fallback axis".into());
+                notes.push(
+                    "forward_hint was parallel to up; used deterministic fallback axis".into(),
+                );
                 (f, "fallback", Some(axis_name))
             } else {
                 (proj.normalize(), "projected_forward_hint", None)
@@ -72,12 +74,17 @@ pub(super) fn basis_from_up_forward_v1(
     };
 
     if !is_finite_non_zero(forward) {
-        return Err("computed forward vector is degenerate (try a different `forward_hint`)".into());
+        return Err(
+            "computed forward vector is degenerate (try a different `forward_hint`)".into(),
+        );
     }
 
     let right_raw = up.cross(forward);
     if !is_finite_non_zero(right_raw) {
-        return Err("could not build a non-degenerate basis: `forward_hint` must not be parallel to `up`".into());
+        return Err(
+            "could not build a non-degenerate basis: `forward_hint` must not be parallel to `up`"
+                .into(),
+        );
     }
     let right = right_raw.normalize();
     let up_out = forward.cross(right).normalize_or_zero();
@@ -105,7 +112,10 @@ mod tests {
 
     fn assert_unit(v: Vec3, label: &str) {
         let l = v.length();
-        assert!((l - 1.0).abs() < 1e-3, "{label} not unit length: {l} v={v:?}");
+        assert!(
+            (l - 1.0).abs() < 1e-3,
+            "{label} not unit length: {l} v={v:?}"
+        );
     }
 
     fn assert_orthogonal(a: Vec3, b: Vec3, label: &str) {
@@ -126,16 +136,22 @@ mod tests {
         assert_orthogonal(basis.forward, basis.right, "forward/right");
         assert_orthogonal(basis.up, basis.right, "up/right");
 
-        assert!((basis.up - Vec3::Y).length() < 1e-3, "up drifted unexpectedly");
+        assert!(
+            (basis.up - Vec3::Y).length() < 1e-3,
+            "up drifted unexpectedly"
+        );
     }
 
     #[test]
     fn projected_forward_hint_preserves_up() {
-        let basis = basis_from_up_forward_v1(Vec3::Y, Some(Vec3::new(1.0, 0.0, 1.0)))
-            .expect("basis");
+        let basis =
+            basis_from_up_forward_v1(Vec3::Y, Some(Vec3::new(1.0, 0.0, 1.0))).expect("basis");
         assert_eq!(basis.forward_source, "projected_forward_hint");
         assert_eq!(basis.fallback_axis, None);
-        assert!((basis.up - Vec3::Y).length() < 1e-3, "up changed unexpectedly");
+        assert!(
+            (basis.up - Vec3::Y).length() < 1e-3,
+            "up changed unexpectedly"
+        );
         assert_orthogonal(basis.forward, basis.up, "forward/up");
     }
 
@@ -145,14 +161,14 @@ mod tests {
         assert_eq!(basis.forward_source, "fallback");
         assert_eq!(basis.fallback_axis, Some("x"));
         assert!(
-            basis
-                .notes
-                .iter()
-                .any(|n| n.contains("parallel to up")),
+            basis.notes.iter().any(|n| n.contains("parallel to up")),
             "expected fallback note, got {:?}",
             basis.notes
         );
-        assert!((basis.up - Vec3::Y).length() < 1e-3, "up changed unexpectedly");
+        assert!(
+            (basis.up - Vec3::Y).length() < 1e-3,
+            "up changed unexpectedly"
+        );
     }
 
     #[test]
@@ -161,4 +177,3 @@ mod tests {
         assert!(err.contains("up"), "unexpected error: {err}");
     }
 }
-

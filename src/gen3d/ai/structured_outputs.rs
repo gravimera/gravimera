@@ -4,6 +4,7 @@ use serde_json::json;
 pub(super) enum Gen3dAiJsonSchemaKind {
     AgentStepV1,
     PlanV1,
+    PlanOpsV1,
     ComponentDraftV1,
     ReviewDeltaV1,
     DescriptorMetaV1,
@@ -346,6 +347,107 @@ fn schema_plan() -> serde_json::Value {
     ])
 }
 
+fn schema_plan_op() -> serde_json::Value {
+    let add_component = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["add_component"]),
+            "name": schema_string(),
+            "size": schema_vec3(),
+            "purpose": schema_string(),
+            "modeling_notes": schema_string(),
+            "anchors": schema_array_of(schema_anchor()),
+            "contacts": schema_array_of(schema_contact()),
+            "attach_to": schema_nullable(schema_plan_attachment()),
+        },
+        "required": ["kind", "name", "size"],
+    });
+    let remove_component = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["remove_component"]),
+            "name": schema_string(),
+        },
+        "required": ["kind", "name"],
+    });
+    let set_attach_to = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_attach_to"]),
+            "component": schema_string(),
+            "set_attach_to": schema_nullable(schema_plan_attachment()),
+        },
+        "required": ["kind", "component", "set_attach_to"],
+    });
+    let set_anchor = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_anchor"]),
+            "component": schema_string(),
+            "anchor": schema_anchor(),
+        },
+        "required": ["kind", "component", "anchor"],
+    });
+    let set_aim_components = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_aim_components"]),
+            "components": schema_array_of(schema_string()),
+        },
+        "required": ["kind", "components"],
+    });
+    let set_attack_muzzle = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_attack_muzzle"]),
+            "component": schema_string(),
+            "anchor": schema_string(),
+        },
+        "required": ["kind", "component", "anchor"],
+    });
+    let set_reuse_groups = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_reuse_groups"]),
+            "reuse_groups": schema_array_of(schema_reuse_group()),
+        },
+        "required": ["kind", "reuse_groups"],
+    });
+
+    schema_any_of(vec![
+        add_component,
+        remove_component,
+        set_attach_to,
+        set_anchor,
+        set_aim_components,
+        set_attack_muzzle,
+        set_reuse_groups,
+    ])
+}
+
+fn schema_plan_ops() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "version": { "type": "integer", "enum": [1] },
+            "ops": {
+                "type": "array",
+                "items": schema_plan_op(),
+                "maxItems": 64
+            }
+        },
+        "required": ["version", "ops"],
+    })
+}
+
 fn schema_primitive_params() -> serde_json::Value {
     let capsule = schema_object(vec![
         ("kind", schema_enum(&["capsule"])),
@@ -629,6 +731,10 @@ pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchema
         Gen3dAiJsonSchemaKind::PlanV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_plan_v1",
             schema: schema_plan(),
+        },
+        Gen3dAiJsonSchemaKind::PlanOpsV1 => Gen3dAiJsonSchemaSpec {
+            name: "gen3d_plan_ops_v1",
+            schema: schema_plan_ops(),
         },
         Gen3dAiJsonSchemaKind::ComponentDraftV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_component_draft_v1",

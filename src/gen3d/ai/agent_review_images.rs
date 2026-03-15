@@ -29,13 +29,7 @@ pub(super) fn parse_strings_array_from_args(
 }
 
 pub(super) fn parse_review_preview_blob_ids_from_args(args: &serde_json::Value) -> Vec<String> {
-    parse_strings_array_from_args(
-        args,
-        &[
-            "preview_blob_ids",
-            "blob_ids",
-        ],
-    )
+    parse_strings_array_from_args(args, &["preview_blob_ids", "blob_ids"])
 }
 
 fn is_user_reference_photo_path(path: &Path) -> bool {
@@ -53,9 +47,16 @@ fn is_user_reference_photo_path(path: &Path) -> bool {
     false
 }
 
-pub(super) fn validate_review_images_for_llm(run_dir: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
-    let run_dir = std::fs::canonicalize(run_dir)
-        .map_err(|err| format!("Failed to canonicalize run_dir {}: {err}", run_dir.display()))?;
+pub(super) fn validate_review_images_for_llm(
+    run_dir: &Path,
+    paths: &[PathBuf],
+) -> Result<Vec<PathBuf>, String> {
+    let run_dir = std::fs::canonicalize(run_dir).map_err(|err| {
+        format!(
+            "Failed to canonicalize run_dir {}: {err}",
+            run_dir.display()
+        )
+    })?;
 
     let mut out: Vec<PathBuf> = Vec::with_capacity(paths.len());
     for path in paths {
@@ -185,12 +186,14 @@ pub(super) fn select_review_preview_blob_ids(
         out.extend(preview_blob_ids.iter().take(5).cloned());
     }
 
-    if include_move_sheet && !out.iter().any(|id| {
-        store
-            .blob_by_id(id.as_str())
-            .map(|blob| has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:move"))
-            .unwrap_or(false)
-    }) {
+    if include_move_sheet
+        && !out.iter().any(|id| {
+            store
+                .blob_by_id(id.as_str())
+                .map(|blob| has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:move"))
+                .unwrap_or(false)
+        })
+    {
         if let Some(id) = preview_blob_ids.iter().find(|id| {
             store
                 .blob_by_id(id.as_str())
@@ -200,12 +203,16 @@ pub(super) fn select_review_preview_blob_ids(
             out.push(id.clone());
         }
     }
-    if include_attack_sheet && !out.iter().any(|id| {
-        store
-            .blob_by_id(id.as_str())
-            .map(|blob| has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:attack"))
-            .unwrap_or(false)
-    }) {
+    if include_attack_sheet
+        && !out.iter().any(|id| {
+            store
+                .blob_by_id(id.as_str())
+                .map(|blob| {
+                    has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:attack")
+                })
+                .unwrap_or(false)
+        })
+    {
         if let Some(id) = preview_blob_ids.iter().find(|id| {
             store
                 .blob_by_id(id.as_str())

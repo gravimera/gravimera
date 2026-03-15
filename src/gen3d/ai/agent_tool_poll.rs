@@ -432,6 +432,9 @@ pub(super) fn poll_agent_tool(
             super::Gen3dAgentLlmToolKind::GeneratePlan => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1)
             }
+            super::Gen3dAgentLlmToolKind::GeneratePlanOps => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanOpsV1)
+            }
             super::Gen3dAgentLlmToolKind::GenerateComponent { .. }
             | super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1)
@@ -1194,6 +1197,268 @@ pub(super) fn poll_agent_tool(
                             ),
                         }
                         }
+                    }
+                }
+                super::Gen3dAgentLlmToolKind::GeneratePlanOps => {
+                    let text = resp.text;
+
+                    if let Some(dir) = job.pass_dir.as_deref() {
+                        write_gen3d_text_artifact(Some(dir), "plan_ops_raw.txt", text.trim());
+                    }
+
+                    let preserve_existing_components = call
+                        .args
+                        .get("constraints")
+                        .and_then(|v| v.get("preserve_existing_components"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(job.preserve_existing_components_mode);
+                    let preserve_edit_policy_raw = call
+                        .args
+                        .get("constraints")
+                        .and_then(|v| v.get("preserve_edit_policy"))
+                        .and_then(|v| v.as_str());
+                    let rewire_components: Vec<String> = call
+                        .args
+                        .get("constraints")
+                        .and_then(|v| v.get("rewire_components"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str())
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let scope_components: Vec<String> = call
+                        .args
+                        .get("scope_components")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str())
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let max_ops = call
+                        .args
+                        .get("max_ops")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(32)
+                        .clamp(1, 64) as usize;
+
+                    match super::plan_ops::apply_llm_generate_plan_ops_v1(
+                        job,
+                        draft,
+                        Some(call.call_id.as_str()),
+                        preserve_existing_components,
+                        preserve_edit_policy_raw,
+                        rewire_components.clone(),
+                        scope_components.clone(),
+                        max_ops,
+                        &text,
+                    ) {
+                        Ok(json) => Gen3dToolResultJsonV1::ok(
+                            call.call_id.clone(),
+                            call.tool_id.clone(),
+                            json,
+                        ),
+                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                            (Some(ai), Some(pass_dir)) => {
+                                let system =
+                                    super::prompts::build_gen3d_plan_ops_system_instructions();
+                                let prompt_override =
+                                    call.args.get("prompt").and_then(|v| v.as_str());
+
+                                #[derive(Debug, Deserialize)]
+                                #[serde(deny_unknown_fields)]
+                                struct InfoKvSelectorArgsV1 {
+                                    kind: String,
+                                    #[serde(default)]
+                                    kv_rev: Option<u64>,
+                                    #[serde(default)]
+                                    assembly_rev: Option<u32>,
+                                    #[serde(default)]
+                                    pass: Option<u32>,
+                                }
+                                #[derive(Debug, Deserialize)]
+                                #[serde(deny_unknown_fields)]
+                                struct PlanTemplateKvRefArgsV1 {
+                                    namespace: String,
+                                    key: String,
+                                    #[serde(default)]
+                                    selector: Option<InfoKvSelectorArgsV1>,
+                                }
+                                let plan_template_kv: Option<PlanTemplateKvRefArgsV1> =
+                                    match call.args.get("plan_template_kv").cloned() {
+                                        Some(value) => match serde_json::from_value(value) {
+                                            Ok(v) => Some(v),
+                                            Err(err) => {
+                                                warn!(
+                                                    "Gen3D: invalid plan_template_kv for schema repair: {err}"
+                                                );
+                                                None
+                                            }
+                                        },
+                                        None => None,
+                                    };
+
+                                let prompt_text = prompt_override
+                                    .map(|s| s.trim())
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| job.user_prompt_raw.clone());
+                                let preserve_edit_policy = preserve_edit_policy_raw
+                                    .map(|s| s.trim())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or("additive");
+
+                                let plan_template_json: Option<serde_json::Value> = (|| {
+                                    fn select_record<'a>(
+                                        store: &'a super::info_store::Gen3dInfoStore,
+                                        namespace: &str,
+                                        key: &str,
+                                        selector_kind: &str,
+                                        selector: Option<&InfoKvSelectorArgsV1>,
+                                    ) -> Option<&'a super::info_store::InfoKvRecord> {
+                                        match selector_kind {
+                                            "latest" => store.kv_latest_record(namespace, key),
+                                            "kv_rev" => {
+                                                let rev = selector.and_then(|s| s.kv_rev)?;
+                                                store
+                                                    .kv_record_by_rev(rev)
+                                                    .filter(|r| {
+                                                        r.key.namespace == namespace
+                                                            && r.key.key == key
+                                                    })
+                                            }
+                                            "as_of_assembly_rev" => {
+                                                let target =
+                                                    selector.and_then(|s| s.assembly_rev)?;
+                                                let mut best: Option<&super::info_store::InfoKvRecord> =
+                                                    None;
+                                                for rec in store.kv_records_for_key(namespace, key) {
+                                                    if rec.assembly_rev > target {
+                                                        continue;
+                                                    }
+                                                    best = match best {
+                                                        None => Some(rec),
+                                                        Some(prev) => {
+                                                            if rec.assembly_rev > prev.assembly_rev
+                                                                || (rec.assembly_rev
+                                                                    == prev.assembly_rev
+                                                                    && rec.kv_rev > prev.kv_rev)
+                                                            {
+                                                                Some(rec)
+                                                            } else {
+                                                                Some(prev)
+                                                            }
+                                                        }
+                                                    };
+                                                }
+                                                best
+                                            }
+                                            "as_of_pass" => {
+                                                let target = selector.and_then(|s| s.pass)?;
+                                                let mut best: Option<&super::info_store::InfoKvRecord> =
+                                                    None;
+                                                for rec in store.kv_records_for_key(namespace, key) {
+                                                    if rec.pass > target {
+                                                        continue;
+                                                    }
+                                                    best = match best {
+                                                        None => Some(rec),
+                                                        Some(prev) => {
+                                                            if rec.pass > prev.pass
+                                                                || (rec.pass == prev.pass
+                                                                    && rec.kv_rev > prev.kv_rev)
+                                                            {
+                                                                Some(rec)
+                                                            } else {
+                                                                Some(prev)
+                                                            }
+                                                        }
+                                                    };
+                                                }
+                                                best
+                                            }
+                                            _ => None,
+                                        }
+                                    }
+
+                                    let kv_ref = plan_template_kv.as_ref()?;
+                                    let namespace = kv_ref.namespace.trim();
+                                    let key = kv_ref.key.trim();
+                                    if namespace.is_empty() || key.is_empty() {
+                                        return None;
+                                    }
+                                    let selector_kind = kv_ref
+                                        .selector
+                                        .as_ref()
+                                        .map(|s| s.kind.trim())
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or("latest");
+                                    let store = job.ensure_info_store().ok()?;
+                                    let record = select_record(
+                                        store,
+                                        namespace,
+                                        key,
+                                        selector_kind,
+                                        kv_ref.selector.as_ref(),
+                                    )?;
+                                    (record.bytes <= 64 * 1024).then_some(record.value.clone())
+                                })();
+
+                                let image_object_summary = job
+                                    .user_image_object_summary
+                                    .as_ref()
+                                    .map(|s| s.text.as_str());
+                                let user_text =
+                                    super::prompts::build_gen3d_plan_ops_user_text_preserve_existing_components(
+                                        prompt_text.as_str(),
+                                        image_object_summary,
+                                        workshop.speed_mode,
+                                        None,
+                                        &job.planned_components,
+                                        &job.assembly_notes,
+                                        preserve_edit_policy,
+                                        &rewire_components,
+                                        plan_template_json.as_ref(),
+                                        &scope_components,
+                                        max_ops,
+                                    );
+
+                                if schedule_llm_tool_schema_repair(
+                                    job,
+                                    workshop,
+                                    &call,
+                                    kind,
+                                    ai,
+                                    &config.gen3d_reasoning_effort_repair,
+                                    pass_dir,
+                                    system,
+                                    user_text,
+                                    Vec::new(),
+                                    &err,
+                                    &text,
+                                    &format!("tool_plan_ops_{}", call.call_id),
+                                ) {
+                                    return;
+                                }
+                                Gen3dToolResultJsonV1::err(
+                                    call.call_id.clone(),
+                                    call.tool_id.clone(),
+                                    err,
+                                )
+                            }
+                            _ => Gen3dToolResultJsonV1::err(
+                                call.call_id.clone(),
+                                call.tool_id.clone(),
+                                err,
+                            ),
+                        },
                     }
                 }
                 super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => Gen3dToolResultJsonV1::err(
