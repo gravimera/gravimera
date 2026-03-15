@@ -20,7 +20,7 @@ flow, and tests will prevent regressions. The observable effect is fewer plan re
 - [x] Update tool registry + agent prompt text so the gate is discoverable and consistent.
 - [x] Add regression tests for the new gate (offline; no OpenAI calls).
 - [x] Update docs under `docs/gen3d/` to match the new contract.
-- [ ] Run `cargo test` and the required rendered smoke test, then commit with a clear message.
+- [x] Run `cargo test` and the required rendered smoke test, then commit with a clear message.
 
 ## Surprises & Discoveries
 
@@ -57,7 +57,9 @@ Mitigation options (pick at least one before enforcing the hard gate):
 
 ## Outcomes & Retrospective
 
-(Empty until implementation.)
+- Enforced template-first preserve-mode replanning: preserve-mode replans with an existing plan refuse to run without `plan_template_kv`.
+- Made `get_plan_template_v1` bounded and resilient: supports `mode`/`max_bytes`, auto-trims under budget, and returns `truncated` + `omitted_fields` for agent visibility.
+- Aligned prompt/tool registry/docs and added offline tests to prevent regressions.
 
 ## Context and Orientation
 
