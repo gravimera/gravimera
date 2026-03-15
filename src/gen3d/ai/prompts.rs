@@ -414,9 +414,7 @@ Hard requirements:\n\
 
     if let Some(template) = plan_template {
         out.push_str("\nPlan template (engine-generated; copy+edit):\n");
-        out.push_str(
-            &serde_json::to_string_pretty(template).unwrap_or_else(|_| template.to_string()),
-        );
+        out.push_str(&serde_json::to_string(template).unwrap_or_else(|_| template.to_string()));
         out.push('\n');
         out.push_str(
             "Template usage:\n\

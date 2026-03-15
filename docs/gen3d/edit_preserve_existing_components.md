@@ -37,9 +37,12 @@ When preserve-mode replanning fails, prefer deterministic “hints/tools” that
 
 - If `llm_generate_plan_v1` fails with a **semantic** error (unknown parent/root, missing required existing names, policy rejection), call:
   - `inspect_plan_v1` (read-only) to get computed constraints (allowed names/root/policy) and structured error kinds.
-- If preserve-mode replanning keeps failing, call:
-  - `get_plan_template_v1` (read-only) to write a plan JSON template into the Info Store (KV), then
-  - re-run `llm_generate_plan_v1` with `plan_template_kv` set to the returned KV reference.
+- Preserve-mode replanning with an existing plan requires a template:
+  - Call `get_plan_template_v1` (read-only) to write a plan JSON template into the Info Store (KV), then
+  - re-run `llm_generate_plan_v1` with `plan_template_kv` set to the returned `plan_template_kv`.
+  - The engine refuses preserve-mode replans without `plan_template_kv`.
+
+Note: `get_plan_template_v1` may return `truncated=true` with `omitted_fields[]` when it must produce a lean template under its `max_bytes` budget. If it still fails due to size or storage errors, disable preserve mode for replanning (`constraints.preserve_existing_components=false`) or simplify the assembly before templating.
 
 Note: if the model output is invalid JSON or fails the plan JSON schema, the engine may attempt an automatic “schema repair” retry of `llm_generate_plan_v1`. In preserve mode, this retry includes the same preserve-mode constraints/context (and the template, if provided) so it does not accidentally “forget” existing component names.
 

@@ -14,12 +14,12 @@ flow, and tests will prevent regressions. The observable effect is fewer plan re
 
 ## Progress
 
-- [ ] (2026-03-14) Audit current preserve-mode replanning flow and locate the `llm_generate_plan_v1` dispatch + prompt builders.
-- [ ] Audit template size/availability constraints (`get_plan_template_v1` max bytes; Info Store requirements) and add a non-deadlocking recovery path.
-- [ ] Implement a tool-level gate: preserve-mode replans require `plan_template_kv` when an existing plan is present.
-- [ ] Update tool registry + agent prompt text so the gate is discoverable and consistent.
-- [ ] Add regression tests for the new gate (offline; no OpenAI calls).
-- [ ] Update docs under `docs/gen3d/` to match the new contract.
+- [x] (2026-03-14) Audit current preserve-mode replanning flow and locate the `llm_generate_plan_v1` dispatch + prompt builders.
+- [x] Audit template size/availability constraints (`get_plan_template_v1` max bytes; Info Store requirements) and add a non-deadlocking recovery path.
+- [x] Implement a tool-level gate: preserve-mode replans require `plan_template_kv` when an existing plan is present.
+- [x] Update tool registry + agent prompt text so the gate is discoverable and consistent.
+- [x] Add regression tests for the new gate (offline; no OpenAI calls).
+- [x] Update docs under `docs/gen3d/` to match the new contract.
 - [ ] Run `cargo test` and the required rendered smoke test, then commit with a clear message.
 
 ## Surprises & Discoveries

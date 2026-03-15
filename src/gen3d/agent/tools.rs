@@ -156,9 +156,10 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 tool_id: TOOL_ID_GET_PLAN_TEMPLATE,
                 title: "Get plan template",
                 one_line_summary:
-                    "Read-only: write a preserve-mode plan template into the Info Store (KV) for safe copy+edit preserve-mode replans.",
-                args_schema: "{ version?: 1 }",
-                args_example: serde_json::json!({ "version": 1 }),
+                    "Read-only: write a preserve-mode replan template into the Info Store (KV). Preserve-mode replanning with an existing plan requires this template (plan_template_kv).",
+                args_schema:
+                    "{ version?: 2, mode?: \"auto\"|\"full\"|\"lean\", max_bytes?: number }",
+                args_example: serde_json::json!({ "version": 2, "mode": "auto" }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_QUERY_COMPONENT_PARTS,
@@ -439,13 +440,13 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 tool_id: TOOL_ID_LLM_GENERATE_PLAN,
                 title: "LLM: generate plan",
                 one_line_summary:
-                    "LLM+mutates: generate/replace the component plan; preserve-mode diffs are policy-validated (constraints.preserve_edit_policy).",
+                    "LLM+mutates: generate/replace the component plan; preserve-mode diffs are policy-validated (constraints.preserve_edit_policy). Preserve-mode replans with an existing plan require plan_template_kv (call get_plan_template_v1 first).",
                 args_schema:
                     "{ prompt?: string, style?: string, plan_template_kv?: { namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number } }, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, components?: string[] }",
                 args_example: serde_json::json!({
+                    "prompt": "Plan a simple 3-component object.",
                     "constraints": {
-                        "preserve_existing_components": true,
-                        "preserve_edit_policy": "additive"
+                        "preserve_existing_components": false
                     }
                 }),
             },

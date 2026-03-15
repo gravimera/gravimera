@@ -111,6 +111,174 @@ fn normalize_tool_call_args(call: &mut Gen3dToolCallJsonV1) -> Result<(), String
     }
 }
 
+const MAX_PLAN_TEMPLATE_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlanTemplateMode {
+    Auto,
+    Full,
+    Lean,
+}
+
+fn parse_plan_template_mode(raw: Option<&str>) -> Result<PlanTemplateMode, String> {
+    let mode = raw.unwrap_or("auto").trim();
+    match mode {
+        "auto" => Ok(PlanTemplateMode::Auto),
+        "full" => Ok(PlanTemplateMode::Full),
+        "lean" => Ok(PlanTemplateMode::Lean),
+        other => Err(format!(
+            "Invalid mode={other:?}. Expected one of: \"auto\", \"full\", \"lean\"."
+        )),
+    }
+}
+
+fn plan_template_mode_label(mode: PlanTemplateMode) -> &'static str {
+    match mode {
+        PlanTemplateMode::Auto => "auto",
+        PlanTemplateMode::Full => "full",
+        PlanTemplateMode::Lean => "lean",
+    }
+}
+
+fn json_compact_bytes(v: &serde_json::Value) -> usize {
+    serde_json::to_vec(v).map(|v| v.len()).unwrap_or(0)
+}
+
+fn strip_plan_template_modeling_notes(plan: &mut serde_json::Value) -> bool {
+    let Some(components) = plan.get_mut("components").and_then(|v| v.as_array_mut()) else {
+        return false;
+    };
+    let mut changed = false;
+    for comp in components.iter_mut() {
+        let Some(obj) = comp.as_object_mut() else {
+            continue;
+        };
+        let notes = obj
+            .entry("modeling_notes")
+            .or_insert_with(|| serde_json::Value::String(String::new()));
+        if notes.as_str().is_some_and(|s| !s.is_empty()) {
+            changed = true;
+        }
+        *notes = serde_json::Value::String(String::new());
+    }
+    changed
+}
+
+fn strip_plan_template_contacts(plan: &mut serde_json::Value) -> bool {
+    let Some(components) = plan.get_mut("components").and_then(|v| v.as_array_mut()) else {
+        return false;
+    };
+    let mut changed = false;
+    for comp in components.iter_mut() {
+        let Some(obj) = comp.as_object_mut() else {
+            continue;
+        };
+        let contacts = obj
+            .entry("contacts")
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        if contacts.as_array().is_some_and(|arr| !arr.is_empty()) {
+            changed = true;
+        }
+        *contacts = serde_json::Value::Array(Vec::new());
+    }
+    changed
+}
+
+fn strip_plan_template_assembly_notes(plan: &mut serde_json::Value) -> bool {
+    let Some(obj) = plan.as_object_mut() else {
+        return false;
+    };
+    let notes = obj
+        .entry("assembly_notes")
+        .or_insert_with(|| serde_json::Value::String(String::new()));
+    let changed = notes.as_str().is_some_and(|s| !s.is_empty());
+    *notes = serde_json::Value::String(String::new());
+    changed
+}
+
+#[derive(Clone, Debug)]
+struct PlanTemplateFitReport {
+    bytes_full: usize,
+    bytes: usize,
+    truncated: bool,
+    omitted_fields: Vec<&'static str>,
+}
+
+fn fit_plan_template_to_budget(
+    mut plan: serde_json::Value,
+    mode: PlanTemplateMode,
+    max_bytes: usize,
+) -> Result<(serde_json::Value, PlanTemplateFitReport), String> {
+    let bytes_full = json_compact_bytes(&plan);
+    let mut bytes = bytes_full;
+    let mut omitted_fields: Vec<&'static str> = Vec::new();
+
+    if mode == PlanTemplateMode::Lean {
+        if strip_plan_template_modeling_notes(&mut plan) {
+            omitted_fields.push("components[].modeling_notes");
+        }
+        if strip_plan_template_contacts(&mut plan) {
+            omitted_fields.push("components[].contacts");
+        }
+        bytes = json_compact_bytes(&plan);
+    }
+
+    if bytes > max_bytes {
+        if mode == PlanTemplateMode::Full {
+            return Err(format!(
+                "output is too large ({bytes} bytes > max_bytes={max_bytes}). Retry with mode=\"auto\" or mode=\"lean\"."
+            ));
+        }
+
+        if strip_plan_template_modeling_notes(&mut plan) {
+            omitted_fields.push("components[].modeling_notes");
+        }
+        bytes = json_compact_bytes(&plan);
+        if bytes > max_bytes {
+            if strip_plan_template_contacts(&mut plan) {
+                omitted_fields.push("components[].contacts");
+            }
+            if strip_plan_template_assembly_notes(&mut plan) {
+                omitted_fields.push("assembly_notes");
+            }
+            bytes = json_compact_bytes(&plan);
+        }
+    }
+
+    if bytes > max_bytes {
+        return Err(format!(
+            "output is too large ({bytes} bytes > max_bytes={max_bytes}) even after lean trimming."
+        ));
+    }
+
+    omitted_fields.sort();
+    omitted_fields.dedup();
+
+    Ok((
+        plan,
+        PlanTemplateFitReport {
+            bytes_full,
+            bytes,
+            truncated: !omitted_fields.is_empty(),
+            omitted_fields,
+        },
+    ))
+}
+
+fn should_require_plan_template_kv_for_preserve_replan(
+    preserve_existing_components: bool,
+    planned_components_len: usize,
+    plan_template_kv_present: bool,
+) -> bool {
+    preserve_existing_components && planned_components_len > 0 && !plan_template_kv_present
+}
+
+fn preserve_replan_missing_template_error() -> String {
+    format!(
+        "Preserve-mode replanning requires `plan_template_kv`. Call `{TOOL_ID_GET_PLAN_TEMPLATE}` first, then retry `{TOOL_ID_LLM_GENERATE_PLAN}` with the returned `plan_template_kv`."
+    )
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InfoKvSelectorArgsV1 {
@@ -723,6 +891,10 @@ pub(super) fn execute_tool_call(
             struct GetPlanTemplateArgsV1 {
                 #[serde(default)]
                 version: u32,
+                #[serde(default)]
+                mode: Option<String>,
+                #[serde(default)]
+                max_bytes: Option<u32>,
             }
 
             let args: GetPlanTemplateArgsV1 = match serde_json::from_value(call.args) {
@@ -735,7 +907,7 @@ pub(super) fn execute_tool_call(
                     ));
                 }
             };
-            if args.version != 0 && args.version != 1 {
+            if args.version != 0 && args.version != 1 && args.version != 2 {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
@@ -745,6 +917,22 @@ pub(super) fn execute_tool_call(
                     ),
                 ));
             }
+
+            let mode = match parse_plan_template_mode(args.mode.as_deref()) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid `{TOOL_ID_GET_PLAN_TEMPLATE}` args: {err}"),
+                    ));
+                }
+            };
+
+            let max_bytes = args
+                .max_bytes
+                .unwrap_or(MAX_PLAN_TEMPLATE_BYTES as u32)
+                .clamp(1024, MAX_PLAN_TEMPLATE_BYTES as u32) as usize;
 
             let Some(pass_dir) = job.pass_dir.as_deref() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -772,19 +960,21 @@ pub(super) fn execute_tool_call(
                 }
             };
 
-            let plan_pretty =
-                serde_json::to_string_pretty(&plan).unwrap_or_else(|_| plan.to_string());
-            let bytes = plan_pretty.as_bytes().len();
-            const MAX_TEMPLATE_BYTES: usize = 60 * 1024;
-            if bytes > MAX_TEMPLATE_BYTES {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    format!(
-                        "`{TOOL_ID_GET_PLAN_TEMPLATE}` output is too large ({bytes} bytes > {MAX_TEMPLATE_BYTES}). Use `get_scene_graph_summary_v1` or simplify the plan before templating."
-                    ),
-                ));
-            }
+            let (plan, fit) = match fit_plan_template_to_budget(plan, mode, max_bytes) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("`{TOOL_ID_GET_PLAN_TEMPLATE}` {err} Disable preserve mode for replanning (constraints.preserve_existing_components=false) or simplify the assembly before templating."),
+                    ));
+                }
+            };
+
+            let bytes_full = fit.bytes_full;
+            let bytes = fit.bytes;
+            let truncated = fit.truncated;
+            let omitted_fields = fit.omitted_fields;
 
             let filename = format!("plan_template_{}.json", sanitize_prefix(&call.call_id));
             write_gen3d_json_artifact(Some(pass_dir), &filename, &plan);
@@ -811,7 +1001,9 @@ pub(super) fn execute_tool_call(
                     namespace,
                     key.as_str(),
                     plan.clone(),
-                    format!("plan template preserve_mode v1 (components={components_total})"),
+                    format!(
+                        "plan template preserve_mode v1 (components={components_total}, bytes={bytes}, truncated={truncated})"
+                    ),
                     Some(super::info_store::InfoProvenance {
                         tool_id: call.tool_id.clone(),
                         call_id: call.call_id.clone(),
@@ -840,13 +1032,18 @@ pub(super) fn execute_tool_call(
                 call.call_id,
                 call.tool_id,
                 serde_json::json!({
-                    "version": 1,
-                    "plan_template_kv": {
-                        "namespace": namespace,
-                        "key": key,
-                        "selector": { "kind": "kv_rev", "kv_rev": record.kv_rev },
-                    },
-                    "bytes": bytes,
+                        "version": 2,
+                        "plan_template_kv": {
+                            "namespace": namespace,
+                            "key": key,
+                            "selector": { "kind": "kv_rev", "kv_rev": record.kv_rev },
+                        },
+                        "mode": plan_template_mode_label(mode),
+                        "max_bytes": max_bytes,
+                        "bytes": record.bytes,
+                        "bytes_full": bytes_full,
+                        "truncated": truncated,
+                    "omitted_fields": omitted_fields,
                     "components_total": components_total,
                 }),
             ))
@@ -3679,15 +3876,6 @@ pub(super) fn execute_tool_call(
                 ));
             };
 
-            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
-            job.shared_result = Some(shared.clone());
-            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
-                message: "Generating plan…".into(),
-            }));
-            job.shared_progress = Some(progress.clone());
-            set_progress(&progress, "Calling model for plan…");
-            job.agent.pending_llm_repair_attempt = 0;
-
             let system = super::prompts::build_gen3d_plan_system_instructions();
             let prompt_override = call.args.get("prompt").and_then(|v| v.as_str());
             let style_hint = call.args.get("style").and_then(|v| v.as_str());
@@ -3720,6 +3908,17 @@ pub(super) fn execute_tool_call(
                 .and_then(|v| v.get("preserve_existing_components"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(job.preserve_existing_components_mode);
+            if should_require_plan_template_kv_for_preserve_replan(
+                preserve_existing_components,
+                job.planned_components.len(),
+                plan_template_kv.is_some(),
+            ) {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    preserve_replan_missing_template_error(),
+                ));
+            }
             let preserve_edit_policy = call
                 .args
                 .get("constraints")
@@ -3841,7 +4040,7 @@ pub(super) fn execute_tool_call(
                         call.call_id,
                         call.tool_id,
                         format!(
-                            "plan_template_kv is too large ({} bytes). Re-generate a smaller template or replan without a template.",
+                            "plan_template_kv is too large ({} bytes). Re-generate a smaller template via `{TOOL_ID_GET_PLAN_TEMPLATE}` (mode=\"auto\" or mode=\"lean\") and retry.",
                             record.bytes
                         ),
                     ));
@@ -3886,6 +4085,16 @@ pub(super) fn execute_tool_call(
                 ai.model_reasoning_effort(),
                 &config.gen3d_reasoning_effort_plan,
             );
+
+            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+            job.shared_result = Some(shared.clone());
+            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+                message: "Generating plan…".into(),
+            }));
+            job.shared_progress = Some(progress.clone());
+            set_progress(&progress, "Calling model for plan…");
+            job.agent.pending_llm_repair_attempt = 0;
+
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
@@ -5418,5 +5627,109 @@ mod tests {
         assert!(err.contains("Unknown selector.kind"), "{err}");
 
         let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn preserve_replan_template_gate_is_actionable() {
+        assert!(super::should_require_plan_template_kv_for_preserve_replan(
+            true, 1, false
+        ));
+        assert!(!super::should_require_plan_template_kv_for_preserve_replan(
+            false, 1, false
+        ));
+        assert!(!super::should_require_plan_template_kv_for_preserve_replan(
+            true, 0, false
+        ));
+        assert!(!super::should_require_plan_template_kv_for_preserve_replan(
+            true, 3, true
+        ));
+
+        let msg = super::preserve_replan_missing_template_error();
+        assert!(
+            msg.contains(super::TOOL_ID_GET_PLAN_TEMPLATE)
+                && msg.contains(super::TOOL_ID_LLM_GENERATE_PLAN)
+                && msg.contains("plan_template_kv"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn plan_template_auto_trims_to_budget() {
+        let long_notes = "x".repeat(2200);
+        let long_assembly = "a".repeat(2200);
+        let contacts = vec!["c"; 64];
+        let components: Vec<serde_json::Value> = (0..10)
+            .map(|idx| {
+                serde_json::json!({
+                    "name": format!("c{idx}"),
+                    "purpose": "",
+                    "modeling_notes": long_notes.as_str(),
+                    "size": [1.0, 1.0, 1.0],
+                    "anchors": [],
+                    "contacts": contacts.clone(),
+                    "attach_to": if idx == 0 { serde_json::Value::Null } else { serde_json::json!({"parent":"c0","parent_anchor":"origin","child_anchor":"origin"}) },
+                })
+            })
+            .collect();
+        let plan = serde_json::json!({
+            "version": 8,
+            "assembly_notes": long_assembly,
+            "mobility": { "kind": "static" },
+            "root_component": "c0",
+            "components": components,
+        });
+
+        let max_bytes = 4096;
+        let (trimmed, report) =
+            super::fit_plan_template_to_budget(plan, super::PlanTemplateMode::Auto, max_bytes)
+                .expect("should fit after trimming");
+        assert!(report.bytes_full > report.bytes, "{report:?}");
+        assert!(report.bytes <= max_bytes, "{report:?}");
+        assert!(report.truncated, "{report:?}");
+        assert!(
+            report
+                .omitted_fields
+                .contains(&"components[].modeling_notes"),
+            "{report:?}"
+        );
+        assert!(
+            report.omitted_fields.contains(&"components[].contacts"),
+            "{report:?}"
+        );
+        assert!(
+            report.omitted_fields.contains(&"assembly_notes"),
+            "{report:?}"
+        );
+
+        assert!(super::json_compact_bytes(&trimmed) <= max_bytes);
+        assert_eq!(
+            trimmed
+                .get("assembly_notes")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<missing>"),
+            ""
+        );
+        let comp0_notes = trimmed
+            .get("components")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("modeling_notes"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("<missing>");
+        assert_eq!(comp0_notes, "");
+    }
+
+    #[test]
+    fn plan_template_full_mode_errors_over_budget() {
+        let plan = serde_json::json!({
+            "version": 8,
+            "assembly_notes": "a".repeat(4096),
+            "components": [
+                { "name": "c0", "modeling_notes": "x".repeat(4096), "contacts": vec!["c"; 32] }
+            ],
+        });
+        let err = super::fit_plan_template_to_budget(plan, super::PlanTemplateMode::Full, 1024)
+            .expect_err("full mode should error");
+        assert!(err.contains("Retry with mode"), "{err}");
     }
 }

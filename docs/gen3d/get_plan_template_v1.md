@@ -8,8 +8,8 @@ The intent is to give the agent a deterministic “starting JSON” for preserve
 
 Use it in preserve-existing-components edit sessions when:
 
-- `llm_generate_plan_v1` fails due to missing existing component names/root mismatch, or
-- you want a safe “copy and edit” starting point for a preserve-mode patch.
+- you are about to do a preserve-mode replan (the engine requires `plan_template_kv` when an existing plan is present), or
+- `llm_generate_plan_v1` fails due to missing existing component names/root mismatch and you want a safe “copy and edit” starting point.
 
 ## What it writes
 
@@ -23,12 +23,17 @@ The artifact is a **plan JSON (version 8)** derived from current engine state:
 
 The template is intended to be **copied and minimally edited** by `llm_generate_plan_v1` (see below).
 
-## Tool output (v1)
+## Tool output (v2)
 
 The tool returns:
 
 - `plan_template_kv`: KV reference (namespace + key + selector) that can be inspected via `info_kv_get_v1` and passed into `llm_generate_plan_v1`,
-- `bytes`: size of the written JSON,
+- `mode`: `"auto"|"full"|"lean"` (what was requested),
+- `max_bytes`: the enforced byte budget (clamped),
+- `bytes`: size of the stored JSON value written to the Info Store (compact JSON bytes),
+- `bytes_full`: size before any trimming,
+- `truncated`: whether the tool produced a trimmed/lean template to fit `max_bytes`,
+- `omitted_fields`: which fields were stripped (bounded; example values: `"assembly_notes"`, `"components[].modeling_notes"`, `"components[].contacts"`),
 - `components_total`: number of components in the template.
 
 ## Using it with `llm_generate_plan_v1`
@@ -47,3 +52,11 @@ Recommended flow in preserve mode:
    - `plan_template_kv` set to the returned `plan_template_kv`
 
 The engine injects the template JSON into the plan prompt as “copy+edit” context. The engine does **not** apply any edits silently; the plan is still produced by the model and validated normally.
+
+## Args (v2)
+
+- `mode`:
+  - `"auto"` (default): return a full template when it fits; otherwise return a lean template under budget.
+  - `"full"`: refuse if the full template exceeds `max_bytes`.
+  - `"lean"`: prefer a smaller template (may omit text-heavy fields even if a full template would fit).
+- `max_bytes`: optional override (clamped to the engine’s maximum accepted template size).
