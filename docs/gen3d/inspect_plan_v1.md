@@ -41,4 +41,5 @@ Notes:
 - Preserve-mode replanning with an existing plan requires `plan_template_kv`: call `get_plan_template_v1`, then re-run `llm_generate_plan_v1` with `plan_template_kv`.
 - If the error is “unknown parent”: fix the plan to use an existing component name exactly (case-sensitive); consider using the template as a starting point.
 - If the error is local and you can express an explicit patch (rename a parent, add a missing component definition, add missing anchors): consider `apply_plan_ops_v1` instead of a full replan.
+- If you want to apply a local, explicit patch to the current accepted plan (no pending rejected attempt), call `apply_plan_ops_v1` with `base_plan="current"`.
 - If the error is a preserve edit-policy violation: either broaden `constraints.preserve_edit_policy`, use `apply_draft_ops_v1`, or disable preserve mode for a full rebuild.

@@ -10,6 +10,7 @@ Use it in preserve-existing-components edit sessions when:
 
 - you are about to do a preserve-mode replan (the engine requires `plan_template_kv` when an existing plan is present), or
 - `llm_generate_plan_v1` fails due to missing existing component names/root mismatch and you want a safe “copy and edit” starting point.
+- the template is too large to store/prompt-inject comfortably and you want to reduce anchor detail via `scope_components` (for example, keep full anchors for `["head","neck"]` when adding a hat).
 
 ## What it writes
 
@@ -29,6 +30,12 @@ The tool returns:
 
 - `plan_template_kv`: KV reference (namespace + key + selector) that can be inspected via `info_kv_get_v1` and passed into `llm_generate_plan_v1`,
 - `mode`: `"auto"|"full"|"lean"` (what was requested),
+- `scoped`: whether a `scope_components` anchor-scope was applied,
+- `scope_components_total` / `scope_components_sample`: how many scope components were requested (and a bounded sample),
+- `anchors_total_full`: total anchors in the full template before any scoping,
+- `anchors_total`: total anchors after scoping (equals `anchors_total_full` when `scoped=false`),
+- `anchors_dropped`: how many anchors were removed by scoping,
+- `components_with_anchors_trimmed`: how many components had their anchors reduced by scoping,
 - `max_bytes`: the enforced byte budget (clamped),
 - `bytes`: size of the stored JSON value written to the Info Store (compact JSON bytes),
 - `bytes_full`: size before any trimming,
@@ -60,3 +67,4 @@ The engine injects the template JSON into the plan prompt as “copy+edit” con
   - `"full"`: refuse if the full template exceeds `max_bytes`.
   - `"lean"`: prefer a smaller template (may omit text-heavy fields even if a full template would fit).
 - `max_bytes`: optional override (clamped to the engine’s maximum accepted template size).
+- `scope_components`: optional list of **existing component names** to keep “full anchor detail” for. When provided, the template keeps all anchors for the scoped components, and trims anchors for non-scoped components down to only those required for the existing plan graph (attachments, contacts, attack muzzle). This is deterministic and can reduce template size for large plans.

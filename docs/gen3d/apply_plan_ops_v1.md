@@ -1,8 +1,12 @@
 # `apply_plan_ops_v1` (Gen3D tool)
 
-`apply_plan_ops_v1` is a **deterministic mutation** tool for repairing a **pending rejected plan attempt** after `llm_generate_plan_v1` produced schema-valid JSON that failed *semantic* validation (unknown parent, missing anchors, preserve-mode diff rejection, etc).
+`apply_plan_ops_v1` is a **deterministic mutation** tool for patching a plan using explicit **PlanOps**.
 
-It applies explicit **PlanOps** to `job.pending_plan_attempt.plan`, re-runs semantic validation, and:
+By default (`base_plan="pending"`), it repairs a **pending rejected plan attempt** after `llm_generate_plan_v1` produced schema-valid JSON that failed *semantic* validation (unknown parent, missing anchors, preserve-mode diff rejection, etc).
+
+With `base_plan="current"`, it patches the **current accepted plan** (no rejected attempt required). If the patched plan fails semantic validation, the engine captures it as `job.pending_plan_attempt` so you can follow up with `inspect_plan_v1` and/or another `apply_plan_ops_v1` call.
+
+It applies explicit **PlanOps** to the selected base plan, re-runs semantic validation, and:
 
 - If the plan becomes valid: **accepts** it (clears `pending_plan_attempt`, updates `planned_components`, updates `assembly_rev`).
 - If still invalid: keeps the patched plan as the pending attempt and returns bounded diagnostics so the agent can patch again (or replan).
@@ -23,13 +27,16 @@ Use `apply_plan_ops_v1` when:
   - fix an incorrect `attach_to.parent` name,
   - add a missing anchor required by an attachment,
   - update `aim.components` or `attack.muzzle`.
+- You have a local, explicit plan change you want to make **without** re-running `llm_generate_plan_v1` (use `base_plan="current"`).
 
 For diagnosis first, prefer `inspect_plan_v1`.
 
 ## Args (v1)
 
 - `version?: 1`
+- `base_plan?: "pending"|"current"` (default `"pending"`)
 - `dry_run?: bool` (default `false`)
+- `constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: "additive"|"allow_offsets"|"allow_rewire", rewire_components?: string[] }`
 - `ops: PlanOp[]` (max 64)
 
 Supported `PlanOp.kind` values:
@@ -56,6 +63,29 @@ Key fields:
 
 ## Example
 
+Patch the current accepted plan (use `dry_run` first):
+
+```json
+{
+  "version": 1,
+  "base_plan": "current",
+  "dry_run": true,
+  "ops": [
+    { "kind": "add_component", "name": "hat", "size": [0.3, 0.2, 0.3] },
+    {
+      "kind": "set_attach_to",
+      "component": "hat",
+      "set_attach_to": {
+        "parent": "head",
+        "parent_anchor": "origin",
+        "child_anchor": "origin",
+        "offset": { "pos": [0.0, 0.15, 0.0] }
+      }
+    }
+  ]
+}
+```
+
 After `inspect_plan_v1` reports a missing referenced component `arm_lower_r`, add it and attach it (use `dry_run` first):
 
 ```json
@@ -77,4 +107,3 @@ After `inspect_plan_v1` reports a missing referenced component `arm_lower_r`, ad
   ]
 }
 ```
-

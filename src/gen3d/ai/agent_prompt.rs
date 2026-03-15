@@ -105,10 +105,11 @@ Rules:\n\
     - For rewires, set `preserve_edit_policy` to `allow_rewire` and provide `constraints.rewire_components` as an explicit allow-list.\n\
 	  - Preserve-mode planning helpers (no silent mutation):\n\
 	    - If `llm_generate_plan_v1` fails with a semantic error (unknown parent/root, missing required names, policy diff rejection), call `inspect_plan_v1` next (NOT `get_scene_graph_summary_v1`).\n\
-	    - If the fix is local/deterministic (rename a parent, add a missing component definition, add missing anchors), you MAY call `apply_plan_ops_v1` to patch the pending rejected plan attempt and revalidate (instead of rerunning `llm_generate_plan_v1`).\n\
+	    - If the fix is local/deterministic (rename a parent, add a missing component definition, add missing anchors), you MAY call `apply_plan_ops_v1` to patch and revalidate (base_plan=\"pending\" patches the pending rejected attempt; base_plan=\"current\" patches the current accepted plan) instead of rerunning `llm_generate_plan_v1`.\n\
 	    - Preserve-mode replanning with an existing plan requires a template:\n\
 	      - Call `get_plan_template_v1` first (mode=\"auto\"), then call `llm_generate_plan_v1` with `plan_template_kv`.\n\
 	      - The tool will refuse preserve-mode replans without `plan_template_kv`.\n\
+	      - If the template is too large, retry `get_plan_template_v1` with `mode=\"lean\"` and/or `scope_components=[...]`.\n\
 	  - To explicitly regenerate already-generated components in preserve mode, pass force=true (regen budgets still apply).\n\
 	  - IMPORTANT: `force=true` regeneration is ONLY allowed when the latest QA indicates errors.\n\
     - The engine refuses force-regeneration unless `state_summary.qa.last_validate_ok=false` OR `state_summary.qa.last_smoke_ok=false`.\n\

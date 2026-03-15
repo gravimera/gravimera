@@ -126,9 +126,9 @@ impl Gen3dToolRegistryV1 {
                 tool_id: TOOL_ID_APPLY_PLAN_OPS,
                 title: "Apply plan ops",
                 one_line_summary:
-                    "Mutates pending plan: apply deterministic ops to the last rejected llm_generate_plan_v1 plan attempt (job.pending_plan_attempt), revalidate, and accept if valid (clears pending_plan_attempt). Writes plan_ops.jsonl + apply_plan_ops_last.json.",
+                    "Mutates plan: apply deterministic ops to either (a) the pending rejected plan attempt (base_plan=\"pending\") or (b) the current accepted plan (base_plan=\"current\"), revalidate, and accept if valid. Writes plan_ops.jsonl + apply_plan_ops_last.json.",
                 args_schema:
-                    "{ version?: 1, dry_run?: bool, ops: PlanOp[] }\n\
+                    "{ version?: 1, base_plan?: \"pending\"|\"current\", constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, dry_run?: bool, ops: PlanOp[] }\n\
 \n\
 PlanOp =\n\
   | { kind:\"add_component\", name:string, size:[number,number,number], purpose?:string, modeling_notes?:string, anchors?:Anchor[], contacts?:Contact[], attach_to?:Attachment }\n\
@@ -145,6 +145,7 @@ Attachment = { parent:string, parent_anchor:string, child_anchor:string, offset?
 Joint = { kind:\"fixed\"|\"hinge\"|\"ball\"|\"free\", axis_join?:[number,number,number], limits_degrees?:[number,number], swing_limits_degrees?:[number,number], twist_limits_degrees?:[number,number] }\n\
 ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string, mode?:string, anchors?:string }",
                 args_example: serde_json::json!({
+                    "base_plan": "current",
                     "dry_run": true,
                     "ops": [
                         { "kind": "add_component", "name": "arm_lower_r", "size": [0.3, 0.2, 0.2] },
@@ -156,9 +157,9 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 tool_id: TOOL_ID_GET_PLAN_TEMPLATE,
                 title: "Get plan template",
                 one_line_summary:
-                    "Read-only: write a preserve-mode replan template into the Info Store (KV). Preserve-mode replanning with an existing plan requires this template (plan_template_kv).",
+                    "Read-only: write a preserve-mode replan template into the Info Store (KV). Optional scope_components trims anchors for non-scope components. Preserve-mode replanning with an existing plan requires this template (plan_template_kv).",
                 args_schema:
-                    "{ version?: 2, mode?: \"auto\"|\"full\"|\"lean\", max_bytes?: number }",
+                    "{ version?: 2, mode?: \"auto\"|\"full\"|\"lean\", max_bytes?: number, scope_components?: string[] }",
                 args_example: serde_json::json!({ "version": 2, "mode": "auto" }),
             },
             Gen3dToolDescriptorV1 {

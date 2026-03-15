@@ -196,6 +196,224 @@ fn strip_plan_template_assembly_notes(plan: &mut serde_json::Value) -> bool {
     changed
 }
 
+#[derive(Clone, Debug, Default)]
+struct PlanTemplateScopeReport {
+    scoped: bool,
+    scope_components_total: usize,
+    scope_components_sample: Vec<String>,
+    anchors_total_full: usize,
+    anchors_total: usize,
+    anchors_dropped: usize,
+    components_with_anchors_trimmed: usize,
+}
+
+fn is_origin_anchor_name(raw: &str) -> bool {
+    let name = raw.trim();
+    name.is_empty() || name == "origin"
+}
+
+fn scope_plan_template_anchors_to_components(
+    plan: &mut serde_json::Value,
+    scope_components: &[String],
+) -> Result<PlanTemplateScopeReport, String> {
+    let mut report = PlanTemplateScopeReport::default();
+    let scope_components: Vec<String> = scope_components
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if scope_components.len() > 64 {
+        return Err(format!(
+            "scope_components is too large ({} > max 64)",
+            scope_components.len()
+        ));
+    }
+
+    let mut attack_muzzle: Option<(String, String)> = None;
+    if let Some(attack) = plan.get("attack").and_then(|v| v.as_object()) {
+        if attack.get("kind").and_then(|v| v.as_str()) == Some("ranged_projectile") {
+            if let Some(muzzle) = attack.get("muzzle").and_then(|v| v.as_object()) {
+                let component = muzzle
+                    .get("component")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let anchor = muzzle
+                    .get("anchor")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if !component.is_empty() && !anchor.is_empty() {
+                    attack_muzzle = Some((component.to_string(), anchor.to_string()));
+                }
+            }
+        }
+    }
+
+    let Some(obj) = plan.as_object_mut() else {
+        return Err("expected plan to be a JSON object".into());
+    };
+    let Some(components) = obj.get_mut("components").and_then(|v| v.as_array_mut()) else {
+        return Err("expected plan.components to be an array".into());
+    };
+
+    let mut anchors_total_full: usize = 0;
+    for comp in components.iter() {
+        if let Some(arr) = comp.get("anchors").and_then(|v| v.as_array()) {
+            anchors_total_full = anchors_total_full.saturating_add(arr.len());
+        }
+    }
+    report.anchors_total_full = anchors_total_full;
+    report.anchors_total = anchors_total_full;
+
+    if scope_components.is_empty() {
+        return Ok(report);
+    }
+
+    let mut available: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for comp in components.iter() {
+        if let Some(name) = comp.get("name").and_then(|v| v.as_str()) {
+            let name = name.trim();
+            if !name.is_empty() {
+                available.insert(name.to_string());
+            }
+        }
+    }
+    let mut missing: Vec<String> = scope_components
+        .iter()
+        .filter(|name| !available.contains(name.as_str()))
+        .cloned()
+        .collect();
+    missing.sort();
+    missing.dedup();
+    if !missing.is_empty() {
+        let mut sample: Vec<String> = available.into_iter().collect();
+        sample.sort();
+        sample.truncate(24);
+        return Err(format!(
+            "Unknown scope_components: {missing:?}. Available (sample): {sample:?}"
+        ));
+    }
+
+    let scope_set: std::collections::HashSet<&str> =
+        scope_components.iter().map(|s| s.as_str()).collect();
+
+    // Compute required anchors for semantic validity of the existing plan graph.
+    let mut required: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    let mut add_required = |component: &str, anchor: &str| {
+        let component = component.trim();
+        if component.is_empty() {
+            return;
+        }
+        let anchor = anchor.trim();
+        if is_origin_anchor_name(anchor) {
+            return;
+        }
+        required
+            .entry(component.to_string())
+            .or_default()
+            .insert(anchor.to_string());
+    };
+
+    for comp in components.iter() {
+        let Some(comp_obj) = comp.as_object() else {
+            continue;
+        };
+        let name = comp_obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            continue;
+        }
+
+        if let Some(contacts) = comp_obj.get("contacts").and_then(|v| v.as_array()) {
+            for c in contacts.iter() {
+                let Some(anchor) = c.get("anchor").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                add_required(name, anchor);
+            }
+        }
+
+        let Some(att) = comp_obj.get("attach_to").and_then(|v| v.as_object()) else {
+            continue;
+        };
+        let parent = att.get("parent").and_then(|v| v.as_str()).unwrap_or("");
+        let parent_anchor = att
+            .get("parent_anchor")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let child_anchor = att
+            .get("child_anchor")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        add_required(name, child_anchor);
+        add_required(parent, parent_anchor);
+    }
+
+    if let Some((component, anchor)) = attack_muzzle.as_ref() {
+        add_required(component.as_str(), anchor.as_str());
+    }
+
+    // Count anchors before, then filter.
+    let mut anchors_total: usize = 0;
+    let mut components_trimmed: usize = 0;
+    for comp in components.iter_mut() {
+        let Some(comp_obj) = comp.as_object_mut() else {
+            continue;
+        };
+        let name = comp_obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            continue;
+        }
+        if scope_set.contains(name) {
+            if let Some(arr) = comp_obj.get("anchors").and_then(|v| v.as_array()) {
+                anchors_total = anchors_total.saturating_add(arr.len());
+            }
+            continue;
+        }
+
+        let Some(arr) = comp_obj.get("anchors").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        let before = arr.len();
+        let required_for_comp = required.get(name);
+        let mut filtered: Vec<serde_json::Value> = Vec::new();
+        for a in arr.iter() {
+            let Some(anchor_name) = a.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(required_for_comp) = required_for_comp else {
+                continue;
+            };
+            if required_for_comp.contains(anchor_name.trim()) {
+                filtered.push(a.clone());
+            }
+        }
+        let after = filtered.len();
+        anchors_total = anchors_total.saturating_add(after);
+        if before != after {
+            components_trimmed = components_trimmed.saturating_add(1);
+        }
+        comp_obj.insert("anchors".into(), serde_json::Value::Array(filtered));
+    }
+
+    report.scoped = true;
+    report.scope_components_total = scope_components.len();
+    report.scope_components_sample = scope_components.iter().cloned().take(24).collect();
+    report.anchors_total = anchors_total;
+    report.anchors_dropped = anchors_total_full.saturating_sub(anchors_total);
+    report.components_with_anchors_trimmed = components_trimmed;
+    Ok(report)
+}
+
 #[derive(Clone, Debug)]
 struct PlanTemplateFitReport {
     bytes_full: usize,
@@ -895,6 +1113,8 @@ pub(super) fn execute_tool_call(
                 mode: Option<String>,
                 #[serde(default)]
                 max_bytes: Option<u32>,
+                #[serde(default)]
+                scope_components: Vec<String>,
             }
 
             let args: GetPlanTemplateArgsV1 = match serde_json::from_value(call.args) {
@@ -956,6 +1176,21 @@ pub(super) fn execute_tool_call(
                         call.call_id,
                         call.tool_id,
                         err,
+                    ));
+                }
+            };
+
+            let mut plan = plan;
+            let scope_report = match scope_plan_template_anchors_to_components(
+                &mut plan,
+                args.scope_components.as_slice(),
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid `{TOOL_ID_GET_PLAN_TEMPLATE}` args: {err}"),
                     ));
                 }
             };
@@ -1045,6 +1280,13 @@ pub(super) fn execute_tool_call(
                         "truncated": truncated,
                     "omitted_fields": omitted_fields,
                     "components_total": components_total,
+                    "scoped": scope_report.scoped,
+                    "scope_components_total": scope_report.scope_components_total,
+                    "scope_components_sample": scope_report.scope_components_sample,
+                    "anchors_total_full": scope_report.anchors_total_full,
+                    "anchors_total": scope_report.anchors_total,
+                    "anchors_dropped": scope_report.anchors_dropped,
+                    "components_with_anchors_trimmed": scope_report.components_with_anchors_trimmed,
                 }),
             ))
         }
@@ -5717,6 +5959,107 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("<missing>");
         assert_eq!(comp0_notes, "");
+    }
+
+    fn find_component<'a>(
+        plan: &'a serde_json::Value,
+        name: &str,
+    ) -> Option<&'a serde_json::Value> {
+        plan.get("components")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|c| c.get("name").and_then(|v| v.as_str()) == Some(name))
+            })
+    }
+
+    #[test]
+    fn plan_template_scope_trims_non_scoped_anchors() {
+        let plan = serde_json::json!({
+            "version": 8,
+            "assembly_notes": "",
+            "mobility": { "kind": "static" },
+            "root_component": "body",
+            "attack": {
+                "kind": "ranged_projectile",
+                "cooldown_secs": 0.5,
+                "muzzle": { "component": "head", "anchor": "muzzle" },
+                "projectile": { "shape": "sphere", "radius": 0.1, "color": [1.0, 1.0, 1.0, 1.0], "unlit": true, "speed": 10.0, "ttl_secs": 1.0, "damage": 1, "obstacle_rule": null, "spawn_energy_impact": false }
+            },
+            "components": [
+                {
+                    "name": "body",
+                    "purpose": "",
+                    "modeling_notes": "",
+                    "size": [1.0, 1.0, 1.0],
+                    "anchors": [
+                        { "name": "mount", "pos": [0.0, 0.0, 0.0], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] },
+                        { "name": "extra", "pos": [0.0, 0.0, 0.0], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
+                    ],
+                    "contacts": [],
+                    "attach_to": null
+                },
+                {
+                    "name": "head",
+                    "purpose": "",
+                    "modeling_notes": "",
+                    "size": [0.5, 0.5, 0.5],
+                    "anchors": [
+                        { "name": "mount", "pos": [0.0, 0.0, 0.0], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] },
+                        { "name": "muzzle", "pos": [0.0, 0.0, 0.0], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] },
+                        { "name": "decor", "pos": [0.0, 0.0, 0.0], "forward": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0] }
+                    ],
+                    "contacts": [],
+                    "attach_to": { "parent": "body", "parent_anchor": "mount", "child_anchor": "mount" }
+                }
+            ]
+        });
+
+        let mut scoped = plan.clone();
+        let report =
+            super::scope_plan_template_anchors_to_components(&mut scoped, &["head".into()])
+                .expect("scope should succeed");
+        assert!(report.scoped, "{report:?}");
+        assert_eq!(report.scope_components_total, 1, "{report:?}");
+        assert_eq!(report.anchors_total_full, 5, "{report:?}");
+        assert_eq!(report.anchors_total, 4, "{report:?}");
+        assert_eq!(report.anchors_dropped, 1, "{report:?}");
+        assert_eq!(report.components_with_anchors_trimmed, 1, "{report:?}");
+
+        let body = find_component(&scoped, "body").expect("body");
+        let body_anchor_names: Vec<&str> = body
+            .get("anchors")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(|a| a.get("name").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(body_anchor_names, vec!["mount"]);
+
+        let head = find_component(&scoped, "head").expect("head");
+        let head_anchor_names: Vec<&str> = head
+            .get("anchors")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(|a| a.get("name").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(head_anchor_names, vec!["mount", "muzzle", "decor"]);
+    }
+
+    #[test]
+    fn plan_template_scope_requires_existing_component_names() {
+        let mut plan = serde_json::json!({
+            "version": 8,
+            "mobility": { "kind": "static" },
+            "root_component": "body",
+            "components": [
+                { "name": "body", "anchors": [], "contacts": [], "attach_to": null }
+            ],
+        });
+        let err = super::scope_plan_template_anchors_to_components(&mut plan, &["nope".into()])
+            .expect_err("unknown scope should error");
+        assert!(err.contains("Unknown scope_components"), "{err}");
     }
 
     #[test]

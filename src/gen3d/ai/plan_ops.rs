@@ -23,7 +23,38 @@ struct ApplyPlanOpsArgsJsonV1 {
     version: u32,
     #[serde(default)]
     dry_run: bool,
+    #[serde(default)]
+    base_plan: Option<String>,
+    #[serde(default)]
+    constraints: Option<ApplyPlanOpsConstraintsJsonV1>,
     ops: Vec<PlanOpJsonV1>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplyPlanOpsConstraintsJsonV1 {
+    #[serde(default)]
+    preserve_existing_components: Option<bool>,
+    #[serde(default)]
+    preserve_edit_policy: Option<String>,
+    #[serde(default)]
+    rewire_components: Option<Vec<String>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ApplyPlanOpsBasePlan {
+    Pending,
+    Current,
+}
+
+fn parse_apply_plan_ops_base_plan(raw: Option<&str>) -> Result<ApplyPlanOpsBasePlan, String> {
+    match raw.unwrap_or("pending").trim() {
+        "pending" => Ok(ApplyPlanOpsBasePlan::Pending),
+        "current" => Ok(ApplyPlanOpsBasePlan::Current),
+        other => Err(format!(
+            "Invalid base_plan={other:?}. Expected one of: \"pending\", \"current\"."
+        )),
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -978,15 +1009,76 @@ pub(super) fn apply_plan_ops_v1(
         return Err("apply_plan_ops_v1: too many ops (max 64)".into());
     }
 
-    let Some(pending) = job.pending_plan_attempt.as_ref() else {
-        return Err(
-            "apply_plan_ops_v1: no pending rejected plan attempt. This tool can only patch the last semantically-rejected llm_generate_plan_v1 output."
-                .into(),
-        );
+    let base_plan = parse_apply_plan_ops_base_plan(args.base_plan.as_deref())
+        .map_err(|err| format!("apply_plan_ops_v1: {err}"))?;
+
+    let mut pending_before = match base_plan {
+        ApplyPlanOpsBasePlan::Pending => job.pending_plan_attempt.clone().ok_or_else(|| {
+            "apply_plan_ops_v1: no pending rejected plan attempt. Set base_plan=\"current\" to patch the current accepted plan."
+                .to_string()
+        })?,
+        ApplyPlanOpsBasePlan::Current => {
+            if job.planned_components.is_empty() {
+                return Err(
+                    "apply_plan_ops_v1: no accepted plan to patch. Run llm_generate_plan_v1 first (or patch a pending rejected plan attempt with base_plan=\"pending\")."
+                        .into(),
+                );
+            }
+
+            let plan_json = super::plan_tools::build_preserve_mode_plan_template_json_v8(
+                draft,
+                &job.planned_components,
+                &job.assembly_notes,
+                job.plan_collider.as_ref(),
+                job.rig_move_cycle_m,
+                &job.reuse_groups,
+            )?;
+            let plan: AiPlanJsonV1 = serde_json::from_value(plan_json)
+                .map_err(|err| format!("apply_plan_ops_v1: failed to parse current plan snapshot: {err}"))?;
+
+            let mut existing_component_names: Vec<String> =
+                job.planned_components.iter().map(|c| c.name.clone()).collect();
+            existing_component_names.sort();
+            existing_component_names.dedup();
+            let existing_root_component = job
+                .planned_components
+                .iter()
+                .find(|c| c.attach_to.is_none())
+                .map(|c| c.name.clone());
+
+            Gen3dPendingPlanAttempt {
+                call_id: call_id.unwrap_or("apply_plan_ops_v1").to_string(),
+                error: "(patch current accepted plan)".into(),
+                preserve_existing_components: job.preserve_existing_components_mode,
+                preserve_edit_policy: None,
+                rewire_components: Vec::new(),
+                existing_component_names,
+                existing_root_component,
+                plan,
+            }
+        }
     };
 
+    if let Some(constraints) = args.constraints.as_ref() {
+        if let Some(preserve_existing_components) = constraints.preserve_existing_components {
+            pending_before.preserve_existing_components = preserve_existing_components;
+        }
+        if let Some(raw) = constraints.preserve_edit_policy.as_deref() {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                pending_before.preserve_edit_policy = Some(trimmed.to_string());
+            }
+        }
+        if let Some(rewire_components) = constraints.rewire_components.as_ref() {
+            pending_before.rewire_components = rewire_components
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+
     let assembly_rev_before = job.assembly_rev();
-    let pending_before = pending.clone();
     let plan_before = pending_before.plan.clone();
     let summary_before = plan_summary_json(&plan_before);
 
@@ -1124,15 +1216,15 @@ pub(super) fn apply_plan_ops_v1(
 
         if !args.dry_run {
             // Commit the patched plan into pending_plan_attempt for further inspection/patching.
-            if let Some(pending_mut) = job.pending_plan_attempt.as_mut() {
-                pending_mut.plan = plan_after.clone();
-                if let Some(first_error) = new_errors
-                    .iter()
-                    .find_map(|v| v.get("error").and_then(|e| e.as_str()))
-                {
-                    pending_mut.error = first_error.to_string();
-                }
+            let mut pending_next = pending_for_inspect.clone();
+            pending_next.plan = plan_after.clone();
+            if let Some(first_error) = new_errors
+                .iter()
+                .find_map(|v| v.get("error").and_then(|e| e.as_str()))
+            {
+                pending_next.error = first_error.to_string();
             }
+            job.pending_plan_attempt = Some(pending_next);
             committed = true;
         }
     } else if !args.dry_run {
@@ -1147,6 +1239,7 @@ pub(super) fn apply_plan_ops_v1(
         "ok": ok,
         "version": 1,
         "dry_run": args.dry_run,
+        "base_plan": match base_plan { ApplyPlanOpsBasePlan::Pending => "pending", ApplyPlanOpsBasePlan::Current => "current" },
         "committed": committed,
         "accepted": accepted,
         "still_pending": still_pending,
@@ -1356,6 +1449,152 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         assert!(error.contains("referenced"));
+    }
+
+    fn make_simple_current_plan() -> AiPlanJsonV1 {
+        AiPlanJsonV1 {
+            version: 8,
+            rig: None,
+            mobility: AiMobilityJson::Static,
+            attack: None,
+            aim: None,
+            collider: None,
+            assembly_notes: "current".into(),
+            root_component: None,
+            reuse_groups: Vec::new(),
+            components: vec![
+                AiPlanComponentJson {
+                    name: "torso".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [1.0, 1.0, 1.0],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: None,
+                },
+                AiPlanComponentJson {
+                    name: "head".into(),
+                    purpose: String::new(),
+                    modeling_notes: String::new(),
+                    size: [0.5, 0.5, 0.5],
+                    anchors: Vec::new(),
+                    contacts: Vec::new(),
+                    attach_to: Some(AiPlanAttachmentJson {
+                        parent: "torso".into(),
+                        parent_anchor: "origin".into(),
+                        child_anchor: "origin".into(),
+                        offset: None,
+                        joint: None,
+                    }),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn apply_plan_ops_can_patch_current_accepted_plan() {
+        let mut job = Gen3dAiJob::default();
+        let mut draft = Gen3dDraft { defs: Vec::new() };
+
+        let plan = make_simple_current_plan();
+        let (planned, notes, mut defs) =
+            convert::ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+        job.planned_components = planned;
+        job.assembly_notes = notes;
+        job.preserve_existing_components_mode = true;
+
+        // Mark the draft as already-generated so preserve-mode validation/merge logic runs.
+        let torso_id =
+            crate::object::registry::builtin_object_id("gravimera/gen3d/component/torso");
+        let torso_def = defs
+            .iter_mut()
+            .find(|def| def.object_id == torso_id)
+            .expect("expected torso def");
+        torso_def.parts.push(
+            ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(0.5, 0.5, 0.5),
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )
+            .with_part_id(Uuid::new_v4().as_u128()),
+        );
+        draft.defs = defs;
+
+        let result = apply_plan_ops_v1(
+            &mut job,
+            &mut draft,
+            Some("call_apply"),
+            serde_json::json!({
+                "version": 1,
+                "base_plan": "current",
+                "ops": [
+                    { "kind": "add_component", "name": "hat", "size": [0.3, 0.2, 0.3] },
+                    { "kind": "set_attach_to", "component": "hat", "set_attach_to": { "parent": "head", "parent_anchor": "origin", "child_anchor": "origin" } }
+                ]
+            }),
+        )
+        .expect("tool should return result JSON");
+
+        assert!(result
+            .get("accepted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false));
+        assert!(job.planned_components.iter().any(|c| c.name == "hat"));
+        assert_eq!(job.planned_components.len(), 3);
+    }
+
+    #[test]
+    fn apply_plan_ops_current_failure_creates_pending_attempt() {
+        let mut job = Gen3dAiJob::default();
+        let mut draft = Gen3dDraft { defs: Vec::new() };
+
+        let plan = make_simple_current_plan();
+        let (planned, notes, defs) =
+            convert::ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+        job.planned_components = planned;
+        job.assembly_notes = notes;
+        draft.defs = defs;
+
+        assert!(job.pending_plan_attempt.is_none());
+
+        let result = apply_plan_ops_v1(
+            &mut job,
+            &mut draft,
+            Some("call_apply"),
+            serde_json::json!({
+                "version": 1,
+                "base_plan": "current",
+                "ops": [
+                    {
+                        "kind": "add_component",
+                        "name": "bad",
+                        "size": [0.2, 0.2, 0.2],
+                        "attach_to": { "parent": "nope", "parent_anchor": "origin", "child_anchor": "origin" }
+                    }
+                ]
+            }),
+        )
+        .expect("tool should return result JSON");
+
+        assert!(!result
+            .get("accepted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false));
+        assert!(job.pending_plan_attempt.is_some());
+        let pending = job
+            .pending_plan_attempt
+            .as_ref()
+            .expect("expected pending attempt");
+        assert!(
+            pending.error.contains("attach_to parent"),
+            "unexpected error: {}",
+            pending.error
+        );
+        assert!(pending.plan.components.iter().any(|c| c.name == "bad"));
     }
 
     fn make_plan_with_tail_joint(joint: Option<AiJointJson>) -> AiPlanJsonV1 {

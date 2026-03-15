@@ -44,6 +44,8 @@ When preserve-mode replanning fails, prefer deterministic “hints/tools” that
 
 Note: `get_plan_template_v1` may return `truncated=true` with `omitted_fields[]` when it must produce a lean template under its `max_bytes` budget. If it still fails due to size or storage errors, disable preserve mode for replanning (`constraints.preserve_existing_components=false`) or simplify the assembly before templating.
 
+Tip: for large plans, you can pass `scope_components` to `get_plan_template_v1` to keep full anchor detail only for a subset of existing components and trim anchors elsewhere (deterministic). This can reduce template size without changing the plan’s structure.
+
 Note: if the model output is invalid JSON or fails the plan JSON schema, the engine may attempt an automatic “schema repair” retry of `llm_generate_plan_v1`. In preserve mode, this retry includes the same preserve-mode constraints/context (and the template, if provided) so it does not accidentally “forget” existing component names.
 
 Related docs:
@@ -77,6 +79,7 @@ Notes:
   2) Call `apply_draft_ops_v1` with `update_primitive_part` and set `set_primitive.color_rgba` for the target `part_id_uuid`.
   - Tip: `query_component_parts_v1` includes bounded `recipes` with copy/pasteable `apply_draft_ops_v1` payloads for recolor and transform edits.
 - If you want to change animation clips, prefer `llm_generate_motion_authoring_v1` (or `apply_draft_ops_v1` animation slot ops).
+- If you want to make a **local, explicit plan change** without re-running `llm_generate_plan_v1`, consider `apply_plan_ops_v1` with `base_plan="current"` (deterministic plan patch + revalidation).
 
 ## Preserve Mode (Generation Tools)
 
