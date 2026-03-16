@@ -9,6 +9,7 @@ This folder contains ExecPlans (execution plans) for larger features and refacto
 - Gen3D model export (glTF/GLB + editable bundles): `docs/execplans/execplan_gen3d_export_glb.md`
 - Gen3D runtime motion algorithms (historical; removed): `docs/execplans/execplan_gen3d_runtime_motion_algorithms.md`
 - Gen3D motion authoring prompt precision + join-frame constraints: `docs/execplans/execplan_gen3d_motion_authoring_prompt_precision_and_plan_join_frames.md`
+- Gen3D paged Info Store + no-progress gates for tool loops (draft): `docs/execplans/execplan_gen3d_paged_info_store_and_no_progress_gates.md`
 - Scene generation roadmap: `docs/execplans/execplan_scene_generation_pipeline.md`
 - Mechanical transform mapping v2 (grouped assignment for 200+ primitives): `docs/execplans/execplan_object_forms_mechanical_transform_mapping_v2.md`
 - Scene storage simplification (remove depot, scene-local prefabs, restart-safe Gen3D edit): `docs/execplans/execplan_scene_local_prefabs_and_self_contained_scene_dat.md`
