@@ -143,7 +143,7 @@ max_parallel_components = 10
 base_url = "https://api.openai.com/v1"
 
 # Any Responses API model that supports images.
-model = "gpt-4.1"
+model = "gpt-5.2"
 
 # "low" | "medium" | "high"
 model_reasoning_effort = "high"
@@ -160,7 +160,7 @@ base_url = "https://generativelanguage.googleapis.com/v1beta"
 # Any Gemini model id (example below). See: https://ai.google.dev/gemini-api/docs/models
 # Note: Gen3D schema-constrained calls use Structured Outputs (`response_json_schema`), so use a
 # model that supports it (Gemini 2.0+).
-model = "gemini-2.5-flash"
+model = "gemini-3.1-pro-preview"
 
 # API token (sent as `x-goog-api-key`). Can also be provided via env `X_GOOG_API_KEY` / `GEMINI_API_KEY`.
 token = "YOUR_GEMINI_API_KEY_HERE"
@@ -174,7 +174,7 @@ base_url = "https://api.anthropic.com/v1"
 # Any Claude model id (example below). See: https://docs.anthropic.com/claude/docs/models-overview
 # Note: Gen3D schema-constrained calls use Structured Outputs (`output_config.format`), so use a
 # model that supports it (Claude 4.5+ per Anthropic docs).
-model = "claude-sonnet-4-5-20250929"
+model = "claude-opus-4-5"
 
 # API token (sent as `x-api-key`). Can also be provided via env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`.
 token = "YOUR_CLAUDE_API_KEY_HERE"

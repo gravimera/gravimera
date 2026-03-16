@@ -53,7 +53,7 @@ Example:
 ```toml
 [openai]
 base_url = "https://api.openai.com/v1" # or your gateway
-model = "gpt-4.1"
+model = "gpt-5.2"
 token = "YOUR_OPENAI_API_KEY"
 ```
 
