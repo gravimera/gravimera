@@ -12,6 +12,7 @@ Instead of re-emitting a full plan JSON like `llm_generate_plan_v1`, the model o
 Artifacts written under the current Gen3D `pass/` dir:
 
 - `plan_ops_generated.json` (raw generated ops payload)
+- `plan_ops_generated_normalized.json` (only when the engine applies deterministic micro-repairs)
 - `plan_ops_apply_last.json` (apply summary; accepted/failed + bounded diagnostics)
 
 ## When to use it
@@ -45,11 +46,28 @@ Key fields are designed to be actionable and bounded:
 
 - `accepted`: whether the patched plan passed semantic validation and was accepted.
 - `ops_total`: how many ops were generated.
+- `repaired`: whether the engine applied deterministic micro-repairs to the generated JSON before parsing.
+- `repair_diff`: bounded list of applied micro-repairs (empty when `repaired=false`).
 - `diff_summary`: compact counts + `touched_components` (bounded).
 - `new_plan_summary`: bounded summary of the patched plan.
 - `new_errors`: `null` when accepted; otherwise bounded diagnostics (includes preserve-policy errors and `inspect_plan_v1`-style structural errors/fixits).
 
 On semantic failure, the engine also captures a `pending_plan_attempt` so you can follow up with `inspect_plan_v1` and/or `apply_plan_ops_v1`.
+
+## Deterministic micro-repair (known aliases)
+
+To reduce expensive schema-repair roundtrips for common low-entropy mismatches, the engine applies a small set of deterministic micro-repairs before parsing the generated JSON.
+
+Currently supported:
+
+- For `{ "kind": "add_component", ... }` ops:
+  - If `name` is missing and `component` is a string, the engine maps `component -> name`.
+  - If both `name` and `component` exist and differ (after trimming), the tool errors (refuses to guess).
+
+When a micro-repair is applied:
+
+- the tool result returns `repaired=true` and a bounded `repair_diff[]`, and
+- `plan_ops_generated_normalized.json` is written under the current `pass/` dir for auditability.
 
 ## Example
 

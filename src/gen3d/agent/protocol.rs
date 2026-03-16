@@ -67,4 +67,19 @@ impl Gen3dToolResultJsonV1 {
             error: Some(error),
         }
     }
+
+    pub(crate) fn err_with_result(
+        call_id: String,
+        tool_id: String,
+        error: String,
+        result: serde_json::Value,
+    ) -> Self {
+        Self {
+            call_id,
+            tool_id,
+            ok: false,
+            result: Some(result),
+            error: Some(error),
+        }
+    }
 }

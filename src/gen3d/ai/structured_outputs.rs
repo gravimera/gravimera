@@ -7,6 +7,7 @@ pub(super) enum Gen3dAiJsonSchemaKind {
     PlanOpsV1,
     ComponentDraftV1,
     ReviewDeltaV1,
+    ReviewDeltaNoRegenV1,
     DescriptorMetaV1,
     MotionAuthoringV1,
 }
@@ -625,6 +626,75 @@ fn schema_review_delta_action() -> serde_json::Value {
     ])
 }
 
+fn schema_review_delta_action_no_regen() -> serde_json::Value {
+    let accept = schema_object(vec![("kind", schema_enum(&["accept"]))]);
+    let tooling_feedback = schema_object(vec![
+        ("kind", schema_enum(&["tooling_feedback"])),
+        ("feedback", schema_tooling_feedback()),
+    ]);
+    let replan = schema_object(vec![
+        ("kind", schema_enum(&["replan"])),
+        ("reason", schema_string()),
+    ]);
+    let tweak_component_transform = schema_object(vec![
+        ("kind", schema_enum(&["tweak_component_transform"])),
+        ("component_id", schema_string()),
+        ("set", schema_nullable(schema_transform_set())),
+        ("delta", schema_nullable(schema_transform_delta())),
+        ("reason", schema_string()),
+    ]);
+    let tweak_component_resolved_rot_world = schema_object(vec![
+        ("kind", schema_enum(&["tweak_component_resolved_rot_world"])),
+        ("component_id", schema_string()),
+        ("rot", schema_rotation()),
+        ("reason", schema_string()),
+    ]);
+    let tweak_anchor = schema_object(vec![
+        ("kind", schema_enum(&["tweak_anchor"])),
+        ("component_id", schema_string()),
+        ("anchor_name", schema_string()),
+        ("set", schema_nullable(schema_anchor_set())),
+        ("delta", schema_nullable(schema_anchor_delta())),
+        ("reason", schema_string()),
+    ]);
+    let tweak_attachment = schema_object(vec![
+        ("kind", schema_enum(&["tweak_attachment"])),
+        ("component_id", schema_string()),
+        ("set", schema_attachment_set()),
+        ("reason", schema_string()),
+    ]);
+    let tweak_contact = schema_object(vec![
+        ("kind", schema_enum(&["tweak_contact"])),
+        ("component_id", schema_string()),
+        ("contact_name", schema_string()),
+        ("stance", schema_nullable(schema_contact_stance())),
+        ("reason", schema_string()),
+    ]);
+    let tweak_mobility = schema_object(vec![
+        ("kind", schema_enum(&["tweak_mobility"])),
+        ("mobility", schema_mobility()),
+        ("reason", schema_string()),
+    ]);
+    let tweak_attack = schema_object(vec![
+        ("kind", schema_enum(&["tweak_attack"])),
+        ("attack", schema_attack()),
+        ("reason", schema_string()),
+    ]);
+
+    schema_any_of(vec![
+        accept,
+        tooling_feedback,
+        replan,
+        tweak_component_transform,
+        tweak_component_resolved_rot_world,
+        tweak_anchor,
+        tweak_attachment,
+        tweak_contact,
+        tweak_mobility,
+        tweak_attack,
+    ])
+}
+
 fn schema_review_delta() -> serde_json::Value {
     schema_object(vec![
         ("version", schema_integer()),
@@ -722,6 +792,27 @@ fn schema_motion_authoring() -> serde_json::Value {
     ])
 }
 
+fn schema_review_delta_no_regen() -> serde_json::Value {
+    schema_object(vec![
+        ("version", schema_integer()),
+        (
+            "applies_to",
+            schema_object(vec![
+                ("run_id", schema_string()),
+                ("attempt", schema_integer()),
+                ("plan_hash", schema_string()),
+                ("assembly_rev", schema_integer()),
+            ]),
+        ),
+        (
+            "actions",
+            schema_array_of(schema_review_delta_action_no_regen()),
+        ),
+        ("summary", schema_nullable(schema_string())),
+        ("notes", schema_nullable(schema_string())),
+    ])
+}
+
 pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchemaSpec {
     match kind {
         Gen3dAiJsonSchemaKind::AgentStepV1 => Gen3dAiJsonSchemaSpec {
@@ -743,6 +834,10 @@ pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchema
         Gen3dAiJsonSchemaKind::ReviewDeltaV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_review_delta_v1",
             schema: schema_review_delta(),
+        },
+        Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1 => Gen3dAiJsonSchemaSpec {
+            name: "gen3d_review_delta_no_regen_v1",
+            schema: schema_review_delta_no_regen(),
         },
         Gen3dAiJsonSchemaKind::DescriptorMetaV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_descriptor_meta_v1",

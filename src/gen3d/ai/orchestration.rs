@@ -1559,8 +1559,14 @@ pub(crate) fn gen3d_poll_ai_job(
 
             let edit_session =
                 job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
-            let system =
-                build_gen3d_review_delta_system_instructions(job.review_appearance, edit_session);
+            let regen_allowed = !job.preserve_existing_components_mode
+                || job.agent.last_validate_ok == Some(false)
+                || job.agent.last_smoke_ok == Some(false);
+            let system = build_gen3d_review_delta_system_instructions(
+                job.review_appearance,
+                edit_session,
+                regen_allowed,
+            );
             let image_object_summary = job
                 .user_image_object_summary
                 .as_ref()
@@ -1582,7 +1588,11 @@ pub(crate) fn gen3d_poll_ai_job(
                 progress,
                 job.cancel_flag.clone(),
                 job.session.clone(),
-                Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
+                Some(if regen_allowed {
+                    Gen3dAiJsonSchemaKind::ReviewDeltaV1
+                } else {
+                    Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
+                }),
                 config.gen3d_require_structured_outputs,
                 ai,
                 reasoning_effort,
@@ -2626,7 +2636,14 @@ fn retry_gen3d_review_delta(
     job.phase = Gen3dAiPhase::WaitingReview;
 
     let edit_session = job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
-    let system = build_gen3d_review_delta_system_instructions(job.review_appearance, edit_session);
+    let regen_allowed = !job.preserve_existing_components_mode
+        || job.agent.last_validate_ok == Some(false)
+        || job.agent.last_smoke_ok == Some(false);
+    let system = build_gen3d_review_delta_system_instructions(
+        job.review_appearance,
+        edit_session,
+        regen_allowed,
+    );
     let mut user_text = job.last_review_user_text.clone();
     user_text.push_str("\n\nYour previous response was invalid.\nError:\n");
     user_text.push_str(reason.trim());
@@ -2645,7 +2662,11 @@ fn retry_gen3d_review_delta(
         progress,
         job.cancel_flag.clone(),
         job.session.clone(),
-        Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
+        Some(if regen_allowed {
+            Gen3dAiJsonSchemaKind::ReviewDeltaV1
+        } else {
+            Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
+        }),
         job.require_structured_outputs,
         ai,
         reasoning_effort,
@@ -3462,6 +3483,7 @@ fn gen3d_set_current_attempt_pass(
     job.attempt = attempt;
     job.pass = pass;
     job.pass_dir = Some(pass_dir.clone());
+    job.agent.info_store_inspection_cache.clear();
 
     if let Some(sinks) = job.log_sinks.as_ref() {
         if let Err(err) = sinks.start_gen3d_pass_log(pass_dir.join("gravimera.log")) {

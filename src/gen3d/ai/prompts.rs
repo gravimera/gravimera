@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn gen3d_review_delta_structural_only_mode_disallows_transform_nudges() {
-        let text = build_gen3d_review_delta_system_instructions(false, false);
+        let text = build_gen3d_review_delta_system_instructions(false, false, true);
         assert!(text.contains("- appearance_review_enabled: false"));
         assert!(text.contains("Only fix structural issues"));
         assert!(text.contains(
@@ -734,7 +734,7 @@ mod tests {
 
     #[test]
     fn gen3d_review_delta_edit_session_mode_allows_alignment_tweaks_without_appearance_review() {
-        let text = build_gen3d_review_delta_system_instructions(false, true);
+        let text = build_gen3d_review_delta_system_instructions(false, true, true);
         assert!(text.contains("- appearance_review_enabled: false"));
         assert!(text.contains("- edit_session: true"));
         assert!(text.contains("Goal: apply the user's requested edits"));
@@ -742,6 +742,18 @@ mod tests {
         assert!(!text.contains(
             "Do NOT propose cosmetic-only tweaks, aesthetic regens, or transform nudges."
         ));
+    }
+
+    #[test]
+    fn gen3d_review_delta_regen_gate_omits_regen_component_action_when_disallowed() {
+        let text = build_gen3d_review_delta_system_instructions(false, false, false);
+        assert!(text.contains("regen_component_allowed: false"));
+        assert!(text.contains("REGENERATION GATE"));
+        assert!(
+            !text.contains("\"kind\":\"regen_component\""),
+            "regen_component action must be omitted from schema list when disallowed"
+        );
+        assert!(text.contains("`regen_component` actions are DISALLOWED"));
     }
 
     #[test]
@@ -995,6 +1007,8 @@ Return STRICT JSON for a PlanOps patch.\n\n\
 Output format:\n\
 - Return ONLY one JSON object matching schema `gen3d_plan_ops_v1`.\n\
 - Do NOT output a full plan JSON. Output ONLY: {\"version\":1,\"ops\":[ ... ]}.\n\
+- Field names matter:\n\
+  - `add_component` uses `name` for the new component name (NOT `component`).\n\
 - Prefer the smallest valid patch (minimal ops; avoid touching unrelated components/fields).\n\
 "
     .to_string()
@@ -1277,6 +1291,7 @@ pub(super) fn build_gen3d_component_system_instructions() -> String {
 pub(super) fn build_gen3d_review_delta_system_instructions(
     review_appearance: bool,
     edit_session: bool,
+    regen_allowed: bool,
 ) -> String {
     let mut out = String::new();
     out.push_str("You are a 3D modeling assistant.\n");
@@ -1317,6 +1332,13 @@ Review mode:\n",
 - Ignore smoke severity=\"warn\" issues unless they imply a severity=\"error\".\n",
             );
         }
+    }
+    if regen_allowed {
+        out.push_str("- regen_component_allowed: true\n");
+    } else {
+        out.push_str("- regen_component_allowed: false\n");
+        out.push_str("\nREGENERATION GATE:\n");
+        out.push_str("- `regen_component` actions are DISALLOWED in this call. Prefer non-regen tweaks, run `qa_v1` to open the gate when errors exist, or disable preserve mode and rebuild.\n");
     }
     out.push_str(
 	        "\nIMPORTANT:\n\
@@ -1372,8 +1394,15 @@ Review mode:\n",
          {\"kind\":\"accept\"},\n\
          {\"kind\":\"tooling_feedback\",\"feedback\":{...}},\n\
          {\"kind\":\"replan\",\"reason\":\"...\"},\n\
-         {\"kind\":\"regen_component\",\"component_id\":\"<uuid>\",\"updated_modeling_notes\":\"...\" (optional),\"reason\":\"...\" (optional)},\n\
-         {\"kind\":\"tweak_component_transform\",\"component_id\":\"<uuid>\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
+",
+    );
+    if regen_allowed {
+        out.push_str(
+            "         {\"kind\":\"regen_component\",\"component_id\":\"<uuid>\",\"updated_modeling_notes\":\"...\" (optional),\"reason\":\"...\" (optional)},\n",
+        );
+    }
+    out.push_str(
+        "         {\"kind\":\"tweak_component_transform\",\"component_id\":\"<uuid>\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_component_resolved_rot_world\",\"component_id\":\"<uuid>\",\"rot\":{...},\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_anchor\",\"component_id\":\"<uuid>\",\"anchor_name\":\"name\",\"set\":{...} (optional),\"delta\":{...} (optional),\"reason\":\"...\" (optional)},\n\
          {\"kind\":\"tweak_attachment\",\"component_id\":\"<uuid>\",\"set\":{...},\"reason\":\"...\" (optional)},\n\
@@ -1405,9 +1434,17 @@ Review mode:\n",
      - `tooling_feedback` is for missing tools / tool improvements / tool bugs.\n\
        It must include at least: {\"version\":1,\"priority\":\"low|medium|high|blocker\",\"title\":\"...\",\"summary\":\"...\"}.\n\
        You may include additional fields (e.g. `missing_tools`, `enhancements`, `bugs`, `examples`, `details`).\n\
-     - Use `replan` only if the component breakdown or attachment tree is fundamentally wrong.\n\
-     - Use `regen_component` if the component geometry is structurally wrong (not for tiny details).\n"
+     - Use `replan` only if the component breakdown or attachment tree is fundamentally wrong.\n",
     );
+    if regen_allowed {
+        out.push_str(
+            "     - Use `regen_component` if the component geometry is structurally wrong (not for tiny details).\n",
+        );
+    } else {
+        out.push_str(
+            "     - `regen_component` is DISALLOWED when regen_component_allowed=false.\n",
+        );
+    }
     out
 }
 

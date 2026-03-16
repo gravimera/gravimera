@@ -6,11 +6,10 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_INFO_BLOBS_LIST, TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST,
     TOOL_ID_INFO_EVENTS_SEARCH, TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY,
     TOOL_ID_INFO_KV_GET_PAGED, TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS,
-    TOOL_ID_INSPECT_PLAN,
-    TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
-    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
-    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
+    TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT,
+    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
     TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT,
     TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
@@ -58,6 +57,7 @@ Rules:\n\
   - If the latest review delta accepts the model / has no actionable fixes (and `qa_v1` has been run), output a \"done\" action.\n\
   - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
   - If budgets prevent further improvement (regen budgets, time, tokens), output a \"done\" action with a best-effort reason.\n\
+  - `done.reason` is treated as an unverified agent note; keep it brief and factual. Do NOT claim tool actions that did not occur.\n\
   - `qa_v1` may report warnings (non-fatal). Treat warnings as informational: do NOT spend steps trying to eliminate warnings.\n\
     - If warnings>0, mention them explicitly in \"done.reason\" (do not claim \"no warnings\").\n\
 - Motion authoring (required for movable units):\n\
@@ -291,6 +291,47 @@ pub(super) fn build_agent_user_text(
                 }
                 out.push_str(" example=");
                 out.push_str(&truncate_for_prompt(&tool.args_example.to_string(), 200));
+            }
+
+            // Prefer surfacing "fixits" for actionable inspection errors.
+            if result.tool_id.as_str() == TOOL_ID_INFO_KV_GET {
+                if let Some(diag) = result.result.as_ref().and_then(|v| v.as_object()) {
+                    if let Some(kv_rev) = diag
+                        .get("record")
+                        .and_then(|v| v.get("kv_rev"))
+                        .and_then(|v| v.as_u64())
+                    {
+                        out.push_str(&format!(" kv_rev={kv_rev}"));
+                    }
+                    if let Some(fixits) = diag.get("fixits").and_then(|v| v.as_array()) {
+                        let mut parts: Vec<String> = Vec::new();
+                        for fixit in fixits.iter().take(3) {
+                            let tool_id = fixit
+                                .get("tool_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .trim();
+                            if tool_id.is_empty() {
+                                continue;
+                            }
+                            let ptr = fixit
+                                .get("args")
+                                .and_then(|v| v.get("json_pointer"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .trim();
+                            if ptr.is_empty() {
+                                parts.push(tool_id.to_string());
+                            } else {
+                                parts.push(format!("{tool_id} json_pointer={ptr}"));
+                            }
+                        }
+                        if !parts.is_empty() {
+                            out.push_str(" fixits=");
+                            out.push_str(&truncate_for_prompt(&format!("{parts:?}"), 240));
+                        }
+                    }
+                }
             }
             return out;
         }
@@ -833,7 +874,10 @@ pub(super) fn build_agent_user_text(
                     .get("warnings")
                     .and_then(|v| v.as_array())
                     .map(|a| a.len());
-                let cached = value.get("cached").and_then(|v| v.as_bool()).unwrap_or(false);
+                let cached = value
+                    .get("cached")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let no_new_information = value
                     .get("no_new_information")
                     .and_then(|v| v.as_bool())
@@ -869,10 +913,7 @@ pub(super) fn build_agent_user_text(
                         .map(str::trim)
                         .filter(|s| !s.is_empty())
                     {
-                        out.push_str(&format!(
-                            " gap_example={}",
-                            truncate_for_prompt(kind, 64)
-                        ));
+                        out.push_str(&format!(" gap_example={}", truncate_for_prompt(kind, 64)));
                     }
                 }
                 if warnings_count > 0 {
@@ -1591,6 +1632,14 @@ pub(super) fn build_agent_user_text(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .trim();
+                let cached = value
+                    .get("cached")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let no_new_information = value
+                    .get("no_new_information")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 out.push_str("ok");
                 if !namespace.is_empty() {
@@ -1613,6 +1662,12 @@ pub(super) fn build_agent_user_text(
                         " json_pointer={}",
                         truncate_for_prompt(json_pointer, 96)
                     ));
+                }
+                if cached {
+                    out.push_str(" cached=true");
+                }
+                if no_new_information {
+                    out.push_str(" no_new_information=true");
                 }
 
                 if let Some(selected_value) = value.get("value") {
@@ -1679,10 +1734,7 @@ pub(super) fn build_agent_user_text(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .trim();
-                let array_len = value
-                    .get("array_len")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let array_len = value.get("array_len").and_then(|v| v.as_u64()).unwrap_or(0);
                 let items = value.get("items").and_then(|v| v.as_array());
                 let items_total = items.map(|a| a.len()).unwrap_or(0);
                 let truncated = value
@@ -1735,7 +1787,8 @@ pub(super) fn build_agent_user_text(
                 }
 
                 let mut summary = base.clone();
-                if !cursor_seg.is_empty() && char_count(&(summary.clone() + &cursor_seg)) <= budget {
+                if !cursor_seg.is_empty() && char_count(&(summary.clone() + &cursor_seg)) <= budget
+                {
                     summary.push_str(&cursor_seg);
                 } else if !cursor_seg.is_empty() {
                     let base = format!("ok items={items_total} array_len={array_len}");
@@ -1748,8 +1801,9 @@ pub(super) fn build_agent_user_text(
                 let mut summary_out = summary;
                 if char_count(&summary_out) > budget {
                     if let Some(cursor) = next_cursor.map(str::trim).filter(|s| !s.is_empty()) {
-                        let minimal =
-                            format!("ok items={items_total} array_len={array_len} next_cursor={cursor}");
+                        let minimal = format!(
+                            "ok items={items_total} array_len={array_len} next_cursor={cursor}"
+                        );
                         if char_count(&minimal) <= budget {
                             summary_out = minimal;
                         } else {
@@ -1757,7 +1811,8 @@ pub(super) fn build_agent_user_text(
                             if char_count(&cursor_only) <= budget {
                                 summary_out = cursor_only;
                             } else {
-                                summary_out = format!("ok items={items_total} array_len={array_len}");
+                                summary_out =
+                                    format!("ok items={items_total} array_len={array_len}");
                             }
                         }
                     } else {
@@ -1960,6 +2015,14 @@ pub(super) fn build_agent_user_text(
                     .get("truncated")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let cached = value
+                    .get("cached")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let no_new_information = value
+                    .get("no_new_information")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 let mut ok_total = 0usize;
                 let mut err_total = 0usize;
@@ -2025,6 +2088,12 @@ pub(super) fn build_agent_user_text(
 
                 let mut summary =
                     format!("ok items={items_total} ok_items={ok_total} err_items={err_total} truncated={truncated}");
+                if cached {
+                    summary.push_str(" cached=true");
+                }
+                if no_new_information {
+                    summary.push_str(" no_new_information=true");
+                }
                 if !samples.is_empty() {
                     let sample = format!(" sample=[{}]", samples.join(", "));
                     if char_count(&(summary.clone() + &sample)) <= budget {

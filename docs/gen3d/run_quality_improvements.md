@@ -5,9 +5,8 @@ This is a design note capturing improvement ideas from a real seeded-edit run
 performed many repeated inspection steps (`info_kv_get*`) and produced at least
 one misleading final "done" narrative.
 
-Scope: proposals only (no code changes yet). Some items below may already have
-partial mitigations in code; the goal is to make remaining gaps explicit and
-reduce repeated inspection / misleading reporting.
+Scope: improvement checklist from a real run. The items below are implemented; this doc remains as
+rationale + acceptance criteria and links to the relevant contracts.
 
 Related docs:
 - Tool authoring constraints: `docs/agent_skills/tool_authoring_rules.md`
@@ -19,23 +18,20 @@ Related docs:
 
 ## Status (as of code on 2026-03-17)
 
-This run revealed issues that are a mix of:
-
-- *still missing* contract/tool behavior, and
-- *already mitigated* by guardrails added elsewhere (no-progress budgets, QA caching, etc).
-
 Already present (not exhaustive; listed so we don’t duplicate work):
 
 - Deterministic no-progress guard with separate budgets for “tries” vs “inspection-only steps”.
 - `qa_v1` caches by a deterministic state hash and returns `cached=true` / `no_new_information=true` on repeats.
 - `info_kv_get_paged_v1` already returns bounded per-item previews (and a deterministic shape preview when an item is truncated).
-- Preserve-mode regen is already QA-gated, but the gate is enforced **after** `llm_review_delta_v1` spends LLM tokens (so regen-only outputs can still be wasted).
 
-Remaining gaps / opportunities (what this doc focuses on):
+Implemented since the run (the items this doc focused on):
 
-- `info_kv_get_v1` oversize reads fail with a string-only error (no bounded shape preview; no mechanical “fixits”).
-- KV reads (`info_kv_get_v1` / `info_kv_get_many_v1`) do not currently surface `cached` / `no_new_information` the way `qa_v1` does.
-- `done` is free-text only; the engine can’t validate evidence or force narratives to be event-true.
+- `info_kv_get_v1` oversize reads now return an actionable error payload (`shape_preview` + mechanical `fixits`) instead of a string-only error.
+- KV reads (`info_kv_get_v1` / `info_kv_get_many_v1`) now cache identical calls per-pass and surface `cached=true` / `no_new_information=true`.
+- `llm_review_delta_v1` now computes a deterministic `regen_allowed` gate before calling the model; when disallowed it uses a schema variant that cannot express `regen_component`.
+- `llm_generate_plan_ops_v1` now applies a deterministic micro-repair for the common alias `add_component.component -> add_component.name` and reports `repaired=true` / `repair_diff`.
+- When the no-progress guard stops a run, the engine emits an Info Store `budget_stop` event with `stop_reason="no_progress"` and bounded fixits.
+- `done` reporting is no longer treated as authoritative free-text: the engine renders a deterministic end-of-run summary from actual state and logs it as an Info Store event.
 - Some “no heuristics” constraints are violated elsewhere (example: smoke results derive `attack_required_by_prompt` via prompt substring checks); track these in `docs/gen3d/assumptions_heuristics_todo.md`.
 
 ## Observations (from the run)

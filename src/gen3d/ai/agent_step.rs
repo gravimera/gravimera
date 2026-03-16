@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
+    TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT,
+    TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{
     append_agent_trace_event_v1, AgentTraceEventV1, Gen3dAgentActionJsonV1, Gen3dToolCallJsonV1,
@@ -114,6 +115,75 @@ fn append_qa_warnings_to_status(status: &mut String, agent: &super::Gen3dAgentSt
             status.push_str(example);
         }
     }
+}
+
+fn no_progress_guard_stop_fixits(job: &Gen3dAiJob) -> Vec<serde_json::Value> {
+    let mut fixits: Vec<serde_json::Value> = Vec::new();
+
+    let mut snaps: Vec<(&String, &super::job::Gen3dAgentSnapshot)> =
+        job.agent.snapshots.iter().collect();
+    snaps.sort_by(|a, b| {
+        a.1.created_at_ms
+            .cmp(&b.1.created_at_ms)
+            .then_with(|| a.0.cmp(b.0))
+    });
+
+    if snaps.len() >= 2 {
+        let a = snaps[snaps.len() - 2].0.as_str();
+        let b = snaps[snaps.len() - 1].0.as_str();
+        fixits.push(serde_json::json!({
+            "tool_id": TOOL_ID_DIFF_SNAPSHOTS,
+            "args": { "version": 1, "a": a, "b": b },
+        }));
+        return fixits;
+    }
+
+    if snaps.is_empty() {
+        fixits.push(serde_json::json!({
+            "tool_id": TOOL_ID_SNAPSHOT,
+            "args": { "version": 1, "label": "snap_before_debug" },
+        }));
+    }
+
+    fixits.push(serde_json::json!({
+        "tool_id": TOOL_ID_LIST_SNAPSHOTS,
+        "args": { "version": 1, "max_items": 20 },
+    }));
+
+    fixits
+}
+
+fn engine_run_summary_json(job: &Gen3dAiJob, draft: &Gen3dDraft) -> serde_json::Value {
+    let llm_available = job
+        .ai
+        .as_ref()
+        .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
+        .unwrap_or(true);
+    let appearance_review_enabled = llm_available && job.review_appearance;
+
+    serde_json::json!({
+        "attempt": job.attempt,
+        "pass": job.pass,
+        "assembly_rev": job.assembly_rev,
+        "plan_hash": job.plan_hash.as_str(),
+        "preserve_existing_components_mode": job.preserve_existing_components_mode,
+        "planned_components_total": job.planned_components.len(),
+        "primitive_parts_total": draft.total_non_projectile_primitive_parts(),
+        "qa": {
+            "ever_validated": job.agent.ever_validated,
+            "ever_smoke_checked": job.agent.ever_smoke_checked,
+            "last_validate_ok": job.agent.last_validate_ok,
+            "last_smoke_ok": job.agent.last_smoke_ok,
+            "last_motion_ok": job.agent.last_motion_ok,
+            "warnings_count": job.agent.last_qa_warnings_count,
+        },
+        "review": {
+            "review_appearance_enabled": appearance_review_enabled,
+            "ever_rendered": job.agent.ever_rendered,
+            "ever_reviewed": job.agent.ever_reviewed,
+            "rendered_since_last_review": job.agent.rendered_since_last_review,
+        },
+    })
 }
 
 fn finalize_run_now(
@@ -823,6 +893,30 @@ pub(super) fn execute_agent_actions(
                     job.agent.no_progress_inspection_steps = 0;
                     job.agent.last_state_hash = Some(state_hash);
                 } else {
+                    let fixits = no_progress_guard_stop_fixits(job);
+                    job.append_info_event_best_effort(
+                        super::info_store::InfoEventKindV1::BudgetStop,
+                        None,
+                        None,
+                        format!(
+                            "Budget stop: no-progress guard triggered (tries: {}/{}; inspection steps: {}/{}).",
+                            job.agent.no_progress_tries,
+                            tries_max,
+                            job.agent.no_progress_inspection_steps,
+                            inspection_max
+                        ),
+                        serde_json::json!({
+                            "reason": "no_progress_guard_triggered",
+                            "stop_reason": "no_progress",
+                            "tries": job.agent.no_progress_tries,
+                            "tries_max": tries_max,
+                            "inspection_steps": job.agent.no_progress_inspection_steps,
+                            "inspection_steps_max": inspection_max,
+                            "last_state_hash": job.agent.last_state_hash.as_deref(),
+                            "fixits": fixits,
+                        }),
+                    );
+
                     workshop.error = None;
                     let mut status = format!(
                         "Build finished (best effort).\nReason: No-progress guard triggered (tries: {}/{}; inspection steps: {}/{}).",
@@ -966,16 +1060,88 @@ pub(super) fn execute_agent_actions(
                 let mut status = if reason.trim().is_empty() {
                     "Build finished.".to_string()
                 } else {
-                    format!("Build finished.\nReason: {}", reason.trim())
+                    "Build finished.".to_string()
                 };
+
+                let summary_json = engine_run_summary_json(job, draft);
+                status.push_str("\n\nSummary:");
+                status.push_str(&format!(
+                    "\n- assembly_rev: {}",
+                    summary_json
+                        .get("assembly_rev")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                ));
+                status.push_str(&format!(
+                    "\n- planned_components_total: {}",
+                    summary_json
+                        .get("planned_components_total")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                ));
+                status.push_str(&format!(
+                    "\n- primitive_parts_total: {}",
+                    summary_json
+                        .get("primitive_parts_total")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                ));
+                status.push_str(&format!(
+                    "\n- validate_ok: {}",
+                    summary_json
+                        .get("qa")
+                        .and_then(|v| v.get("last_validate_ok"))
+                        .and_then(|v| v.as_bool())
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "unknown".into())
+                ));
+                status.push_str(&format!(
+                    "\n- smoke_ok: {}",
+                    summary_json
+                        .get("qa")
+                        .and_then(|v| v.get("last_smoke_ok"))
+                        .and_then(|v| v.as_bool())
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "unknown".into())
+                ));
+                status.push_str(&format!(
+                    "\n- motion_ok: {}",
+                    summary_json
+                        .get("qa")
+                        .and_then(|v| v.get("last_motion_ok"))
+                        .and_then(|v| v.as_bool())
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "unknown".into())
+                ));
+
+                let agent_note = reason.trim();
+                let agent_note_capped = super::truncate_for_ui(agent_note, 800);
+                if !agent_note.is_empty() {
+                    status.push_str("\n\nAgent note (unverified): ");
+                    status.push_str(&super::truncate_for_ui(agent_note, 360));
+                }
                 if !unfinished.is_empty() {
                     status.push_str("\n\nUnfinished checks (best effort):");
-                    for item in unfinished {
+                    for item in unfinished.iter() {
                         status.push_str("\n- ");
                         status.push_str(item.trim());
                     }
                 }
                 append_qa_warnings_to_status(&mut status, &job.agent);
+
+                job.append_info_event_best_effort(
+                    super::info_store::InfoEventKindV1::EngineLog,
+                    None,
+                    None,
+                    "Agent done.".into(),
+                    serde_json::json!({
+                        "kind": "agent_done",
+                        "agent_note": agent_note_capped,
+                        "agent_note_truncated": agent_note_capped != agent_note,
+                        "summary": summary_json,
+                        "unfinished_checks": unfinished,
+                    }),
+                );
 
                 workshop.error = None;
                 start_finish_run_sequence(
@@ -987,8 +1153,19 @@ pub(super) fn execute_agent_actions(
                     draft,
                     Gen3dPendingFinishRun {
                         workshop_status: status,
-                        run_log: format!("agent_done reason={:?}", reason.trim()),
-                        info_log: format!("Gen3D agent: done. reason={:?}", reason.trim()),
+                        run_log: format!(
+                            "agent_done assembly_rev={} note={:?}",
+                            job.assembly_rev,
+                            super::truncate_for_ui(agent_note, 240)
+                        ),
+                        info_log: format!(
+                            "Gen3D agent: done. assembly_rev={} validate_ok={:?} smoke_ok={:?} motion_ok={:?} note={:?}",
+                            job.assembly_rev,
+                            job.agent.last_validate_ok,
+                            job.agent.last_smoke_ok,
+                            job.agent.last_motion_ok,
+                            super::truncate_for_ui(agent_note, 240)
+                        ),
                     },
                 );
                 return;

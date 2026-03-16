@@ -105,9 +105,15 @@ pub(super) fn start_agent_llm_review_delta_call(
     }
 
     let edit_session = job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
+    let regen_allowed = !job.preserve_existing_components_mode
+        || job.agent.last_validate_ok == Some(false)
+        || job.agent.last_smoke_ok == Some(false);
+    job.agent.pending_review_delta_regen_allowed = Some(regen_allowed);
+
     let system = super::prompts::build_gen3d_review_delta_system_instructions(
         review_appearance,
         edit_session,
+        regen_allowed,
     );
     let image_object_summary = job
         .user_image_object_summary
@@ -142,7 +148,11 @@ pub(super) fn start_agent_llm_review_delta_call(
         progress,
         job.cancel_flag.clone(),
         job.session.clone(),
-        Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1),
+        Some(if regen_allowed {
+            super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1
+        } else {
+            super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
+        }),
         config.gen3d_require_structured_outputs,
         ai,
         reasoning_effort,

@@ -443,7 +443,20 @@ pub(super) fn poll_agent_tool(
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1)
             }
             super::Gen3dAgentLlmToolKind::ReviewDelta => {
-                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1)
+                let regen_allowed =
+                    job.agent
+                        .pending_review_delta_regen_allowed
+                        .unwrap_or_else(|| {
+                            !job.preserve_existing_components_mode
+                                || job.agent.last_validate_ok == Some(false)
+                                || job.agent.last_smoke_ok == Some(false)
+                        });
+                job.agent.pending_review_delta_regen_allowed = Some(regen_allowed);
+                Some(if regen_allowed {
+                    super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1
+                } else {
+                    super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
+                })
             }
         };
         spawn_gen3d_ai_text_thread(
@@ -2206,6 +2219,24 @@ pub(super) fn poll_agent_tool(
                                         job.agent.ever_reviewed = true;
                                         job.agent.pending_llm_repair_attempt = 0;
 
+                                        let regen_allowed =
+                                            job.agent.pending_review_delta_regen_allowed.unwrap_or_else(|| {
+                                                !job.preserve_existing_components_mode
+                                                    || job.agent.last_validate_ok == Some(false)
+                                                    || job.agent.last_smoke_ok == Some(false)
+                                            });
+                                        let regen_allowed_reason = if regen_allowed {
+                                            "allowed".to_string()
+                                        } else if !job.preserve_existing_components_mode {
+                                            "preserve_existing_components_mode=false".to_string()
+                                        } else if job.agent.last_validate_ok.is_none()
+                                            || job.agent.last_smoke_ok.is_none()
+                                        {
+                                            "qa_v1 has not been run (or is incomplete)".to_string()
+                                        } else {
+                                            "qa_v1 reports no errors".to_string()
+                                        };
+
                                         Gen3dToolResultJsonV1::ok(
                                             call.call_id,
                                             call.tool_id,
@@ -2213,6 +2244,8 @@ pub(super) fn poll_agent_tool(
                                                 "ok": true,
                                                 "accepted": apply.accepted,
                                                 "had_actions": apply.had_actions && !non_actionable_regen_only,
+                                                "regen_allowed": regen_allowed,
+                                                "regen_allowed_reason": regen_allowed_reason,
                                                 "regen_component_indices": regen_buckets.allowed,
                                                 "regen_component_indices_skipped_due_to_budget": regen_buckets.skipped_due_to_budget,
                                                 "regen_component_indices_blocked_due_to_qa_gate": regen_buckets.blocked_due_to_qa_gate,
@@ -2257,10 +2290,19 @@ pub(super) fn poll_agent_tool(
                                             let review_appearance = job.review_appearance;
                                             let edit_session = job.edit_base_prefab_id.is_some()
                                                 && !job.user_prompt_raw.trim().is_empty();
-	                                            let system = super::prompts::build_gen3d_review_delta_system_instructions(
-	                                                review_appearance,
-	                                                edit_session,
-	                                            );
+                                            let regen_allowed =
+                                                job.agent.pending_review_delta_regen_allowed.unwrap_or_else(|| {
+                                                    !job.preserve_existing_components_mode
+                                                        || job.agent.last_validate_ok == Some(false)
+                                                        || job.agent.last_smoke_ok == Some(false)
+                                                });
+                                            job.agent.pending_review_delta_regen_allowed =
+                                                Some(regen_allowed);
+                                            let system = super::prompts::build_gen3d_review_delta_system_instructions(
+                                                review_appearance,
+                                                edit_session,
+                                                regen_allowed,
+                                            );
 	                                            let image_object_summary = job
 	                                                .user_image_object_summary
 	                                                .as_ref()
@@ -2411,14 +2453,22 @@ pub(super) fn poll_agent_tool(
                                 let review_appearance = job.review_appearance;
                                 let edit_session = job.edit_base_prefab_id.is_some()
                                     && !job.user_prompt_raw.trim().is_empty();
-	                                let system = super::prompts::build_gen3d_review_delta_system_instructions(
-	                                    review_appearance,
-	                                    edit_session,
-	                                );
-	                                let image_object_summary = job
-	                                    .user_image_object_summary
-	                                    .as_ref()
-	                                    .map(|s| s.text.as_str());
+                                let regen_allowed =
+                                    job.agent.pending_review_delta_regen_allowed.unwrap_or_else(|| {
+                                        !job.preserve_existing_components_mode
+                                            || job.agent.last_validate_ok == Some(false)
+                                            || job.agent.last_smoke_ok == Some(false)
+                                    });
+                                job.agent.pending_review_delta_regen_allowed = Some(regen_allowed);
+                                let system = super::prompts::build_gen3d_review_delta_system_instructions(
+                                    review_appearance,
+                                    edit_session,
+                                    regen_allowed,
+                                );
+                                let image_object_summary = job
+                                    .user_image_object_summary
+                                    .as_ref()
+                                    .map(|s| s.text.as_str());
                                 let user_text = super::prompts::build_gen3d_review_delta_user_text(
                                     &run_id,
                                     job.attempt,

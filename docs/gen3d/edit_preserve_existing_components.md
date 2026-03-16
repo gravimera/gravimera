@@ -104,14 +104,15 @@ When this flag is true:
 
 ### QA-gated regen requests (agent visibility)
 
-In preserve mode, higher-level tools (most commonly `llm_review_delta_v1`) may request regeneration of already-generated components (for example, to restyle geometry).
-
-When the QA gate is closed (latest QA is clean or unknown), these regen requests are **not actionable** as `force=true` regeneration. The engine surfaces them explicitly in `get_state_summary_v1`:
+In preserve mode, regenerating already-generated components requires `force=true` and is QA-gated.
+The engine surfaces queued regeneration work explicitly in `get_state_summary_v1`:
 
 - `pending_regen_component_indices`: actionable generation work (missing components, or regen that is currently permitted).
 - `pending_regen_component_indices_blocked_due_to_qa_gate`: regen requested for already-generated components, but blocked by the QA gate.
 
-Additionally, if `llm_review_delta_v1` requests *only* QA-gated regen (no other deterministic tweak actions / replans), the tool returns a tool error explaining the QA gate and the deterministic recovery options.
+Additionally, `llm_review_delta_v1` computes a deterministic `regen_allowed` gate **before** calling the model.
+When the QA gate is closed, the review-delta call is schema-gated so it cannot propose `regen_component` actions.
+The tool result includes `regen_allowed` + `regen_allowed_reason` so the agent can explain why regeneration was not considered in that call.
 
 Deterministic recovery options:
 

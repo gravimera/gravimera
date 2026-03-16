@@ -228,6 +228,167 @@ fn json_shape_preview(value: &serde_json::Value) -> serde_json::Value {
     }
 }
 
+fn json_pointer_escape_token(token: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    for ch in token.chars() {
+        match ch {
+            '~' => out.push_str("~0"),
+            '/' => out.push_str("~1"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn json_pointer_append(base: Option<&str>, token: &str) -> String {
+    let escaped = json_pointer_escape_token(token);
+    match base.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(prefix) => format!("{}/{}", prefix.trim_end_matches('/'), escaped),
+        None => format!("/{escaped}"),
+    }
+}
+
+fn info_kv_record_json(record: &super::info_store::InfoKvRecord) -> serde_json::Value {
+    let mut record_json = serde_json::Map::new();
+    record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
+    record_json.insert(
+        "written_at_ms".into(),
+        serde_json::json!(record.written_at_ms),
+    );
+    record_json.insert("attempt".into(), serde_json::json!(record.attempt));
+    record_json.insert("pass".into(), serde_json::json!(record.pass));
+    record_json.insert(
+        "assembly_rev".into(),
+        serde_json::json!(record.assembly_rev),
+    );
+    record_json.insert(
+        "workspace_id".into(),
+        serde_json::Value::String(record.workspace_id.clone()),
+    );
+    record_json.insert(
+        "key".into(),
+        serde_json::json!({
+            "namespace": record.key.namespace.as_str(),
+            "key": record.key.key.as_str(),
+        }),
+    );
+    record_json.insert(
+        "summary".into(),
+        serde_json::Value::String(record.summary.clone()),
+    );
+    record_json.insert("bytes".into(), serde_json::json!(record.bytes));
+    if let Some(prov) = record.written_by.as_ref() {
+        record_json.insert(
+            "written_by".into(),
+            serde_json::json!({
+                "tool_id": prov.tool_id.as_str(),
+                "call_id": prov.call_id.as_str(),
+            }),
+        );
+    }
+    serde_json::Value::Object(record_json)
+}
+
+fn build_info_kv_oversize_fixits(
+    record: &super::info_store::InfoKvRecord,
+    namespace: &str,
+    key: &str,
+    json_pointer: Option<&str>,
+    max_bytes: usize,
+    selected: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    const MAX_FIXITS: usize = 6;
+
+    let mut fixits: Vec<serde_json::Value> = Vec::new();
+    let selector = serde_json::json!({ "kind": "kv_rev", "kv_rev": record.kv_rev });
+
+    match selected {
+        serde_json::Value::Array(_) => {
+            // Use paged reads for arrays.
+            let mut args = serde_json::json!({
+                "namespace": namespace,
+                "key": key,
+                "selector": selector,
+                "page": { "limit": 50 },
+                "max_item_bytes": 4096,
+            });
+            if let Some(ptr) = json_pointer.map(str::trim).filter(|s| !s.is_empty()) {
+                if let Some(obj) = args.as_object_mut() {
+                    obj.insert(
+                        "json_pointer".into(),
+                        serde_json::Value::String(ptr.to_string()),
+                    );
+                }
+            }
+            fixits.push(serde_json::json!({
+                "tool_id": TOOL_ID_INFO_KV_GET_PAGED,
+                "args": args,
+                "note": "Page through the selected JSON array.",
+            }));
+        }
+        serde_json::Value::Object(obj) => {
+            let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+            keys.sort();
+            for k in keys.into_iter().take(4) {
+                if fixits.len() >= MAX_FIXITS {
+                    break;
+                }
+                let ptr = json_pointer_append(json_pointer, k);
+                fixits.push(serde_json::json!({
+                    "tool_id": TOOL_ID_INFO_KV_GET,
+                    "args": {
+                        "namespace": namespace,
+                        "key": key,
+                        "selector": selector,
+                        "json_pointer": ptr,
+                        "max_bytes": max_bytes,
+                    },
+                    "note": format!("Retry with json_pointer for top-level key `{k}`."),
+                }));
+
+                if fixits.len() >= MAX_FIXITS {
+                    break;
+                }
+                if obj.get(k).is_some_and(|v| v.is_array()) {
+                    let ptr = json_pointer_append(json_pointer, k);
+                    fixits.push(serde_json::json!({
+                        "tool_id": TOOL_ID_INFO_KV_GET_PAGED,
+                        "args": {
+                            "namespace": namespace,
+                            "key": key,
+                            "selector": selector,
+                            "json_pointer": ptr,
+                            "page": { "limit": 50 },
+                            "max_item_bytes": 4096,
+                        },
+                        "note": format!("Page through array at json_pointer for key `{k}`."),
+                    }));
+                }
+            }
+        }
+        serde_json::Value::String(_) => {
+            if max_bytes < 512 * 1024 {
+                fixits.push(serde_json::json!({
+                    "tool_id": TOOL_ID_INFO_KV_GET,
+                    "args": {
+                        "namespace": namespace,
+                        "key": key,
+                        "selector": selector,
+                        "max_bytes": 512 * 1024,
+                    },
+                    "note": "Retry with a larger max_bytes (clamped).",
+                }));
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+
+    if fixits.len() > MAX_FIXITS {
+        fixits.truncate(MAX_FIXITS);
+    }
+    fixits
+}
+
 fn strip_plan_template_modeling_notes(plan: &mut serde_json::Value) -> bool {
     let Some(components) = plan.get_mut("components").and_then(|v| v.as_array_mut()) else {
         return false;
@@ -1330,6 +1491,492 @@ fn execute_qa_v1(
     job.agent.last_qa_basis_state_hash = Some(state_hash);
     job.agent.last_qa_result_json = Some(json.clone());
 
+    Gen3dToolResultJsonV1::ok(call_id.to_string(), tool_id.to_string(), json)
+}
+
+fn execute_info_kv_get_v1(
+    job: &mut Gen3dAiJob,
+    tool_id: &str,
+    call_id: &str,
+    args_value: serde_json::Value,
+) -> Gen3dToolResultJsonV1 {
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct InfoKvGetArgsV1 {
+        namespace: String,
+        key: String,
+        #[serde(default)]
+        selector: Option<InfoKvSelectorArgsV1>,
+        #[serde(default)]
+        json_pointer: Option<String>,
+        #[serde(default)]
+        max_bytes: Option<u64>,
+    }
+
+    let args: InfoKvGetArgsV1 = match serde_json::from_value(args_value) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(
+                call_id.to_string(),
+                tool_id.to_string(),
+                format!("Invalid args for `{TOOL_ID_INFO_KV_GET}`: {err}"),
+            );
+        }
+    };
+
+    let namespace = args.namespace.trim();
+    let key = args.key.trim();
+    if namespace.is_empty() {
+        return Gen3dToolResultJsonV1::err(
+            call_id.to_string(),
+            tool_id.to_string(),
+            "Missing args.namespace".into(),
+        );
+    }
+    if key.is_empty() {
+        return Gen3dToolResultJsonV1::err(
+            call_id.to_string(),
+            tool_id.to_string(),
+            "Missing args.key".into(),
+        );
+    }
+
+    let max_bytes = args.max_bytes.unwrap_or(64 * 1024).clamp(1024, 512 * 1024) as usize;
+
+    let selector_kind = args
+        .selector
+        .as_ref()
+        .map(|s| s.kind.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "latest".into());
+
+    if let Err(err) = job.ensure_info_store() {
+        return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+    }
+    let Some(store) = job.info_store.as_ref() else {
+        return Gen3dToolResultJsonV1::err(
+            call_id.to_string(),
+            tool_id.to_string(),
+            "Internal error: missing info_store after ensure_info_store.".into(),
+        );
+    };
+
+    let record = match select_kv_record(
+        store,
+        namespace,
+        key,
+        selector_kind.as_str(),
+        args.selector.as_ref(),
+    ) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    };
+
+    let Some(record) = record else {
+        return Gen3dToolResultJsonV1::err(
+            call_id.to_string(),
+            tool_id.to_string(),
+            format!(
+                "KV not found: namespace={namespace:?} key={key:?}. Use `{TOOL_ID_INFO_KV_LIST_KEYS}`."
+            ),
+        );
+    };
+
+    let json_pointer = args
+        .json_pointer
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    // Cache key is based on the resolved KV record (kv_rev) so selector.kind="latest" is safe.
+    let cache_key = {
+        let params_sig = store.stable_params_sig(&serde_json::json!({
+            "namespace": namespace,
+            "key": key,
+            "kv_rev": record.kv_rev,
+            "json_pointer": json_pointer.as_deref().unwrap_or(""),
+            "max_bytes": max_bytes,
+        }));
+        format!("{TOOL_ID_INFO_KV_GET}|{params_sig}")
+    };
+
+    if let Some(prev_json) = job
+        .agent
+        .info_store_inspection_cache
+        .get(&cache_key)
+        .cloned()
+    {
+        let mut json = prev_json;
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("cached".into(), serde_json::Value::Bool(true));
+            obj.insert("no_new_information".into(), serde_json::Value::Bool(true));
+            obj.insert(
+                "no_new_information_message".into(),
+                serde_json::Value::String(
+                    "No new information: same KV record (kv_rev) and json_pointer in this pass. Use `info_kv_list_history_v1` to browse revisions, or wait for a mutation to write a new revision."
+                        .into(),
+                ),
+            );
+        }
+        return Gen3dToolResultJsonV1::ok(call_id.to_string(), tool_id.to_string(), json);
+    }
+
+    let selected = if let Some(ptr) = json_pointer.as_deref() {
+        record
+            .value
+            .pointer(ptr)
+            .ok_or_else(|| format!("JSON pointer not found in KV value: {ptr}"))
+    } else {
+        Ok(&record.value)
+    };
+    let selected = match selected {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    };
+
+    let size_limit = max_bytes.saturating_add(1);
+    let (selected_bytes, _) = match json_bytes_capped(selected, size_limit) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    };
+    if selected_bytes > max_bytes {
+        let shape_preview = json_shape_preview(selected);
+        let fixits = build_info_kv_oversize_fixits(
+            record,
+            namespace,
+            key,
+            json_pointer.as_deref(),
+            max_bytes,
+            selected,
+        );
+        let mut diag = serde_json::Map::new();
+        diag.insert(
+            "kind".into(),
+            serde_json::Value::String("kv_value_too_large".into()),
+        );
+        diag.insert("record".into(), info_kv_record_json(record));
+        diag.insert("max_bytes".into(), serde_json::json!(max_bytes));
+        diag.insert(
+            "selected_bytes_capped".into(),
+            serde_json::json!(selected_bytes),
+        );
+        if let Some(ptr) = json_pointer.as_deref() {
+            diag.insert(
+                "json_pointer".into(),
+                serde_json::Value::String(ptr.to_string()),
+            );
+        }
+        diag.insert("shape_preview".into(), shape_preview.clone());
+        diag.insert("fixits".into(), serde_json::Value::Array(fixits));
+
+        let mut msg = format!(
+            "KV value is too large (selected_bytes > max_bytes={max_bytes}). Use `json_pointer` to select a smaller subset."
+        );
+        if !shape_preview.is_null() {
+            msg.push_str(" shape_preview=");
+            msg.push_str(&shape_preview.to_string());
+        }
+
+        return Gen3dToolResultJsonV1::err_with_result(
+            call_id.to_string(),
+            tool_id.to_string(),
+            msg,
+            serde_json::Value::Object(diag),
+        );
+    }
+
+    let mut out = serde_json::Map::new();
+    out.insert("ok".into(), serde_json::Value::Bool(true));
+    out.insert("record".into(), info_kv_record_json(record));
+    out.insert("value".into(), selected.clone());
+    out.insert("truncated".into(), serde_json::Value::Bool(false));
+    out.insert("cached".into(), serde_json::Value::Bool(false));
+    out.insert("no_new_information".into(), serde_json::Value::Bool(false));
+    if let Some(ptr) = json_pointer {
+        out.insert("json_pointer".into(), serde_json::Value::String(ptr));
+    }
+    let json = serde_json::Value::Object(out);
+    job.agent
+        .info_store_inspection_cache
+        .insert(cache_key, json.clone());
+    Gen3dToolResultJsonV1::ok(call_id.to_string(), tool_id.to_string(), json)
+}
+
+fn execute_info_kv_get_many_v1(
+    job: &mut Gen3dAiJob,
+    tool_id: &str,
+    call_id: &str,
+    args_value: serde_json::Value,
+) -> Gen3dToolResultJsonV1 {
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct InfoKvGetManyItemArgsV1 {
+        namespace: String,
+        key: String,
+        #[serde(default)]
+        json_pointer: Option<String>,
+        #[serde(default)]
+        max_bytes: Option<u64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct InfoKvGetManyArgsV1 {
+        items: Vec<InfoKvGetManyItemArgsV1>,
+        #[serde(default)]
+        selector: Option<InfoKvSelectorArgsV1>,
+        #[serde(default)]
+        max_items: Option<u32>,
+    }
+
+    let args_value_for_error = args_value.clone();
+    let args: InfoKvGetManyArgsV1 = match serde_json::from_value(args_value.clone()) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(
+                call_id.to_string(),
+                tool_id.to_string(),
+                format_info_kv_get_many_args_error(&args_value_for_error, &err),
+            );
+        }
+    };
+
+    let max_items = args.max_items.unwrap_or(20).clamp(1, 50) as usize;
+    let mut truncated = false;
+    let mut requested = args.items;
+    if requested.len() > max_items {
+        requested.truncate(max_items);
+        truncated = true;
+    }
+
+    let selector_kind = args
+        .selector
+        .as_ref()
+        .map(|s| s.kind.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "latest".into());
+
+    if let Err(err) = job.ensure_info_store() {
+        return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+    }
+    let Some(store) = job.info_store.as_ref() else {
+        return Gen3dToolResultJsonV1::err(
+            call_id.to_string(),
+            tool_id.to_string(),
+            "Internal error: missing info_store after ensure_info_store.".into(),
+        );
+    };
+
+    struct ResolvedItem<'a> {
+        namespace: String,
+        key: String,
+        json_pointer: Option<String>,
+        max_bytes: usize,
+        record: Option<&'a super::info_store::InfoKvRecord>,
+    }
+
+    let selector_ref = args.selector.as_ref();
+    let mut resolved: Vec<ResolvedItem<'_>> = Vec::with_capacity(requested.len());
+    for item in requested {
+        let namespace = item.namespace.trim().to_string();
+        let key = item.key.trim().to_string();
+        let json_pointer = item
+            .json_pointer
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let max_bytes = item.max_bytes.unwrap_or(64 * 1024).clamp(1024, 512 * 1024) as usize;
+
+        let record = if namespace.is_empty() || key.is_empty() {
+            None
+        } else {
+            match select_kv_record(
+                store,
+                namespace.as_str(),
+                key.as_str(),
+                selector_kind.as_str(),
+                selector_ref,
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return Gen3dToolResultJsonV1::err(
+                        call_id.to_string(),
+                        tool_id.to_string(),
+                        err,
+                    );
+                }
+            }
+        };
+
+        resolved.push(ResolvedItem {
+            namespace,
+            key,
+            json_pointer,
+            max_bytes,
+            record,
+        });
+    }
+
+    let cache_key = {
+        let items_sig: Vec<serde_json::Value> = resolved
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "namespace": item.namespace.as_str(),
+                    "key": item.key.as_str(),
+                    "kv_rev": item.record.map(|r| r.kv_rev),
+                    "json_pointer": item.json_pointer.as_deref().unwrap_or(""),
+                    "max_bytes": item.max_bytes,
+                })
+            })
+            .collect();
+        let params_sig = store.stable_params_sig(&serde_json::json!({
+            "items": items_sig,
+            "truncated": truncated,
+        }));
+        format!("{TOOL_ID_INFO_KV_GET_MANY}|{params_sig}")
+    };
+
+    if let Some(prev_json) = job
+        .agent
+        .info_store_inspection_cache
+        .get(&cache_key)
+        .cloned()
+    {
+        let mut json = prev_json;
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("cached".into(), serde_json::Value::Bool(true));
+            obj.insert("no_new_information".into(), serde_json::Value::Bool(true));
+            obj.insert(
+                "no_new_information_message".into(),
+                serde_json::Value::String(
+                    "No new information: identical KV reads (resolved kv_rev + json_pointer) already returned in this pass."
+                        .into(),
+                ),
+            );
+        }
+        return Gen3dToolResultJsonV1::ok(call_id.to_string(), tool_id.to_string(), json);
+    }
+
+    let mut out_items: Vec<serde_json::Value> = Vec::with_capacity(resolved.len());
+    for item in resolved {
+        if item.namespace.is_empty() || item.key.is_empty() {
+            out_items.push(serde_json::json!({
+                "namespace": item.namespace,
+                "key": item.key,
+                "ok": false,
+                "error": "Missing namespace/key.",
+            }));
+            continue;
+        }
+
+        let Some(record) = item.record else {
+            out_items.push(serde_json::json!({
+                "namespace": item.namespace,
+                "key": item.key,
+                "ok": false,
+                "error": "KV not found for selector.",
+            }));
+            continue;
+        };
+
+        let selected = if let Some(ptr) = item.json_pointer.as_deref() {
+            match record.value.pointer(ptr) {
+                Some(v) => Ok(v),
+                None => Err(format!("JSON pointer not found: {ptr}")),
+            }
+        } else {
+            Ok(&record.value)
+        };
+        let selected = match selected {
+            Ok(v) => v,
+            Err(err) => {
+                out_items.push(serde_json::json!({
+                    "namespace": item.namespace,
+                    "key": item.key,
+                    "ok": false,
+                    "record": info_kv_record_json(record),
+                    "error": err,
+                }));
+                continue;
+            }
+        };
+
+        let size_limit = item.max_bytes.saturating_add(1);
+        let (selected_bytes, _) = match json_bytes_capped(selected, size_limit) {
+            Ok(v) => v,
+            Err(err) => {
+                out_items.push(serde_json::json!({
+                    "namespace": item.namespace,
+                    "key": item.key,
+                    "ok": false,
+                    "record": info_kv_record_json(record),
+                    "error": err,
+                }));
+                continue;
+            }
+        };
+
+        if selected_bytes > item.max_bytes {
+            let shape_preview = json_shape_preview(selected);
+            let fixits = build_info_kv_oversize_fixits(
+                record,
+                item.namespace.as_str(),
+                item.key.as_str(),
+                item.json_pointer.as_deref(),
+                item.max_bytes,
+                selected,
+            );
+            out_items.push(serde_json::json!({
+                "namespace": item.namespace,
+                "key": item.key,
+                "ok": false,
+                "record": info_kv_record_json(record),
+                "json_pointer": item.json_pointer,
+                "error_kind": "kv_value_too_large",
+                "error": format!("KV value is too large (selected_bytes > max_bytes={}). Use json_pointer.", item.max_bytes),
+                "max_bytes": item.max_bytes,
+                "selected_bytes_capped": selected_bytes,
+                "shape_preview": shape_preview,
+                "fixits": fixits,
+            }));
+            continue;
+        }
+
+        let mut out = serde_json::Map::new();
+        out.insert(
+            "namespace".into(),
+            serde_json::Value::String(item.namespace),
+        );
+        out.insert("key".into(), serde_json::Value::String(item.key));
+        out.insert("ok".into(), serde_json::Value::Bool(true));
+        out.insert("record".into(), info_kv_record_json(record));
+        out.insert("value".into(), selected.clone());
+        out.insert("truncated".into(), serde_json::Value::Bool(false));
+        if let Some(ptr) = item.json_pointer {
+            out.insert("json_pointer".into(), serde_json::Value::String(ptr));
+        }
+        out_items.push(serde_json::Value::Object(out));
+    }
+
+    let json = serde_json::json!({
+        "ok": true,
+        "items": out_items,
+        "truncated": truncated,
+        "cached": false,
+        "no_new_information": false,
+    });
+    job.agent
+        .info_store_inspection_cache
+        .insert(cache_key, json.clone());
     Gen3dToolResultJsonV1::ok(call_id.to_string(), tool_id.to_string(), json)
 }
 
@@ -2708,190 +3355,16 @@ pub(super) fn execute_tool_call(
             ))
         }
         TOOL_ID_INFO_KV_GET => {
-            #[derive(Debug, Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct InfoKvGetArgsV1 {
-                namespace: String,
-                key: String,
-                #[serde(default)]
-                selector: Option<InfoKvSelectorArgsV1>,
-                #[serde(default)]
-                json_pointer: Option<String>,
-                #[serde(default)]
-                max_bytes: Option<u64>,
-            }
-
-            let args: InfoKvGetArgsV1 = match serde_json::from_value(call.args) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        format!("Invalid args for `{TOOL_ID_INFO_KV_GET}`: {err}"),
-                    ));
-                }
-            };
-
-            let namespace = args.namespace.trim();
-            let key = args.key.trim();
-            if namespace.is_empty() {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    "Missing args.namespace".into(),
-                ));
-            }
-            if key.is_empty() {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    "Missing args.key".into(),
-                ));
-            }
-
-            let max_bytes = args.max_bytes.unwrap_or(64 * 1024).clamp(1024, 512 * 1024) as usize;
-
-            let selector_kind = args
-                .selector
-                .as_ref()
-                .map(|s| s.kind.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "latest".into());
-
-            let store = match job.ensure_info_store() {
-                Ok(s) => s,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            let record = match select_kv_record(
-                store,
-                namespace,
-                key,
-                selector_kind.as_str(),
-                args.selector.as_ref(),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            let Some(record) = record else {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    format!(
-                        "KV not found: namespace={namespace:?} key={key:?}. Use `{TOOL_ID_INFO_KV_LIST_KEYS}`."
-                    ),
-                ));
-            };
-
-            let json_pointer = args
-                .json_pointer
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
-
-            let selected = if let Some(ptr) = json_pointer.as_deref() {
-                record
-                    .value
-                    .pointer(ptr)
-                    .cloned()
-                    .ok_or_else(|| format!("JSON pointer not found in KV value: {ptr}"))
-            } else {
-                Ok(record.value.clone())
-            };
-            let selected = match selected {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            let selected_bytes = match serde_json::to_vec(&selected) {
-                Ok(v) => v.len(),
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        format!("Failed to serialize KV value: {err}"),
-                    ));
-                }
-            };
-            if selected_bytes > max_bytes {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    format!(
-                        "KV value is too large ({selected_bytes} bytes > max_bytes={max_bytes}). Use `json_pointer` to select a smaller subset."
-                    ),
-                ));
-            }
-
-            let mut out = serde_json::Map::new();
-            out.insert("ok".into(), serde_json::Value::Bool(true));
-            let mut record_json = serde_json::Map::new();
-            record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
-            record_json.insert(
-                "written_at_ms".into(),
-                serde_json::json!(record.written_at_ms),
-            );
-            record_json.insert("attempt".into(), serde_json::json!(record.attempt));
-            record_json.insert("pass".into(), serde_json::json!(record.pass));
-            record_json.insert(
-                "assembly_rev".into(),
-                serde_json::json!(record.assembly_rev),
-            );
-            record_json.insert(
-                "workspace_id".into(),
-                serde_json::Value::String(record.workspace_id.clone()),
-            );
-            record_json.insert(
-                "key".into(),
-                serde_json::json!({
-                    "namespace": record.key.namespace.as_str(),
-                    "key": record.key.key.as_str(),
-                }),
-            );
-            record_json.insert(
-                "summary".into(),
-                serde_json::Value::String(record.summary.clone()),
-            );
-            record_json.insert("bytes".into(), serde_json::json!(record.bytes));
-            if let Some(prov) = record.written_by.as_ref() {
-                record_json.insert(
-                    "written_by".into(),
-                    serde_json::json!({
-                        "tool_id": prov.tool_id.as_str(),
-                        "call_id": prov.call_id.as_str(),
-                    }),
-                );
-            }
-            out.insert("record".into(), serde_json::Value::Object(record_json));
-            out.insert("value".into(), selected);
-            out.insert("truncated".into(), serde_json::Value::Bool(false));
-            if let Some(ptr) = json_pointer {
-                out.insert("json_pointer".into(), serde_json::Value::String(ptr));
-            }
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
-                call.call_id,
-                call.tool_id,
-                serde_json::Value::Object(out),
+            let Gen3dToolCallJsonV1 {
+                call_id,
+                tool_id,
+                args,
+            } = call;
+            ToolCallOutcome::Immediate(execute_info_kv_get_v1(
+                job,
+                tool_id.as_str(),
+                call_id.as_str(),
+                args,
             ))
         }
         TOOL_ID_INFO_KV_GET_PAGED => {
@@ -2908,209 +3381,16 @@ pub(super) fn execute_tool_call(
             ))
         }
         TOOL_ID_INFO_KV_GET_MANY => {
-            #[derive(Debug, Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct InfoKvGetManyItemArgsV1 {
-                namespace: String,
-                key: String,
-                #[serde(default)]
-                json_pointer: Option<String>,
-                #[serde(default)]
-                max_bytes: Option<u64>,
-            }
-
-            #[derive(Debug, Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct InfoKvGetManyArgsV1 {
-                items: Vec<InfoKvGetManyItemArgsV1>,
-                #[serde(default)]
-                selector: Option<InfoKvSelectorArgsV1>,
-                #[serde(default)]
-                max_items: Option<u32>,
-            }
-
-            let args_value = call.args.clone();
-            let args: InfoKvGetManyArgsV1 = match serde_json::from_value(args_value.clone()) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        format_info_kv_get_many_args_error(&args_value, &err),
-                    ));
-                }
-            };
-
-            let max_items = args.max_items.unwrap_or(20).clamp(1, 50) as usize;
-            let mut truncated = false;
-            let mut requested = args.items;
-            if requested.len() > max_items {
-                requested.truncate(max_items);
-                truncated = true;
-            }
-
-            let selector_kind = args
-                .selector
-                .as_ref()
-                .map(|s| s.kind.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "latest".into());
-
-            let store = match job.ensure_info_store() {
-                Ok(s) => s,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            let selector_ref = args.selector.as_ref();
-
-            let mut out_items: Vec<serde_json::Value> = Vec::with_capacity(requested.len());
-            for item in requested {
-                let namespace = item.namespace.trim().to_string();
-                let key = item.key.trim().to_string();
-                if namespace.is_empty() || key.is_empty() {
-                    out_items.push(serde_json::json!({
-                        "namespace": namespace,
-                        "key": key,
-                        "ok": false,
-                        "error": "Missing namespace/key.",
-                    }));
-                    continue;
-                }
-
-                let max_bytes =
-                    item.max_bytes.unwrap_or(64 * 1024).clamp(1024, 512 * 1024) as usize;
-
-                let record = match select_kv_record(
-                    store,
-                    namespace.as_str(),
-                    key.as_str(),
-                    selector_kind.as_str(),
-                    selector_ref,
-                ) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                            call.call_id,
-                            call.tool_id,
-                            err,
-                        ));
-                    }
-                };
-                let Some(record) = record else {
-                    out_items.push(serde_json::json!({
-                        "namespace": namespace,
-                        "key": key,
-                        "ok": false,
-                        "error": "KV not found for selector.",
-                    }));
-                    continue;
-                };
-
-                let json_pointer = item
-                    .json_pointer
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string);
-                let selected = if let Some(ptr) = json_pointer.as_deref() {
-                    match record.value.pointer(ptr).cloned() {
-                        Some(v) => Ok(v),
-                        None => Err(format!("JSON pointer not found: {ptr}")),
-                    }
-                } else {
-                    Ok(record.value.clone())
-                };
-                let selected = match selected {
-                    Ok(v) => v,
-                    Err(err) => {
-                        out_items.push(serde_json::json!({
-                            "namespace": namespace,
-                            "key": key,
-                            "ok": false,
-                            "error": err,
-                        }));
-                        continue;
-                    }
-                };
-                let selected_bytes = match serde_json::to_vec(&selected) {
-                    Ok(v) => v.len(),
-                    Err(err) => {
-                        out_items.push(serde_json::json!({
-                            "namespace": namespace,
-                            "key": key,
-                            "ok": false,
-                            "error": format!("Failed to serialize KV value: {err}"),
-                        }));
-                        continue;
-                    }
-                };
-                if selected_bytes > max_bytes {
-                    out_items.push(serde_json::json!({
-                        "namespace": namespace,
-                        "key": key,
-                        "ok": false,
-                        "error": format!("KV value is too large ({selected_bytes} bytes > max_bytes={max_bytes}). Use json_pointer."),
-                    }));
-                    continue;
-                }
-
-                let mut out = serde_json::Map::new();
-                out.insert("namespace".into(), serde_json::Value::String(namespace));
-                out.insert("key".into(), serde_json::Value::String(key));
-                out.insert("ok".into(), serde_json::Value::Bool(true));
-                let mut record_json = serde_json::Map::new();
-                record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
-                record_json.insert(
-                    "written_at_ms".into(),
-                    serde_json::json!(record.written_at_ms),
-                );
-                record_json.insert("attempt".into(), serde_json::json!(record.attempt));
-                record_json.insert("pass".into(), serde_json::json!(record.pass));
-                record_json.insert(
-                    "assembly_rev".into(),
-                    serde_json::json!(record.assembly_rev),
-                );
-                record_json.insert(
-                    "workspace_id".into(),
-                    serde_json::Value::String(record.workspace_id.clone()),
-                );
-                record_json.insert(
-                    "summary".into(),
-                    serde_json::Value::String(record.summary.clone()),
-                );
-                record_json.insert("bytes".into(), serde_json::json!(record.bytes));
-                if let Some(prov) = record.written_by.as_ref() {
-                    record_json.insert(
-                        "written_by".into(),
-                        serde_json::json!({
-                            "tool_id": prov.tool_id.as_str(),
-                            "call_id": prov.call_id.as_str(),
-                        }),
-                    );
-                }
-                out.insert("record".into(), serde_json::Value::Object(record_json));
-                out.insert("value".into(), selected);
-                out.insert("truncated".into(), serde_json::Value::Bool(false));
-                if let Some(ptr) = json_pointer {
-                    out.insert("json_pointer".into(), serde_json::Value::String(ptr));
-                }
-                out_items.push(serde_json::Value::Object(out));
-            }
-
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
-                call.call_id,
-                call.tool_id,
-                serde_json::json!({
-                    "ok": true,
-                    "items": out_items,
-                    "truncated": truncated,
-                }),
+            let Gen3dToolCallJsonV1 {
+                call_id,
+                tool_id,
+                args,
+            } = call;
+            ToolCallOutcome::Immediate(execute_info_kv_get_many_v1(
+                job,
+                tool_id.as_str(),
+                call_id.as_str(),
+                args,
             ))
         }
         TOOL_ID_INFO_EVENTS_LIST => {
@@ -7319,6 +7599,245 @@ mod tests {
                 .is_some_and(|s| !s.trim().is_empty()),
             "expected blocked_reason, got {gap:?}"
         );
+    }
+
+    #[test]
+    fn info_kv_get_v1_second_call_is_cached() {
+        let run_dir = make_temp_dir("gravimera_info_kv_get_cache_test");
+
+        let mut job = super::Gen3dAiJob::default();
+        job.run_dir = Some(run_dir.clone());
+
+        {
+            let store = job.ensure_info_store().expect("open store");
+            store
+                .kv_put(
+                    0,
+                    1,
+                    2,
+                    "main",
+                    "gen3d",
+                    "ws.main.small",
+                    serde_json::json!({ "a": 1, "b": 2 }),
+                    "small".into(),
+                    None,
+                )
+                .expect("kv put");
+        }
+
+        let r1 = super::execute_info_kv_get_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET,
+            "call_1",
+            serde_json::json!({
+                "namespace": "gen3d",
+                "key": "ws.main.small",
+                "selector": { "kind": "latest" },
+                "json_pointer": "/a",
+                "max_bytes": 64 * 1024,
+            }),
+        );
+        assert!(r1.ok, "expected tool call ok, got {r1:?}");
+        let j1 = r1.result.clone().expect("missing result");
+        assert_eq!(
+            j1.get("cached").and_then(|v| v.as_bool()),
+            Some(false),
+            "expected cached=false, got {j1:?}"
+        );
+        let kv_rev_1 = j1
+            .get("record")
+            .and_then(|v| v.get("kv_rev"))
+            .and_then(|v| v.as_u64())
+            .expect("missing record.kv_rev");
+
+        let r2 = super::execute_info_kv_get_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET,
+            "call_2",
+            serde_json::json!({
+                "namespace": "gen3d",
+                "key": "ws.main.small",
+                "selector": { "kind": "latest" },
+                "json_pointer": "/a",
+                "max_bytes": 64 * 1024,
+            }),
+        );
+        assert!(r2.ok, "expected tool call ok, got {r2:?}");
+        let j2 = r2.result.clone().expect("missing result");
+        assert_eq!(
+            j2.get("cached").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected cached=true, got {j2:?}"
+        );
+        assert_eq!(
+            j2.get("no_new_information").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected no_new_information=true, got {j2:?}"
+        );
+        let kv_rev_2 = j2
+            .get("record")
+            .and_then(|v| v.get("kv_rev"))
+            .and_then(|v| v.as_u64())
+            .expect("missing record.kv_rev");
+        assert_eq!(kv_rev_2, kv_rev_1, "expected cached kv_rev unchanged");
+
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn info_kv_get_v1_oversize_error_includes_shape_preview_and_fixits() {
+        let run_dir = make_temp_dir("gravimera_info_kv_get_oversize_test");
+
+        let mut job = super::Gen3dAiJob::default();
+        job.run_dir = Some(run_dir.clone());
+
+        {
+            let store = job.ensure_info_store().expect("open store");
+            store
+                .kv_put(
+                    0,
+                    1,
+                    2,
+                    "main",
+                    "gen3d",
+                    "ws.main.big",
+                    serde_json::json!({
+                        "arr": (0..128).collect::<Vec<_>>(),
+                        "blob": "x".repeat(20_000),
+                    }),
+                    "big".into(),
+                    None,
+                )
+                .expect("kv put");
+        }
+
+        let r = super::execute_info_kv_get_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET,
+            "call_1",
+            serde_json::json!({
+                "namespace": "gen3d",
+                "key": "ws.main.big",
+                "selector": { "kind": "latest" },
+                "max_bytes": 1024,
+            }),
+        );
+        assert!(!r.ok, "expected tool call error, got {r:?}");
+        let diag = r.result.clone().expect("expected error result payload");
+        assert_eq!(
+            diag.get("kind").and_then(|v| v.as_str()),
+            Some("kv_value_too_large"),
+            "expected kind, got {diag:?}"
+        );
+        let shape = diag
+            .get("shape_preview")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        assert_eq!(
+            shape.get("kind").and_then(|v| v.as_str()),
+            Some("object"),
+            "expected object shape preview, got {shape:?}"
+        );
+        let fixits = diag
+            .get("fixits")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            fixits.iter().any(|f| {
+                f.get("tool_id").and_then(|v| v.as_str()) == Some(super::TOOL_ID_INFO_KV_GET)
+            }),
+            "expected info_kv_get_v1 fixit, got {fixits:?}"
+        );
+        assert!(
+            fixits.iter().any(|f| {
+                f.get("tool_id").and_then(|v| v.as_str()) == Some(super::TOOL_ID_INFO_KV_GET_PAGED)
+            }),
+            "expected info_kv_get_paged_v1 fixit, got {fixits:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn info_kv_get_many_v1_second_call_is_cached() {
+        let run_dir = make_temp_dir("gravimera_info_kv_get_many_cache_test");
+
+        let mut job = super::Gen3dAiJob::default();
+        job.run_dir = Some(run_dir.clone());
+
+        {
+            let store = job.ensure_info_store().expect("open store");
+            store
+                .kv_put(
+                    0,
+                    1,
+                    2,
+                    "main",
+                    "gen3d",
+                    "ws.main.small",
+                    serde_json::json!({ "a": 1, "b": 2 }),
+                    "small".into(),
+                    None,
+                )
+                .expect("kv put");
+            store
+                .kv_put(
+                    0,
+                    1,
+                    2,
+                    "main",
+                    "gen3d",
+                    "ws.main.other",
+                    serde_json::json!({ "k": "v" }),
+                    "other".into(),
+                    None,
+                )
+                .expect("kv put other");
+        }
+
+        let args = serde_json::json!({
+            "selector": { "kind": "latest" },
+            "items": [
+                { "namespace": "gen3d", "key": "ws.main.small", "json_pointer": "/a" },
+                { "namespace": "gen3d", "key": "ws.main.other" }
+            ],
+        });
+
+        let r1 = super::execute_info_kv_get_many_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET_MANY,
+            "call_1",
+            args.clone(),
+        );
+        assert!(r1.ok, "expected tool call ok, got {r1:?}");
+        let j1 = r1.result.clone().expect("missing result");
+        assert_eq!(
+            j1.get("cached").and_then(|v| v.as_bool()),
+            Some(false),
+            "expected cached=false, got {j1:?}"
+        );
+
+        let r2 = super::execute_info_kv_get_many_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET_MANY,
+            "call_2",
+            args,
+        );
+        assert!(r2.ok, "expected tool call ok, got {r2:?}");
+        let j2 = r2.result.clone().expect("missing result");
+        assert_eq!(
+            j2.get("cached").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected cached=true, got {j2:?}"
+        );
+        assert_eq!(
+            j2.get("no_new_information").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected no_new_information=true, got {j2:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&run_dir);
     }
 
     #[test]

@@ -242,7 +242,7 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 tool_id: TOOL_ID_INFO_KV_GET,
                 title: "Info KV: get",
                 one_line_summary:
-                    "Read-only: fetch a KV value by key + selector (latest/kv_rev/as-of); bounded by max_bytes.",
+                    "Read-only: fetch a KV value by key + selector (latest/kv_rev/as-of); bounded by max_bytes. Repeats within a pass may return cached=true/no_new_information=true. Oversize errors include a deterministic shape_preview + fixits.",
                 args_schema:
                     "{ namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }, json_pointer?: string, max_bytes?: number }",
                 args_example: serde_json::json!({
@@ -272,7 +272,7 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 tool_id: TOOL_ID_INFO_KV_GET_MANY,
                 title: "Info KV: get many",
                 one_line_summary:
-                    "Read-only: fetch multiple KV values with ONE shared top-level selector (do NOT put selector inside items[]); returns per-key errors; bounded.",
+                    "Read-only: fetch multiple KV values with ONE shared top-level selector (do NOT put selector inside items[]); returns per-key errors; bounded. Repeats within a pass may return cached=true/no_new_information=true.",
                 args_schema:
                     "{ items: { namespace: string, key: string, json_pointer?: string, max_bytes?: number }[], selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }, max_items?: number }",
                 args_example: serde_json::json!({
@@ -473,7 +473,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 tool_id: TOOL_ID_LLM_GENERATE_PLAN_OPS,
                 title: "LLM: generate plan ops",
                 one_line_summary:
-                    "LLM+mutates: generate a bounded PlanOps patch and deterministically apply it to the current accepted plan (preserve-mode diff-first replanning). Requires constraints.preserve_existing_components=true, an existing plan, and plan_template_kv (call get_plan_template_v1 first). Optional scope_components rejects ops that touch out-of-scope existing components. Writes plan_ops_generated.json + plan_ops_apply_last.json artifacts under pass/.",
+                    "LLM+mutates: generate a bounded PlanOps patch and deterministically apply it to the current accepted plan (preserve-mode diff-first replanning). Requires constraints.preserve_existing_components=true, an existing plan, and plan_template_kv (call get_plan_template_v1 first). Optional scope_components rejects ops that touch out-of-scope existing components. Deterministically normalizes common alias add_component.component→name (reports repaired=true + repair_diff; writes plan_ops_generated_normalized.json). Writes plan_ops_generated.json + plan_ops_apply_last.json artifacts under pass/.",
                 args_schema:
                     "{ prompt?: string, plan_template_kv?: { namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number } }, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, scope_components?: string[], max_ops?: number }",
                 args_example: serde_json::json!({
@@ -514,7 +514,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 tool_id: TOOL_ID_LLM_REVIEW_DELTA,
                 title: "LLM: review delta",
                 one_line_summary:
-                    "LLM+mutates: apply deterministic tweak ops; may request component regen indices (some may be budget/QA-gated). Use `preview_blob_ids` (or `blob_ids`) for explicit renders; pass `{\"preview_blob_ids\":[]}` to use the latest render cache.",
+                    "LLM+mutates: apply deterministic tweak ops; in preserve mode regen is QA-gated BEFORE the LLM call (schema omits regen_component when gate closed; result includes regen_allowed + reason). Use `preview_blob_ids` (or `blob_ids`) for explicit renders; pass `{\"preview_blob_ids\":[]}` to use the latest render cache.",
                 args_schema:
                     "{ preview_blob_ids?: string[], blob_ids?: string[] }",
                 args_example: serde_json::json!({ "preview_blob_ids": [] }),

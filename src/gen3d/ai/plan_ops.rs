@@ -1299,6 +1299,79 @@ struct GeneratedPlanOpsJsonV1 {
     ops: Vec<PlanOpJsonV1>,
 }
 
+fn apply_generated_plan_ops_micro_repairs_v1(
+    payload: &mut serde_json::Value,
+) -> Result<Vec<serde_json::Value>, String> {
+    let Some(root) = payload.as_object_mut() else {
+        return Ok(Vec::new());
+    };
+    let Some(ops) = root.get_mut("ops").and_then(|v| v.as_array_mut()) else {
+        return Ok(Vec::new());
+    };
+
+    let mut diff: Vec<serde_json::Value> = Vec::new();
+
+    for (idx, op) in ops.iter_mut().enumerate() {
+        let Some(op_obj) = op.as_object_mut() else {
+            continue;
+        };
+        let kind = op_obj
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if kind != "add_component" {
+            continue;
+        }
+
+        let name = op_obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let component = op_obj
+            .get("component")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        match (name.as_deref(), component.as_deref()) {
+            (None, Some(component)) => {
+                op_obj.insert(
+                    "name".to_string(),
+                    serde_json::Value::String(component.to_string()),
+                );
+                op_obj.remove("component");
+                diff.push(serde_json::json!({
+                    "kind": "alias_field",
+                    "op_index": idx,
+                    "op_kind": "add_component",
+                    "from": "component",
+                    "to": "name",
+                    "value": component,
+                }));
+            }
+            (Some(name), Some(component)) => {
+                if name.trim() != component.trim() {
+                    return Err(format!(
+                        "llm_generate_plan_ops_v1: add_component op[{idx}] contains both `name` and `component` with different values (name={name:?}, component={component:?}); refusing deterministic micro-repair. Omit `component` and use only `name`."
+                    ));
+                }
+                op_obj.remove("component");
+                diff.push(serde_json::json!({
+                    "kind": "dropped_redundant_alias",
+                    "op_index": idx,
+                    "op_kind": "add_component",
+                    "dropped": "component",
+                    "kept": "name",
+                    "value": name,
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(diff)
+}
+
 fn touched_component_names_for_scope(ops: &[PlanOpJsonV1]) -> std::collections::BTreeSet<String> {
     let mut out = std::collections::BTreeSet::<String>::new();
     for op in ops.iter() {
@@ -1405,9 +1478,14 @@ pub(super) fn apply_llm_generate_plan_ops_v1(
 
     let json_text = super::parse::extract_json_object(text).unwrap_or_else(|| text.to_string());
     let json_text = json_text.trim();
-    let payload_value: serde_json::Value = serde_json::from_str(json_text)
+    let mut payload_value: serde_json::Value = serde_json::from_str(json_text)
         .map_err(|err| format!("llm_generate_plan_ops_v1: Failed to parse JSON: {err}"))?;
     let payload_value_for_artifact = payload_value.clone();
+
+    let repair_diff = apply_generated_plan_ops_micro_repairs_v1(&mut payload_value)?;
+    let repaired = !repair_diff.is_empty();
+    let payload_value_normalized_for_artifact = payload_value.clone();
+
     let payload: GeneratedPlanOpsJsonV1 = serde_json::from_value(payload_value)
         .map_err(|err| format!("llm_generate_plan_ops_v1: AI JSON schema error: {err}"))?;
     if payload.version != 1 {
@@ -1442,6 +1520,22 @@ pub(super) fn apply_llm_generate_plan_ops_v1(
             "plan_ops_generated.json",
             &payload_value_for_artifact,
         );
+        if repaired {
+            let filename = format!(
+                "plan_ops_generated_normalized_{}.json",
+                sanitize_prefix(call_id.unwrap_or(""))
+            );
+            super::artifacts::write_gen3d_json_artifact(
+                Some(dir),
+                &filename,
+                &payload_value_normalized_for_artifact,
+            );
+            super::artifacts::write_gen3d_json_artifact(
+                Some(dir),
+                "plan_ops_generated_normalized.json",
+                &payload_value_normalized_for_artifact,
+            );
+        }
     }
 
     let scope_components: Vec<String> = scope_components
@@ -1689,6 +1783,8 @@ Hint: include these names in scope_components, or omit scope_components, or use 
     let result = serde_json::json!({
         "ok": ok,
         "version": 1,
+        "repaired": repaired,
+        "repair_diff": repair_diff,
         "accepted": accepted,
         "committed": committed,
         "assembly_rev_before": assembly_rev_before,
@@ -2303,6 +2399,88 @@ mod tests {
             .find(|c| c.name == "torso")
             .expect("expected torso");
         assert_eq!(torso.modeling_notes.trim(), "torso modeling notes keep");
+        assert!(job.planned_components.iter().any(|c| c.name == "hat"));
+    }
+
+    #[test]
+    fn llm_generate_plan_ops_micro_repairs_add_component_component_alias() {
+        let mut job = Gen3dAiJob::default();
+        let mut draft = Gen3dDraft { defs: Vec::new() };
+
+        let plan = make_simple_current_plan();
+        let (planned, notes, mut defs) =
+            convert::ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+
+        job.planned_components = planned;
+        job.assembly_notes = notes;
+        job.preserve_existing_components_mode = true;
+
+        // Mark the draft as already-generated so preserve-mode merge path is used.
+        let torso_id =
+            crate::object::registry::builtin_object_id("gravimera/gen3d/component/torso");
+        let torso_def = defs
+            .iter_mut()
+            .find(|def| def.object_id == torso_id)
+            .expect("expected torso def");
+        torso_def.parts.push(
+            ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(0.5, 0.5, 0.5),
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )
+            .with_part_id(Uuid::new_v4().as_u128()),
+        );
+        draft.defs = defs;
+
+        let text = r#"
+        {
+          "version": 1,
+          "ops": [
+            { "kind": "add_component", "component": "hat", "size": [0.3, 0.2, 0.3] },
+            {
+              "kind": "set_attach_to",
+              "component": "hat",
+              "set_attach_to": { "parent": "head", "parent_anchor": "origin", "child_anchor": "origin" }
+            }
+          ]
+        }
+        "#;
+
+        let result = apply_llm_generate_plan_ops_v1(
+            &mut job,
+            &mut draft,
+            Some("call_plan_ops"),
+            true,
+            Some("additive"),
+            Vec::new(),
+            Vec::new(),
+            32,
+            text,
+        )
+        .expect("tool should return result JSON");
+
+        assert!(result
+            .get("accepted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false));
+        assert_eq!(result.get("repaired").and_then(|v| v.as_bool()), Some(true));
+        let diff = result
+            .get("repair_diff")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(!diff.is_empty());
+        assert_eq!(
+            diff.iter().any(
+                |v| v.get("from").and_then(|v| v.as_str()) == Some("component")
+                    && v.get("to").and_then(|v| v.as_str()) == Some("name")
+            ),
+            true
+        );
         assert!(job.planned_components.iter().any(|c| c.name == "hat"));
     }
 
