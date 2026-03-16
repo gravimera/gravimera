@@ -780,6 +780,10 @@ impl Gen3dInfoStore {
         page_slice(items, kind, params_sig, limit, offset)
     }
 
+    pub(super) fn offset_cursor(&self, kind: &str, params_sig: &str, offset: usize) -> String {
+        encode_offset_cursor(kind, params_sig, offset)
+    }
+
     pub(super) fn stable_params_sig(&self, value: &serde_json::Value) -> String {
         stable_params_sig(value)
     }
@@ -807,6 +811,67 @@ mod tests {
         );
         assert!(decode_offset_cursor("events", params_sig, cursor.as_str()).is_err());
         assert!(decode_offset_cursor(kind, "{\"sort\":\"ts_desc\"}", cursor.as_str()).is_err());
+    }
+
+    #[test]
+    fn cursor_roundtrip_rejects_mismatch_for_kv_get_paged_params() {
+        let run_dir = make_temp_dir("gravimera_info_store_cursor_sig_test");
+        let mut store = Gen3dInfoStore::open_or_create(&run_dir).expect("open store");
+
+        let record = store
+            .kv_put(
+                0,
+                1,
+                2,
+                "main",
+                "gen3d",
+                "ws.main.qa",
+                serde_json::json!({ "errors": [1, 2, 3, 4, 5] }),
+                "qa".into(),
+                None,
+            )
+            .expect("kv put");
+
+        let kind = "info_kv_get_paged_v1";
+        let params_sig = store.stable_params_sig(&serde_json::json!({
+            "tool_id": kind,
+            "namespace": "gen3d",
+            "key": "ws.main.qa",
+            "kv_rev": record.kv_rev,
+            "json_pointer": "/errors",
+            "max_item_bytes": 4096,
+        }));
+
+        let cursor = store.offset_cursor(kind, params_sig.as_str(), 2);
+        let page = InfoPage {
+            limit: 2,
+            cursor: Some(cursor.clone()),
+        };
+
+        let (limit, offset) = store
+            .page_from_args(kind, params_sig.as_str(), Some(&page), 50, 200)
+            .expect("page_from_args");
+        assert_eq!(limit, 2);
+        assert_eq!(offset, 2);
+
+        // Changing the selected kv_rev must reject reusing the previous cursor.
+        let mismatched_sig = store.stable_params_sig(&serde_json::json!({
+            "tool_id": kind,
+            "namespace": "gen3d",
+            "key": "ws.main.qa",
+            "kv_rev": record.kv_rev + 1,
+            "json_pointer": "/errors",
+            "max_item_bytes": 4096,
+        }));
+        let page = InfoPage {
+            limit: 2,
+            cursor: Some(cursor),
+        };
+        assert!(store
+            .page_from_args(kind, mismatched_sig.as_str(), Some(&page), 50, 200)
+            .is_err());
+
+        let _ = std::fs::remove_dir_all(&run_dir);
     }
 
     #[test]

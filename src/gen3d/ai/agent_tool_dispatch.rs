@@ -11,8 +11,9 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_TOOL_DETAIL,
     TOOL_ID_GET_USER_INPUTS, TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST,
     TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH,
-    TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_LIST_HISTORY,
-    TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS,
+    TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED,
+    TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
+    TOOL_ID_LIST_SNAPSHOTS,
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
     TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MERGE_WORKSPACE,
@@ -39,7 +40,7 @@ use super::agent_review_images::{
     review_capture_dimensions_for_max_dim,
 };
 use super::agent_step::ToolCallOutcome;
-use super::agent_utils::{build_component_subset_workspace_defs, sanitize_prefix};
+use super::agent_utils::{build_component_subset_workspace_defs, compute_agent_state_hash, sanitize_prefix};
 use super::artifacts::{
     append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact,
 };
@@ -142,6 +143,88 @@ fn plan_template_mode_label(mode: PlanTemplateMode) -> &'static str {
 
 fn json_compact_bytes(v: &serde_json::Value) -> usize {
     serde_json::to_vec(v).map(|v| v.len()).unwrap_or(0)
+}
+
+#[derive(Debug, Default)]
+struct JsonByteLimitWriter {
+    limit: usize,
+    bytes: usize,
+    exceeded: bool,
+}
+
+impl std::io::Write for JsonByteLimitWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.exceeded {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "byte limit exceeded",
+            ));
+        }
+
+        if self.bytes.saturating_add(buf.len()) > self.limit {
+            self.bytes = self.limit;
+            self.exceeded = true;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "byte limit exceeded",
+            ));
+        }
+
+        self.bytes = self.bytes.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn json_bytes_capped(value: &serde_json::Value, max_bytes: usize) -> Result<(usize, bool), String> {
+    if max_bytes == 0 {
+        return Ok((0, true));
+    }
+
+    let mut writer = JsonByteLimitWriter {
+        limit: max_bytes,
+        bytes: 0,
+        exceeded: false,
+    };
+    match serde_json::to_writer(&mut writer, value) {
+        Ok(()) => Ok((writer.bytes, false)),
+        Err(err) => {
+            if writer.exceeded {
+                Ok((writer.bytes, true))
+            } else {
+                Err(format!("Failed to serialize JSON: {err}"))
+            }
+        }
+    }
+}
+
+fn json_shape_preview(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Null => serde_json::Value::Null,
+        serde_json::Value::Bool(v) => serde_json::Value::Bool(*v),
+        serde_json::Value::Number(v) => serde_json::Value::Number(v.clone()),
+        serde_json::Value::String(s) => serde_json::json!({
+            "kind": "string",
+            "len_bytes": s.as_bytes().len(),
+        }),
+        serde_json::Value::Array(arr) => serde_json::json!({
+            "kind": "array",
+            "len": arr.len(),
+        }),
+        serde_json::Value::Object(obj) => {
+            let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+            keys.sort();
+            let keys_sample: Vec<&str> = keys.into_iter().take(16).collect();
+            serde_json::json!({
+                "kind": "object",
+                "keys_sample": keys_sample,
+                "keys_total": obj.len(),
+            })
+        }
+    }
 }
 
 fn strip_plan_template_modeling_notes(plan: &mut serde_json::Value) -> bool {
@@ -715,6 +798,526 @@ fn run_smoke_check_v1(
     }
     job.agent.ever_smoke_checked = true;
     Ok(json)
+}
+
+fn build_capability_gaps_from_smoke_v1(
+    job: &Gen3dAiJob,
+    draft: &Gen3dDraft,
+    smoke: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    use crate::object::registry::ColliderProfile;
+
+    const MAX_GAPS: usize = 16;
+    const MAX_FIXITS: usize = 3;
+
+    let mut gaps: Vec<serde_json::Value> = Vec::new();
+
+    let root_def = draft.root_def();
+    let movable = root_def.and_then(|def| def.mobility.as_ref()).is_some();
+
+    if movable {
+        let has_move = job.planned_components.iter().any(|c| {
+            c.attach_to.as_ref().is_some_and(|att| {
+                att.animations
+                    .iter()
+                    .any(|slot| slot.channel.as_ref() == "move")
+            })
+        });
+        if !has_move {
+            gaps.push(serde_json::json!({
+                "kind": "missing_motion_channel",
+                "severity": "error",
+                "message": "Movable unit has no \"move\" motion channel slots (required to finish the run).",
+                "evidence": {
+                    "channel": "move",
+                },
+                "fixits": [],
+            }));
+        }
+    }
+
+    if movable {
+        if let Some(root_def) = root_def {
+            if matches!(root_def.collider, ColliderProfile::None) {
+                gaps.push(serde_json::json!({
+                    "kind": "missing_root_field",
+                    "severity": "error",
+                    "message": "Movable unit has collider.kind=\"none\" (selection/click hit area is required).",
+                    "evidence": {
+                        "field": "collider",
+                    },
+                    "fixits": [],
+                    "blocked": true,
+                    "blocked_reason": "No deterministic tool can set the root collider today (PlanOps do not support it). Replan via llm_generate_plan_v1 / llm_review_delta_v1, or add a deterministic root-patch tool.",
+                }));
+            }
+        }
+    }
+
+    let attack_required_by_prompt = smoke
+        .get("attack_required_by_prompt")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let mobility_present = smoke
+        .get("mobility_present")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let attack_present = smoke
+        .get("attack_present")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if attack_required_by_prompt && (!mobility_present || !attack_present) {
+        gaps.push(serde_json::json!({
+            "kind": "missing_root_field",
+            "severity": "error",
+            "message": "Prompt implies the object should be attack-capable, but the draft has no mobility/attack profile.",
+            "evidence": {
+                "attack_required_by_prompt": true,
+                "mobility_present": mobility_present,
+                "attack_present": attack_present,
+            },
+            "fixits": [],
+            "blocked": true,
+            "blocked_reason": "No deterministic tool can set root mobility/attack today (PlanOps do not support it). Replan via llm_generate_plan_v1 / llm_review_delta_v1, or add deterministic root-field patch tools.",
+        }));
+    }
+
+    if attack_present && !mobility_present {
+        gaps.push(serde_json::json!({
+            "kind": "inconsistent_root_fields",
+            "severity": "error",
+            "message": "Draft has an attack profile but is not movable (missing mobility).",
+            "evidence": {
+                "mobility_present": mobility_present,
+                "attack_present": attack_present,
+            },
+            "fixits": [],
+            "blocked": true,
+            "blocked_reason": "No deterministic tool can set root mobility today (PlanOps do not support it). Replan via llm_generate_plan_v1 / llm_review_delta_v1, or add deterministic root-field patch tools.",
+        }));
+    }
+
+    let mut motion_repairs_suggestions: Option<Vec<serde_json::Value>> = None;
+    if let Some(motion_issues) = smoke
+        .get("motion_validation")
+        .and_then(|v| v.get("issues"))
+        .and_then(|v| v.as_array())
+    {
+        for issue in motion_issues.iter() {
+            if gaps.len() >= MAX_GAPS {
+                break;
+            }
+
+            let issue_kind = issue
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if issue_kind.is_empty() {
+                continue;
+            }
+
+            let severity = issue
+                .get("severity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("warn")
+                .trim();
+            let message = issue
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let component_name = issue
+                .get("component_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let component_id = issue
+                .get("component_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let channel = issue
+                .get("channel")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let evidence = issue.get("evidence").cloned().unwrap_or(serde_json::Value::Null);
+
+            let mut fixits: Vec<serde_json::Value> = Vec::new();
+
+            if issue_kind == "joint_rest_bias_large" && !component_name.is_empty() {
+                let mut args = serde_json::Map::new();
+                args.insert(
+                    "child_components".into(),
+                    serde_json::Value::Array(vec![serde_json::Value::String(component_name.into())]),
+                );
+                if !channel.is_empty() {
+                    args.insert(
+                        "channels".into(),
+                        serde_json::Value::Array(vec![serde_json::Value::String(channel.into())]),
+                    );
+                }
+                let target = if severity == "error" { "error" } else { "warn" };
+                args.insert(
+                    "target".into(),
+                    serde_json::Value::String(target.to_string()),
+                );
+                fixits.push(serde_json::json!({
+                    "tool_id": TOOL_ID_RECENTER_ATTACHMENT_MOTION,
+                    "args": serde_json::Value::Object(args),
+                }));
+            }
+
+            if issue_kind == "hinge_limit_exceeded" && fixits.len() < MAX_FIXITS {
+                if motion_repairs_suggestions.is_none() {
+                    let report = super::motion_repairs::suggest_motion_repairs_report_v1(
+                        job.rig_move_cycle_m,
+                        &job.planned_components,
+                        job.assembly_rev(),
+                        8,
+                        0.2,
+                    );
+                    motion_repairs_suggestions = report
+                        .get("suggestions")
+                        .and_then(|v| v.as_array())
+                        .cloned();
+                }
+
+                if let Some(suggestions) = motion_repairs_suggestions.as_ref() {
+                    for suggestion in suggestions.iter() {
+                        if fixits.len() >= MAX_FIXITS {
+                            break;
+                        }
+                        let sug_comp = suggestion
+                            .get("component_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let sug_channel = suggestion
+                            .get("channel")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        if !component_name.is_empty() && sug_comp != component_name {
+                            continue;
+                        }
+                        if !channel.is_empty() && sug_channel != channel {
+                            continue;
+                        }
+                        let Some(apply_args) =
+                            suggestion.get("apply_draft_ops_args").cloned()
+                        else {
+                            continue;
+                        };
+                        let note = suggestion
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        fixits.push(serde_json::json!({
+                            "tool_id": TOOL_ID_APPLY_DRAFT_OPS,
+                            "args": apply_args,
+                            "note": note,
+                        }));
+                    }
+                }
+            }
+
+            gaps.push(serde_json::json!({
+                "kind": "motion_validation_error",
+                "severity": severity,
+                "message": if message.is_empty() { issue_kind } else { message },
+                "evidence": {
+                    "issue_kind": issue_kind,
+                    "component_name": component_name,
+                    "component_id": component_id,
+                    "channel": channel,
+                    "evidence": evidence,
+                },
+                "fixits": fixits,
+            }));
+        }
+    }
+
+    if gaps.len() > MAX_GAPS {
+        gaps.truncate(MAX_GAPS);
+    }
+    gaps
+}
+
+fn execute_qa_v1(
+    job: &mut Gen3dAiJob,
+    draft: &mut Gen3dDraft,
+    tool_id: &str,
+    call_id: &str,
+    args_value: serde_json::Value,
+) -> Gen3dToolResultJsonV1 {
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct QaArgsV1 {
+        #[serde(default)]
+        force: bool,
+    }
+
+    let args: QaArgsV1 = match serde_json::from_value(args_value) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(
+                call_id.to_string(),
+                tool_id.to_string(),
+                format!("Invalid args for `{TOOL_ID_QA}`: {err}"),
+            );
+        }
+    };
+
+    let workspace_id = job.active_workspace_id().trim().to_string();
+    let state_hash = compute_agent_state_hash(job, draft);
+    let basis = serde_json::json!({
+        "workspace_id": workspace_id.as_str(),
+        "state_hash": state_hash.as_str(),
+        "plan_hash": job.plan_hash.as_str(),
+        "assembly_rev": job.assembly_rev,
+    });
+
+    let same_basis = job.agent.last_qa_basis_workspace_id.as_deref() == Some(workspace_id.as_str())
+        && job.agent.last_qa_basis_state_hash.as_deref() == Some(state_hash.as_str());
+
+    if !args.force && same_basis {
+        if let Some(prev_json) = job.agent.last_qa_result_json.clone() {
+            let mut json = prev_json;
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert("cached".into(), serde_json::Value::Bool(true));
+                obj.insert("no_new_information".into(), serde_json::Value::Bool(true));
+                obj.insert("basis".into(), basis.clone());
+                obj.insert(
+                    "no_new_information_message".into(),
+                    serde_json::Value::String(
+                        "No new information: QA basis unchanged. Mutate draft/plan before retrying `qa_v1` (ex: `apply_draft_ops_v1`, `apply_plan_ops_v1`, `llm_generate_plan_v1`, `llm_generate_motion_authoring_v1`). Use force=true to bypass caching."
+                            .into(),
+                    ),
+                );
+            }
+            return Gen3dToolResultJsonV1::ok(
+                call_id.to_string(),
+                tool_id.to_string(),
+                json,
+            );
+        }
+    }
+
+    let validate = run_validate_v1(job, draft);
+    let mut smoke = match run_smoke_check_v1(job, draft) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    };
+
+    let capability_gaps = build_capability_gaps_from_smoke_v1(job, draft, &smoke);
+    if let Some(obj) = smoke.as_object_mut() {
+        obj.insert(
+            "capability_gaps".into(),
+            serde_json::Value::Array(capability_gaps.clone()),
+        );
+    }
+
+    let validate_ok = validate
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let smoke_ok = smoke.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    let mut warnings: Vec<serde_json::Value> = Vec::new();
+
+    fn push_issue(out: &mut Vec<serde_json::Value>, source: &'static str, issue: &serde_json::Value) {
+        if let serde_json::Value::Object(map) = issue {
+            let mut merged = map.clone();
+            merged.insert("source".to_string(), serde_json::Value::String(source.into()));
+            out.push(serde_json::Value::Object(merged));
+        } else {
+            out.push(serde_json::json!({ "source": source, "issue": issue }));
+        }
+    }
+
+    fn collect(
+        source: &'static str,
+        issues: Option<&serde_json::Value>,
+        errors: &mut Vec<serde_json::Value>,
+        warnings: &mut Vec<serde_json::Value>,
+    ) {
+        let Some(issues) = issues else {
+            return;
+        };
+        let Some(items) = issues.as_array() else {
+            return;
+        };
+        for item in items {
+            match item.get("severity").and_then(|v| v.as_str()) {
+                Some("error") => push_issue(errors, source, item),
+                Some("warn" | "warning") => push_issue(warnings, source, item),
+                Some(_) | None => push_issue(warnings, source, item),
+            }
+        }
+    }
+
+    collect("validate", validate.get("issues"), &mut errors, &mut warnings);
+    collect("smoke", smoke.get("issues"), &mut errors, &mut warnings);
+    collect(
+        "motion_validation",
+        smoke.get("motion_validation").and_then(|v| v.get("issues")),
+        &mut errors,
+        &mut warnings,
+    );
+
+    job.agent.last_qa_warnings_count = Some(warnings.len().min(u32::MAX as usize) as u32);
+    job.agent.last_qa_warning_example = warnings.first().and_then(|issue| {
+        let source = issue.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let component_name = issue
+            .get("component_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let kind = issue.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let message = issue.get("message").and_then(|v| v.as_str()).unwrap_or("");
+
+        let mut example = String::new();
+        if !source.trim().is_empty() {
+            example.push_str(source.trim());
+            example.push(' ');
+        }
+        if !component_name.trim().is_empty() {
+            example.push_str(component_name.trim());
+            example.push(' ');
+        }
+        if !kind.trim().is_empty() {
+            example.push_str(kind.trim());
+            example.push_str(": ");
+        }
+        example.push_str(message.trim());
+
+        let example = example.trim();
+        if example.is_empty() {
+            None
+        } else {
+            Some(example.replace('\n', " "))
+        }
+    });
+
+    let ok = validate_ok && smoke_ok;
+    let mut json = serde_json::json!({
+        "ok": ok,
+        "validate": validate,
+        "smoke": smoke,
+        "errors": errors,
+        "warnings": warnings,
+        "cached": false,
+        "no_new_information": false,
+        "basis": basis,
+        "capability_gaps": capability_gaps,
+    });
+
+    if let Some(dir) = job.pass_dir.as_deref() {
+        write_gen3d_json_artifact(Some(dir), "qa.json", &json);
+    }
+
+    // Also persist validate/smoke individually so agents can fetch them via stable keys even
+    // when they only run `qa_v1`.
+    let validate_json = json
+        .get("validate")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let smoke_json = json
+        .get("smoke")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let validate_key = format!("ws.{workspace_id}.validate");
+    let smoke_key = format!("ws.{workspace_id}.smoke");
+    let qa_key = format!("ws.{workspace_id}.qa");
+
+    if validate_json != serde_json::Value::Null {
+        let validate_ok = validate_json
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let validate_issues = validate_json
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .map(|v| v.len())
+            .unwrap_or(0);
+        if let Err(err) = info_kv_put_for_tool(
+            job,
+            workspace_id.as_str(),
+            tool_id,
+            call_id,
+            validate_key.as_str(),
+            validate_json,
+            format!("validate (ok={validate_ok} issues={validate_issues})"),
+        ) {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    }
+    if smoke_json != serde_json::Value::Null {
+        let smoke_ok = smoke_json
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let smoke_issues = smoke_json
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .map(|v| v.len())
+            .unwrap_or(0);
+        if let Err(err) = info_kv_put_for_tool(
+            job,
+            workspace_id.as_str(),
+            tool_id,
+            call_id,
+            smoke_key.as_str(),
+            smoke_json,
+            format!("smoke (ok={smoke_ok} issues={smoke_issues})"),
+        ) {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    }
+
+    let error_count = json
+        .get("errors")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let warning_count = json
+        .get("warnings")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let qa_record = match info_kv_put_for_tool(
+        job,
+        workspace_id.as_str(),
+        tool_id,
+        call_id,
+        qa_key.as_str(),
+        json.clone(),
+        format!("qa (ok={ok} errors={error_count} warnings={warning_count})"),
+    ) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    };
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert(
+            "info_kv".into(),
+            info_kv_ref_json(INFO_KV_NAMESPACE_GEN3D, qa_key.as_str(), qa_record.kv_rev),
+        );
+    }
+
+    job.agent.last_qa_basis_workspace_id = Some(workspace_id);
+    job.agent.last_qa_basis_state_hash = Some(state_hash);
+    job.agent.last_qa_result_json = Some(json.clone());
+
+    Gen3dToolResultJsonV1::ok(call_id.to_string(), tool_id.to_string(), json)
 }
 
 pub(super) fn execute_tool_call(
@@ -1389,6 +1992,13 @@ pub(super) fn execute_tool_call(
                     ));
                 }
             };
+            let gaps = build_capability_gaps_from_smoke_v1(job, draft, &json);
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert(
+                    "capability_gaps".into(),
+                    serde_json::Value::Array(gaps),
+                );
+            }
             let workspace_id = job.active_workspace_id().trim().to_string();
             let key = format!("ws.{workspace_id}.smoke");
             let ok = json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -1515,230 +2125,18 @@ pub(super) fn execute_tool_call(
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_QA => {
-            let validate = run_validate_v1(job, draft);
-            let smoke = match run_smoke_check_v1(job, draft) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            let validate_ok = validate
-                .get("ok")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let smoke_ok = smoke.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-
-            let mut errors: Vec<serde_json::Value> = Vec::new();
-            let mut warnings: Vec<serde_json::Value> = Vec::new();
-
-            fn push_issue(
-                out: &mut Vec<serde_json::Value>,
-                source: &'static str,
-                issue: &serde_json::Value,
-            ) {
-                if let serde_json::Value::Object(map) = issue {
-                    let mut merged = map.clone();
-                    merged.insert(
-                        "source".to_string(),
-                        serde_json::Value::String(source.into()),
-                    );
-                    out.push(serde_json::Value::Object(merged));
-                } else {
-                    out.push(serde_json::json!({ "source": source, "issue": issue }));
-                }
-            }
-
-            fn collect(
-                source: &'static str,
-                issues: Option<&serde_json::Value>,
-                errors: &mut Vec<serde_json::Value>,
-                warnings: &mut Vec<serde_json::Value>,
-            ) {
-                let Some(issues) = issues else {
-                    return;
-                };
-                let Some(items) = issues.as_array() else {
-                    return;
-                };
-                for item in items {
-                    match item.get("severity").and_then(|v| v.as_str()) {
-                        Some("error") => push_issue(errors, source, item),
-                        Some("warn" | "warning") => push_issue(warnings, source, item),
-                        Some(_) | None => push_issue(warnings, source, item),
-                    }
-                }
-            }
-
-            collect(
-                "validate",
-                validate.get("issues"),
-                &mut errors,
-                &mut warnings,
-            );
-            collect("smoke", smoke.get("issues"), &mut errors, &mut warnings);
-            collect(
-                "motion_validation",
-                smoke.get("motion_validation").and_then(|v| v.get("issues")),
-                &mut errors,
-                &mut warnings,
-            );
-
-            job.agent.last_qa_warnings_count = Some(warnings.len().min(u32::MAX as usize) as u32);
-            job.agent.last_qa_warning_example = warnings.first().and_then(|issue| {
-                let source = issue.get("source").and_then(|v| v.as_str()).unwrap_or("");
-                let component_name = issue
-                    .get("component_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let kind = issue.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-                let message = issue.get("message").and_then(|v| v.as_str()).unwrap_or("");
-
-                let mut example = String::new();
-                if !source.trim().is_empty() {
-                    example.push_str(source.trim());
-                    example.push(' ');
-                }
-                if !component_name.trim().is_empty() {
-                    example.push_str(component_name.trim());
-                    example.push(' ');
-                }
-                if !kind.trim().is_empty() {
-                    example.push_str(kind.trim());
-                    example.push_str(": ");
-                }
-                example.push_str(message.trim());
-
-                let example = example.trim();
-                if example.is_empty() {
-                    None
-                } else {
-                    Some(example.replace('\n', " "))
-                }
-            });
-
-            let ok = validate_ok && smoke_ok;
-            let mut json = serde_json::json!({
-                "ok": ok,
-                "validate": validate,
-                "smoke": smoke,
-                "errors": errors,
-                "warnings": warnings,
-            });
-
-            if let Some(dir) = job.pass_dir.as_deref() {
-                write_gen3d_json_artifact(Some(dir), "qa.json", &json);
-            }
-
-            let workspace_id = job.active_workspace_id().trim().to_string();
-
-            // Also persist validate/smoke individually so agents can fetch them via stable keys even
-            // when they only run `qa_v1`.
-            let validate_json = json
-                .get("validate")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let smoke_json = json
-                .get("smoke")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let validate_key = format!("ws.{workspace_id}.validate");
-            let smoke_key = format!("ws.{workspace_id}.smoke");
-            let qa_key = format!("ws.{workspace_id}.qa");
-
-            if validate_json != serde_json::Value::Null {
-                let validate_ok = validate_json
-                    .get("ok")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let validate_issues = validate_json
-                    .get("issues")
-                    .and_then(|v| v.as_array())
-                    .map(|v| v.len())
-                    .unwrap_or(0);
-                if let Err(err) = info_kv_put_for_tool(
-                    job,
-                    workspace_id.as_str(),
-                    call.tool_id.as_str(),
-                    call.call_id.as_str(),
-                    validate_key.as_str(),
-                    validate_json,
-                    format!("validate (ok={validate_ok} issues={validate_issues})"),
-                ) {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            }
-            if smoke_json != serde_json::Value::Null {
-                let smoke_ok = smoke_json
-                    .get("ok")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let smoke_issues = smoke_json
-                    .get("issues")
-                    .and_then(|v| v.as_array())
-                    .map(|v| v.len())
-                    .unwrap_or(0);
-                if let Err(err) = info_kv_put_for_tool(
-                    job,
-                    workspace_id.as_str(),
-                    call.tool_id.as_str(),
-                    call.call_id.as_str(),
-                    smoke_key.as_str(),
-                    smoke_json,
-                    format!("smoke (ok={smoke_ok} issues={smoke_issues})"),
-                ) {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            }
-
-            let error_count = json
-                .get("errors")
-                .and_then(|v| v.as_array())
-                .map(|v| v.len())
-                .unwrap_or(0);
-            let warning_count = json
-                .get("warnings")
-                .and_then(|v| v.as_array())
-                .map(|v| v.len())
-                .unwrap_or(0);
-            let qa_record = match info_kv_put_for_tool(
+            let Gen3dToolCallJsonV1 {
+                call_id,
+                tool_id,
+                args,
+            } = call;
+            ToolCallOutcome::Immediate(execute_qa_v1(
                 job,
-                workspace_id.as_str(),
-                call.tool_id.as_str(),
-                call.call_id.as_str(),
-                qa_key.as_str(),
-                json.clone(),
-                format!("qa (ok={ok} errors={error_count} warnings={warning_count})"),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-            if let Some(obj) = json.as_object_mut() {
-                obj.insert(
-                    "info_kv".into(),
-                    info_kv_ref_json(INFO_KV_NAMESPACE_GEN3D, qa_key.as_str(), qa_record.kv_rev),
-                );
-            }
-
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
+                draft,
+                tool_id.as_str(),
+                call_id.as_str(),
+                args,
+            ))
         }
         TOOL_ID_INFO_KV_LIST_KEYS => {
             #[derive(Debug, Deserialize)]
@@ -2247,6 +2645,255 @@ pub(super) fn execute_tool_call(
             if let Some(ptr) = json_pointer {
                 out.insert("json_pointer".into(), serde_json::Value::String(ptr));
             }
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
+                call.call_id,
+                call.tool_id,
+                serde_json::Value::Object(out),
+            ))
+        }
+        TOOL_ID_INFO_KV_GET_PAGED => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct InfoKvGetPagedArgsV1 {
+                namespace: String,
+                key: String,
+                #[serde(default)]
+                selector: Option<InfoKvSelectorArgsV1>,
+                #[serde(default)]
+                json_pointer: Option<String>,
+                #[serde(default)]
+                page: Option<InfoPage>,
+                #[serde(default)]
+                max_item_bytes: Option<u64>,
+            }
+
+            let args: InfoKvGetPagedArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid args for `{TOOL_ID_INFO_KV_GET_PAGED}`: {err}"),
+                    ));
+                }
+            };
+
+            let namespace = args.namespace.trim();
+            let key = args.key.trim();
+            if namespace.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing args.namespace".into(),
+                ));
+            }
+            if key.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing args.key".into(),
+                ));
+            }
+
+            let max_item_bytes = args
+                .max_item_bytes
+                .unwrap_or(4096)
+                .clamp(256, 64 * 1024) as usize;
+
+            let selector_kind = args
+                .selector
+                .as_ref()
+                .map(|s| s.kind.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "latest".into());
+
+            let store = match job.ensure_info_store() {
+                Ok(s) => s,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
+
+            let record = match select_kv_record(
+                store,
+                namespace,
+                key,
+                selector_kind.as_str(),
+                args.selector.as_ref(),
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
+
+            let Some(record) = record else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "KV not found: namespace={namespace:?} key={key:?}. Use `{TOOL_ID_INFO_KV_LIST_KEYS}`."
+                    ),
+                ));
+            };
+
+            let json_pointer = args
+                .json_pointer
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+
+            let selected = if let Some(ptr) = json_pointer.as_deref() {
+                record
+                    .value
+                    .pointer(ptr)
+                    .ok_or_else(|| format!("JSON pointer not found in KV value: {ptr}"))
+            } else {
+                Ok(&record.value)
+            };
+            let selected: &serde_json::Value = match selected {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
+
+            let Some(items) = selected.as_array() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Selected JSON value is not an array. Provide json_pointer to an array (example: \"/errors\" or \"/items\").".into(),
+                ));
+            };
+
+            let params_sig = store.stable_params_sig(&serde_json::json!({
+                "tool_id": TOOL_ID_INFO_KV_GET_PAGED,
+                "namespace": namespace,
+                "key": key,
+                "kv_rev": record.kv_rev,
+                "json_pointer": json_pointer.clone().unwrap_or_default(),
+                "max_item_bytes": max_item_bytes,
+            }));
+            let (limit, offset) = match store.page_from_args(
+                TOOL_ID_INFO_KV_GET_PAGED,
+                params_sig.as_str(),
+                args.page.as_ref(),
+                50,
+                200,
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        err,
+                    ));
+                }
+            };
+
+            let array_len = items.len();
+            let end = (offset + limit).min(array_len);
+            let truncated = end < array_len;
+            let next_cursor = truncated.then(|| {
+                store.offset_cursor(TOOL_ID_INFO_KV_GET_PAGED, params_sig.as_str(), end)
+            });
+
+            let mut out_items: Vec<serde_json::Value> = Vec::new();
+            if offset < array_len {
+                out_items.reserve(end.saturating_sub(offset));
+                for idx in offset..end {
+                    let item = &items[idx];
+                    let (bytes, _) = match json_bytes_capped(
+                        item,
+                        max_item_bytes.saturating_add(1),
+                    ) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                                call.call_id,
+                                call.tool_id,
+                                err,
+                            ));
+                        }
+                    };
+                    let item_truncated = bytes > max_item_bytes;
+                    let value_preview = if item_truncated {
+                        json_shape_preview(item)
+                    } else {
+                        item.clone()
+                    };
+                    out_items.push(serde_json::json!({
+                        "index": idx,
+                        "bytes": bytes,
+                        "truncated": item_truncated,
+                        "value_preview": value_preview,
+                    }));
+                }
+            }
+
+            let mut out = serde_json::Map::new();
+            out.insert("ok".into(), serde_json::Value::Bool(true));
+            let mut record_json = serde_json::Map::new();
+            record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
+            record_json.insert(
+                "written_at_ms".into(),
+                serde_json::json!(record.written_at_ms),
+            );
+            record_json.insert("attempt".into(), serde_json::json!(record.attempt));
+            record_json.insert("pass".into(), serde_json::json!(record.pass));
+            record_json.insert(
+                "assembly_rev".into(),
+                serde_json::json!(record.assembly_rev),
+            );
+            record_json.insert(
+                "workspace_id".into(),
+                serde_json::Value::String(record.workspace_id.clone()),
+            );
+            record_json.insert(
+                "key".into(),
+                serde_json::json!({
+                    "namespace": record.key.namespace.as_str(),
+                    "key": record.key.key.as_str(),
+                }),
+            );
+            record_json.insert(
+                "summary".into(),
+                serde_json::Value::String(record.summary.clone()),
+            );
+            record_json.insert("bytes".into(), serde_json::json!(record.bytes));
+            if let Some(prov) = record.written_by.as_ref() {
+                record_json.insert(
+                    "written_by".into(),
+                    serde_json::json!({
+                        "tool_id": prov.tool_id.as_str(),
+                        "call_id": prov.call_id.as_str(),
+                    }),
+                );
+            }
+            out.insert("record".into(), serde_json::Value::Object(record_json));
+            out.insert("array_len".into(), serde_json::json!(array_len));
+            out.insert("items".into(), serde_json::Value::Array(out_items));
+            out.insert("truncated".into(), serde_json::Value::Bool(truncated));
+            if let Some(cursor) = next_cursor {
+                out.insert("next_cursor".into(), serde_json::Value::String(cursor));
+            }
+            if let Some(ptr) = json_pointer {
+                out.insert("json_pointer".into(), serde_json::Value::String(ptr));
+            }
+
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
                 call.call_id,
                 call.tool_id,
@@ -5927,6 +6574,7 @@ mod tests {
     use super::format_info_kv_get_many_args_error;
     use super::normalize_tool_call_args;
     use crate::gen3d::agent::Gen3dToolCallJsonV1;
+    use bevy::prelude::{Quat, Transform, Vec2, Vec3};
     use serde::Deserialize;
     use std::path::PathBuf;
     use uuid::Uuid;
@@ -6176,6 +6824,284 @@ mod tests {
                 && msg.contains("plan_template_kv"),
             "{msg}"
         );
+    }
+
+    fn make_test_root_def_movable(movable: bool) -> crate::object::registry::ObjectDef {
+        use crate::object::registry::{
+            ColliderProfile, MobilityDef, MobilityMode, ObjectDef, ObjectInteraction,
+        };
+
+        ObjectDef {
+            object_id: crate::gen3d::gen3d_draft_object_id(),
+            label: "gen3d_draft".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::AabbXZ {
+                half_extents: Vec2::new(0.5, 0.5),
+            },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: movable.then_some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        }
+    }
+
+    #[test]
+    fn gen3d_capability_gaps_includes_missing_motion_channel_for_movable() {
+        let job = super::Gen3dAiJob::default();
+        let draft = crate::gen3d::state::Gen3dDraft {
+            defs: vec![make_test_root_def_movable(true)],
+        };
+
+        let smoke = serde_json::json!({});
+        let gaps = super::build_capability_gaps_from_smoke_v1(&job, &draft, &smoke);
+        assert!(
+            gaps.iter().any(|g| {
+                g.get("kind").and_then(|v| v.as_str()) == Some("missing_motion_channel")
+            }),
+            "expected missing_motion_channel gap, got {gaps:?}"
+        );
+    }
+
+    #[test]
+    fn gen3d_capability_gaps_hinge_limit_exceeded_includes_apply_draft_ops_fixit() {
+        use crate::gen3d::ai::schema::{AiJointJson, AiJointKindJson};
+        use crate::object::registry::{
+            AnchorDef, PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
+            PartAnimationSlot, PartAnimationSpec,
+        };
+
+        let mut job = super::Gen3dAiJob::default();
+        job.rig_move_cycle_m = Some(1.0);
+        job.planned_components = vec![
+            super::super::job::Gen3dPlannedComponent {
+                display_name: "1. root".into(),
+                name: "root".into(),
+                purpose: String::new(),
+                modeling_notes: String::new(),
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                planned_size: Vec3::ONE,
+                actual_size: Some(Vec3::ONE),
+                anchors: vec![AnchorDef {
+                    name: "mount".into(),
+                    transform: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+                }],
+                contacts: Vec::new(),
+                attach_to: None,
+            },
+            super::super::job::Gen3dPlannedComponent {
+                display_name: "2. tongue".into(),
+                name: "tongue".into(),
+                purpose: String::new(),
+                modeling_notes: String::new(),
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                planned_size: Vec3::ONE,
+                actual_size: Some(Vec3::ONE),
+                anchors: vec![AnchorDef {
+                    name: "mount".into(),
+                    transform: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+                }],
+                contacts: Vec::new(),
+                attach_to: Some(super::super::job::Gen3dPlannedAttachment {
+                    parent: "root".into(),
+                    parent_anchor: "origin".into(),
+                    child_anchor: "origin".into(),
+                    offset: Transform::IDENTITY,
+                    joint: Some(AiJointJson {
+                        kind: AiJointKindJson::Hinge,
+                        axis_join: Some([1.0, 0.0, 0.0]),
+                        limits_degrees: Some([-30.0, 30.0]),
+                        swing_limits_degrees: None,
+                        twist_limits_degrees: None,
+                    }),
+                    animations: vec![PartAnimationSlot {
+                        channel: "move".into(),
+                        spec: PartAnimationSpec {
+                            driver: PartAnimationDriver::MovePhase,
+                            speed_scale: 1.0,
+                            time_offset_units: 0.0,
+                            clip: PartAnimationDef::Loop {
+                                duration_secs: 1.0,
+                                keyframes: vec![
+                                    PartAnimationKeyframeDef {
+                                        time_secs: 0.0,
+                                        delta: Transform::IDENTITY,
+                                    },
+                                    PartAnimationKeyframeDef {
+                                        time_secs: 0.5,
+                                        delta: Transform {
+                                            rotation: Quat::from_axis_angle(
+                                                Vec3::X,
+                                                40.0_f32.to_radians(),
+                                            ),
+                                            ..Default::default()
+                                        },
+                                    },
+                                    PartAnimationKeyframeDef {
+                                        time_secs: 1.0,
+                                        delta: Transform::IDENTITY,
+                                    },
+                                ],
+                            },
+                        },
+                    }],
+                }),
+            },
+        ];
+
+        let draft = crate::gen3d::state::Gen3dDraft {
+            defs: vec![make_test_root_def_movable(false)],
+        };
+
+        let motion_report = super::super::motion_validation::build_motion_validation_report(
+            Some(1.0),
+            &job.planned_components,
+        );
+        assert!(
+            motion_report
+                .motion_validation
+                .get("issues")
+                .and_then(|v| v.as_array())
+                .is_some_and(|issues| issues.iter().any(|i| {
+                    i.get("kind").and_then(|v| v.as_str()) == Some("hinge_limit_exceeded")
+                })),
+            "expected hinge_limit_exceeded in motion_validation issues, got {:?}",
+            motion_report.motion_validation
+        );
+
+        let smoke = serde_json::json!({
+            "attack_required_by_prompt": false,
+            "mobility_present": false,
+            "attack_present": false,
+            "motion_validation": motion_report.motion_validation,
+        });
+        let gaps = super::build_capability_gaps_from_smoke_v1(&job, &draft, &smoke);
+
+        let hinge_gap = gaps
+            .iter()
+            .find(|g| {
+                g.get("kind").and_then(|v| v.as_str()) == Some("motion_validation_error")
+                    && g.get("evidence")
+                        .and_then(|v| v.get("issue_kind"))
+                        .and_then(|v| v.as_str())
+                        == Some("hinge_limit_exceeded")
+            })
+            .expect("missing hinge_limit_exceeded capability gap");
+
+        let has_apply_fixit = hinge_gap
+            .get("fixits")
+            .and_then(|v| v.as_array())
+            .is_some_and(|fixits| {
+                fixits.iter().any(|fixit| {
+                    fixit.get("tool_id").and_then(|v| v.as_str()) == Some("apply_draft_ops_v1")
+                        && fixit.get("args").is_some()
+                })
+            });
+        assert!(
+            has_apply_fixit,
+            "expected apply_draft_ops_v1 fixit in {hinge_gap:?}"
+        );
+    }
+
+    #[test]
+    fn gen3d_capability_gaps_missing_root_interface_is_marked_blocked() {
+        let job = super::Gen3dAiJob::default();
+        let draft = crate::gen3d::state::Gen3dDraft {
+            defs: vec![make_test_root_def_movable(false)],
+        };
+
+        let smoke = serde_json::json!({
+            "attack_required_by_prompt": true,
+            "mobility_present": false,
+            "attack_present": false,
+        });
+
+        let gaps = super::build_capability_gaps_from_smoke_v1(&job, &draft, &smoke);
+        let gap = gaps
+            .iter()
+            .find(|g| g.get("kind").and_then(|v| v.as_str()) == Some("missing_root_field"))
+            .expect("missing root gap");
+        assert_eq!(
+            gap.get("blocked").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected blocked=true, got {gap:?}"
+        );
+        assert!(
+            gap.get("blocked_reason")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.trim().is_empty()),
+            "expected blocked_reason, got {gap:?}"
+        );
+    }
+
+    #[test]
+    fn qa_v1_second_call_is_cached_and_preserves_info_kv() {
+        let run_dir = make_temp_dir("gravimera_qa_cache_test");
+
+        let mut job = super::Gen3dAiJob::default();
+        job.run_dir = Some(run_dir.clone());
+
+        let mut draft = crate::gen3d::state::Gen3dDraft {
+            defs: vec![make_test_root_def_movable(false)],
+        };
+
+        let r1 = super::execute_qa_v1(
+            &mut job,
+            &mut draft,
+            super::TOOL_ID_QA,
+            "call_1",
+            serde_json::json!({}),
+        );
+        assert!(r1.ok, "expected tool call ok, got {r1:?}");
+        let j1 = r1.result.clone().expect("missing qa result");
+        let kv1 = j1.get("info_kv").cloned().expect("missing info_kv");
+        let kv_rev_1 = kv1
+            .get("selector")
+            .and_then(|v| v.get("kv_rev"))
+            .and_then(|v| v.as_u64())
+            .expect("missing info_kv.selector.kv_rev");
+
+        let r2 = super::execute_qa_v1(
+            &mut job,
+            &mut draft,
+            super::TOOL_ID_QA,
+            "call_2",
+            serde_json::json!({}),
+        );
+        assert!(r2.ok, "expected tool call ok, got {r2:?}");
+        let j2 = r2.result.clone().expect("missing qa result");
+        assert_eq!(
+            j2.get("cached").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected cached=true, got {j2:?}"
+        );
+        assert_eq!(
+            j2.get("no_new_information").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected no_new_information=true, got {j2:?}"
+        );
+
+        let kv2 = j2.get("info_kv").cloned().expect("missing info_kv");
+        let kv_rev_2 = kv2
+            .get("selector")
+            .and_then(|v| v.get("kv_rev"))
+            .and_then(|v| v.as_u64())
+            .expect("missing info_kv.selector.kv_rev");
+        assert_eq!(kv_rev_2, kv_rev_1, "expected cached QA kv_rev unchanged");
+
+        let _ = std::fs::remove_dir_all(&run_dir);
     }
 
     #[test]

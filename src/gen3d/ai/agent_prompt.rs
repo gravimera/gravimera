@@ -5,7 +5,8 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_INFO_BLOBS_GET,
     TOOL_ID_INFO_BLOBS_LIST, TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST,
     TOOL_ID_INFO_EVENTS_SEARCH, TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY,
-    TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
+    TOOL_ID_INFO_KV_GET_PAGED, TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS,
+    TOOL_ID_INSPECT_PLAN,
     TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
     TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
@@ -832,6 +833,16 @@ pub(super) fn build_agent_user_text(
                     .get("warnings")
                     .and_then(|v| v.as_array())
                     .map(|a| a.len());
+                let cached = value.get("cached").and_then(|v| v.as_bool()).unwrap_or(false);
+                let no_new_information = value
+                    .get("no_new_information")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let capability_gaps = value
+                    .get("capability_gaps")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
                 out.push_str("ok");
                 if let Some(ok) = ok {
                     out.push_str(&format!(" ok={ok}"));
@@ -841,6 +852,29 @@ pub(super) fn build_agent_user_text(
                 }
                 let warnings_count = warnings.unwrap_or(0);
                 out.push_str(&format!(" warnings={warnings_count}"));
+                if cached {
+                    out.push_str(" cached=true");
+                }
+                if no_new_information {
+                    out.push_str(" no_new_information=true");
+                }
+                if capability_gaps > 0 {
+                    out.push_str(&format!(" capability_gaps={capability_gaps}"));
+                    if let Some(kind) = value
+                        .get("capability_gaps")
+                        .and_then(|v| v.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|g| g.get("kind"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        out.push_str(&format!(
+                            " gap_example={}",
+                            truncate_for_prompt(kind, 64)
+                        ));
+                    }
+                }
                 if warnings_count > 0 {
                     if let Some(first) = value
                         .get("warnings")
@@ -876,12 +910,19 @@ pub(super) fn build_agent_user_text(
                     .get("issues")
                     .and_then(|v| v.as_array())
                     .map(|a| a.len());
+                let capability_gaps = value
+                    .get("capability_gaps")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len());
                 out.push_str("ok");
                 if let Some(ok) = ok {
                     out.push_str(&format!(" ok={ok}"));
                 }
                 if let Some(issues) = issues {
                     out.push_str(&format!(" issues={issues}"));
+                }
+                if let Some(gaps) = capability_gaps {
+                    out.push_str(&format!(" capability_gaps={gaps}"));
                 }
             }
             TOOL_ID_MOTION_METRICS => {
@@ -1611,6 +1652,120 @@ pub(super) fn build_agent_user_text(
                 if char_count(&out) > MAX_LINE_CHARS {
                     out = truncate_for_prompt(&out, MAX_LINE_CHARS);
                 }
+            }
+            TOOL_ID_INFO_KV_GET_PAGED => {
+                const MAX_LINE_CHARS: usize = 900;
+                let budget = MAX_LINE_CHARS.saturating_sub(char_count(&out));
+
+                let record = value.get("record").and_then(|v| v.as_object());
+                let key = record
+                    .and_then(|r| r.get("key"))
+                    .and_then(|v| v.as_object());
+                let namespace = key
+                    .and_then(|k| k.get("namespace"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let kv_key = key
+                    .and_then(|k| k.get("key"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let kv_rev = record
+                    .and_then(|r| r.get("kv_rev"))
+                    .and_then(|v| v.as_u64());
+                let json_pointer = value
+                    .get("json_pointer")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let array_len = value
+                    .get("array_len")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let items = value.get("items").and_then(|v| v.as_array());
+                let items_total = items.map(|a| a.len()).unwrap_or(0);
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let next_cursor = value.get("next_cursor").and_then(|v| v.as_str());
+                let cursor_seg = next_cursor
+                    .map(|c| format!(" next_cursor={c}"))
+                    .unwrap_or_default();
+
+                let (idx_first, idx_last) = items
+                    .and_then(|items| {
+                        let first = items
+                            .first()
+                            .and_then(|v| v.get("index"))
+                            .and_then(|v| v.as_u64());
+                        let last = items
+                            .last()
+                            .and_then(|v| v.get("index"))
+                            .and_then(|v| v.as_u64());
+                        Some((first, last))
+                    })
+                    .unwrap_or((None, None));
+
+                let mut base = String::new();
+                base.push_str("ok");
+                if !namespace.is_empty() {
+                    base.push_str(&format!(
+                        " namespace={}",
+                        truncate_for_prompt(namespace, 32)
+                    ));
+                }
+                if !kv_key.is_empty() {
+                    base.push_str(&format!(" key={}", truncate_for_prompt(kv_key, 96)));
+                }
+                if let Some(kv_rev) = kv_rev {
+                    base.push_str(&format!(" kv_rev={kv_rev}"));
+                }
+                if !json_pointer.is_empty() {
+                    base.push_str(&format!(
+                        " json_pointer={}",
+                        truncate_for_prompt(json_pointer, 96)
+                    ));
+                }
+                base.push_str(&format!(" array_len={array_len}"));
+                base.push_str(&format!(" items={items_total} truncated={truncated}"));
+                if let (Some(a), Some(b)) = (idx_first, idx_last) {
+                    base.push_str(&format!(" index_range={a}..={b}"));
+                }
+
+                let mut summary = base.clone();
+                if !cursor_seg.is_empty() && char_count(&(summary.clone() + &cursor_seg)) <= budget {
+                    summary.push_str(&cursor_seg);
+                } else if !cursor_seg.is_empty() {
+                    let base = format!("ok items={items_total} array_len={array_len}");
+                    summary = base.clone();
+                    if char_count(&(summary.clone() + &cursor_seg)) <= budget {
+                        summary.push_str(&cursor_seg);
+                    }
+                }
+
+                let mut summary_out = summary;
+                if char_count(&summary_out) > budget {
+                    if let Some(cursor) = next_cursor.map(str::trim).filter(|s| !s.is_empty()) {
+                        let minimal =
+                            format!("ok items={items_total} array_len={array_len} next_cursor={cursor}");
+                        if char_count(&minimal) <= budget {
+                            summary_out = minimal;
+                        } else {
+                            let cursor_only = format!("next_cursor={cursor}");
+                            if char_count(&cursor_only) <= budget {
+                                summary_out = cursor_only;
+                            } else {
+                                summary_out = format!("ok items={items_total} array_len={array_len}");
+                            }
+                        }
+                    } else {
+                        summary_out = truncate_for_prompt(&summary_out, budget);
+                    }
+                }
+
+                out.push_str(&summary_out);
             }
             TOOL_ID_INFO_KV_LIST_KEYS => {
                 const MAX_LINE_CHARS: usize = 800;
@@ -3014,7 +3169,7 @@ mod tests {
         assert!(text.contains("Available tools (args signature + example shown"));
         assert!(text
             .lines()
-            .any(|line| line.contains("- qa_v1:") && line.contains("args={}")));
+            .any(|line| line.contains("- qa_v1:") && line.contains("args={ force?: bool")));
         assert!(text.lines().any(|line| {
             line.contains("- info_events_search_v1:") && line.contains("args={ query: string")
         }));
@@ -3176,6 +3331,112 @@ mod tests {
             line.chars().count() <= 800,
             "info_events_list_v1 summary too long: {} chars",
             line.chars().count()
+        );
+    }
+
+    #[test]
+    fn summarize_info_kv_get_paged_includes_exact_cursor() {
+        let config = AppConfig::default();
+        let job = Gen3dAiJob::default();
+        let workshop = Gen3dWorkshop::default();
+        let registry = Gen3dToolRegistryV1::default();
+
+        let cursor = "CURSOR_TOKEN_0123456789abcdefghijklmnopqrstuvwxyz_-";
+        let recent_tool_results = vec![Gen3dToolResultJsonV1::ok(
+            "call_1".to_string(),
+            TOOL_ID_INFO_KV_GET_PAGED.to_string(),
+            serde_json::json!({
+                "ok": true,
+                "record": {
+                    "kv_rev": 123,
+                    "written_at_ms": 0,
+                    "attempt": 0,
+                    "pass": 0,
+                    "assembly_rev": 0,
+                    "workspace_id": "main",
+                    "key": { "namespace": "gen3d", "key": "ws.main.qa" },
+                    "summary": "qa",
+                    "bytes": 10,
+                },
+                "json_pointer": "/errors",
+                "array_len": 5,
+                "items": [
+                    { "index": 0, "bytes": 2, "truncated": false, "value_preview": {"kind":"example"} },
+                    { "index": 1, "bytes": 2, "truncated": false, "value_preview": {"kind":"example"} }
+                ],
+                "truncated": true,
+                "next_cursor": cursor,
+            }),
+        )];
+
+        let text = build_agent_user_text(
+            &config,
+            &job,
+            &workshop,
+            serde_json::json!({}),
+            &recent_tool_results,
+            &registry,
+        );
+
+        let line = text
+            .lines()
+            .find(|line| line.contains("info_kv_get_paged_v1 (call_1):"))
+            .unwrap_or("");
+        assert!(
+            line.contains(&format!("next_cursor={cursor}")),
+            "expected exact next_cursor token in summary line: {line}"
+        );
+        assert!(
+            line.contains("array_len=5") && line.contains("items=2"),
+            "expected array_len/items in summary line: {line}"
+        );
+        assert!(
+            line.chars().count() <= 900,
+            "info_kv_get_paged_v1 summary too long: {} chars",
+            line.chars().count()
+        );
+    }
+
+    #[test]
+    fn summarize_qa_cached_includes_cached_flags() {
+        let config = AppConfig::default();
+        let job = Gen3dAiJob::default();
+        let workshop = Gen3dWorkshop::default();
+        let registry = Gen3dToolRegistryV1::default();
+
+        let recent_tool_results = vec![Gen3dToolResultJsonV1::ok(
+            "call_1".to_string(),
+            TOOL_ID_QA.to_string(),
+            serde_json::json!({
+                "ok": false,
+                "errors": [{ "severity": "error", "message": "x" }],
+                "warnings": [],
+                "cached": true,
+                "no_new_information": true,
+                "capability_gaps": [{ "kind": "missing_motion_channel" }],
+            }),
+        )];
+
+        let text = build_agent_user_text(
+            &config,
+            &job,
+            &workshop,
+            serde_json::json!({}),
+            &recent_tool_results,
+            &registry,
+        );
+
+        let line = text
+            .lines()
+            .find(|line| line.contains("qa_v1 (call_1):"))
+            .unwrap_or("");
+        assert!(
+            line.contains("cached=true") && line.contains("no_new_information=true"),
+            "expected cached/no_new_information flags in summary line: {line}"
+        );
+        assert!(
+            line.contains("capability_gaps=1"),
+            "expected capability_gaps count in summary line: {line}"
         );
     }
 

@@ -3,7 +3,7 @@
 This document records Gen3D process decisions and forward-looking next actions.
 It may describe behavior that is **not implemented yet**.
 
-Last updated: 2026-03-12
+Last updated: 2026-03-16
 
 ## Non‑negotiable constraints
 
@@ -222,6 +222,7 @@ Gen3D uses a run-scoped Info Store (KV + events + blobs) for agent inspection (n
 Suggested default caps (tune later; bump tool versions for breaking changes):
 
 - KV: `info_kv_*_v1.page.limit` default 50 max 200; `info_kv_get_v1.max_bytes` default 64 KiB max 512 KiB.
+- KV arrays: `info_kv_get_paged_v1.max_item_bytes` default 4096 clamp [256, 64 KiB].
 - Events: `info_events_*_v1.page.limit` default 100 max 500; `info_events_search_v1.query` max 256 bytes; `info_events_get_v1.max_bytes` default 64 KiB max 512 KiB.
 - Blobs: `info_blobs_list_v1.page.limit` default 50 max 200; label filter arrays capped (to keep tool output bounded).
 
@@ -235,7 +236,7 @@ If we introduce `start_task_v1` / `poll_task_v1` / `cancel_task_v1`, define:
 ### Phase 1: observability (read the “repo”)
 
 - Info Store inspection (preferred for agents):
-  - KV: `info_kv_list_keys_v1` / `info_kv_list_history_v1` / `info_kv_get_v1`
+  - KV: `info_kv_list_keys_v1` / `info_kv_list_history_v1` / `info_kv_get_v1` / `info_kv_get_paged_v1`
   - Events: `info_events_list_v1` / `info_events_search_v1` / `info_events_get_v1`
   - Blobs: `info_blobs_list_v1` / `info_blobs_get_v1`
 - Structured queries over the current draft (avoid forcing the agent to parse huge JSON blobs):
@@ -299,8 +300,10 @@ Build on existing `create_workspace_v1` / `set_active_workspace_v1` / `delete_wo
 Goal: one call that returns a combined, compact QA verdict.
 
 - Runs `validate_v1` + `smoke_check_v1`.
-- Returns a stable summary JSON:
-  - `{ ok, validate: {...}, smoke: {...}, errors: [...], warnings: [...] }`
+- Returns a stable summary JSON (bounded):
+  - `{ ok, validate: {...}, smoke: {...}, errors: [...], warnings: [...], info_kv, capability_gaps, cached, no_new_information, basis }`
+  - `capability_gaps[]` includes optional deterministic `fixits[]` tool payloads (never applied silently).
+  - Repeating the call on unchanged state returns `cached=true` + `no_new_information=true` unless `force=true`.
 - Writes artifacts to the run dir the same way the underlying tools do.
 
 ### 2) Info Store inspection tools (agent-facing)
@@ -308,7 +311,7 @@ Goal: one call that returns a combined, compact QA verdict.
 Goal: let the agent learn from its own history without re-prompting the user.
 
 Candidates:
-- KV (structured summaries + history): `info_kv_list_keys_v1` / `info_kv_list_history_v1` / `info_kv_get_v1`
+- KV (structured summaries + history): `info_kv_list_keys_v1` / `info_kv_list_history_v1` / `info_kv_get_v1` / `info_kv_get_paged_v1`
 - Events (tool call start/results + budget stops): `info_events_list_v1` / `info_events_search_v1` / `info_events_get_v1`
 - Blobs (renders/motion sheets by labels): `info_blobs_list_v1` / `info_blobs_get_v1`
 

@@ -20,6 +20,7 @@ pub(crate) const TOOL_ID_QA: &str = "qa_v1";
 pub(crate) const TOOL_ID_INFO_KV_LIST_KEYS: &str = "info_kv_list_keys_v1";
 pub(crate) const TOOL_ID_INFO_KV_LIST_HISTORY: &str = "info_kv_list_history_v1";
 pub(crate) const TOOL_ID_INFO_KV_GET: &str = "info_kv_get_v1";
+pub(crate) const TOOL_ID_INFO_KV_GET_PAGED: &str = "info_kv_get_paged_v1";
 pub(crate) const TOOL_ID_INFO_KV_GET_MANY: &str = "info_kv_get_many_v1";
 pub(crate) const TOOL_ID_INFO_EVENTS_LIST: &str = "info_events_list_v1";
 pub(crate) const TOOL_ID_INFO_EVENTS_GET: &str = "info_events_get_v1";
@@ -205,8 +206,8 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 tool_id: TOOL_ID_QA,
                 title: "QA",
                 one_line_summary:
-                    "Runs validate_v1 + smoke_check_v1; may auto-repair motion contact; returns combined summary.",
-                args_schema: "{}",
+                    "Runs validate_v1 + smoke_check_v1; may auto-repair motion contact; caches by state_hash to prevent repeating inspection loops (use force=true to bypass).",
+                args_schema: "{ force?: bool }",
                 args_example: serde_json::json!({}),
             },
             Gen3dToolDescriptorV1 {
@@ -249,6 +250,22 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                     "key": "ws.main.scene_graph_summary",
                     "selector": { "kind": "latest" },
                     "json_pointer": "/components_total"
+                }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_INFO_KV_GET_PAGED,
+                title: "Info KV: get paged",
+                one_line_summary:
+                    "Read-only: page through a KV JSON array with bounded per-item previews (cursor is bound to a frozen kv_rev; use json_pointer to select an array).",
+                args_schema:
+                    "{ namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }, json_pointer?: string, page?: { limit?: number, cursor?: string }, max_item_bytes?: number }",
+                args_example: serde_json::json!({
+                    "namespace": "gen3d",
+                    "key": "ws.main.qa",
+                    "selector": { "kind": "latest" },
+                    "json_pointer": "/errors",
+                    "page": { "limit": 50 },
+                    "max_item_bytes": 4096
                 }),
             },
             Gen3dToolDescriptorV1 {

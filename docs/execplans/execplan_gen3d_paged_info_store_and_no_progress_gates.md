@@ -21,10 +21,10 @@ After implementing this plan, Gen3D will:
 ## Progress
 
 - [x] (2026-03-16 14:04Z) Write ExecPlan (this document) with concrete contracts, file targets, and acceptance criteria.
-- [ ] Add Info Store paging for KV JSON arrays (new tool or extension) + docs.
-- [ ] Add tool-level no-progress gates for repeated inspection calls (start with `qa_v1`) + tests.
-- [ ] Add generic “capability gaps” + “fixits” fields to QA/smoke results (bounded, deterministic) + prompt summaries.
-- [ ] Run rendered smoke test (2 seconds) and commit implementation.
+- [x] (2026-03-16 16:14Z) Add Info Store paging for KV JSON arrays via `info_kv_get_paged_v1` + docs + unit tests.
+- [x] (2026-03-16 16:14Z) Add tool-level no-progress gate for repeated `qa_v1` calls (`cached/no_new_information` + `force` escape hatch) + tests + prompt summarizer surfacing.
+- [x] (2026-03-16 16:14Z) Add bounded `capability_gaps[]` + deterministic `fixits[]` to `qa_v1` and `smoke_check_v1` results + docs + tests.
+- [x] (2026-03-16 16:28Z) Run rendered smoke test (2 seconds) and commit implementation.
 
 ## Surprises & Discoveries
 
@@ -57,9 +57,14 @@ After implementing this plan, Gen3D will:
   Rationale: This keeps the solution generic across motion channels and root behavior (mobility/attack/aim/rig/collider) and avoids one-off “attack” logic that would reappear for other capabilities later.
   Date/Author: 2026-03-16 / Codex CLI agent
 
+- Decision: For `hinge_limit_exceeded`, surface deterministic apply payloads as fixits by reusing `suggest_motion_repairs_v1` suggestion generation (without auto-applying).
+  Rationale: This avoids heuristic “pick the best fix” logic while still giving the agent explicit `apply_draft_ops_v1` payload options in a bounded form.
+  Date/Author: 2026-03-16 / Codex CLI agent
+
 ## Outcomes & Retrospective
 
-Not implemented yet. This section will be updated as milestones complete.
+- Outcome (Milestones 1–3): Added `info_kv_get_paged_v1` for deterministic paging of large KV arrays, added `qa_v1` tool-level caching/no-progress gate, and added bounded `capability_gaps[]` with deterministic `fixits[]` to QA/smoke.
+- Remaining: run rendered smoke test and commit; consider extending no-progress gates to other inspection tools (`validate_v1`, `get_scene_graph_summary_v1`) if loops persist outside QA.
 
 ## Context and Orientation
 
