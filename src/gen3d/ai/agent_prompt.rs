@@ -1,13 +1,18 @@
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    Gen3dToolDescriptorV1, TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_COPY_COMPONENT,
-    TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
-    TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_INSPECT_PLAN, TOOL_ID_LLM_GENERATE_COMPONENT,
-    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
+    Gen3dToolDescriptorV1, TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_COPY_COMPONENT,
+    TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_GET_PLAN_TEMPLATE,
+    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_INFO_BLOBS_GET,
+    TOOL_ID_INFO_BLOBS_LIST, TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST,
+    TOOL_ID_INFO_EVENTS_SEARCH, TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY,
+    TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
+    TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
+    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
+    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_SMOKE_CHECK, TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
+    TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT,
+    TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use uuid::Uuid;
@@ -151,6 +156,10 @@ pub(super) fn build_agent_user_text(
 ) -> String {
     let _ = config;
 
+    fn char_count(text: &str) -> usize {
+        text.chars().count()
+    }
+
     fn truncate_for_prompt(text: &str, max_chars: usize) -> String {
         if text.chars().count() <= max_chars {
             return text.to_string();
@@ -165,6 +174,11 @@ pub(super) fn build_agent_user_text(
 
     fn first_line(text: &str) -> &str {
         text.split('\n').next().unwrap_or("")
+    }
+
+    fn one_line_snip(text: &str, max_chars: usize) -> String {
+        let sanitized = text.replace('\r', " ").replace('\n', " ");
+        truncate_for_prompt(sanitized.trim(), max_chars)
     }
 
     fn required_keys_from_args_sig(args_sig: &str) -> Vec<String> {
@@ -287,79 +301,152 @@ pub(super) fn build_agent_user_text(
 
         match result.tool_id.as_str() {
             TOOL_ID_GET_SCENE_GRAPH_SUMMARY => {
-                let components = value.get("components").and_then(|v| v.as_array());
-                let components_total = components.map(|a| a.len()).unwrap_or(0);
-                let mut edges: Vec<String> = Vec::new();
-                if let Some(components) = components {
-                    for c in components {
-                        let child = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        let attach_to = c.get("attach_to");
-                        let Some(attach_to) = attach_to else {
-                            continue;
-                        };
-                        if attach_to.is_null() {
-                            continue;
-                        }
-
-                        let parent = attach_to
-                            .get("parent_component_name")
-                            .and_then(|v| v.as_str())
-                            .or_else(|| attach_to.get("parent").and_then(|v| v.as_str()))
-                            .unwrap_or("");
-                        let parent_anchor = attach_to
-                            .get("parent_anchor")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let child_anchor = attach_to
-                            .get("child_anchor")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let joint_kind = attach_to
-                            .get("joint")
-                            .and_then(|v| v.get("kind"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("null");
-                        let offset_pos = attach_to
-                            .get("offset")
-                            .and_then(|v| v.get("pos"))
-                            .map(|v| truncate_for_prompt(&v.to_string(), 64))
-                            .unwrap_or_else(|| "null".into());
-
-                        if child.trim().is_empty() {
-                            continue;
-                        }
-                        let mut edge = String::new();
-                        edge.push_str(child.trim());
-                        edge.push_str("->");
-                        edge.push_str(parent.trim());
-                        if !parent_anchor.trim().is_empty() {
-                            edge.push('.');
-                            edge.push_str(parent_anchor.trim());
-                        }
-                        if !child_anchor.trim().is_empty() {
-                            edge.push_str(" child=");
-                            edge.push_str(child_anchor.trim());
-                        }
-                        edge.push_str(" off=");
-                        edge.push_str(offset_pos.trim());
-                        edge.push_str(" joint=");
-                        edge.push_str(joint_kind.trim());
-                        edges.push(edge);
+                fn edge_to_string(edge: &serde_json::Value) -> Option<String> {
+                    let child = edge
+                        .get("child")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let parent = edge
+                        .get("parent")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    if child.is_empty() || parent.is_empty() {
+                        return None;
                     }
+                    let parent_anchor = edge
+                        .get("parent_anchor")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let child_anchor = edge
+                        .get("child_anchor")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let joint_kind = edge
+                        .get("joint_kind")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("null")
+                        .trim();
+                    let offset_pos = edge
+                        .get("offset_pos")
+                        .map(|v| truncate_for_prompt(&v.to_string(), 64))
+                        .unwrap_or_else(|| "null".into());
+
+                    let mut out = String::new();
+                    out.push_str(child);
+                    out.push_str("->");
+                    out.push_str(parent);
+                    if !parent_anchor.is_empty() {
+                        out.push('.');
+                        out.push_str(parent_anchor);
+                    }
+                    if !child_anchor.is_empty() {
+                        out.push_str(" child=");
+                        out.push_str(child_anchor);
+                    }
+                    out.push_str(" off=");
+                    out.push_str(offset_pos.trim());
+                    out.push_str(" joint=");
+                    out.push_str(joint_kind);
+                    Some(truncate_for_prompt(out.trim(), 120))
                 }
 
                 out.push_str("ok");
+
+                let components_total = value
+                    .get("components_total")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| {
+                        value
+                            .get("components")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len() as u64)
+                    })
+                    .unwrap_or(0);
                 out.push_str(&format!(" components={components_total}"));
-                if !edges.is_empty() {
-                    // Keep it bounded; this is just enough info to apply deterministic ops.
-                    let total = edges.len();
-                    let shown: Vec<&str> = edges.iter().take(12).map(|s| s.as_str()).collect();
-                    out.push_str(&format!(
-                        " attachment_edges={}",
-                        truncate_for_prompt(&format!("{shown:?}"), 360)
-                    ));
-                    if total > shown.len() {
-                        out.push_str(&format!(" attachment_edges_total={total}"));
+
+                if let Some(info_kv) = value.get("info_kv").and_then(|v| v.as_object()) {
+                    let namespace = info_kv
+                        .get("namespace")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let key = info_kv
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let kv_rev = info_kv
+                        .get("selector")
+                        .and_then(|v| v.get("kv_rev"))
+                        .and_then(|v| v.as_u64());
+                    if !namespace.is_empty() || !key.is_empty() || kv_rev.is_some() {
+                        out.push_str(" info_kv={");
+                        if !namespace.is_empty() {
+                            out.push_str("namespace=");
+                            out.push_str(&truncate_for_prompt(namespace, 32));
+                            out.push(' ');
+                        }
+                        if !key.is_empty() {
+                            out.push_str("key=");
+                            out.push_str(&truncate_for_prompt(key, 96));
+                            out.push(' ');
+                        }
+                        if let Some(kv_rev) = kv_rev {
+                            out.push_str(&format!("kv_rev={kv_rev}"));
+                        }
+                        out.push('}');
+                    }
+                }
+
+                let Some(attachment_edges) =
+                    value.get("attachment_edges").and_then(|v| v.as_array())
+                else {
+                    return out;
+                };
+                let total = attachment_edges.len();
+                out.push_str(&format!(" attachment_edges_total={total}"));
+                if total > 0 {
+                    const SAMPLE_MAX_CHARS: usize = 480;
+                    let mut head = total.min(6);
+                    let mut tail = total.saturating_sub(head).min(6);
+
+                    let mut sample_text = String::new();
+                    while head > 0 || tail > 0 {
+                        let mut parts: Vec<String> = Vec::new();
+                        for edge in attachment_edges.iter().take(head) {
+                            if let Some(s) = edge_to_string(edge) {
+                                parts.push(s);
+                            }
+                        }
+                        if tail > 0 {
+                            let start = total.saturating_sub(tail);
+                            for edge in attachment_edges.iter().skip(start) {
+                                if let Some(s) = edge_to_string(edge) {
+                                    parts.push(s);
+                                }
+                            }
+                        }
+                        sample_text = parts.join(" | ");
+                        if char_count(&sample_text) <= SAMPLE_MAX_CHARS {
+                            break;
+                        }
+                        if head > 0 {
+                            head = head.saturating_sub(1);
+                            continue;
+                        }
+                        if tail > 0 {
+                            tail = tail.saturating_sub(1);
+                            continue;
+                        }
+                    }
+                    if !sample_text.trim().is_empty() {
+                        out.push_str(" attachment_edges_sample=[");
+                        out.push_str(&sample_text);
+                        out.push(']');
                     }
                 }
             }
@@ -637,34 +724,88 @@ pub(super) fn build_agent_user_text(
                 }
             }
             TOOL_ID_RENDER_PREVIEW => {
-                let blob_ids = value
-                    .get("blob_ids")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len());
-                let static_blob_ids = value
-                    .get("static_blob_ids")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len());
+                fn join_exact_ids(ids: &[&str], max_chars: usize) -> String {
+                    let mut out = String::new();
+                    for id in ids {
+                        if id.trim().is_empty() {
+                            continue;
+                        }
+                        let sep = if out.is_empty() { "" } else { "," };
+                        let candidate_len = char_count(&out) + char_count(sep) + char_count(id);
+                        if candidate_len > max_chars {
+                            break;
+                        }
+                        out.push_str(sep);
+                        out.push_str(id);
+                    }
+                    out
+                }
+
+                let blob_ids_arr = value.get("blob_ids").and_then(|v| v.as_array());
+                let static_blob_ids_arr = value.get("static_blob_ids").and_then(|v| v.as_array());
+
+                let blob_ids_total = blob_ids_arr.map(|a| a.len()).unwrap_or(0);
+                let static_blob_ids_total = static_blob_ids_arr.map(|a| a.len()).unwrap_or(0);
+
+                let blob_ids_sample = blob_ids_arr
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str())
+                            .take(3)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let static_blob_ids_sample = static_blob_ids_arr
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str())
+                            .take(3)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
                 let motion_sheet_blob_ids = value.get("motion_sheet_blob_ids");
-                let has_move_sheet = motion_sheet_blob_ids
+                let move_sheet = motion_sheet_blob_ids
                     .and_then(|v| v.get("move"))
                     .and_then(|v| v.as_str())
-                    .is_some();
-                let has_attack_sheet = motion_sheet_blob_ids
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let attack_sheet = motion_sheet_blob_ids
                     .and_then(|v| v.get("attack"))
                     .and_then(|v| v.as_str())
-                    .is_some();
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
                 out.push_str("ok");
-                if let Some(blob_ids) = blob_ids {
-                    out.push_str(&format!(" blob_ids={blob_ids}"));
+                out.push_str(&format!(" blob_ids={blob_ids_total}"));
+                if !blob_ids_sample.is_empty() {
+                    let sample = join_exact_ids(&blob_ids_sample, 240);
+                    if !sample.is_empty() {
+                        out.push_str(" blob_ids_sample=[");
+                        out.push_str(&sample);
+                        out.push(']');
+                    }
                 }
-                if let Some(static_blob_ids) = static_blob_ids {
-                    out.push_str(&format!(" static_blob_ids={static_blob_ids}"));
+                out.push_str(&format!(" static_blob_ids={static_blob_ids_total}"));
+                if !static_blob_ids_sample.is_empty() {
+                    let sample = join_exact_ids(&static_blob_ids_sample, 240);
+                    if !sample.is_empty() {
+                        out.push_str(" static_blob_ids_sample=[");
+                        out.push_str(&sample);
+                        out.push(']');
+                    }
                 }
-                if has_move_sheet || has_attack_sheet {
-                    out.push_str(&format!(
-                        " motion_sheets={{move:{has_move_sheet},attack:{has_attack_sheet}}}"
-                    ));
+                if move_sheet.is_some() || attack_sheet.is_some() {
+                    out.push_str(" motion_sheets={");
+                    if let Some(move_sheet) = move_sheet {
+                        out.push_str("move=");
+                        out.push_str(move_sheet);
+                        out.push(' ');
+                    }
+                    if let Some(attack_sheet) = attack_sheet {
+                        out.push_str("attack=");
+                        out.push_str(attack_sheet);
+                    }
+                    out.push('}');
                 }
             }
             TOOL_ID_VALIDATE => {
@@ -784,18 +925,158 @@ pub(super) fn build_agent_user_text(
                 }
             }
             TOOL_ID_SUGGEST_MOTION_REPAIRS => {
-                let suggestions = value
-                    .get("suggestions")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len());
-                let truncated = value.get("truncated").and_then(|v| v.as_bool());
-                out.push_str("ok");
-                if let Some(suggestions) = suggestions {
-                    out.push_str(&format!(" suggestions={suggestions}"));
+                const MAX_LINE_CHARS: usize = 3000;
+                const MAX_APPLY_ARGS_CHARS: usize = 800;
+                const MAX_SUGGESTIONS: usize = 8;
+
+                fn impact_snip(impact: &serde_json::Value) -> Option<String> {
+                    let obj = impact.as_object()?;
+                    if let Some(scale) = obj.get("scale_factor").and_then(|v| v.as_f64()) {
+                        if scale.is_finite() {
+                            return Some(format!("scale_factor={scale:.4}"));
+                        }
+                    }
+                    if let Some(relax) = obj.get("relax_degrees").and_then(|v| v.as_f64()) {
+                        if relax.is_finite() {
+                            return Some(format!("relax_degrees={relax:.3}"));
+                        }
+                    }
+                    if let Some(limits) = obj.get("new_limits_degrees").and_then(|v| v.as_array()) {
+                        if limits.len() == 2 {
+                            let a = limits.first().and_then(|v| v.as_f64());
+                            let b = limits.get(1).and_then(|v| v.as_f64());
+                            if let (Some(a), Some(b)) = (a, b) {
+                                if a.is_finite() && b.is_finite() {
+                                    return Some(format!("new_limits_degrees=[{a:.3},{b:.3}]"));
+                                }
+                            }
+                        }
+                    }
+                    let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+                    keys.sort();
+                    (!keys.is_empty())
+                        .then(|| truncate_for_prompt(&format!("impact_keys={keys:?}"), 120))
                 }
-                if let Some(truncated) = truncated {
-                    out.push_str(&format!(" truncated={truncated}"));
+
+                let suggestions_arr = value.get("suggestions").and_then(|v| v.as_array());
+                let suggestions_total = suggestions_arr.map(|a| a.len()).unwrap_or(0);
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let budget = MAX_LINE_CHARS.saturating_sub(char_count(&out));
+
+                let mut summary =
+                    format!("ok suggestions={suggestions_total} truncated={truncated}");
+
+                let Some(suggestions_arr) = suggestions_arr else {
+                    out.push_str(&truncate_for_prompt(&summary, budget));
+                    return out;
+                };
+
+                let mut items_text = String::new();
+                let mut included = 0usize;
+                for suggestion in suggestions_arr.iter().take(MAX_SUGGESTIONS) {
+                    let id = suggestion.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let kind = suggestion
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let component_name = suggestion
+                        .get("component_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let channel = suggestion
+                        .get("channel")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let impact = suggestion
+                        .get("impact")
+                        .and_then(|v| (!v.is_null()).then_some(v))
+                        .and_then(impact_snip);
+
+                    let apply_args_field = match suggestion.get("apply_draft_ops_args") {
+                        Some(apply_args) if !apply_args.is_null() => {
+                            let json = apply_args.to_string();
+                            if char_count(&json) <= MAX_APPLY_ARGS_CHARS {
+                                format!("apply_draft_ops_args={json}")
+                            } else {
+                                format!(
+                                    "apply_draft_ops_args=<omitted chars={}>",
+                                    char_count(&json)
+                                )
+                            }
+                        }
+                        _ => "apply_draft_ops_args=<missing>".to_string(),
+                    };
+
+                    let mut item = String::new();
+                    item.push('{');
+                    if !id.trim().is_empty() {
+                        item.push_str("id=");
+                        item.push_str(&truncate_for_prompt(id.trim(), 96));
+                        item.push_str(", ");
+                    }
+                    if !kind.trim().is_empty() {
+                        item.push_str("kind=");
+                        item.push_str(&truncate_for_prompt(kind.trim(), 64));
+                        item.push_str(", ");
+                    }
+                    if !component_name.trim().is_empty() {
+                        item.push_str("component=");
+                        item.push_str(&truncate_for_prompt(component_name.trim(), 64));
+                        item.push_str(", ");
+                    }
+                    if !channel.trim().is_empty() {
+                        item.push_str("channel=");
+                        item.push_str(&truncate_for_prompt(channel.trim(), 64));
+                        item.push_str(", ");
+                    }
+                    if let Some(impact) = impact.as_deref() {
+                        if !impact.trim().is_empty() {
+                            item.push_str("impact=");
+                            item.push_str(&truncate_for_prompt(impact.trim(), 120));
+                            item.push_str(", ");
+                        }
+                    }
+                    item.push_str(&apply_args_field);
+                    item.push('}');
+
+                    let sep = if included == 0 { "" } else { ", " };
+                    let omitted_after = suggestions_total.saturating_sub(included + 1);
+                    let omitted_seg = if omitted_after > 0 {
+                        format!(" omitted_suggestions={omitted_after}")
+                    } else {
+                        String::new()
+                    };
+                    let candidate_len = char_count(&summary)
+                        + char_count(" items=[")
+                        + char_count(&items_text)
+                        + char_count(sep)
+                        + char_count(&item)
+                        + char_count("]")
+                        + char_count(&omitted_seg);
+                    if candidate_len > budget {
+                        break;
+                    }
+
+                    items_text.push_str(sep);
+                    items_text.push_str(&item);
+                    included += 1;
                 }
+
+                if included > 0 {
+                    summary.push_str(" items=[");
+                    summary.push_str(&items_text);
+                    summary.push(']');
+                }
+                let omitted = suggestions_total.saturating_sub(included);
+                if omitted > 0 {
+                    summary.push_str(&format!(" omitted_suggestions={omitted}"));
+                }
+
+                out.push_str(&truncate_for_prompt(&summary, budget));
             }
             TOOL_ID_GET_PLAN_TEMPLATE => {
                 let plan_template_kv = value.get("plan_template_kv");
@@ -890,6 +1171,1075 @@ pub(super) fn build_agent_user_text(
                         " first_error_kind={}",
                         truncate_for_prompt(kind, 64)
                     ));
+                }
+            }
+            TOOL_ID_INFO_EVENTS_LIST => {
+                const MAX_LINE_CHARS: usize = 800;
+                let budget = MAX_LINE_CHARS.saturating_sub(char_count(&out));
+
+                let items = value.get("items").and_then(|v| v.as_array());
+                let items_total = items.map(|a| a.len()).unwrap_or(0);
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let next_cursor = value.get("next_cursor").and_then(|v| v.as_str());
+
+                let cursor_seg = next_cursor
+                    .map(|c| format!(" next_cursor={c}"))
+                    .unwrap_or_default();
+
+                fn item_snip(item: &serde_json::Value, include_message: bool) -> String {
+                    let event_id = item.get("event_id").and_then(|v| v.as_u64());
+                    let kind = item
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let tool_id = item
+                        .get("tool_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let call_id = item
+                        .get("call_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let pass = item.get("pass").and_then(|v| v.as_u64());
+                    let message = item.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                    let message = one_line_snip(message, 120);
+
+                    let mut out = String::new();
+                    out.push('{');
+                    if let Some(event_id) = event_id {
+                        out.push_str(&format!("event_id={event_id} "));
+                    }
+                    if !kind.is_empty() {
+                        out.push_str("kind=");
+                        out.push_str(kind);
+                        out.push(' ');
+                    }
+                    if !tool_id.is_empty() {
+                        out.push_str("tool_id=");
+                        out.push_str(tool_id);
+                        out.push(' ');
+                    }
+                    if !call_id.is_empty() {
+                        out.push_str("call_id=");
+                        out.push_str(call_id);
+                        out.push(' ');
+                    }
+                    if let Some(pass) = pass {
+                        out.push_str(&format!("pass={pass} "));
+                    }
+                    if include_message && !message.trim().is_empty() {
+                        out.push_str("message=");
+                        out.push_str(message.trim());
+                    }
+                    out.push('}');
+                    out
+                }
+
+                let mut base = format!("ok items={items_total} truncated={truncated}");
+
+                let mut chosen_sample: Option<String> = None;
+                for include_message in [true, false] {
+                    let mut candidates: Vec<String> = Vec::new();
+                    if let Some(items) = items {
+                        candidates = items
+                            .iter()
+                            .take(3)
+                            .map(|item| item_snip(item, include_message))
+                            .collect();
+                    }
+                    for n in (1..=candidates.len()).rev() {
+                        let joined = candidates
+                            .iter()
+                            .take(n)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let candidate = format!("{base} first=[{joined}]{cursor_seg}");
+                        if char_count(&candidate) <= budget {
+                            chosen_sample = Some(format!(" first=[{joined}]"));
+                            break;
+                        }
+                    }
+                    if chosen_sample.is_some() {
+                        break;
+                    }
+                }
+
+                let mut summary = base.clone();
+                if let Some(sample) = chosen_sample.as_deref() {
+                    if char_count(&(summary.clone() + sample + &cursor_seg)) <= budget {
+                        summary.push_str(sample);
+                    }
+                }
+                if !cursor_seg.is_empty() && char_count(&(summary.clone() + &cursor_seg)) <= budget
+                {
+                    summary.push_str(&cursor_seg);
+                } else if !cursor_seg.is_empty() {
+                    // Drop truncated/sample before losing the cursor.
+                    base = format!("ok items={items_total}");
+                    summary = base.clone();
+                    if char_count(&(summary.clone() + &cursor_seg)) <= budget {
+                        summary.push_str(&cursor_seg);
+                    }
+                }
+
+                let mut summary_out = summary;
+                if char_count(&summary_out) > budget {
+                    if let Some(cursor) = next_cursor.map(str::trim).filter(|s| !s.is_empty()) {
+                        let minimal = format!("ok items={items_total} next_cursor={cursor}");
+                        if char_count(&minimal) <= budget {
+                            summary_out = minimal;
+                        } else {
+                            let cursor_only = format!("next_cursor={cursor}");
+                            if char_count(&cursor_only) <= budget {
+                                summary_out = cursor_only;
+                            } else {
+                                summary_out = format!("ok items={items_total}");
+                            }
+                        }
+                    } else {
+                        summary_out = truncate_for_prompt(&summary_out, budget);
+                    }
+                }
+                out.push_str(&summary_out);
+            }
+            TOOL_ID_INFO_EVENTS_SEARCH => {
+                const MAX_LINE_CHARS: usize = 800;
+                let budget = MAX_LINE_CHARS.saturating_sub(char_count(&out));
+
+                let matches = value.get("matches").and_then(|v| v.as_array());
+                let matches_total = matches.map(|a| a.len()).unwrap_or(0);
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let next_cursor = value.get("next_cursor").and_then(|v| v.as_str());
+                let cursor_seg = next_cursor
+                    .map(|c| format!(" next_cursor={c}"))
+                    .unwrap_or_default();
+
+                fn match_snip(item: &serde_json::Value, include_message: bool) -> String {
+                    let event_id = item.get("event_id").and_then(|v| v.as_u64());
+                    let kind = item
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let message = item
+                        .get("message_excerpt")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let message = one_line_snip(message, 120);
+
+                    let mut out = String::new();
+                    out.push('{');
+                    if let Some(event_id) = event_id {
+                        out.push_str(&format!("event_id={event_id} "));
+                    }
+                    if !kind.is_empty() {
+                        out.push_str("kind=");
+                        out.push_str(kind);
+                        out.push(' ');
+                    }
+                    if include_message && !message.trim().is_empty() {
+                        out.push_str("message_excerpt=");
+                        out.push_str(message.trim());
+                    }
+                    out.push('}');
+                    out
+                }
+
+                let base = format!("ok matches={matches_total} truncated={truncated}");
+
+                let mut chosen_sample: Option<String> = None;
+                for include_message in [true, false] {
+                    let mut candidates: Vec<String> = Vec::new();
+                    if let Some(matches) = matches {
+                        candidates = matches
+                            .iter()
+                            .take(3)
+                            .map(|item| match_snip(item, include_message))
+                            .collect();
+                    }
+                    for n in (1..=candidates.len()).rev() {
+                        let joined = candidates
+                            .iter()
+                            .take(n)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let candidate = format!("{base} first=[{joined}]{cursor_seg}");
+                        if char_count(&candidate) <= budget {
+                            chosen_sample = Some(format!(" first=[{joined}]"));
+                            break;
+                        }
+                    }
+                    if chosen_sample.is_some() {
+                        break;
+                    }
+                }
+
+                let mut summary = base.clone();
+                if let Some(sample) = chosen_sample.as_deref() {
+                    if char_count(&(summary.clone() + sample + &cursor_seg)) <= budget {
+                        summary.push_str(sample);
+                    }
+                }
+                if !cursor_seg.is_empty() && char_count(&(summary.clone() + &cursor_seg)) <= budget
+                {
+                    summary.push_str(&cursor_seg);
+                } else if !cursor_seg.is_empty() {
+                    // Drop truncated/sample before losing the cursor.
+                    let base = format!("ok matches={matches_total}");
+                    summary = base.clone();
+                    if char_count(&(summary.clone() + &cursor_seg)) <= budget {
+                        summary.push_str(&cursor_seg);
+                    }
+                }
+
+                let mut summary_out = summary;
+                if char_count(&summary_out) > budget {
+                    if let Some(cursor) = next_cursor.map(str::trim).filter(|s| !s.is_empty()) {
+                        let minimal = format!("ok matches={matches_total} next_cursor={cursor}");
+                        if char_count(&minimal) <= budget {
+                            summary_out = minimal;
+                        } else {
+                            let cursor_only = format!("next_cursor={cursor}");
+                            if char_count(&cursor_only) <= budget {
+                                summary_out = cursor_only;
+                            } else {
+                                summary_out = format!("ok matches={matches_total}");
+                            }
+                        }
+                    } else {
+                        summary_out = truncate_for_prompt(&summary_out, budget);
+                    }
+                }
+                out.push_str(&summary_out);
+            }
+            TOOL_ID_INFO_EVENTS_GET => {
+                const MAX_LINE_CHARS: usize = 1000;
+
+                let Some(event) = value.get("event").and_then(|v| v.as_object()) else {
+                    out.push_str("ok");
+                    return out;
+                };
+
+                let event_id = event.get("event_id").and_then(|v| v.as_u64());
+                let kind = event
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let tool_id = event
+                    .get("tool_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let call_id = event
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let pass = event.get("pass").and_then(|v| v.as_u64());
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let json_pointer = value
+                    .get("json_pointer")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+
+                out.push_str("ok");
+                if let Some(event_id) = event_id {
+                    out.push_str(&format!(" event_id={event_id}"));
+                }
+                if !kind.is_empty() {
+                    out.push_str(&format!(" kind={}", truncate_for_prompt(kind, 64)));
+                }
+                if !tool_id.is_empty() {
+                    out.push_str(&format!(" tool_id={}", truncate_for_prompt(tool_id, 64)));
+                }
+                if !call_id.is_empty() {
+                    out.push_str(&format!(" call_id={}", truncate_for_prompt(call_id, 32)));
+                }
+                if let Some(pass) = pass {
+                    out.push_str(&format!(" pass={pass}"));
+                }
+                out.push_str(&format!(" truncated={truncated}"));
+                if !json_pointer.is_empty() {
+                    out.push_str(&format!(
+                        " json_pointer={}",
+                        truncate_for_prompt(json_pointer, 96)
+                    ));
+                }
+
+                if let Some(data) = event.get("data") {
+                    if !data.is_null() {
+                        let json = data.to_string();
+                        let remaining = MAX_LINE_CHARS.saturating_sub(char_count(&out));
+                        let needed = char_count(" data=") + char_count(&json);
+                        if char_count(&json) <= 320 && needed <= remaining {
+                            out.push_str(" data=");
+                            out.push_str(&json);
+                        } else if let Some(obj) = data.as_object() {
+                            let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+                            keys.sort();
+                            if !keys.is_empty() {
+                                out.push_str(" data_keys=");
+                                out.push_str(&truncate_for_prompt(&format!("{keys:?}"), 160));
+                            }
+                        } else if let Some(arr) = data.as_array() {
+                            out.push_str(&format!(" data_len={}", arr.len()));
+                        } else if let Some(s) = data.as_str() {
+                            out.push_str(" data=");
+                            out.push_str(&one_line_snip(s, 200));
+                        } else {
+                            out.push_str(" data_type=");
+                            out.push_str(match data {
+                                serde_json::Value::Bool(_) => "bool",
+                                serde_json::Value::Number(_) => "number",
+                                serde_json::Value::String(_) => "string",
+                                serde_json::Value::Array(_) => "array",
+                                serde_json::Value::Object(_) => "object",
+                                serde_json::Value::Null => "null",
+                            });
+                        }
+                    }
+                }
+
+                if char_count(&out) > MAX_LINE_CHARS {
+                    out = truncate_for_prompt(&out, MAX_LINE_CHARS);
+                }
+            }
+            TOOL_ID_INFO_KV_GET => {
+                const MAX_LINE_CHARS: usize = 900;
+
+                let record = value.get("record").and_then(|v| v.as_object());
+                let key = record
+                    .and_then(|r| r.get("key"))
+                    .and_then(|v| v.as_object());
+                let namespace = key
+                    .and_then(|k| k.get("namespace"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let kv_key = key
+                    .and_then(|k| k.get("key"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let kv_rev = record
+                    .and_then(|r| r.get("kv_rev"))
+                    .and_then(|v| v.as_u64());
+                let summary = record
+                    .and_then(|r| r.get("summary"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let json_pointer = value
+                    .get("json_pointer")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+
+                out.push_str("ok");
+                if !namespace.is_empty() {
+                    out.push_str(&format!(
+                        " namespace={}",
+                        truncate_for_prompt(namespace, 32)
+                    ));
+                }
+                if !kv_key.is_empty() {
+                    out.push_str(&format!(" key={}", truncate_for_prompt(kv_key, 96)));
+                }
+                if let Some(kv_rev) = kv_rev {
+                    out.push_str(&format!(" kv_rev={kv_rev}"));
+                }
+                if !summary.is_empty() {
+                    out.push_str(&format!(" summary={}", one_line_snip(summary, 160)));
+                }
+                if !json_pointer.is_empty() {
+                    out.push_str(&format!(
+                        " json_pointer={}",
+                        truncate_for_prompt(json_pointer, 96)
+                    ));
+                }
+
+                if let Some(selected_value) = value.get("value") {
+                    if let Some(obj) = selected_value.as_object() {
+                        if let Some(ok) = obj.get("ok").and_then(|v| v.as_bool()) {
+                            out.push_str(&format!(" value_ok={ok}"));
+                        }
+                        if let Some(errors) = obj.get("errors").and_then(|v| v.as_array()) {
+                            out.push_str(&format!(" errors={}", errors.len()));
+                        }
+                        if let Some(warnings) = obj.get("warnings").and_then(|v| v.as_array()) {
+                            out.push_str(&format!(" warnings={}", warnings.len()));
+                        }
+                        if let Some(issues) = obj.get("issues").and_then(|v| v.as_array()) {
+                            out.push_str(&format!(" issues={}", issues.len()));
+                        }
+                        if obj.get("ok").is_none()
+                            && obj.get("errors").is_none()
+                            && obj.get("warnings").is_none()
+                            && obj.get("issues").is_none()
+                        {
+                            let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+                            keys.sort();
+                            if !keys.is_empty() {
+                                out.push_str(" value_keys=");
+                                out.push_str(&truncate_for_prompt(&format!("{keys:?}"), 160));
+                            }
+                        }
+                    } else if let Some(arr) = selected_value.as_array() {
+                        out.push_str(&format!(" value_len={}", arr.len()));
+                    } else if let Some(s) = selected_value.as_str() {
+                        out.push_str(" value=");
+                        out.push_str(&one_line_snip(s, 200));
+                    }
+                }
+
+                if char_count(&out) > MAX_LINE_CHARS {
+                    out = truncate_for_prompt(&out, MAX_LINE_CHARS);
+                }
+            }
+            TOOL_ID_INFO_KV_LIST_KEYS => {
+                const MAX_LINE_CHARS: usize = 800;
+                let budget = MAX_LINE_CHARS.saturating_sub(char_count(&out));
+
+                let items = value.get("items").and_then(|v| v.as_array());
+                let items_total = items.map(|a| a.len()).unwrap_or(0);
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let next_cursor = value.get("next_cursor").and_then(|v| v.as_str());
+                let cursor_seg = next_cursor
+                    .map(|c| format!(" next_cursor={c}"))
+                    .unwrap_or_default();
+
+                let mut base = format!("ok items={items_total} truncated={truncated}");
+                let mut sample = String::new();
+                if let Some(items) = items {
+                    let mut parts: Vec<String> = Vec::new();
+                    for item in items.iter().take(3) {
+                        let ns = item
+                            .get("namespace")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let key = item
+                            .get("key")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let latest = item.get("latest").and_then(|v| v.as_object());
+                        let kv_rev = latest
+                            .and_then(|o| o.get("kv_rev"))
+                            .and_then(|v| v.as_u64());
+                        let summary = latest
+                            .and_then(|o| o.get("summary"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if ns.is_empty() && key.is_empty() {
+                            continue;
+                        }
+                        let mut s = String::new();
+                        s.push('{');
+                        if !ns.is_empty() {
+                            s.push_str("ns=");
+                            s.push_str(ns);
+                            s.push(' ');
+                        }
+                        if !key.is_empty() {
+                            s.push_str("key=");
+                            s.push_str(&truncate_for_prompt(key, 64));
+                            s.push(' ');
+                        }
+                        if let Some(kv_rev) = kv_rev {
+                            s.push_str(&format!("kv_rev={kv_rev} "));
+                        }
+                        let summary = one_line_snip(summary, 80);
+                        if !summary.trim().is_empty() {
+                            s.push_str("summary=");
+                            s.push_str(summary.trim());
+                        }
+                        s.push('}');
+                        parts.push(s);
+                    }
+                    if !parts.is_empty() {
+                        sample = format!(" sample=[{}]", parts.join(", "));
+                    }
+                }
+
+                let mut summary = base.clone();
+                if !sample.is_empty()
+                    && char_count(&(summary.clone() + &sample + &cursor_seg)) <= budget
+                {
+                    summary.push_str(&sample);
+                }
+                if !cursor_seg.is_empty() && char_count(&(summary.clone() + &cursor_seg)) <= budget
+                {
+                    summary.push_str(&cursor_seg);
+                } else if !cursor_seg.is_empty() {
+                    base = format!("ok items={items_total}");
+                    summary = base.clone();
+                    if char_count(&(summary.clone() + &cursor_seg)) <= budget {
+                        summary.push_str(&cursor_seg);
+                    }
+                }
+
+                let mut summary_out = summary;
+                if char_count(&summary_out) > budget {
+                    if let Some(cursor) = next_cursor.map(str::trim).filter(|s| !s.is_empty()) {
+                        let minimal = format!("ok items={items_total} next_cursor={cursor}");
+                        if char_count(&minimal) <= budget {
+                            summary_out = minimal;
+                        } else {
+                            let cursor_only = format!("next_cursor={cursor}");
+                            if char_count(&cursor_only) <= budget {
+                                summary_out = cursor_only;
+                            } else {
+                                summary_out = format!("ok items={items_total}");
+                            }
+                        }
+                    } else {
+                        summary_out = truncate_for_prompt(&summary_out, budget);
+                    }
+                }
+                out.push_str(&summary_out);
+            }
+            TOOL_ID_INFO_KV_LIST_HISTORY => {
+                const MAX_LINE_CHARS: usize = 800;
+                let budget = MAX_LINE_CHARS.saturating_sub(char_count(&out));
+
+                let items = value.get("items").and_then(|v| v.as_array());
+                let items_total = items.map(|a| a.len()).unwrap_or(0);
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let next_cursor = value.get("next_cursor").and_then(|v| v.as_str());
+                let cursor_seg = next_cursor
+                    .map(|c| format!(" next_cursor={c}"))
+                    .unwrap_or_default();
+
+                let base = format!("ok items={items_total} truncated={truncated}");
+                let mut sample = String::new();
+                if let Some(items) = items {
+                    let mut parts: Vec<String> = Vec::new();
+                    for item in items.iter().take(3) {
+                        let kv_rev = item.get("kv_rev").and_then(|v| v.as_u64());
+                        let summary = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                        let mut s = String::new();
+                        s.push('{');
+                        if let Some(kv_rev) = kv_rev {
+                            s.push_str(&format!("kv_rev={kv_rev} "));
+                        }
+                        let summary = one_line_snip(summary, 100);
+                        if !summary.trim().is_empty() {
+                            s.push_str("summary=");
+                            s.push_str(summary.trim());
+                        }
+                        s.push('}');
+                        parts.push(s);
+                    }
+                    if !parts.is_empty() {
+                        sample = format!(" sample=[{}]", parts.join(", "));
+                    }
+                }
+
+                let mut summary = base.clone();
+                if !sample.is_empty()
+                    && char_count(&(summary.clone() + &sample + &cursor_seg)) <= budget
+                {
+                    summary.push_str(&sample);
+                }
+                if !cursor_seg.is_empty() && char_count(&(summary.clone() + &cursor_seg)) <= budget
+                {
+                    summary.push_str(&cursor_seg);
+                } else if !cursor_seg.is_empty() {
+                    let base = format!("ok items={items_total}");
+                    summary = base.clone();
+                    if char_count(&(summary.clone() + &cursor_seg)) <= budget {
+                        summary.push_str(&cursor_seg);
+                    }
+                }
+
+                let mut summary_out = summary;
+                if char_count(&summary_out) > budget {
+                    if let Some(cursor) = next_cursor.map(str::trim).filter(|s| !s.is_empty()) {
+                        let minimal = format!("ok items={items_total} next_cursor={cursor}");
+                        if char_count(&minimal) <= budget {
+                            summary_out = minimal;
+                        } else {
+                            let cursor_only = format!("next_cursor={cursor}");
+                            if char_count(&cursor_only) <= budget {
+                                summary_out = cursor_only;
+                            } else {
+                                summary_out = format!("ok items={items_total}");
+                            }
+                        }
+                    } else {
+                        summary_out = truncate_for_prompt(&summary_out, budget);
+                    }
+                }
+                out.push_str(&summary_out);
+            }
+            TOOL_ID_INFO_KV_GET_MANY => {
+                const MAX_LINE_CHARS: usize = 900;
+                let budget = MAX_LINE_CHARS.saturating_sub(char_count(&out));
+
+                let items = value.get("items").and_then(|v| v.as_array());
+                let items_total = items.map(|a| a.len()).unwrap_or(0);
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let mut ok_total = 0usize;
+                let mut err_total = 0usize;
+                let mut samples: Vec<String> = Vec::new();
+                if let Some(items) = items {
+                    for item in items.iter().take(3) {
+                        let ns = item
+                            .get("namespace")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let key = item
+                            .get("key")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let ok = item.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                        if ok {
+                            ok_total += 1;
+                        } else {
+                            err_total += 1;
+                        }
+                        let kv_rev = item
+                            .get("record")
+                            .and_then(|v| v.get("kv_rev"))
+                            .and_then(|v| v.as_u64());
+                        let mut s = String::new();
+                        s.push('{');
+                        if !ns.is_empty() {
+                            s.push_str("ns=");
+                            s.push_str(ns);
+                            s.push(' ');
+                        }
+                        if !key.is_empty() {
+                            s.push_str("key=");
+                            s.push_str(&truncate_for_prompt(key, 64));
+                            s.push(' ');
+                        }
+                        s.push_str(&format!("ok={ok} "));
+                        if let Some(kv_rev) = kv_rev {
+                            s.push_str(&format!("kv_rev={kv_rev} "));
+                        }
+                        if !ok {
+                            let err = item.get("error").and_then(|v| v.as_str()).unwrap_or("");
+                            let err = one_line_snip(err, 120);
+                            if !err.trim().is_empty() {
+                                s.push_str("error=");
+                                s.push_str(err.trim());
+                            }
+                        }
+                        s.push('}');
+                        samples.push(s);
+                    }
+                    for item in items.iter().skip(3) {
+                        let ok = item.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                        if ok {
+                            ok_total += 1;
+                        } else {
+                            err_total += 1;
+                        }
+                    }
+                }
+
+                let mut summary =
+                    format!("ok items={items_total} ok_items={ok_total} err_items={err_total} truncated={truncated}");
+                if !samples.is_empty() {
+                    let sample = format!(" sample=[{}]", samples.join(", "));
+                    if char_count(&(summary.clone() + &sample)) <= budget {
+                        summary.push_str(&sample);
+                    }
+                }
+                out.push_str(&truncate_for_prompt(&summary, budget));
+            }
+            TOOL_ID_INFO_BLOBS_LIST => {
+                const MAX_LINE_CHARS: usize = 800;
+                let budget = MAX_LINE_CHARS.saturating_sub(char_count(&out));
+
+                let items = value.get("items").and_then(|v| v.as_array());
+                let items_total = items.map(|a| a.len()).unwrap_or(0);
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let next_cursor = value.get("next_cursor").and_then(|v| v.as_str());
+                let cursor_seg = next_cursor
+                    .map(|c| format!(" next_cursor={c}"))
+                    .unwrap_or_default();
+
+                let base = format!("ok items={items_total} truncated={truncated}");
+                let mut sample = String::new();
+                if let Some(items) = items {
+                    let mut parts: Vec<String> = Vec::new();
+                    for item in items.iter().take(3) {
+                        let blob_id = item
+                            .get("blob_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let bytes = item.get("bytes").and_then(|v| v.as_u64());
+                        let content_type = item
+                            .get("content_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        if blob_id.is_empty() {
+                            continue;
+                        }
+                        let mut s = String::new();
+                        s.push('{');
+                        s.push_str("blob_id=");
+                        s.push_str(&truncate_for_prompt(blob_id, 64));
+                        if let Some(bytes) = bytes {
+                            s.push_str(&format!(" bytes={bytes}"));
+                        }
+                        if !content_type.is_empty() {
+                            s.push_str(" type=");
+                            s.push_str(&truncate_for_prompt(content_type, 48));
+                        }
+                        s.push('}');
+                        parts.push(s);
+                    }
+                    if !parts.is_empty() {
+                        sample = format!(" sample=[{}]", parts.join(", "));
+                    }
+                }
+
+                let mut summary = base.clone();
+                if !sample.is_empty()
+                    && char_count(&(summary.clone() + &sample + &cursor_seg)) <= budget
+                {
+                    summary.push_str(&sample);
+                }
+                if !cursor_seg.is_empty() && char_count(&(summary.clone() + &cursor_seg)) <= budget
+                {
+                    summary.push_str(&cursor_seg);
+                } else if !cursor_seg.is_empty() {
+                    let base = format!("ok items={items_total}");
+                    summary = base.clone();
+                    if char_count(&(summary.clone() + &cursor_seg)) <= budget {
+                        summary.push_str(&cursor_seg);
+                    }
+                }
+
+                let mut summary_out = summary;
+                if char_count(&summary_out) > budget {
+                    if let Some(cursor) = next_cursor.map(str::trim).filter(|s| !s.is_empty()) {
+                        let minimal = format!("ok items={items_total} next_cursor={cursor}");
+                        if char_count(&minimal) <= budget {
+                            summary_out = minimal;
+                        } else {
+                            let cursor_only = format!("next_cursor={cursor}");
+                            if char_count(&cursor_only) <= budget {
+                                summary_out = cursor_only;
+                            } else {
+                                summary_out = format!("ok items={items_total}");
+                            }
+                        }
+                    } else {
+                        summary_out = truncate_for_prompt(&summary_out, budget);
+                    }
+                }
+                out.push_str(&summary_out);
+            }
+            TOOL_ID_INFO_BLOBS_GET => {
+                const MAX_LINE_CHARS: usize = 500;
+
+                let blob = value.get("blob").and_then(|v| v.as_object());
+                let blob_id = blob
+                    .and_then(|b| b.get("blob_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let bytes = blob.and_then(|b| b.get("bytes")).and_then(|v| v.as_u64());
+                let content_type = blob
+                    .and_then(|b| b.get("content_type"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+
+                out.push_str("ok");
+                if !blob_id.is_empty() {
+                    out.push_str(&format!(" blob_id={}", truncate_for_prompt(blob_id, 96)));
+                }
+                if let Some(bytes) = bytes {
+                    out.push_str(&format!(" bytes={bytes}"));
+                }
+                if !content_type.is_empty() {
+                    out.push_str(&format!(
+                        " content_type={}",
+                        truncate_for_prompt(content_type, 64)
+                    ));
+                }
+
+                if char_count(&out) > MAX_LINE_CHARS {
+                    out = truncate_for_prompt(&out, MAX_LINE_CHARS);
+                }
+            }
+            TOOL_ID_APPLY_DRAFT_OPS => {
+                const MAX_LINE_CHARS: usize = 900;
+
+                let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                let committed = value
+                    .get("committed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let atomic = value
+                    .get("atomic")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let new_assembly_rev = value.get("new_assembly_rev").and_then(|v| v.as_u64());
+                let applied_ops = value
+                    .get("applied_ops")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                let rejected_ops = value
+                    .get("rejected_ops")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+
+                out.push_str("ok");
+                out.push_str(&format!(" ok={ok} committed={committed} atomic={atomic}"));
+                if let Some(new_assembly_rev) = new_assembly_rev {
+                    out.push_str(&format!(" new_assembly_rev={new_assembly_rev}"));
+                }
+                out.push_str(&format!(
+                    " applied_ops={applied_ops} rejected_ops={rejected_ops}"
+                ));
+
+                if let Some(diff) = value.get("diff_summary").and_then(|v| v.as_object()) {
+                    let anchors = diff
+                        .get("anchors_updated")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let attachments = diff
+                        .get("attachments_updated")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let prim = diff.get("primitive_parts").and_then(|v| v.as_object());
+                    let prim_added = prim
+                        .and_then(|o| o.get("added"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let prim_removed = prim
+                        .and_then(|o| o.get("removed"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let prim_updated = prim
+                        .and_then(|o| o.get("updated"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let anim = diff.get("animation_slots").and_then(|v| v.as_object());
+                    let anim_upserted = anim
+                        .and_then(|o| o.get("upserted"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let anim_scaled = anim
+                        .and_then(|o| o.get("scaled"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let anim_removed = anim
+                        .and_then(|o| o.get("removed"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    out.push_str(&format!(
+                        " diff={{anchors:{anchors},attachments:{attachments},prim:+{prim_added}/-{prim_removed}/~{prim_updated},anim:upsert:{anim_upserted},scale:{anim_scaled},rm:{anim_removed}}}"
+                    ));
+                }
+
+                if let Some(info_kv) = value.get("info_kv").and_then(|v| v.as_object()) {
+                    let namespace = info_kv
+                        .get("namespace")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let key = info_kv
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let kv_rev = info_kv
+                        .get("selector")
+                        .and_then(|v| v.get("kv_rev"))
+                        .and_then(|v| v.as_u64());
+                    if !namespace.is_empty() || !key.is_empty() || kv_rev.is_some() {
+                        out.push_str(" info_kv={");
+                        if !namespace.is_empty() {
+                            out.push_str("namespace=");
+                            out.push_str(&truncate_for_prompt(namespace, 32));
+                            out.push(' ');
+                        }
+                        if !key.is_empty() {
+                            out.push_str("key=");
+                            out.push_str(&truncate_for_prompt(key, 96));
+                            out.push(' ');
+                        }
+                        if let Some(kv_rev) = kv_rev {
+                            out.push_str(&format!("kv_rev={kv_rev}"));
+                        }
+                        out.push('}');
+                    }
+                }
+
+                if char_count(&out) > MAX_LINE_CHARS {
+                    out = truncate_for_prompt(&out, MAX_LINE_CHARS);
+                }
+            }
+            TOOL_ID_SNAPSHOT => {
+                let snapshot_id = value
+                    .get("snapshot_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let label = value
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let assembly_rev = value.get("assembly_rev").and_then(|v| v.as_u64());
+                out.push_str("ok");
+                if !snapshot_id.is_empty() {
+                    out.push_str(&format!(
+                        " snapshot_id={}",
+                        truncate_for_prompt(snapshot_id, 64)
+                    ));
+                }
+                if !label.is_empty() {
+                    out.push_str(&format!(" label={}", one_line_snip(label, 64)));
+                }
+                if let Some(assembly_rev) = assembly_rev {
+                    out.push_str(&format!(" assembly_rev={assembly_rev}"));
+                }
+            }
+            TOOL_ID_LIST_SNAPSHOTS => {
+                let snaps = value.get("snapshots").and_then(|v| v.as_array());
+                let total = snaps.map(|a| a.len()).unwrap_or(0);
+                let truncated = value
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                out.push_str("ok");
+                out.push_str(&format!(" snapshots={total} truncated={truncated}"));
+                if let Some(snaps) = snaps {
+                    let mut ids: Vec<String> = Vec::new();
+                    for s in snaps.iter().take(3) {
+                        let id = s
+                            .get("snapshot_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let label = s.get("label").and_then(|v| v.as_str()).unwrap_or("").trim();
+                        if id.is_empty() {
+                            continue;
+                        }
+                        if label.is_empty() {
+                            ids.push(id.to_string());
+                        } else {
+                            ids.push(format!("{}({})", id, one_line_snip(label, 32)));
+                        }
+                    }
+                    if !ids.is_empty() {
+                        out.push_str(&format!(
+                            " sample={}",
+                            truncate_for_prompt(&format!("{ids:?}"), 200)
+                        ));
+                    }
+                }
+            }
+            TOOL_ID_DIFF_SNAPSHOTS => {
+                let a = value.get("a").and_then(|v| v.as_object());
+                let b = value.get("b").and_then(|v| v.as_object());
+                let a_id = a
+                    .and_then(|o| o.get("snapshot_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let b_id = b
+                    .and_then(|o| o.get("snapshot_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let summary = value.get("diff_summary").and_then(|v| v.as_object());
+                let changed = summary
+                    .and_then(|o| o.get("components_changed"))
+                    .and_then(|v| v.as_u64());
+                out.push_str("ok");
+                if !a_id.is_empty() {
+                    out.push_str(&format!(" a={}", truncate_for_prompt(a_id, 64)));
+                }
+                if !b_id.is_empty() {
+                    out.push_str(&format!(" b={}", truncate_for_prompt(b_id, 64)));
+                }
+                if let Some(changed) = changed {
+                    out.push_str(&format!(" components_changed={changed}"));
+                }
+                if let Some(summary) = summary {
+                    let geo = summary
+                        .get("geometry_changed")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let anc = summary
+                        .get("anchors_changed")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let att = summary
+                        .get("attachments_changed")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let anim = summary
+                        .get("animations_changed")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    out.push_str(&format!(
+                        " diff={{geo:{geo},anchors:{anc},attachments:{att},anim:{anim}}}"
+                    ));
+                }
+            }
+            TOOL_ID_RESTORE_SNAPSHOT => {
+                let snapshot_id = value
+                    .get("snapshot_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let before = value.get("assembly_rev_before").and_then(|v| v.as_u64());
+                let after = value.get("assembly_rev_after").and_then(|v| v.as_u64());
+                out.push_str("ok");
+                if !snapshot_id.is_empty() {
+                    out.push_str(&format!(
+                        " snapshot_id={}",
+                        truncate_for_prompt(snapshot_id, 64)
+                    ));
+                }
+                if let (Some(before), Some(after)) = (before, after) {
+                    out.push_str(&format!(" assembly_rev={before}->{after}"));
                 }
             }
             TOOL_ID_COPY_COMPONENT
@@ -1698,5 +3048,204 @@ mod tests {
         assert!(text.contains("required_keys=[\"query\"]"));
         assert!(text.contains("example="));
         assert!(text.contains("\"query\""));
+    }
+
+    #[test]
+    fn summarize_suggest_motion_repairs_includes_inline_apply_args_when_small() {
+        let config = AppConfig::default();
+        let job = Gen3dAiJob::default();
+        let workshop = Gen3dWorkshop::default();
+        let registry = Gen3dToolRegistryV1::default();
+
+        let patch = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "if_assembly_rev": 7,
+            "ops": [
+                {
+                    "kind": "set_attachment_joint",
+                    "child_component": "arm",
+                    "set_joint": { "kind": "hinge", "axis_join": [1.0, 0.0, 0.0], "limits_degrees": [-30.0, 90.0] },
+                }
+            ]
+        });
+        let expected_json = patch.to_string();
+
+        let recent_tool_results = vec![Gen3dToolResultJsonV1::ok(
+            "call_1".to_string(),
+            TOOL_ID_SUGGEST_MOTION_REPAIRS.to_string(),
+            serde_json::json!({
+                "ok": true,
+                "version": 1,
+                "suggestions": [
+                    {
+                        "id": "hinge_limit_exceeded/arm/move/relax_joint_limits",
+                        "kind": "relax_joint_limits",
+                        "component_name": "arm",
+                        "channel": "move",
+                        "impact": { "relax_degrees": 3.2 },
+                        "apply_draft_ops_args": patch,
+                    }
+                ],
+                "truncated": false,
+            }),
+        )];
+
+        let text = build_agent_user_text(
+            &config,
+            &job,
+            &workshop,
+            serde_json::json!({}),
+            &recent_tool_results,
+            &registry,
+        );
+
+        let line = text
+            .lines()
+            .find(|line| line.contains("suggest_motion_repairs_v1 (call_1):"))
+            .unwrap_or("");
+        assert!(
+            line.contains(&format!("apply_draft_ops_args={expected_json}")),
+            "expected inline apply args JSON in summary line: {line}"
+        );
+        assert!(
+            line.chars().count() <= 3000,
+            "suggest_motion_repairs_v1 summary too long: {} chars",
+            line.chars().count()
+        );
+    }
+
+    #[test]
+    fn summarize_info_events_list_includes_event_id_and_exact_cursor_and_omits_data_preview() {
+        let config = AppConfig::default();
+        let job = Gen3dAiJob::default();
+        let workshop = Gen3dWorkshop::default();
+        let registry = Gen3dToolRegistryV1::default();
+
+        let cursor = "CURSOR_TOKEN_0123456789abcdefghijklmnopqrstuvwxyz_-";
+        let recent_tool_results = vec![Gen3dToolResultJsonV1::ok(
+            "call_1".to_string(),
+            TOOL_ID_INFO_EVENTS_LIST.to_string(),
+            serde_json::json!({
+                "ok": true,
+                "items": [
+                    {
+                        "event_id": 16,
+                        "ts_ms": 0,
+                        "attempt": 1,
+                        "pass": 7,
+                        "assembly_rev": 9,
+                        "kind": "tool_call_result",
+                        "tool_id": "suggest_motion_repairs_v1",
+                        "call_id": "call_1",
+                        "message": "Tool call ok: suggest_motion_repairs_v1",
+                        "data_preview": "SHOULD_NOT_APPEAR",
+                    }
+                ],
+                "truncated": false,
+                "next_cursor": cursor,
+            }),
+        )];
+
+        let text = build_agent_user_text(
+            &config,
+            &job,
+            &workshop,
+            serde_json::json!({}),
+            &recent_tool_results,
+            &registry,
+        );
+
+        let line = text
+            .lines()
+            .find(|line| line.contains("info_events_list_v1 (call_1):"))
+            .unwrap_or("");
+        assert!(
+            line.contains("event_id=16"),
+            "expected event_id in summary line: {line}"
+        );
+        assert!(
+            line.contains(&format!("next_cursor={cursor}")),
+            "expected exact next_cursor token in summary line: {line}"
+        );
+        assert!(
+            !line.contains("data_preview") && !line.contains("SHOULD_NOT_APPEAR"),
+            "summary line must not include data_preview: {line}"
+        );
+        assert!(
+            line.chars().count() <= 800,
+            "info_events_list_v1 summary too long: {} chars",
+            line.chars().count()
+        );
+    }
+
+    #[test]
+    fn summarize_scene_graph_summary_is_tail_safe_and_includes_info_kv_ref() {
+        let config = AppConfig::default();
+        let job = Gen3dAiJob::default();
+        let workshop = Gen3dWorkshop::default();
+        let registry = Gen3dToolRegistryV1::default();
+
+        let mut edges: Vec<serde_json::Value> = Vec::new();
+        for i in 0..19u32 {
+            edges.push(serde_json::json!({
+                "child": format!("child_{i}"),
+                "parent": "body",
+                "parent_anchor": "origin",
+                "child_anchor": "origin",
+                "offset_pos": [0.0, 0.0, 0.0],
+                "joint_kind": "fixed",
+            }));
+        }
+        edges.push(serde_json::json!({
+            "child": "grass_bundle",
+            "parent": "body",
+            "parent_anchor": "grass_bundle_attach",
+            "child_anchor": "origin",
+            "offset_pos": [0.0, 1.0, 0.0],
+            "joint_kind": "fixed",
+        }));
+
+        let recent_tool_results = vec![Gen3dToolResultJsonV1::ok(
+            "call_1".to_string(),
+            TOOL_ID_GET_SCENE_GRAPH_SUMMARY.to_string(),
+            serde_json::json!({
+                "ok": true,
+                "version": 1,
+                "components_total": 3,
+                "attachment_edges": edges,
+                "info_kv": {
+                    "namespace": "gen3d",
+                    "key": "ws.main.scene_graph_summary",
+                    "selector": { "kind": "kv_rev", "kv_rev": 42 }
+                }
+            }),
+        )];
+
+        let text = build_agent_user_text(
+            &config,
+            &job,
+            &workshop,
+            serde_json::json!({}),
+            &recent_tool_results,
+            &registry,
+        );
+
+        let line = text
+            .lines()
+            .find(|line| line.contains("get_scene_graph_summary_v1 (call_1):"))
+            .unwrap_or("");
+        assert!(
+            line.contains("attachment_edges_total=20"),
+            "expected total edge count: {line}"
+        );
+        assert!(
+            line.contains("grass_bundle->body.grass_bundle_attach"),
+            "expected tail edge sample to include last edge: {line}"
+        );
+        assert!(
+            line.contains("info_kv={") && line.contains("kv_rev=42"),
+            "expected info_kv ref: {line}"
+        );
     }
 }

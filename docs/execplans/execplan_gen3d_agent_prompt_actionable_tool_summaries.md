@@ -18,12 +18,13 @@ Info Store browsing should be treated as stateless paging:
 ## Progress
 
 - [x] (2026-03-16 01:03Z) Write ExecPlan, capture the root-cause evidence, and define bounded summarization rules.
-- [ ] Implement actionable `suggest_motion_repairs_v1` summaries (bounded; no silent apply).
-- [ ] Implement actionable Info Store summaries (start with `info_events_list_v1`).
-- [ ] Make `get_scene_graph_summary_v1` summaries tail-safe + include `info_kv` ref (prevents attachment-edge truncation loops).
-- [ ] Audit remaining tools for “actionability vs size” and patch summaries as needed.
-- [ ] Add unit tests for prompt summarization budgets and key fields.
-- [ ] Run rendered smoke test and commit.
+- [x] (2026-03-16 12:17Z) Implement actionable `suggest_motion_repairs_v1` summaries (bounded; no silent apply).
+- [x] (2026-03-16 12:17Z) Implement actionable Info Store summaries (start with `info_events_list_v1`).
+- [x] (2026-03-16 12:17Z) Make `get_scene_graph_summary_v1` summaries tail-safe + include `info_kv` ref (prevents attachment-edge truncation loops).
+- [x] (2026-03-16 12:17Z) Audit and patch additional tools for “actionability vs size” (Info Store, `render_preview_v1`, snapshot tools, `apply_draft_ops_v1`).
+- [x] (2026-03-16 12:17Z) Add unit tests for prompt summarization budgets and key fields.
+- [x] (2026-03-16 12:17Z) Run rendered smoke test (2 seconds).
+- [ ] Commit changes.
 
 ## Surprises & Discoveries
 
@@ -64,7 +65,8 @@ Info Store browsing should be treated as stateless paging:
 
 ## Outcomes & Retrospective
 
-- Outcome: (pending)
+- Outcome: The Gen3D agent prompt now includes bounded, actionable tool-result summaries for `suggest_motion_repairs_v1` (inline `apply_draft_ops_args` when small), navigation-first summaries for Info Store tools (event ids + exact cursors), and a tail-safe `get_scene_graph_summary_v1` summary that always includes `info_kv` refs. Unit tests cover budgets/fields and the rendered smoke test starts without crashing.
+- Remaining: Commit changes; continue auditing remaining tools if new inspection loops appear.
 
 ## Context and Orientation
 
@@ -245,3 +247,7 @@ The implementation should be limited to agent-prompt summarization and its tests
 
 - Unit tests
   - Add tests adjacent to `src/gen3d/ai/agent_prompt.rs` (follow existing test layout in the crate).
+
+## Plan Revision Notes
+
+(2026-03-16 12:17Z) Updated `Progress` and `Outcomes & Retrospective` to reflect completed implementation + tests + rendered smoke test; left commit as the remaining step.
