@@ -29,7 +29,7 @@ base_url = "https://api.openai.com/v1" # or your OpenAI-compatible gateway
 token = "YOUR_OPENAI_API_KEY"          # or set env `OPENAI_API_KEY`
 ```
 
-Tip: start from `config.example.toml` so required keys like `openai.model` are already present.
+Tip: start from `config.example.toml` so sensible defaults (including `openai.model`) are already present.
 
 **Run:**
 

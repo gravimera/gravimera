@@ -44,7 +44,7 @@ Override config loading:
 
 Gen3D uses OpenAI-compatible endpoints by default (`[gen3d].ai_service = "openai"`).
 
-- Required: `[openai].model`
+- Optional: `[openai].model` (defaults to `gpt-5.2`)
 - Optional: `[openai].base_url` (defaults to `https://api.openai.com/v1`)
 - Required: `[openai].token` (or env `OPENAI_API_KEY`)
 
