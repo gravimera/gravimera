@@ -37,6 +37,12 @@ After implementing this plan, Gen3D will:
 - Observation: The repository already has a deterministic paging cursor mechanism for list/search tools (events, blobs, KV history).
   Evidence: `src/gen3d/ai/info_store.rs` implements offset cursors via `encode_offset_cursor(...)` / `decode_offset_cursor(...)`, and `agent_tool_dispatch.rs` uses `store.page_from_args(...)` and `store.page_out(...)` for list tools.
 
+- Observation: Tool-level `ok=false` (tool call error) is summarized as `ERROR:` in the agent prompt; using tool errors for “no-progress” gates is likely to be counterproductive for inspection tools.
+  Evidence: `src/gen3d/ai/agent_prompt.rs` treats any `Gen3dToolResultJsonV1.ok=false` as an error and expands “expected args” boilerplate, which is useful for schema mistakes but not for “same result; no new info”.
+
+- Observation: `smoke_check_v1` currently includes prompt-keyword heuristics (e.g. “attack required”) and should be treated as legacy logic; this plan must avoid expanding heuristic requirement inference.
+  Evidence: `src/gen3d/ai/orchestration.rs` sets `attack_required_by_prompt` via `prompt.contains(...)` checks.
+
 ## Decision Log
 
 - Decision: Add a paging tool for KV JSON arrays (rather than dumping large values in prompt summaries).
@@ -90,20 +96,32 @@ Proposed contract:
   - `key: string`
   - `selector?: { kind: "latest"|"kv_rev"|"as_of_assembly_rev"|"as_of_pass", kv_rev?: number, assembly_rev?: number, pass?: number }`
   - `json_pointer?: string` (must resolve to a JSON array; default is the full KV value)
-  - `page?: { limit?: number, cursor?: string }` (stateless paging; use the existing offset-cursor encoding)
-  - `max_item_bytes?: number` (default 4096; clamp [256, 64k]) to bound per-item previews
+  - `page?: { limit?: number, cursor?: string }` (stateless paging; uses the existing offset-cursor encoding)
+    - `page.limit`: default 50, max 200 (match existing Info Store paging defaults)
+  - `max_item_bytes?: number` (default 4096; clamp [256, 64k]) to bound per-item previews (and therefore total tool output)
 
 - Result:
   - `ok: true`
-  - `record: { namespace/key, kv_rev, pass, attempt, assembly_rev, summary, bytes, written_by }` (same shape as `info_kv_get_v1`)
-  - `items: [{ index: number, value_preview: any, truncated: bool, bytes: number }]` where `value_preview` is either the full item (if <= max_item_bytes) or a deterministic “shape preview” when larger (see below)
+  - `record`: exactly the same `record` object shape as `info_kv_get_v1` returns (includes `written_at_ms`, `workspace_id`, and `key:{namespace,key}`)
+  - `array_len: number` (the total length of the selected array; used to reason about paging without fetching the whole array)
+  - `items: [{ index: number, value_preview: any, truncated: bool, bytes: number }]`
+    - `index`: absolute index into the selected array.
+    - `bytes`: the serialized JSON byte size of the item, **capped** at `max_item_bytes + 1` (so implementations can avoid allocating huge buffers). If the true size is greater, `truncated=true`.
+    - `value_preview`: either the full item (when `truncated=false`) or a deterministic “shape preview” (when `truncated=true`, see below).
   - `truncated: bool` (true if there are more items beyond this page)
   - `next_cursor?: string` (exact token; never truncate)
   - `json_pointer?: string` (echo, if provided)
 
+Paging semantics (regression-critical):
+
+- Paging must be against a single, frozen KV record. Even when `selector.kind="latest"`, the tool must select a concrete record first and bind paging to that record’s `kv_rev` (so pages don’t “shift” if a newer KV revision is written between calls).
+- The paging cursor must reject mismatches deterministically by encoding all shape-affecting params into the cursor `params_sig`:
+  - `namespace`, `key`, **selected `kv_rev`**, `json_pointer` (or `""`), `max_item_bytes`, and the tool id/kind.
+
 Deterministic “shape preview” algorithm (generic; no heuristics):
 
-- For scalars: return the scalar directly (it is already small).
+- For `null`/`bool`/`number`: return the scalar directly.
+- For `string`: never return an oversized string. If it does not fit, return `{ "kind":"string", "len_bytes": <n> }` as the preview.
 - For arrays: return `{ "kind":"array", "len": <n> }`.
 - For objects: return `{ "kind":"object", "keys_sample": [sorted first 16 keys], "keys_total": <n> }`.
 
@@ -136,22 +154,33 @@ We already compute a “state hash” for the agent no-progress guard (`compute_
 
 Design: add `basis` + `cached` fields to selected inspection tools, and for repeated calls with unchanged basis:
 
-- Either return the cached prior result with `cached=true` and a new `no_new_information=true` flag, plus a short actionable message; or
-- Return `ok=false` with a specific, machine-readable error kind like `no_progress_repeated_call`, including the basis and pointers to the last stored KV/event.
+- Return the cached prior result with:
+  - `cached=true`
+  - `no_new_information=true`
+  - `basis:{...}` echoed back for debugging
+  - a short actionable message that pushes the agent toward mutation or toward a “blocked” conclusion.
+
+Do **not** use tool-call `ok=false` for the no-progress path: tool errors are summarized as `ERROR:` in the prompt and are reserved for invalid args / runtime failures (see `Surprises & Discoveries` above).
 
 Start with `qa_v1` because it is the most expensive/loop-prone tool. Consider also `get_scene_graph_summary_v1`, `validate_v1`, `smoke_check_v1`, and Info Store “latest” getters when used as inspection loops.
 
 Proposed QA basis:
 
-- `state_hash` (from `compute_agent_state_hash(job, draft)`), plus
-- `plan_hash`, `active_workspace`, and `assembly_rev` for human debugging.
+- Equality key (what determines “no new info”):
+  - `workspace_id` (active workspace)
+  - `state_hash` from `compute_agent_state_hash(job, draft)` (already ignores revision counters like `assembly_rev` and includes motion value digests)
+- Debug fields (include in `basis` for visibility, but do not use for equality):
+  - `plan_hash`
+  - `assembly_rev`
 
 Implementation locations:
 
 - `src/gen3d/ai/agent_tool_dispatch.rs` in the `TOOL_ID_QA` branch:
-  - Compute basis before running validate/smoke.
-  - If basis matches the last QA basis stored on `job.agent` (or job-level state), skip recomputation and return the cached result.
-  - When returning cached due to repetition, include `cached=true` and a short “mutate before retry” hint that references concrete tool IDs (`apply_draft_ops_v1`, `apply_plan_ops_v1`, `llm_generate_plan_v1`, `llm_generate_motion_authoring_v1`) but does not prescribe a specific fix.
+  - Add a `force?: bool` arg (default false) to bypass caching explicitly when needed (debugging or when external state changes).
+  - Compute the QA `basis` up front.
+  - If `force!=true` and basis matches the last QA basis stored on `job.agent`, return a cached result (and do **not** write new KV records). Ensure the cached JSON still includes the original `info_kv` pointer so the agent can inspect the last full QA output.
+  - When returning cached due to repetition, include an actionable “mutate before retry” hint that references concrete tool IDs (`apply_draft_ops_v1`, `apply_plan_ops_v1`, `llm_generate_plan_v1`, `llm_generate_motion_authoring_v1`) but does not prescribe a specific fix.
+  - Update `src/gen3d/ai/agent_prompt.rs` QA summarizer to surface `cached` / `no_new_information` (otherwise the gate is invisible to the agent).
 
 Docs:
 
@@ -159,7 +188,7 @@ Docs:
 
 Tests:
 
-- Add a deterministic unit test that constructs a minimal job/draft, runs `qa_v1` twice without mutation, and asserts the second result has `cached=true` (or the `no_progress_repeated_call` error kind).
+- Add a deterministic unit test that constructs a minimal job/draft, runs `qa_v1` twice without mutation, and asserts the second result has `cached=true` and `no_new_information=true` (and preserves the prior `info_kv` pointer).
 
 ### Milestone 3: Generic “capability gaps” and “fixits” in QA/smoke results (motion-aware)
 
@@ -286,4 +315,3 @@ New or extended interfaces must be explicit and tested.
 ## Plan Change Log
 
 - (2026-03-16) Initial draft created to address repeating-QA loops generically and to introduce Info Store paging for large tool outputs. Rationale: avoid “attack-specific” fixes and keep tool results actionable and bounded.
-
