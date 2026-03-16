@@ -39,11 +39,11 @@ cargo run
 
 ## Docs
 
-- Developer onboarding: `docs/developer_onboarding.md`
-- Game design (final target): `docs/gamedesign/README.md`
-- Specs (contracts/formats): `docs/gamedesign/specs.md`
-- Gen3D workflow + schemas: `gen_3d.md` and `docs/gen3d/`
-- Controls (rendered UI): `docs/controls.md`
-- Local Automation HTTP API: `docs/automation_http_api.md`
-- Intelligence service: `docs/intelligence_service.md`
-- Publishing builds: `docs/publishing.md`
+- Developer onboarding: [docs/developer_onboarding.md](docs/developer_onboarding.md)
+- Game design (final target): [docs/gamedesign/README.md](docs/gamedesign/README.md)
+- Specs (contracts/formats): [docs/gamedesign/specs.md](docs/gamedesign/specs.md)
+- Gen3D workflow + schemas: [gen_3d.md](gen_3d.md) and [docs/gen3d/](docs/gen3d/)
+- Controls (rendered UI): [docs/controls.md](docs/controls.md)
+- Local Automation HTTP API: [docs/automation_http_api.md](docs/automation_http_api.md)
+- Intelligence service: [docs/intelligence_service.md](docs/intelligence_service.md)
+- Publishing builds: [docs/publishing.md](docs/publishing.md)
