@@ -13,8 +13,7 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH,
     TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED,
     TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
-    TOOL_ID_LIST_SNAPSHOTS,
-    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
     TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MERGE_WORKSPACE,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
@@ -40,7 +39,9 @@ use super::agent_review_images::{
     review_capture_dimensions_for_max_dim,
 };
 use super::agent_step::ToolCallOutcome;
-use super::agent_utils::{build_component_subset_workspace_defs, compute_agent_state_hash, sanitize_prefix};
+use super::agent_utils::{
+    build_component_subset_workspace_defs, compute_agent_state_hash, sanitize_prefix,
+};
 use super::artifacts::{
     append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact,
 };
@@ -943,7 +944,10 @@ fn build_capability_gaps_from_smoke_v1(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .trim();
-            let evidence = issue.get("evidence").cloned().unwrap_or(serde_json::Value::Null);
+            let evidence = issue
+                .get("evidence")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
 
             let mut fixits: Vec<serde_json::Value> = Vec::new();
 
@@ -951,7 +955,9 @@ fn build_capability_gaps_from_smoke_v1(
                 let mut args = serde_json::Map::new();
                 args.insert(
                     "child_components".into(),
-                    serde_json::Value::Array(vec![serde_json::Value::String(component_name.into())]),
+                    serde_json::Value::Array(vec![serde_json::Value::String(
+                        component_name.into(),
+                    )]),
                 );
                 if !channel.is_empty() {
                     args.insert(
@@ -1006,8 +1012,7 @@ fn build_capability_gaps_from_smoke_v1(
                         if !channel.is_empty() && sug_channel != channel {
                             continue;
                         }
-                        let Some(apply_args) =
-                            suggestion.get("apply_draft_ops_args").cloned()
+                        let Some(apply_args) = suggestion.get("apply_draft_ops_args").cloned()
                         else {
                             continue;
                         };
@@ -1100,11 +1105,7 @@ fn execute_qa_v1(
                     ),
                 );
             }
-            return Gen3dToolResultJsonV1::ok(
-                call_id.to_string(),
-                tool_id.to_string(),
-                json,
-            );
+            return Gen3dToolResultJsonV1::ok(call_id.to_string(), tool_id.to_string(), json);
         }
     }
 
@@ -1133,10 +1134,17 @@ fn execute_qa_v1(
     let mut errors: Vec<serde_json::Value> = Vec::new();
     let mut warnings: Vec<serde_json::Value> = Vec::new();
 
-    fn push_issue(out: &mut Vec<serde_json::Value>, source: &'static str, issue: &serde_json::Value) {
+    fn push_issue(
+        out: &mut Vec<serde_json::Value>,
+        source: &'static str,
+        issue: &serde_json::Value,
+    ) {
         if let serde_json::Value::Object(map) = issue {
             let mut merged = map.clone();
-            merged.insert("source".to_string(), serde_json::Value::String(source.into()));
+            merged.insert(
+                "source".to_string(),
+                serde_json::Value::String(source.into()),
+            );
             out.push(serde_json::Value::Object(merged));
         } else {
             out.push(serde_json::json!({ "source": source, "issue": issue }));
@@ -1164,7 +1172,12 @@ fn execute_qa_v1(
         }
     }
 
-    collect("validate", validate.get("issues"), &mut errors, &mut warnings);
+    collect(
+        "validate",
+        validate.get("issues"),
+        &mut errors,
+        &mut warnings,
+    );
     collect("smoke", smoke.get("issues"), &mut errors, &mut warnings);
     collect(
         "motion_validation",
@@ -1318,6 +1331,239 @@ fn execute_qa_v1(
     job.agent.last_qa_result_json = Some(json.clone());
 
     Gen3dToolResultJsonV1::ok(call_id.to_string(), tool_id.to_string(), json)
+}
+
+fn execute_info_kv_get_paged_v1(
+    job: &mut Gen3dAiJob,
+    tool_id: &str,
+    call_id: &str,
+    args_value: serde_json::Value,
+) -> Gen3dToolResultJsonV1 {
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct InfoKvGetPagedArgsV1 {
+        namespace: String,
+        key: String,
+        #[serde(default)]
+        selector: Option<InfoKvSelectorArgsV1>,
+        #[serde(default)]
+        json_pointer: Option<String>,
+        #[serde(default)]
+        page: Option<InfoPage>,
+        #[serde(default)]
+        max_item_bytes: Option<u64>,
+    }
+
+    let args: InfoKvGetPagedArgsV1 = match serde_json::from_value(args_value) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(
+                call_id.to_string(),
+                tool_id.to_string(),
+                format!("Invalid args for `{TOOL_ID_INFO_KV_GET_PAGED}`: {err}"),
+            );
+        }
+    };
+
+    let namespace = args.namespace.trim();
+    let key = args.key.trim();
+    if namespace.is_empty() {
+        return Gen3dToolResultJsonV1::err(
+            call_id.to_string(),
+            tool_id.to_string(),
+            "Missing args.namespace".into(),
+        );
+    }
+    if key.is_empty() {
+        return Gen3dToolResultJsonV1::err(
+            call_id.to_string(),
+            tool_id.to_string(),
+            "Missing args.key".into(),
+        );
+    }
+
+    let max_item_bytes = args.max_item_bytes.unwrap_or(4096).clamp(256, 64 * 1024) as usize;
+
+    let selector_kind = args
+        .selector
+        .as_ref()
+        .map(|s| s.kind.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "latest".into());
+
+    let store = match job.ensure_info_store() {
+        Ok(s) => s,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    };
+
+    let record = match select_kv_record(
+        store,
+        namespace,
+        key,
+        selector_kind.as_str(),
+        args.selector.as_ref(),
+    ) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    };
+
+    let Some(record) = record else {
+        return Gen3dToolResultJsonV1::err(
+            call_id.to_string(),
+            tool_id.to_string(),
+            format!(
+                "KV not found: namespace={namespace:?} key={key:?}. Use `{TOOL_ID_INFO_KV_LIST_KEYS}`."
+            ),
+        );
+    };
+
+    let json_pointer = args
+        .json_pointer
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    let selected = if let Some(ptr) = json_pointer.as_deref() {
+        record
+            .value
+            .pointer(ptr)
+            .ok_or_else(|| format!("JSON pointer not found in KV value: {ptr}"))
+    } else {
+        Ok(&record.value)
+    };
+    let selected: &serde_json::Value = match selected {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    };
+
+    let Some(items) = selected.as_array() else {
+        return Gen3dToolResultJsonV1::err(
+            call_id.to_string(),
+            tool_id.to_string(),
+            "Selected JSON value is not an array. Provide json_pointer to an array (example: \"/errors\" or \"/items\")."
+                .into(),
+        );
+    };
+
+    let params_sig = store.stable_params_sig(&serde_json::json!({
+        "tool_id": TOOL_ID_INFO_KV_GET_PAGED,
+        "namespace": namespace,
+        "key": key,
+        "kv_rev": record.kv_rev,
+        "json_pointer": json_pointer.clone().unwrap_or_default(),
+        "max_item_bytes": max_item_bytes,
+    }));
+    let (limit, offset) = match store.page_from_args(
+        TOOL_ID_INFO_KV_GET_PAGED,
+        params_sig.as_str(),
+        args.page.as_ref(),
+        50,
+        200,
+    ) {
+        Ok(v) => v,
+        Err(err) => {
+            return Gen3dToolResultJsonV1::err(call_id.to_string(), tool_id.to_string(), err);
+        }
+    };
+
+    let array_len = items.len();
+    let end = (offset + limit).min(array_len);
+    let truncated = end < array_len;
+    let next_cursor =
+        truncated.then(|| store.offset_cursor(TOOL_ID_INFO_KV_GET_PAGED, params_sig.as_str(), end));
+
+    let mut out_items: Vec<serde_json::Value> = Vec::new();
+    if offset < array_len {
+        out_items.reserve(end.saturating_sub(offset));
+        for idx in offset..end {
+            let item = &items[idx];
+            let (bytes, _) = match json_bytes_capped(item, max_item_bytes.saturating_add(1)) {
+                Ok(v) => v,
+                Err(err) => {
+                    return Gen3dToolResultJsonV1::err(
+                        call_id.to_string(),
+                        tool_id.to_string(),
+                        err,
+                    );
+                }
+            };
+            let item_truncated = bytes > max_item_bytes;
+            let value_preview = if item_truncated {
+                json_shape_preview(item)
+            } else {
+                item.clone()
+            };
+            out_items.push(serde_json::json!({
+                "index": idx,
+                "bytes": bytes,
+                "truncated": item_truncated,
+                "value_preview": value_preview,
+            }));
+        }
+    }
+
+    let mut out = serde_json::Map::new();
+    out.insert("ok".into(), serde_json::Value::Bool(true));
+    let mut record_json = serde_json::Map::new();
+    record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
+    record_json.insert(
+        "written_at_ms".into(),
+        serde_json::json!(record.written_at_ms),
+    );
+    record_json.insert("attempt".into(), serde_json::json!(record.attempt));
+    record_json.insert("pass".into(), serde_json::json!(record.pass));
+    record_json.insert(
+        "assembly_rev".into(),
+        serde_json::json!(record.assembly_rev),
+    );
+    record_json.insert(
+        "workspace_id".into(),
+        serde_json::Value::String(record.workspace_id.clone()),
+    );
+    record_json.insert(
+        "key".into(),
+        serde_json::json!({
+            "namespace": record.key.namespace.as_str(),
+            "key": record.key.key.as_str(),
+        }),
+    );
+    record_json.insert(
+        "summary".into(),
+        serde_json::Value::String(record.summary.clone()),
+    );
+    record_json.insert("bytes".into(), serde_json::json!(record.bytes));
+    if let Some(prov) = record.written_by.as_ref() {
+        record_json.insert(
+            "written_by".into(),
+            serde_json::json!({
+                "tool_id": prov.tool_id.as_str(),
+                "call_id": prov.call_id.as_str(),
+            }),
+        );
+    }
+    out.insert("record".into(), serde_json::Value::Object(record_json));
+    out.insert("array_len".into(), serde_json::json!(array_len));
+    out.insert("items".into(), serde_json::Value::Array(out_items));
+    out.insert("truncated".into(), serde_json::Value::Bool(truncated));
+    if let Some(cursor) = next_cursor {
+        out.insert("next_cursor".into(), serde_json::Value::String(cursor));
+    }
+    if let Some(ptr) = json_pointer {
+        out.insert("json_pointer".into(), serde_json::Value::String(ptr));
+    }
+
+    Gen3dToolResultJsonV1::ok(
+        call_id.to_string(),
+        tool_id.to_string(),
+        serde_json::Value::Object(out),
+    )
 }
 
 pub(super) fn execute_tool_call(
@@ -1994,10 +2240,7 @@ pub(super) fn execute_tool_call(
             };
             let gaps = build_capability_gaps_from_smoke_v1(job, draft, &json);
             if let Some(obj) = json.as_object_mut() {
-                obj.insert(
-                    "capability_gaps".into(),
-                    serde_json::Value::Array(gaps),
-                );
+                obj.insert("capability_gaps".into(), serde_json::Value::Array(gaps));
             }
             let workspace_id = job.active_workspace_id().trim().to_string();
             let key = format!("ws.{workspace_id}.smoke");
@@ -2652,252 +2895,16 @@ pub(super) fn execute_tool_call(
             ))
         }
         TOOL_ID_INFO_KV_GET_PAGED => {
-            #[derive(Debug, Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct InfoKvGetPagedArgsV1 {
-                namespace: String,
-                key: String,
-                #[serde(default)]
-                selector: Option<InfoKvSelectorArgsV1>,
-                #[serde(default)]
-                json_pointer: Option<String>,
-                #[serde(default)]
-                page: Option<InfoPage>,
-                #[serde(default)]
-                max_item_bytes: Option<u64>,
-            }
-
-            let args: InfoKvGetPagedArgsV1 = match serde_json::from_value(call.args) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        format!("Invalid args for `{TOOL_ID_INFO_KV_GET_PAGED}`: {err}"),
-                    ));
-                }
-            };
-
-            let namespace = args.namespace.trim();
-            let key = args.key.trim();
-            if namespace.is_empty() {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    "Missing args.namespace".into(),
-                ));
-            }
-            if key.is_empty() {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    "Missing args.key".into(),
-                ));
-            }
-
-            let max_item_bytes = args
-                .max_item_bytes
-                .unwrap_or(4096)
-                .clamp(256, 64 * 1024) as usize;
-
-            let selector_kind = args
-                .selector
-                .as_ref()
-                .map(|s| s.kind.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "latest".into());
-
-            let store = match job.ensure_info_store() {
-                Ok(s) => s,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            let record = match select_kv_record(
-                store,
-                namespace,
-                key,
-                selector_kind.as_str(),
-                args.selector.as_ref(),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            let Some(record) = record else {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    format!(
-                        "KV not found: namespace={namespace:?} key={key:?}. Use `{TOOL_ID_INFO_KV_LIST_KEYS}`."
-                    ),
-                ));
-            };
-
-            let json_pointer = args
-                .json_pointer
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
-
-            let selected = if let Some(ptr) = json_pointer.as_deref() {
-                record
-                    .value
-                    .pointer(ptr)
-                    .ok_or_else(|| format!("JSON pointer not found in KV value: {ptr}"))
-            } else {
-                Ok(&record.value)
-            };
-            let selected: &serde_json::Value = match selected {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            let Some(items) = selected.as_array() else {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    "Selected JSON value is not an array. Provide json_pointer to an array (example: \"/errors\" or \"/items\").".into(),
-                ));
-            };
-
-            let params_sig = store.stable_params_sig(&serde_json::json!({
-                "tool_id": TOOL_ID_INFO_KV_GET_PAGED,
-                "namespace": namespace,
-                "key": key,
-                "kv_rev": record.kv_rev,
-                "json_pointer": json_pointer.clone().unwrap_or_default(),
-                "max_item_bytes": max_item_bytes,
-            }));
-            let (limit, offset) = match store.page_from_args(
-                TOOL_ID_INFO_KV_GET_PAGED,
-                params_sig.as_str(),
-                args.page.as_ref(),
-                50,
-                200,
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            let array_len = items.len();
-            let end = (offset + limit).min(array_len);
-            let truncated = end < array_len;
-            let next_cursor = truncated.then(|| {
-                store.offset_cursor(TOOL_ID_INFO_KV_GET_PAGED, params_sig.as_str(), end)
-            });
-
-            let mut out_items: Vec<serde_json::Value> = Vec::new();
-            if offset < array_len {
-                out_items.reserve(end.saturating_sub(offset));
-                for idx in offset..end {
-                    let item = &items[idx];
-                    let (bytes, _) = match json_bytes_capped(
-                        item,
-                        max_item_bytes.saturating_add(1),
-                    ) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                                call.call_id,
-                                call.tool_id,
-                                err,
-                            ));
-                        }
-                    };
-                    let item_truncated = bytes > max_item_bytes;
-                    let value_preview = if item_truncated {
-                        json_shape_preview(item)
-                    } else {
-                        item.clone()
-                    };
-                    out_items.push(serde_json::json!({
-                        "index": idx,
-                        "bytes": bytes,
-                        "truncated": item_truncated,
-                        "value_preview": value_preview,
-                    }));
-                }
-            }
-
-            let mut out = serde_json::Map::new();
-            out.insert("ok".into(), serde_json::Value::Bool(true));
-            let mut record_json = serde_json::Map::new();
-            record_json.insert("kv_rev".into(), serde_json::json!(record.kv_rev));
-            record_json.insert(
-                "written_at_ms".into(),
-                serde_json::json!(record.written_at_ms),
-            );
-            record_json.insert("attempt".into(), serde_json::json!(record.attempt));
-            record_json.insert("pass".into(), serde_json::json!(record.pass));
-            record_json.insert(
-                "assembly_rev".into(),
-                serde_json::json!(record.assembly_rev),
-            );
-            record_json.insert(
-                "workspace_id".into(),
-                serde_json::Value::String(record.workspace_id.clone()),
-            );
-            record_json.insert(
-                "key".into(),
-                serde_json::json!({
-                    "namespace": record.key.namespace.as_str(),
-                    "key": record.key.key.as_str(),
-                }),
-            );
-            record_json.insert(
-                "summary".into(),
-                serde_json::Value::String(record.summary.clone()),
-            );
-            record_json.insert("bytes".into(), serde_json::json!(record.bytes));
-            if let Some(prov) = record.written_by.as_ref() {
-                record_json.insert(
-                    "written_by".into(),
-                    serde_json::json!({
-                        "tool_id": prov.tool_id.as_str(),
-                        "call_id": prov.call_id.as_str(),
-                    }),
-                );
-            }
-            out.insert("record".into(), serde_json::Value::Object(record_json));
-            out.insert("array_len".into(), serde_json::json!(array_len));
-            out.insert("items".into(), serde_json::Value::Array(out_items));
-            out.insert("truncated".into(), serde_json::Value::Bool(truncated));
-            if let Some(cursor) = next_cursor {
-                out.insert("next_cursor".into(), serde_json::Value::String(cursor));
-            }
-            if let Some(ptr) = json_pointer {
-                out.insert("json_pointer".into(), serde_json::Value::String(ptr));
-            }
-
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
-                call.call_id,
-                call.tool_id,
-                serde_json::Value::Object(out),
+            let Gen3dToolCallJsonV1 {
+                call_id,
+                tool_id,
+                args,
+            } = call;
+            ToolCallOutcome::Immediate(execute_info_kv_get_paged_v1(
+                job,
+                tool_id.as_str(),
+                call_id.as_str(),
+                args,
             ))
         }
         TOOL_ID_INFO_KV_GET_MANY => {
@@ -6798,6 +6805,274 @@ mod tests {
         )
         .expect_err("unknown selector kind should error");
         assert!(err.contains("Unknown selector.kind"), "{err}");
+
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn info_kv_get_paged_pages_stably_and_deterministically() {
+        let run_dir = make_temp_dir("gravimera_info_kv_get_paged_test");
+
+        let mut job = super::Gen3dAiJob::default();
+        job.run_dir = Some(run_dir.clone());
+
+        let record = {
+            let store = job.ensure_info_store().expect("open store");
+            store
+                .kv_put(
+                    0,
+                    1,
+                    2,
+                    "main",
+                    "gen3d",
+                    "ws.main.qa",
+                    serde_json::json!({ "errors": [0, 1, 2, 3, 4] }),
+                    "qa".into(),
+                    None,
+                )
+                .expect("kv put")
+        };
+
+        let r1 = super::execute_info_kv_get_paged_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET_PAGED,
+            "call_1",
+            serde_json::json!({
+                "namespace": "gen3d",
+                "key": "ws.main.qa",
+                "selector": { "kind": "latest" },
+                "json_pointer": "/errors",
+                "page": { "limit": 2 },
+                "max_item_bytes": 4096,
+            }),
+        );
+        assert!(r1.ok, "expected tool call ok, got {r1:?}");
+        let j1 = r1.result.clone().expect("missing result");
+        assert_eq!(
+            j1.get("array_len").and_then(|v| v.as_u64()),
+            Some(5),
+            "expected array_len=5, got {j1:?}"
+        );
+        let items1 = j1.get("items").and_then(|v| v.as_array()).expect("items");
+        assert_eq!(items1.len(), 2, "expected 2 items, got {j1:?}");
+        assert_eq!(
+            items1[0].get("index").and_then(|v| v.as_u64()),
+            Some(0),
+            "{j1:?}"
+        );
+        assert_eq!(
+            items1[1].get("index").and_then(|v| v.as_u64()),
+            Some(1),
+            "{j1:?}"
+        );
+        assert_eq!(
+            j1.get("truncated").and_then(|v| v.as_bool()),
+            Some(true),
+            "{j1:?}"
+        );
+        let cursor1 = j1
+            .get("next_cursor")
+            .and_then(|v| v.as_str())
+            .expect("missing next_cursor")
+            .to_string();
+
+        // Simulate a newer KV revision appearing between pages. Paging must remain stable by
+        // pinning `selector.kind="kv_rev"` to the record selected on page 1.
+        {
+            let store = job.ensure_info_store().expect("open store");
+            store
+                .kv_put(
+                    0,
+                    2,
+                    3,
+                    "main",
+                    "gen3d",
+                    "ws.main.qa",
+                    serde_json::json!({ "errors": [999] }),
+                    "qa newer".into(),
+                    None,
+                )
+                .expect("kv put newer");
+        }
+
+        let args_page2 = serde_json::json!({
+            "namespace": "gen3d",
+            "key": "ws.main.qa",
+            "selector": { "kind": "kv_rev", "kv_rev": record.kv_rev },
+            "json_pointer": "/errors",
+            "page": { "limit": 2, "cursor": cursor1 },
+            "max_item_bytes": 4096,
+        });
+
+        // Using selector.kind="latest" after a new revision exists should reject the cursor.
+        let r2_latest = super::execute_info_kv_get_paged_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET_PAGED,
+            "call_2_latest",
+            serde_json::json!({
+                "namespace": "gen3d",
+                "key": "ws.main.qa",
+                "selector": { "kind": "latest" },
+                "json_pointer": "/errors",
+                "page": { "limit": 2, "cursor": j1.get("next_cursor").unwrap() },
+                "max_item_bytes": 4096,
+            }),
+        );
+        assert!(
+            !r2_latest.ok
+                && r2_latest
+                    .error
+                    .as_deref()
+                    .is_some_and(|e| e.contains("Cursor does not match this request")),
+            "expected cursor mismatch error, got {r2_latest:?}"
+        );
+
+        let r2 = super::execute_info_kv_get_paged_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET_PAGED,
+            "call_2",
+            args_page2.clone(),
+        );
+        assert!(r2.ok, "expected tool call ok, got {r2:?}");
+        let j2 = r2.result.clone().expect("missing result");
+        let items2 = j2.get("items").and_then(|v| v.as_array()).expect("items");
+        assert_eq!(items2.len(), 2, "expected 2 items, got {j2:?}");
+        assert_eq!(
+            items2[0].get("index").and_then(|v| v.as_u64()),
+            Some(2),
+            "{j2:?}"
+        );
+        assert_eq!(
+            items2[1].get("index").and_then(|v| v.as_u64()),
+            Some(3),
+            "{j2:?}"
+        );
+        let cursor2 = j2
+            .get("next_cursor")
+            .and_then(|v| v.as_str())
+            .expect("missing next_cursor")
+            .to_string();
+
+        // Determinism: the same request must produce the same page output.
+        let r2_again = super::execute_info_kv_get_paged_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET_PAGED,
+            "call_2_again",
+            args_page2,
+        );
+        assert!(r2_again.ok, "expected tool call ok, got {r2_again:?}");
+        assert_eq!(
+            r2_again.result.clone().expect("missing result"),
+            j2,
+            "expected deterministic paging output"
+        );
+
+        let r3 = super::execute_info_kv_get_paged_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET_PAGED,
+            "call_3",
+            serde_json::json!({
+                "namespace": "gen3d",
+                "key": "ws.main.qa",
+                "selector": { "kind": "kv_rev", "kv_rev": record.kv_rev },
+                "json_pointer": "/errors",
+                "page": { "limit": 2, "cursor": cursor2 },
+                "max_item_bytes": 4096,
+            }),
+        );
+        assert!(r3.ok, "expected tool call ok, got {r3:?}");
+        let j3 = r3.result.clone().expect("missing result");
+        let items3 = j3.get("items").and_then(|v| v.as_array()).expect("items");
+        assert_eq!(items3.len(), 1, "expected 1 item, got {j3:?}");
+        assert_eq!(
+            items3[0].get("index").and_then(|v| v.as_u64()),
+            Some(4),
+            "{j3:?}"
+        );
+        assert_eq!(
+            j3.get("truncated").and_then(|v| v.as_bool()),
+            Some(false),
+            "{j3:?}"
+        );
+        assert!(
+            j3.get("next_cursor").is_none(),
+            "expected no next_cursor on last page, got {j3:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn info_kv_get_paged_item_truncation_uses_shape_preview() {
+        let run_dir = make_temp_dir("gravimera_info_kv_get_paged_trunc_test");
+
+        let mut job = super::Gen3dAiJob::default();
+        job.run_dir = Some(run_dir.clone());
+
+        let string_len_bytes = 1024;
+        {
+            let store = job.ensure_info_store().expect("open store");
+            store
+                .kv_put(
+                    0,
+                    1,
+                    2,
+                    "main",
+                    "gen3d",
+                    "ws.main.qa",
+                    serde_json::json!({ "errors": ["x".repeat(string_len_bytes)] }),
+                    "qa".into(),
+                    None,
+                )
+                .expect("kv put");
+        }
+
+        let max_item_bytes = 256;
+        let r1 = super::execute_info_kv_get_paged_v1(
+            &mut job,
+            super::TOOL_ID_INFO_KV_GET_PAGED,
+            "call_1",
+            serde_json::json!({
+                "namespace": "gen3d",
+                "key": "ws.main.qa",
+                "selector": { "kind": "latest" },
+                "json_pointer": "/errors",
+                "page": { "limit": 1 },
+                "max_item_bytes": max_item_bytes,
+            }),
+        );
+        assert!(r1.ok, "expected tool call ok, got {r1:?}");
+        let j1 = r1.result.clone().expect("missing result");
+
+        let items = j1.get("items").and_then(|v| v.as_array()).expect("items");
+        assert_eq!(items.len(), 1, "expected 1 item, got {j1:?}");
+        let item = &items[0];
+        assert_eq!(
+            item.get("truncated").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected item truncated=true, got {item:?}"
+        );
+        assert_eq!(
+            item.get("bytes").and_then(|v| v.as_u64()),
+            Some((max_item_bytes + 1) as u64),
+            "expected capped bytes=max_item_bytes+1, got {item:?}"
+        );
+
+        let preview = item.get("value_preview").expect("missing value_preview");
+        assert!(
+            preview.is_object(),
+            "expected shape preview object, got {preview:?}"
+        );
+        assert_eq!(
+            preview.get("kind").and_then(|v| v.as_str()),
+            Some("string"),
+            "expected kind=string, got {preview:?}"
+        );
+        assert_eq!(
+            preview.get("len_bytes").and_then(|v| v.as_u64()),
+            Some(string_len_bytes as u64),
+            "expected len_bytes={string_len_bytes}, got {preview:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&run_dir);
     }
