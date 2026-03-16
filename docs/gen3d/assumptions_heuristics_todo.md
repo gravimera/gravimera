@@ -40,6 +40,11 @@ Each item below is intended to be resolved one-by-one later. Keep this list upda
   - Result: Gen3D outputs must follow the exact schema (explicit `version`, canonical enums, explicit `projectile.color` RGBA array). Nonconforming outputs fail fast and are handled via regeneration / schema repair rather than engine-side guessing.
   - Code: `src/gen3d/ai/parse.rs` (now strict; no normalization), `src/gen3d/ai/schema.rs` (stricter types; fewer aliases), `src/gen3d/ai/structured_outputs.rs` (projectile color requires RGBA), `src/gen3d/ai/convert.rs` (validates projectile color range).
 
+- [ ] **Remove prompt substring inference in smoke results (`attack_required_by_prompt`)**
+  - Today, Gen3D smoke results infer “attack required” by substring checks over the raw prompt and use that to decide whether missing root mobility/attack is an error.
+  - Replace with explicit plan/tool inputs (or remove “prompt implies capability” inference entirely). The engine should not guess intent from text.
+  - Code: `src/gen3d/ai/orchestration.rs` (`build_gen3d_smoke_results`).
+
 ## 2) Silent defaults / hidden assumptions — make explicit, validate hard, or error early
 
 - [x] **Hard-coded coordinate conventions (forward = +Z, up = +Y)**
