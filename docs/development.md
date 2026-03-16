@@ -1,14 +1,21 @@
 # Development notes
 
+For build/run/setup, see `docs/developer_onboarding.md`.
+
 ## Useful commands
 
 - Tests: `cargo test`
 - Format: `cargo fmt`
-- Headless smoke test (isolated data dir):
+- Rendered smoke test (isolated data dir):
 
 ```bash
-tmpdir=$(mktemp -d)
-GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --headless --headless-seconds 1
+tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2
+```
+
+Headless smoke test (CI / no GPU):
+
+```bash
+tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --headless --headless-seconds 1
 ```
 
 ## Network proxy (OpenAI/Gen3D)
