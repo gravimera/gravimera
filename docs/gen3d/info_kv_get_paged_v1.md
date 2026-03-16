@@ -58,6 +58,8 @@ Paging is bound to a **single frozen KV record**:
 
 If you reuse a cursor with different params (including a different `kv_rev`), the tool returns an error like “Cursor does not match this request”.
 
+Practical tip: when paging, treat `(record.kv_rev, next_cursor)` as a pair. For page 2+, pin `selector.kind="kv_rev"` to the `record.kv_rev` you received; don’t keep calling with `selector.kind="latest"` if a newer KV revision might appear between pages.
+
 ## Deterministic “shape preview” (no heuristics)
 
 When an item is too large to return inline (`truncated=true`), `value_preview` is:
@@ -84,13 +86,13 @@ Fetch the first page of QA errors:
 }
 ```
 
-Fetch the next page using `next_cursor` from the previous result:
+Fetch the next page using `next_cursor` from the previous result, **pinning** the `kv_rev` returned in `record.kv_rev`:
 
 ```json
 {
   "namespace": "gen3d",
   "key": "ws.main.qa",
-  "selector": { "kind": "latest" },
+  "selector": { "kind": "kv_rev", "kv_rev": 123 },
   "json_pointer": "/errors",
   "page": { "limit": 50, "cursor": "<next_cursor>" },
   "max_item_bytes": 4096

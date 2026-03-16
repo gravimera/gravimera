@@ -64,7 +64,8 @@ After implementing this plan, Gen3D will:
 ## Outcomes & Retrospective
 
 - Outcome (Milestones 1–3): Added `info_kv_get_paged_v1` for deterministic paging of large KV arrays, added `qa_v1` tool-level caching/no-progress gate, and added bounded `capability_gaps[]` with deterministic `fixits[]` to QA/smoke.
-- Remaining: run rendered smoke test and commit; consider extending no-progress gates to other inspection tools (`validate_v1`, `get_scene_graph_summary_v1`) if loops persist outside QA.
+- Outcome: Ran rendered smoke test and landed the implementation in `10fbd22` (2026-03-16).
+- Next: consider extending no-progress gates to other inspection tools (`validate_v1`, `get_scene_graph_summary_v1`) if loops persist outside QA.
 
 ## Context and Orientation
 
