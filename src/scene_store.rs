@@ -143,7 +143,6 @@ pub(crate) struct WorkspaceSwitchDeps<'w> {
     material_cache: ResMut<'w, crate::object::visuals::MaterialCache>,
     mesh_cache: ResMut<'w, crate::object::visuals::PrimitiveMeshCache>,
     library: ResMut<'w, ObjectLibrary>,
-    prefab_descriptors: ResMut<'w, crate::prefab_descriptors::PrefabDescriptorLibrary>,
     camera_zoom: ResMut<'w, CameraZoom>,
     camera_yaw: ResMut<'w, CameraYaw>,
     camera_pitch: ResMut<'w, CameraPitch>,
@@ -2023,14 +2022,12 @@ pub(crate) fn load_scene_dat(
     mut material_cache: ResMut<crate::object::visuals::MaterialCache>,
     mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
     mut library: ResMut<ObjectLibrary>,
-    mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
 ) {
     // Reset library to builtins only. `scene.dat` must contain all defs needed to spawn.
     *library = ObjectLibrary::default();
 
-    // Tooling loads scene-local prefab descriptors on demand; runtime scene load does not scan
-    // prefab packages.
-    prefab_descriptors.clear();
+    // Prefab descriptors are realm-level and loaded by UI/tooling on demand. Scene loading does not
+    // depend on them, but we keep the cache so panels (Meta/Gen3D) stay stable across scene loads.
 
     let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
     match load_scene_dat_from_path(
@@ -2129,9 +2126,7 @@ pub(crate) fn apply_pending_workspace_switch(
 
     // Reset library to builtins only. `scene.dat` must contain all defs needed to spawn.
     *deps.library = ObjectLibrary::default();
-    // Tooling loads scene-local prefab descriptors on demand; runtime scene load does not scan
-    // prefab packages.
-    deps.prefab_descriptors.clear();
+    // Prefab descriptors are realm-level and reused across workspace tabs.
 
     let to_path = workspace_scene_dat_path(&deps.config, &deps.active, switch.to);
     match load_scene_dat_from_path(
@@ -2188,6 +2183,8 @@ pub(crate) fn apply_pending_realm_scene_switch(
         return;
     }
 
+    let realm_changed = target.realm_id != active.realm_id;
+
     if let Err(err) = crate::realm::ensure_realm_scene_scaffold(&target.realm_id, &target.scene_id)
     {
         warn!("{err}");
@@ -2215,9 +2212,11 @@ pub(crate) fn apply_pending_realm_scene_switch(
 
     // Reset library to builtins only. `scene.dat` must contain all defs needed to spawn.
     *library = ObjectLibrary::default();
-    // Tooling loads scene-local prefab descriptors on demand; runtime scene load does not scan
-    // prefab packages.
-    prefab_descriptors.clear();
+    // Prefab descriptors are realm-level; keep them across scene switches so Meta/Gen3D UI stays
+    // stable. Clear on realm switch to avoid stale data for a different realm.
+    if realm_changed {
+        prefab_descriptors.clear();
+    }
 
     let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
     match load_scene_dat_from_path(
