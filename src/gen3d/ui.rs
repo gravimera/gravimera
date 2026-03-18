@@ -681,6 +681,7 @@ pub(crate) fn enter_gen3d_mode(
                                 min_height: Val::Px(0.0),
                                 padding: UiRect::all(Val::Px(8.0)),
                                 border: UiRect::all(Val::Px(1.0)),
+                                overflow: Overflow::clip(),
                                 ..default()
                             },
                             BackgroundColor(Color::srgba(0.01, 0.01, 0.015, 0.55)),
@@ -2450,53 +2451,79 @@ pub(crate) fn gen3d_update_ui_text(
         }
     }
 
-    let mut status_summary = workshop.status.trim_end().to_string();
-    if job.is_running() {
-        if let Some(msg) = job.progress_message() {
-            let msg = msg.trim();
-            if !msg.is_empty() {
-                status_summary.push_str("\n\nProgress: ");
-                status_summary.push_str(msg);
+    fn truncate_ellipsis(text: &str, max_chars: usize) -> String {
+        let text = text.trim();
+        if text.chars().count() <= max_chars {
+            return text.to_string();
+        }
+        let mut out: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+
+    let components = draft.component_count();
+    let parts = draft.total_primitive_parts();
+    let motions = preview_state.animation_channels.len();
+
+    let state = if workshop.error.is_some() {
+        "Error"
+    } else if job.is_running() {
+        "Building"
+    } else if job.is_build_complete() {
+        "Done"
+    } else if job.can_resume() {
+        "Stopped"
+    } else {
+        "Idle"
+    };
+
+    let run_time = job
+        .run_elapsed()
+        .map(|d| {
+            let secs = d.as_secs();
+            if secs < 60 {
+                format!("{:.1}s", d.as_secs_f32())
+            } else {
+                format!("{}m {}s", secs / 60, secs % 60)
             }
-        }
-    }
+        })
+        .unwrap_or_else(|| "—".into());
+
+    let run_tokens = format_compact_count(job.current_run_tokens());
+    let total_tokens = format_compact_count(job.total_tokens());
+
+    let mut step_status = "—".to_string();
     if let Some(active) = workshop.status_log.active.as_ref() {
-        status_summary.push_str("\n\nCurrent step:\n");
-        status_summary.push_str(active.step.trim());
-        if !active.why.trim().is_empty() {
-            status_summary.push_str("\nWhy: ");
-            status_summary.push_str(active.why.trim());
-        }
-        if let Some(elapsed) = workshop.status_log.active_elapsed() {
-            status_summary.push_str("\nElapsed: ");
-            status_summary.push_str(&format_duration(elapsed));
-        }
+        let step = truncate_ellipsis(active.step.as_str(), 46);
+        let elapsed = workshop
+            .status_log
+            .active_elapsed()
+            .unwrap_or_else(|| std::time::Duration::from_secs(0));
+        step_status = format!("{step} (running {})", format_duration(elapsed));
     } else if let Some(last) = workshop.status_log.entries.last() {
-        status_summary.push_str("\n\nLast step:\n");
-        status_summary.push_str(last.step.trim());
-        status_summary.push_str(" → ");
-        status_summary.push_str(last.result.trim());
-        status_summary.push_str(" (");
-        status_summary.push_str(&format_duration_ms(last.duration_ms));
-        status_summary.push(')');
+        let step = truncate_ellipsis(last.step.as_str(), 36);
+        let result = truncate_ellipsis(last.result.as_str(), 26);
+        step_status = format!(
+            "{step} → {result} ({})",
+            format_duration_ms(last.duration_ms)
+        );
     }
-    let chat_fallbacks = job.chat_fallbacks_this_run();
-    if chat_fallbacks > 0 {
-        status_summary.push_str(&format!(
-            "\n\nNote: Used /chat/completions fallback ×{chat_fallbacks}. Results may be less consistent."
-        ));
-    }
-    if !draft.defs.is_empty() {
-        let primitives = draft.total_primitive_parts();
-        let components = draft.component_count();
-        status_summary.push_str(&format!(
-            "\n\nDraft: components: {components} | primitives: {primitives}"
-        ));
-    }
-    if let Some(err) = &workshop.error {
-        status_summary.push_str("\n\nError:\n");
-        status_summary.push_str(err.trim());
-    }
+
+    let prefab_status = if job.last_saved_prefab_id().is_some() {
+        "Saved"
+    } else {
+        "—"
+    };
+
+    let status_summary = format!(
+        "State: {state} | Prefab: {prefab_status}\n\
+Draft: comps {components} | parts {parts} | motion {motions}\n\
+Run: attempt {} | pass {} | time {run_time}\n\
+Tokens: run {run_tokens} | total {total_tokens}\n\
+Step: {step_status}",
+        job.attempt() + 1,
+        job.pass() + 1,
+    );
     {
         let mut status = texts.p0();
         for mut text in &mut status {

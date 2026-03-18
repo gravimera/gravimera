@@ -440,6 +440,12 @@ impl Plugin for RenderedGen3dPlugin {
         );
         app.add_systems(
             Update,
+            crate::gen3d::gen3d_auto_save_when_done
+                .after(crate::gen3d::gen3d_poll_ai_job)
+                .after(crate::gen3d::gen3d_save_button),
+        );
+        app.add_systems(
+            Update,
             crate::gen3d::gen3d_cleanup_preview_scene_when_idle
                 .after(crate::gen3d::gen3d_apply_draft_to_preview)
                 .run_if(in_state(BuildScene::Realm)),

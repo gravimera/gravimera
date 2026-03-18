@@ -29,15 +29,15 @@ The AI is instructed to prioritize **basic structure and proportions** over smal
    - Select preview motion channel via the **Anim** dropdown (lists available channels; canonical: Idle / Move / Attack).
    - Toggle collider overlay via **Collision: On/Off** (also controls whether saved buildings block unit movement).
    - Open the **Status** overlay via the top-right `≡` button (collapsed by default).
-     - **Status** tab: live summary + scrollable step logs (why/result/duration).
+     - **Status** tab: compact counters (components/parts/motion/pass) + scrollable step logs (why/result/duration).
      - **Prefab** tab: current prefab descriptor details (no revision history).
    - The preview shows run time and AI token counters (run + total) at top-left.
 6. If needed, change notes/images and click **Build** again.
-7. Once a usable draft exists (root + at least one primitive part), click **Save** to place the generated model next to the hero.
-   - You can **Save multiple times**, even while building.
+7. After Build completes, Gen3D **auto-saves** the prefab and refreshes the **Prefab** tab details.
+   - You can still click **Save** to save additional copies (or save mid-run while building).
    - After leaving Gen3D, you can edit it in Build mode selection (delete/duplicate/move/rotate/scale).
 
-If generation fails, the Status overlay shows a short error summary plus the step-by-step log (why/result/duration). Detailed logs and artifacts are also written under the Gen3D cache directory.
+If generation fails, the Status log shows the step-by-step errors (why/result/duration). Detailed logs and artifacts are also written under the Gen3D cache directory.
 
 ---
 

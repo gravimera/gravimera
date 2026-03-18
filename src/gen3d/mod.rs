@@ -145,6 +145,7 @@ pub(crate) use preview::{
     gen3d_apply_draft_to_preview, gen3d_preview_orbit_controls,
     gen3d_preview_tick_selected_animation, gen3d_update_collision_overlay,
 };
+pub(crate) use save::gen3d_auto_save_when_done;
 pub(crate) use save::gen3d_prefab_thumbnail_capture_poll;
 pub(crate) use save::gen3d_request_prefab_thumbnail_capture;
 pub(crate) use save::gen3d_save_button;
