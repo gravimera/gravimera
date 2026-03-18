@@ -32,6 +32,7 @@ mod orchestration;
 mod parse;
 mod plan_ops;
 mod plan_tools;
+mod pipeline_orchestrator;
 mod preserve_plan_policy;
 mod prompts;
 mod reuse_groups;

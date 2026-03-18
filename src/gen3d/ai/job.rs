@@ -20,6 +20,10 @@ pub(super) const GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES: u8 = 6;
 pub(super) enum Gen3dAiMode {
     #[default]
     Agent,
+    Pipeline,
+    /// Legacy non-agent phase machine (pre tool-driven agent loop).
+    #[allow(dead_code)]
+    LegacyPhaseMachine,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

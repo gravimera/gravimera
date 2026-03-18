@@ -14,6 +14,7 @@ pub(crate) struct AppConfig {
     pub(crate) scene_dat_path: Option<PathBuf>,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
     pub(crate) gen3d_ai_service: Gen3dAiService,
+    pub(crate) gen3d_orchestrator: Gen3dOrchestrator,
     pub(crate) intelligence_service_enabled: bool,
     pub(crate) intelligence_service_mode: IntelligenceServiceMode,
     pub(crate) intelligence_service_addr: Option<String>,
@@ -70,6 +71,7 @@ impl Default for AppConfig {
             scene_dat_path: None,
             gen3d_cache_dir: None,
             gen3d_ai_service: Gen3dAiService::OpenAi,
+            gen3d_orchestrator: Gen3dOrchestrator::Agent,
             intelligence_service_enabled: false,
             intelligence_service_mode: IntelligenceServiceMode::Embedded,
             intelligence_service_addr: None,
@@ -131,6 +133,13 @@ pub(crate) enum Gen3dAiService {
     OpenAi,
     Gemini,
     Claude,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Gen3dOrchestrator {
+    #[default]
+    Agent,
+    Pipeline,
 }
 
 pub(crate) fn default_config_path() -> PathBuf {
@@ -210,6 +219,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_scene_dat_path_into_config(out, text);
     parse_gen3d_cache_dir_into_config(out, text);
     parse_gen3d_ai_service_into_config(out, text);
+    parse_gen3d_orchestrator_into_config(out, text);
     parse_intelligence_service_enabled_into_config(out, text);
     parse_intelligence_service_mode_into_config(out, text);
     parse_intelligence_service_addr_into_config(out, text);
@@ -366,6 +376,14 @@ fn populate_claude_config(out: &mut AppConfig, text: &str) {
 fn parse_gen3d_ai_service_into_config(out: &mut AppConfig, text: &str) {
     match parse_gen3d_ai_service(text) {
         Ok(Some(value)) => out.gen3d_ai_service = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_gen3d_orchestrator_into_config(out: &mut AppConfig, text: &str) {
+    match parse_gen3d_orchestrator(text) {
+        Ok(Some(value)) => out.gen3d_orchestrator = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -959,6 +977,72 @@ fn parse_gen3d_ai_service(text: &str) -> Result<Option<Gen3dAiService>, String> 
             other => {
                 return Err(format!(
                     "config.toml:{line_no}: unsupported `gen3d.ai_service` value {other:?} (expected \"openai\", \"gemini\", or \"claude\")"
+                ));
+            }
+        });
+    }
+
+    Ok(out)
+}
+
+fn parse_gen3d_orchestrator(text: &str) -> Result<Option<Gen3dOrchestrator>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<Gen3dOrchestrator> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "orchestrator" && key != "gen3d_orchestrator" {
+            continue;
+        }
+
+        // Accept at top-level, or under `[gen3d]` / `[app]` for convenience.
+        if let Some(sec) = section.as_deref() {
+            if sec != "gen3d" && sec != "app" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let parsed = parse_toml_string(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a quoted string value for `gen3d.orchestrator` (example: [gen3d]\\norchestrator = \"pipeline\")"
+            )
+        })?;
+        let parsed = parsed.trim().to_ascii_lowercase();
+        if parsed.is_empty() {
+            out = None;
+            continue;
+        }
+
+        out = Some(match parsed.as_str() {
+            "agent" => Gen3dOrchestrator::Agent,
+            "pipeline" => Gen3dOrchestrator::Pipeline,
+            other => {
+                return Err(format!(
+                    "config.toml:{line_no}: unsupported `gen3d.orchestrator` value {other:?} (expected \"agent\" or \"pipeline\")"
                 ));
             }
         });
@@ -2755,8 +2839,8 @@ mod tests {
     use super::parse_gen3d_review_appearance;
     use super::parse_gen3d_save_pass_screenshots;
     use super::{
-        parse_config_text_into, parse_intelligence_service_mode, AppConfig, Gen3dAiService,
-        IntelligenceServiceMode,
+        parse_config_text_into, parse_gen3d_orchestrator, parse_intelligence_service_mode,
+        AppConfig, Gen3dAiService, Gen3dOrchestrator, IntelligenceServiceMode,
     };
     use std::path::PathBuf;
 
@@ -2842,6 +2926,29 @@ mod tests {
             cfg.errors.is_empty(),
             "unexpected config errors: {:?}",
             cfg.errors
+        );
+    }
+
+    #[test]
+    fn parses_gen3d_orchestrator_from_gen3d_section() {
+        let text = r#"
+        [gen3d]
+        orchestrator = "pipeline"
+        "#;
+        assert_eq!(
+            parse_gen3d_orchestrator(text).unwrap(),
+            Some(Gen3dOrchestrator::Pipeline)
+        );
+    }
+
+    #[test]
+    fn parses_gen3d_orchestrator_from_top_level() {
+        let text = r#"
+        gen3d_orchestrator = "agent"
+        "#;
+        assert_eq!(
+            parse_gen3d_orchestrator(text).unwrap(),
+            Some(Gen3dOrchestrator::Agent)
         );
     }
 

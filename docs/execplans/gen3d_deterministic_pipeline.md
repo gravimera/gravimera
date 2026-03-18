@@ -29,7 +29,7 @@ How to see it working (after implementation):
 
 - [x] (2026-03-18 22:10 CST) Drafted this ExecPlan.
 - [x] (2026-03-18 23:07 CST) Revised this ExecPlan to call out pipeline reachability (all entrypoints), add a deterministic QA/motion remediation loop, tighten tool contracts/gates, and note mock-backend gaps.
-- [ ] Implement pipeline orchestrator skeleton and config toggle; keep agent-step path unchanged and available.
+- [x] (2026-03-18 23:40 CST) Implemented pipeline orchestrator skeleton + config toggle (pipeline currently falls back to agent-step; deterministic pipeline logic comes next).
 - [ ] Add new LLM tool: `llm_generate_draft_ops_v1` (suggestions only; no mutation) + strict structured-output schema.
 - [ ] Implement create-session pipeline flow (new Build): plan → components → QA → (render/review) loops → finish.
 - [ ] Implement edit-session pipeline flow (seeded Edit/Fork): plan-ops → missing components → DraftOps suggest+apply (atomic) → QA → (render/review) loops → finish.

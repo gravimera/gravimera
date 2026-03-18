@@ -71,6 +71,11 @@
 # - "claude"
 # ai_service = "openai"
 
+# Gen3D orchestrator:
+# - "agent" (default): Codex-style agent_step loop decides which tools to call next.
+# - "pipeline": deterministic pipeline orchestrator (tool sequence is engine-driven; agent-step is fallback).
+# orchestrator = "agent"
+
 # Optional: override where Gen3D artifacts are cached.
 # Default: `~/.gravimera/cache/gen3d/`.
 # Relative paths are resolved relative to the config file directory.
