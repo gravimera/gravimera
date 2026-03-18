@@ -771,50 +771,106 @@ pub(super) fn generate_text_via_openai(
     hydrate_session_capabilities_from_cache(&mut session, base_url, model);
     let caps_before = OpenAiCapabilityFlagsSnapshot::from_session(&session);
 
-    let responses_summary = match openai_responses_flow(
-        progress,
-        &mut session,
-        cancel,
-        expected_schema,
-        require_structured_outputs,
-        base_url,
-        api_key,
-        model,
-        reasoning_effort,
-        system_instructions,
-        user_text,
-        &images,
-        image_paths,
-        run_dir,
-        artifact_prefix,
-    ) {
-        Ok(resp) => {
-            append_agent_trace_event_v1(
-                run_root_dir,
-                &AgentTraceEventV1::LlmResponse {
-                    artifact_prefix: artifact_prefix.to_string(),
-                    artifact_dir: run_dir
-                        .map(|d| d.display().to_string())
-                        .unwrap_or_else(|| "<none>".into()),
-                    api: "responses".into(),
-                    ok: true,
-                    total_tokens: resp.total_tokens,
-                    error: None,
-                },
-            );
-            append_gen3d_run_log(
-                run_dir,
-                format!(
-                    "request_done prefix={} api=responses tokens={}",
-                    artifact_prefix,
-                    resp.total_tokens.unwrap_or(0)
-                ),
-            );
-            persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
-            return Ok(resp);
-        }
-        Err(err) => {
-            if err.cancelled {
+    let (responses_summary, attempted_responses) = if session.responses_supported == Some(false) {
+        // Avoid repeatedly attempting /responses (and logging warnings) once we've already
+        // detected that the provider doesn't support it for this base_url/model pair.
+        debug!(
+            "Gen3D: skipping /responses (previously marked unsupported); using /chat/completions."
+        );
+        append_gen3d_run_log(
+            run_dir,
+            format!(
+                "responses_skipped prefix={} reason=unsupported",
+                artifact_prefix
+            ),
+        );
+        append_agent_trace_event_v1(
+            run_root_dir,
+            &AgentTraceEventV1::LlmResponse {
+                artifact_prefix: artifact_prefix.to_string(),
+                artifact_dir: run_dir
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| "<none>".into()),
+                api: "responses".into(),
+                ok: false,
+                total_tokens: None,
+                error: Some("skipped_unsupported".into()),
+            },
+        );
+        (
+            OpenAiError::new("Responses API not supported".into()),
+            false,
+        )
+    } else {
+        let responses_summary = match openai_responses_flow(
+            progress,
+            &mut session,
+            cancel,
+            expected_schema,
+            require_structured_outputs,
+            base_url,
+            api_key,
+            model,
+            reasoning_effort,
+            system_instructions,
+            user_text,
+            &images,
+            image_paths,
+            run_dir,
+            artifact_prefix,
+        ) {
+            Ok(resp) => {
+                append_agent_trace_event_v1(
+                    run_root_dir,
+                    &AgentTraceEventV1::LlmResponse {
+                        artifact_prefix: artifact_prefix.to_string(),
+                        artifact_dir: run_dir
+                            .map(|d| d.display().to_string())
+                            .unwrap_or_else(|| "<none>".into()),
+                        api: "responses".into(),
+                        ok: true,
+                        total_tokens: resp.total_tokens,
+                        error: None,
+                    },
+                );
+                append_gen3d_run_log(
+                    run_dir,
+                    format!(
+                        "request_done prefix={} api=responses tokens={}",
+                        artifact_prefix,
+                        resp.total_tokens.unwrap_or(0)
+                    ),
+                );
+                persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
+                return Ok(resp);
+            }
+            Err(err) => {
+                if err.cancelled {
+                    append_agent_trace_event_v1(
+                        run_root_dir,
+                        &AgentTraceEventV1::LlmResponse {
+                            artifact_prefix: artifact_prefix.to_string(),
+                            artifact_dir: run_dir
+                                .map(|d| d.display().to_string())
+                                .unwrap_or_else(|| "<none>".into()),
+                            api: "responses".into(),
+                            ok: false,
+                            total_tokens: None,
+                            error: Some("cancelled".into()),
+                        },
+                    );
+                    append_gen3d_run_log(
+                        run_dir,
+                        format!("request_cancelled prefix={}", artifact_prefix),
+                    );
+                    persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
+                    return Err("Cancelled".into());
+                }
+                warn!(
+                    "Gen3D: /responses attempt failed; falling back to /chat/completions: {}",
+                    err.short()
+                );
+                debug!("Gen3D: /responses failed detail: {}", err.detail());
                 append_agent_trace_event_v1(
                     run_root_dir,
                     &AgentTraceEventV1::LlmResponse {
@@ -825,44 +881,22 @@ pub(super) fn generate_text_via_openai(
                         api: "responses".into(),
                         ok: false,
                         total_tokens: None,
-                        error: Some("cancelled".into()),
+                        error: Some(err.short().to_string()),
                     },
                 );
                 append_gen3d_run_log(
                     run_dir,
-                    format!("request_cancelled prefix={}", artifact_prefix),
+                    format!(
+                        "responses_failed prefix={} err={}",
+                        artifact_prefix,
+                        err.short()
+                    ),
                 );
-                persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
-                return Err("Cancelled".into());
+                err
             }
-            warn!(
-                "Gen3D: /responses attempt failed; falling back to /chat/completions: {}",
-                err.short()
-            );
-            debug!("Gen3D: /responses failed detail: {}", err.detail());
-            append_agent_trace_event_v1(
-                run_root_dir,
-                &AgentTraceEventV1::LlmResponse {
-                    artifact_prefix: artifact_prefix.to_string(),
-                    artifact_dir: run_dir
-                        .map(|d| d.display().to_string())
-                        .unwrap_or_else(|| "<none>".into()),
-                    api: "responses".into(),
-                    ok: false,
-                    total_tokens: None,
-                    error: Some(err.short().to_string()),
-                },
-            );
-            append_gen3d_run_log(
-                run_dir,
-                format!(
-                    "responses_failed prefix={} err={}",
-                    artifact_prefix,
-                    err.short()
-                ),
-            );
-            err
-        }
+        };
+
+        (responses_summary, true)
     };
 
     let chat_summary = match openai_chat_completions_flow(
@@ -929,10 +963,17 @@ pub(super) fn generate_text_via_openai(
                 persist_session_capabilities_if_changed(base_url, model, caps_before, &session);
                 return Err("Cancelled".into());
             }
-            warn!(
-                "Gen3D: /chat/completions attempt failed after /responses fallback: {}",
-                err.short()
-            );
+            if attempted_responses {
+                warn!(
+                    "Gen3D: /chat/completions attempt failed after /responses fallback: {}",
+                    err.short()
+                );
+            } else {
+                warn!(
+                    "Gen3D: /chat/completions attempt failed (/responses unsupported): {}",
+                    err.short()
+                );
+            }
             debug!("Gen3D: /chat/completions failed detail: {}", err.detail());
             append_agent_trace_event_v1(
                 run_root_dir,
