@@ -614,6 +614,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
     job.agent = Gen3dAgentState::default();
+    job.pipeline = super::Gen3dPipelineState::default();
     job.run_started_at = None;
     job.last_run_elapsed = None;
     job.current_run_tokens = 0;
@@ -1128,6 +1129,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
     job.agent = Gen3dAgentState::default();
+    job.pipeline = super::Gen3dPipelineState::default();
     job.save_seq = 0;
     job.edit_base_prefab_id = None;
     job.save_overwrite_prefab_id = None;

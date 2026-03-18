@@ -30,13 +30,14 @@ How to see it working (after implementation):
 - [x] (2026-03-18 22:10 CST) Drafted this ExecPlan.
 - [x] (2026-03-18 23:07 CST) Revised this ExecPlan to call out pipeline reachability (all entrypoints), add a deterministic QA/motion remediation loop, tighten tool contracts/gates, and note mock-backend gaps.
 - [x] (2026-03-18 23:40 CST) Implemented pipeline orchestrator skeleton + config toggle (pipeline currently falls back to agent-step; deterministic pipeline logic comes next).
-- [ ] Add new LLM tool: `llm_generate_draft_ops_v1` (suggestions only; no mutation) + strict structured-output schema.
-- [ ] Implement create-session pipeline flow (new Build): plan → components → QA → (render/review) loops → finish.
-- [ ] Implement edit-session pipeline flow (seeded Edit/Fork): plan-ops → missing components → DraftOps suggest+apply (atomic) → QA → (render/review) loops → finish.
-- [ ] Implement deterministic fallback to agent-step (bounded retries; explicit status + Info Store event).
-- [ ] Add mock backend responses + offline tests so the pipeline is regression-tested without network.
-- [ ] Update docs (`gen_3d.md`) to describe pipeline mode + fallback and the new DraftOps tool.
-- [ ] Run `cargo test` and the rendered smoke test; fix any regressions.
+- [x] (2026-03-19 01:35 CST) Added new LLM tool: `llm_generate_draft_ops_v1` (suggestions only; no mutation) + strict structured-output schema + engine-side validation.
+- [x] (2026-03-19 01:35 CST) Implemented create-session pipeline flow (new Build): plan → components → QA → (render/review) loops → finish.
+- [x] (2026-03-19 01:35 CST) Implemented edit-session pipeline flow (seeded Edit/Fork): plan-ops → DraftOps suggest+apply (atomic) → QA → (render/review) loops → finish.
+- [x] (2026-03-19 01:35 CST) Implemented deterministic fallback to agent-step (bounded retries; explicit status + Info Store event).
+- [x] (2026-03-19 01:35 CST) Added mock backend responses + offline tests so the pipeline is regression-tested without network.
+- [x] (2026-03-19 01:35 CST) Updated docs (`gen_3d.md`) to describe pipeline mode + fallback and the new DraftOps tool.
+- [x] (2026-03-19 01:36 CST) Ran `cargo test`.
+- [x] (2026-03-19 01:48 CST) Ran the rendered smoke test (`cargo run -- --rendered-seconds 2`).
 
 
 ## Surprises & Discoveries
@@ -54,9 +55,11 @@ How to see it working (after implementation):
 
 - Observation: Pipeline mode is currently not reachable because all session entrypoints force agent mode, and `Gen3dAiMode` currently only contains `Agent`.
   Evidence: `src/gen3d/ai/orchestration.rs::gen3d_start_build_from_api`, `src/gen3d/ai/orchestration.rs::gen3d_resume_build_from_api`, and `src/gen3d/ai/orchestration.rs::gen3d_start_seeded_session_from_prefab_id_from_api` set `job.mode = Gen3dAiMode::Agent`. Also `src/gen3d/ai/job.rs::Gen3dAiMode` currently has only the `Agent` variant.
+  Update: Resolved (2026-03-18) by introducing `[gen3d].orchestrator = "pipeline"` and dispatching `gen3d_poll_ai_job` to the pipeline orchestrator when enabled.
 
 - Observation: `mock://gen3d` currently has no mock responses for `tool_plan_ops_*` and `tool_review_*` artifact prefixes, and will error if tests/pipeline try to call those tools without extending the mock backend.
   Evidence: `src/gen3d/ai/openai.rs::mock_gen3d_response_text` handles `tool_plan_`, `tool_component`, and `tool_motion_authoring_`, but returns `mock://gen3d has no response for artifact_prefix ...` for other prefixes.
+  Update: Resolved (2026-03-19) by adding mock responses for `tool_plan_ops_*`, `tool_review_*`, and `tool_draft_ops_*`.
 
 
 ## Decision Log
@@ -88,7 +91,10 @@ How to see it working (after implementation):
 
 ## Outcomes & Retrospective
 
-(To be filled during/after implementation.)
+- Outcome: Gen3D can now run in a deterministic pipeline mode (engine-driven state machine) with bounded retries and explicit fallback to agent-step.
+- Outcome: Seeded Edit/Fork runs are DraftOps-first via a new schema-constrained tool `llm_generate_draft_ops_v1` (suggestions-only) + deterministic application via `apply_draft_ops_v1` (atomic + `if_assembly_rev`).
+- Outcome: Offline regression coverage exists for create + seeded edit flows, plus a forced-failure case that triggers pipeline fallback to agent-step on persistent DraftOps schema failures (mock backend marker).
+- Outcome: Rendered smoke run starts and exits cleanly (`--rendered-seconds 2`).
 
 
 ## Context and Orientation

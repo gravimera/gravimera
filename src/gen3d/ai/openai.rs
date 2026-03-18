@@ -1348,6 +1348,13 @@ fn mock_generate_text_via_openai(
         user_text: &str,
         text: String,
     ) -> String {
+        const MARKER_INVALID_DRAFT_OPS_ALWAYS: &str = "__MOCK_INVALID_DRAFT_OPS_ALWAYS__";
+        if user_text.contains(MARKER_INVALID_DRAFT_OPS_ALWAYS)
+            && artifact_prefix.starts_with("tool_draft_ops_")
+        {
+            return "{".to_string();
+        }
+
         const MARKER: &str = "__MOCK_TRUNCATE_ONCE__";
         if !user_text.contains(MARKER) {
             return text;
@@ -1485,6 +1492,83 @@ fn mock_generate_text_via_openai(
             })
             .to_string()
         }
+    } else if artifact_prefix.starts_with("tool_plan_ops_") {
+        // A "no-op" plan-ops patch. This exercises the PlanOps parsing/apply path offline.
+        serde_json::json!({ "version": 1, "ops": [] }).to_string()
+    } else if artifact_prefix.starts_with("tool_review_") {
+        let (run_id, attempt, plan_hash, assembly_rev) = parse_applies_to_from_user_text(user_text)
+            .unwrap_or_else(|| ("".into(), 0, "".into(), 0));
+        serde_json::json!({
+            "version": 1,
+            "applies_to": { "run_id": run_id, "attempt": attempt, "plan_hash": plan_hash, "assembly_rev": assembly_rev },
+            "actions": [
+                { "kind": "accept" }
+            ],
+            "summary": "Mock: accept review."
+        })
+        .to_string()
+    } else if artifact_prefix.starts_with("tool_draft_ops_") {
+        fn find_first_part_id_by_component(user_text: &str) -> Option<(String, String, [f32; 3])> {
+            let marker = "Component parts snapshots (JSON; includes part_id_uuid + recipes):";
+            let after = user_text.split(marker).nth(1)?;
+            for line in after.lines() {
+                let line = line.trim();
+                if !line.starts_with('{') {
+                    continue;
+                }
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                    continue;
+                };
+                let component = value.get("component")?.as_str()?.trim().to_string();
+                if component.is_empty() {
+                    continue;
+                }
+                let parts = value.get("parts").and_then(|v| v.as_array())?;
+                for part in parts {
+                    let part_id = part
+                        .get("part_id_uuid")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if part_id.is_empty() || part_id == "null" {
+                        continue;
+                    }
+                    let scale = part
+                        .get("transform")
+                        .and_then(|v| v.get("scale"))
+                        .and_then(|v| v.as_array())
+                        .and_then(|arr| {
+                            (arr.len() == 3).then_some([
+                                arr[0].as_f64().unwrap_or(1.0) as f32,
+                                arr[1].as_f64().unwrap_or(1.0) as f32,
+                                arr[2].as_f64().unwrap_or(1.0) as f32,
+                            ])
+                        })
+                        .unwrap_or([1.0, 1.0, 1.0]);
+                    return Some((component, part_id, scale));
+                }
+            }
+            None
+        }
+
+        let Some((component, part_id_uuid, scale)) = find_first_part_id_by_component(user_text)
+        else {
+            return Err("mock://gen3d: tool_draft_ops_* missing component parts snapshots".into());
+        };
+        let new_scale = [scale[0], scale[1], scale[2] * 1.25];
+        serde_json::json!({
+            "version": 1,
+            "ops": [
+                {
+                    "kind": "update_primitive_part",
+                    "component": component,
+                    "part_id_uuid": part_id_uuid,
+                    "set_transform": { "scale": new_scale }
+                }
+            ]
+        })
+        .to_string()
     } else if artifact_prefix.starts_with("tool_plan_") {
         plan_json_for_kind(mock_kind_from_text(user_text)).to_string()
     } else if artifact_prefix.starts_with("tool_component") {

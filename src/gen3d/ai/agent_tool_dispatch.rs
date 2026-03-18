@@ -14,7 +14,7 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED,
     TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
     TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
+    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
     TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MERGE_WORKSPACE,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
@@ -5572,6 +5572,246 @@ pub(super) fn execute_tool_call(
             job.agent.pending_tool_call = Some(call);
             job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::GeneratePlanOps);
             job.phase = Gen3dAiPhase::AgentWaitingTool;
+            ToolCallOutcome::StartedAsync
+        }
+        TOOL_ID_LLM_GENERATE_DRAFT_OPS => {
+            let Some(ai) = job.ai.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing AI config".into(),
+                ));
+            };
+            let Some(pass_dir) = job.pass_dir.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing pass dir".into(),
+                ));
+            };
+            if job.planned_components.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "{TOOL_ID_LLM_GENERATE_DRAFT_OPS} requires an existing accepted plan. Run `{TOOL_ID_LLM_GENERATE_PLAN}` first."
+                    ),
+                ));
+            }
+
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct GenerateDraftOpsArgsV1 {
+                prompt: String,
+                #[serde(default)]
+                scope_components: Vec<String>,
+                #[serde(default)]
+                max_ops: Option<u32>,
+                #[serde(default)]
+                strategy: Option<String>,
+                #[serde(default)]
+                allow_remove_parts: Option<bool>,
+            }
+
+            let args: GenerateDraftOpsArgsV1 = match serde_json::from_value(call.args.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!(
+                            "Invalid args for `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`: {err}"
+                        ),
+                    ));
+                }
+            };
+
+            let prompt_text = args.prompt.trim();
+            if prompt_text.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!("`{TOOL_ID_LLM_GENERATE_DRAFT_OPS}` requires a non-empty args.prompt string."),
+                ));
+            }
+
+            let max_ops = args.max_ops.unwrap_or(24).clamp(1, 64) as usize;
+            let strategy = args.strategy.as_deref().unwrap_or("balanced").trim().to_string();
+            if strategy != "conservative" && strategy != "balanced" {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "Invalid strategy={strategy:?}. Expected one of: \"conservative\", \"balanced\"."
+                    ),
+                ));
+            }
+            let allow_remove_parts = args.allow_remove_parts.unwrap_or(false);
+
+            let mut scope_components: Vec<String> = Vec::new();
+            let mut seen = std::collections::HashSet::<String>::new();
+            for name in args.scope_components {
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let idx = job
+                    .planned_components
+                    .iter()
+                    .position(|c| c.name == name)
+                    .or_else(|| resolve_component_index_by_name_hint(&job.planned_components, &name))
+                    .unwrap_or(usize::MAX);
+                if idx == usize::MAX || idx >= job.planned_components.len() {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!(
+                            "Unknown scope_components entry: {name:?}. Hint: use component names from the plan."
+                        ),
+                    ));
+                }
+                let canonical = job.planned_components[idx].name.clone();
+                if seen.insert(canonical.clone()) {
+                    scope_components.push(canonical);
+                }
+            }
+
+            let include_components: Vec<String> = if scope_components.is_empty() {
+                job.planned_components
+                    .iter()
+                    .map(|c| c.name.clone())
+                    .collect()
+            } else {
+                scope_components.clone()
+            };
+
+            let workspace_id = job.active_workspace_id().trim().to_string();
+            let (snapshots, mut missing) = {
+                let store = match job.ensure_info_store() {
+                    Ok(s) => s,
+                    Err(err) => {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call.call_id,
+                            call.tool_id,
+                            err,
+                        ));
+                    }
+                };
+
+                let mut snapshots: Vec<serde_json::Value> = Vec::new();
+                let mut missing: Vec<String> = Vec::new();
+                for component in &include_components {
+                    let component_seg = normalize_identifier_for_match(component.as_str());
+                    let component_seg = if component_seg.is_empty() {
+                        "unknown".to_string()
+                    } else {
+                        component_seg
+                    };
+                    let key = format!("ws.{workspace_id}.component_parts.{component_seg}");
+                    if let Some(record) =
+                        store.kv_latest_record(INFO_KV_NAMESPACE_GEN3D, key.as_str())
+                    {
+                        snapshots.push(record.value.clone());
+                    } else {
+                        missing.push(component.clone());
+                    }
+                }
+
+                (snapshots, missing)
+            };
+
+            if !missing.is_empty() {
+                missing.sort();
+                missing.dedup();
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "Missing component parts snapshots for: {missing:?}.\n\
+Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` for these component(s) first, then retry `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`.\n\
+Example: {{\"component\":\"cannon\",\"max_parts\":128}}"
+                    ),
+                ));
+            }
+            if snapshots.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "No component parts snapshots available.\n\
+Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`."
+                    ),
+                ));
+            }
+
+            let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
+            let scene_graph_summary = super::build_gen3d_scene_graph_summary(
+                &run_id,
+                job.attempt,
+                job.pass,
+                &job.plan_hash,
+                job.assembly_rev,
+                &job.planned_components,
+                draft,
+            );
+            if let Some(dir) = job.pass_dir.as_deref() {
+                write_gen3d_json_artifact(Some(dir), "scene_graph_summary.json", &scene_graph_summary);
+            }
+
+            let system = super::prompts::build_gen3d_draft_ops_system_instructions();
+            let image_object_summary = job
+                .user_image_object_summary
+                .as_ref()
+                .map(|s| s.text.as_str());
+            let user_text = super::prompts::build_gen3d_draft_ops_user_text(
+                prompt_text,
+                image_object_summary,
+                &run_id,
+                job.attempt,
+                job.pass,
+                &job.plan_hash,
+                job.assembly_rev,
+                strategy.as_str(),
+                max_ops,
+                allow_remove_parts,
+                &scene_graph_summary,
+                &snapshots,
+                scope_components.as_slice(),
+            );
+
+            let reasoning_effort = super::openai::cap_reasoning_effort(
+                ai.model_reasoning_effort(),
+                &config.gen3d_reasoning_effort_component,
+            );
+
+            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+            job.shared_result = Some(shared.clone());
+            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+                message: "Generating DraftOps…".into(),
+            }));
+            job.shared_progress = Some(progress.clone());
+            set_progress(&progress, "Calling model for DraftOps…");
+            job.agent.pending_llm_repair_attempt = 0;
+
+            spawn_gen3d_ai_text_thread(
+                shared,
+                progress,
+                job.cancel_flag.clone(),
+                job.session.clone(),
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::DraftOpsV1),
+                config.gen3d_require_structured_outputs,
+                ai,
+                reasoning_effort,
+                system,
+                user_text,
+                Vec::new(),
+                pass_dir,
+                sanitize_prefix(&format!("tool_draft_ops_{}", &call.call_id)),
+            );
+            job.agent.pending_tool_call = Some(call);
+            job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::GenerateDraftOps);
+            job.phase = Gen3dAiPhase::AgentWaitingTool;
+            workshop.status = "Generating DraftOps…".into();
             ToolCallOutcome::StartedAsync
         }
         TOOL_ID_LLM_GENERATE_COMPONENT => {

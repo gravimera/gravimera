@@ -5,6 +5,7 @@ pub(super) enum Gen3dAiJsonSchemaKind {
     AgentStepV1,
     PlanV1,
     PlanOpsV1,
+    DraftOpsV1,
     ComponentDraftV1,
     ReviewDeltaV1,
     ReviewDeltaNoRegenV1,
@@ -792,6 +793,249 @@ fn schema_motion_authoring() -> serde_json::Value {
     ])
 }
 
+fn schema_transform_delta_draft_ops() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "pos": schema_nullable(schema_vec3()),
+            "scale": schema_nullable(schema_vec3()),
+            "rot_quat_xyzw": schema_nullable(schema_quat_xyzw()),
+            "forward": schema_nullable(schema_vec3()),
+            "up": schema_nullable(schema_vec3()),
+        },
+        "required": [],
+    })
+}
+
+fn schema_primitive_params_draft_ops() -> serde_json::Value {
+    let capsule = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["capsule"]),
+            "radius": schema_number(),
+            "half_length": schema_number(),
+        },
+        "required": ["kind", "radius", "half_length"],
+    });
+    let conical_frustum = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["conical_frustum"]),
+            "top_radius": schema_number(),
+            "bottom_radius": schema_number(),
+            "height": schema_number(),
+        },
+        "required": ["kind", "top_radius", "bottom_radius", "height"],
+    });
+    let torus = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["torus"]),
+            "minor_radius": schema_number(),
+            "major_radius": schema_number(),
+        },
+        "required": ["kind", "minor_radius", "major_radius"],
+    });
+    schema_any_of(vec![capsule, conical_frustum, torus])
+}
+
+fn schema_primitive_spec_draft_ops() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "mesh": schema_string(),
+            "params": schema_nullable(schema_primitive_params_draft_ops()),
+            "color_rgba": schema_nullable(schema_color_input()),
+            "unlit": schema_nullable(schema_bool()),
+        },
+        "required": ["mesh"],
+    })
+}
+
+fn schema_animation_clip_draft_ops() -> serde_json::Value {
+    let delta = schema_object(vec![
+        ("pos", schema_nullable(schema_vec3())),
+        ("rot_quat_xyzw", schema_nullable(schema_quat_xyzw())),
+        ("scale", schema_nullable(schema_vec3())),
+    ]);
+    let keyframe = schema_object(vec![("t_units", schema_number()), ("delta", delta)]);
+
+    let clip_loop = schema_object(vec![
+        ("kind", schema_enum(&["loop"])),
+        ("duration_units", schema_number()),
+        ("keyframes", schema_array_of(keyframe.clone())),
+    ]);
+    let clip_once = schema_object(vec![
+        ("kind", schema_enum(&["once"])),
+        ("duration_units", schema_number()),
+        ("keyframes", schema_array_of(keyframe.clone())),
+    ]);
+    let clip_ping_pong = schema_object(vec![
+        ("kind", schema_enum(&["ping_pong"])),
+        ("duration_units", schema_number()),
+        ("keyframes", schema_array_of(keyframe)),
+    ]);
+    let clip_spin = schema_object(vec![
+        ("kind", schema_enum(&["spin"])),
+        ("axis", schema_vec3()),
+        ("radians_per_unit", schema_number()),
+        ("axis_space", schema_enum(&["join", "child_local"])),
+    ]);
+
+    schema_any_of(vec![clip_loop, clip_once, clip_ping_pong, clip_spin])
+}
+
+fn schema_animation_slot_spec_draft_ops() -> serde_json::Value {
+    schema_object(vec![
+        (
+            "driver",
+            schema_enum(&["always", "move_phase", "move_distance", "attack_time"]),
+        ),
+        ("speed_scale", schema_number()),
+        ("time_offset_units", schema_number()),
+        ("clip", schema_animation_clip_draft_ops()),
+    ])
+}
+
+fn schema_draft_op() -> serde_json::Value {
+    let set_anchor_transform = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_anchor_transform"]),
+            "component": schema_string(),
+            "anchor": schema_string(),
+            "set": schema_transform_delta_draft_ops(),
+        },
+        "required": ["kind", "component", "anchor", "set"],
+    });
+
+    let set_attachment_offset = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_attachment_offset"]),
+            "child_component": schema_string(),
+            "set": schema_transform_delta_draft_ops(),
+        },
+        "required": ["kind", "child_component", "set"],
+    });
+
+    let set_attachment_joint = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_attachment_joint"]),
+            "child_component": schema_string(),
+            "set_joint": schema_nullable(schema_joint()),
+        },
+        "required": ["kind", "child_component", "set_joint"],
+    });
+
+    let update_primitive_part = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["update_primitive_part"]),
+            "component": schema_string(),
+            "part_id_uuid": schema_string(),
+            "set_transform": schema_nullable(schema_transform_delta_draft_ops()),
+            "set_primitive": schema_nullable(schema_primitive_spec_draft_ops()),
+            "set_render_priority": schema_nullable(schema_integer()),
+        },
+        "required": ["kind", "component", "part_id_uuid"],
+    });
+
+    let add_primitive_part = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["add_primitive_part"]),
+            "component": schema_string(),
+            "part_id_uuid": schema_string(),
+            "primitive": schema_primitive_spec_draft_ops(),
+            "transform": schema_transform_delta_draft_ops(),
+            "render_priority": schema_nullable(schema_integer()),
+        },
+        "required": ["kind", "component", "part_id_uuid", "primitive", "transform"],
+    });
+
+    let remove_primitive_part = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["remove_primitive_part"]),
+            "component": schema_string(),
+            "part_id_uuid": schema_string(),
+        },
+        "required": ["kind", "component", "part_id_uuid"],
+    });
+
+    let upsert_animation_slot = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["upsert_animation_slot"]),
+            "child_component": schema_string(),
+            "channel": schema_string(),
+            "slot": schema_animation_slot_spec_draft_ops(),
+        },
+        "required": ["kind", "child_component", "channel", "slot"],
+    });
+
+    let scale_animation_slot_rotation = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["scale_animation_slot_rotation"]),
+            "child_component": schema_string(),
+            "channel": schema_string(),
+            "scale": schema_number(),
+        },
+        "required": ["kind", "child_component", "channel", "scale"],
+    });
+
+    let remove_animation_slot = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["remove_animation_slot"]),
+            "child_component": schema_string(),
+            "channel": schema_string(),
+        },
+        "required": ["kind", "child_component", "channel"],
+    });
+
+    schema_any_of(vec![
+        set_anchor_transform,
+        set_attachment_offset,
+        set_attachment_joint,
+        update_primitive_part,
+        add_primitive_part,
+        remove_primitive_part,
+        upsert_animation_slot,
+        scale_animation_slot_rotation,
+        remove_animation_slot,
+    ])
+}
+
+fn schema_draft_ops_tool_output() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "version": { "type": "integer", "enum": [1] },
+            "ops": schema_array_of(schema_draft_op()),
+        },
+        "required": ["version", "ops"],
+    })
+}
+
 fn schema_review_delta_no_regen() -> serde_json::Value {
     schema_object(vec![
         ("version", schema_integer()),
@@ -826,6 +1070,10 @@ pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchema
         Gen3dAiJsonSchemaKind::PlanOpsV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_plan_ops_v1",
             schema: schema_plan_ops(),
+        },
+        Gen3dAiJsonSchemaKind::DraftOpsV1 => Gen3dAiJsonSchemaSpec {
+            name: "gen3d_draft_ops_v1",
+            schema: schema_draft_ops_tool_output(),
         },
         Gen3dAiJsonSchemaKind::ComponentDraftV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_component_draft_v1",

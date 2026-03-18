@@ -42,6 +42,7 @@ pub(crate) const TOOL_ID_DETACH_COMPONENT: &str = "detach_component_v1";
 
 pub(crate) const TOOL_ID_LLM_GENERATE_PLAN: &str = "llm_generate_plan_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_PLAN_OPS: &str = "llm_generate_plan_ops_v1";
+pub(crate) const TOOL_ID_LLM_GENERATE_DRAFT_OPS: &str = "llm_generate_draft_ops_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENT: &str = "llm_generate_component_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENTS: &str = "llm_generate_components_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_MOTION_AUTHORING: &str = "llm_generate_motion_authoring_v1";
@@ -484,6 +485,21 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                     "plan_template_kv": { "namespace": "gen3d", "key": "ws.main.plan_template.preserve_mode.v1", "selector": { "kind": "latest" } },
                     "scope_components": ["head"],
                     "max_ops": 16
+                }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_LLM_GENERATE_DRAFT_OPS,
+                title: "LLM: generate DraftOps",
+                one_line_summary:
+                    "LLM-only: suggests `apply_draft_ops_v1` ops for in-place primitive edits (no mutation by itself). Requires existing component parts snapshots (call query_component_parts_v1 first). The engine validates + clamps ops deterministically before returning them.",
+                args_schema:
+                    "{ prompt: string, scope_components?: string[], max_ops?: number, strategy?: \"conservative\"|\"balanced\", allow_remove_parts?: bool }",
+                args_example: serde_json::json!({
+                    "prompt": "Make the cannon longer and darken it.",
+                    "scope_components": ["cannon"],
+                    "max_ops": 16,
+                    "strategy": "conservative",
+                    "allow_remove_parts": false
                 }),
             },
             Gen3dToolDescriptorV1 {

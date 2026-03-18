@@ -435,6 +435,9 @@ pub(super) fn poll_agent_tool(
             super::Gen3dAgentLlmToolKind::GeneratePlanOps => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanOpsV1)
             }
+            super::Gen3dAgentLlmToolKind::GenerateDraftOps => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::DraftOpsV1)
+            }
             super::Gen3dAgentLlmToolKind::GenerateComponent { .. }
             | super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1)
@@ -1427,11 +1430,11 @@ pub(super) fn poll_agent_tool(
                                 let image_object_summary = job
                                     .user_image_object_summary
                                     .as_ref()
-                                    .map(|s| s.text.as_str());
+                                    .map(|s| s.text.clone());
                                 let user_text =
                                     super::prompts::build_gen3d_plan_ops_user_text_preserve_existing_components(
                                         prompt_text.as_str(),
-                                        image_object_summary,
+                                        image_object_summary.as_deref(),
                                         workshop.speed_mode,
                                         None,
                                         &job.planned_components,
@@ -1460,6 +1463,503 @@ pub(super) fn poll_agent_tool(
                                 ) {
                                     return;
                                 }
+                                Gen3dToolResultJsonV1::err(
+                                    call.call_id.clone(),
+                                    call.tool_id.clone(),
+                                    err,
+                                )
+                            }
+                            _ => Gen3dToolResultJsonV1::err(
+                                call.call_id.clone(),
+                                call.tool_id.clone(),
+                                err,
+                            ),
+                        },
+                    }
+                }
+                super::Gen3dAgentLlmToolKind::GenerateDraftOps => {
+                    let text = resp.text;
+
+                    if let Some(dir) = job.pass_dir.as_deref() {
+                        write_gen3d_text_artifact(Some(dir), "draft_ops_raw.txt", text.trim());
+                    }
+
+                    #[derive(Debug, Deserialize)]
+                    #[serde(deny_unknown_fields)]
+                    struct DraftOpsOutJsonV1 {
+                        version: u32,
+                        ops: Vec<serde_json::Value>,
+                    }
+
+                    fn kind_string(op: &serde_json::Value) -> String {
+                        op.get("kind")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string()
+                    }
+
+                    fn validate_no_unknown_keys(
+                        kind: &str,
+                        obj: &serde_json::Map<String, serde_json::Value>,
+                    ) -> Result<(), String> {
+                        let allowed: std::collections::HashSet<&'static str> = match kind {
+                            "set_anchor_transform" => {
+                                ["kind", "component", "anchor", "set"].into_iter().collect()
+                            }
+                            "set_attachment_offset" => {
+                                ["kind", "child_component", "set"].into_iter().collect()
+                            }
+                            "set_attachment_joint" => {
+                                ["kind", "child_component", "set_joint"].into_iter().collect()
+                            }
+                            "update_primitive_part" => [
+                                "kind",
+                                "component",
+                                "part_id_uuid",
+                                "set_transform",
+                                "set_primitive",
+                                "set_render_priority",
+                            ]
+                            .into_iter()
+                            .collect(),
+                            "add_primitive_part" => [
+                                "kind",
+                                "component",
+                                "part_id_uuid",
+                                "primitive",
+                                "transform",
+                                "render_priority",
+                            ]
+                            .into_iter()
+                            .collect(),
+                            "remove_primitive_part" => {
+                                ["kind", "component", "part_id_uuid"].into_iter().collect()
+                            }
+                            "upsert_animation_slot" => {
+                                ["kind", "child_component", "channel", "slot"]
+                                    .into_iter()
+                                    .collect()
+                            }
+                            "scale_animation_slot_rotation" => {
+                                ["kind", "child_component", "channel", "scale"]
+                                    .into_iter()
+                                    .collect()
+                            }
+                            "remove_animation_slot" => {
+                                ["kind", "child_component", "channel"].into_iter().collect()
+                            }
+                            other => {
+                                return Err(format!("Unknown DraftOp kind={other:?}"));
+                            }
+                        };
+
+                        for key in obj.keys() {
+                            if !allowed.contains(key.as_str()) {
+                                return Err(format!(
+                                    "DraftOp kind={kind:?} includes unknown key {key:?}"
+                                ));
+                            }
+                        }
+                        Ok(())
+                    }
+
+                    fn validate_draft_ops(
+                        job: &mut Gen3dAiJob,
+                        call: &crate::gen3d::agent::Gen3dToolCallJsonV1,
+                        ops: &[serde_json::Value],
+                    ) -> Result<(), String> {
+                        let max_ops = call
+                            .args
+                            .get("max_ops")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(24)
+                            .clamp(1, 64) as usize;
+                        if ops.len() > max_ops {
+                            return Err(format!(
+                                "Too many ops: {} > max_ops={max_ops}",
+                                ops.len()
+                            ));
+                        }
+
+                        let allow_remove_parts = call
+                            .args
+                            .get("allow_remove_parts")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        let planned_components = job.planned_components.clone();
+                        let planned_names: std::collections::HashSet<String> = planned_components
+                            .iter()
+                            .map(|c| c.name.clone())
+                            .collect();
+
+                        let workspace_id = job.active_workspace_id().trim().to_string();
+                        let mut parts_by_component: std::collections::HashMap<String, std::collections::HashSet<String>> =
+                            std::collections::HashMap::new();
+                        {
+                            let store = job.ensure_info_store()?;
+                            for comp in planned_components.iter() {
+                                let component_seg =
+                                    super::agent_parsing::normalize_identifier_for_match(
+                                        comp.name.as_str(),
+                                    );
+                                if component_seg.is_empty() {
+                                    continue;
+                                }
+                                let key = format!("ws.{workspace_id}.component_parts.{component_seg}");
+                                let Some(record) = store.kv_latest_record("gen3d", key.as_str())
+                                else {
+                                    continue;
+                                };
+                                let mut ids = std::collections::HashSet::<String>::new();
+                                if let Some(parts) =
+                                    record.value.get("parts").and_then(|v| v.as_array())
+                                {
+                                    for part in parts {
+                                        if let Some(id) =
+                                            part.get("part_id_uuid").and_then(|v| v.as_str())
+                                        {
+                                            let id = id.trim();
+                                            if !id.is_empty() {
+                                                ids.insert(id.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                                if !ids.is_empty() {
+                                    parts_by_component.insert(comp.name.clone(), ids);
+                                }
+                            }
+                        }
+
+                        for (idx, op) in ops.iter().enumerate() {
+                            let serde_json::Value::Object(obj) = op else {
+                                return Err(format!("ops[{idx}] is not an object"));
+                            };
+                            let kind = kind_string(op);
+                            if kind.is_empty() {
+                                return Err(format!("ops[{idx}] is missing kind"));
+                            }
+
+                            validate_no_unknown_keys(kind.as_str(), obj)?;
+
+                            let component = op
+                                .get("component")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| op.get("child_component").and_then(|v| v.as_str()))
+                                .and_then(|s| {
+                                    let s = s.trim();
+                                    (!s.is_empty()).then_some(s)
+                                });
+
+                            match kind.as_str() {
+                                "set_anchor_transform" => {
+                                    let component = component.ok_or_else(|| {
+                                        "set_anchor_transform requires component".to_string()
+                                    })?;
+                                    if !planned_names.contains(component) {
+                                        return Err(format!(
+                                            "ops[{idx}] references unknown component={component:?}"
+                                        ));
+                                    }
+                                    let anchor = op
+                                        .get("anchor")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .trim();
+                                    if anchor.is_empty() {
+                                        return Err(format!(
+                                            "ops[{idx}] set_anchor_transform requires anchor"
+                                        ));
+                                    }
+                                    let exists = planned_components.iter().any(|c| {
+                                        c.name == component
+                                            && c.anchors
+                                                .iter()
+                                                .any(|a| a.name.as_ref() == anchor)
+                                    });
+                                    if !exists {
+                                        return Err(format!(
+                                            "ops[{idx}] anchor not found: component={component:?} anchor={anchor:?}"
+                                        ));
+                                    }
+                                }
+                                "set_attachment_offset" | "set_attachment_joint" => {
+                                    let component = component.ok_or_else(|| {
+                                        format!("{kind} requires child_component")
+                                    })?;
+                                    if !planned_names.contains(component) {
+                                        return Err(format!(
+                                            "ops[{idx}] references unknown child_component={component:?}"
+                                        ));
+                                    }
+                                }
+                                "remove_primitive_part" => {
+                                    if !allow_remove_parts {
+                                        return Err("remove_primitive_part rejected: allow_remove_parts=false".into());
+                                    }
+                                    let component = component.ok_or_else(|| {
+                                        "remove_primitive_part requires component".to_string()
+                                    })?;
+                                    if !planned_names.contains(component) {
+                                        return Err(format!(
+                                            "ops[{idx}] references unknown component={component:?}"
+                                        ));
+                                    }
+                                    let part_id = op
+                                        .get("part_id_uuid")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .trim();
+                                    if part_id.is_empty() {
+                                        return Err(format!(
+                                            "ops[{idx}] remove_primitive_part requires part_id_uuid"
+                                        ));
+                                    }
+                                    let known = parts_by_component
+                                        .get(component)
+                                        .map(|set| set.contains(part_id))
+                                        .unwrap_or(false);
+                                    if !known {
+                                        return Err(format!(
+                                            "ops[{idx}] unknown part_id_uuid={part_id:?} for component={component:?} (call query_component_parts_v1 first)"
+                                        ));
+                                    }
+                                }
+                                "update_primitive_part" => {
+                                    let component = component.ok_or_else(|| {
+                                        "update_primitive_part requires component".to_string()
+                                    })?;
+                                    if !planned_names.contains(component) {
+                                        return Err(format!(
+                                            "ops[{idx}] references unknown component={component:?}"
+                                        ));
+                                    }
+                                    let part_id = op
+                                        .get("part_id_uuid")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .trim();
+                                    if part_id.is_empty() {
+                                        return Err(format!(
+                                            "ops[{idx}] update_primitive_part requires part_id_uuid"
+                                        ));
+                                    }
+                                    let known = parts_by_component
+                                        .get(component)
+                                        .map(|set| set.contains(part_id))
+                                        .unwrap_or(false);
+                                    if !known {
+                                        return Err(format!(
+                                            "ops[{idx}] unknown part_id_uuid={part_id:?} for component={component:?} (call query_component_parts_v1 first)"
+                                        ));
+                                    }
+                                }
+                                "add_primitive_part" => {
+                                    let component = component.ok_or_else(|| {
+                                        "add_primitive_part requires component".to_string()
+                                    })?;
+                                    if !planned_names.contains(component) {
+                                        return Err(format!(
+                                            "ops[{idx}] references unknown component={component:?}"
+                                        ));
+                                    }
+                                    let part_id = op
+                                        .get("part_id_uuid")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .trim();
+                                    if part_id.is_empty() {
+                                        return Err(format!(
+                                            "ops[{idx}] add_primitive_part requires part_id_uuid"
+                                        ));
+                                    }
+                                    if uuid::Uuid::parse_str(part_id).is_err() {
+                                        return Err(format!(
+                                            "ops[{idx}] add_primitive_part part_id_uuid is not a valid UUID: {part_id:?}"
+                                        ));
+                                    }
+                                }
+                                "upsert_animation_slot"
+                                | "scale_animation_slot_rotation"
+                                | "remove_animation_slot" => {
+                                    let component = component.ok_or_else(|| {
+                                        format!("{kind} requires child_component")
+                                    })?;
+                                    if !planned_names.contains(component) {
+                                        return Err(format!(
+                                            "ops[{idx}] references unknown child_component={component:?}"
+                                        ));
+                                    }
+                                    let channel = op
+                                        .get("channel")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .trim();
+                                    if channel.is_empty() {
+                                        return Err(format!("ops[{idx}] {kind} requires channel"));
+                                    }
+                                }
+                                other => {
+                                    return Err(format!("Unknown DraftOp kind={other:?}"));
+                                }
+                            }
+                        }
+
+                        Ok(())
+                    }
+
+                    let parsed = (|| {
+                        let json = parse::extract_json_object(text.as_str())
+                            .ok_or_else(|| "Missing JSON object in DraftOps output".to_string())?;
+                        let value: DraftOpsOutJsonV1 = serde_json::from_str(&json)
+                            .map_err(|err| format!("DraftOps schema mismatch: {err}"))?;
+                        if value.version != 1 {
+                            return Err(format!(
+                                "Unsupported DraftOps version {} (expected 1).",
+                                value.version
+                            ));
+                        }
+                        validate_draft_ops(job, &call, value.ops.as_slice())?;
+                        Ok(value)
+                    })();
+
+                    match parsed {
+                        Ok(value) => {
+                            let json = serde_json::json!({
+                                "version": 1,
+                                "ops": value.ops,
+                            });
+                            if let Some(dir) = job.pass_dir.as_deref() {
+                                write_gen3d_json_artifact(Some(dir), "draft_ops_suggested_last.json", &json);
+                            }
+                            Gen3dToolResultJsonV1::ok(call.call_id.clone(), call.tool_id.clone(), json)
+                        }
+                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                            (Some(ai), Some(pass_dir)) => {
+                                let system =
+                                    super::prompts::build_gen3d_draft_ops_system_instructions();
+                                let prompt_text = call
+                                    .args
+                                    .get("prompt")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .trim()
+                                    .to_string();
+                                let scope_components: Vec<String> = call
+                                    .args
+                                    .get("scope_components")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str())
+                                            .map(|s| s.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .unwrap_or_default();
+                                let max_ops = call
+                                    .args
+                                    .get("max_ops")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(24)
+                                    .clamp(1, 64) as usize;
+                                let strategy = call
+                                    .args
+                                    .get("strategy")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("balanced")
+                                    .trim()
+                                    .to_string();
+                                let allow_remove_parts = call
+                                    .args
+                                    .get("allow_remove_parts")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+
+                                let image_object_summary = job
+                                    .user_image_object_summary
+                                    .as_ref()
+                                    .map(|s| s.text.clone());
+
+                                let run_id =
+                                    job.run_id.map(|id| id.to_string()).unwrap_or_default();
+                                let scene_graph_summary = super::build_gen3d_scene_graph_summary(
+                                    &run_id,
+                                    job.attempt,
+                                    job.pass,
+                                    &job.plan_hash,
+                                    job.assembly_rev,
+                                    &job.planned_components,
+                                    draft,
+                                );
+
+                                let workspace_id = job.active_workspace_id().trim().to_string();
+                                let planned_component_names: Vec<String> = job
+                                    .planned_components
+                                    .iter()
+                                    .map(|c| c.name.clone())
+                                    .collect();
+                                let snapshots: Vec<serde_json::Value> = match job.ensure_info_store()
+                                {
+                                    Ok(store) => {
+                                        let mut out = Vec::new();
+                                        for name in planned_component_names.iter() {
+                                            let seg =
+                                                super::agent_parsing::normalize_identifier_for_match(
+                                                    name.as_str(),
+                                                );
+                                            if seg.is_empty() {
+                                                continue;
+                                            }
+                                            let key =
+                                                format!("ws.{workspace_id}.component_parts.{seg}");
+                                            if let Some(record) =
+                                                store.kv_latest_record("gen3d", key.as_str())
+                                            {
+                                                out.push(record.value.clone());
+                                            }
+                                        }
+                                        out
+                                    }
+                                    Err(_) => Vec::new(),
+                                };
+
+                                let user_text = super::prompts::build_gen3d_draft_ops_user_text(
+                                    prompt_text.as_str(),
+                                    image_object_summary.as_deref(),
+                                    &run_id,
+                                    job.attempt,
+                                    job.pass,
+                                    &job.plan_hash,
+                                    job.assembly_rev,
+                                    strategy.as_str(),
+                                    max_ops,
+                                    allow_remove_parts,
+                                    &scene_graph_summary,
+                                    &snapshots,
+                                    scope_components.as_slice(),
+                                );
+
+                                if schedule_llm_tool_schema_repair(
+                                    job,
+                                    workshop,
+                                    &call,
+                                    kind,
+                                    ai,
+                                    &config.gen3d_reasoning_effort_repair,
+                                    pass_dir,
+                                    system,
+                                    user_text,
+                                    Vec::new(),
+                                    &err,
+                                    &text,
+                                    &format!("tool_draft_ops_{}", call.call_id),
+                                ) {
+                                    return;
+                                }
+
                                 Gen3dToolResultJsonV1::err(
                                     call.call_id.clone(),
                                     call.tool_id.clone(),

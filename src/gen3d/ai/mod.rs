@@ -43,6 +43,8 @@ mod workspaces;
 
 #[cfg(test)]
 mod regression_tests;
+#[cfg(test)]
+mod pipeline_orchestrator_tests;
 
 use super::{GEN3D_MAX_REQUEST_IMAGES, GEN3D_PREVIEW_DEFAULT_PITCH, GEN3D_PREVIEW_DEFAULT_YAW};
 

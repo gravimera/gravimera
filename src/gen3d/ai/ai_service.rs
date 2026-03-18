@@ -63,6 +63,7 @@ fn expected_version_for_schema(kind: Gen3dAiJsonSchemaKind) -> u64 {
         Gen3dAiJsonSchemaKind::AgentStepV1 => 1,
         Gen3dAiJsonSchemaKind::PlanV1 => 8,
         Gen3dAiJsonSchemaKind::PlanOpsV1 => 1,
+        Gen3dAiJsonSchemaKind::DraftOpsV1 => 1,
         Gen3dAiJsonSchemaKind::ComponentDraftV1 => 2,
         Gen3dAiJsonSchemaKind::ReviewDeltaV1 => 1,
         Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1 => 1,

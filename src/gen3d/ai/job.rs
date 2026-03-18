@@ -26,10 +26,70 @@ pub(super) enum Gen3dAiMode {
     LegacyPhaseMachine,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Gen3dPipelineStage {
+    #[default]
+    Start,
+    /// Create-session planning (new build).
+    CreatePlan,
+    /// Preserve-mode full replan (template required).
+    PreserveReplanTemplate,
+    PreserveReplanPlan,
+    /// Seeded Edit/Fork: preserve-mode PlanOps pass (diff-first replanning).
+    EditPlanTemplate,
+    EditPlanOps,
+    /// Ensure all components exist (missing-only or regen requested by review-delta).
+    EnsureComponents,
+    /// Seeded Edit/Fork: capture component parts snapshots for DraftOps.
+    EditQueryComponentParts,
+    /// Seeded Edit/Fork: ask the LLM for DraftOps suggestions.
+    EditSuggestDraftOps,
+    /// Seeded Edit/Fork: apply suggested DraftOps (atomic + if_assembly_rev-gated).
+    EditApplyDraftOps,
+    /// QA loop (validate + smoke + motion validation) and deterministic remediation.
+    Qa,
+    /// Appearance review (optional).
+    RenderPreview,
+    ReviewDelta,
+    /// Terminal state: finish the run.
+    Finish,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct Gen3dPipelineState {
+    pub(super) stage: Gen3dPipelineStage,
+    pub(super) tool_seq: u32,
+    /// Prevent re-processing the same tool result across frames.
+    pub(super) last_processed_tool_call_id: Option<String>,
+    /// Preserve-mode replanning requires a plan template KV ref.
+    pub(super) plan_template_kv: Option<serde_json::Value>,
+    /// For edit sessions: progress through per-component `query_component_parts_v1` calls.
+    pub(super) query_parts_next_idx: usize,
+    /// For edit sessions: latest DraftOps suggestion payload `{version:1, ops:[...]}`.
+    pub(super) draft_ops_suggested: Option<serde_json::Value>,
+    /// For edit sessions: compact rejection payload appended to the next DraftOps prompt.
+    pub(super) draft_ops_last_rejected: Option<serde_json::Value>,
+    pub(super) edit_plan_ops_done: bool,
+    pub(super) edit_draft_ops_done: bool,
+    pub(super) draft_ops_attempts: u32,
+    pub(super) components_attempts: u32,
+    pub(super) qa_attempts: u32,
+    pub(super) qa_fixits_applied: u32,
+    pub(super) motion_authoring_attempts: u32,
+    pub(super) review_delta_attempts: u32,
+    pub(super) no_progress_state_hash: Option<String>,
+    pub(super) no_progress_tries: u32,
+    /// Cached preview blob ids from `render_preview_v1` for the next `llm_review_delta_v1`.
+    pub(super) pending_preview_blob_ids: Vec<String>,
+    /// Force a new plan call even if a plan already exists (used for replan requests).
+    pub(super) force_replan: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dAgentLlmToolKind {
     GeneratePlan,
     GeneratePlanOps,
+    GenerateDraftOps,
     GenerateComponent { component_idx: usize },
     GenerateComponentsBatch,
     GenerateMotionAuthoring,
@@ -514,6 +574,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) build_complete: bool,
     pub(super) mode: Gen3dAiMode,
     pub(super) phase: Gen3dAiPhase,
+    pub(super) pipeline: Gen3dPipelineState,
     pub(super) ai: Option<Gen3dAiServiceConfig>,
     pub(super) require_structured_outputs: bool,
     pub(super) run_id: Option<Uuid>,

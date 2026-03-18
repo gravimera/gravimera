@@ -1014,6 +1014,107 @@ Output format:\n\
     .to_string()
 }
 
+pub(super) fn build_gen3d_draft_ops_system_instructions() -> String {
+    "You are a 3D modeling assistant.\n\
+Return STRICT JSON for a DraftOps suggestion list.\n\n\
+Output format:\n\
+- Return ONLY one JSON object matching schema `gen3d_draft_ops_v1`.\n\
+- Output ONLY: {\"version\":1,\"ops\":[ ... ]}.\n\
+- Do NOT output markdown or extra commentary.\n\n\
+Hard rules:\n\
+- Use ONLY component names and part_id_uuid values present in the provided snapshots.\n\
+- Do NOT invent part_id_uuid for updates/removals.\n\
+- Only add new primitives when necessary; prefer updating existing primitives (transform/color/mesh params).\n\
+- Unless allow_remove_parts=true, do NOT output `remove_primitive_part`.\n"
+    .to_string()
+}
+
+pub(super) fn build_gen3d_draft_ops_user_text(
+    edit_prompt: &str,
+    image_object_summary: Option<&str>,
+    run_id: &str,
+    attempt: u32,
+    pass: u32,
+    plan_hash: &str,
+    assembly_rev: u32,
+    strategy: &str,
+    max_ops: usize,
+    allow_remove_parts: bool,
+    scene_graph_summary: &serde_json::Value,
+    component_parts_snapshots: &[serde_json::Value],
+    scope_components: &[String],
+) -> String {
+    let max_ops = max_ops.clamp(1, 64);
+
+    let mut out = String::new();
+    out.push_str(
+        "EDIT MODE (DraftOps suggestions): Suggest `apply_draft_ops_v1` ops to modify an existing Gen3D draft IN-PLACE.\n\
+Goal: satisfy the user edit request with minimal safe primitive edits.\n\
+Do NOT regenerate components.\n\n",
+    );
+
+    out.push_str("Request:\n");
+    out.push_str("- edit_prompt: ");
+    out.push_str(edit_prompt.trim());
+    out.push('\n');
+
+    out.push_str("\nRun context:\n");
+    out.push_str(&format!(
+        "- run_id: {run_id}\n- attempt: {attempt}\n- pass: {pass}\n- plan_hash: {plan_hash}\n- assembly_rev: {assembly_rev}\n"
+    ));
+
+    out.push_str("\nGuards:\n");
+    out.push_str(&format!("- max_ops: {max_ops}\n"));
+    out.push_str(&format!("- strategy: {strategy}\n"));
+    out.push_str(&format!(
+        "- allow_remove_parts: {}\n",
+        if allow_remove_parts { "true" } else { "false" }
+    ));
+    if scope_components.is_empty() {
+        out.push_str("- scope_components: (none)\n");
+    } else {
+        out.push_str("- scope_components: ");
+        for (idx, name) in scope_components.iter().take(32).enumerate() {
+            if idx > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(name.trim());
+        }
+        if scope_components.len() > 32 {
+            out.push_str(", …");
+        }
+        out.push('\n');
+    }
+    out.push_str(
+        "- IMPORTANT: Only use part_id_uuid values that appear in the snapshots below.\n\
+- Output MUST be exactly one JSON object.\n",
+    );
+
+    out.push_str("\nEffective user prompt context:\n");
+    out.push_str(&build_gen3d_effective_user_prompt(
+        edit_prompt,
+        image_object_summary,
+    ));
+
+    out.push_str("\nScene graph summary (JSON):\n");
+    out.push_str(
+        &serde_json::to_string(scene_graph_summary)
+            .unwrap_or_else(|_| scene_graph_summary.to_string()),
+    );
+    out.push('\n');
+
+    out.push_str("\nComponent parts snapshots (JSON; includes part_id_uuid + recipes):\n");
+    for snap in component_parts_snapshots.iter().take(16) {
+        out.push_str(&serde_json::to_string(snap).unwrap_or_else(|_| snap.to_string()));
+        out.push('\n');
+    }
+    if component_parts_snapshots.len() > 16 {
+        out.push_str("(truncated: too many component parts snapshots)\n");
+    }
+
+    out
+}
+
 pub(super) fn build_gen3d_plan_ops_user_text_preserve_existing_components(
     raw_prompt: &str,
     image_object_summary: Option<&str>,

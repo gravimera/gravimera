@@ -39,7 +39,17 @@ If generation fails, the status panel shows a short error summary; detailed step
 
 ---
 
-## Agent Loop (Implemented)
+## Orchestrators (Agent + Pipeline)
+
+Gen3D supports two orchestrators, selected via `[gen3d].orchestrator` in `config.toml`:
+
+- `agent` (default): a Codex-style `agent_step` loop where the model decides which tool to call next.
+- `pipeline`: a deterministic engine-driven state machine that runs the same high-level flow every time (plan → components → QA → optional render/review), using LLM-backed tools only as schema-constrained suggestion producers.
+  - When the pipeline cannot make progress (tool schema failures beyond repair budget, repeated atomic DraftOps rejections, no-progress guard, etc.), it **falls back to `agent`** with an explicit status line and an Info Store `EngineLog` event.
+
+---
+
+## Agent Loop Orchestrator (Implemented)
 
 Gen3D Build is a Codex-style, tool-driven agent loop.
 
@@ -86,6 +96,30 @@ Plan-level reuse:
   - When copying a subtree, the engine may need internal parent anchors (e.g. `next`) to exist on the target in order to attach expanded descendants. With `preserve_interfaces` / `copy_source`, missing internal parent anchors are hydrated deterministically from the source so subtree expansion can proceed. With `preserve_target`, missing required anchors still fail the copy.
 
 The loop continues until the AI returns `done`, the user clicks **Stop**, or a budget/no-progress guard stops best-effort.
+
+---
+
+## Pipeline Orchestrator (Implemented)
+
+When `[gen3d].orchestrator = "pipeline"`, the engine runs a deterministic pipeline orchestrator.
+
+Create sessions (new builds):
+
+- Ensure (optional) image summary exists.
+- `llm_generate_plan_v1` → `llm_generate_components_v1` (missing-only) → `qa_v1` remediation loop.
+- If QA indicates motion validation failures, the pipeline calls `llm_generate_motion_authoring_v1` and re-runs QA.
+- If QA still fails after bounded attempts, the pipeline calls `llm_review_delta_v1` as deterministic remediation (apply replan/regen/tweak actions via engine code) and loops back to QA.
+
+Seeded Edit/Fork sessions (DraftOps-first):
+
+- Preserve-mode diff replanning: `get_plan_template_v1` → `llm_generate_plan_ops_v1` (applies ops deterministically in-engine).
+- Capture editable part snapshots: `query_component_parts_v1` (per-component; snapshots stored in Info Store).
+- Primitive editing: `llm_generate_draft_ops_v1` (suggestions only; strict JSON) → `apply_draft_ops_v1` (engine applies ops atomically with `if_assembly_rev` gating).
+
+Debugging signals:
+
+- Status lines include pipeline phases like “Pipeline: planning… / generating components… / QA…”.
+- DraftOps application writes `apply_draft_ops_last.json` under the current `attempt_*/pass_*/` folder.
 
 ---
 
