@@ -68,6 +68,9 @@ pub(super) fn poll_gen3d_agent(
         Gen3dAiPhase::AgentWaitingUserImageSummary => {
             poll_agent_user_image_summary(config, workshop, job);
         }
+        Gen3dAiPhase::AgentWaitingPromptIntent => {
+            poll_agent_prompt_intent(config, workshop, job);
+        }
         Gen3dAiPhase::AgentWaitingStep => poll_agent_step(
             config,
             commands,
@@ -210,6 +213,73 @@ pub(super) fn spawn_agent_user_image_summary_request(
     Ok(())
 }
 
+pub(super) fn spawn_agent_prompt_intent_request(
+    config: &AppConfig,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    pass_dir: PathBuf,
+) -> Result<(), String> {
+    if job.prompt_intent.is_some() {
+        job.phase = Gen3dAiPhase::AgentWaitingStep;
+        return spawn_agent_step_request(config, workshop, job, pass_dir);
+    }
+
+    let Some(ai) = job.ai.clone() else {
+        return Err("Internal error: missing AI config.".into());
+    };
+
+    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+    job.shared_result = Some(shared.clone());
+    let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+        message: "Analyzing prompt…".into(),
+    }));
+    job.shared_progress = Some(progress.clone());
+
+    set_progress(&progress, "Determining prompt intent…");
+    status_steps::log_ai_request_started(
+        workshop,
+        "Analyze prompt intent",
+        "Determining whether the prompt requires gameplay attack capability.",
+    );
+
+    append_agent_trace_event_v1(
+        job.run_dir.as_deref(),
+        &AgentTraceEventV1::Info {
+            message: "Gen3D: analyzing prompt intent".into(),
+        },
+    );
+    append_gen3d_run_log(
+        Some(&pass_dir),
+        format!("prompt_intent_request attempt={} pass={}", job.attempt, job.pass),
+    );
+
+    let system = super::prompts::build_gen3d_prompt_intent_system_instructions();
+    let user_text = super::prompts::build_gen3d_prompt_intent_user_text(
+        &job.user_prompt_raw,
+        job.user_image_object_summary
+            .as_ref()
+            .map(|s| s.text.as_str()),
+    );
+    let reasoning_effort = super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+    spawn_gen3d_ai_text_thread(
+        shared,
+        progress,
+        job.cancel_flag.clone(),
+        job.session.clone(),
+        Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PromptIntentV1),
+        config.gen3d_require_structured_outputs,
+        ai,
+        reasoning_effort,
+        system,
+        user_text,
+        Vec::new(),
+        pass_dir,
+        "prompt_intent".into(),
+    );
+
+    Ok(())
+}
+
 fn truncate_text_to_max_words_preserving_whitespace(
     text: &str,
     max_words: usize,
@@ -345,7 +415,106 @@ fn poll_agent_user_image_summary(
                 }),
             );
 
-            workshop.status = "Reference images summarized.\nPlanning…".to_string();
+            workshop.status = "Reference images summarized.\nAnalyzing prompt…".to_string();
+            job.phase = Gen3dAiPhase::AgentWaitingPromptIntent;
+
+            let Some(pass_dir) = job.pass_dir.clone() else {
+                fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+                return;
+            };
+            if let Err(err) = spawn_agent_prompt_intent_request(config, workshop, job, pass_dir) {
+                fail_job(workshop, job, err);
+            }
+        }
+        Err(err) => {
+            fail_job(
+                workshop,
+                job,
+                format!(
+                    "Reference image pre-processing failed: {err}\nTip: try again or use a text prompt without images."
+                ),
+            );
+        }
+    }
+}
+
+fn poll_agent_prompt_intent(config: &AppConfig, workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {
+    if job.prompt_intent.is_some() {
+        job.phase = Gen3dAiPhase::AgentWaitingStep;
+        if let Some(pass_dir) = job.pass_dir.clone() {
+            if let Err(err) = spawn_agent_step_request(config, workshop, job, pass_dir) {
+                fail_job(workshop, job, err);
+            }
+        } else {
+            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+        }
+        return;
+    }
+
+    if job.shared_result.is_none() {
+        let Some(pass_dir) = job.pass_dir.clone() else {
+            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+            return;
+        };
+        if let Err(err) = spawn_agent_prompt_intent_request(config, workshop, job, pass_dir) {
+            fail_job(workshop, job, err);
+        }
+        return;
+    }
+
+    let Some(shared) = job.shared_result.as_ref() else {
+        fail_job(
+            workshop,
+            job,
+            "Internal error: missing Gen3D shared_result.",
+        );
+        return;
+    };
+    let Some(result) = take_shared_result(shared) else {
+        return;
+    };
+    job.shared_result = None;
+    job.shared_progress = None;
+
+    match result {
+        Ok(resp) => {
+            job.note_api_used(resp.api);
+            job.session = resp.session;
+            if let Some(tokens) = resp.total_tokens {
+                job.add_tokens(tokens);
+            }
+
+            let parsed = match super::parse::parse_ai_prompt_intent_from_text(&resp.text) {
+                Ok(v) => v,
+                Err(err) => {
+                    fail_job(
+                        workshop,
+                        job,
+                        format!("Prompt intent classification failed: {err}"),
+                    );
+                    return;
+                }
+            };
+            let requires_attack = parsed.requires_attack;
+            job.prompt_intent = Some(parsed.clone());
+
+            status_steps::log_ai_request_finished(
+                workshop,
+                &format!("OK (requires_attack={requires_attack})"),
+            );
+
+            if let Some(run_dir) = job.run_dir.clone() {
+                let attempt_dir = run_dir.join(format!("attempt_{}", job.attempt));
+                write_gen3d_json_artifact(
+                    Some(&attempt_dir),
+                    "inputs/prompt_intent.json",
+                    &serde_json::to_value(&parsed).unwrap_or_else(|_| {
+                        serde_json::json!({"version": 1, "requires_attack": requires_attack})
+                    }),
+                );
+            }
+
+            workshop.status = "Prompt analyzed.\nPlanning…".to_string();
             job.phase = Gen3dAiPhase::AgentWaitingStep;
 
             let Some(pass_dir) = job.pass_dir.clone() else {
@@ -360,9 +529,7 @@ fn poll_agent_user_image_summary(
             fail_job(
                 workshop,
                 job,
-                format!(
-                    "Reference image pre-processing failed: {err}\nTip: try again or use a text prompt without images."
-                ),
+                format!("Prompt intent classification failed: {err}"),
             );
         }
     }

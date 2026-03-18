@@ -944,7 +944,7 @@ fn run_smoke_check_v1(
     draft: &mut Gen3dDraft,
 ) -> Result<serde_json::Value, String> {
     let json = super::build_gen3d_smoke_results(
-        &job.user_prompt_raw,
+        job.prompt_intent.as_ref().map(|i| i.requires_attack),
         !job.user_images.is_empty(),
         job.rig_move_cycle_m,
         &job.planned_components,
@@ -1086,6 +1086,9 @@ fn build_capability_gaps_from_smoke_v1(
                 .and_then(|v| v.as_str())
                 .unwrap_or("warn")
                 .trim();
+            if severity != "error" {
+                continue;
+            }
             let message = issue
                 .get("message")
                 .and_then(|v| v.as_str())
@@ -6712,7 +6715,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 && can_render
             {
                 let smoke_results = super::build_gen3d_smoke_results(
-                    &job.user_prompt_raw,
+                    job.prompt_intent.as_ref().map(|i| i.requires_attack),
                     !job.user_images.is_empty(),
                     job.rig_move_cycle_m,
                     &job.planned_components,
@@ -7712,6 +7715,102 @@ mod tests {
                 g.get("kind").and_then(|v| v.as_str()) == Some("missing_motion_channel")
             }),
             "expected missing_motion_channel gap, got {gaps:?}"
+        );
+    }
+
+    #[test]
+    fn gen3d_capability_gaps_skips_warn_motion_validation_issues() {
+        let job = super::Gen3dAiJob::default();
+        let draft = crate::gen3d::state::Gen3dDraft {
+            defs: vec![make_test_root_def_movable(false)],
+        };
+
+        let smoke = serde_json::json!({
+            "motion_validation": {
+                "ok": true,
+                "issues": [{
+                    "severity": "warn",
+                    "kind": "attack_self_intersection",
+                    "component_id": "comp_1",
+                    "component_name": "head_left",
+                    "channel": "attack_primary",
+                    "message": "Self-intersection detected.",
+                    "evidence": {},
+                }]
+            }
+        });
+        let gaps = super::build_capability_gaps_from_smoke_v1(&job, &draft, &smoke);
+        assert!(
+            gaps.iter()
+                .all(|g| g.get("kind").and_then(|v| v.as_str()) != Some("motion_validation_error")),
+            "expected warn motion issues not to produce capability gaps, got {gaps:?}"
+        );
+    }
+
+    #[test]
+    fn gen3d_smoke_results_attack_requirement_comes_from_prompt_intent() {
+        let planned = vec![super::super::job::Gen3dPlannedComponent {
+            display_name: "1. root".into(),
+            name: "root".into(),
+            purpose: "root".into(),
+            modeling_notes: String::new(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: Some(Vec3::ONE),
+            anchors: Vec::new(),
+            contacts: Vec::new(),
+            attach_to: None,
+        }];
+
+        let draft = crate::gen3d::state::Gen3dDraft {
+            defs: vec![make_test_root_def_movable(false)],
+        };
+
+        let smoke_no_attack_required =
+            super::super::build_gen3d_smoke_results(Some(false), false, None, &planned, &draft);
+        assert_eq!(
+            smoke_no_attack_required
+                .get("attack_required_by_prompt")
+                .and_then(|v| v.as_bool()),
+            Some(false),
+            "expected attack_required_by_prompt=false, got {smoke_no_attack_required:?}"
+        );
+        let has_error = smoke_no_attack_required
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .is_some_and(|issues| {
+                issues.iter().any(|i| i.get("severity").and_then(|v| v.as_str()) == Some("error"))
+            });
+        assert!(
+            !has_error,
+            "expected no smoke errors when attack is not required, got {smoke_no_attack_required:?}"
+        );
+
+        let smoke_attack_required =
+            super::super::build_gen3d_smoke_results(Some(true), false, None, &planned, &draft);
+        assert_eq!(
+            smoke_attack_required
+                .get("attack_required_by_prompt")
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "expected attack_required_by_prompt=true, got {smoke_attack_required:?}"
+        );
+        let has_missing_root_error = smoke_attack_required
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .is_some_and(|issues| {
+                issues.iter().any(|i| {
+                    i.get("severity").and_then(|v| v.as_str()) == Some("error")
+                        && i.get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .contains("attack-capable")
+                })
+            });
+        assert!(
+            has_missing_root_error,
+            "expected missing root mobility/attack error when attack is required, got {smoke_attack_required:?}"
         );
     }
 

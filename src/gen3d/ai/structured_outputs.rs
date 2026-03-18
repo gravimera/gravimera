@@ -3,6 +3,7 @@ use serde_json::json;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dAiJsonSchemaKind {
     AgentStepV1,
+    PromptIntentV1,
     PlanV1,
     PlanOpsV1,
     DraftOpsV1,
@@ -1057,11 +1058,27 @@ fn schema_review_delta_no_regen() -> serde_json::Value {
     ])
 }
 
+fn schema_prompt_intent() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "version": { "type": "integer", "enum": [1] },
+            "requires_attack": schema_bool(),
+        },
+        "required": ["version", "requires_attack"],
+    })
+}
+
 pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchemaSpec {
     match kind {
         Gen3dAiJsonSchemaKind::AgentStepV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_agent_step_v1",
             schema: schema_agent_step(),
+        },
+        Gen3dAiJsonSchemaKind::PromptIntentV1 => Gen3dAiJsonSchemaSpec {
+            name: "gen3d_prompt_intent_v1",
+            schema: schema_prompt_intent(),
         },
         Gen3dAiJsonSchemaKind::PlanV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_plan_v1",

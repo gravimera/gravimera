@@ -29,20 +29,20 @@ How to see it working (after implementation):
 
 - [x] (2026-03-19) Investigated run cache showing repeated motion-authoring ↔ QA loop and documented root causes.
 - [x] (2026-03-19) Drafted this ExecPlan.
-- [ ] Implement prompt-intent extraction (generic, language-agnostic) and plumb into smoke/QA.
-- [ ] Make motion-validation warn findings non-blocking in `capability_gaps` (errors only).
-- [ ] Add unit tests + offline regression coverage for the two behaviors.
-- [ ] Update documentation that describes `capability_gaps` semantics and prompt-intent behavior.
-- [ ] Run `cargo test` and the rendered smoke test (`--rendered-seconds 2`).
+- [x] (2026-03-19) Implemented prompt-intent extraction (generic, language-agnostic) and plumbed into smoke/QA.
+- [x] (2026-03-19) Made motion-validation warn findings non-blocking in `capability_gaps` (errors only).
+- [x] (2026-03-19) Added unit tests for the two behaviors.
+- [x] (2026-03-19) Updated documentation to clarify `capability_gaps` semantics (errors-only) and prompt-intent behavior.
+- [x] (2026-03-19) Ran `cargo test` and the rendered smoke test (`cargo run -- --rendered-seconds 2`).
 
 
 ## Surprises & Discoveries
 
-- Observation: `attack_required_by_prompt` is computed by an English-only keyword heuristic.
-  Evidence: `src/gen3d/ai/orchestration.rs::build_gen3d_smoke_results` lowercases the raw prompt and checks a small set of substrings (`"can attack"`, `"weapon"`, `"gun"`, …).
+- Observation (pre-fix): `attack_required_by_prompt` was computed by an English-only keyword heuristic.
+  Evidence (pre-fix): `src/gen3d/ai/orchestration.rs::build_gen3d_smoke_results` lowercased the raw prompt and checked a small set of substrings (`"can attack"`, `"weapon"`, `"gun"`, …).
 
-- Observation: Warn-level `motion_validation` issues are surfaced as `capability_gaps`, not only as `warnings`.
-  Evidence: `src/gen3d/ai/agent_tool_dispatch.rs::build_capability_gaps_from_smoke_v1` converts every `smoke.motion_validation.issues[]` entry into a `{"kind":"motion_validation_error", ...}` gap regardless of severity.
+- Observation (pre-fix): Warn-level `motion_validation` issues were surfaced as `capability_gaps`, not only as `warnings`.
+  Evidence (pre-fix): `src/gen3d/ai/agent_tool_dispatch.rs::build_capability_gaps_from_smoke_v1` converted every `smoke.motion_validation.issues[]` entry into a `{"kind":"motion_validation_error", ...}` gap regardless of severity.
 
 - Observation: The agent prompt summary prints `capability_gaps=N` prominently for `qa_v1` tool results, which nudges agent behavior into a “fix gaps” loop.
   Evidence: `src/gen3d/ai/agent_prompt.rs` prints `capability_gaps={capability_gaps}` for `qa_v1` results and also prints the first warning example.
@@ -241,4 +241,3 @@ This ExecPlan’s intent is to make that class of run either:
 
 - enforce attack capability correctly (so QA errors until fixed), and
 - avoid turning warn-only motion-validation into “capability gaps” that cause iterative thrash.
-

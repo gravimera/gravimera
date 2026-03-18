@@ -164,12 +164,12 @@ The create-flow next-step rules:
 - If user images exist and `job.user_image_object_summary` is missing, run the existing image-summary request (the same implementation used by agent mode), then continue. (Do not use agent-step for this.)
 - Ensure a plan exists. If no accepted plan exists yet (empty `job.plan_hash` or `job.planned_components` empty), run `llm_generate_plan_v1`.
 - Ensure geometry exists. If any planned component has `actual_size.is_none()`, run `llm_generate_components_v1` in missing-only mode until all planned components have sizes.
-- Run QA by calling `qa_v1`. This produces explicit `ok/errors/warnings` plus `capability_gaps` (which may include deterministic “fixits” that are already expressed as tool calls).
+- Run QA by calling `qa_v1`. This produces explicit `ok/errors/warnings` plus `capability_gaps` (blockers only: severity=`error`, sometimes with deterministic “fixits” already expressed as tool calls). Warn-only motion validation findings are informational and appear only under `warnings` (not as capability gaps).
 
 If QA fails (`qa_v1.ok=false`), the pipeline must not “give up” immediately. Handle QA failure deterministically, in this order:
 
 1. Apply deterministic QA fixits when present. If `qa_v1.capability_gaps[*].fixits[*]` includes entries with `tool_id="apply_draft_ops_v1"`, execute up to a small bounded number of them (for example: max 3 fixits per QA pass, max 2 QA-fix passes per run) and re-run `qa_v1`. This is generic and does not rely on heuristics: it simply applies engine-provided fixes.
-2. If motion is still a blocker, run motion authoring. Concretely: if the latest QA payload indicates motion failure (for example `qa_v1.smoke.motion_validation.ok=false`, or a `capability_gaps` entry with kind like `missing_motion_channel` / `motion_validation_error`), call `llm_generate_motion_authoring_v1`, then re-run `qa_v1`.
+2. If motion is still a blocker, run motion authoring. Concretely: if the latest QA payload indicates motion failure (for example `qa_v1.smoke.motion_validation.ok=false`, or a `capability_gaps` entry with kind like `missing_motion_channel` / `motion_validation_error` (severity=`error`)), call `llm_generate_motion_authoring_v1`, then re-run `qa_v1`.
 3. If QA is still failing after bounded attempts, call `llm_review_delta_v1` to ask the model for a replan/regen/tweak delta using the current plan + smoke results. Because QA failed, regen will be allowed by existing rules (see `agent_review_delta.rs::regen_allowed`). Apply the returned delta deterministically (using the existing conversion/application code), then loop back to QA.
 4. If the pipeline exceeds its explicit retry budgets or hits the no-progress guard, fall back to agent-step with an explicit reason.
 

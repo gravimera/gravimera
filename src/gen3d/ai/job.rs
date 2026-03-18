@@ -600,6 +600,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) user_prompt_raw: String,
     pub(super) user_images: Vec<PathBuf>,
     pub(super) user_image_object_summary: Option<Gen3dUserImageObjectSummary>,
+    pub(super) prompt_intent: Option<AiPromptIntentJsonV1>,
     pub(super) run_dir: Option<PathBuf>,
     pub(super) pass_dir: Option<PathBuf>,
     pub(super) info_store: Option<Gen3dInfoStore>,
@@ -1276,6 +1277,7 @@ pub(super) enum Gen3dAiPhase {
     Idle,
     // Codex-style tool-driven agent loop.
     AgentWaitingUserImageSummary,
+    AgentWaitingPromptIntent,
     AgentWaitingStep,
     AgentExecutingActions,
     AgentWaitingTool,

@@ -68,6 +68,51 @@ pub(super) fn build_gen3d_user_image_object_summary_user_text(
     out
 }
 
+pub(super) fn build_gen3d_prompt_intent_system_instructions() -> String {
+    "You are a prompt-intent classifier for Gravimera Gen3D.\n\
+Your job: decide whether the requested object MUST have gameplay attack capability (a root attack profile).\n\n\
+Definitions:\n\
+- requires_attack=true means the user wants the object to be able to perform an attack action (ex: bite/claw, punch, swing a weapon, shoot/projectiles/lasers, cast an offensive spell, explode to damage others).\n\
+- requires_attack=false means the user does NOT request attack capability (ex: decorative statue, harmless animal, prop) OR explicitly says it cannot/should not attack.\n\n\
+Rules:\n\
+- Be language-agnostic: the user notes can be any language.\n\
+- If the prompt is ambiguous, set requires_attack=false.\n\
+- Output MUST be a single JSON object that matches the schema exactly (no extra text)."
+        .to_string()
+}
+
+pub(super) fn build_gen3d_prompt_intent_user_text(
+    raw_prompt: &str,
+    image_object_summary: Option<&str>,
+) -> String {
+    let mut out = String::new();
+    let notes = raw_prompt.trim();
+    if notes.is_empty() {
+        out.push_str("User notes: (none)\n");
+    } else {
+        out.push_str("User notes:\n");
+        out.push_str(notes);
+        out.push('\n');
+    }
+
+    if let Some(summary) = image_object_summary
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        out.push_str("Reference photo main-object summary (engine-generated text):\n");
+        out.push_str(summary);
+        out.push('\n');
+    } else {
+        out.push_str("Reference photo main-object summary: (none)\n");
+    }
+
+    out.push_str(
+        "Question: Does the user request that the object can attack in gameplay?\n\
+Return JSON with {\"version\":1,\"requires_attack\":true|false}.\n",
+    );
+    out
+}
+
 pub(super) fn build_gen3d_effective_user_prompt(
     raw_prompt: &str,
     image_object_summary: Option<&str>,

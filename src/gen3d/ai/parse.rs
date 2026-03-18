@@ -4,7 +4,7 @@ use super::super::GEN3D_MAX_PARTS;
 use super::artifacts::write_gen3d_json_artifact;
 use super::schema::{
     AiDescriptorMetaJsonV1, AiDraftJsonV1, AiMotionAuthoringJsonV1, AiPlanJsonV1,
-    AiReviewDeltaJsonV1,
+    AiPromptIntentJsonV1, AiReviewDeltaJsonV1,
 };
 
 fn normalize_ai_plan_component_joint_fields(json_value: &mut serde_json::Value) {
@@ -230,6 +230,42 @@ pub(super) fn parse_ai_review_delta_from_text(text: &str) -> Result<AiReviewDelt
         delta.actions.truncate(64);
     }
     Ok(delta)
+}
+
+pub(super) fn parse_ai_prompt_intent_from_text(text: &str) -> Result<AiPromptIntentJsonV1, String> {
+    debug!(
+        "Gen3D: extracted prompt-intent output text (chars={})",
+        text.chars().count()
+    );
+    let json_text = extract_json_object(text).unwrap_or_else(|| text.to_string());
+    debug!(
+        "Gen3D: parsing prompt-intent JSON (chars={})",
+        json_text.trim().chars().count()
+    );
+    if cfg!(debug_assertions) {
+        debug!(
+            "Gen3D: prompt-intent output preview (start): {}",
+            super::truncate_for_ui(json_text.trim(), 800)
+        );
+    }
+
+    let json_text = json_text.trim();
+    let json_value: serde_json::Value =
+        serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
+    if json_value.get("version").is_none() {
+        return Err("AI prompt-intent JSON missing required `version` (expected 1).".into());
+    }
+
+    let intent: AiPromptIntentJsonV1 =
+        serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
+    if intent.version != 1 {
+        return Err(format!(
+            "Unsupported AI prompt-intent version {} (expected 1)",
+            intent.version
+        ));
+    }
+
+    Ok(intent)
 }
 
 pub(super) fn parse_ai_descriptor_meta_from_text(

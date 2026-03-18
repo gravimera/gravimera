@@ -307,7 +307,11 @@ pub(crate) fn gen3d_resume_build_from_api(
     workshop.status_log.finish_step("OK".to_string());
 
     if !workshop.prompt.trim().is_empty() {
-        job.user_prompt_raw = workshop.prompt.clone();
+        let next_prompt = workshop.prompt.clone();
+        if job.user_prompt_raw.trim() != next_prompt.trim() {
+            job.prompt_intent = None;
+        }
+        job.user_prompt_raw = next_prompt;
     }
 
     job.log_sinks = log_sinks;
@@ -324,10 +328,13 @@ pub(crate) fn gen3d_resume_build_from_api(
     };
     let needs_user_image_summary =
         !job.user_images.is_empty() && job.user_image_object_summary.is_none();
+    let needs_prompt_intent = job.prompt_intent.is_none() && !needs_user_image_summary;
     job.phase = match job.mode {
         Gen3dAiMode::Agent => {
             if needs_user_image_summary {
                 Gen3dAiPhase::AgentWaitingUserImageSummary
+            } else if needs_prompt_intent {
+                Gen3dAiPhase::AgentWaitingPromptIntent
             } else {
                 Gen3dAiPhase::AgentWaitingStep
             }
@@ -335,6 +342,8 @@ pub(crate) fn gen3d_resume_build_from_api(
         Gen3dAiMode::Pipeline => {
             if needs_user_image_summary {
                 Gen3dAiPhase::AgentWaitingUserImageSummary
+            } else if needs_prompt_intent {
+                Gen3dAiPhase::AgentWaitingPromptIntent
             } else {
                 Gen3dAiPhase::AgentExecutingActions
             }
@@ -372,6 +381,8 @@ pub(crate) fn gen3d_resume_build_from_api(
                 job,
                 pass_dir.clone(),
             )
+        } else if matches!(job.phase, Gen3dAiPhase::AgentWaitingPromptIntent) {
+            agent_loop::spawn_agent_prompt_intent_request(config, workshop, job, pass_dir.clone())
         } else {
             agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir.clone())
         };
@@ -1087,14 +1098,14 @@ pub(crate) fn gen3d_start_build_from_api(
     job.phase = match job.mode {
         Gen3dAiMode::Agent => {
             if cached_image_paths.is_empty() {
-                Gen3dAiPhase::AgentWaitingStep
+                Gen3dAiPhase::AgentWaitingPromptIntent
             } else {
                 Gen3dAiPhase::AgentWaitingUserImageSummary
             }
         }
         Gen3dAiMode::Pipeline => {
             if cached_image_paths.is_empty() {
-                Gen3dAiPhase::AgentExecutingActions
+                Gen3dAiPhase::AgentWaitingPromptIntent
             } else {
                 Gen3dAiPhase::AgentWaitingUserImageSummary
             }
@@ -1114,6 +1125,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.user_prompt_raw = workshop.prompt.clone();
     job.user_images = cached_image_paths.clone();
     job.user_image_object_summary = None;
+    job.prompt_intent = None;
     job.run_dir = Some(run_dir.clone());
     job.pass_dir = Some(pass_dir.clone());
     job.review_kind = Gen3dAutoReviewKind::EndOfRun;
@@ -1168,6 +1180,10 @@ pub(crate) fn gen3d_start_build_from_api(
         format!(
             "Analyzing reference images…\nService: {service}\nModel: {model}\nImages: {images_count}",
         )
+    } else if matches!(job.phase, Gen3dAiPhase::AgentWaitingPromptIntent) {
+        format!(
+            "Analyzing prompt…\nService: {service}\nModel: {model}\nImages: {images_count}",
+        )
     } else {
         format!("Building…\nService: {service}\nModel: {model}\nImages: {images_count}")
     };
@@ -1180,6 +1196,8 @@ pub(crate) fn gen3d_start_build_from_api(
                 job,
                 pass_dir.clone(),
             )
+        } else if matches!(job.phase, Gen3dAiPhase::AgentWaitingPromptIntent) {
+            agent_loop::spawn_agent_prompt_intent_request(config, workshop, job, pass_dir.clone())
         } else {
             agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir.clone())
         };
@@ -1645,7 +1663,7 @@ pub(crate) fn gen3d_poll_ai_job(
                 &draft,
             );
             let smoke_results = build_gen3d_smoke_results(
-                &job.user_prompt_raw,
+                job.prompt_intent.as_ref().map(|i| i.requires_attack),
                 !job.user_images.is_empty(),
                 job.rig_move_cycle_m,
                 &job.planned_components,
@@ -1837,6 +1855,7 @@ pub(crate) fn gen3d_poll_ai_job(
             match job.phase {
                 Gen3dAiPhase::AgentWaitingStep
                 | Gen3dAiPhase::AgentWaitingUserImageSummary
+                | Gen3dAiPhase::AgentWaitingPromptIntent
                 | Gen3dAiPhase::AgentExecutingActions
                 | Gen3dAiPhase::AgentWaitingTool
                 | Gen3dAiPhase::AgentCapturingRender
@@ -4640,27 +4659,25 @@ pub(super) fn build_gen3d_scene_graph_summary(
 }
 
 pub(super) fn build_gen3d_smoke_results(
-    raw_prompt: &str,
+    attack_required_by_prompt: Option<bool>,
     has_images: bool,
     rig_move_cycle_m: Option<f32>,
     components: &[Gen3dPlannedComponent],
     draft: &Gen3dDraft,
 ) -> serde_json::Value {
-    let prompt = raw_prompt.trim().to_ascii_lowercase();
-    let attack_required = prompt.contains("can attack")
-        || prompt.contains("attackable")
-        || prompt.contains("weapon")
-        || prompt.contains("gun")
-        || prompt.contains("shoot")
-        || prompt.contains("spear")
-        || prompt.contains("axe")
-        || prompt.contains("bow");
+    let attack_required = attack_required_by_prompt.unwrap_or(false);
 
     let root = draft.root_def();
     let mobility_present = root.and_then(|r| r.mobility.as_ref()).is_some();
     let attack_present = root.and_then(|r| r.attack.as_ref()).is_some();
 
     let mut issues: Vec<serde_json::Value> = Vec::new();
+    if attack_required_by_prompt.is_none() {
+        issues.push(serde_json::json!({
+            "severity":"warn",
+            "message":"Prompt intent is unavailable; attack capability requirement was not enforced.",
+        }));
+    }
     if attack_required && (!mobility_present || !attack_present) {
         issues.push(serde_json::json!({
             "severity":"error",

@@ -588,6 +588,14 @@ pub(crate) struct AiDescriptorMetaJsonV1 {
     pub(crate) tags: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiPromptIntentJsonV1 {
+    #[serde(default)]
+    pub(crate) version: u32,
+    pub(crate) requires_attack: bool,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AiMotionAuthoringDecisionJsonV1 {

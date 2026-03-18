@@ -77,7 +77,7 @@ pub(super) fn start_agent_llm_review_delta_call(
         draft,
     );
     let smoke_results = super::build_gen3d_smoke_results(
-        &job.user_prompt_raw,
+        job.prompt_intent.as_ref().map(|i| i.requires_attack),
         !job.user_images.is_empty(),
         job.rig_move_cycle_m,
         &job.planned_components,

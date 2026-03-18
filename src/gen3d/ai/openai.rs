@@ -1533,6 +1533,14 @@ fn mock_generate_text_via_openai(
             })
             .to_string()
         }
+    } else if artifact_prefix == "prompt_intent" {
+        let kind = mock_kind_from_text(user_text);
+        let requires_attack = !matches!(kind, MockKind::Snake);
+        serde_json::json!({
+            "version": 1,
+            "requires_attack": requires_attack,
+        })
+        .to_string()
     } else if artifact_prefix.starts_with("tool_plan_ops_") {
         // A "no-op" plan-ops patch. This exercises the PlanOps parsing/apply path offline.
         serde_json::json!({ "version": 1, "ops": [] }).to_string()
