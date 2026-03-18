@@ -2067,7 +2067,7 @@ pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
         .zip(job.edit_base_prefab_id())
         .map(|(entity, _)| entity);
 
-    if let Some(target_entity) = seeded_target {
+    let saved = if let Some(target_entity) = seeded_target {
         gen3d_save_seeded_session_in_place(
             commands,
             asset_server,
@@ -2110,7 +2110,10 @@ pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
             player_collider,
             scene_saves,
         )
-    }
+    }?;
+
+    job.set_last_saved_prefab_id(Some(saved.prefab_id));
+    Ok(saved)
 }
 
 pub(crate) fn gen3d_save_current_draft_from_api(

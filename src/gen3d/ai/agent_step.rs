@@ -28,6 +28,7 @@ use super::agent_utils::{
 use super::artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_text_artifact,
 };
+use super::status_steps;
 use super::GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES;
 use super::{
     fail_job, gen3d_advance_pass, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob,
@@ -192,6 +193,9 @@ fn finalize_run_now(
     finish: Gen3dPendingFinishRun,
 ) {
     workshop.status = finish.workshop_status;
+    workshop
+        .status_log
+        .finish_step_if_active("Finished.".to_string());
     append_gen3d_run_log(job.pass_dir.as_deref(), finish.run_log);
     info!("{}", finish.info_log);
     job.finish_run_metrics();
@@ -1182,6 +1186,7 @@ pub(super) fn execute_agent_actions(
                 };
                 job.metrics
                     .note_tool_call_started(call.call_id.as_str(), call.tool_id.as_str());
+                status_steps::log_tool_call_started(workshop, &call);
                 append_agent_trace_event_v1(
                     job.run_dir.as_deref(),
                     &AgentTraceEventV1::ToolCall {
@@ -1239,6 +1244,7 @@ pub(super) fn execute_agent_actions(
                 ) {
                     ToolCallOutcome::Immediate(result) => {
                         job.metrics.note_tool_result(&result);
+                        status_steps::log_tool_call_finished(workshop, job, &*draft, &result);
                         append_gen3d_run_log(
                             job.pass_dir.as_deref(),
                             format!(

@@ -14,13 +14,14 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED,
     TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
     TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
-    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MERGE_WORKSPACE,
-    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
-    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META,
-    TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK,
-    TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
+    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
+    TOOL_ID_MOTION_METRICS, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS,
+    TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
+    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK,
+    TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_SUGGEST_MOTION_REPAIRS,
+    TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -5619,9 +5620,7 @@ pub(super) fn execute_tool_call(
                     return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                         call.call_id,
                         call.tool_id,
-                        format!(
-                            "Invalid args for `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`: {err}"
-                        ),
+                        format!("Invalid args for `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`: {err}"),
                     ));
                 }
             };
@@ -5636,7 +5635,12 @@ pub(super) fn execute_tool_call(
             }
 
             let max_ops = args.max_ops.unwrap_or(24).clamp(1, 64) as usize;
-            let strategy = args.strategy.as_deref().unwrap_or("balanced").trim().to_string();
+            let strategy = args
+                .strategy
+                .as_deref()
+                .unwrap_or("balanced")
+                .trim()
+                .to_string();
             if strategy != "conservative" && strategy != "balanced" {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
@@ -5659,7 +5663,9 @@ pub(super) fn execute_tool_call(
                     .planned_components
                     .iter()
                     .position(|c| c.name == name)
-                    .or_else(|| resolve_component_index_by_name_hint(&job.planned_components, &name))
+                    .or_else(|| {
+                        resolve_component_index_by_name_hint(&job.planned_components, &name)
+                    })
                     .unwrap_or(usize::MAX);
                 if idx == usize::MAX || idx >= job.planned_components.len() {
                     return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -5755,7 +5761,11 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 draft,
             );
             if let Some(dir) = job.pass_dir.as_deref() {
-                write_gen3d_json_artifact(Some(dir), "scene_graph_summary.json", &scene_graph_summary);
+                write_gen3d_json_artifact(
+                    Some(dir),
+                    "scene_graph_summary.json",
+                    &scene_graph_summary,
+                );
             }
 
             let system = super::prompts::build_gen3d_draft_ops_system_instructions();

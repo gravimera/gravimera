@@ -395,7 +395,7 @@ impl Plugin for RenderedGen3dPlugin {
             (
                 crate::gen3d::gen3d_status_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),
-                crate::gen3d::gen3d_tool_feedback_scroll_wheel
+                crate::gen3d::gen3d_prefab_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_prompt_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),
@@ -405,8 +405,6 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_preview_animation_dropdown_scroll_wheel
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_orbit_controls
-                    .run_if(crate::automation::local_input_enabled),
-                crate::gen3d::gen3d_copy_tool_feedback_buttons
                     .run_if(crate::automation::local_input_enabled),
             )
                 .run_if(in_state(BuildScene::Preview)),
@@ -493,7 +491,7 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_update_ui_text)
                     .after(crate::gen3d::gen3d_side_panel_toggle_button),
                 crate::gen3d::gen3d_update_side_tab_ui.after(crate::gen3d::gen3d_update_ui_text),
-                crate::gen3d::gen3d_update_tool_feedback_text
+                crate::gen3d::gen3d_update_prefab_details_text
                     .after(crate::gen3d::gen3d_update_side_tab_ui),
             )
                 .run_if(in_state(BuildScene::Preview)),
@@ -503,7 +501,7 @@ impl Plugin for RenderedGen3dPlugin {
             (
                 crate::gen3d::gen3d_update_prompt_scrollbar_ui,
                 crate::gen3d::gen3d_update_status_scrollbar_ui,
-                crate::gen3d::gen3d_update_tool_feedback_scrollbar_ui,
+                crate::gen3d::gen3d_update_prefab_scrollbar_ui,
             )
                 .in_set(UiSystems::Content)
                 .run_if(in_state(BuildScene::Preview)),

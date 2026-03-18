@@ -4,8 +4,8 @@ use bevy::prelude::*;
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
-    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_QA,
+    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW,
 };
 use crate::gen3d::agent::{
@@ -14,16 +14,19 @@ use crate::gen3d::agent::{
 use crate::threaded_result::take_shared_result;
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
-use super::super::state::{
-    Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dWorkshop,
-};
+use super::super::state::{Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dWorkshop};
 use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::agent_render_capture::poll_agent_render_capture;
-use super::agent_step::{poll_agent_descriptor_meta, poll_agent_pass_snapshot_capture, start_finish_run_sequence};
+use super::agent_step::{
+    poll_agent_descriptor_meta, poll_agent_pass_snapshot_capture, start_finish_run_sequence,
+};
 use super::agent_tool_dispatch::execute_tool_call;
 use super::agent_tool_poll::poll_agent_tool;
-use super::agent_utils::{compute_agent_state_hash, note_observable_tool_result, truncate_json_for_log};
+use super::agent_utils::{
+    compute_agent_state_hash, note_observable_tool_result, truncate_json_for_log,
+};
 use super::artifacts::{append_gen3d_jsonl_artifact, append_gen3d_run_log};
+use super::status_steps;
 use super::{
     fail_job, Gen3dAiJob, Gen3dAiMode, Gen3dAiPhase, Gen3dPendingFinishRun, Gen3dPipelineStage,
 };
@@ -109,13 +112,31 @@ pub(super) fn poll_gen3d_pipeline(
             );
         }
         Gen3dAiPhase::AgentCapturingPassSnapshot => {
-            poll_agent_pass_snapshot_capture(config, commands, images, workshop, feedback_history, job);
+            poll_agent_pass_snapshot_capture(
+                config,
+                commands,
+                images,
+                workshop,
+                feedback_history,
+                job,
+            );
         }
         Gen3dAiPhase::AgentWaitingDescriptorMeta => {
             poll_agent_descriptor_meta(config, commands, images, workshop, job, draft);
         }
         Gen3dAiPhase::AgentExecutingActions | Gen3dAiPhase::AgentWaitingStep => {
-            poll_pipeline_tick(config, time, commands, images, workshop, feedback_history, job, draft, preview, preview_model);
+            poll_pipeline_tick(
+                config,
+                time,
+                commands,
+                images,
+                workshop,
+                feedback_history,
+                job,
+                draft,
+                preview,
+                preview_model,
+            );
         }
         Gen3dAiPhase::Idle => {}
         other => {
@@ -148,9 +169,9 @@ fn poll_pipeline_user_image_summary(
             fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
             return;
         };
-        if let Err(err) =
-            super::agent_loop::spawn_agent_user_image_summary_request(config, workshop, job, pass_dir)
-        {
+        if let Err(err) = super::agent_loop::spawn_agent_user_image_summary_request(
+            config, workshop, job, pass_dir,
+        ) {
             fail_job(workshop, job, err);
         }
         return;
@@ -250,7 +271,11 @@ fn run_complete_enough_for_pipeline_finish(job: &Gen3dAiJob, draft: &Gen3dDraft)
     if draft.total_non_projectile_primitive_parts() == 0 {
         return false;
     }
-    if job.planned_components.iter().any(|c| c.actual_size.is_none()) {
+    if job
+        .planned_components
+        .iter()
+        .any(|c| c.actual_size.is_none())
+    {
         return false;
     }
     if !job.agent.pending_regen_component_indices.is_empty() {
@@ -267,7 +292,10 @@ fn run_complete_enough_for_pipeline_finish(job: &Gen3dAiJob, draft: &Gen3dDraft)
     }
 
     if appearance_review_enabled(job) {
-        if !job.agent.ever_rendered || !job.agent.ever_reviewed || job.agent.rendered_since_last_review {
+        if !job.agent.ever_rendered
+            || !job.agent.ever_reviewed
+            || job.agent.rendered_since_last_review
+        {
             return false;
         }
     }
@@ -286,9 +314,14 @@ fn pipeline_make_call_id(job: &mut Gen3dAiJob, tool_id: &str) -> String {
     format!("pipe_{}_p{}_a{}", tool_seg, job.pass, seq)
 }
 
-fn pipeline_record_tool_call_start(job: &mut Gen3dAiJob, call: &Gen3dToolCallJsonV1) {
+fn pipeline_record_tool_call_start(
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    call: &Gen3dToolCallJsonV1,
+) {
     job.metrics
         .note_tool_call_started(call.call_id.as_str(), call.tool_id.as_str());
+    status_steps::log_tool_call_started(workshop, call);
     append_agent_trace_event_v1(
         job.run_dir.as_deref(),
         &AgentTraceEventV1::ToolCall {
@@ -324,8 +357,14 @@ fn pipeline_record_tool_call_start(job: &mut Gen3dAiJob, call: &Gen3dToolCallJso
     );
 }
 
-fn pipeline_record_tool_result(job: &mut Gen3dAiJob, result: &Gen3dToolResultJsonV1) {
+fn pipeline_record_tool_result(
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+    result: &Gen3dToolResultJsonV1,
+) {
     job.metrics.note_tool_result(result);
+    status_steps::log_tool_call_finished(workshop, job, draft, result);
     append_agent_trace_event_v1(
         job.run_dir.as_deref(),
         &AgentTraceEventV1::ToolResult {
@@ -417,7 +456,7 @@ fn start_pipeline_tool_call(
         tool_id: tool_id.to_string(),
         args,
     };
-    pipeline_record_tool_call_start(job, &call);
+    pipeline_record_tool_call_start(workshop, job, &call);
 
     match execute_tool_call(
         config,
@@ -496,7 +535,8 @@ fn poll_pipeline_tick(
                         | TOOL_ID_LLM_GENERATE_DRAFT_OPS
                 );
                 if !is_inspection_tool {
-                    job.pipeline.no_progress_tries = job.pipeline.no_progress_tries.saturating_add(1);
+                    job.pipeline.no_progress_tries =
+                        job.pipeline.no_progress_tries.saturating_add(1);
                 }
             }
 
@@ -539,7 +579,9 @@ fn poll_pipeline_tick(
                     job.pipeline.plan_template_kv = Some(kv);
                 }
             }
-            if last.tool_id == TOOL_ID_LLM_GENERATE_PLAN || last.tool_id == TOOL_ID_LLM_GENERATE_PLAN_OPS {
+            if last.tool_id == TOOL_ID_LLM_GENERATE_PLAN
+                || last.tool_id == TOOL_ID_LLM_GENERATE_PLAN_OPS
+            {
                 // Plan changes invalidate DraftOps caches and completion markers.
                 job.pipeline.edit_draft_ops_done = false;
                 job.pipeline.draft_ops_suggested = None;
@@ -601,8 +643,8 @@ fn poll_pipeline_tick(
                 Gen3dPipelineStage::Qa | Gen3dPipelineStage::ReviewDelta
             ))
     {
-        let mut status = "Build finished. Orbit/zoom the preview. Click Build to start a new run."
-            .to_string();
+        let mut status =
+            "Build finished. Orbit/zoom the preview. Click Build to start a new run.".to_string();
         if appearance_review_enabled(job) && job.agent.last_qa_warnings_count.unwrap_or(0) > 0 {
             status.push_str("\n(See Status for QA warnings.)");
         }
@@ -627,7 +669,10 @@ fn poll_pipeline_tick(
     let edit_session = is_edit_session(job);
     match job.pipeline.stage {
         Gen3dPipelineStage::CreatePlan => {
-            if job.pipeline.force_replan || job.plan_hash.trim().is_empty() || job.planned_components.is_empty() {
+            if job.pipeline.force_replan
+                || job.plan_hash.trim().is_empty()
+                || job.planned_components.is_empty()
+            {
                 job.pipeline.force_replan = false;
                 workshop.status = "Pipeline: planning…".into();
                 if let Some(result) = start_pipeline_tool_call(
@@ -644,7 +689,7 @@ fn poll_pipeline_tick(
                     TOOL_ID_LLM_GENERATE_PLAN,
                     serde_json::json!({ "prompt": job.user_prompt_raw }),
                 ) {
-                    pipeline_record_tool_result(job, &result);
+                    pipeline_record_tool_result(workshop, job, &*draft, &result);
                 }
                 return;
             }
@@ -653,7 +698,12 @@ fn poll_pipeline_tick(
         Gen3dPipelineStage::PreserveReplanTemplate | Gen3dPipelineStage::EditPlanTemplate => {
             // Ensure we have an accepted plan to template.
             if job.planned_components.is_empty() || job.plan_hash.trim().is_empty() {
-                fallback_to_agent_step(config, workshop, job, "missing_plan_for_preserve_template".into());
+                fallback_to_agent_step(
+                    config,
+                    workshop,
+                    job,
+                    "missing_plan_for_preserve_template".into(),
+                );
                 return;
             }
             if job.pipeline.plan_template_kv.is_none() {
@@ -672,11 +722,14 @@ fn poll_pipeline_tick(
                     TOOL_ID_GET_PLAN_TEMPLATE,
                     serde_json::json!({ "version": 2, "mode": "auto" }),
                 ) {
-                    pipeline_record_tool_result(job, &result);
+                    pipeline_record_tool_result(workshop, job, &*draft, &result);
                 }
                 return;
             }
-            job.pipeline.stage = if matches!(job.pipeline.stage, Gen3dPipelineStage::PreserveReplanTemplate) {
+            job.pipeline.stage = if matches!(
+                job.pipeline.stage,
+                Gen3dPipelineStage::PreserveReplanTemplate
+            ) {
                 Gen3dPipelineStage::PreserveReplanPlan
             } else {
                 Gen3dPipelineStage::EditPlanOps
@@ -706,7 +759,7 @@ fn poll_pipeline_tick(
                     "constraints": { "preserve_existing_components": true, "preserve_edit_policy": "allow_offsets" }
                 }),
             ) {
-                pipeline_record_tool_result(job, &result);
+                pipeline_record_tool_result(workshop, job, &*draft, &result);
             }
             job.pipeline.plan_template_kv = None;
             job.pipeline.stage = Gen3dPipelineStage::EnsureComponents;
@@ -740,7 +793,7 @@ fn poll_pipeline_tick(
                     "max_ops": 32
                 }),
             ) {
-                pipeline_record_tool_result(job, &result);
+                pipeline_record_tool_result(workshop, job, &*draft, &result);
             }
             job.pipeline.edit_plan_ops_done = true;
             job.pipeline.plan_template_kv = None;
@@ -749,7 +802,10 @@ fn poll_pipeline_tick(
         }
         Gen3dPipelineStage::EnsureComponents => {
             let regen_indices = job.agent.pending_regen_component_indices.clone();
-            let missing_any = job.planned_components.iter().any(|c| c.actual_size.is_none());
+            let missing_any = job
+                .planned_components
+                .iter()
+                .any(|c| c.actual_size.is_none());
 
             if !regen_indices.is_empty() {
                 workshop.status = "Pipeline: regenerating components…".into();
@@ -767,15 +823,21 @@ fn poll_pipeline_tick(
                     TOOL_ID_LLM_GENERATE_COMPONENTS,
                     serde_json::json!({ "component_indices": regen_indices, "force": true }),
                 ) {
-                    pipeline_record_tool_result(job, &result);
+                    pipeline_record_tool_result(workshop, job, &*draft, &result);
                 }
                 return;
             }
 
             if missing_any {
-                job.pipeline.components_attempts = job.pipeline.components_attempts.saturating_add(1);
+                job.pipeline.components_attempts =
+                    job.pipeline.components_attempts.saturating_add(1);
                 if job.pipeline.components_attempts > 6 {
-                    fallback_to_agent_step(config, workshop, job, "components_generation_stalled".into());
+                    fallback_to_agent_step(
+                        config,
+                        workshop,
+                        job,
+                        "components_generation_stalled".into(),
+                    );
                     return;
                 }
                 workshop.status = "Pipeline: generating components…".into();
@@ -793,7 +855,7 @@ fn poll_pipeline_tick(
                     TOOL_ID_LLM_GENERATE_COMPONENTS,
                     serde_json::json!({ "missing_only": true }),
                 ) {
-                    pipeline_record_tool_result(job, &result);
+                    pipeline_record_tool_result(workshop, job, &*draft, &result);
                 }
                 return;
             }
@@ -812,7 +874,12 @@ fn poll_pipeline_tick(
         }
         Gen3dPipelineStage::EditQueryComponentParts => {
             if job.planned_components.is_empty() {
-                fallback_to_agent_step(config, workshop, job, "no_components_to_query_parts".into());
+                fallback_to_agent_step(
+                    config,
+                    workshop,
+                    job,
+                    "no_components_to_query_parts".into(),
+                );
                 return;
             }
             if job.pipeline.query_parts_next_idx >= job.planned_components.len() {
@@ -840,9 +907,10 @@ fn poll_pipeline_tick(
                 TOOL_ID_QUERY_COMPONENT_PARTS,
                 serde_json::json!({ "component": name, "max_parts": 128 }),
             ) {
-                pipeline_record_tool_result(job, &result);
+                pipeline_record_tool_result(workshop, job, &*draft, &result);
                 if result.ok {
-                    job.pipeline.query_parts_next_idx = job.pipeline.query_parts_next_idx.saturating_add(1);
+                    job.pipeline.query_parts_next_idx =
+                        job.pipeline.query_parts_next_idx.saturating_add(1);
                 }
             }
             return;
@@ -884,7 +952,7 @@ fn poll_pipeline_tick(
                     "allow_remove_parts": false
                 }),
             ) {
-                pipeline_record_tool_result(job, &result);
+                pipeline_record_tool_result(workshop, job, &*draft, &result);
             }
             job.pipeline.draft_ops_attempts = job.pipeline.draft_ops_attempts.saturating_add(1);
             job.pipeline.stage = Gen3dPipelineStage::EditApplyDraftOps;
@@ -895,7 +963,10 @@ fn poll_pipeline_tick(
                 job.pipeline.stage = Gen3dPipelineStage::EditSuggestDraftOps;
                 return;
             };
-            let ops = suggested.get("ops").cloned().unwrap_or(serde_json::Value::Array(Vec::new()));
+            let ops = suggested
+                .get("ops")
+                .cloned()
+                .unwrap_or(serde_json::Value::Array(Vec::new()));
             workshop.status = "Pipeline: applying DraftOps…".into();
             let args = serde_json::json!({
                 "version": 1,
@@ -917,7 +988,7 @@ fn poll_pipeline_tick(
                 TOOL_ID_APPLY_DRAFT_OPS,
                 args,
             ) {
-                pipeline_record_tool_result(job, &result);
+                pipeline_record_tool_result(workshop, job, &*draft, &result);
                 if let Some(rejected) = result
                     .result
                     .as_ref()
@@ -970,7 +1041,7 @@ fn poll_pipeline_tick(
                 serde_json::json!({}),
             );
             if let Some(result) = qa_result {
-                pipeline_record_tool_result(job, &result);
+                pipeline_record_tool_result(workshop, job, &*draft, &result);
                 let ok = result
                     .result
                     .as_ref()
@@ -984,7 +1055,12 @@ fn poll_pipeline_tick(
                     } else if run_complete_enough_for_pipeline_finish(job, draft) {
                         job.pipeline.stage = Gen3dPipelineStage::Finish;
                     } else {
-                        fallback_to_agent_step(config, workshop, job, "qa_ok_but_not_complete".into());
+                        fallback_to_agent_step(
+                            config,
+                            workshop,
+                            job,
+                            "qa_ok_but_not_complete".into(),
+                        );
                     }
                     return;
                 }
@@ -1002,7 +1078,9 @@ fn poll_pipeline_tick(
                             continue;
                         };
                         for fixit in items {
-                            if fixit.get("tool_id").and_then(|v| v.as_str()) != Some(TOOL_ID_APPLY_DRAFT_OPS) {
+                            if fixit.get("tool_id").and_then(|v| v.as_str())
+                                != Some(TOOL_ID_APPLY_DRAFT_OPS)
+                            {
                                 continue;
                             }
                             if let Some(args) = fixit.get("args").cloned() {
@@ -1016,7 +1094,10 @@ fn poll_pipeline_tick(
                     let mut args_obj = args.as_object().cloned().unwrap_or_default();
                     args_obj.insert("version".into(), serde_json::json!(1));
                     args_obj.insert("atomic".into(), serde_json::json!(true));
-                    args_obj.insert("if_assembly_rev".into(), serde_json::json!(job.assembly_rev));
+                    args_obj.insert(
+                        "if_assembly_rev".into(),
+                        serde_json::json!(job.assembly_rev),
+                    );
                     workshop.status = "Pipeline: applying QA fixit…".into();
                     if let Some(result) = start_pipeline_tool_call(
                         config,
@@ -1032,9 +1113,10 @@ fn poll_pipeline_tick(
                         TOOL_ID_APPLY_DRAFT_OPS,
                         serde_json::Value::Object(args_obj),
                     ) {
-                        pipeline_record_tool_result(job, &result);
+                        pipeline_record_tool_result(workshop, job, &*draft, &result);
                     }
-                    job.pipeline.qa_fixits_applied = job.pipeline.qa_fixits_applied.saturating_add(1);
+                    job.pipeline.qa_fixits_applied =
+                        job.pipeline.qa_fixits_applied.saturating_add(1);
                     return;
                 }
 
@@ -1066,16 +1148,22 @@ fn poll_pipeline_tick(
                         TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
                         serde_json::json!({}),
                     ) {
-                        pipeline_record_tool_result(job, &result);
+                        pipeline_record_tool_result(workshop, job, &*draft, &result);
                     }
                     return;
                 }
 
                 if job.pipeline.review_delta_attempts >= 3 {
-                    fallback_to_agent_step(config, workshop, job, "qa_failed_exhausted_review_delta".into());
+                    fallback_to_agent_step(
+                        config,
+                        workshop,
+                        job,
+                        "qa_failed_exhausted_review_delta".into(),
+                    );
                     return;
                 }
-                job.pipeline.review_delta_attempts = job.pipeline.review_delta_attempts.saturating_add(1);
+                job.pipeline.review_delta_attempts =
+                    job.pipeline.review_delta_attempts.saturating_add(1);
                 workshop.status = "Pipeline: review-delta remediation…".into();
                 if let Some(result) = start_pipeline_tool_call(
                     config,
@@ -1091,7 +1179,7 @@ fn poll_pipeline_tick(
                     TOOL_ID_LLM_REVIEW_DELTA,
                     serde_json::json!({}),
                 ) {
-                    pipeline_record_tool_result(job, &result);
+                    pipeline_record_tool_result(workshop, job, &*draft, &result);
                 }
                 job.pipeline.stage = Gen3dPipelineStage::EnsureComponents;
                 return;
@@ -1122,7 +1210,7 @@ fn poll_pipeline_tick(
                     "include_motion_sheets": false
                 }),
             ) {
-                pipeline_record_tool_result(job, &result);
+                pipeline_record_tool_result(workshop, job, &*draft, &result);
             }
             job.pipeline.stage = Gen3dPipelineStage::ReviewDelta;
             return;
@@ -1150,7 +1238,7 @@ fn poll_pipeline_tick(
                 TOOL_ID_LLM_REVIEW_DELTA,
                 args,
             ) {
-                pipeline_record_tool_result(job, &result);
+                pipeline_record_tool_result(workshop, job, &*draft, &result);
                 if let Some(replan_reason) = result
                     .result
                     .as_ref()
@@ -1199,6 +1287,14 @@ fn fallback_to_agent_step(
         serde_json::json!({
             "reason": reason,
         }),
+    );
+
+    status_steps::log_note(
+        workshop,
+        &format!(
+            "Pipeline fallback → agent-step (reason: {})",
+            super::orchestration::truncate_for_ui(&reason, 240)
+        ),
     );
 
     workshop.status = format!("Pipeline fallback → agent-step (reason: {reason})");

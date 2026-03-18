@@ -1,4 +1,5 @@
 use bevy::ecs::hierarchy::{ChildOf, ChildSpawnerCommands};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::{Ime, PrimaryWindow};
 
@@ -226,7 +227,6 @@ pub(crate) fn enter_gen3d_mode(
     workshop.prompt_scrollbar_drag = None;
     workshop.side_tab = Gen3dSideTab::Status;
     workshop.side_panel_open = false;
-    workshop.tool_feedback_unread = false;
     preview_state.animation_channel = "idle".to_string();
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
@@ -526,7 +526,7 @@ pub(crate) fn enter_gen3d_mode(
                                         right: Val::Px(8.0),
                                         top: Val::Px(44.0),
                                         bottom: Val::Px(8.0),
-                                        width: Val::Px(360.0),
+                                        width: Val::Px(520.0),
                                         flex_direction: FlexDirection::Column,
                                         row_gap: Val::Px(6.0),
                                         padding: UiRect::all(Val::Px(8.0)),
@@ -605,11 +605,11 @@ pub(crate) fn enter_gen3d_mode(
                                                     0.25, 0.25, 0.30, 0.70,
                                                 )),
                                                 Visibility::Inherited,
-                                                Gen3dSideTabButton::new(Gen3dSideTab::ToolFeedback),
+                                                Gen3dSideTabButton::new(Gen3dSideTab::Prefab),
                                             ))
                                             .with_children(|button| {
                                                 button.spawn((
-                                                    Text::new("Tool Feedback"),
+                                                    Text::new("Prefab"),
                                                     TextFont {
                                                         font_size: 14.0,
                                                         ..default()
@@ -617,7 +617,7 @@ pub(crate) fn enter_gen3d_mode(
                                                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                                                     Visibility::Inherited,
                                                     Gen3dSideTabButtonText::new(
-                                                        Gen3dSideTab::ToolFeedback,
+                                                        Gen3dSideTab::Prefab,
                                                     ),
                                                 ));
                                             });
@@ -631,31 +631,41 @@ pub(crate) fn enter_gen3d_mode(
                                                 flex_grow: 1.0,
                                                 flex_basis: Val::Px(0.0),
                                                 min_height: Val::Px(0.0),
-                                                flex_direction: FlexDirection::Row,
-                                                column_gap: Val::Px(6.0),
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: Val::Px(8.0),
                                                 ..default()
                                             },
                                             BackgroundColor(Color::NONE),
                                             Visibility::Inherited,
                                             Gen3dStatusPanelRoot,
                                         ))
-                                        .with_children(|row| {
-                                            row.spawn((
+                                        .with_children(|col| {
+                                            // Summary (keeps updating).
+                                            col.spawn((
                                                 Node {
-                                                    flex_grow: 1.0,
-                                                    flex_basis: Val::Px(0.0),
+                                                    width: Val::Percent(100.0),
+                                                    height: Val::Px(148.0),
                                                     min_height: Val::Px(0.0),
-                                                    overflow: Overflow::scroll_y(),
+                                                    padding: UiRect::all(Val::Px(8.0)),
+                                                    border: UiRect::all(Val::Px(1.0)),
                                                     ..default()
                                                 },
-                                                BackgroundColor(Color::NONE),
+                                                BackgroundColor(Color::srgba(
+                                                    0.01, 0.01, 0.015, 0.55,
+                                                )),
+                                                BorderColor::all(Color::srgba(
+                                                    0.25, 0.25, 0.30, 0.65,
+                                                )),
                                                 Visibility::Inherited,
-                                                ScrollPosition::default(),
-                                                Gen3dStatusScrollPanel,
                                             ))
-                                            .with_children(|scroll| {
-                                                scroll.spawn((
+                                            .with_children(|summary| {
+                                                summary.spawn((
                                                     Text::new(""),
+                                                    Node {
+                                                        width: Val::Percent(100.0),
+                                                        align_self: AlignSelf::FlexStart,
+                                                        ..default()
+                                                    },
                                                     TextFont {
                                                         font_size: 14.0,
                                                         ..default()
@@ -666,134 +676,7 @@ pub(crate) fn enter_gen3d_mode(
                                                 ));
                                             });
 
-                                            row.spawn((
-                                                Node {
-                                                    width: Val::Px(8.0),
-                                                    height: Val::Percent(100.0),
-                                                    position_type: PositionType::Relative,
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::srgba(
-                                                    0.02, 0.02, 0.03, 0.45,
-                                                )),
-                                                BorderColor::all(Color::srgba(
-                                                    0.25, 0.25, 0.30, 0.65,
-                                                )),
-                                                Visibility::Hidden,
-                                                Gen3dStatusScrollbarTrack,
-                                            ))
-                                            .with_children(|track| {
-                                                track.spawn((
-                                                    Button,
-                                                    Node {
-                                                        position_type: PositionType::Absolute,
-                                                        left: Val::Px(1.0),
-                                                        right: Val::Px(1.0),
-                                                        top: Val::Px(0.0),
-                                                        height: Val::Px(18.0),
-                                                        ..default()
-                                                    },
-                                                    BackgroundColor(Color::srgba(
-                                                        0.85, 0.88, 0.95, 0.85,
-                                                    )),
-                                                    Visibility::Inherited,
-                                                    Gen3dStatusScrollbarThumb,
-                                                ));
-                                            });
-                                        });
-
-                                    // Tool Feedback tab content.
-                                    panel
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                flex_grow: 1.0,
-                                                flex_basis: Val::Px(0.0),
-                                                min_height: Val::Px(0.0),
-                                                flex_direction: FlexDirection::Column,
-                                                row_gap: Val::Px(6.0),
-                                                display: Display::None,
-                                                ..default()
-                                            },
-                                            BackgroundColor(Color::NONE),
-                                            Visibility::Hidden,
-                                            Gen3dToolFeedbackPanelRoot,
-                                        ))
-                                        .with_children(|col| {
-                                            col.spawn((
-                                                Node {
-                                                    width: Val::Percent(100.0),
-                                                    flex_direction: FlexDirection::Row,
-                                                    column_gap: Val::Px(6.0),
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::NONE),
-                                                Visibility::Inherited,
-                                            ))
-                                            .with_children(|row| {
-                                                row.spawn((
-                                                    Button,
-                                                    Node {
-                                                        flex_grow: 1.0,
-                                                        height: Val::Px(28.0),
-                                                        justify_content: JustifyContent::Center,
-                                                        align_items: AlignItems::Center,
-                                                        border: UiRect::all(Val::Px(1.0)),
-                                                        ..default()
-                                                    },
-                                                    BackgroundColor(Color::srgba(
-                                                        0.06, 0.10, 0.16, 0.80,
-                                                    )),
-                                                    BorderColor::all(Color::srgba(
-                                                        0.25, 0.25, 0.30, 0.65,
-                                                    )),
-                                                    Visibility::Inherited,
-                                                    Gen3dCopyFeedbackCodexButton,
-                                                ))
-                                                .with_children(|button| {
-                                                    button.spawn((
-                                                        Text::new("Copy for Codex"),
-                                                        TextFont {
-                                                            font_size: 14.0,
-                                                            ..default()
-                                                        },
-                                                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                                        Visibility::Inherited,
-                                                    ));
-                                                });
-
-                                                row.spawn((
-                                                    Button,
-                                                    Node {
-                                                        flex_grow: 1.0,
-                                                        height: Val::Px(28.0),
-                                                        justify_content: JustifyContent::Center,
-                                                        align_items: AlignItems::Center,
-                                                        border: UiRect::all(Val::Px(1.0)),
-                                                        ..default()
-                                                    },
-                                                    BackgroundColor(Color::srgba(
-                                                        0.08, 0.10, 0.12, 0.78,
-                                                    )),
-                                                    BorderColor::all(Color::srgba(
-                                                        0.25, 0.25, 0.30, 0.65,
-                                                    )),
-                                                    Visibility::Inherited,
-                                                    Gen3dCopyFeedbackJsonButton,
-                                                ))
-                                                .with_children(|button| {
-                                                    button.spawn((
-                                                        Text::new("Copy JSON"),
-                                                        TextFont {
-                                                            font_size: 14.0,
-                                                            ..default()
-                                                        },
-                                                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                                        Visibility::Inherited,
-                                                    ));
-                                                });
-                                            });
-
+                                            // Logs (scrollable).
                                             col.spawn((
                                                 Node {
                                                     width: Val::Percent(100.0),
@@ -819,39 +702,45 @@ pub(crate) fn enter_gen3d_mode(
                                                     BackgroundColor(Color::NONE),
                                                     Visibility::Inherited,
                                                     ScrollPosition::default(),
-                                                    Gen3dToolFeedbackScrollPanel,
+                                                    Gen3dStatusScrollPanel,
                                                 ))
                                                 .with_children(|scroll| {
                                                     scroll.spawn((
                                                         Text::new(""),
+                                                        Node {
+                                                            width: Val::Percent(100.0),
+                                                            align_self: AlignSelf::FlexStart,
+                                                            ..default()
+                                                        },
                                                         TextFont {
                                                             font_size: 14.0,
                                                             ..default()
                                                         },
                                                         TextColor(Color::srgb(0.85, 0.85, 0.90)),
                                                         Visibility::Inherited,
-                                                        Gen3dToolFeedbackText,
+                                                        Gen3dStatusLogsText,
                                                     ));
                                                 });
 
                                                 row.spawn((
-                                                    Node {
-                                                        width: Val::Px(8.0),
-                                                        height: Val::Percent(100.0),
-                                                        position_type: PositionType::Relative,
-                                                        ..default()
-                                                    },
-                                                    BackgroundColor(Color::srgba(
-                                                        0.02, 0.02, 0.03, 0.45,
-                                                    )),
-                                                    BorderColor::all(Color::srgba(
-                                                        0.25, 0.25, 0.30, 0.65,
-                                                    )),
-                                                    Visibility::Hidden,
-                                                    Gen3dToolFeedbackScrollbarTrack,
-                                                ))
+                                                Node {
+                                                    width: Val::Px(8.0),
+                                                    height: Val::Percent(100.0),
+                                                    position_type: PositionType::Relative,
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgba(
+                                                    0.02, 0.02, 0.03, 0.45,
+                                                )),
+                                                BorderColor::all(Color::srgba(
+                                                    0.25, 0.25, 0.30, 0.65,
+                                                )),
+                                                Visibility::Hidden,
+                                                Gen3dStatusScrollbarTrack,
+                                            ))
                                                 .with_children(|track| {
                                                     track.spawn((
+                                                        Button,
                                                         Node {
                                                             position_type: PositionType::Absolute,
                                                             left: Val::Px(1.0),
@@ -864,9 +753,94 @@ pub(crate) fn enter_gen3d_mode(
                                                             0.85, 0.88, 0.95, 0.85,
                                                         )),
                                                         Visibility::Inherited,
-                                                        Gen3dToolFeedbackScrollbarThumb,
+                                                        Gen3dStatusScrollbarThumb,
                                                     ));
                                                 });
+                                            });
+                                        });
+
+                                    // Prefab tab content.
+                                    panel
+                                        .spawn((
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                flex_grow: 1.0,
+                                                flex_basis: Val::Px(0.0),
+                                                min_height: Val::Px(0.0),
+                                                flex_direction: FlexDirection::Row,
+                                                column_gap: Val::Px(6.0),
+                                                display: Display::None,
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::NONE),
+                                            Visibility::Hidden,
+                                            Gen3dPrefabPanelRoot,
+                                        ))
+                                        .with_children(|row| {
+                                            row.spawn((
+                                                Node {
+                                                    flex_grow: 1.0,
+                                                    flex_basis: Val::Px(0.0),
+                                                    min_height: Val::Px(0.0),
+                                                    overflow: Overflow::scroll_y(),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::NONE),
+                                                Visibility::Inherited,
+                                                ScrollPosition::default(),
+                                                Gen3dPrefabScrollPanel,
+                                            ))
+                                            .with_children(|scroll| {
+                                                scroll.spawn((
+                                                    Text::new(""),
+                                                    Node {
+                                                        width: Val::Percent(100.0),
+                                                        align_self: AlignSelf::FlexStart,
+                                                        ..default()
+                                                    },
+                                                    TextFont {
+                                                        font_size: 14.0,
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                                                    Visibility::Inherited,
+                                                    Gen3dPrefabDetailsText,
+                                                ));
+                                            });
+
+                                            row.spawn((
+                                                Node {
+                                                    width: Val::Px(8.0),
+                                                    height: Val::Percent(100.0),
+                                                    position_type: PositionType::Relative,
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgba(
+                                                    0.02, 0.02, 0.03, 0.45,
+                                                )),
+                                                BorderColor::all(Color::srgba(
+                                                    0.25, 0.25, 0.30, 0.65,
+                                                )),
+                                                Visibility::Hidden,
+                                                Gen3dPrefabScrollbarTrack,
+                                            ))
+                                            .with_children(|track| {
+                                                track.spawn((
+                                                    Button,
+                                                    Node {
+                                                        position_type: PositionType::Absolute,
+                                                        left: Val::Px(1.0),
+                                                        right: Val::Px(1.0),
+                                                        top: Val::Px(0.0),
+                                                        height: Val::Px(18.0),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(
+                                                        0.85, 0.88, 0.95, 0.85,
+                                                    )),
+                                                    Visibility::Inherited,
+                                                    Gen3dPrefabScrollbarThumb,
+                                                ));
                                             });
                                         });
                                 });
@@ -1490,8 +1464,6 @@ pub(crate) fn gen3d_update_side_panel_ui(
 
     let label = if workshop.side_panel_open {
         "×".to_string()
-    } else if workshop.tool_feedback_unread {
-        "≡*".to_string()
     } else {
         "≡".to_string()
     };
@@ -1657,7 +1629,9 @@ pub(crate) fn gen3d_prompt_scrollbar_drag(
     let track_clicked = matches!(track_vis, Visibility::Visible | Visibility::Inherited)
         && track_node.contains_point(*track_transform, cursor)
         && mouse_just_pressed;
-    if workshop.prompt_scrollbar_drag.is_none() && (mouse_just_pressed || *interaction == Interaction::Pressed) {
+    if workshop.prompt_scrollbar_drag.is_none()
+        && (mouse_just_pressed || *interaction == Interaction::Pressed)
+    {
         if let Some(local) = track_transform
             .try_inverse()
             .map(|transform| transform.transform_point2(cursor))
@@ -2375,29 +2349,75 @@ pub(crate) fn gen3d_clear_prompt_button(
     }
 }
 
+#[derive(SystemParam)]
+pub(crate) struct Gen3dUpdateUiTextDeps<'w, 's> {
+    commands: Commands<'w, 's>,
+    workshop: Res<'w, Gen3dWorkshop>,
+    preview_state: Res<'w, Gen3dPreview>,
+    draft: Res<'w, Gen3dDraft>,
+    job: Res<'w, Gen3dAiJob>,
+    ui_fonts: Res<'w, UiFonts>,
+    emoji_atlas: Res<'w, EmojiAtlas>,
+    asset_server: Res<'w, AssetServer>,
+    continue_buttons:
+        Query<'w, 's, (&'static mut Node, &'static mut Visibility), With<Gen3dContinueButton>>,
+    scroll_panels: ParamSet<
+        'w,
+        's,
+        (
+            Query<
+                'w,
+                's,
+                (&'static ComputedNode, &'static mut ScrollPosition),
+                With<Gen3dPromptScrollPanel>,
+            >,
+            Query<
+                'w,
+                's,
+                (&'static ComputedNode, &'static mut ScrollPosition),
+                With<Gen3dStatusScrollPanel>,
+            >,
+        ),
+    >,
+    texts: ParamSet<
+        'w,
+        's,
+        (
+            Query<'w, 's, &'static mut Text, With<Gen3dStatusText>>,
+            Query<'w, 's, &'static mut Text, With<Gen3dStatusLogsText>>,
+            Query<'w, 's, &'static mut Text, With<Gen3dGenerateButtonText>>,
+            Query<'w, 's, &'static mut Text, With<Gen3dCollisionToggleText>>,
+            Query<'w, 's, &'static mut Text, With<Gen3dPreviewStatsText>>,
+        ),
+    >,
+    rich_text: Query<'w, 's, Entity, With<Gen3dPromptRichText>>,
+}
+
 pub(crate) fn gen3d_update_ui_text(
-    mut commands: Commands,
     build_scene: Res<State<BuildScene>>,
-    workshop: Res<Gen3dWorkshop>,
-    preview_state: Res<Gen3dPreview>,
-    draft: Res<Gen3dDraft>,
-    job: Res<Gen3dAiJob>,
-    ui_fonts: Res<UiFonts>,
-    emoji_atlas: Res<EmojiAtlas>,
-    asset_server: Res<AssetServer>,
-    mut continue_buttons: Query<(&mut Node, &mut Visibility), With<Gen3dContinueButton>>,
-    mut prompt_scroll: Query<(&ComputedNode, &mut ScrollPosition), With<Gen3dPromptScrollPanel>>,
-    mut texts: ParamSet<(
-        Query<&mut Text, With<Gen3dStatusText>>,
-        Query<&mut Text, With<Gen3dGenerateButtonText>>,
-        Query<&mut Text, With<Gen3dCollisionToggleText>>,
-        Query<&mut Text, With<Gen3dPreviewStatsText>>,
-    )>,
-    rich_text: Query<Entity, With<Gen3dPromptRichText>>,
+    deps: Gen3dUpdateUiTextDeps,
     mut last_prompt: Local<Option<String>>,
     mut last_prompt_entity: Local<Option<Entity>>,
     mut autoscroll_frames: Local<u8>,
+    mut last_status_log_rev: Local<Option<(usize, Option<u32>)>>,
+    mut status_log_autoscroll_frames: Local<u8>,
+    mut status_log_follow_tail: Local<bool>,
 ) {
+    let Gen3dUpdateUiTextDeps {
+        mut commands,
+        workshop,
+        preview_state,
+        draft,
+        job,
+        ui_fonts,
+        emoji_atlas,
+        asset_server,
+        mut continue_buttons,
+        mut scroll_panels,
+        mut texts,
+        rich_text,
+    } = deps;
+
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
@@ -2440,7 +2460,7 @@ pub(crate) fn gen3d_update_ui_text(
     }
 
     if *autoscroll_frames > 0 && workshop.prompt_scrollbar_drag.is_none() {
-        if let Ok((node, mut scroll)) = prompt_scroll.single_mut() {
+        if let Ok((node, mut scroll)) = scroll_panels.p0().single_mut() {
             let panel_scale = node.inverse_scale_factor();
             let viewport_h = node.size.y.max(0.0) * panel_scale;
             let content_h = node.content_size.y.max(0.0) * panel_scale;
@@ -2457,50 +2477,136 @@ pub(crate) fn gen3d_update_ui_text(
         }
     }
 
-    let mut status_text = workshop.status.clone();
+    let mut status_summary = workshop.status.trim_end().to_string();
     if job.is_running() {
         if let Some(msg) = job.progress_message() {
             let msg = msg.trim();
             if !msg.is_empty() {
-                status_text.push_str("\nStep: ");
-                status_text.push_str(msg);
+                status_summary.push_str("\n\nProgress: ");
+                status_summary.push_str(msg);
             }
         }
     }
+    if let Some(active) = workshop.status_log.active.as_ref() {
+        status_summary.push_str("\n\nCurrent step:\n");
+        status_summary.push_str(active.step.trim());
+        if !active.why.trim().is_empty() {
+            status_summary.push_str("\nWhy: ");
+            status_summary.push_str(active.why.trim());
+        }
+        if let Some(elapsed) = workshop.status_log.active_elapsed() {
+            status_summary.push_str("\nElapsed: ");
+            status_summary.push_str(&format_duration(elapsed));
+        }
+    } else if let Some(last) = workshop.status_log.entries.last() {
+        status_summary.push_str("\n\nLast step:\n");
+        status_summary.push_str(last.step.trim());
+        status_summary.push_str(" → ");
+        status_summary.push_str(last.result.trim());
+        status_summary.push_str(" (");
+        status_summary.push_str(&format_duration_ms(last.duration_ms));
+        status_summary.push(')');
+    }
     let chat_fallbacks = job.chat_fallbacks_this_run();
     if chat_fallbacks > 0 {
-        status_text.push_str(&format!(
+        status_summary.push_str(&format!(
             "\n\nNote: Used /chat/completions fallback ×{chat_fallbacks}. Results may be less consistent."
         ));
     }
     if !draft.defs.is_empty() {
         let primitives = draft.total_primitive_parts();
         let components = draft.component_count();
-        if components > 0 {
-            status_text.push_str(&format!(
-                "\nDraft components: {components} | primitives: {primitives}"
-            ));
-        } else {
-            status_text.push_str(&format!("\nDraft primitives: {primitives}"));
-        }
-    }
-    if let Some(metrics) = job.status_metrics_text() {
-        status_text.push_str(&metrics);
+        status_summary.push_str(&format!(
+            "\n\nDraft: components: {components} | primitives: {primitives}"
+        ));
     }
     if let Some(err) = &workshop.error {
-        status_text.push_str("\n\nError:\n");
-        status_text.push_str(err);
+        status_summary.push_str("\n\nError:\n");
+        status_summary.push_str(err.trim());
     }
     {
         let mut status = texts.p0();
         for mut text in &mut status {
-            **text = status_text.clone();
+            **text = status_summary.clone();
         }
+    }
+
+    let log_rev = (
+        workshop.status_log.entries.len(),
+        workshop.status_log.active.as_ref().map(|s| s.seq),
+    );
+    if *last_status_log_rev != Some(log_rev) {
+        *last_status_log_rev = Some(log_rev);
+        if *status_log_follow_tail {
+            *status_log_autoscroll_frames = 3;
+        }
+    }
+
+    let mut logs_text = String::new();
+    if workshop.status_log.entries.is_empty() && workshop.status_log.active.is_none() {
+        logs_text.push_str("No logs yet.\n");
+    } else {
+        for entry in &workshop.status_log.entries {
+            logs_text.push_str(&format!(
+                "[{:03}] {} — {} → {} ({})\n",
+                entry.seq,
+                entry.step.trim(),
+                entry.why.trim(),
+                entry.result.trim(),
+                format_duration_ms(entry.duration_ms)
+            ));
+        }
+        if let Some(active) = workshop.status_log.active.as_ref() {
+            let elapsed = workshop
+                .status_log
+                .active_elapsed()
+                .unwrap_or_else(|| std::time::Duration::from_secs(0));
+            logs_text.push_str(&format!(
+                "[{:03}] {} — {} → running… ({})\n",
+                active.seq,
+                active.step.trim(),
+                active.why.trim(),
+                format_duration(elapsed)
+            ));
+        }
+    }
+    {
+        let mut logs = texts.p1();
+        for mut text in &mut logs {
+            **text = logs_text.clone();
+        }
+    }
+
+    if *status_log_autoscroll_frames > 0 {
+        if let Ok((node, mut scroll)) = scroll_panels.p1().single_mut() {
+            let panel_scale = node.inverse_scale_factor();
+            let viewport_h = node.size.y.max(0.0) * panel_scale;
+            let content_h = node.content_size.y.max(0.0) * panel_scale;
+            if viewport_h >= 1.0 && content_h > viewport_h + 0.5 {
+                let max_scroll = (content_h - viewport_h).max(0.0);
+                scroll.y = max_scroll;
+                *status_log_autoscroll_frames = (*status_log_autoscroll_frames).saturating_sub(1);
+            } else {
+                scroll.y = 0.0;
+                *status_log_autoscroll_frames = 0;
+            }
+
+            let max_scroll = (content_h - viewport_h).max(0.0);
+            *status_log_follow_tail = max_scroll <= 1.0 || (max_scroll - scroll.y) <= 24.0;
+        } else {
+            *status_log_autoscroll_frames = 0;
+        }
+    } else if let Ok((node, scroll)) = scroll_panels.p1().single() {
+        let panel_scale = node.inverse_scale_factor();
+        let viewport_h = node.size.y.max(0.0) * panel_scale;
+        let content_h = node.content_size.y.max(0.0) * panel_scale;
+        let max_scroll = (content_h - viewport_h).max(0.0);
+        *status_log_follow_tail = max_scroll <= 1.0 || (max_scroll - scroll.y) <= 24.0;
     }
 
     let label = if job.is_running() { "Stop" } else { "Build" };
     {
-        let mut button = texts.p1();
+        let mut button = texts.p2();
         for mut text in &mut button {
             **text = label.into();
         }
@@ -2524,7 +2630,7 @@ pub(crate) fn gen3d_update_ui_text(
         "Collision: Off"
     };
     {
-        let mut collision = texts.p2();
+        let mut collision = texts.p3();
         for mut text in &mut collision {
             **text = collision_label.into();
         }
@@ -2547,7 +2653,7 @@ pub(crate) fn gen3d_update_ui_text(
         "Run time: {run_time}\nTokens (run): {run_tokens}\nTokens (total): {total_tokens}",
     );
     {
-        let mut stats = texts.p3();
+        let mut stats = texts.p4();
         for mut text in &mut stats {
             **text = stats_text.clone();
         }
@@ -2568,5 +2674,24 @@ fn format_compact_count(value: u64) -> String {
         format!("{:.2}K", v / K)
     } else {
         value.to_string()
+    }
+}
+
+fn format_duration_ms(ms: u128) -> String {
+    format_duration(std::time::Duration::from_millis(
+        ms.min(u128::from(u64::MAX)) as u64,
+    ))
+}
+
+fn format_duration(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{:.1}s", d.as_secs_f32())
+    } else if secs < 60 * 60 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else {
+        let hours = secs / 3600;
+        let mins = (secs % 3600) / 60;
+        format!("{hours}h {mins}m")
     }
 }

@@ -1,10 +1,12 @@
 use bevy::prelude::*;
 
-use crate::config::AppConfig;
+use crate::object::registry::ObjectLibrary;
+use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::types::BuildScene;
+use uuid::Uuid;
 
+use super::ai::Gen3dAiJob;
 use super::state::*;
-use super::tool_feedback::{gen3d_cache_base_dir, Gen3dToolFeedbackHistory};
 
 pub(crate) fn gen3d_side_tab_buttons(
     build_scene: Res<State<BuildScene>>,
@@ -22,9 +24,6 @@ pub(crate) fn gen3d_side_tab_buttons(
         match *interaction {
             Interaction::Pressed => {
                 workshop.side_tab = button.tab();
-                if matches!(workshop.side_tab, Gen3dSideTab::ToolFeedback) {
-                    workshop.tool_feedback_unread = false;
-                }
                 *bg = BackgroundColor(Color::srgba(0.08, 0.12, 0.16, 0.92));
             }
             Interaction::Hovered => {
@@ -40,7 +39,7 @@ pub(crate) fn gen3d_update_side_tab_ui(
     workshop: Res<Gen3dWorkshop>,
     mut panels: ParamSet<(
         Query<(&mut Node, &mut Visibility), With<Gen3dStatusPanelRoot>>,
-        Query<(&mut Node, &mut Visibility), With<Gen3dToolFeedbackPanelRoot>>,
+        Query<(&mut Node, &mut Visibility), With<Gen3dPrefabPanelRoot>>,
     )>,
     mut buttons: Query<(&Gen3dSideTabButton, &Interaction, &mut BackgroundColor)>,
     mut texts: Query<(&Gen3dSideTabButtonText, &mut Text)>,
@@ -59,7 +58,7 @@ pub(crate) fn gen3d_update_side_tab_ui(
         };
     }
     for (mut node, mut vis) in panels.p1().iter_mut() {
-        let active = matches!(workshop.side_tab, Gen3dSideTab::ToolFeedback);
+        let active = matches!(workshop.side_tab, Gen3dSideTab::Prefab);
         node.display = if active { Display::Flex } else { Display::None };
         *vis = if active {
             Visibility::Inherited
@@ -81,74 +80,173 @@ pub(crate) fn gen3d_update_side_tab_ui(
     for (tab, mut text) in &mut texts {
         let label = match tab.tab() {
             Gen3dSideTab::Status => "Status".to_string(),
-            Gen3dSideTab::ToolFeedback => {
-                if workshop.tool_feedback_unread {
-                    "Tool Feedback*".to_string()
-                } else {
-                    "Tool Feedback".to_string()
-                }
-            }
+            Gen3dSideTab::Prefab => "Prefab".to_string(),
         };
         **text = label.into();
     }
 }
 
-pub(crate) fn gen3d_update_tool_feedback_text(
+pub(crate) fn gen3d_update_prefab_details_text(
     build_scene: Res<State<BuildScene>>,
-    config: Res<AppConfig>,
     workshop: Res<Gen3dWorkshop>,
-    history: Res<Gen3dToolFeedbackHistory>,
-    mut texts: Query<&mut Text, With<Gen3dToolFeedbackText>>,
+    job: Res<Gen3dAiJob>,
+    descriptors: Res<PrefabDescriptorLibrary>,
+    library: Res<ObjectLibrary>,
+    mut texts: Query<&mut Text, With<Gen3dPrefabDetailsText>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
-    if !matches!(workshop.side_tab, Gen3dSideTab::ToolFeedback) {
+    if !matches!(workshop.side_tab, Gen3dSideTab::Prefab) {
         return;
     }
 
-    let run_id = history.last_run_id().map(|s| s.to_string());
+    let saved = job.last_saved_prefab_id();
+    let overwrite = job.save_overwrite_prefab_id();
+    let base = job.edit_base_prefab_id();
+
+    let (prefab_id, source_label) = if let Some(id) = saved {
+        (id, "Saved")
+    } else if let Some(id) = overwrite {
+        (id, "Save target")
+    } else if let Some(id) = base {
+        (id, "Base")
+    } else {
+        let mut out = String::new();
+        out.push_str("Current Prefab\n\n");
+        out.push_str("No prefab selected yet.\n\n");
+        out.push_str("Tip: Click Build, then Save to create a prefab descriptor.\n");
+
+        for mut text in &mut texts {
+            **text = out.clone().into();
+        }
+        return;
+    };
+
+    let uuid = Uuid::from_u128(prefab_id).to_string();
+    let desc = descriptors.get(prefab_id);
+
+    let name = desc
+        .and_then(|d| d.label.as_ref())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| uuid.clone());
+    let tags = desc.map(|d| d.tags.clone()).unwrap_or_default();
+    let roles = desc.map(|d| d.roles.clone()).unwrap_or_default();
+    let short = desc
+        .and_then(|d| d.text.as_ref())
+        .and_then(|t| t.short.as_deref())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty());
+    let long = desc
+        .and_then(|d| d.text.as_ref())
+        .and_then(|t| t.long.as_deref())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty());
+    let gen3d_prompt = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.gen3d.as_ref())
+        .and_then(|g| g.prompt.as_deref())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty());
+    let gen3d_descriptor_meta = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.gen3d.as_ref())
+        .and_then(|g| g.extra.get("descriptor_meta_v1"));
+    let modified_at_ms = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.modified_at_ms);
+    let created_at_ms = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.created_at_ms);
 
     let mut out = String::new();
-    if history.entries.is_empty() {
-        out.push_str("No tool feedback yet.\n\n");
-        out.push_str(
-            "When the Gen3D reviewer wants new tools or improvements, it will add entries here.\n",
-        );
-    } else if let Some(run_id) = run_id.as_deref() {
-        let entries: Vec<_> = history.entries_for_run(run_id).collect();
-        out.push_str(&format!(
-            "Last run: {run_id}\nEntries: {}\n\n",
-            entries.len()
-        ));
-        if entries.is_empty() {
-            out.push_str("No feedback entries for the last run.\n");
-        } else {
-            for entry in entries {
-                out.push_str(&format!(
-                    "[{}] {} (attempt {:?} / pass {:?})\n{}\n\n",
-                    entry.priority.to_uppercase(),
-                    entry.title.trim(),
-                    entry.attempt.unwrap_or(0),
-                    entry.pass.unwrap_or(0),
-                    entry.summary.trim()
-                ));
-            }
-        }
+    out.push_str("Current Prefab\n\n");
 
-        let run_dir = gen3d_cache_base_dir(&config).join(run_id);
-        out.push_str("Files:\n");
+    out.push_str(&format!("Showing: {source_label}\n"));
+    out.push_str(&format!("Name: {name}\n"));
+    out.push_str(&format!("ID: {uuid}\n"));
+    if let Some(modified_at_ms) = modified_at_ms {
+        out.push_str(&format!("Modified: {modified_at_ms}\n"));
+    }
+    if let Some(created_at_ms) = created_at_ms {
+        out.push_str(&format!("Created: {created_at_ms}\n"));
+    }
+    if !roles.is_empty() {
+        out.push_str(&format!("Roles: {}\n", roles.join(", ")));
+    }
+    if !tags.is_empty() {
+        out.push_str(&format!("Tags: {}\n", tags.join(", ")));
+    }
+    if let Some(size) = library.size(prefab_id) {
         out.push_str(&format!(
-            "- {}\n",
-            run_dir.join("tool_feedback.jsonl").display()
+            "Size (m): [{:.3}, {:.3}, {:.3}]\n",
+            size.x, size.y, size.z
         ));
-        out.push_str(&format!(
-            "- {}\n",
-            gen3d_cache_base_dir(&config)
-                .join("tool_feedback_history.jsonl")
-                .display()
-        ));
+    }
+
+    out.push_str("\nDescriptions\n");
+    out.push_str("Short:\n");
+    if let Some(short) = short {
+        out.push_str(short);
+        out.push('\n');
+    } else {
+        out.push_str("<none>\n");
+    }
+    out.push('\n');
+    out.push_str("Long:\n");
+    if let Some(long) = long {
+        out.push_str(long);
+        out.push('\n');
+    } else {
+        out.push_str("<none>\n");
+    }
+
+    if let Some(gen3d_prompt) = gen3d_prompt {
+        out.push('\n');
+        out.push_str("Gen3D prompt:\n");
+        out.push_str(gen3d_prompt);
+        out.push('\n');
+    }
+
+    if let Some(meta_json) = gen3d_descriptor_meta {
+        let name = meta_json
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty());
+        let short = meta_json
+            .get("short")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty());
+        let tags = meta_json
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        out.push('\n');
+        out.push_str("AI enriched (descriptor_meta_v1):\n");
+        if let Some(name) = name {
+            out.push_str(&format!("- name: {name}\n"));
+        }
+        if let Some(short) = short {
+            out.push_str("- short: ");
+            out.push_str(short);
+            out.push('\n');
+        }
+        if !tags.is_empty() {
+            out.push_str(&format!("- tags: {}\n", tags.join(", ")));
+        }
     }
 
     for mut text in &mut texts {
@@ -156,20 +254,20 @@ pub(crate) fn gen3d_update_tool_feedback_text(
     }
 }
 
-pub(crate) fn gen3d_tool_feedback_scroll_wheel(
+pub(crate) fn gen3d_prefab_scroll_wheel(
     build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
     mut panels: Query<
         (&ComputedNode, &UiGlobalTransform, &mut ScrollPosition),
-        With<Gen3dToolFeedbackScrollPanel>,
+        With<Gen3dPrefabScrollPanel>,
     >,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
-    if !matches!(workshop.side_tab, Gen3dSideTab::ToolFeedback) {
+    if !matches!(workshop.side_tab, Gen3dSideTab::Prefab) {
         for _ in mouse_wheel.read() {}
         return;
     }
@@ -207,17 +305,17 @@ pub(crate) fn gen3d_tool_feedback_scroll_wheel(
     scroll.y = (scroll.y - delta_px).max(0.0);
 }
 
-pub(crate) fn gen3d_update_tool_feedback_scrollbar_ui(
+pub(crate) fn gen3d_update_prefab_scrollbar_ui(
     build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
-    panels: Query<&ComputedNode, With<Gen3dToolFeedbackScrollPanel>>,
-    mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dToolFeedbackScrollbarTrack>>,
-    mut thumbs: Query<&mut Node, With<Gen3dToolFeedbackScrollbarThumb>>,
+    panels: Query<&ComputedNode, With<Gen3dPrefabScrollPanel>>,
+    mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dPrefabScrollbarTrack>>,
+    mut thumbs: Query<&mut Node, With<Gen3dPrefabScrollbarThumb>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
-    if !matches!(workshop.side_tab, Gen3dSideTab::ToolFeedback) {
+    if !matches!(workshop.side_tab, Gen3dSideTab::Prefab) {
         return;
     }
 
@@ -258,159 +356,4 @@ pub(crate) fn gen3d_update_tool_feedback_scrollbar_ui(
 
     thumb.top = Val::Px(thumb_top);
     thumb.height = Val::Px(thumb_h);
-}
-
-pub(crate) fn gen3d_copy_tool_feedback_buttons(
-    build_scene: Res<State<BuildScene>>,
-    config: Res<AppConfig>,
-    mut workshop: ResMut<Gen3dWorkshop>,
-    history: Res<Gen3dToolFeedbackHistory>,
-    mut buttons: Query<
-        (
-            &Interaction,
-            &mut BackgroundColor,
-            Option<&Gen3dCopyFeedbackCodexButton>,
-            Option<&Gen3dCopyFeedbackJsonButton>,
-        ),
-        Changed<Interaction>,
-    >,
-) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return;
-    }
-
-    let run_id = history.last_run_id().map(|s| s.to_string());
-
-    for (interaction, mut bg, codex, json) in &mut buttons {
-        let is_codex = codex.is_some();
-        let is_json = json.is_some();
-
-        if !is_codex && !is_json {
-            continue;
-        }
-
-        match *interaction {
-            Interaction::Pressed => {
-                if is_codex {
-                    *bg = BackgroundColor(Color::srgba(0.10, 0.14, 0.22, 0.90));
-                    if let Some(run_id) = run_id.as_deref() {
-                        let payload = build_codex_clipboard_payload(&config, &history, run_id);
-                        if crate::clipboard::write_text(&payload) {
-                            workshop.status = format!("Copied tool feedback for run {run_id}.");
-                            workshop.error = None;
-                        } else {
-                            workshop.error = Some("Failed to copy to clipboard.".into());
-                        }
-                    } else {
-                        workshop.error = Some("No tool feedback entries to copy yet.".into());
-                    }
-                } else {
-                    *bg = BackgroundColor(Color::srgba(0.10, 0.12, 0.14, 0.88));
-                    if let Some(run_id) = run_id.as_deref() {
-                        let entries: Vec<_> = history.entries_for_run(run_id).cloned().collect();
-                        match serde_json::to_string_pretty(&entries) {
-                            Ok(json) => {
-                                if crate::clipboard::write_text(&json) {
-                                    workshop.status =
-                                        format!("Copied JSON tool feedback for run {run_id}.");
-                                    workshop.error = None;
-                                } else {
-                                    workshop.error =
-                                        Some("Failed to copy JSON to clipboard.".into());
-                                }
-                            }
-                            Err(err) => {
-                                workshop.error = Some(format!("Failed to serialize JSON: {err}"));
-                            }
-                        }
-                    } else {
-                        workshop.error = Some("No tool feedback entries to copy yet.".into());
-                    }
-                }
-            }
-            Interaction::Hovered => {
-                if is_codex {
-                    *bg = BackgroundColor(Color::srgba(0.08, 0.12, 0.20, 0.86));
-                } else {
-                    *bg = BackgroundColor(Color::srgba(0.08, 0.10, 0.12, 0.82));
-                }
-            }
-            Interaction::None => {
-                if is_codex {
-                    *bg = BackgroundColor(Color::srgba(0.06, 0.10, 0.16, 0.80));
-                } else {
-                    *bg = BackgroundColor(Color::srgba(0.08, 0.10, 0.12, 0.78));
-                }
-            }
-        }
-    }
-}
-
-fn build_codex_clipboard_payload(
-    config: &AppConfig,
-    history: &Gen3dToolFeedbackHistory,
-    run_id: &str,
-) -> String {
-    let repo_path = std::env::current_dir()
-        .ok()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "<unknown>".into());
-    let git = std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| o.status.success().then_some(o))
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "<unknown>".into());
-
-    let entries: Vec<_> = history.entries_for_run(run_id).collect();
-    let base_dir = gen3d_cache_base_dir(config);
-    let run_dir = base_dir.join(run_id);
-
-    let mut out = String::new();
-    out.push_str("# Gravimera Gen3D tooling feedback (last run)\n");
-    out.push_str(&format!("Repo: {repo_path}\n"));
-    out.push_str(&format!("Git: {git}\n"));
-    out.push_str(&format!("Run: {run_id}\n\n"));
-
-    out.push_str("Summary:\n");
-    if entries.is_empty() {
-        out.push_str("- (no tool feedback entries for this run)\n");
-    } else {
-        for e in &entries {
-            out.push_str(&format!(
-                "- [{}] {} — {} (attempt_{}/pass_{})\n",
-                e.priority.to_uppercase(),
-                e.title.trim(),
-                e.summary.trim(),
-                e.attempt.unwrap_or(0),
-                e.pass.unwrap_or(0)
-            ));
-        }
-    }
-
-    out.push_str("\nFiles:\n");
-    out.push_str(&format!(
-        "- {}\n",
-        run_dir.join("tool_feedback.jsonl").display()
-    ));
-    out.push_str(&format!(
-        "- {}\n",
-        base_dir.join("tool_feedback_history.jsonl").display()
-    ));
-    out.push_str(&format!(
-        "- {}\n",
-        run_dir.join("attempt_*/pass_*/gen3d_run.log").display()
-    ));
-    out.push_str(&format!(
-        "- {}\n",
-        run_dir.join("attempt_*/pass_*/gravimera.log").display()
-    ));
-    out.push_str(&format!(
-        "- {}\n",
-        run_dir.join("attempt_*/pass_*/review_*.png").display()
-    ));
-
-    out
 }

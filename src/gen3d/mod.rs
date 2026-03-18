@@ -136,11 +136,10 @@ pub(crate) use ai::{gen3d_continue_button, gen3d_generate_button, gen3d_poll_ai_
 pub(crate) use ai::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 pub(crate) use images::{
     gen3d_clear_images_button, gen3d_handle_drag_and_drop, gen3d_image_viewer_click_to_close,
-    gen3d_image_viewer_keyboard_navigation,
-    gen3d_rebuild_images_list_ui, gen3d_thumbnail_button_open_viewer,
-    gen3d_thumbnail_button_style_on_interaction, gen3d_thumbnail_button_style_on_selection,
-    gen3d_update_image_viewer_ui, gen3d_update_images_inline_visibility,
-    gen3d_update_thumbnail_tooltip,
+    gen3d_image_viewer_keyboard_navigation, gen3d_rebuild_images_list_ui,
+    gen3d_thumbnail_button_open_viewer, gen3d_thumbnail_button_style_on_interaction,
+    gen3d_thumbnail_button_style_on_selection, gen3d_update_image_viewer_ui,
+    gen3d_update_images_inline_visibility, gen3d_update_thumbnail_tooltip,
 };
 pub(crate) use preview::{
     gen3d_apply_draft_to_preview, gen3d_preview_orbit_controls,
@@ -155,9 +154,8 @@ pub(crate) use state::*;
 pub(crate) use status::{gen3d_status_scroll_wheel, gen3d_update_status_scrollbar_ui};
 pub(crate) use tool_feedback::{gen3d_load_tool_feedback_history, Gen3dToolFeedbackHistory};
 pub(crate) use tool_feedback_ui::{
-    gen3d_copy_tool_feedback_buttons, gen3d_side_tab_buttons, gen3d_tool_feedback_scroll_wheel,
-    gen3d_update_side_tab_ui, gen3d_update_tool_feedback_scrollbar_ui,
-    gen3d_update_tool_feedback_text,
+    gen3d_prefab_scroll_wheel, gen3d_side_tab_buttons, gen3d_update_prefab_details_text,
+    gen3d_update_prefab_scrollbar_ui, gen3d_update_side_tab_ui,
 };
 pub(crate) use ui::{
     enter_gen3d_mode, exit_gen3d_mode, gen3d_cleanup_preview_scene_when_idle,
@@ -165,9 +163,8 @@ pub(crate) use ui::{
     gen3d_preview_animation_dropdown_button, gen3d_preview_animation_dropdown_scroll_wheel,
     gen3d_preview_animation_option_buttons, gen3d_prompt_box_focus, gen3d_prompt_scroll_wheel,
     gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
-    gen3d_rebuild_preview_animation_dropdown_options_ui,
-    gen3d_side_panel_toggle_button, gen3d_update_preview_animation_dropdown_ui,
-    gen3d_update_preview_panel_image_fit, gen3d_update_prompt_scrollbar_ui,
-    gen3d_update_side_panel_ui, gen3d_update_ui_text, handle_gen3d_toggle_button,
-    spawn_gen3d_preview_panel, update_gen3d_toggle_button_label,
+    gen3d_rebuild_preview_animation_dropdown_options_ui, gen3d_side_panel_toggle_button,
+    gen3d_update_preview_animation_dropdown_ui, gen3d_update_preview_panel_image_fit,
+    gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
+    handle_gen3d_toggle_button, spawn_gen3d_preview_panel, update_gen3d_toggle_button_label,
 };

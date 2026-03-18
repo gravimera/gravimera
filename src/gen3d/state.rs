@@ -3,6 +3,89 @@ use std::path::PathBuf;
 
 use crate::object::registry::{ObjectDef, ObjectPartKind};
 
+#[derive(Clone, Debug)]
+pub(crate) struct Gen3dStatusLogEntry {
+    pub(crate) seq: u32,
+    pub(crate) step: String,
+    pub(crate) why: String,
+    pub(crate) result: String,
+    pub(crate) duration_ms: u128,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Gen3dStatusLogActiveStep {
+    pub(crate) seq: u32,
+    pub(crate) step: String,
+    pub(crate) why: String,
+    pub(crate) started_at: std::time::Instant,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Gen3dStatusLog {
+    pub(crate) entries: Vec<Gen3dStatusLogEntry>,
+    pub(crate) active: Option<Gen3dStatusLogActiveStep>,
+    pub(crate) next_seq: u32,
+}
+
+impl Gen3dStatusLog {
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+        self.active = None;
+        self.next_seq = 0;
+    }
+
+    pub(crate) fn start_step(&mut self, step: impl Into<String>, why: impl Into<String>) {
+        const MAX_ENTRIES: usize = 200;
+
+        if self.active.is_some() {
+            self.finish_step("Interrupted.");
+        }
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.saturating_add(1);
+        self.active = Some(Gen3dStatusLogActiveStep {
+            seq,
+            step: step.into(),
+            why: why.into(),
+            started_at: std::time::Instant::now(),
+        });
+        if self.entries.len() > MAX_ENTRIES {
+            let drain = self.entries.len().saturating_sub(MAX_ENTRIES);
+            self.entries.drain(0..drain);
+        }
+    }
+
+    pub(crate) fn finish_step(&mut self, result: impl Into<String>) {
+        let Some(active) = self.active.take() else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        let duration_ms = now
+            .duration_since(active.started_at)
+            .as_millis()
+            .min(u128::from(u64::MAX));
+        self.entries.push(Gen3dStatusLogEntry {
+            seq: active.seq,
+            step: active.step,
+            why: active.why,
+            result: result.into(),
+            duration_ms,
+        });
+    }
+
+    pub(crate) fn finish_step_if_active(&mut self, result: impl Into<String>) {
+        if self.active.is_none() {
+            return;
+        }
+        self.finish_step(result);
+    }
+
+    pub(crate) fn active_elapsed(&self) -> Option<std::time::Duration> {
+        self.active
+            .as_ref()
+            .map(|active| std::time::Instant::now().duration_since(active.started_at))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Gen3dSpeedMode {
     Level3,
@@ -41,18 +124,18 @@ pub(crate) struct Gen3dWorkshop {
     pub(crate) prompt_focused: bool,
     pub(crate) status: String,
     pub(crate) error: Option<String>,
+    pub(crate) status_log: Gen3dStatusLog,
     pub(crate) image_viewer: Option<usize>,
     pub(crate) speed_mode: Gen3dSpeedMode,
     pub(crate) side_tab: Gen3dSideTab,
     pub(crate) side_panel_open: bool,
-    pub(crate) tool_feedback_unread: bool,
     pub(crate) prompt_scrollbar_drag: Option<Gen3dPromptScrollbarDrag>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Gen3dSideTab {
     Status,
-    ToolFeedback,
+    Prefab,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,6 +320,9 @@ pub(crate) struct Gen3dSaveButtonText;
 pub(crate) struct Gen3dStatusText;
 
 #[derive(Component)]
+pub(crate) struct Gen3dStatusLogsText;
+
+#[derive(Component)]
 pub(crate) struct Gen3dSideTabButton {
     tab: Gen3dSideTab,
 }
@@ -270,7 +356,7 @@ impl Gen3dSideTabButtonText {
 pub(crate) struct Gen3dStatusPanelRoot;
 
 #[derive(Component)]
-pub(crate) struct Gen3dToolFeedbackPanelRoot;
+pub(crate) struct Gen3dPrefabPanelRoot;
 
 #[derive(Component)]
 pub(crate) struct Gen3dSidePanelRoot;
@@ -282,22 +368,16 @@ pub(crate) struct Gen3dSidePanelToggleButton;
 pub(crate) struct Gen3dSidePanelToggleButtonText;
 
 #[derive(Component)]
-pub(crate) struct Gen3dToolFeedbackScrollPanel;
+pub(crate) struct Gen3dPrefabScrollPanel;
 
 #[derive(Component)]
-pub(crate) struct Gen3dToolFeedbackScrollbarTrack;
+pub(crate) struct Gen3dPrefabScrollbarTrack;
 
 #[derive(Component)]
-pub(crate) struct Gen3dToolFeedbackScrollbarThumb;
+pub(crate) struct Gen3dPrefabScrollbarThumb;
 
 #[derive(Component)]
-pub(crate) struct Gen3dToolFeedbackText;
-
-#[derive(Component)]
-pub(crate) struct Gen3dCopyFeedbackCodexButton;
-
-#[derive(Component)]
-pub(crate) struct Gen3dCopyFeedbackJsonButton;
+pub(crate) struct Gen3dPrefabDetailsText;
 
 #[derive(Component)]
 pub(crate) struct Gen3dClearPromptButton;

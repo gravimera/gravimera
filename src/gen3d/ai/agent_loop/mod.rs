@@ -11,6 +11,7 @@ use crate::gen3d::agent::{append_agent_trace_event_v1, AgentTraceEventV1, Gen3dT
 use super::artifacts::{
     append_gen3d_run_log, write_gen3d_json_artifact, write_gen3d_text_artifact,
 };
+use super::status_steps;
 use super::{
     fail_job, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
     Gen3dAiTextResponse,
@@ -156,6 +157,14 @@ pub(super) fn spawn_agent_user_image_summary_request(
     job.shared_progress = Some(progress.clone());
 
     set_progress(&progress, "Analyzing reference images…");
+    status_steps::log_ai_request_started(
+        workshop,
+        "Analyze reference images",
+        &format!(
+            "You provided {} image(s); extracting a short object summary for downstream steps.",
+            job.user_images.len()
+        ),
+    );
 
     append_agent_trace_event_v1(
         job.run_dir.as_deref(),
@@ -311,6 +320,13 @@ fn poll_agent_user_image_summary(
                 truncated,
                 word_count,
             });
+            status_steps::log_ai_request_finished(
+                workshop,
+                &format!(
+                    "OK (words: {word_count}{})",
+                    if truncated { ", truncated" } else { "" }
+                ),
+            );
 
             let Some(run_dir) = job.run_dir.clone() else {
                 fail_job(workshop, job, "Internal error: missing Gen3D run dir.");

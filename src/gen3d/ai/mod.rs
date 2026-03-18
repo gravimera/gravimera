@@ -30,21 +30,22 @@ mod motion_validation;
 mod openai;
 mod orchestration;
 mod parse;
+mod pipeline_orchestrator;
 mod plan_ops;
 mod plan_tools;
-mod pipeline_orchestrator;
 mod preserve_plan_policy;
 mod prompts;
 mod reuse_groups;
 mod schema;
 mod snapshots;
+mod status_steps;
 mod structured_outputs;
 mod workspaces;
 
 #[cfg(test)]
-mod regression_tests;
-#[cfg(test)]
 mod pipeline_orchestrator_tests;
+#[cfg(test)]
+mod regression_tests;
 
 use super::{GEN3D_MAX_REQUEST_IMAGES, GEN3D_PREVIEW_DEFAULT_PITCH, GEN3D_PREVIEW_DEFAULT_YAW};
 

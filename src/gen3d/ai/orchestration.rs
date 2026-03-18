@@ -20,13 +20,13 @@ use crate::threaded_result::{
 use crate::types::{AnimationChannelsActive, AttackClock, BuildScene, LocomotionClock};
 
 use super::agent_loop;
-use super::pipeline_orchestrator;
 use super::ai_service::{generate_text_via_ai_service, Gen3dAiServiceConfig};
 use super::artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
     write_gen3d_json_artifact,
 };
 use super::job::*;
+use super::pipeline_orchestrator;
 use super::prompts::{
     build_gen3d_component_system_instructions, build_gen3d_component_user_text,
     build_gen3d_plan_system_instructions, build_gen3d_plan_user_text,
@@ -43,8 +43,8 @@ use super::reuse_groups;
 
 use super::super::state::{
     Gen3dContinueButton, Gen3dDraft, Gen3dGenerateButton, Gen3dPendingSeedFromPrefab, Gen3dPreview,
-    Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dSeedFromPrefabMode, Gen3dSideTab,
-    Gen3dSpeedMode, Gen3dWorkshop,
+    Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dSeedFromPrefabMode, Gen3dSpeedMode,
+    Gen3dWorkshop,
 };
 use super::super::tool_feedback::{
     append_gen3d_tool_feedback_entry, gen3d_tool_feedback_history_path, Gen3dToolFeedbackEntry,
@@ -223,6 +223,10 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
         return;
     }
 
+    workshop
+        .status_log
+        .finish_step_if_active("Stopped by user.".to_string());
+
     // Stop the current build, but keep the session context so it can be resumed.
     // Any in-flight AI request thread stops as soon as it observes the cancel flag; we also ignore
     // its eventual result and stop updating UI state.
@@ -295,6 +299,12 @@ pub(crate) fn gen3d_resume_build_from_api(
     if job.run_id.is_none() || job.run_dir.is_none() || job.pass_dir.is_none() {
         return Err("Cannot resume: no prior Gen3D session (start a new Build).".into());
     }
+
+    workshop.status_log.start_step(
+        "Resume build".to_string(),
+        "User clicked Continue; resuming the previous run.".to_string(),
+    );
+    workshop.status_log.finish_step("OK".to_string());
 
     if !workshop.prompt.trim().is_empty() {
         job.user_prompt_raw = workshop.prompt.clone();
@@ -1040,6 +1050,18 @@ pub(crate) fn gen3d_start_build_from_api(
         ),
     );
 
+    workshop.status_log.clear();
+    workshop.status_log.start_step(
+        "Run started".to_string(),
+        format!(
+            "Service: {} | Model: {} | Images: {}",
+            ai.service_label(),
+            ai.model(),
+            cached_image_paths.len()
+        ),
+    );
+    workshop.status_log.finish_step("OK".to_string());
+
     workshop.error = None;
     workshop.status = format!(
         "Planning components…\nService: {}\nModel: {}\nImages: {}",
@@ -1133,6 +1155,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.save_seq = 0;
     job.edit_base_prefab_id = None;
     job.save_overwrite_prefab_id = None;
+    job.last_saved_prefab_id = None;
     job.seed_target_entity = None;
     draft.defs.clear();
 
@@ -3157,6 +3180,10 @@ fn poll_gen3d_parallel_components(
 pub(super) fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: impl Into<String>) {
     let err = err.into();
     error!("Gen3D: build failed: {}", truncate_for_ui(&err, 1200));
+    workshop.status_log.finish_step_if_active(format!(
+        "Error: {}",
+        truncate_for_ui(err.trim().lines().next().unwrap_or(""), 240)
+    ));
     if let Some(flag) = job.cancel_flag.as_ref() {
         flag.store(true, Ordering::Relaxed);
     }
@@ -3250,6 +3277,10 @@ pub(super) fn finish_job_best_effort(
         "Gen3D: stopping run due to budget: {}",
         truncate_for_ui(&reason, 800)
     );
+    workshop.status_log.finish_step_if_active(format!(
+        "Stopped (best effort): {}",
+        truncate_for_ui(reason.trim(), 240)
+    ));
     if let Some(flag) = job.cancel_flag.as_ref() {
         flag.store(true, Ordering::Relaxed);
     }
@@ -5325,9 +5356,14 @@ pub(super) fn record_gen3d_tooling_feedback(
 
         append_gen3d_tool_feedback_entry(config, run_dir, &entry);
         history.entries.push(entry);
-        if matches!(workshop.side_tab, Gen3dSideTab::Status) {
-            workshop.tool_feedback_unread = true;
-        }
+        super::status_steps::log_note(
+            workshop,
+            &format!(
+                "Tool feedback received: [{}] {}",
+                entry_priority.to_uppercase(),
+                truncate_for_ui(entry_title.trim(), 180)
+            ),
+        );
 
         // Codex-style developer breadcrumbs: surface tool feedback in terminal/logs.
         if let Some(pass_dir) = pass_dir {

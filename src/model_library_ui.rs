@@ -19,8 +19,8 @@ use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
 use crate::scene_store::SceneSaveRequest;
 use crate::types::{
-    AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, GameMode, ObjectId,
-    ObjectPrefabId, EmojiAtlas, UiFonts,
+    AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, EmojiAtlas, GameMode,
+    ObjectId, ObjectPrefabId, UiFonts,
 };
 
 const PANEL_Z_INDEX: i32 = 930;

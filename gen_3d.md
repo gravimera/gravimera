@@ -16,7 +16,7 @@ The AI is instructed to prioritize **basic structure and proportions** over smal
    - Thumbnails appear inside the prompt box on the right. Click a thumbnail to open the viewer (`↑/↓` navigate, `Esc` to close) while keeping the 3D preview visible.
    - Limits: at most 3 images total; each image must be smaller than 5 MiB (over-limit images are refused with a tip).
 3. Optional: type notes/style in the prompt box (supports Chinese/IME input, emoji, paste via `Cmd/Ctrl+V`, and scrolling for long text; **Clear Prompt** wipes it).
-   - On WSL, paste/copy prefers the Windows clipboard via interop (`powershell.exe` / `clip.exe`). If interop is disabled, install `wl-clipboard` or `xclip`/`xsel`.
+   - On WSL, paste prefers the Windows clipboard via interop (`powershell.exe` / `clip.exe`). If interop is disabled, install `wl-clipboard` or `xclip`/`xsel`.
    - The game always provides a default style: “Concise Voxel/Pixel Art style (not necessarily cuboid-only).”
    - If your notes include a different style, the AI should prefer your notes over the default.
    - Limits: at most 250 whitespace-separated words and at most 2000 characters (extra input is refused with a tip).
@@ -29,13 +29,15 @@ The AI is instructed to prioritize **basic structure and proportions** over smal
    - Select preview motion channel via the **Anim** dropdown (lists available channels; canonical: Idle / Move / Attack).
    - Toggle collider overlay via **Collision: On/Off** (also controls whether saved buildings block unit movement).
    - Open the **Status** overlay via the top-right `≡` button (collapsed by default).
+     - **Status** tab: live summary + scrollable step logs (why/result/duration).
+     - **Prefab** tab: current prefab descriptor details (no revision history).
    - The preview shows run time and AI token counters (run + total) at top-left.
 6. If needed, change notes/images and click **Build** again.
 7. Once a usable draft exists (root + at least one primitive part), click **Save** to place the generated model next to the hero.
    - You can **Save multiple times**, even while building.
    - After leaving Gen3D, you can edit it in Build mode selection (delete/duplicate/move/rotate/scale).
 
-If generation fails, the status panel shows a short error summary; detailed step-by-step logs are printed to the terminal at debug level.
+If generation fails, the Status overlay shows a short error summary plus the step-by-step log (why/result/duration). Detailed logs and artifacts are also written under the Gen3D cache directory.
 
 ---
 

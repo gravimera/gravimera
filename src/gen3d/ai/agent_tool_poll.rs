@@ -23,6 +23,7 @@ use super::artifacts::{
     write_gen3d_json_artifact, write_gen3d_text_artifact,
 };
 use super::parse;
+use super::status_steps;
 use super::{
     fail_job, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
     Gen3dAiTextResponse,
@@ -246,6 +247,7 @@ pub(super) fn poll_agent_tool(
             poll_agent_component_batch(config, workshop, job, draft, workshop.speed_mode)
         {
             job.metrics.note_tool_result(&tool_result);
+            status_steps::log_tool_call_finished(workshop, job, &*draft, &tool_result);
             append_agent_trace_event_v1(
                 job.run_dir.as_deref(),
                 &AgentTraceEventV1::ToolResult {
@@ -3085,6 +3087,7 @@ pub(super) fn poll_agent_tool(
     };
 
     job.metrics.note_tool_result(&tool_result);
+    status_steps::log_tool_call_finished(workshop, job, &*draft, &tool_result);
     append_agent_trace_event_v1(
         job.run_dir.as_deref(),
         &AgentTraceEventV1::ToolResult {

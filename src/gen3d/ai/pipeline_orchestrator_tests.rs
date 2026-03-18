@@ -5,9 +5,7 @@ use bevy::prelude::*;
 use uuid::Uuid;
 
 use crate::config::{AppConfig, OpenAiConfig};
-use crate::gen3d::state::{
-    Gen3dDraft, Gen3dPreview, Gen3dSpeedMode, Gen3dWorkshop,
-};
+use crate::gen3d::state::{Gen3dDraft, Gen3dPreview, Gen3dSpeedMode, Gen3dWorkshop};
 use crate::gen3d::tool_feedback::Gen3dToolFeedbackHistory;
 
 use super::ai_service::Gen3dAiServiceConfig;
@@ -195,7 +193,10 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
     app = run_app_until_build_stops(app, Duration::from_secs(5));
 
     let before_edit_rev = app.world().resource::<Gen3dAiJob>().assembly_rev;
-    assert!(before_edit_rev > 0, "expected non-zero assembly_rev after create");
+    assert!(
+        before_edit_rev > 0,
+        "expected non-zero assembly_rev after create"
+    );
 
     // Start a seeded edit run using the existing in-memory draft + plan.
     let pass1 = run_dir.join("attempt_0").join("pass_1");
@@ -240,8 +241,8 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
         "expected apply_draft_ops_last.json artifact in edit pass"
     );
 
-    let tool_calls = std::fs::read_to_string(pass1.join("tool_calls.jsonl"))
-        .expect("read tool_calls.jsonl");
+    let tool_calls =
+        std::fs::read_to_string(pass1.join("tool_calls.jsonl")).expect("read tool_calls.jsonl");
     assert!(
         tool_calls.contains("llm_generate_draft_ops_v1"),
         "expected llm_generate_draft_ops_v1 tool call in edit run"
