@@ -2716,7 +2716,7 @@ fn parse_openai_config(text: &str) -> Result<OpenAiConfig, String> {
     }
 
     let base_url = base_url.unwrap_or_else(|| "https://api.openai.com/v1".into());
-    let model = model.unwrap_or_else(|| "gpt-5.2".into());
+    let model = model.unwrap_or_else(|| "gpt-5.4".into());
     let effort = effort.unwrap_or_else(|| "high".into());
     let api_key = api_key.unwrap_or_default();
 

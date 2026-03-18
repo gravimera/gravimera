@@ -148,7 +148,7 @@ max_parallel_components = 10
 base_url = "https://api.openai.com/v1"
 
 # Any Responses API model that supports images.
-model = "gpt-5.2"
+model = "gpt-5.4"
 
 # "low" | "medium" | "high"
 model_reasoning_effort = "high"
