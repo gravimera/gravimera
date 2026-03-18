@@ -485,365 +485,6 @@ pub(crate) fn enter_gen3d_mode(
                                             });
                                         });
                                 });
-
-                            // Collapsible side panel toggle.
-                            preview
-                                .spawn((
-                                    Button,
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        right: Val::Px(8.0),
-                                        top: Val::Px(8.0),
-                                        width: Val::Px(28.0),
-                                        height: Val::Px(28.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.80)),
-                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.70)),
-                                    ZIndex(2150),
-                                    Gen3dSidePanelToggleButton,
-                                ))
-                                .with_children(|button| {
-                                    button.spawn((
-                                        Text::new("≡"),
-                                        TextFont {
-                                            font_size: 16.0,
-                                            ..default()
-                                        },
-                                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                        Gen3dSidePanelToggleButtonText,
-                                    ));
-                                });
-
-                            // Collapsible Status overlay (hidden by default).
-                            preview
-                                .spawn((
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        right: Val::Px(8.0),
-                                        top: Val::Px(44.0),
-                                        bottom: Val::Px(8.0),
-                                        width: Val::Px(520.0),
-                                        flex_direction: FlexDirection::Column,
-                                        row_gap: Val::Px(6.0),
-                                        padding: UiRect::all(Val::Px(8.0)),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        min_height: Val::Px(0.0),
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.92)),
-                                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                                    ZIndex(2140),
-                                    Visibility::Hidden,
-                                    Gen3dSidePanelRoot,
-                                ))
-                                .with_children(|panel| {
-                                    // Side tab bar.
-                                    panel
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                flex_direction: FlexDirection::Row,
-                                                column_gap: Val::Px(6.0),
-                                                ..default()
-                                            },
-                                            BackgroundColor(Color::NONE),
-                                            Visibility::Inherited,
-                                        ))
-                                        .with_children(|tabs| {
-                                            tabs.spawn((
-                                                Button,
-                                                Node {
-                                                    flex_grow: 1.0,
-                                                    height: Val::Px(30.0),
-                                                    justify_content: JustifyContent::Center,
-                                                    align_items: AlignItems::Center,
-                                                    border: UiRect::all(Val::Px(1.0)),
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::srgba(
-                                                    0.03, 0.03, 0.04, 0.70,
-                                                )),
-                                                BorderColor::all(Color::srgba(
-                                                    0.25, 0.25, 0.30, 0.70,
-                                                )),
-                                                Visibility::Inherited,
-                                                Gen3dSideTabButton::new(Gen3dSideTab::Status),
-                                            ))
-                                            .with_children(|button| {
-                                                button.spawn((
-                                                    Text::new("Status"),
-                                                    TextFont {
-                                                        font_size: 14.0,
-                                                        ..default()
-                                                    },
-                                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                                    Visibility::Inherited,
-                                                    Gen3dSideTabButtonText::new(
-                                                        Gen3dSideTab::Status,
-                                                    ),
-                                                ));
-                                            });
-
-                                            tabs.spawn((
-                                                Button,
-                                                Node {
-                                                    flex_grow: 1.0,
-                                                    height: Val::Px(30.0),
-                                                    justify_content: JustifyContent::Center,
-                                                    align_items: AlignItems::Center,
-                                                    border: UiRect::all(Val::Px(1.0)),
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::srgba(
-                                                    0.03, 0.03, 0.04, 0.70,
-                                                )),
-                                                BorderColor::all(Color::srgba(
-                                                    0.25, 0.25, 0.30, 0.70,
-                                                )),
-                                                Visibility::Inherited,
-                                                Gen3dSideTabButton::new(Gen3dSideTab::Prefab),
-                                            ))
-                                            .with_children(|button| {
-                                                button.spawn((
-                                                    Text::new("Prefab"),
-                                                    TextFont {
-                                                        font_size: 14.0,
-                                                        ..default()
-                                                    },
-                                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                                    Visibility::Inherited,
-                                                    Gen3dSideTabButtonText::new(
-                                                        Gen3dSideTab::Prefab,
-                                                    ),
-                                                ));
-                                            });
-                                        });
-
-                                    // Status tab content.
-                                    panel
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                flex_grow: 1.0,
-                                                flex_basis: Val::Px(0.0),
-                                                min_height: Val::Px(0.0),
-                                                flex_direction: FlexDirection::Column,
-                                                row_gap: Val::Px(8.0),
-                                                ..default()
-                                            },
-                                            BackgroundColor(Color::NONE),
-                                            Visibility::Inherited,
-                                            Gen3dStatusPanelRoot,
-                                        ))
-                                        .with_children(|col| {
-                                            // Summary (keeps updating).
-                                            col.spawn((
-                                                Node {
-                                                    width: Val::Percent(100.0),
-                                                    height: Val::Px(148.0),
-                                                    min_height: Val::Px(0.0),
-                                                    padding: UiRect::all(Val::Px(8.0)),
-                                                    border: UiRect::all(Val::Px(1.0)),
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::srgba(
-                                                    0.01, 0.01, 0.015, 0.55,
-                                                )),
-                                                BorderColor::all(Color::srgba(
-                                                    0.25, 0.25, 0.30, 0.65,
-                                                )),
-                                                Visibility::Inherited,
-                                            ))
-                                            .with_children(|summary| {
-                                                summary.spawn((
-                                                    Text::new(""),
-                                                    Node {
-                                                        width: Val::Percent(100.0),
-                                                        align_self: AlignSelf::FlexStart,
-                                                        ..default()
-                                                    },
-                                                    TextFont {
-                                                        font_size: 14.0,
-                                                        ..default()
-                                                    },
-                                                    TextColor(Color::srgb(0.85, 0.85, 0.90)),
-                                                    Visibility::Inherited,
-                                                    Gen3dStatusText,
-                                                ));
-                                            });
-
-                                            // Logs (scrollable).
-                                            col.spawn((
-                                                Node {
-                                                    width: Val::Percent(100.0),
-                                                    flex_grow: 1.0,
-                                                    flex_basis: Val::Px(0.0),
-                                                    min_height: Val::Px(0.0),
-                                                    flex_direction: FlexDirection::Row,
-                                                    column_gap: Val::Px(6.0),
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::NONE),
-                                                Visibility::Inherited,
-                                            ))
-                                            .with_children(|row| {
-                                                row.spawn((
-                                                    Node {
-                                                        flex_grow: 1.0,
-                                                        flex_basis: Val::Px(0.0),
-                                                        min_height: Val::Px(0.0),
-                                                        overflow: Overflow::scroll_y(),
-                                                        ..default()
-                                                    },
-                                                    BackgroundColor(Color::NONE),
-                                                    Visibility::Inherited,
-                                                    ScrollPosition::default(),
-                                                    Gen3dStatusScrollPanel,
-                                                ))
-                                                .with_children(|scroll| {
-                                                    scroll.spawn((
-                                                        Text::new(""),
-                                                        Node {
-                                                            width: Val::Percent(100.0),
-                                                            align_self: AlignSelf::FlexStart,
-                                                            ..default()
-                                                        },
-                                                        TextFont {
-                                                            font_size: 14.0,
-                                                            ..default()
-                                                        },
-                                                        TextColor(Color::srgb(0.85, 0.85, 0.90)),
-                                                        Visibility::Inherited,
-                                                        Gen3dStatusLogsText,
-                                                    ));
-                                                });
-
-                                                row.spawn((
-                                                Node {
-                                                    width: Val::Px(8.0),
-                                                    height: Val::Percent(100.0),
-                                                    position_type: PositionType::Relative,
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::srgba(
-                                                    0.02, 0.02, 0.03, 0.45,
-                                                )),
-                                                BorderColor::all(Color::srgba(
-                                                    0.25, 0.25, 0.30, 0.65,
-                                                )),
-                                                Visibility::Hidden,
-                                                Gen3dStatusScrollbarTrack,
-                                            ))
-                                                .with_children(|track| {
-                                                    track.spawn((
-                                                        Button,
-                                                        Node {
-                                                            position_type: PositionType::Absolute,
-                                                            left: Val::Px(1.0),
-                                                            right: Val::Px(1.0),
-                                                            top: Val::Px(0.0),
-                                                            height: Val::Px(18.0),
-                                                            ..default()
-                                                        },
-                                                        BackgroundColor(Color::srgba(
-                                                            0.85, 0.88, 0.95, 0.85,
-                                                        )),
-                                                        Visibility::Inherited,
-                                                        Gen3dStatusScrollbarThumb,
-                                                    ));
-                                                });
-                                            });
-                                        });
-
-                                    // Prefab tab content.
-                                    panel
-                                        .spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                flex_grow: 1.0,
-                                                flex_basis: Val::Px(0.0),
-                                                min_height: Val::Px(0.0),
-                                                flex_direction: FlexDirection::Row,
-                                                column_gap: Val::Px(6.0),
-                                                display: Display::None,
-                                                ..default()
-                                            },
-                                            BackgroundColor(Color::NONE),
-                                            Visibility::Hidden,
-                                            Gen3dPrefabPanelRoot,
-                                        ))
-                                        .with_children(|row| {
-                                            row.spawn((
-                                                Node {
-                                                    flex_grow: 1.0,
-                                                    flex_basis: Val::Px(0.0),
-                                                    min_height: Val::Px(0.0),
-                                                    overflow: Overflow::scroll_y(),
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::NONE),
-                                                Visibility::Inherited,
-                                                ScrollPosition::default(),
-                                                Gen3dPrefabScrollPanel,
-                                            ))
-                                            .with_children(|scroll| {
-                                                scroll.spawn((
-                                                    Text::new(""),
-                                                    Node {
-                                                        width: Val::Percent(100.0),
-                                                        align_self: AlignSelf::FlexStart,
-                                                        ..default()
-                                                    },
-                                                    TextFont {
-                                                        font_size: 14.0,
-                                                        ..default()
-                                                    },
-                                                    TextColor(Color::srgb(0.85, 0.85, 0.90)),
-                                                    Visibility::Inherited,
-                                                    Gen3dPrefabDetailsText,
-                                                ));
-                                            });
-
-                                            row.spawn((
-                                                Node {
-                                                    width: Val::Px(8.0),
-                                                    height: Val::Percent(100.0),
-                                                    position_type: PositionType::Relative,
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::srgba(
-                                                    0.02, 0.02, 0.03, 0.45,
-                                                )),
-                                                BorderColor::all(Color::srgba(
-                                                    0.25, 0.25, 0.30, 0.65,
-                                                )),
-                                                Visibility::Hidden,
-                                                Gen3dPrefabScrollbarTrack,
-                                            ))
-                                            .with_children(|track| {
-                                                track.spawn((
-                                                    Button,
-                                                    Node {
-                                                        position_type: PositionType::Absolute,
-                                                        left: Val::Px(1.0),
-                                                        right: Val::Px(1.0),
-                                                        top: Val::Px(0.0),
-                                                        height: Val::Px(18.0),
-                                                        ..default()
-                                                    },
-                                                    BackgroundColor(Color::srgba(
-                                                        0.85, 0.88, 0.95, 0.85,
-                                                    )),
-                                                    Visibility::Inherited,
-                                                    Gen3dPrefabScrollbarThumb,
-                                                ));
-                                            });
-                                        });
-                                });
                         },
                     );
 
@@ -889,6 +530,338 @@ pub(crate) fn enter_gen3d_mode(
                             });
                         });
                 });
+            });
+
+            // Collapsible side panel toggle.
+            root.spawn((
+                Button,
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(12.0),
+                    top: Val::Px(12.0),
+                    width: Val::Px(28.0),
+                    height: Val::Px(28.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.80)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.70)),
+                ZIndex(2150),
+                Gen3dSidePanelToggleButton,
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new("≡"),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    Gen3dSidePanelToggleButtonText,
+                ));
+            });
+
+            // Collapsible Status overlay (hidden by default).
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(12.0),
+                    top: Val::Px(48.0),
+                    bottom: Val::Px(12.0),
+                    width: Val::Px(520.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(6.0),
+                    padding: UiRect::all(Val::Px(8.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    min_height: Val::Px(0.0),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.92)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                ZIndex(2140),
+                Visibility::Hidden,
+                Gen3dSidePanelRoot,
+            ))
+            .with_children(|panel| {
+                // Side tab bar.
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(6.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                        Visibility::Inherited,
+                    ))
+                    .with_children(|tabs| {
+                        tabs.spawn((
+                            Button,
+                            Node {
+                                flex_grow: 1.0,
+                                height: Val::Px(30.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.70)),
+                            Visibility::Inherited,
+                            Gen3dSideTabButton::new(Gen3dSideTab::Status),
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                Text::new("Status"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                Visibility::Inherited,
+                                Gen3dSideTabButtonText::new(Gen3dSideTab::Status),
+                            ));
+                        });
+
+                        tabs.spawn((
+                            Button,
+                            Node {
+                                flex_grow: 1.0,
+                                height: Val::Px(30.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.70)),
+                            Visibility::Inherited,
+                            Gen3dSideTabButton::new(Gen3dSideTab::Prefab),
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                Text::new("Prefab"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                Visibility::Inherited,
+                                Gen3dSideTabButtonText::new(Gen3dSideTab::Prefab),
+                            ));
+                        });
+                    });
+
+                // Status tab content.
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_grow: 1.0,
+                            flex_basis: Val::Px(0.0),
+                            min_height: Val::Px(0.0),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                        Visibility::Inherited,
+                        Gen3dStatusPanelRoot,
+                    ))
+                    .with_children(|col| {
+                        // Summary (keeps updating).
+                        col.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(148.0),
+                                min_height: Val::Px(0.0),
+                                padding: UiRect::all(Val::Px(8.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.01, 0.01, 0.015, 0.55)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            Visibility::Inherited,
+                        ))
+                        .with_children(|summary| {
+                            summary.spawn((
+                                Text::new(""),
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    align_self: AlignSelf::FlexStart,
+                                    ..default()
+                                },
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                                Visibility::Inherited,
+                                Gen3dStatusText,
+                            ));
+                        });
+
+                        // Logs (scrollable).
+                        col.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                flex_grow: 1.0,
+                                flex_basis: Val::Px(0.0),
+                                min_height: Val::Px(0.0),
+                                flex_direction: FlexDirection::Row,
+                                column_gap: Val::Px(6.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                            Visibility::Inherited,
+                        ))
+                        .with_children(|row| {
+                            row.spawn((
+                                Node {
+                                    flex_grow: 1.0,
+                                    flex_basis: Val::Px(0.0),
+                                    min_height: Val::Px(0.0),
+                                    flex_direction: FlexDirection::Column,
+                                    overflow: Overflow::scroll_y(),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                                Visibility::Inherited,
+                                ScrollPosition::default(),
+                                Gen3dStatusScrollPanel,
+                            ))
+                            .with_children(|scroll| {
+                                scroll.spawn((
+                                    Text::new(""),
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        align_self: AlignSelf::FlexStart,
+                                        ..default()
+                                    },
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                                    Visibility::Inherited,
+                                    Gen3dStatusLogsText,
+                                ));
+                            });
+
+                            row.spawn((
+                                Node {
+                                    width: Val::Px(8.0),
+                                    height: Val::Percent(100.0),
+                                    position_type: PositionType::Relative,
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
+                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                Visibility::Hidden,
+                                Gen3dStatusScrollbarTrack,
+                            ))
+                            .with_children(|track| {
+                                track.spawn((
+                                    Button,
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        left: Val::Px(1.0),
+                                        right: Val::Px(1.0),
+                                        top: Val::Px(0.0),
+                                        height: Val::Px(18.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgba(0.85, 0.88, 0.95, 0.85)),
+                                    Visibility::Inherited,
+                                    Gen3dStatusScrollbarThumb,
+                                ));
+                            });
+                        });
+                    });
+
+                // Prefab tab content.
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_grow: 1.0,
+                            flex_basis: Val::Px(0.0),
+                            min_height: Val::Px(0.0),
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(6.0),
+                            display: Display::None,
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                        Visibility::Hidden,
+                        Gen3dPrefabPanelRoot,
+                    ))
+                    .with_children(|row| {
+                        row.spawn((
+                            Node {
+                                flex_grow: 1.0,
+                                flex_basis: Val::Px(0.0),
+                                min_height: Val::Px(0.0),
+                                flex_direction: FlexDirection::Column,
+                                overflow: Overflow::scroll_y(),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                            Visibility::Inherited,
+                            ScrollPosition::default(),
+                            Gen3dPrefabScrollPanel,
+                        ))
+                        .with_children(|scroll| {
+                            scroll.spawn((
+                                Text::new(""),
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    align_self: AlignSelf::FlexStart,
+                                    ..default()
+                                },
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                                Visibility::Inherited,
+                                Gen3dPrefabDetailsText,
+                            ));
+                        });
+
+                        row.spawn((
+                            Node {
+                                width: Val::Px(8.0),
+                                height: Val::Percent(100.0),
+                                position_type: PositionType::Relative,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            Visibility::Hidden,
+                            Gen3dPrefabScrollbarTrack,
+                        ))
+                        .with_children(|track| {
+                            track.spawn((
+                                Button,
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(1.0),
+                                    right: Val::Px(1.0),
+                                    top: Val::Px(0.0),
+                                    height: Val::Px(18.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.85, 0.88, 0.95, 0.85)),
+                                Visibility::Inherited,
+                                Gen3dPrefabScrollbarThumb,
+                            ));
+                        });
+                    });
             });
 
             // Bottom: prompt + generate + status.
