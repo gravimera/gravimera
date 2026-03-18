@@ -110,6 +110,20 @@ The agent path must remain unchanged and reachable:
 
 Keep the tool execution machinery shared. The pipeline should reuse `agent_tool_dispatch::execute_tool_call` and `agent_tool_poll::poll_agent_tool` rather than re-implementing LLM spawning, structured-output repair, artifact logging, or regen/QA gates.
 
+Important integration detail (fixes a real conflict with the current agent implementation): `poll_agent_tool` and the agent execution path both append tool results into `job.agent.step_tool_results`, which is intended to be “recent tool results for the next agent_step prompt”. In pipeline mode we must avoid unbounded accumulation and we must keep agent fallback clean. Implement the pipeline so it treats each pipeline action as “one tool call at a time” and does the following bookkeeping:
+
+- Before starting a pipeline tool call, clear `job.agent.step_tool_results` (so there is at most one result after the tool finishes).
+- Start the tool call using the same tracing as the agent (trace event, `tool_calls.jsonl`, `job.metrics.note_tool_call_started`, and Info Store `ToolCallStart`). Prefer extracting a helper from `src/gen3d/ai/agent_step.rs` so both orchestrators share the exact same instrumentation.
+- When the tool finishes (immediate or async), read the single tool result from `job.agent.step_tool_results.last()`, copy it into pipeline state (for “most recent tool result”), then clear `job.agent.step_tool_results` again.
+- Only when switching to agent fallback should `job.agent.step_tool_results` be populated (as part of a normal agent step). The pipeline must switch with `step_tool_results` empty.
+
+Concrete file targets for this milestone (so a novice can start from this plan):
+
+- In `src/gen3d/ai/job.rs`, extend `Gen3dAiMode` with a new variant (name TBD, e.g. `Pipeline`) and add a pipeline state struct on `Gen3dAiJob` (for example: `pipeline: Gen3dPipelineState` containing `phase`, `last_tool_result`, retry counters, and a simple `call_seq` for generating unique `call_id`s).
+- In `src/gen3d/ai/orchestration.rs::gen3d_poll_ai_job`, dispatch to a new `pipeline::poll_gen3d_pipeline(...)` function when `job.mode` is pipeline mode.
+- Add a new module (suggested path: `src/gen3d/ai/pipeline.rs`) that owns all deterministic “what tool next” logic and never constructs `gen3d_agent_step_v1`.
+- In `src/config.rs` and `config.example.toml`, add the config knob used to select the orchestrator (default should remain the current behavior until you are ready to flip it).
+
 Contract-first rule (embedded here): Any new tool must return actionable results and actionable errors, and must enforce its own gatekeeping (validation, budgets, forbidden states) inside the tool implementation. Do not add “agent prompt rules” as the primary enforcement mechanism.
 
 ### 2) Implement deterministic “next tool” selection (create flow)
@@ -131,7 +145,8 @@ For a fresh Build (non-seeded):
 
 For seeded Edit/Fork sessions (where `job.edit_base_prefab_id.is_some()` and preserve mode defaults to true):
 
-- Always run a preserve-mode plan ops pass first: `get_plan_template_v1` (mode="auto") → `llm_generate_plan_ops_v1` → `apply_plan_ops_v1`.
+- Always run a preserve-mode plan ops pass first: `get_plan_template_v1` (mode="auto") → `llm_generate_plan_ops_v1`.
+  - Note: `llm_generate_plan_ops_v1` already *applies* the generated ops internally (see `plan_ops::apply_llm_generate_plan_ops_v1`). Do not call `apply_plan_ops_v1` separately unless you are intentionally applying a deterministic, non-LLM patch you authored in code.
   - This handles add/remove/rewire/anchor-interface edits deterministically (and yields actionable errors when not possible).
   - If plan ops fails semantically, retry with `inspect_plan_v1` information in the prompt (bounded retries); then fall back to full `llm_generate_plan_v1` with `constraints.preserve_existing_components=true` if needed.
 - Generate any missing components created by plan ops.
@@ -174,6 +189,16 @@ Prompting requirements (system + user prompt builders):
   - For each component in scope: the `query_component_parts_v1` snapshot, including part ids and copy/pasteable recipes (bounded).
   - Any relevant guards (atomic apply, `if_assembly_rev` usage, op limits).
 
+Concrete integration checklist for this tool (to avoid prompt/tool mismatches and “silent” behavior changes):
+
+- Register the tool in `src/gen3d/agent/tools.rs` (`TOOL_ID_LLM_GENERATE_DRAFT_OPS`, descriptor entry with `args_schema` + `args_example`) so agent-step fallback can use it.
+- Add a new `Gen3dAgentLlmToolKind` variant (e.g. `GenerateDraftOps`) in `src/gen3d/ai/job.rs`.
+- Extend `src/gen3d/ai/structured_outputs.rs` with a new schema kind (e.g. `DraftOpsV1`) that matches the output `{version:1, ops:[...]}` with `additionalProperties=false` everywhere, and wire it through the LLM request as `expected_schema`.
+- Implement tool dispatch and polling alongside other LLM-backed tools:
+  - `src/gen3d/ai/agent_tool_dispatch.rs`: spawn the LLM request for this tool (artifact prefix like `tool_draft_ops_<call_id>`).
+  - `src/gen3d/ai/agent_tool_poll.rs`: parse the structured output and return it as a tool result (do not apply it here; application is via `apply_draft_ops_v1`).
+- Extend the mock backend (`mock://gen3d` in `src/gen3d/ai/openai.rs`) to return a small, valid DraftOps payload for `tool_draft_ops_*` prefixes so offline tests can cover the pipeline.
+
 ### 5) Deterministic fallback to agent-step
 
 Define clear fallback triggers (no heuristics, only explicit counters / tool outcomes), for example:
@@ -196,6 +221,7 @@ Add offline regression coverage so CI doesn’t need network access:
   - `tool_plan_ops_*` (even if empty ops)
   - `tool_review_*` (a simple “accept” delta)
   - `tool_draft_ops_*` (suggest a small, valid DraftOps list for a known mock object)
+- Note: the current `mock://gen3d` backend explicitly rejects image inputs. Keep pipeline regression tests prompt-only (no reference images) unless/until mock image support is added.
 - Add unit tests for pipeline “next step selection” given synthetic job states (no Bevy world needed).
 - Add at least one end-to-end offline test that runs the pipeline on mock backend from “start build” through finish, asserting that:
   - No `agent_step` is called in pipeline mode unless fallback is triggered.
@@ -256,9 +282,9 @@ At the end of implementation, the following interfaces must exist and be exercis
   - Produces only DraftOps suggestions (no mutation).
   - Has actionable errors when inputs are missing (no plan, no component parts snapshot, invalid args).
 - Deterministic application via existing `apply_draft_ops_v1` with diffs visible in tool results and artifacts.
+- `llm_generate_draft_ops_v1` must be present in the tool registry shown to agent-step so fallback mode can continue to be DraftOps-first.
 
 
 ## Note on future revisions
 
 (When this plan is revised, add a short note here describing what changed and why.)
-
