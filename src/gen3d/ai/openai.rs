@@ -7,7 +7,8 @@ use crate::gen3d::agent::{
     append_agent_trace_event_v1, run_root_dir_from_pass_dir, AgentTraceEventV1,
 };
 use crate::openai_shared::{
-    curl_auth_header_file, extract_openai_responses_output_text,
+    curl_auth_header_file, extract_openai_chat_completions_sse_last_json,
+    extract_openai_chat_completions_sse_output_text, extract_openai_responses_output_text,
     extract_openai_responses_sse_output_text, split_curl_http_status, CURL_HTTP_STATUS_MARKER,
     CURL_HTTP_STATUS_WRITEOUT_ARG,
 };
@@ -52,18 +53,22 @@ struct OpenAiCapabilitiesCacheEntryV1 {
     base_url: String,
     model: String,
     responses_supported: Option<bool>,
+    responses_stream_required: Option<bool>,
     responses_continuation_supported: Option<bool>,
     responses_background_supported: Option<bool>,
     responses_structured_outputs_supported: Option<bool>,
+    chat_stream_required: Option<bool>,
     chat_structured_outputs_supported: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct OpenAiCapabilityFlagsSnapshot {
     responses_supported: Option<bool>,
+    responses_stream_required: Option<bool>,
     responses_continuation_supported: Option<bool>,
     responses_background_supported: Option<bool>,
     responses_structured_outputs_supported: Option<bool>,
+    chat_stream_required: Option<bool>,
     chat_structured_outputs_supported: Option<bool>,
 }
 
@@ -71,9 +76,11 @@ impl OpenAiCapabilityFlagsSnapshot {
     fn from_session(session: &Gen3dAiSessionState) -> Self {
         Self {
             responses_supported: session.responses_supported,
+            responses_stream_required: session.responses_stream_required,
             responses_continuation_supported: session.responses_continuation_supported,
             responses_background_supported: session.responses_background_supported,
             responses_structured_outputs_supported: session.responses_structured_outputs_supported,
+            chat_stream_required: session.chat_stream_required,
             chat_structured_outputs_supported: session.chat_structured_outputs_supported,
         }
     }
@@ -193,9 +200,11 @@ fn hydrate_session_capabilities_from_cache_path(
     path: &Path,
 ) {
     let needs_hydration = session.responses_supported.is_none()
+        || session.responses_stream_required.is_none()
         || session.responses_continuation_supported.is_none()
         || session.responses_background_supported.is_none()
         || session.responses_structured_outputs_supported.is_none()
+        || session.chat_stream_required.is_none()
         || session.chat_structured_outputs_supported.is_none();
     if !needs_hydration {
         return;
@@ -219,6 +228,9 @@ fn hydrate_session_capabilities_from_cache_path(
     if session.responses_supported.is_none() {
         session.responses_supported = entry.responses_supported;
     }
+    if session.responses_stream_required.is_none() {
+        session.responses_stream_required = entry.responses_stream_required;
+    }
     if session.responses_continuation_supported.is_none() {
         session.responses_continuation_supported = entry.responses_continuation_supported;
     }
@@ -228,6 +240,9 @@ fn hydrate_session_capabilities_from_cache_path(
     if session.responses_structured_outputs_supported.is_none() {
         session.responses_structured_outputs_supported =
             entry.responses_structured_outputs_supported;
+    }
+    if session.chat_stream_required.is_none() {
+        session.chat_stream_required = entry.chat_stream_required;
     }
     if session.chat_structured_outputs_supported.is_none() {
         session.chat_structured_outputs_supported = entry.chat_structured_outputs_supported;
@@ -283,6 +298,9 @@ fn persist_session_capabilities_to_cache_path(
     if session.responses_supported.is_some() {
         entry.responses_supported = session.responses_supported;
     }
+    if session.responses_stream_required.is_some() {
+        entry.responses_stream_required = session.responses_stream_required;
+    }
     if session.responses_continuation_supported.is_some() {
         entry.responses_continuation_supported = session.responses_continuation_supported;
     }
@@ -292,6 +310,9 @@ fn persist_session_capabilities_to_cache_path(
     if session.responses_structured_outputs_supported.is_some() {
         entry.responses_structured_outputs_supported =
             session.responses_structured_outputs_supported;
+    }
+    if session.chat_stream_required.is_some() {
+        entry.chat_stream_required = session.chat_stream_required;
     }
     if session.chat_structured_outputs_supported.is_some() {
         entry.chat_structured_outputs_supported = session.chat_structured_outputs_supported;
@@ -1877,6 +1898,25 @@ fn is_structured_outputs_rejected(err: &OpenAiError) -> bool {
         || preview.contains("invalid")
 }
 
+fn is_stream_required(err: &OpenAiError) -> bool {
+    if err.status != Some(400) {
+        return false;
+    }
+    let Some(preview) = err.body_preview.as_deref() else {
+        return false;
+    };
+    let preview = preview.to_ascii_lowercase();
+
+    // Common gateway error (example):
+    // {"detail":"Stream must be set to true"}
+    if preview.contains("stream must be set to true") {
+        return true;
+    }
+
+    // More tolerant matching for variants like "stream must be true".
+    preview.contains("stream") && preview.contains("must") && preview.contains("true")
+}
+
 fn openai_responses_flow(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
@@ -1995,12 +2035,15 @@ fn openai_responses_flow(
         let background_for_request =
             schema_for_request.is_some() && session.responses_background_supported != Some(false);
 
+        let stream_for_request = session.responses_stream_required == Some(true);
+
         match openai_responses_curl(
             progress,
             cancel,
             base_url,
             api_key,
             model,
+            stream_for_request,
             reasoning_effort,
             schema_for_request,
             system_instructions,
@@ -2056,6 +2099,21 @@ fn openai_responses_flow(
                     session.responses_continuation_supported = Some(false);
                     success_used_previous_response_id = false;
                     previous_response_id = None;
+                    continue;
+                }
+
+                if !stream_for_request && is_stream_required(&err) {
+                    warn!("Gen3D: /responses requires stream=true; retrying with streaming enabled for this session.");
+                    append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "responses_retry prefix={} reason=stream_required err={}",
+                            artifact_prefix,
+                            err.short()
+                        ),
+                    );
+                    session.responses_supported = Some(true);
+                    session.responses_stream_required = Some(true);
                     continue;
                 }
 
@@ -2171,12 +2229,14 @@ fn openai_responses_flow(
                 };
                 let background_for_request = schema_for_request.is_some()
                     && session.responses_background_supported != Some(false);
+                let stream_for_request = session.responses_stream_required == Some(true);
                 body = openai_responses_curl(
                     progress,
                     cancel,
                     base_url,
                     api_key,
                     model,
+                    stream_for_request,
                     reasoning_effort,
                     schema_for_request,
                     system_instructions,
@@ -2374,7 +2434,7 @@ fn openai_chat_completions_flow(
     let max_attempts = 1 + MAX_CHAT_RETRIES;
     let mut attempt = 0usize;
     let mut retry_delay = std::time::Duration::from_millis(250);
-    let json = loop {
+    let body = loop {
         attempt = attempt.saturating_add(1);
         if attempt > 1 {
             set_progress(
@@ -2392,6 +2452,8 @@ fn openai_chat_completions_flow(
             None
         };
 
+        let stream_for_request = session.chat_stream_required == Some(true);
+
         match openai_chat_completions_curl(
             progress,
             session,
@@ -2399,6 +2461,7 @@ fn openai_chat_completions_flow(
             base_url,
             api_key,
             model,
+            stream_for_request,
             reasoning_effort,
             schema_for_request,
             system_instructions,
@@ -2408,15 +2471,28 @@ fn openai_chat_completions_flow(
             run_dir,
             artifact_prefix,
         ) {
-            Ok(json) => {
+            Ok(body) => {
                 if schema_for_request.is_some() {
                     session.chat_structured_outputs_supported = Some(true);
                 }
-                break json;
+                break body;
             }
             Err(err) => {
                 if err.cancelled {
                     return Err(err);
+                }
+                if !stream_for_request && is_stream_required(&err) {
+                    warn!("Gen3D: /chat/completions requires stream=true; retrying with streaming enabled for this session.");
+                    append_gen3d_run_log(
+                        run_dir,
+                        format!(
+                            "chat_retry prefix={} reason=stream_required err={}",
+                            artifact_prefix,
+                            err.short()
+                        ),
+                    );
+                    session.chat_stream_required = Some(true);
+                    continue;
                 }
                 if schema_for_request.is_some() && is_structured_outputs_rejected(&err) {
                     session.chat_structured_outputs_supported = Some(false);
@@ -2448,19 +2524,63 @@ fn openai_chat_completions_flow(
             }
         }
     };
-    write_gen3d_json_artifact(run_dir, format!("{artifact_prefix}_chat.json"), &json);
 
-    let text = json
-        .get("choices")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| OpenAiError::new("/chat/completions returned no content".into()))?
-        .to_string();
+    write_gen3d_text_artifact(run_dir, format!("{artifact_prefix}_chat_raw.txt"), &body);
 
-    let total_tokens = extract_openai_total_tokens(&json);
+    let body_trim = body.trim();
+    let json_opt: Option<serde_json::Value> = serde_json::from_str(body_trim).ok();
+
+    if let Some(json) = json_opt.as_ref() {
+        write_gen3d_json_artifact(run_dir, format!("{artifact_prefix}_chat.json"), json);
+    }
+    if json_opt.is_none() {
+        if let Some(last) = extract_openai_chat_completions_sse_last_json(body_trim) {
+            write_gen3d_json_artifact(
+                run_dir,
+                format!("{artifact_prefix}_chat_sse_last.json"),
+                &last,
+            );
+        }
+    }
+
+    let (text, total_tokens) = if let Some(json) = json_opt.as_ref() {
+        let text = json
+            .get("choices")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.get(0))
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| OpenAiError::new("/chat/completions returned no content".into()))?
+            .to_string();
+        (text, extract_openai_total_tokens(json))
+    } else if let Some(text) = extract_openai_chat_completions_sse_output_text(body_trim) {
+        let total_tokens = extract_openai_chat_completions_sse_last_json(body_trim)
+            .as_ref()
+            .and_then(extract_openai_total_tokens);
+        (text, total_tokens)
+    } else {
+        return Err(OpenAiError {
+            summary: "/chat/completions returned no content".into(),
+            url,
+            status: None,
+            body_preview: Some(truncate_for_ui(body_trim, 1200)),
+            cancelled: false,
+        });
+    };
+
+    // Keep a short chat history to give the model some context between runs.
+    session.chat_history.push(Gen3dChatHistoryMessage {
+        role: "assistant".into(),
+        content: text.clone(),
+    });
+    if session.chat_history.len() > GEN3D_MAX_CHAT_HISTORY_MESSAGES {
+        let keep = GEN3D_MAX_CHAT_HISTORY_MESSAGES;
+        session
+            .chat_history
+            .drain(0..(session.chat_history.len().saturating_sub(keep)));
+    }
+
     Ok(Gen3dAiTextResponse {
         text,
         api: Gen3dAiApi::ChatCompletions,
@@ -2528,6 +2648,7 @@ impl std::error::Error for OpenAiError {}
 
 fn build_openai_responses_request_json(
     model: &str,
+    stream: bool,
     reasoning_effort: &str,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     system_instructions: &str,
@@ -2539,7 +2660,7 @@ fn build_openai_responses_request_json(
 ) -> serde_json::Value {
     let mut input = serde_json::json!({
       "model": model,
-      "stream": false,
+      "stream": stream,
       "input": [
         {
           "role": "system",
@@ -2607,6 +2728,7 @@ fn build_openai_responses_request_json(
 fn build_openai_chat_completions_request_json(
     session: &Gen3dAiSessionState,
     model: &str,
+    stream: bool,
     reasoning_effort: &str,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     system_instructions: &str,
@@ -2655,7 +2777,7 @@ fn build_openai_chat_completions_request_json(
 
     let mut body_json = serde_json::json!({
       "model": model,
-      "stream": false,
+      "stream": stream,
       "messages": messages,
     });
     if reasoning_effort.trim() != "none" {
@@ -2681,6 +2803,7 @@ fn openai_responses_curl(
     base_url: &str,
     api_key: &str,
     model: &str,
+    stream: bool,
     reasoning_effort: &str,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     system_instructions: &str,
@@ -2701,6 +2824,7 @@ fn openai_responses_curl(
     }
     let input = build_openai_responses_request_json(
         model,
+        stream,
         reasoning_effort,
         expected_schema,
         system_instructions,
@@ -2880,11 +3004,12 @@ fn openai_responses_curl(
 
 fn openai_chat_completions_curl(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
-    session: &mut Gen3dAiSessionState,
+    session: &Gen3dAiSessionState,
     cancel: Option<&AtomicBool>,
     base_url: &str,
     api_key: &str,
     model: &str,
+    stream: bool,
     reasoning_effort: &str,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     system_instructions: &str,
@@ -2893,7 +3018,7 @@ fn openai_chat_completions_curl(
     image_paths: &[PathBuf],
     run_dir: Option<&Path>,
     artifact_prefix: &str,
-) -> Result<serde_json::Value, OpenAiError> {
+) -> Result<String, OpenAiError> {
     let url = crate::config::join_base_url(base_url, "chat/completions");
     if let Some(cancel) = cancel {
         if cancel.load(Ordering::Relaxed) {
@@ -2903,6 +3028,7 @@ fn openai_chat_completions_curl(
     let body_json = build_openai_chat_completions_request_json(
         session,
         model,
+        stream,
         reasoning_effort,
         expected_schema,
         system_instructions,
@@ -3063,36 +3189,7 @@ fn openai_chat_completions_curl(
         }
     }
 
-    let json: serde_json::Value = serde_json::from_str(body.trim()).map_err(|err| OpenAiError {
-        summary: format!("Failed to parse JSON: {err}"),
-        url: url.clone(),
-        status: status_code,
-        body_preview: Some(truncate_for_ui(body.trim(), 1200)),
-        cancelled: false,
-    })?;
-
-    // Keep a short chat history to give the model some context between runs.
-    let content = json
-        .get("choices")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    session.chat_history.push(Gen3dChatHistoryMessage {
-        role: "assistant".into(),
-        content,
-    });
-    if session.chat_history.len() > GEN3D_MAX_CHAT_HISTORY_MESSAGES {
-        let keep = GEN3D_MAX_CHAT_HISTORY_MESSAGES;
-        session
-            .chat_history
-            .drain(0..(session.chat_history.len().saturating_sub(keep)));
-    }
-
-    Ok(json)
+    Ok(body.trim().to_string())
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -3148,6 +3245,7 @@ mod tests {
     fn responses_request_includes_text_format_when_schema_provided() {
         let json = build_openai_responses_request_json(
             "gpt-test",
+            false,
             "high",
             Some(Gen3dAiJsonSchemaKind::PlanV1),
             "sys",
@@ -3178,6 +3276,7 @@ mod tests {
     fn responses_request_omits_text_format_when_schema_not_provided() {
         let json = build_openai_responses_request_json(
             "gpt-test",
+            false,
             "high",
             None,
             "sys",
@@ -3194,6 +3293,7 @@ mod tests {
     fn responses_request_enables_background_with_store_when_requested() {
         let json = build_openai_responses_request_json(
             "gpt-test",
+            false,
             "high",
             Some(Gen3dAiJsonSchemaKind::PlanV1),
             "sys",
@@ -3213,6 +3313,7 @@ mod tests {
         let json = build_openai_chat_completions_request_json(
             &session,
             "gpt-test",
+            false,
             "high",
             Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1),
             "sys",
@@ -3245,6 +3346,7 @@ mod tests {
         let json = build_openai_chat_completions_request_json(
             &session,
             "gpt-test",
+            false,
             "high",
             None,
             "sys",
@@ -3277,6 +3379,27 @@ mod tests {
     }
 
     #[test]
+    fn detects_stream_required_errors() {
+        let err = OpenAiError {
+            summary: "HTTP 400".into(),
+            url: "https://example.invalid".into(),
+            status: Some(400),
+            body_preview: Some("{\"detail\":\"Stream must be set to true\"}".into()),
+            cancelled: false,
+        };
+        assert!(is_stream_required(&err));
+
+        let other = OpenAiError {
+            summary: "HTTP 400".into(),
+            url: "https://example.invalid".into(),
+            status: Some(400),
+            body_preview: Some("stream must be set to false".into()),
+            cancelled: false,
+        };
+        assert!(!is_stream_required(&other));
+    }
+
+    #[test]
     fn hydrates_capabilities_by_base_url_and_model() {
         let dir = std::env::temp_dir().join(format!(
             "gravimera_openai_caps_test_{}",
@@ -3291,18 +3414,22 @@ mod tests {
                     base_url: "https://example.invalid/v1/".into(),
                     model: "gpt-a".into(),
                     responses_supported: Some(true),
+                    responses_stream_required: Some(true),
                     responses_continuation_supported: Some(false),
                     responses_background_supported: Some(false),
                     responses_structured_outputs_supported: Some(true),
+                    chat_stream_required: Some(true),
                     chat_structured_outputs_supported: Some(true),
                 },
                 OpenAiCapabilitiesCacheEntryV1 {
                     base_url: "https://example.invalid/v1".into(),
                     model: "gpt-b".into(),
                     responses_supported: Some(false),
+                    responses_stream_required: Some(false),
                     responses_continuation_supported: Some(false),
                     responses_background_supported: Some(false),
                     responses_structured_outputs_supported: Some(false),
+                    chat_stream_required: Some(false),
                     chat_structured_outputs_supported: Some(false),
                 },
             ],
@@ -3317,14 +3444,17 @@ mod tests {
             &path,
         );
         assert_eq!(session.responses_supported, Some(true));
+        assert_eq!(session.responses_stream_required, Some(true));
         assert_eq!(session.responses_continuation_supported, Some(false));
         assert_eq!(session.responses_background_supported, Some(false));
         assert_eq!(session.responses_structured_outputs_supported, Some(true));
+        assert_eq!(session.chat_stream_required, Some(true));
         assert_eq!(session.chat_structured_outputs_supported, Some(true));
 
         // Does not override existing flags.
         let mut session2 = Gen3dAiSessionState::default();
         session2.responses_supported = Some(false);
+        session2.responses_stream_required = Some(false);
         hydrate_session_capabilities_from_cache_path(
             &mut session2,
             "https://example.invalid/v1/",
@@ -3332,7 +3462,9 @@ mod tests {
             &path,
         );
         assert_eq!(session2.responses_supported, Some(false));
+        assert_eq!(session2.responses_stream_required, Some(false));
         assert_eq!(session2.responses_structured_outputs_supported, Some(true));
+        assert_eq!(session2.chat_stream_required, Some(true));
 
         // Separate model key uses separate entry.
         let mut session3 = Gen3dAiSessionState::default();
@@ -3343,7 +3475,9 @@ mod tests {
             &path,
         );
         assert_eq!(session3.responses_supported, Some(false));
+        assert_eq!(session3.responses_stream_required, Some(false));
         assert_eq!(session3.responses_structured_outputs_supported, Some(false));
+        assert_eq!(session3.chat_stream_required, Some(false));
     }
 
     #[test]
@@ -3356,6 +3490,7 @@ mod tests {
 
         let mut session = Gen3dAiSessionState::default();
         session.responses_supported = Some(true);
+        session.responses_stream_required = Some(true);
         session.responses_background_supported = Some(false);
         persist_session_capabilities_to_cache_path(
             "https://example.invalid/v1/",
@@ -3372,6 +3507,7 @@ mod tests {
             .find(|e| e.base_url == "https://example.invalid/v1" && e.model == "gpt-a")
             .expect("expected persisted entry");
         assert_eq!(entry.responses_supported, Some(true));
+        assert_eq!(entry.responses_stream_required, Some(true));
         assert_eq!(entry.responses_background_supported, Some(false));
 
         // New information updates the entry without clearing other fields.
@@ -3390,6 +3526,7 @@ mod tests {
             .find(|e| e.base_url == "https://example.invalid/v1" && e.model == "gpt-a")
             .expect("expected updated entry");
         assert_eq!(entry2.responses_supported, Some(true));
+        assert_eq!(entry2.responses_stream_required, Some(true));
         assert_eq!(entry2.responses_background_supported, Some(false));
         assert_eq!(entry2.responses_structured_outputs_supported, Some(false));
     }

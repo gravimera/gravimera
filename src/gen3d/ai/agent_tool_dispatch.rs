@@ -6660,9 +6660,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err_with_result(
                     call.call_id,
                     call.tool_id,
-                    format!(
-                        "Review-delta budget exhausted (used={rounds_used} max={rounds_max})."
-                    ),
+                    format!("Review-delta budget exhausted (used={rounds_used} max={rounds_max})."),
                     serde_json::json!({
                         "kind": "review_delta_budget_exhausted",
                         "used": rounds_used,
@@ -7780,7 +7778,9 @@ mod tests {
             .get("issues")
             .and_then(|v| v.as_array())
             .is_some_and(|issues| {
-                issues.iter().any(|i| i.get("severity").and_then(|v| v.as_str()) == Some("error"))
+                issues
+                    .iter()
+                    .any(|i| i.get("severity").and_then(|v| v.as_str()) == Some("error"))
             });
         assert!(
             !has_error,
@@ -8532,7 +8532,9 @@ mod tests {
         config.gen3d_review_delta_rounds_max = 2;
 
         let mut job = crate::gen3d::ai::Gen3dAiJob::default();
-        job.ai = Some(super::super::ai_service::Gen3dAiServiceConfig::OpenAi(openai));
+        job.ai = Some(super::super::ai_service::Gen3dAiServiceConfig::OpenAi(
+            openai,
+        ));
         job.pass_dir = Some(pass_dir);
         job.review_delta_rounds_used = 2;
 

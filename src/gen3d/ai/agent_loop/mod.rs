@@ -250,7 +250,10 @@ pub(super) fn spawn_agent_prompt_intent_request(
     );
     append_gen3d_run_log(
         Some(&pass_dir),
-        format!("prompt_intent_request attempt={} pass={}", job.attempt, job.pass),
+        format!(
+            "prompt_intent_request attempt={} pass={}",
+            job.attempt, job.pass
+        ),
     );
 
     let system = super::prompts::build_gen3d_prompt_intent_system_instructions();
@@ -438,7 +441,11 @@ fn poll_agent_user_image_summary(
     }
 }
 
-fn poll_agent_prompt_intent(config: &AppConfig, workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {
+fn poll_agent_prompt_intent(
+    config: &AppConfig,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+) {
     if job.prompt_intent.is_some() {
         job.phase = Gen3dAiPhase::AgentWaitingStep;
         if let Some(pass_dir) = job.pass_dir.clone() {
@@ -508,9 +515,9 @@ fn poll_agent_prompt_intent(config: &AppConfig, workshop: &mut Gen3dWorkshop, jo
                 write_gen3d_json_artifact(
                     Some(&attempt_dir),
                     "inputs/prompt_intent.json",
-                    &serde_json::to_value(&parsed).unwrap_or_else(|_| {
-                        serde_json::json!({"version": 1, "requires_attack": requires_attack})
-                    }),
+                    &serde_json::to_value(&parsed).unwrap_or_else(
+                        |_| serde_json::json!({"version": 1, "requires_attack": requires_attack}),
+                    ),
                 );
             }
 

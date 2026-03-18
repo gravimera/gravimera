@@ -1181,9 +1181,7 @@ pub(crate) fn gen3d_start_build_from_api(
             "Analyzing reference images…\nService: {service}\nModel: {model}\nImages: {images_count}",
         )
     } else if matches!(job.phase, Gen3dAiPhase::AgentWaitingPromptIntent) {
-        format!(
-            "Analyzing prompt…\nService: {service}\nModel: {model}\nImages: {images_count}",
-        )
+        format!("Analyzing prompt…\nService: {service}\nModel: {model}\nImages: {images_count}",)
     } else {
         format!("Building…\nService: {service}\nModel: {model}\nImages: {images_count}")
     };
@@ -1254,6 +1252,9 @@ pub(super) fn poll_gen3d_descriptor_meta_in_flight(job: &mut Gen3dAiJob) {
             if let Some(flag) = resp.session.responses_supported {
                 job.session.responses_supported = Some(flag);
             }
+            if let Some(flag) = resp.session.responses_stream_required {
+                job.session.responses_stream_required = Some(flag);
+            }
             if let Some(flag) = resp.session.responses_continuation_supported {
                 job.session.responses_continuation_supported = Some(flag);
             }
@@ -1262,6 +1263,9 @@ pub(super) fn poll_gen3d_descriptor_meta_in_flight(job: &mut Gen3dAiJob) {
             }
             if let Some(flag) = resp.session.responses_structured_outputs_supported {
                 job.session.responses_structured_outputs_supported = Some(flag);
+            }
+            if let Some(flag) = resp.session.chat_stream_required {
+                job.session.chat_stream_required = Some(flag);
             }
             if let Some(flag) = resp.session.chat_structured_outputs_supported {
                 job.session.chat_structured_outputs_supported = Some(flag);
@@ -2947,8 +2951,14 @@ fn poll_gen3d_parallel_components(
                 if let Some(flag) = resp.session.responses_supported {
                     job.session.responses_supported = Some(flag);
                 }
+                if let Some(flag) = resp.session.responses_stream_required {
+                    job.session.responses_stream_required = Some(flag);
+                }
                 if let Some(flag) = resp.session.responses_continuation_supported {
                     job.session.responses_continuation_supported = Some(flag);
+                }
+                if let Some(flag) = resp.session.chat_stream_required {
+                    job.session.chat_stream_required = Some(flag);
                 }
 
                 let ai = match parse::parse_ai_draft_from_text(&resp.text) {

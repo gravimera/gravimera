@@ -33,8 +33,7 @@ pub(super) fn start_agent_llm_review_delta_call(
 
     let rounds_max = config.gen3d_review_delta_rounds_max;
     if rounds_max == 0 {
-        return Err("Review-delta is disabled by config (gen3d.review_delta_rounds_max=0)."
-            .into());
+        return Err("Review-delta is disabled by config (gen3d.review_delta_rounds_max=0).".into());
     }
     let next_round_index = job.review_delta_rounds_used.saturating_add(1);
     if next_round_index > rounds_max {
@@ -51,9 +50,7 @@ pub(super) fn start_agent_llm_review_delta_call(
     };
     append_gen3d_run_log(
         Some(pass_dir.as_path()),
-        format!(
-            "review_delta_start round={next_round_index}/{rounds_max} focus={focus_mode}"
-        ),
+        format!("review_delta_start round={next_round_index}/{rounds_max} focus={focus_mode}"),
     );
 
     let mut preview_blob_ids = if review_appearance {

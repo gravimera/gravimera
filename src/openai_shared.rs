@@ -203,6 +203,115 @@ pub(crate) fn extract_openai_responses_sse_output_text(body: &str) -> Option<Str
         .find_map(|(_, text)| (!text.trim().is_empty()).then_some(text.clone()))
 }
 
+pub(crate) fn extract_openai_chat_completions_sse_last_json(body: &str) -> Option<Value> {
+    let mut last: Option<Value> = None;
+    for line in body.lines() {
+        let line = line.trim();
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let Ok(json) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        last = Some(json);
+    }
+    last
+}
+
+pub(crate) fn extract_openai_chat_completions_sse_output_text(body: &str) -> Option<String> {
+    fn append_text_parts(out: &mut String, value: &Value) {
+        match value {
+            Value::String(s) => out.push_str(s),
+            Value::Array(arr) => {
+                for part in arr {
+                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                        out.push_str(text);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut by_choice_index: BTreeMap<i64, String> = BTreeMap::new();
+    let mut full_by_choice_index: BTreeMap<i64, String> = BTreeMap::new();
+
+    for line in body.lines() {
+        let line = line.trim();
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let Ok(json) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+
+        let Some(choices) = json.get("choices").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for choice in choices {
+            let choice_index = choice.get("index").and_then(|v| v.as_i64()).unwrap_or(0);
+
+            // Some OpenAI-compatible providers embed the final assistant message in stream chunks.
+            if let Some(message) = choice.get("message") {
+                if let Some(content) = message.get("content") {
+                    let mut out = String::new();
+                    append_text_parts(&mut out, content);
+                    if !out.trim().is_empty() {
+                        full_by_choice_index.insert(choice_index, out);
+                        continue;
+                    }
+                }
+            }
+
+            // Standard Chat Completions streaming: `choices[].delta.content` as string.
+            if let Some(delta) = choice.get("delta") {
+                if let Some(content) = delta.get("content") {
+                    let slot = by_choice_index.entry(choice_index).or_default();
+                    append_text_parts(slot, content);
+                    continue;
+                }
+
+                // Some providers use `delta.text` rather than `delta.content`.
+                if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                    by_choice_index
+                        .entry(choice_index)
+                        .or_default()
+                        .push_str(text);
+                    continue;
+                }
+            }
+
+            // Fallback (non-chat style): `choices[].text`.
+            if let Some(text) = choice.get("text").and_then(|v| v.as_str()) {
+                by_choice_index
+                    .entry(choice_index)
+                    .or_default()
+                    .push_str(text);
+            }
+        }
+    }
+
+    let pick = |map: &BTreeMap<i64, String>| -> Option<String> {
+        if let Some(text) = map.get(&0) {
+            if !text.trim().is_empty() {
+                return Some(text.clone());
+            }
+        }
+        map.iter()
+            .find_map(|(_, text)| (!text.trim().is_empty()).then_some(text.clone()))
+    };
+
+    pick(&full_by_choice_index).or_else(|| pick(&by_choice_index))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +375,40 @@ data: {"type":"response.completed","response":{"output":[{"type":"message","role
             extract_openai_responses_sse_output_text(body).as_deref(),
             Some("second")
         );
+    }
+
+    #[test]
+    fn chat_completions_sse_output_text_accumulates_deltas() {
+        let body = r#"data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello "}}]}
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"world"}}]}
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+data: [DONE]
+"#;
+        assert_eq!(
+            extract_openai_chat_completions_sse_output_text(body).as_deref(),
+            Some("Hello world")
+        );
+    }
+
+    #[test]
+    fn chat_completions_sse_output_text_prefers_full_message_content_when_present() {
+        let body = r#"data: {"choices":[{"index":0,"delta":{"content":"{\"a\":1}"}}]}
+data: {"choices":[{"index":0,"message":{"content":"{\"a\":1}"}}]}
+data: [DONE]
+"#;
+        assert_eq!(
+            extract_openai_chat_completions_sse_output_text(body).as_deref(),
+            Some("{\"a\":1}")
+        );
+    }
+
+    #[test]
+    fn chat_completions_sse_last_json_returns_last_chunk() {
+        let body = r#"data: {"n":1}
+data: {"n":2}
+data: [DONE]
+"#;
+        let json = extract_openai_chat_completions_sse_last_json(body).expect("last json");
+        assert_eq!(json.get("n").and_then(|v| v.as_i64()), Some(2));
     }
 }

@@ -105,6 +105,9 @@ pub(super) fn poll_agent_component_batch(
                 if let Some(flag) = resp.session.responses_supported {
                     job.session.responses_supported = Some(flag);
                 }
+                if let Some(flag) = resp.session.responses_stream_required {
+                    job.session.responses_stream_required = Some(flag);
+                }
                 if let Some(flag) = resp.session.responses_continuation_supported {
                     job.session.responses_continuation_supported = Some(flag);
                 }
@@ -113,6 +116,9 @@ pub(super) fn poll_agent_component_batch(
                 }
                 if let Some(flag) = resp.session.responses_structured_outputs_supported {
                     job.session.responses_structured_outputs_supported = Some(flag);
+                }
+                if let Some(flag) = resp.session.chat_stream_required {
+                    job.session.chat_stream_required = Some(flag);
                 }
                 if let Some(flag) = resp.session.chat_structured_outputs_supported {
                     job.session.chat_structured_outputs_supported = Some(flag);

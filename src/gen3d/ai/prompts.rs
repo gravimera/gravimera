@@ -793,7 +793,10 @@ mod tests {
     fn gen3d_review_delta_round_2_edit_session_is_focused_and_avoids_micro_tweaks() {
         let text = build_gen3d_review_delta_system_instructions(false, true, true, 2, 2);
         assert!(text.contains("Round 2 / focused"), "{text}");
-        assert!(text.contains("propose ONLY the placement/alignment changes needed"), "{text}");
+        assert!(
+            text.contains("propose ONLY the placement/alignment changes needed"),
+            "{text}"
+        );
         assert!(
             !text.contains("You MAY propose placement/alignment tweaks"),
             "round 2 should not advertise broad alignment tweaks"

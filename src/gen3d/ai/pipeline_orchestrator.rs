@@ -263,7 +263,11 @@ fn poll_pipeline_user_image_summary(
     }
 }
 
-fn poll_pipeline_prompt_intent(config: &AppConfig, workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {
+fn poll_pipeline_prompt_intent(
+    config: &AppConfig,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+) {
     if job.prompt_intent.is_some() {
         job.shared_result = None;
         job.shared_progress = None;
@@ -343,7 +347,11 @@ fn poll_pipeline_prompt_intent(config: &AppConfig, workshop: &mut Gen3dWorkshop,
             let parsed = match super::parse::parse_ai_prompt_intent_from_text(&resp.text) {
                 Ok(v) => v,
                 Err(err) => {
-                    fail_job(workshop, job, format!("Prompt intent classification failed: {err}"));
+                    fail_job(
+                        workshop,
+                        job,
+                        format!("Prompt intent classification failed: {err}"),
+                    );
                     return;
                 }
             };
@@ -355,9 +363,9 @@ fn poll_pipeline_prompt_intent(config: &AppConfig, workshop: &mut Gen3dWorkshop,
                 super::artifacts::write_gen3d_json_artifact(
                     Some(&attempt_dir),
                     "inputs/prompt_intent.json",
-                    &serde_json::to_value(&parsed).unwrap_or_else(|_| {
-                        serde_json::json!({"version": 1, "requires_attack": requires_attack})
-                    }),
+                    &serde_json::to_value(&parsed).unwrap_or_else(
+                        |_| serde_json::json!({"version": 1, "requires_attack": requires_attack}),
+                    ),
                 );
             }
 
@@ -365,7 +373,11 @@ fn poll_pipeline_prompt_intent(config: &AppConfig, workshop: &mut Gen3dWorkshop,
             job.phase = Gen3dAiPhase::AgentExecutingActions;
         }
         Err(err) => {
-            fail_job(workshop, job, format!("Prompt intent classification failed: {err}"));
+            fail_job(
+                workshop,
+                job,
+                format!("Prompt intent classification failed: {err}"),
+            );
         }
     }
 }
@@ -1345,9 +1357,7 @@ fn poll_pipeline_tick(
                     config,
                     workshop,
                     job,
-                    format!(
-                        "review_delta_budget_exhausted:used={rounds_used} max={rounds_max}"
-                    ),
+                    format!("review_delta_budget_exhausted:used={rounds_used} max={rounds_max}"),
                 );
                 return;
             }

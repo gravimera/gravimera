@@ -91,7 +91,7 @@ tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered
 By default Gravimera stores runtime data under `~/.gravimera/`:
 
 - `~/.gravimera/config.toml` (settings, AI providers)
-- `~/.gravimera/openai_capabilities_cache.json` (cached OpenAI-compatible endpoint capabilities, keyed by `base_url` + `model`)
+- `~/.gravimera/openai_capabilities_cache.json` (cached OpenAI-compatible endpoint capabilities, keyed by `base_url` + `model`; includes whether the gateway requires `stream=true`)
 - `~/.gravimera/realm/` (realms + scenes)
 - `~/.gravimera/realm/active.json` (active realm/scene selection)
 - `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
