@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn gen3d_review_delta_structural_only_mode_disallows_transform_nudges() {
-        let text = build_gen3d_review_delta_system_instructions(false, false, true);
+        let text = build_gen3d_review_delta_system_instructions(false, false, true, 1, 2);
         assert!(text.contains("- appearance_review_enabled: false"));
         assert!(text.contains("Only fix structural issues"));
         assert!(text.contains(
@@ -734,19 +734,30 @@ mod tests {
 
     #[test]
     fn gen3d_review_delta_edit_session_mode_allows_alignment_tweaks_without_appearance_review() {
-        let text = build_gen3d_review_delta_system_instructions(false, true, true);
+        let text = build_gen3d_review_delta_system_instructions(false, true, true, 1, 2);
         assert!(text.contains("- appearance_review_enabled: false"));
         assert!(text.contains("- edit_session: true"));
         assert!(text.contains("Goal: apply the user's requested edits"));
-        assert!(text.contains("You MAY propose minimal placement/alignment tweaks"));
+        assert!(text.contains("You MAY propose placement/alignment tweaks"));
         assert!(!text.contains(
             "Do NOT propose cosmetic-only tweaks, aesthetic regens, or transform nudges."
         ));
     }
 
     #[test]
+    fn gen3d_review_delta_round_2_edit_session_is_focused_and_avoids_micro_tweaks() {
+        let text = build_gen3d_review_delta_system_instructions(false, true, true, 2, 2);
+        assert!(text.contains("Round 2 / focused"), "{text}");
+        assert!(text.contains("propose ONLY the placement/alignment changes needed"), "{text}");
+        assert!(
+            !text.contains("You MAY propose placement/alignment tweaks"),
+            "round 2 should not advertise broad alignment tweaks"
+        );
+    }
+
+    #[test]
     fn gen3d_review_delta_regen_gate_omits_regen_component_action_when_disallowed() {
-        let text = build_gen3d_review_delta_system_instructions(false, false, false);
+        let text = build_gen3d_review_delta_system_instructions(false, false, false, 1, 2);
         assert!(text.contains("regen_component_allowed: false"));
         assert!(text.contains("REGENERATION GATE"));
         assert!(
@@ -1393,7 +1404,15 @@ pub(super) fn build_gen3d_review_delta_system_instructions(
     review_appearance: bool,
     edit_session: bool,
     regen_allowed: bool,
+    review_delta_round_index: u32,
+    review_delta_rounds_max: u32,
 ) -> String {
+    let focus_mode = if review_delta_round_index <= 1 {
+        "broad"
+    } else {
+        "main_issue_only"
+    };
+
     let mut out = String::new();
     out.push_str("You are a 3D modeling assistant.\n");
     out.push_str(
@@ -1415,18 +1434,55 @@ Review mode:\n",
         out.push_str("- appearance_review_enabled: true\n");
     } else {
         out.push_str("- appearance_review_enabled: false\n");
+    }
+    if edit_session {
+        out.push_str("- edit_session: true\n");
+    }
+    out.push_str(&format!(
+        "- review_delta_round: {review_delta_round_index}/{review_delta_rounds_max}\n"
+    ));
+    out.push_str(&format!("- review_delta_focus: {focus_mode}\n"));
+    if focus_mode == "broad" {
+        out.push_str(
+            "\nTWO-ROUND POLICY (Round 1 / broad):\n\
+- Fix ALL objective errors first (smoke/validate severity=\"error\").\n\
+- Then satisfy the user's main request.\n\
+- Prefer ONE comprehensive, machine-appliable action list. Avoid micro-iterations.\n\
+- If no meaningful actions remain, return ONLY {\"kind\":\"accept\"}.\n",
+        );
+    } else {
+        out.push_str(
+            "\nTWO-ROUND POLICY (Round 2 / focused):\n\
+- Fix any remaining objective errors first (smoke/validate severity=\"error\").\n\
+- Then focus ONLY on the main issue (the user's request). Do NOT propose optional improvements or minor nudges.\n\
+- If objective errors are cleared and the main issue is satisfied (or cannot be improved deterministically from the structured summaries), return ONLY {\"kind\":\"accept\"}.\n",
+        );
+    }
+
+    if !review_appearance {
         if edit_session {
             out.push_str(
-                "- edit_session: true\n\
+                "\nEdit-session guidance:\n\
 - Goal: apply the user's requested edits to the existing draft.\n\
-- Treat user notes as authoritative. If the user says something is misaligned, assume it is and fix it.\n\
-- You MAY propose minimal placement/alignment tweaks (tweak_component_transform / tweak_component_resolved_rot_world / tweak_attachment / tweak_anchor / tweak_contact) even when smoke/validate report ok.\n\
+- Treat user notes as authoritative. If the user says something is misaligned, assume it is and fix it.\n",
+            );
+            if focus_mode == "broad" {
+                out.push_str(
+                    "- You MAY propose placement/alignment tweaks (tweak_component_transform / tweak_component_resolved_rot_world / tweak_attachment / tweak_anchor / tweak_contact) even when smoke/validate report ok.\n\
 - Still prioritize objective errors first (if any).\n\
 - Do NOT propose cosmetic-only changes.\n",
-            );
+                );
+            } else {
+                out.push_str(
+                    "- In this round, propose ONLY the placement/alignment changes needed for the main issue.\n\
+- Still prioritize objective errors first (if any).\n\
+- Do NOT propose cosmetic-only changes or exploratory micro-tweaks.\n",
+                );
+            }
         } else {
             out.push_str(
-                "- Only fix structural issues:\n\
+                "\nStructural-only guidance (appearance_review_enabled=false):\n\
+- Only fix structural issues:\n\
   - smoke_results.motion_validation issues with severity=\"error\"\n\
   - other smoke_results issues with severity=\"error\" (if present)\n\
 - Do NOT propose cosmetic-only tweaks, aesthetic regens, or transform nudges.\n\
@@ -1558,6 +1614,8 @@ pub(super) fn build_gen3d_review_delta_user_text(
     image_object_summary: Option<&str>,
     scene_graph_summary: &serde_json::Value,
     smoke_results: &serde_json::Value,
+    review_delta_round_index: u32,
+    review_delta_rounds_max: u32,
 ) -> String {
     fn fmt_f32(v: Option<f32>) -> String {
         v.map(|f| format!("{f:.2}"))
@@ -1846,6 +1904,15 @@ pub(super) fn build_gen3d_review_delta_user_text(
     }
 
     let mut out = String::new();
+    let focus_mode = if review_delta_round_index <= 1 {
+        "broad"
+    } else {
+        "main_issue_only"
+    };
+    out.push_str(&format!(
+        "Review-delta round: {review_delta_round_index}/{review_delta_rounds_max}\n"
+    ));
+    out.push_str(&format!("Review-delta focus: {focus_mode}\n"));
     out.push_str("Auto-review pass: propose strict machine-appliable deltas.\n");
     out.push_str(&build_gen3d_effective_user_prompt(
         raw_prompt,

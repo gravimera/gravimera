@@ -1153,12 +1153,17 @@ fn poll_pipeline_tick(
                     return;
                 }
 
-                if job.pipeline.review_delta_attempts >= 3 {
+                let rounds_max = config.gen3d_review_delta_rounds_max;
+                let rounds_used = job.review_delta_rounds_used;
+                let rounds_remaining = rounds_max.saturating_sub(rounds_used);
+                if rounds_max == 0 || rounds_remaining == 0 {
                     fallback_to_agent_step(
                         config,
                         workshop,
                         job,
-                        "qa_failed_exhausted_review_delta".into(),
+                        format!(
+                            "qa_failed_review_delta_budget_exhausted:used={rounds_used} max={rounds_max}"
+                        ),
                     );
                     return;
                 }
@@ -1216,6 +1221,21 @@ fn poll_pipeline_tick(
             return;
         }
         Gen3dPipelineStage::ReviewDelta => {
+            let rounds_max = config.gen3d_review_delta_rounds_max;
+            let rounds_used = job.review_delta_rounds_used;
+            let rounds_remaining = rounds_max.saturating_sub(rounds_used);
+            if rounds_max == 0 || rounds_remaining == 0 {
+                fallback_to_agent_step(
+                    config,
+                    workshop,
+                    job,
+                    format!(
+                        "review_delta_budget_exhausted:used={rounds_used} max={rounds_max}"
+                    ),
+                );
+                return;
+            }
+
             workshop.status = "Pipeline: review delta…".into();
             let args = if job.pipeline.pending_preview_blob_ids.is_empty() {
                 serde_json::json!({})

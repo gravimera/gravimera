@@ -29,6 +29,7 @@ pub(crate) struct AppConfig {
     pub(crate) gen3d_max_parallel_components: usize,
     pub(crate) gen3d_max_seconds: u64,
     pub(crate) gen3d_max_tokens: u64,
+    pub(crate) gen3d_review_delta_rounds_max: u32,
     pub(crate) gen3d_no_progress_tries_max: u32,
     pub(crate) gen3d_inspection_steps_max: u32,
     pub(crate) gen3d_max_replans: u32,
@@ -86,6 +87,7 @@ impl Default for AppConfig {
             gen3d_max_parallel_components: 10,
             gen3d_max_seconds: 60 * 30,
             gen3d_max_tokens: 10_000_000,
+            gen3d_review_delta_rounds_max: 2,
             gen3d_no_progress_tries_max: 3,
             gen3d_inspection_steps_max: 12,
             gen3d_max_replans: 1,
@@ -234,6 +236,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_gen3d_max_parallel_components_into_config(out, text);
     parse_gen3d_max_seconds_into_config(out, text);
     parse_gen3d_max_tokens_into_config(out, text);
+    parse_gen3d_review_delta_rounds_max_into_config(out, text);
     parse_gen3d_no_progress_tries_max_into_config(out, text);
     parse_gen3d_inspection_steps_max_into_config(out, text);
     parse_gen3d_max_replans_into_config(out, text);
@@ -566,6 +569,14 @@ fn parse_gen3d_max_seconds_into_config(out: &mut AppConfig, text: &str) {
 fn parse_gen3d_max_tokens_into_config(out: &mut AppConfig, text: &str) {
     match parse_gen3d_max_tokens(text) {
         Ok(Some(value)) => out.gen3d_max_tokens = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_gen3d_review_delta_rounds_max_into_config(out: &mut AppConfig, text: &str) {
+    match parse_gen3d_review_delta_rounds_max(text) {
+        Ok(Some(value)) => out.gen3d_review_delta_rounds_max = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -2040,6 +2051,76 @@ fn parse_gen3d_max_tokens(text: &str) -> Result<Option<u64>, String> {
         }
 
         out = Some((parsed as u64).min(MAX_ALLOWED));
+    }
+
+    Ok(out)
+}
+
+fn parse_gen3d_review_delta_rounds_max(text: &str) -> Result<Option<u32>, String> {
+    const MAX_ALLOWED: u32 = 2;
+
+    let mut section: Option<String> = None;
+    let mut out: Option<u32> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "review_delta_rounds_max" && key != "gen3d_review_delta_rounds_max" {
+            continue;
+        }
+
+        // Accept at top-level, or under `[gen3d]` / `[app]` for convenience.
+        if let Some(sec) = section.as_deref() {
+            if sec != "gen3d" && sec != "app" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let value = if value.starts_with('"') || value.starts_with('\'') {
+            parse_toml_string(value).ok_or_else(|| {
+                format!(
+                    "config.toml:{line_no}: expected an integer for `review_delta_rounds_max` (example: review_delta_rounds_max = 2)"
+                )
+            })?
+        } else {
+            value.to_string()
+        };
+
+        let parsed: i64 = value.trim().parse().map_err(|_| {
+            format!(
+                "config.toml:{line_no}: expected an integer for `review_delta_rounds_max` (example: review_delta_rounds_max = 2)"
+            )
+        })?;
+        if parsed < 0 {
+            return Err(format!(
+                "config.toml:{line_no}: `review_delta_rounds_max` must be >= 0"
+            ));
+        }
+
+        out = Some((parsed as u32).min(MAX_ALLOWED));
     }
 
     Ok(out)

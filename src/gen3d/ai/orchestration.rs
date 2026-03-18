@@ -620,6 +620,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.per_component_refine_passes_done = 0;
     job.per_component_resume = None;
     job.replan_attempts = 0;
+    job.review_delta_rounds_used = 0;
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
@@ -1125,6 +1126,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.per_component_refine_passes_done = 0;
     job.per_component_resume = None;
     job.replan_attempts = 0;
+    job.review_delta_rounds_used = 0;
     job.regen_total = 0;
     job.regen_per_component.clear();
     job.planned_components.clear();
@@ -1662,10 +1664,17 @@ pub(crate) fn gen3d_poll_ai_job(
             let regen_allowed = !job.preserve_existing_components_mode
                 || job.agent.last_validate_ok == Some(false)
                 || job.agent.last_smoke_ok == Some(false);
+            let review_delta_rounds_max = config.gen3d_review_delta_rounds_max.max(1);
+            let review_delta_round_index = job
+                .review_delta_rounds_used
+                .saturating_add(1)
+                .min(review_delta_rounds_max);
             let system = build_gen3d_review_delta_system_instructions(
                 job.review_appearance,
                 edit_session,
                 regen_allowed,
+                review_delta_round_index,
+                review_delta_rounds_max,
             );
             let image_object_summary = job
                 .user_image_object_summary
@@ -1680,6 +1689,8 @@ pub(crate) fn gen3d_poll_ai_job(
                 image_object_summary,
                 &scene_graph_summary,
                 &smoke_results,
+                review_delta_round_index,
+                review_delta_rounds_max,
             );
             job.last_review_user_text = user_text.clone();
             let reasoning_effort = ai.model_reasoning_effort().to_string();
@@ -2694,7 +2705,7 @@ const GEN3D_MAX_REVIEW_DELTA_REPAIRS: u8 = 1;
 fn retry_gen3d_review_delta(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
-    _config: &AppConfig,
+    config: &AppConfig,
     _speed: Gen3dSpeedMode,
     reason: &str,
 ) -> bool {
@@ -2739,10 +2750,17 @@ fn retry_gen3d_review_delta(
     let regen_allowed = !job.preserve_existing_components_mode
         || job.agent.last_validate_ok == Some(false)
         || job.agent.last_smoke_ok == Some(false);
+    let review_delta_rounds_max = config.gen3d_review_delta_rounds_max.max(1);
+    let review_delta_round_index = job
+        .review_delta_rounds_used
+        .max(1)
+        .min(review_delta_rounds_max);
     let system = build_gen3d_review_delta_system_instructions(
         job.review_appearance,
         edit_session,
         regen_allowed,
+        review_delta_round_index,
+        review_delta_rounds_max,
     );
     let mut user_text = job.last_review_user_text.clone();
     user_text.push_str("\n\nYour previous response was invalid.\nError:\n");

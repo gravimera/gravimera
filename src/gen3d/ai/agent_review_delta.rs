@@ -11,7 +11,7 @@ use super::agent_review_images::{
     select_review_preview_blob_ids, validate_review_images_for_llm,
 };
 use super::agent_utils::sanitize_prefix;
-use super::artifacts::write_gen3d_json_artifact;
+use super::artifacts::{append_gen3d_run_log, write_gen3d_json_artifact};
 use super::{
     set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
     Gen3dAiTextResponse, GEN3D_MAX_REQUEST_IMAGES,
@@ -30,6 +30,31 @@ pub(super) fn start_agent_llm_review_delta_call(
     let Some(pass_dir) = job.pass_dir.clone() else {
         return Err("Missing pass dir".into());
     };
+
+    let rounds_max = config.gen3d_review_delta_rounds_max;
+    if rounds_max == 0 {
+        return Err("Review-delta is disabled by config (gen3d.review_delta_rounds_max=0)."
+            .into());
+    }
+    let next_round_index = job.review_delta_rounds_used.saturating_add(1);
+    if next_round_index > rounds_max {
+        return Err(format!(
+            "Review-delta budget exhausted (used={} max={}).",
+            job.review_delta_rounds_used, rounds_max
+        ));
+    }
+    job.review_delta_rounds_used = next_round_index;
+    let focus_mode = if next_round_index <= 1 {
+        "broad"
+    } else {
+        "main_issue_only"
+    };
+    append_gen3d_run_log(
+        Some(pass_dir.as_path()),
+        format!(
+            "review_delta_start round={next_round_index}/{rounds_max} focus={focus_mode}"
+        ),
+    );
 
     let mut preview_blob_ids = if review_appearance {
         parse_review_preview_blob_ids_from_args(&call.args)
@@ -114,6 +139,8 @@ pub(super) fn start_agent_llm_review_delta_call(
         review_appearance,
         edit_session,
         regen_allowed,
+        next_round_index,
+        rounds_max,
     );
     let image_object_summary = job
         .user_image_object_summary
@@ -128,6 +155,8 @@ pub(super) fn start_agent_llm_review_delta_call(
         image_object_summary,
         &scene_graph_summary,
         &smoke_results,
+        next_round_index,
+        rounds_max,
     );
 
     let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();

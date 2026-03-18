@@ -6635,6 +6635,43 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 ));
             };
 
+            let rounds_max = config.gen3d_review_delta_rounds_max;
+            let rounds_used = job.review_delta_rounds_used;
+            if rounds_max == 0 {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err_with_result(
+                    call.call_id,
+                    call.tool_id,
+                    "Review-delta is disabled by config (gen3d.review_delta_rounds_max=0).".into(),
+                    serde_json::json!({
+                        "kind": "review_delta_disabled",
+                        "used": rounds_used,
+                        "max": rounds_max,
+                        "guidance": "Do not call llm_review_delta_v1. Use deterministic tools (apply_draft_ops_v1 / apply_plan_ops_v1) and finish best-effort after qa_v1.",
+                        "fixits": [
+                            { "tool_id": TOOL_ID_QA, "args": {} }
+                        ],
+                    }),
+                ));
+            }
+            if rounds_used >= rounds_max {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err_with_result(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "Review-delta budget exhausted (used={rounds_used} max={rounds_max})."
+                    ),
+                    serde_json::json!({
+                        "kind": "review_delta_budget_exhausted",
+                        "used": rounds_used,
+                        "max": rounds_max,
+                        "guidance": "Do not call llm_review_delta_v1 again in this run. Run qa_v1 if needed, then finish best-effort or use deterministic tools (apply_draft_ops_v1 / apply_plan_ops_v1). Start a new run if you need more review-delta iterations.",
+                        "fixits": [
+                            { "tool_id": TOOL_ID_QA, "args": {} }
+                        ],
+                    }),
+                ));
+            }
+
             if let Some(obj) = call.args.as_object() {
                 if obj.contains_key("preview_images") || obj.contains_key("preview_paths") {
                     return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -7111,7 +7148,7 @@ mod tests {
     use super::format_info_kv_get_many_args_error;
     use super::normalize_tool_call_args;
     use crate::gen3d::agent::Gen3dToolCallJsonV1;
-    use bevy::prelude::{Quat, Transform, Vec2, Vec3};
+    use bevy::prelude::*;
     use serde::Deserialize;
     use std::path::PathBuf;
     use uuid::Uuid;
@@ -8327,5 +8364,116 @@ mod tests {
         let err = super::fit_plan_template_to_budget(plan, super::PlanTemplateMode::Full, 1024)
             .expect_err("full mode should error");
         assert!(err.contains("Retry with mode"), "{err}");
+    }
+
+    #[derive(Resource, Default)]
+    struct CapturedToolResult(pub(crate) Option<crate::gen3d::agent::Gen3dToolResultJsonV1>);
+
+    fn capture_review_delta_budget_gate(
+        config: Res<crate::config::AppConfig>,
+        time: Res<Time>,
+        mut commands: Commands,
+        mut images: ResMut<Assets<Image>>,
+        mut workshop: ResMut<crate::gen3d::state::Gen3dWorkshop>,
+        mut feedback_history: ResMut<crate::gen3d::tool_feedback::Gen3dToolFeedbackHistory>,
+        mut job: ResMut<crate::gen3d::ai::Gen3dAiJob>,
+        mut draft: ResMut<crate::gen3d::state::Gen3dDraft>,
+        mut preview: ResMut<crate::gen3d::state::Gen3dPreview>,
+        mut preview_model: Query<
+            (
+                &mut crate::types::AnimationChannelsActive,
+                &mut crate::types::LocomotionClock,
+                &mut crate::types::AttackClock,
+            ),
+            With<crate::gen3d::state::Gen3dPreviewModelRoot>,
+        >,
+        mut captured: ResMut<CapturedToolResult>,
+    ) {
+        if captured.0.is_some() {
+            return;
+        }
+        let call = Gen3dToolCallJsonV1 {
+            call_id: "call_1".into(),
+            tool_id: crate::gen3d::agent::tools::TOOL_ID_LLM_REVIEW_DELTA.to_string(),
+            args: serde_json::json!({}),
+        };
+        let outcome = super::execute_tool_call(
+            &config,
+            &time,
+            &mut commands,
+            &mut images,
+            &mut workshop,
+            &mut feedback_history,
+            &mut job,
+            &mut draft,
+            &mut preview,
+            &mut preview_model,
+            call,
+        );
+        if let super::ToolCallOutcome::Immediate(result) = outcome {
+            captured.0 = Some(result);
+        }
+    }
+
+    #[test]
+    fn llm_review_delta_budget_gate_returns_actionable_error() {
+        let pass_dir = make_temp_dir("gravimera_review_delta_budget_gate_test");
+
+        let openai = crate::config::OpenAiConfig {
+            base_url: "mock://gen3d".into(),
+            model: "mock".into(),
+            model_reasoning_effort: "none".into(),
+            api_key: "mock".into(),
+        };
+
+        let mut config = crate::config::AppConfig {
+            openai: Some(openai.clone()),
+            ..Default::default()
+        };
+        config.gen3d_review_delta_rounds_max = 2;
+
+        let mut job = crate::gen3d::ai::Gen3dAiJob::default();
+        job.ai = Some(super::super::ai_service::Gen3dAiServiceConfig::OpenAi(openai));
+        job.pass_dir = Some(pass_dir);
+        job.review_delta_rounds_used = 2;
+
+        let mut app = App::new();
+        app.insert_resource(config);
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Assets::<Image>::default());
+        app.insert_resource(crate::gen3d::state::Gen3dWorkshop::default());
+        app.insert_resource(crate::gen3d::tool_feedback::Gen3dToolFeedbackHistory::default());
+        app.insert_resource(job);
+        app.insert_resource(crate::gen3d::state::Gen3dDraft::default());
+        app.insert_resource(crate::gen3d::state::Gen3dPreview::default());
+        app.insert_resource(CapturedToolResult::default());
+        app.add_systems(Update, capture_review_delta_budget_gate);
+
+        app.update();
+
+        let captured = app
+            .world()
+            .resource::<CapturedToolResult>()
+            .0
+            .clone()
+            .expect("expected tool result");
+        assert!(!captured.ok, "expected ok=false, got {captured:?}");
+        let err = captured.error.as_deref().unwrap_or("");
+        assert!(err.contains("budget exhausted"), "unexpected error={err}");
+        let result = captured.result.expect("expected structured error result");
+        assert_eq!(
+            result.get("kind").and_then(|v| v.as_str()),
+            Some("review_delta_budget_exhausted"),
+            "{result:?}"
+        );
+        assert_eq!(result.get("used").and_then(|v| v.as_u64()), Some(2));
+        assert_eq!(result.get("max").and_then(|v| v.as_u64()), Some(2));
+        assert!(
+            result
+                .get("guidance")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("Do not call llm_review_delta_v1 again")),
+            "expected actionable guidance, got {result:?}"
+        );
     }
 }

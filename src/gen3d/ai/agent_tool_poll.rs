@@ -2739,11 +2739,26 @@ pub(super) fn poll_agent_tool(
                                             "qa_v1 reports no errors".to_string()
                                         };
 
+                                        let review_delta_rounds_max =
+                                            config.gen3d_review_delta_rounds_max;
+                                        let review_delta_round_index = job.review_delta_rounds_used;
+                                        let review_delta_rounds_remaining = review_delta_rounds_max
+                                            .saturating_sub(review_delta_round_index);
+                                        let review_delta_focus = if review_delta_round_index <= 1 {
+                                            "broad"
+                                        } else {
+                                            "main_issue_only"
+                                        };
+
                                         Gen3dToolResultJsonV1::ok(
                                             call.call_id,
                                             call.tool_id,
                                             serde_json::json!({
                                                 "ok": true,
+                                                "review_delta_round_index": review_delta_round_index,
+                                                "review_delta_rounds_max": review_delta_rounds_max,
+                                                "review_delta_rounds_remaining": review_delta_rounds_remaining,
+                                                "review_delta_focus": review_delta_focus,
                                                 "accepted": apply.accepted,
                                                 "had_actions": apply.had_actions && !non_actionable_regen_only,
                                                 "regen_allowed": regen_allowed,
@@ -2800,10 +2815,18 @@ pub(super) fn poll_agent_tool(
                                                 });
                                             job.agent.pending_review_delta_regen_allowed =
                                                 Some(regen_allowed);
+                                            let review_delta_rounds_max =
+                                                config.gen3d_review_delta_rounds_max.max(1);
+                                            let review_delta_round_index = job
+                                                .review_delta_rounds_used
+                                                .max(1)
+                                                .min(review_delta_rounds_max);
                                             let system = super::prompts::build_gen3d_review_delta_system_instructions(
                                                 review_appearance,
                                                 edit_session,
                                                 regen_allowed,
+                                                review_delta_round_index,
+                                                review_delta_rounds_max,
                                             );
 	                                            let image_object_summary = job
 	                                                .user_image_object_summary
@@ -2819,6 +2842,8 @@ pub(super) fn poll_agent_tool(
                                                     image_object_summary,
                                                     &scene_graph_summary,
                                                 &smoke_results,
+                                                review_delta_round_index,
+                                                review_delta_rounds_max,
                                             );
 
                                             let mut preview_blob_ids = if review_appearance {
@@ -2962,10 +2987,18 @@ pub(super) fn poll_agent_tool(
                                             || job.agent.last_smoke_ok == Some(false)
                                     });
                                 job.agent.pending_review_delta_regen_allowed = Some(regen_allowed);
+                                let review_delta_rounds_max =
+                                    config.gen3d_review_delta_rounds_max.max(1);
+                                let review_delta_round_index = job
+                                    .review_delta_rounds_used
+                                    .max(1)
+                                    .min(review_delta_rounds_max);
                                 let system = super::prompts::build_gen3d_review_delta_system_instructions(
                                     review_appearance,
                                     edit_session,
                                     regen_allowed,
+                                    review_delta_round_index,
+                                    review_delta_rounds_max,
                                 );
                                 let image_object_summary = job
                                     .user_image_object_summary
@@ -2980,6 +3013,8 @@ pub(super) fn poll_agent_tool(
                                     image_object_summary,
                                     &scene_graph_summary,
                                     &smoke_results,
+                                    review_delta_round_index,
+                                    review_delta_rounds_max,
                                 );
 
                                 let mut preview_blob_ids = if review_appearance {

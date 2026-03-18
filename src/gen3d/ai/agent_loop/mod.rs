@@ -834,6 +834,7 @@ mod tests {
         job.current_run_tokens = 1234;
         job.regen_total = 15;
         job.regen_per_component = vec![2, 1];
+        job.review_delta_rounds_used = 1;
         job.agent.no_progress_tries = 5;
         job.agent.no_progress_inspection_steps = 8;
         job.planned_components = vec![
@@ -877,6 +878,13 @@ mod tests {
             .and_then(|v| v.as_u64())
             .expect("expected regen remaining_total");
         assert_eq!(regen_remaining, 1);
+
+        let review_delta_remaining = budgets
+            .get("review_delta")
+            .and_then(|v| v.get("rounds_remaining"))
+            .and_then(|v| v.as_u64())
+            .expect("expected review_delta rounds_remaining");
+        assert_eq!(review_delta_remaining, 1);
 
         let no_progress_tries_remaining = budgets
             .get("no_progress")

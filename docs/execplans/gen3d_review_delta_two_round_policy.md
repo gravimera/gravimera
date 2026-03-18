@@ -26,14 +26,14 @@ How to see it working (after implementation):
 
 ## Progress
 
-- [x] (2026-03-19) Drafted this ExecPlan (design only; no code changes yet).
-- [ ] Implement per-run review-delta budget tracking (completed: none; remaining: add config + job state + reset paths).
-- [ ] Enforce tool gate for `llm_review_delta_v1` when budget exhausted (completed: none; remaining: immediate actionable error + Info Store event).
-- [ ] Make `llm_review_delta_v1` round-aware (completed: none; remaining: prompt updates for round 1 vs round 2 behavior).
-- [ ] Update agent-step prompt/state summary to expose remaining review-delta budget (completed: none; remaining: agent prompt + summary JSON).
-- [ ] Update pipeline remediation loop to respect global 2-round cap (completed: none; remaining: adjust stage loop + fallback behavior).
-- [ ] Add tests and offline verification (completed: none; remaining: unit tests + integration tests; ensure mock backend coverage).
-- [ ] Run `cargo test` + rendered smoke test (`--rendered-seconds 2`) and record outcomes here.
+- [x] (2026-03-19) Drafted this ExecPlan.
+- [x] (2026-03-19) Implemented per-run review-delta budget tracking (config + job counter + resets on new Build/Edit/Fork runs).
+- [x] (2026-03-19) Enforced a tool gate for `llm_review_delta_v1` when budget is exhausted (immediate, actionable `ok=false` tool result).
+- [x] (2026-03-19) Made `llm_review_delta_v1` round-aware (prompt injects round index/max and round 1 vs round 2 focus rules).
+- [x] (2026-03-19) Exposed review-delta budget counters in the agent state summary (`state_summary.budgets.review_delta`).
+- [x] (2026-03-19) Updated pipeline orchestrator to respect the global 2-round cap (fallback to agent-step when exhausted).
+- [x] (2026-03-19) Added tests for prompt focus + tool gating + state summary budgets.
+- [x] (2026-03-19) Verified with `cargo test` and the rendered smoke test (`--rendered-seconds 2`).
 
 
 ## Surprises & Discoveries
@@ -46,6 +46,9 @@ How to see it working (after implementation):
 
 - Observation: When `gen3d.review_appearance=false`, the current system prompt for review-delta explicitly allows small placement/alignment tweaks even if smoke/validate report OK (edit sessions).
   Evidence: `src/gen3d/ai/prompts.rs::build_gen3d_review_delta_system_instructions` includes “You MAY propose minimal placement/alignment tweaks … even when smoke/validate report ok.”
+
+- Observation: A review-delta tool call can be split into two phases when appearance review is enabled: a prerender capture (async) followed by the LLM review call.
+  Evidence: `src/gen3d/ai/agent_tool_dispatch.rs` can start a review prerender capture for `llm_review_delta_v1`, and `src/gen3d/ai/agent_render_capture.rs` later calls `start_agent_llm_review_delta_call(...)` after the images are ready.
 
 
 ## Decision Log
@@ -62,12 +65,24 @@ How to see it working (after implementation):
   Rationale: Appearance review is slower and not reliably helpful for the oscillation failure mode. The two-round policy should converge using structured summaries only.
   Date/Author: 2026-03-19 / user + assistant
 
+- Decision: Interpret `gen3d.review_delta_rounds_max=0` as “disabled” (not unlimited), and clamp values >2 down to 2.
+  Rationale: The product policy is a hard cap to prevent oscillation, while still allowing developers to disable review-delta entirely for debugging.
+  Date/Author: 2026-03-19 / assistant
+
+- Decision: Increment the review-delta round budget when the LLM review call starts (not when a prerender capture starts).
+  Rationale: Appearance review can prerender before the LLM call; counting at LLM start ensures the budget covers both direct calls and prerendered calls without consuming budget on render failures.
+  Date/Author: 2026-03-19 / assistant
+
 
 ## Outcomes & Retrospective
 
-- Outcome (so far): Design drafted; implementation pending.
-- Anticipated outcome: Runs that previously repeated `llm_review_delta_v1` will converge after at most 2 review passes (plus QA), reducing timeouts and pass spam in the run cache.
-- Anticipated tradeoff: Some edge cases may require more than 2 review-delta passes to reach “ideal” structure. The product decision is to prefer early, stable finish over endless micro-improvement.
+- Outcome: `llm_review_delta_v1` is now capped to 2 calls per run and is explicitly round-aware (round 1 broad; round 2 focused on objective errors + the main issue, otherwise accept).
+- Outcome: The tool gate returns an actionable error payload when exhausted, and the pipeline orchestrator consults the same budget to avoid wasting passes.
+- Outcome: The agent state summary now exposes `budgets.review_delta.rounds_max/used/remaining`, so the agent can stop calling review-delta once exhausted.
+- Verification: `cargo test` passed.
+- Verification: rendered smoke test passed:
+  - `tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2`
+- Tradeoff: Some edge cases may still benefit from >2 review-delta calls, but the product decision remains “finish early and stable” over micro-iteration. The recovery path is to start a fresh run.
 
 
 ## Context and Orientation
@@ -118,7 +133,9 @@ Add a config knob and job state that are shared across both orchestrators:
 - Config (in `config.toml` parsing + `AppConfig`):
   - Key: `[gen3d] review_delta_rounds_max = 2`
   - Default: 2
-  - Allow 0 to mean “disabled/unlimited” only if there is a strong dev need; otherwise keep it strictly 2 to match product policy.
+  - Values: 0..2
+    - 0 disables `llm_review_delta_v1` (the tool returns an error instead of calling the model).
+    - Values >2 are clamped to 2 (policy cap).
 
 - Job state (in `src/gen3d/ai/job.rs::Gen3dAiJob`):
   - `review_delta_rounds_used: u32` (per run, counts started calls, not “successful applies”)
@@ -263,8 +280,13 @@ Acceptance is behavioral and observable:
 
 ## Idempotence and Recovery
 
-- If a developer wants to experiment with different round caps, the config knob allows adjusting max rounds without code edits.
-- If the cap causes unacceptable outcomes for specific workflows, the recovery path is: start a new run (fresh budget) or temporarily raise the cap in `config.toml` while debugging.
+- If a developer wants to experiment with different round caps, the config knob allows reducing rounds without code edits (`0..2`; values above 2 are clamped to 2).
+- If the cap causes unacceptable outcomes for specific workflows, the recovery path is: start a new run (fresh budget). (Raising the cap above 2 is intentionally blocked by policy.)
+
+
+## Revision Notes
+
+- (2026-03-19) Implemented the two-round review-delta policy end-to-end (budget tracking + tool gate + prompts + pipeline + tests) and updated the living sections to reflect completion.
 
 
 ## Artifacts and Notes
@@ -283,4 +305,3 @@ No external dependencies are required. Changes are confined to:
 - Review-delta prompt construction (`src/gen3d/ai/prompts.rs`, plus call sites such as `src/gen3d/ai/agent_review_delta.rs`).
 - Agent-step state summary prompt (`src/gen3d/ai/agent_prompt.rs`) to expose budget counters.
 - Pipeline orchestrator remediation loop (`src/gen3d/ai/pipeline_orchestrator.rs`) to respect the shared cap.
-

@@ -413,6 +413,8 @@ fn gen3d_review_delta_prompt_includes_join_axes_and_offset_pos() {
         None,
         &scene_graph_summary,
         &smoke_results,
+        1,
+        2,
     );
 
     assert!(

@@ -530,7 +530,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 tool_id: TOOL_ID_LLM_REVIEW_DELTA,
                 title: "LLM: review delta",
                 one_line_summary:
-                    "LLM+mutates: apply deterministic tweak ops; in preserve mode regen is QA-gated BEFORE the LLM call (schema omits regen_component when gate closed; result includes regen_allowed + reason). Use `preview_blob_ids` (or `blob_ids`) for explicit renders; pass `{\"preview_blob_ids\":[]}` to use the latest render cache.",
+                    "LLM+mutates: apply deterministic tweak ops. Budget: at most 2 calls per run (round 1 broad; round 2 focused on the main issue). In preserve mode regen is QA-gated BEFORE the LLM call (schema omits regen_component when gate closed; result includes regen_allowed + reason). Use `preview_blob_ids` (or `blob_ids`) for explicit renders; pass `{\"preview_blob_ids\":[]}` to use the latest render cache.",
                 args_schema:
                     "{ preview_blob_ids?: string[], blob_ids?: string[] }",
                 args_example: serde_json::json!({ "preview_blob_ids": [] }),

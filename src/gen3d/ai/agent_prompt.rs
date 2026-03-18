@@ -56,7 +56,7 @@ Rules:\n\
 - STOP when the model is good enough:\n\
   - If the latest review delta accepts the model / has no actionable fixes (and `qa_v1` has been run), output a \"done\" action.\n\
   - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
-  - If budgets prevent further improvement (regen budgets, time, tokens), output a \"done\" action with a best-effort reason.\n\
+  - If budgets prevent further improvement (regen budgets, review-delta rounds, time, tokens), output a \"done\" action with a best-effort reason.\n\
   - `done.reason` is treated as an unverified agent note; keep it brief and factual. Do NOT claim tool actions that did not occur.\n\
   - `qa_v1` may report warnings (non-fatal). Treat warnings as informational: do NOT spend steps trying to eliminate warnings.\n\
     - If warnings>0, mention them explicitly in \"done.reason\" (do not claim \"no warnings\").\n\
@@ -131,6 +131,9 @@ Rules:\n\
     - If review_appearance=true: render_preview_v1\n\
     - Then: llm_review_delta_v1\n\
   - Do NOT call llm_review_delta_v1 repeatedly without applying the pending work or rerunning qa_v1 (and render_preview_v1 if review_appearance=true).\n\
+  - Budget: llm_review_delta_v1 is capped per run (see state_summary.budgets.review_delta). Use it intentionally:\n\
+    - Round 1: broad (fix all objective errors + satisfy the request).\n\
+    - Round 2: focused (fix objective errors + main issue only), then accept.\n\
 - If `state_summary.pending_regen_component_indices_blocked_due_to_qa_gate` is non-empty:\n\
   - Do NOT retry force-regeneration while QA is clean/unknown.\n\
   - Exit this state deterministically (do NOT keep inspecting):\n\
@@ -2922,6 +2925,9 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
                 .saturating_sub(job.current_run_tokens()),
         )
     };
+    let review_delta_rounds_remaining = config
+        .gen3d_review_delta_rounds_max
+        .saturating_sub(job.review_delta_rounds_used);
 
     let motion_authoring_status = {
         match job.motion_authoring.as_ref() {
@@ -3089,6 +3095,11 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
                 "used_total": job.regen_total,
                 "remaining_total": regen_remaining_total,
                 "max_per_component": config.gen3d_max_regen_per_component,
+            },
+            "review_delta": {
+                "rounds_max": config.gen3d_review_delta_rounds_max,
+                "rounds_used": job.review_delta_rounds_used,
+                "rounds_remaining": review_delta_rounds_remaining,
             },
             "no_progress": {
                 "tries_max": config.gen3d_no_progress_tries_max,

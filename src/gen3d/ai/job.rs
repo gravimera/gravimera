@@ -594,6 +594,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) per_component_refine_passes_done: u32,
     pub(super) per_component_resume: Option<Gen3dComponentBatchResume>,
     pub(super) replan_attempts: u32,
+    pub(super) review_delta_rounds_used: u32,
     pub(super) regen_total: u32,
     pub(super) regen_per_component: Vec<u32>,
     pub(super) user_prompt_raw: String,
