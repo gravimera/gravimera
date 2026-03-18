@@ -11,6 +11,8 @@ Gen3D “Build” is currently orchestrated by a Codex-style `agent_step` loop: 
 
 After this change, Gen3D will have a deterministic **pipeline orchestrator** that manages the fixed workflow as a state machine. The model will still be used for the inherently open-ended parts (plan generation, component drafts, plan ops, review delta, and DraftOps suggestions), but the *process management* (what happens next, retries, gating, budgets, stopping conditions) will be deterministic and testable.
 
+In this plan, “deterministic” means: given the same in-memory job state + the same tool results, the engine makes the same decision about what to do next. It does **not** mean the LLM always emits identical text. LLM-backed tools are treated as suggestion producers that must conform to strict schemas, and their effects are applied by deterministic code paths (`plan_ops`, `draft_ops`, `convert::apply_ai_review_delta_actions`, validation/QA). Pipeline decisions must be based on explicit state/tool outputs (counters, hashes, `qa_v1` fields), not object-type heuristics (“chairs vs snakes”).
+
 We will keep the existing `agent_step` loop as a **fallback**. When the pipeline cannot make progress (tool schema failures beyond repair budget, repeated atomic DraftOps rejections, etc.), it will switch to agent-step and continue the run using the current implementation.
 
 The most important product requirement is **DraftOps-first editing**: in seeded Edit/Fork sessions, user requests like “make the cannon longer” should prefer in-place primitive edits (`apply_draft_ops_v1`) rather than regenerating whole components. This requires a new LLM-backed tool that *suggests* DraftOps deterministically (strict schema), then the engine applies them via `apply_draft_ops_v1` (atomic + revision-gated).
@@ -26,6 +28,7 @@ How to see it working (after implementation):
 ## Progress
 
 - [x] (2026-03-18 22:10 CST) Drafted this ExecPlan.
+- [x] (2026-03-18 23:07 CST) Revised this ExecPlan to call out pipeline reachability (all entrypoints), add a deterministic QA/motion remediation loop, tighten tool contracts/gates, and note mock-backend gaps.
 - [ ] Implement pipeline orchestrator skeleton and config toggle; keep agent-step path unchanged and available.
 - [ ] Add new LLM tool: `llm_generate_draft_ops_v1` (suggestions only; no mutation) + strict structured-output schema.
 - [ ] Implement create-session pipeline flow (new Build): plan → components → QA → (render/review) loops → finish.
@@ -49,6 +52,12 @@ How to see it working (after implementation):
 
 - Observation: `docs/agent_skills/tool_authoring_rules.md` and `docs/agent_skills/prompt_tool_contract_review.md` are referenced in `AGENTS.md` but are not present in this working tree (directory exists, files missing). This plan therefore embeds the needed “contract-first” tool guidance instead of referencing those docs.
 
+- Observation: Pipeline mode is currently not reachable because all session entrypoints force agent mode, and `Gen3dAiMode` currently only contains `Agent`.
+  Evidence: `src/gen3d/ai/orchestration.rs::gen3d_start_build_from_api`, `src/gen3d/ai/orchestration.rs::gen3d_resume_build_from_api`, and `src/gen3d/ai/orchestration.rs::gen3d_start_seeded_session_from_prefab_id_from_api` set `job.mode = Gen3dAiMode::Agent`. Also `src/gen3d/ai/job.rs::Gen3dAiMode` currently has only the `Agent` variant.
+
+- Observation: `mock://gen3d` currently has no mock responses for `tool_plan_ops_*` and `tool_review_*` artifact prefixes, and will error if tests/pipeline try to call those tools without extending the mock backend.
+  Evidence: `src/gen3d/ai/openai.rs::mock_gen3d_response_text` handles `tool_plan_`, `tool_component`, and `tool_motion_authoring_`, but returns `mock://gen3d has no response for artifact_prefix ...` for other prefixes.
+
 
 ## Decision Log
 
@@ -66,6 +75,14 @@ How to see it working (after implementation):
 
 - Decision: Avoid object-type heuristics in pipeline logic; transitions must be based on explicit tool outputs/state flags, not special-casing “chairs vs snakes”.
   Rationale: Gen3D must be generic (“generate any object”); process management must not encode per-object heuristics.
+  Date/Author: 2026-03-18 / assistant
+
+- Decision: Make QA failure handling explicit and deterministic in the pipeline: apply deterministic QA fixits first (when provided), then attempt motion authoring if motion is the blocker, then use review-delta for replan/regen, and only then fall back to agent-step.
+  Rationale: Without a defined QA remediation loop, the pipeline will either stall or fall back immediately, defeating the purpose. Using `qa_v1` outputs (including capability-gaps fixits) keeps the logic generic and testable.
+  Date/Author: 2026-03-18 / assistant
+
+- Decision: When appearance review is enabled, have the pipeline call `render_preview_v1` explicitly and pass the resulting blob ids into `llm_review_delta_v1`, instead of relying on the tool’s internal “prerender if missing” behavior.
+  Rationale: It keeps pipeline sequencing observable (“render” is a first-class step), makes artifacts predictable in tests, and avoids hidden branching inside `llm_review_delta_v1` dispatch.
   Date/Author: 2026-03-18 / assistant
 
 
@@ -108,6 +125,12 @@ The agent path must remain unchanged and reachable:
 - Config toggle: add a config knob (e.g. `[gen3d].orchestrator = "pipeline"|"agent"`) so developers can force agent mode for comparison/debugging.
 - Fallback: pipeline can switch `job.mode` to agent mode mid-run and continue by entering `Gen3dAiPhase::AgentWaitingStep` and calling `spawn_agent_step_request`.
 
+Pipeline must be reachable from every entrypoint, not only from polling. Today, all of the following overwrite `job.mode` to `Agent`, which would silently disable pipeline mode unless they are updated to respect the orchestrator config:
+
+- `src/gen3d/ai/orchestration.rs::gen3d_start_build_from_api` (new Build)
+- `src/gen3d/ai/orchestration.rs::gen3d_resume_build_from_api` (Continue)
+- `src/gen3d/ai/orchestration.rs::gen3d_start_seeded_session_from_prefab_id_from_api` (Edit/Fork seed/reset)
+
 Keep the tool execution machinery shared. The pipeline should reuse `agent_tool_dispatch::execute_tool_call` and `agent_tool_poll::poll_agent_tool` rather than re-implementing LLM spawning, structured-output repair, artifact logging, or regen/QA gates.
 
 Important integration detail (fixes a real conflict with the current agent implementation): `poll_agent_tool` and the agent execution path both append tool results into `job.agent.step_tool_results`, which is intended to be “recent tool results for the next agent_step prompt”. In pipeline mode we must avoid unbounded accumulation and we must keep agent fallback clean. Implement the pipeline so it treats each pipeline action as “one tool call at a time” and does the following bookkeeping:
@@ -128,22 +151,32 @@ Contract-first rule (embedded here): Any new tool must return actionable results
 
 ### 2) Implement deterministic “next tool” selection (create flow)
 
-For a fresh Build (non-seeded):
+For a fresh Build (non-seeded), the pipeline should repeatedly select the next tool using only explicit state + prior tool outputs. A novice should implement this as a small loop (“pick next action; execute tool; incorporate result; repeat”) with bounded retries and a no-progress guard based on the existing state-hash logic.
 
-- If user images exist and `job.user_image_object_summary` is missing: run the existing image-summary request, then continue.
-- Ensure a plan exists. If no accepted plan exists yet (empty `job.plan_hash` / `job.planned_components` empty), run `llm_generate_plan_v1`.
-- Generate missing components: run `llm_generate_components_v1` in missing-only mode until every planned component has `actual_size`.
-- Run QA: `qa_v1` (this updates `job.agent.last_validate_ok`, `last_smoke_ok`, motion flags, and caches by state hash).
-- If `review_appearance=true`: run `render_preview_v1`, then `llm_review_delta_v1`.
-- Apply review delta results deterministically:
-  - If it requests `replan_reason`: re-run `llm_generate_plan_v1` (or prefer plan ops if a future “plan ops for create” exists).
-  - If it requests regen indices: run `llm_generate_components_v1` with those indices (respecting existing regen budgets + QA gates).
-  - If it applied non-regen tweaks (anchors/attachments/etc): loop back to QA and (optionally) render/review.
-- Finish deterministically when “complete enough” (reuse/extract logic equivalent to `run_complete_enough_for_auto_finish` in `src/gen3d/ai/agent_step.rs`).
+The create-flow next-step rules:
+
+- If user images exist and `job.user_image_object_summary` is missing, run the existing image-summary request (the same implementation used by agent mode), then continue. (Do not use agent-step for this.)
+- Ensure a plan exists. If no accepted plan exists yet (empty `job.plan_hash` or `job.planned_components` empty), run `llm_generate_plan_v1`.
+- Ensure geometry exists. If any planned component has `actual_size.is_none()`, run `llm_generate_components_v1` in missing-only mode until all planned components have sizes.
+- Run QA by calling `qa_v1`. This produces explicit `ok/errors/warnings` plus `capability_gaps` (which may include deterministic “fixits” that are already expressed as tool calls).
+
+If QA fails (`qa_v1.ok=false`), the pipeline must not “give up” immediately. Handle QA failure deterministically, in this order:
+
+1. Apply deterministic QA fixits when present. If `qa_v1.capability_gaps[*].fixits[*]` includes entries with `tool_id="apply_draft_ops_v1"`, execute up to a small bounded number of them (for example: max 3 fixits per QA pass, max 2 QA-fix passes per run) and re-run `qa_v1`. This is generic and does not rely on heuristics: it simply applies engine-provided fixes.
+2. If motion is still a blocker, run motion authoring. Concretely: if the latest QA payload indicates motion failure (for example `qa_v1.smoke.motion_validation.ok=false`, or a `capability_gaps` entry with kind like `missing_motion_channel` / `motion_validation_error`), call `llm_generate_motion_authoring_v1`, then re-run `qa_v1`.
+3. If QA is still failing after bounded attempts, call `llm_review_delta_v1` to ask the model for a replan/regen/tweak delta using the current plan + smoke results. Because QA failed, regen will be allowed by existing rules (see `agent_review_delta.rs::regen_allowed`). Apply the returned delta deterministically (using the existing conversion/application code), then loop back to QA.
+4. If the pipeline exceeds its explicit retry budgets or hits the no-progress guard, fall back to agent-step with an explicit reason.
+
+If QA succeeds (`qa_v1.ok=true`), optionally run appearance review loops:
+
+- If `review_appearance=true`, call `render_preview_v1` (choose a stable prefix and stable view set), then call `llm_review_delta_v1` with `preview_blob_ids` set to the blob ids created by `render_preview_v1`.
+- Apply the resulting review delta deterministically. If it triggers replan or regen, do so (respecting existing regen budgets and QA gates), then loop back to QA.
+
+Finish deterministically when “complete enough” (reuse or extract logic equivalent to `run_complete_enough_for_auto_finish` in `src/gen3d/ai/agent_step.rs`). “Complete enough” must be evaluated based on explicit state: primitive-part count, all components generated, QA ok, motion ok (when applicable), and (when enabled) appearance review completed.
 
 ### 3) Implement deterministic “next tool” selection (edit flow, DraftOps-first)
 
-For seeded Edit/Fork sessions (where `job.edit_base_prefab_id.is_some()` and preserve mode defaults to true):
+For seeded Edit/Fork sessions (where `job.edit_base_prefab_id.is_some()` and preserve mode defaults to true), the pipeline must preserve as much of the existing geometry as possible and prefer deterministic patch tools (`plan_ops`, then `draft_ops`) over regeneration. Regeneration is still possible, but must respect the existing QA gating and “preserve mode” defaults.
 
 - Always run a preserve-mode plan ops pass first: `get_plan_template_v1` (mode="auto") → `llm_generate_plan_ops_v1`.
   - Note: `llm_generate_plan_ops_v1` already *applies* the generated ops internally (see `plan_ops::apply_llm_generate_plan_ops_v1`). Do not call `apply_plan_ops_v1` separately unless you are intentionally applying a deterministic, non-LLM patch you authored in code.
@@ -156,7 +189,8 @@ For seeded Edit/Fork sessions (where `job.edit_base_prefab_id.is_some()` and pre
   - Apply the suggested ops using `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev=job.assembly_rev`.
   - If application rejects ops (non-empty `rejected_ops`), call `llm_generate_draft_ops_v1` again with the rejection payload and the current `query_component_parts_v1` snapshot (LLMRepair-style loop), bounded by a small retry budget.
   - Only when DraftOps cannot satisfy the request should regeneration be used. In preserve mode, regeneration is QA-gated; the pipeline must respect that gate.
-- Run QA and, if enabled, render+review-delta loops as in the create flow.
+- Run QA and remediate failures using the same deterministic QA loop as the create flow (deterministic fixits → motion authoring → review delta → fallback). In edit sessions, ensure that preserve mode remains enabled unless/until QA failure explicitly allows regen (again, matching `regen_allowed` rules).
+- If enabled, run render+review-delta loops as in the create flow, passing `preview_blob_ids` explicitly.
 
 ### 4) Add the `llm_generate_draft_ops_v1` tool (suggestions-only)
 
@@ -174,6 +208,7 @@ Suggested tool args (engine-validated; actionable errors):
 - `scope_components?: string[]` (optional; if omitted, the tool may consider all components described in the supplied “component parts snapshot” text)
 - `max_ops?: number` (default 24, clamp 1..64)
 - `strategy?: "conservative"|"balanced"` (optional; influences whether it prefers recolor/scale vs adding/removing primitives)
+- `allow_remove_parts?: bool` (default false; when false, the engine must reject `remove_primitive_part` ops deterministically)
 
 Suggested tool output schema:
 
@@ -188,6 +223,8 @@ Prompting requirements (system + user prompt builders):
   - A compact scene graph summary (component list, attachment structure).
   - For each component in scope: the `query_component_parts_v1` snapshot, including part ids and copy/pasteable recipes (bounded).
   - Any relevant guards (atomic apply, `if_assembly_rev` usage, op limits).
+
+Engine-side validation requirements (contract-first): regardless of prompting, the tool handler must enforce safety and gatekeeping deterministically. At minimum: clamp `max_ops`, reject unknown keys, reject ops referencing unknown components/part ids, reject `RemovePrimitivePart` unless `allow_remove_parts=true`, and require `if_assembly_rev` + `atomic=true` on application.
 
 Concrete integration checklist for this tool (to avoid prompt/tool mismatches and “silent” behavior changes):
 
@@ -287,4 +324,4 @@ At the end of implementation, the following interfaces must exist and be exercis
 
 ## Note on future revisions
 
-(When this plan is revised, add a short note here describing what changed and why.)
+- (2026-03-18) Clarified what “deterministic” means, listed all entrypoints that must respect orchestrator selection, specified a deterministic QA/motion remediation loop, tightened the DraftOps tool contract with enforceable gates, and documented current `mock://gen3d` prefix gaps so offline tests are implementable.
