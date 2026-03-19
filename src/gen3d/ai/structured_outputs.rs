@@ -61,7 +61,22 @@ fn schema_array_of(items: serde_json::Value) -> serde_json::Value {
 fn schema_any_object() -> serde_json::Value {
     json!({
         "type": "object",
-        "additionalProperties": true
+        // Some OpenAI-compatible providers validate JSON Schema strictly when `strict=true` and
+        // require `additionalProperties=false` for every object schema (including nested ones).
+        //
+        // The Gen3D agent protocol uses `args` as an arbitrary JSON object whose shape depends on
+        // the tool. To keep the protocol flexible while satisfying strict validators, we allow
+        // any key via a permissive `patternProperties` entry, and still set
+        // `additionalProperties=false` to satisfy providers that require it.
+        //
+        // Some providers additionally require every object schema to specify both `properties`
+        // (possibly empty) and `required` (possibly empty) whenever `type=object`.
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "patternProperties": {
+            "^.*$": {}
+        }
     })
 }
 
@@ -364,7 +379,7 @@ fn schema_plan_op() -> serde_json::Value {
             "contacts": schema_array_of(schema_contact()),
             "attach_to": schema_nullable(schema_plan_attachment()),
         },
-        "required": ["kind", "name", "size"],
+        "required": ["kind", "name", "size", "purpose", "modeling_notes", "anchors", "contacts", "attach_to"],
     });
     let remove_component = json!({
         "type": "object",
@@ -805,7 +820,7 @@ fn schema_transform_delta_draft_ops() -> serde_json::Value {
             "forward": schema_nullable(schema_vec3()),
             "up": schema_nullable(schema_vec3()),
         },
-        "required": [],
+        "required": ["pos", "scale", "rot_quat_xyzw", "forward", "up"],
     })
 }
 
@@ -854,7 +869,7 @@ fn schema_primitive_spec_draft_ops() -> serde_json::Value {
             "color_rgba": schema_nullable(schema_color_input()),
             "unlit": schema_nullable(schema_bool()),
         },
-        "required": ["mesh"],
+        "required": ["mesh", "params", "color_rgba", "unlit"],
     })
 }
 
@@ -949,7 +964,7 @@ fn schema_draft_op() -> serde_json::Value {
             "set_primitive": schema_nullable(schema_primitive_spec_draft_ops()),
             "set_render_priority": schema_nullable(schema_integer()),
         },
-        "required": ["kind", "component", "part_id_uuid"],
+        "required": ["kind", "component", "part_id_uuid", "set_transform", "set_primitive", "set_render_priority"],
     });
 
     let add_primitive_part = json!({
@@ -963,7 +978,7 @@ fn schema_draft_op() -> serde_json::Value {
             "transform": schema_transform_delta_draft_ops(),
             "render_priority": schema_nullable(schema_integer()),
         },
-        "required": ["kind", "component", "part_id_uuid", "primitive", "transform"],
+        "required": ["kind", "component", "part_id_uuid", "primitive", "transform", "render_priority"],
     });
 
     let remove_primitive_part = json!({

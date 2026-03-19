@@ -1917,6 +1917,14 @@ fn is_stream_required(err: &OpenAiError) -> bool {
     preview.contains("stream") && preview.contains("must") && preview.contains("true")
 }
 
+fn openai_error_message(json: &serde_json::Value) -> Option<&str> {
+    json.get("error")?
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
 fn openai_responses_flow(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
@@ -2057,6 +2065,23 @@ fn openai_responses_flow(
             false,
         ) {
             Ok(body) => {
+                if body.trim().is_empty() {
+                    if !stream_for_request {
+                        warn!("Gen3D: /responses returned an empty body; retrying with stream=true for this session.");
+                        append_gen3d_run_log(
+                            run_dir,
+                            format!(
+                                "responses_retry prefix={} reason=empty_body_stream_required",
+                                artifact_prefix
+                            ),
+                        );
+                        session.responses_supported = Some(true);
+                        session.responses_stream_required = Some(true);
+                        continue;
+                    }
+                    session.responses_supported = Some(false);
+                    return Err(OpenAiError::new("/responses returned an empty body".into()));
+                }
                 session.responses_supported = Some(true);
                 if background_for_request {
                     session.responses_background_supported = Some(true);
@@ -2533,17 +2558,35 @@ fn openai_chat_completions_flow(
     if let Some(json) = json_opt.as_ref() {
         write_gen3d_json_artifact(run_dir, format!("{artifact_prefix}_chat.json"), json);
     }
-    if json_opt.is_none() {
-        if let Some(last) = extract_openai_chat_completions_sse_last_json(body_trim) {
-            write_gen3d_json_artifact(
-                run_dir,
-                format!("{artifact_prefix}_chat_sse_last.json"),
-                &last,
-            );
-        }
+
+    let sse_last_json = if json_opt.is_none() {
+        extract_openai_chat_completions_sse_last_json(body_trim).or_else(|| {
+            extract_json_object(body_trim).and_then(|extracted| {
+                serde_json::from_str::<serde_json::Value>(extracted.trim()).ok()
+            })
+        })
+    } else {
+        None
+    };
+    if let Some(last) = sse_last_json.as_ref() {
+        write_gen3d_json_artifact(
+            run_dir,
+            format!("{artifact_prefix}_chat_sse_last.json"),
+            last,
+        );
     }
 
     let (text, total_tokens) = if let Some(json) = json_opt.as_ref() {
+        if let Some(message) = openai_error_message(json) {
+            return Err(OpenAiError {
+                summary: format!("OpenAI error: {message}"),
+                url,
+                status: None,
+                body_preview: Some(truncate_for_ui(body_trim, 1200)),
+                cancelled: false,
+            });
+        }
+
         let text = json
             .get("choices")
             .and_then(|v| v.as_array())
@@ -2555,10 +2598,16 @@ fn openai_chat_completions_flow(
             .to_string();
         (text, extract_openai_total_tokens(json))
     } else if let Some(text) = extract_openai_chat_completions_sse_output_text(body_trim) {
-        let total_tokens = extract_openai_chat_completions_sse_last_json(body_trim)
-            .as_ref()
-            .and_then(extract_openai_total_tokens);
+        let total_tokens = sse_last_json.as_ref().and_then(extract_openai_total_tokens);
         (text, total_tokens)
+    } else if let Some(message) = sse_last_json.as_ref().and_then(openai_error_message) {
+        return Err(OpenAiError {
+            summary: format!("OpenAI error: {message}"),
+            url,
+            status: None,
+            body_preview: Some(truncate_for_ui(body_trim, 1200)),
+            cancelled: false,
+        });
     } else {
         return Err(OpenAiError {
             summary: "/chat/completions returned no content".into(),
