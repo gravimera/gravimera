@@ -1003,6 +1003,35 @@ pub(super) fn execute_agent_actions(
                     continue;
                 }
 
+                // If this is an edit-overwrite run, do not allow the agent to finish while QA has
+                // explicit errors. Overwrite saves are destructive: finishing early would
+                // auto-save an invalid prefab into the realm/scene.
+                if job.overwrite_save_blocked_by_qa_errors() {
+                    workshop.error = Some(
+                        "Agent requested done but latest QA reported errors; continuing."
+                            .to_string(),
+                    );
+                    workshop.status = "Continuing Gen3D build… (QA errors block overwrite save)"
+                        .to_string();
+                    append_gen3d_run_log(
+                        job.pass_dir.as_deref(),
+                        format!(
+                            "agent_done_ignored (qa errors; overwrite save) validate_ok={:?} smoke_ok={:?} motion_ok={:?}",
+                            job.agent.last_validate_ok,
+                            job.agent.last_smoke_ok,
+                            job.agent.last_motion_ok
+                        ),
+                    );
+                    warn!(
+                        "Gen3D agent requested done but QA reported errors; continuing (overwrite save) validate_ok={:?} smoke_ok={:?} motion_ok={:?}",
+                        job.agent.last_validate_ok,
+                        job.agent.last_smoke_ok,
+                        job.agent.last_motion_ok
+                    );
+                    job.agent.step_action_idx = job.agent.step_actions.len();
+                    continue;
+                }
+
                 // Stop means stop: respect `done` even if QA/review are incomplete.
                 // However, keep "unfinished" state visible in the UI status message.
                 let llm_available = job
@@ -1554,5 +1583,30 @@ mod tests {
         assert!(status.contains("QA warnings (non-blocking):"));
         assert!(status.contains("count: 2"));
         assert!(status.contains("example: motion_validation jaw_lower attack_self_intersection"));
+    }
+
+    #[test]
+    fn overwrite_save_blocked_by_qa_errors_requires_overwrite_mode() {
+        let mut job = super::super::Gen3dAiJob::default();
+        job.agent.last_smoke_ok = Some(false);
+        assert!(!job.overwrite_save_blocked_by_qa_errors());
+
+        job.set_save_overwrite_prefab_id(Some(123));
+        assert!(job.overwrite_save_blocked_by_qa_errors());
+    }
+
+    #[test]
+    fn overwrite_save_blocked_by_qa_errors_triggers_only_on_explicit_errors() {
+        let mut job = super::super::Gen3dAiJob::default();
+        job.set_save_overwrite_prefab_id(Some(123));
+        assert!(!job.overwrite_save_blocked_by_qa_errors());
+
+        job.agent.last_validate_ok = Some(true);
+        job.agent.last_smoke_ok = Some(true);
+        job.agent.last_motion_ok = Some(true);
+        assert!(!job.overwrite_save_blocked_by_qa_errors());
+
+        job.agent.last_validate_ok = Some(false);
+        assert!(job.overwrite_save_blocked_by_qa_errors());
     }
 }

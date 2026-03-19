@@ -672,6 +672,28 @@ impl Gen3dAiJob {
         self.build_complete
     }
 
+    pub(crate) fn last_validate_ok(&self) -> Option<bool> {
+        self.agent.last_validate_ok
+    }
+
+    pub(crate) fn last_smoke_ok(&self) -> Option<bool> {
+        self.agent.last_smoke_ok
+    }
+
+    pub(crate) fn last_motion_ok(&self) -> Option<bool> {
+        self.agent.last_motion_ok
+    }
+
+    pub(crate) fn has_explicit_qa_errors(&self) -> bool {
+        self.agent.last_validate_ok == Some(false)
+            || self.agent.last_smoke_ok == Some(false)
+            || self.agent.last_motion_ok == Some(false)
+    }
+
+    pub(crate) fn overwrite_save_blocked_by_qa_errors(&self) -> bool {
+        self.save_overwrite_prefab_id().is_some() && self.has_explicit_qa_errors()
+    }
+
     pub(crate) fn can_resume(&self) -> bool {
         !self.running
             && !self.build_complete

@@ -2127,6 +2127,15 @@ pub(crate) fn gen3d_auto_save_when_done(
             "Build completed; save a prefab and refresh the Prefab tab.".to_string(),
         );
 
+        if job.overwrite_save_blocked_by_qa_errors() {
+            save_note = "skipped (qa errors)".to_string();
+            workshop.status_log.finish_step_if_active(format!(
+                "Skipped: QA errors block overwrite save (validate_ok={:?} smoke_ok={:?} motion_ok={:?}).",
+                job.last_validate_ok(),
+                job.last_smoke_ok(),
+                job.last_motion_ok()
+            ));
+        } else {
         match player_q.single() {
             Ok((player_transform, player_collider)) => {
                 match gen3d_save_current_draft_seed_aware_from_api(
@@ -2197,6 +2206,7 @@ pub(crate) fn gen3d_auto_save_when_done(
                     .status_log
                     .finish_step_if_active("Error: missing hero entity.".to_string());
             }
+        }
         }
     } else if job.last_saved_prefab_id().is_some() {
         save_note = "skipped (already saved)".to_string();

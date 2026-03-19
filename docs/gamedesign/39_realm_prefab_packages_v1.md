@@ -159,6 +159,6 @@ If a destination already exists, tools should avoid overwriting and quarantine t
 ## Idempotence and Overwrite Rules
 
 - Saving a Gen3D edit in “overwrite” mode overwrites the existing prefab package directory for that root prefab id.
+- Because overwrite saves are destructive, engine-driven auto-save should be QA-gated: if the latest QA indicates errors, do not auto-overwrite the prefab package.
 - Saving a Gen3D fork writes a new prefab package directory named by the new root prefab id.
 - Tools should treat repeated writes as idempotent: delete/rewrite `gen3d_source_v1/` on each save to avoid stale files; delete stale prefab JSON under `prefabs/` that no longer correspond to the saved defs.
-
