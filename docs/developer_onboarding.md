@@ -59,6 +59,7 @@ token = "YOUR_OPENAI_API_KEY"
 
 Other providers:
 
+- MiMo (Xiaomi): set `[gen3d].ai_service = "mimo"` and configure `[mimo]` (token env: `MIMO_API_KEY`). See `docs/ai_services/mimo.md`.
 - Gemini: set `[gen3d].ai_service = "gemini"` and configure `[gemini]` (token env: `X_GOOG_API_KEY` / `GEMINI_API_KEY`).
 - Claude: set `[gen3d].ai_service = "claude"` and configure `[claude]` (token env: `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`).
 

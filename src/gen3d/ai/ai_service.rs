@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use bevy::log::warn;
 
-use crate::config::{ClaudeConfig, GeminiConfig, OpenAiConfig};
+use crate::config::{ClaudeConfig, GeminiConfig, MimoConfig, OpenAiConfig};
 
 use super::structured_outputs::Gen3dAiJsonSchemaKind;
 use super::{agent_parsing, artifacts, parse};
@@ -15,6 +15,7 @@ use super::{Gen3dAiProgress, Gen3dAiSessionState, Gen3dAiTextResponse};
 #[derive(Clone, Debug)]
 pub(super) enum Gen3dAiServiceConfig {
     OpenAi(OpenAiConfig),
+    Mimo(MimoConfig),
     Gemini(GeminiConfig),
     Claude(ClaudeConfig),
 }
@@ -23,6 +24,7 @@ impl Gen3dAiServiceConfig {
     pub(super) fn service_label(&self) -> &'static str {
         match self {
             Self::OpenAi(_) => "openai",
+            Self::Mimo(_) => "mimo",
             Self::Gemini(_) => "gemini",
             Self::Claude(_) => "claude",
         }
@@ -31,6 +33,7 @@ impl Gen3dAiServiceConfig {
     pub(super) fn base_url(&self) -> &str {
         match self {
             Self::OpenAi(cfg) => cfg.base_url.as_str(),
+            Self::Mimo(cfg) => cfg.base_url.as_str(),
             Self::Gemini(cfg) => cfg.base_url.as_str(),
             Self::Claude(cfg) => cfg.base_url.as_str(),
         }
@@ -39,6 +42,7 @@ impl Gen3dAiServiceConfig {
     pub(super) fn model(&self) -> &str {
         match self {
             Self::OpenAi(cfg) => cfg.model.as_str(),
+            Self::Mimo(cfg) => cfg.model.as_str(),
             Self::Gemini(cfg) => cfg.model.as_str(),
             Self::Claude(cfg) => cfg.model.as_str(),
         }
@@ -47,6 +51,9 @@ impl Gen3dAiServiceConfig {
     pub(super) fn model_reasoning_effort(&self) -> &str {
         match self {
             Self::OpenAi(cfg) => cfg.model_reasoning_effort.as_str(),
+            // MiMo uses the OpenAI Chat Completions format, but does not support the OpenAI
+            // `reasoning_effort` request parameter. Keep the same logging/budget surface.
+            Self::Mimo(_) => "high",
             // Gemini does not have an OpenAI-style "reasoning_effort" request parameter, but the
             // rest of the Gen3D orchestration expects an effective effort string for logging +
             // budget capping. Treat Gemini as "high" here; the Gemini backend ignores this.
@@ -388,6 +395,22 @@ pub(super) fn generate_text_via_ai_service(
                 &openai.base_url,
                 &openai.api_key,
                 &openai.model,
+                reasoning_effort,
+                system_instructions,
+                user_text,
+                image_paths,
+                run_dir,
+                artifact_prefix,
+            ),
+            Gen3dAiServiceConfig::Mimo(mimo) => super::mimo::generate_text_via_mimo(
+                progress,
+                call_session,
+                cancel.clone(),
+                expected_schema,
+                require_structured_outputs,
+                &mimo.base_url,
+                &mimo.api_key,
+                &mimo.model,
                 reasoning_effort,
                 system_instructions,
                 user_text,

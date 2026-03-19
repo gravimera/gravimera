@@ -27,6 +27,7 @@ mod job;
 mod motion_recenter;
 mod motion_repairs;
 mod motion_validation;
+mod mimo;
 mod openai;
 mod orchestration;
 mod parse;

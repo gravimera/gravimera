@@ -67,6 +67,7 @@
 
 # AI service used by Gen3D:
 # - "openai" (default)
+# - "mimo" (Xiaomi MiMo OpenAI-compatible Chat Completions)
 # - "gemini"
 # - "claude"
 # ai_service = "openai"
@@ -160,6 +161,19 @@ model_reasoning_effort = "high"
 
 # API token (OpenAI API key). Can also be provided via env `OPENAI_API_KEY`.
 token = "YOUR_OPENAI_API_KEY_HERE"
+
+[mimo]
+
+# Xiaomi MiMo OpenAI-compatible Chat Completions base URL.
+# Official endpoint:
+base_url = "https://api.xiaomimimo.com/v1"
+
+# Any supported MiMo model id (example below). See the MiMo Open Platform docs.
+# Note: `mimo-v2-omni` supports image inputs (recommended for Gen3D reference photos).
+model = "mimo-v2-omni"
+
+# API token. Can also be provided via env `MIMO_API_KEY`.
+token = "YOUR_MIMO_API_KEY_HERE"
 
 [gemini]
 

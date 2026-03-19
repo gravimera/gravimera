@@ -411,6 +411,17 @@ fn resolve_gen3d_ai_service_config(config: &AppConfig) -> Result<Gen3dAiServiceC
                 Err(details)
             }
         },
+        crate::config::Gen3dAiService::Mimo => match config.mimo.clone() {
+            Some(mimo) => Ok(Gen3dAiServiceConfig::Mimo(mimo)),
+            None => {
+                let details = if config.errors.is_empty() {
+                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                } else {
+                    config.errors.join("\n")
+                };
+                Err(details)
+            }
+        },
         crate::config::Gen3dAiService::Gemini => match config.gemini.clone() {
             Some(gemini) => Ok(Gen3dAiServiceConfig::Gemini(gemini)),
             None => {

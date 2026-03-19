@@ -7,6 +7,7 @@ const CONFIG_OVERRIDE_ENV: &str = "GRAVIMERA_CONFIG";
 #[derive(Resource, Clone, Debug)]
 pub(crate) struct AppConfig {
     pub(crate) openai: Option<OpenAiConfig>,
+    pub(crate) mimo: Option<MimoConfig>,
     pub(crate) gemini: Option<GeminiConfig>,
     pub(crate) claude: Option<ClaudeConfig>,
     pub(crate) log_path: Option<PathBuf>,
@@ -65,6 +66,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             openai: None,
+            mimo: None,
             gemini: None,
             claude: None,
             log_path: Some(crate::paths::gravimera_dir().join("gravimera.log")),
@@ -116,6 +118,13 @@ pub(crate) struct OpenAiConfig {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct MimoConfig {
+    pub(crate) base_url: String,
+    pub(crate) model: String,
+    pub(crate) api_key: String,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct GeminiConfig {
     pub(crate) base_url: String,
     pub(crate) model: String,
@@ -133,6 +142,7 @@ pub(crate) struct ClaudeConfig {
 pub(crate) enum Gen3dAiService {
     #[default]
     OpenAi,
+    Mimo,
     Gemini,
     Claude,
 }
@@ -251,6 +261,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_gen3d_reasoning_effort_review_into_config(out, text);
     parse_gen3d_reasoning_effort_repair_into_config(out, text);
     populate_openai_config(out, text);
+    populate_mimo_config(out, text);
     populate_gemini_config(out, text);
     populate_claude_config(out, text);
 }
@@ -286,6 +297,43 @@ fn populate_openai_config(out: &mut AppConfig, text: &str) {
                 }
             } else {
                 out.openai = Some(cfg);
+            }
+        }
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn populate_mimo_config(out: &mut AppConfig, text: &str) {
+    if !config_has_section(text, "mimo") {
+        if matches!(out.gen3d_ai_service, Gen3dAiService::Mimo) {
+            out.errors.push(
+                "config.toml: missing [mimo] section (required when [gen3d].ai_service = \"mimo\")"
+                    .into(),
+            );
+        }
+        return;
+    }
+
+    match parse_mimo_config(text) {
+        Ok(mut cfg) => {
+            let allow_empty_key_for_mock = cfg.base_url.trim().starts_with("mock://gen3d")
+                && cfg!(any(test, debug_assertions));
+            // Allow env override for convenience (keeps secrets out of files if desired).
+            if cfg.api_key.trim().is_empty() {
+                if let Ok(key) = std::env::var("MIMO_API_KEY") {
+                    cfg.api_key = key;
+                }
+            }
+            if cfg.api_key.trim().is_empty() {
+                if allow_empty_key_for_mock {
+                    out.mimo = Some(cfg);
+                } else {
+                    out.errors.push(
+                        "config.toml: missing `mimo.token` / `mimo.MIMO_API_KEY` (or env `MIMO_API_KEY`)".into(),
+                    );
+                }
+            } else {
+                out.mimo = Some(cfg);
             }
         }
         Err(err) => out.errors.push(err),
@@ -983,11 +1031,12 @@ fn parse_gen3d_ai_service(text: &str) -> Result<Option<Gen3dAiService>, String> 
 
         out = Some(match parsed.as_str() {
             "openai" => Gen3dAiService::OpenAi,
+            "mimo" => Gen3dAiService::Mimo,
             "gemini" => Gen3dAiService::Gemini,
             "claude" => Gen3dAiService::Claude,
             other => {
                 return Err(format!(
-                    "config.toml:{line_no}: unsupported `gen3d.ai_service` value {other:?} (expected \"openai\", \"gemini\", or \"claude\")"
+                    "config.toml:{line_no}: unsupported `gen3d.ai_service` value {other:?} (expected \"openai\", \"mimo\", \"gemini\", or \"claude\")"
                 ));
             }
         });
@@ -2809,6 +2858,58 @@ fn parse_openai_config(text: &str) -> Result<OpenAiConfig, String> {
     })
 }
 
+fn parse_mimo_config(text: &str) -> Result<MimoConfig, String> {
+    let mut in_mimo = false;
+    let mut base_url = None::<String>;
+    let mut model = None::<String>;
+    let mut api_key = None::<String>;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let section = line.trim_matches(&['[', ']'][..]).trim();
+            in_mimo = section == "mimo";
+            continue;
+        }
+        if !in_mimo {
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        let value = parse_toml_string(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a quoted string value for key `{key}` (example: {key} = \"...\")"
+            )
+        })?;
+
+        match key {
+            "base_url" => base_url = Some(value),
+            "model" => model = Some(value),
+            "token" | "api_key" => api_key = Some(value),
+            "MIMO_API_KEY" => api_key = Some(value),
+            _ => {}
+        }
+    }
+
+    let base_url = base_url.unwrap_or_else(|| "https://api.xiaomimimo.com/v1".into());
+    let model = model.unwrap_or_else(|| "mimo-v2-omni".into());
+    let api_key = api_key.unwrap_or_default();
+
+    Ok(MimoConfig {
+        base_url,
+        model,
+        api_key,
+    })
+}
+
 fn parse_gemini_config(text: &str) -> Result<GeminiConfig, String> {
     let mut in_gemini = false;
     let mut base_url = None::<String>;
@@ -3127,10 +3228,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_gen3d_ai_service_and_mimo_config() {
+        let text = r#"
+[gen3d]
+ai_service = "mimo"
+
+[mimo]
+base_url = "https://api.xiaomimimo.com/v1"
+model = "mimo-v2-omni"
+token = "mimo_test_key"
+"#;
+        let mut parsed = AppConfig::default();
+        parse_config_text_into(&mut parsed, text);
+        assert_eq!(parsed.gen3d_ai_service, Gen3dAiService::Mimo);
+        let mimo = parsed.mimo.expect("mimo config");
+        assert_eq!(mimo.base_url, "https://api.xiaomimimo.com/v1");
+        assert_eq!(mimo.model, "mimo-v2-omni");
+        assert_eq!(mimo.api_key, "mimo_test_key");
+    }
+
+    #[test]
     fn parses_gen3d_ai_service_and_claude_config() {
         let text = r#"
-        [gen3d]
-        ai_service = "claude"
+[gen3d]
+ai_service = "claude"
 
         [claude]
         base_url = "mock://gen3d"

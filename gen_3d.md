@@ -224,6 +224,7 @@ Gen3D budgets / guard:
 Gen3D AI provider:
 
 - `[gen3d].ai_service = "openai"` (default) uses `[openai]` config (`token` or env `OPENAI_API_KEY`).
+- `[gen3d].ai_service = "mimo"` uses `[mimo]` config (`token` or env `MIMO_API_KEY`). See `docs/ai_services/mimo.md`.
 - `[gen3d].ai_service = "gemini"` uses `[gemini]` config (`token` or env `X_GOOG_API_KEY` / `GEMINI_API_KEY`).
   - Gen3D requests Gemini Structured Outputs via `response_json_schema` for schema-constrained calls; use a Gemini model that supports it (Gemini 2.0+).
 - `[gen3d].ai_service = "claude"` uses `[claude]` config (`token` or env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`).

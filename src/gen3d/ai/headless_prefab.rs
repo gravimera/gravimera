@@ -44,6 +44,15 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
                 "Gen3D headless: OpenAI is not configured (missing [openai] in config.toml)."
                     .to_string()
             })?,
+        crate::config::Gen3dAiService::Mimo => config
+            .mimo
+            .as_ref()
+            .cloned()
+            .map(Gen3dAiServiceConfig::Mimo)
+            .ok_or_else(|| {
+                "Gen3D headless: MiMo is not configured (missing [mimo] in config.toml)."
+                    .to_string()
+            })?,
         crate::config::Gen3dAiService::Gemini => config
             .gemini
             .as_ref()
