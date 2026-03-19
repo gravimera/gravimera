@@ -332,6 +332,10 @@ fn schema_reuse_group() -> serde_json::Value {
         ("targets", schema_array_of(schema_string())),
         ("alignment", schema_enum(&["rotation", "mirror_mount_x"])),
         (
+            "alignment_frame",
+            schema_nullable(schema_enum(&["join", "child_anchor"])),
+        ),
+        (
             "mode",
             schema_nullable(schema_enum(&["detached", "linked"])),
         ),

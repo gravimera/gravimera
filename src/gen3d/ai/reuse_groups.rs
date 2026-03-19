@@ -2,12 +2,12 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use super::copy_component::{
-    Gen3dCopyAlignmentMode, Gen3dCopyAnchorsMode, Gen3dCopyMode,
+    Gen3dCopyAlignmentFrame, Gen3dCopyAlignmentMode, Gen3dCopyAnchorsMode, Gen3dCopyMode,
     Gen3dSubtreeCopyMissingBranchPolicy,
 };
 use super::schema::{
-    AiReuseAlignmentJson, AiReuseAnchorsJson, AiReuseGroupJson, AiReuseGroupKindJson,
-    AiReuseModeJson,
+    AiReuseAlignmentFrameJson, AiReuseAlignmentJson, AiReuseAnchorsJson, AiReuseGroupJson,
+    AiReuseGroupKindJson, AiReuseModeJson,
 };
 use super::Gen3dPlannedComponent;
 
@@ -23,6 +23,7 @@ pub(super) struct Gen3dValidatedReuseGroup {
     pub(super) source_root_idx: usize,
     pub(super) target_root_indices: Vec<usize>,
     pub(super) alignment: Gen3dCopyAlignmentMode,
+    pub(super) alignment_frame: Gen3dCopyAlignmentFrame,
     pub(super) mode: Gen3dCopyMode,
     pub(super) anchors_mode: Gen3dCopyAnchorsMode,
 }
@@ -128,6 +129,34 @@ fn parse_alignment(alignment: AiReuseAlignmentJson) -> Gen3dCopyAlignmentMode {
     }
 }
 
+fn parse_alignment_frame(
+    frame: Option<AiReuseAlignmentFrameJson>,
+    alignment: Gen3dCopyAlignmentMode,
+    group_idx: usize,
+    warnings: &mut Vec<String>,
+) -> Gen3dCopyAlignmentFrame {
+    let frame = match frame.unwrap_or(AiReuseAlignmentFrameJson::Join) {
+        AiReuseAlignmentFrameJson::Join => Gen3dCopyAlignmentFrame::Join,
+        AiReuseAlignmentFrameJson::ChildAnchor => Gen3dCopyAlignmentFrame::ChildAnchor,
+        AiReuseAlignmentFrameJson::Unknown => {
+            warnings.push(format!(
+                "reuse_groups[{group_idx}]: unsupported alignment_frame; using join"
+            ));
+            Gen3dCopyAlignmentFrame::Join
+        }
+    };
+
+    // Mirror alignment is defined in the JOIN frame.
+    if alignment == Gen3dCopyAlignmentMode::MirrorMountX && frame != Gen3dCopyAlignmentFrame::Join {
+        warnings.push(format!(
+            "reuse_groups[{group_idx}]: alignment=mirror_mount_x does not support alignment_frame=child_anchor; using join"
+        ));
+        return Gen3dCopyAlignmentFrame::Join;
+    }
+
+    frame
+}
+
 pub(super) fn validate_reuse_groups(
     plan_groups: &[AiReuseGroupJson],
     planned_components: &[Gen3dPlannedComponent],
@@ -149,6 +178,8 @@ pub(super) fn validate_reuse_groups(
         };
 
         let alignment = parse_alignment(group.alignment);
+        let alignment_frame =
+            parse_alignment_frame(group.alignment_frame, alignment, group_idx, &mut warnings);
 
         let source_name = group.source.trim();
         if source_name.is_empty() {
@@ -211,6 +242,7 @@ pub(super) fn validate_reuse_groups(
             source_root_idx,
             target_root_indices,
             alignment,
+            alignment_frame,
             mode,
             anchors_mode,
         });
@@ -452,6 +484,7 @@ pub(super) fn apply_auto_copy(
                         group.mode,
                         group.anchors_mode,
                         group.alignment,
+                        group.alignment_frame,
                         Transform::IDENTITY,
                         None,
                     ) {
@@ -524,6 +557,7 @@ pub(super) fn apply_auto_copy(
                         group.mode,
                         group.anchors_mode,
                         group.alignment,
+                        group.alignment_frame,
                         Transform::IDENTITY,
                         Gen3dSubtreeCopyMissingBranchPolicy::SkipExternallyReferenced,
                     ) {
@@ -628,6 +662,7 @@ mod tests {
                 source: "leg_0".into(),
                 targets: vec!["leg_1".into(), "leg_2".into()],
                 alignment: AiReuseAlignmentJson::Rotation,
+                alignment_frame: None,
                 mode: None,
                 anchors: None,
             }],
@@ -663,6 +698,7 @@ mod tests {
                 source: "leg0_root".into(),
                 targets: vec!["leg1_root".into()],
                 alignment: AiReuseAlignmentJson::Rotation,
+                alignment_frame: None,
                 mode: None,
                 anchors: None,
             }],
@@ -701,6 +737,7 @@ mod tests {
                 source: "leg0_root".into(),
                 targets: vec!["leg1_root".into()],
                 alignment: AiReuseAlignmentJson::Rotation,
+                alignment_frame: None,
                 mode: None,
                 anchors: None,
             }],
@@ -735,6 +772,7 @@ mod tests {
                 source: "leg0_root".into(),
                 targets: vec!["leg1_root".into()],
                 alignment: AiReuseAlignmentJson::Rotation,
+                alignment_frame: None,
                 mode: None,
                 anchors: None,
             }],
@@ -788,6 +826,7 @@ mod tests {
                 source: "leg0_root".into(),
                 targets: vec!["leg1_root".into()],
                 alignment: AiReuseAlignmentJson::Rotation,
+                alignment_frame: None,
                 mode: None,
                 anchors: None,
             }],

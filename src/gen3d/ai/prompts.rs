@@ -989,6 +989,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - The engine can then generate only the unique components + the declared reuse sources, and fill the remaining targets via deterministic copy.\n\
          - This does NOT change the attachment tree; it only affects how missing geometry gets produced.\n\
          - Reuse targets are allowed (and expected) to differ in per-target `attach_to.offset` (radial/mirrored placement).\n\
+         - `reuse_groups[].alignment_frame` (optional; default `join`):\n\
+           - `join` (default): alignment accounts for each component's `attach_to.offset` rotation.\n\
+           - `child_anchor`: alignment ignores `attach_to.offset` (use when targets are rotated via offset, e.g. reuse a front window on side walls).\n\
          - IMPORTANT: The engine will NOT guess whether a reuse group should be mirrored. You MUST explicitly set `reuse_groups[].alignment`.\n\
          - `reuse_groups[].kind`:\n\
            - `component` (copy a single component's geometry)\n\
@@ -1016,7 +1019,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             \"assembly_notes\": \"...\" (optional),\n\
           \"root_component\": \"component_name\" (optional; otherwise inferred as the only component without attach_to),\n\
           \"reuse_groups\": [\n\
-              {{ \"kind\": \"component\" | \"subtree\", \"source\": \"component_name\", \"targets\": [\"component_name\", ...], \"alignment\": \"rotation\" | \"mirror_mount_x\", \"mode\": \"detached\" | \"linked\" (optional), \"anchors\": \"preserve_interfaces\" | \"preserve_target\" | \"copy_source\" (optional) }}\n\
+              {{ \"kind\": \"component\" | \"subtree\", \"source\": \"component_name\", \"targets\": [\"component_name\", ...], \"alignment\": \"rotation\" | \"mirror_mount_x\", \"alignment_frame\": \"join\" | \"child_anchor\" (optional), \"mode\": \"detached\" | \"linked\" (optional), \"anchors\": \"preserve_interfaces\" | \"preserve_target\" | \"copy_source\" (optional) }}\n\
           ] (optional),\n\
           \"components\": [\n\
             {{\n\

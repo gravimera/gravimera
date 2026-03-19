@@ -387,12 +387,19 @@ fn reuse_groups_to_ai_json(
                     "copy_source"
                 }
             };
+            let alignment_frame = match g.alignment_frame {
+                crate::gen3d::ai::copy_component::Gen3dCopyAlignmentFrame::Join => "join",
+                crate::gen3d::ai::copy_component::Gen3dCopyAlignmentFrame::ChildAnchor => {
+                    "child_anchor"
+                }
+            };
 
             Some(serde_json::json!({
                 "kind": kind,
                 "source": source,
                 "targets": targets,
                 "alignment": alignment,
+                "alignment_frame": alignment_frame,
                 "mode": mode,
                 "anchors": anchors,
             }))
@@ -1339,6 +1346,7 @@ mod tests {
             source: "arm_lower_l".into(),
             targets: vec!["arm_lower_r".into()],
             alignment: AiReuseAlignmentJson::MirrorMountX,
+            alignment_frame: None,
             mode: None,
             anchors: None,
         }];

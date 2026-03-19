@@ -4556,6 +4556,39 @@ pub(super) fn execute_tool_call(
             } else {
                 super::copy_component::Gen3dCopyAlignmentMode::Rotation
             };
+            let alignment_frame = call
+                .args
+                .get("alignment_frame")
+                .or_else(|| call.args.get("frame"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("join")
+                .trim()
+                .to_ascii_lowercase();
+            let alignment_frame = match alignment_frame.as_str() {
+                "" | "join" | "join_frame" => super::copy_component::Gen3dCopyAlignmentFrame::Join,
+                "child_anchor" | "child" | "child_frame" => {
+                    super::copy_component::Gen3dCopyAlignmentFrame::ChildAnchor
+                }
+                other => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!(
+                            "Unknown alignment_frame `{other}` (expected `join` or `child_anchor`)"
+                        ),
+                    ));
+                }
+            };
+            if alignment == super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX
+                && alignment_frame != super::copy_component::Gen3dCopyAlignmentFrame::Join
+            {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "mirror_component_v1 does not support alignment_frame=child_anchor (use join)."
+                        .into(),
+                ));
+            }
 
             let mut targets: Vec<usize> = Vec::new();
             let target_list = call
@@ -4672,6 +4705,7 @@ pub(super) fn execute_tool_call(
                     mode,
                     anchors_mode,
                     alignment,
+                    alignment_frame,
                     delta,
                     None,
                 ) {
@@ -4828,6 +4862,39 @@ pub(super) fn execute_tool_call(
             } else {
                 super::copy_component::Gen3dCopyAlignmentMode::Rotation
             };
+            let alignment_frame = call
+                .args
+                .get("alignment_frame")
+                .or_else(|| call.args.get("frame"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("join")
+                .trim()
+                .to_ascii_lowercase();
+            let alignment_frame = match alignment_frame.as_str() {
+                "" | "join" | "join_frame" => super::copy_component::Gen3dCopyAlignmentFrame::Join,
+                "child_anchor" | "child" | "child_frame" => {
+                    super::copy_component::Gen3dCopyAlignmentFrame::ChildAnchor
+                }
+                other => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!(
+                            "Unknown alignment_frame `{other}` (expected `join` or `child_anchor`)"
+                        ),
+                    ));
+                }
+            };
+            if alignment == super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX
+                && alignment_frame != super::copy_component::Gen3dCopyAlignmentFrame::Join
+            {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "mirror_component_subtree_v1 does not support alignment_frame=child_anchor (use join)."
+                        .into(),
+                ));
+            }
 
             let Some(arr) = call.args.get("targets").and_then(|v| v.as_array()) else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -4903,6 +4970,7 @@ pub(super) fn execute_tool_call(
                     mode,
                     anchors_mode,
                     alignment,
+                    alignment_frame,
                     delta,
                     super::copy_component::Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
                 );

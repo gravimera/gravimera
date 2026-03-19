@@ -30,6 +30,22 @@ pub(super) enum Gen3dCopyAlignmentMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Gen3dCopyAlignmentFrame {
+    /// Compute alignment deltas in the canonical JOIN frame, accounting for each component's
+    /// `attach_to.offset` rotation.
+    ///
+    /// This is the default because many Gen3D plans use `attach_to.offset` to compensate for
+    /// mount-anchor basis flips (e.g. hemisphere guard constraints).
+    Join,
+    /// Compute alignment deltas directly from child anchors, ignoring `attach_to.offset`.
+    ///
+    /// Use this when reuse targets intentionally differ by `attach_to.offset` rotation (e.g.
+    /// reusing a flat detail across different faces) and you want the offset rotation to rotate
+    /// the copied geometry instead of being canceled by copy-time alignment.
+    ChildAnchor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dSubtreeCopyMissingBranchPolicy {
     /// Clone all missing target branches when a source child exists with the same attachment edge
     /// key. This matches the default expectations for explicit user tool calls.
@@ -181,6 +197,7 @@ pub(super) fn copy_component_into(
     mode: Gen3dCopyMode,
     anchors_mode: Gen3dCopyAnchorsMode,
     alignment: Gen3dCopyAlignmentMode,
+    alignment_frame: Gen3dCopyAlignmentFrame,
     delta: Transform,
     copied_target_indices: Option<&HashSet<usize>>,
 ) -> Result<Gen3dCopyComponentOutcome, String> {
@@ -302,19 +319,29 @@ pub(super) fn copy_component_into(
             }
 
             let target_mat = target_anchor.to_matrix();
-            let rot_mat = target_mat * inv_target_offset * source_offset_mat * inv_source_anchor;
+
+            let rot_join_mat =
+                target_mat * inv_target_offset * source_offset_mat * inv_source_anchor;
+            let rot_child_anchor_mat = target_mat * inv_source_anchor;
+
             // Optional mirrored alignment: flip the mount-local right axis (X) to preserve
             // the forward/up join convention while mirroring handedness (common for L/R reuse).
+            //
+            // Mirror alignment is defined in the JOIN frame, so it always uses JOIN alignment math.
             let mirror_local = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
-            let mirror_mat = target_mat
+            let mirror_join_mat = target_mat
                 * mirror_local
                 * inv_target_offset
                 * source_offset_mat
                 * inv_source_anchor;
 
-            let chosen = match alignment {
-                Gen3dCopyAlignmentMode::Rotation => rot_mat,
-                Gen3dCopyAlignmentMode::MirrorMountX => mirror_mat,
+            let chosen = match (alignment, alignment_frame) {
+                (Gen3dCopyAlignmentMode::Rotation, Gen3dCopyAlignmentFrame::Join) => rot_join_mat,
+                (
+                    Gen3dCopyAlignmentMode::Rotation,
+                    Gen3dCopyAlignmentFrame::ChildAnchor,
+                ) => rot_child_anchor_mat,
+                (Gen3dCopyAlignmentMode::MirrorMountX, _) => mirror_join_mat,
             };
             Ok(transform_from_mat4(chosen))
         })()?
@@ -826,6 +853,7 @@ pub(super) fn copy_component_subtree_into(
     mode: Gen3dCopyMode,
     anchors_mode: Gen3dCopyAnchorsMode,
     alignment: Gen3dCopyAlignmentMode,
+    alignment_frame: Gen3dCopyAlignmentFrame,
     delta: Transform,
     missing_branch_policy: Gen3dSubtreeCopyMissingBranchPolicy,
 ) -> Result<Vec<Gen3dCopyComponentOutcome>, String> {
@@ -872,6 +900,7 @@ pub(super) fn copy_component_subtree_into(
             mode,
             anchors_mode,
             alignment,
+            alignment_frame,
             delta,
             copied_target_indices.as_ref(),
         )?;
@@ -1315,6 +1344,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::CopySourceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             None,
         )
@@ -1384,6 +1414,7 @@ mod tests {
             Gen3dCopyMode::Linked,
             Gen3dCopyAnchorsMode::CopySourceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             None,
         )
@@ -1518,6 +1549,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
@@ -1625,6 +1657,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             None,
         )
@@ -1640,6 +1673,131 @@ mod tests {
             (rotor_mount.transform.translation.z - 0.22).abs() < 1e-4,
             "expected rotor_mount to stay at +Z tip, got {:?}",
             rotor_mount.transform.translation
+        );
+    }
+
+    #[test]
+    fn child_anchor_alignment_frame_does_not_cancel_offset_rotation() {
+        // Repro for house windows: all windows share the same child anchor basis, but side windows
+        // use `attach_to.offset` to rotate the component to face left/right. JOIN-frame reuse would
+        // cancel that offset rotation, leaving side windows oriented like the front window.
+        fn setup() -> (Vec<Gen3dPlannedComponent>, Gen3dDraft, u128) {
+            let mut components = vec![stub_component("window_front"), stub_component("window_side")];
+            components[0].actual_size = Some(Vec3::ONE);
+            components[0].attach_to = Some(super::super::Gen3dPlannedAttachment {
+                parent: "wall".into(),
+                parent_anchor: "win_front".into(),
+                child_anchor: "mount".into(),
+                offset: Transform::IDENTITY,
+                joint: None,
+                animations: Vec::new(),
+            });
+            components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+                parent: "wall".into(),
+                parent_anchor: "win_side".into(),
+                child_anchor: "mount".into(),
+                offset: Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
+                joint: None,
+                animations: Vec::new(),
+            });
+
+            let source_id = component_object_id("window_front");
+            let target_id = component_object_id("window_side");
+
+            let visual = crate::object::registry::PrimitiveVisualDef::Primitive {
+                mesh: crate::object::registry::MeshKey::UnitCube,
+                params: None,
+                color: Color::WHITE,
+                unlit: false,
+            };
+            let source_def = ObjectDef {
+                anchors: vec![anchor_named_forward("mount", Vec3::Z)],
+                parts: vec![ObjectPartDef::primitive(
+                    visual,
+                    Transform::from_translation(Vec3::new(0.0, 0.0, 1.0)),
+                )],
+                ..stub_def(source_id, "window_front")
+            };
+            let target_def = ObjectDef {
+                anchors: vec![anchor_named_forward("mount", Vec3::Z)],
+                parts: Vec::new(),
+                ..stub_def(target_id, "window_side")
+            };
+
+            let mut draft = Gen3dDraft::default();
+            draft.defs = vec![source_def, target_def];
+
+            (components, draft, target_id)
+        }
+
+        // JOIN-frame reuse cancels the offset rotation (window stays facing forward).
+        let (mut components, mut draft, target_id) = setup();
+        copy_component_into(
+            &mut components,
+            &mut draft,
+            0,
+            1,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
+            Transform::IDENTITY,
+            None,
+        )
+        .expect("copy ok");
+        let target_def = draft.defs.iter().find(|d| d.object_id == target_id).unwrap();
+        let part = target_def
+            .parts
+            .iter()
+            .find(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
+            .expect("copied primitive");
+        let offset_mat = components[1]
+            .attach_to
+            .as_ref()
+            .expect("target attachment")
+            .offset
+            .to_matrix();
+        let world_mat = offset_mat * part.transform.to_matrix();
+        let world_pos = world_mat.w_axis.truncate();
+        let dp = (world_pos - Vec3::new(0.0, 0.0, 1.0)).length();
+        assert!(
+            dp < 1e-3,
+            "expected JOIN-frame copy to cancel offset rotation; got world_pos={world_pos:?} dp={dp}"
+        );
+
+        // Child-anchor reuse keeps the local geometry stable so the offset can rotate it.
+        let (mut components, mut draft, target_id) = setup();
+        copy_component_into(
+            &mut components,
+            &mut draft,
+            0,
+            1,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveTargetAnchors,
+            Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::ChildAnchor,
+            Transform::IDENTITY,
+            None,
+        )
+        .expect("copy ok");
+        let target_def = draft.defs.iter().find(|d| d.object_id == target_id).unwrap();
+        let part = target_def
+            .parts
+            .iter()
+            .find(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
+            .expect("copied primitive");
+        let offset_mat = components[1]
+            .attach_to
+            .as_ref()
+            .expect("target attachment")
+            .offset
+            .to_matrix();
+        let world_mat = offset_mat * part.transform.to_matrix();
+        let world_pos = world_mat.w_axis.truncate();
+        let dp = (world_pos - Vec3::new(1.0, 0.0, 0.0)).length();
+        assert!(
+            dp < 1e-3,
+            "expected ChildAnchor copy to preserve offset rotation; got world_pos={world_pos:?} dp={dp}"
         );
     }
 
@@ -1785,6 +1943,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
@@ -1926,6 +2085,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
@@ -1950,6 +2110,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             Gen3dSubtreeCopyMissingBranchPolicy::SkipExternallyReferenced,
         )
@@ -2060,6 +2221,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             None,
         )
@@ -2175,6 +2337,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::MirrorMountX,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             None,
         )
@@ -2326,6 +2489,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             None,
         )
@@ -2496,6 +2660,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
@@ -2620,6 +2785,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
@@ -2745,6 +2911,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
@@ -2887,6 +3054,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )
@@ -3000,6 +3168,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::MirrorMountX,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             None,
         )
@@ -3094,6 +3263,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
             Gen3dCopyAlignmentMode::MirrorMountX,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             None,
         )
@@ -3302,6 +3472,7 @@ mod tests {
             Gen3dCopyMode::Detached,
             Gen3dCopyAnchorsMode::PreserveTargetAnchors,
             Gen3dCopyAlignmentMode::Rotation,
+            Gen3dCopyAlignmentFrame::Join,
             Transform::IDENTITY,
             Gen3dSubtreeCopyMissingBranchPolicy::CloneAllMissing,
         )

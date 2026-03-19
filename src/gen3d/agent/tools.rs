@@ -421,7 +421,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 title: "Copy component",
                 one_line_summary: "Mutates draft: copy one component into targets (linked/detached; no regen).",
                 args_schema:
-                    "{ source_component: string|number, targets?: (string|number)[], mode?: \"detached\"|\"linked\", anchors?: string, transform?: TransformDelta }",
+                    "{ source_component: string|number, targets?: (string|number)[], mode?: \"detached\"|\"linked\", anchors?: string, alignment_frame?: \"join\"|\"child_anchor\", transform?: TransformDelta }",
                 args_example: serde_json::json!({ "source_component": "arm_l_upper", "targets": ["arm_r_upper"], "mode": "linked" }),
             },
             Gen3dToolDescriptorV1 {
@@ -437,7 +437,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 title: "Copy component subtree",
                 one_line_summary: "Mutates draft: copy a component + descendants into target roots (no regen).",
                 args_schema:
-                    "{ source_root: string|number, targets: (string|number)[], mode?: \"detached\", anchors?: string, transform?: TransformDelta }",
+                    "{ source_root: string|number, targets: (string|number)[], mode?: \"detached\", anchors?: string, alignment_frame?: \"join\"|\"child_anchor\", transform?: TransformDelta }",
                 args_example: serde_json::json!({ "source_root": "leg_l_thigh", "targets": ["leg_r_thigh"] }),
             },
             Gen3dToolDescriptorV1 {
