@@ -12,7 +12,7 @@ use super::job::Gen3dPendingPlanAttempt;
 use super::reuse_groups;
 use super::schema::{
     AiAimJson, AiAnchorJson, AiAnchorRefJson, AiAttackJson, AiColliderJson, AiContactJson,
-    AiPlanAttachmentJson, AiPlanComponentJson, AiPlanJsonV1, AiReuseGroupJson,
+    AiMobilityJson, AiPlanAttachmentJson, AiPlanComponentJson, AiPlanJsonV1, AiReuseGroupJson,
 };
 use super::{convert, preserve_plan_policy, Gen3dAiJob, Gen3dPlannedComponent};
 
@@ -95,6 +95,15 @@ enum PlanOpJsonV1 {
     SetReuseGroups {
         reuse_groups: Vec<AiReuseGroupJson>,
     },
+    SetMobility {
+        mobility: AiMobilityJson,
+    },
+    SetAttack {
+        attack: serde_json::Value,
+    },
+    SetCollider {
+        collider: serde_json::Value,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -122,6 +131,9 @@ struct PlanOpsApplyState {
     aim_set: bool,
     muzzle_set: bool,
     reuse_groups_set: bool,
+    mobility_set: bool,
+    attack_set: bool,
+    collider_set: bool,
     touched_components: std::collections::BTreeSet<String>,
 }
 
@@ -158,6 +170,23 @@ fn attack_kind_label(attack: Option<&AiAttackJson>) -> &'static str {
     }
 }
 
+fn mobility_kind_label(mobility: &AiMobilityJson) -> &'static str {
+    match mobility {
+        AiMobilityJson::Static => "static",
+        AiMobilityJson::Ground { .. } => "ground",
+        AiMobilityJson::Air { .. } => "air",
+    }
+}
+
+fn collider_kind_label(collider: Option<&AiColliderJson>) -> &'static str {
+    match collider {
+        None => "omit",
+        Some(AiColliderJson::None) => "none",
+        Some(AiColliderJson::CircleXz { .. }) => "circle_xz",
+        Some(AiColliderJson::AabbXz { .. }) => "aabb_xz",
+    }
+}
+
 fn plan_summary_json(plan: &AiPlanJsonV1) -> serde_json::Value {
     let mut component_names: Vec<String> = plan
         .components
@@ -191,7 +220,9 @@ fn plan_summary_json(plan: &AiPlanJsonV1) -> serde_json::Value {
         "root_component": root_component,
         "reuse_groups_total": plan.reuse_groups.len(),
         "has_aim": plan.aim.is_some(),
+        "mobility_kind": mobility_kind_label(&plan.mobility),
         "attack_kind": attack_kind_label(plan.attack.as_ref()),
+        "collider_kind": collider_kind_label(plan.collider.as_ref()),
     })
 }
 
@@ -681,6 +712,73 @@ fn apply_one_op(
                 }),
             })
         }
+        PlanOpJsonV1::SetMobility { mobility } => {
+            let before = mobility_kind_label(&plan.mobility);
+            plan.mobility = mobility;
+            state.mobility_set = true;
+            Ok(OpAppliedJsonV1 {
+                index: idx,
+                kind: "set_mobility".into(),
+                diff: serde_json::json!({
+                    "before_kind": before,
+                    "after_kind": mobility_kind_label(&plan.mobility),
+                }),
+            })
+        }
+        PlanOpJsonV1::SetAttack { attack } => {
+            let before = attack_kind_label(plan.attack.as_ref());
+            let next: Option<AiAttackJson> = if attack.is_null() {
+                None
+            } else {
+                match serde_json::from_value(attack) {
+                    Ok(v) => Some(v),
+                    Err(err) => {
+                        return Err(OpRejectionJsonV1 {
+                            index: idx,
+                            kind: "set_attack".into(),
+                            error: format!("Invalid attack: {err}"),
+                        });
+                    }
+                }
+            };
+            plan.attack = next;
+            state.attack_set = true;
+            Ok(OpAppliedJsonV1 {
+                index: idx,
+                kind: "set_attack".into(),
+                diff: serde_json::json!({
+                    "before_kind": before,
+                    "after_kind": attack_kind_label(plan.attack.as_ref()),
+                }),
+            })
+        }
+        PlanOpJsonV1::SetCollider { collider } => {
+            let before = collider_kind_label(plan.collider.as_ref());
+            let next: Option<AiColliderJson> = if collider.is_null() {
+                None
+            } else {
+                match serde_json::from_value(collider) {
+                    Ok(v) => Some(v),
+                    Err(err) => {
+                        return Err(OpRejectionJsonV1 {
+                            index: idx,
+                            kind: "set_collider".into(),
+                            error: format!("Invalid collider: {err}"),
+                        });
+                    }
+                }
+            };
+            plan.collider = next;
+            state.collider_set = true;
+            Ok(OpAppliedJsonV1 {
+                index: idx,
+                kind: "set_collider".into(),
+                diff: serde_json::json!({
+                    "before_kind": before,
+                    "after_kind": collider_kind_label(plan.collider.as_ref()),
+                }),
+            })
+        }
     }
 }
 
@@ -1095,7 +1193,10 @@ pub(super) fn apply_plan_ops_v1(
         "attachments_set": state.attachments_set,
         "anchors_upserted": state.anchors_upserted,
         "aim_set": state.aim_set,
+        "mobility_set": state.mobility_set,
+        "attack_set": state.attack_set,
         "attack_muzzle_set": state.muzzle_set,
+        "collider_set": state.collider_set,
         "reuse_groups_set": state.reuse_groups_set,
         "touched_components": state.touched_components.iter().cloned().take(32).collect::<Vec<_>>(),
     });
@@ -1445,6 +1546,22 @@ fn touched_component_names_for_scope(ops: &[PlanOpJsonV1]) -> std::collections::
                     }
                 }
             }
+            PlanOpJsonV1::SetMobility { .. } | PlanOpJsonV1::SetCollider { .. } => {}
+            PlanOpJsonV1::SetAttack { attack } => {
+                let parsed: Result<AiAttackJson, _> = if attack.is_null() {
+                    Err(())
+                } else {
+                    serde_json::from_value(attack.clone()).map_err(|_| ())
+                };
+                if let Ok(AiAttackJson::RangedProjectile { muzzle, .. }) = parsed {
+                    if let Some(muzzle) = muzzle.as_ref() {
+                        let component = muzzle.component.trim();
+                        if !component.is_empty() {
+                            out.insert(component.to_string());
+                        }
+                    }
+                }
+            }
         }
     }
     out
@@ -1658,7 +1775,10 @@ Hint: include these names in scope_components, or omit scope_components, or use 
         "attachments_set": state.attachments_set,
         "anchors_upserted": state.anchors_upserted,
         "aim_set": state.aim_set,
+        "mobility_set": state.mobility_set,
+        "attack_set": state.attack_set,
         "attack_muzzle_set": state.muzzle_set,
+        "collider_set": state.collider_set,
         "reuse_groups_set": state.reuse_groups_set,
         "touched_components": state.touched_components.iter().cloned().take(32).collect::<Vec<_>>(),
     });
@@ -1823,7 +1943,9 @@ mod tests {
     use super::*;
     use crate::gen3d::ai::schema::AiMobilityJson;
     use crate::gen3d::ai::schema::{AiJointJson, AiJointKindJson};
-    use crate::object::registry::{MeshKey, ObjectPartDef, PrimitiveVisualDef};
+    use crate::object::registry::{
+        ColliderProfile, MeshKey, MobilityMode, ObjectPartDef, PrimitiveVisualDef, UnitAttackKind,
+    };
     use uuid::Uuid;
 
     fn make_plan_with_missing_parent() -> AiPlanJsonV1 {
@@ -1903,7 +2025,7 @@ mod tests {
         assert!(result
             .get("accepted")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false));
+            .unwrap_or(false), "expected accepted=true, got {result:?}");
         assert!(!result
             .get("still_pending")
             .and_then(|v| v.as_bool())
@@ -2067,12 +2189,213 @@ mod tests {
         )
         .expect("tool should return result JSON");
 
-        assert!(result
-            .get("accepted")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false));
+        assert!(
+            result
+                .get("accepted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            "expected accepted=true, got {result:?}"
+        );
         assert!(job.planned_components.iter().any(|c| c.name == "hat"));
         assert_eq!(job.planned_components.len(), 3);
+    }
+
+    #[test]
+    fn apply_plan_ops_can_set_root_fields_on_current_plan() {
+        let mut job = Gen3dAiJob::default();
+        let mut draft = Gen3dDraft { defs: Vec::new() };
+
+        let plan = make_simple_current_plan();
+        let (planned, notes, mut defs) =
+            convert::ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+        job.planned_components = planned;
+        job.assembly_notes = notes;
+        job.preserve_existing_components_mode = true;
+
+        // Mark the draft as already-generated so preserve-mode validation/merge logic runs.
+        let torso_id =
+            crate::object::registry::builtin_object_id("gravimera/gen3d/component/torso");
+        let torso_def = defs
+            .iter_mut()
+            .find(|def| def.object_id == torso_id)
+            .expect("expected torso def");
+        torso_def.parts.push(
+            ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(0.5, 0.5, 0.5),
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )
+            .with_part_id(Uuid::new_v4().as_u128()),
+        );
+        draft.defs = defs;
+
+        let result = apply_plan_ops_v1(
+            &mut job,
+            &mut draft,
+            Some("call_apply"),
+            serde_json::json!({
+                "version": 1,
+                "base_plan": "current",
+                "ops": [
+                    { "kind": "set_mobility", "mobility": { "kind": "ground", "max_speed": 5.0 } },
+                    { "kind": "set_collider", "collider": { "kind": "circle_xz", "radius": 1.2 } },
+                    { "kind": "set_attack", "attack": { "kind": "melee", "damage": 10, "range": 1.0, "radius": 0.5, "arc_degrees": 90.0 } }
+                ]
+            }),
+        )
+        .expect("tool should return result JSON");
+
+        assert!(
+            result
+                .get("accepted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            "expected accepted=true, got {result:?}"
+        );
+        assert_eq!(
+            result
+                .get("diff_summary")
+                .and_then(|v| v.get("mobility_set"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            result
+                .get("diff_summary")
+                .and_then(|v| v.get("attack_set"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            result
+                .get("diff_summary")
+                .and_then(|v| v.get("collider_set"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+
+        let root_def = draft.root_def().expect("expected root def");
+        assert!(
+            root_def
+                .mobility
+                .as_ref()
+                .is_some_and(|m| m.mode == MobilityMode::Ground && (m.max_speed - 5.0).abs() < 1e-4),
+            "expected ground mobility, got {:?}",
+            root_def.mobility
+        );
+        assert!(
+            root_def
+                .attack
+                .as_ref()
+                .is_some_and(|attack| attack.kind == UnitAttackKind::Melee),
+            "expected melee attack, got {:?}",
+            root_def.attack.as_ref().map(|a| a.kind)
+        );
+        assert!(
+            matches!(root_def.collider, ColliderProfile::CircleXZ { radius } if (radius - 1.2).abs() < 1e-4),
+            "expected circle collider, got {:?}",
+            root_def.collider
+        );
+    }
+
+    #[test]
+    fn apply_plan_ops_set_attack_and_collider_accepts_null_when_static() {
+        let mut job = Gen3dAiJob::default();
+        let mut draft = Gen3dDraft { defs: Vec::new() };
+
+        let plan = make_simple_current_plan();
+        let (planned, notes, mut defs) =
+            convert::ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+        job.planned_components = planned;
+        job.assembly_notes = notes;
+        job.preserve_existing_components_mode = true;
+
+        // Mark the draft as already-generated so preserve-mode validation/merge logic runs.
+        let torso_id =
+            crate::object::registry::builtin_object_id("gravimera/gen3d/component/torso");
+        let torso_def = defs
+            .iter_mut()
+            .find(|def| def.object_id == torso_id)
+            .expect("expected torso def");
+        torso_def.parts.push(
+            ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(0.5, 0.5, 0.5),
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )
+            .with_part_id(Uuid::new_v4().as_u128()),
+        );
+        draft.defs = defs;
+
+        let _ = apply_plan_ops_v1(
+            &mut job,
+            &mut draft,
+            Some("call_apply_1"),
+            serde_json::json!({
+                "version": 1,
+                "base_plan": "current",
+                "ops": [
+                    { "kind": "set_mobility", "mobility": { "kind": "ground", "max_speed": 5.0 } },
+                    { "kind": "set_collider", "collider": { "kind": "circle_xz", "radius": 1.2 } },
+                    { "kind": "set_attack", "attack": { "kind": "melee", "damage": 10, "range": 1.0, "radius": 0.5, "arc_degrees": 90.0 } }
+                ]
+            }),
+        )
+        .expect("tool should return result JSON");
+
+        let result = apply_plan_ops_v1(
+            &mut job,
+            &mut draft,
+            Some("call_apply_2"),
+            serde_json::json!({
+                "version": 1,
+                "base_plan": "current",
+                "ops": [
+                    { "kind": "set_mobility", "mobility": { "kind": "static" } },
+                    { "kind": "set_attack", "attack": null },
+                    { "kind": "set_collider", "collider": null }
+                ]
+            }),
+        )
+        .expect("tool should return result JSON");
+
+        assert!(
+            result
+                .get("accepted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            "expected accepted=true, got {result:?}"
+        );
+
+        let root_def = draft.root_def().expect("expected root def");
+        assert!(
+            root_def.mobility.is_none(),
+            "expected mobility removed, got {:?}",
+            root_def.mobility
+        );
+        assert!(
+            root_def.attack.is_none(),
+            "expected attack removed, got {:?}",
+            root_def.attack.as_ref().map(|a| a.kind)
+        );
+        assert!(
+            matches!(root_def.collider, ColliderProfile::AabbXZ { .. }),
+            "expected default aabb collider, got {:?}",
+            root_def.collider
+        );
+        assert!(
+            job.plan_collider.is_none(),
+            "expected plan_collider=None, got {:?}",
+            job.plan_collider
+        );
     }
 
     #[test]

@@ -115,8 +115,10 @@ Create sessions (new builds):
 Seeded Edit/Fork sessions (DraftOps-first):
 
 - Preserve-mode diff replanning: `get_plan_template_v1` → `llm_generate_plan_ops_v1` (applies ops deterministically in-engine).
+- Root-field fixes without geometry regen: preserve-mode PlanOps can set plan-level root fields (`mobility`, `attack`, `collider`) via ops `set_mobility` / `set_attack` / `set_collider` (useful when a seeded prefab is missing a root attack profile).
 - Capture editable part snapshots: `query_component_parts_v1` (per-component; snapshots stored in Info Store).
 - Primitive editing: `llm_generate_draft_ops_v1` (suggestions only; strict JSON) → `apply_draft_ops_v1` (engine applies ops atomically with `if_assembly_rev` gating).
+- When `qa_v1` fails, check `qa_v1.capability_gaps[].fixits` and apply the suggested tool calls; root-field gaps (missing `mobility`/`attack`/`collider`) should converge via preserve-mode plan ops instead of repeated motion-authoring passes.
 
 Debugging signals:
 
@@ -239,6 +241,7 @@ Gen3D AI provider:
 {
   "version": 8,
   "mobility": { "kind": "static" },
+  "attack": { "kind": "melee", "damage": 10, "range": 1.2, "radius": 0.4, "arc_degrees": 90.0 },
   "collider": { "kind": "aabb_xz", "half_extents": [2.0, 2.0] },
   "assembly_notes": "Short notes about shared dimensions / alignment / style.",
   "root_component": "seat",
@@ -276,6 +279,18 @@ Gen3D AI provider:
 - `{ "kind": "none" }`
 - `{ "kind": "circle_xz", "radius": number }`
 - `{ "kind": "aabb_xz", "half_extents": [hx, hz] }`
+
+`attack` is optional, but REQUIRED for attack-capable units (when the prompt intent requires it). It supports:
+
+- `{ "kind": "none" }`
+- `{ "kind": "melee", "cooldown_secs"?: number, "damage"?: number, "range": number, "radius": number, "arc_degrees": number }`
+- `{ "kind": "ranged_projectile", "cooldown_secs"?: number, "muzzle": { "component": string, "anchor": string }, "projectile": { "shape": "sphere"|"capsule"|"cuboid"|"cylinder", "radius"?: number, "length"?: number, "size"?: [x,y,z], "color": [r,g,b,a], "unlit"?: bool, "speed": number, "ttl_secs": number, "damage": number, "obstacle_rule"?: "bullets_blockers"|"laser_blockers", "spawn_energy_impact"?: bool } }`
+
+Notes:
+
+- For the attack to actually be enabled in the assembled draft, the engine currently requires:
+  - `melee`: `range` + `radius` + `arc_degrees` (missing fields cause the attack profile to be ignored).
+  - `ranged_projectile`: BOTH `muzzle` and `projectile` (missing fields cause the attack profile to be ignored).
 
 Notes:
 

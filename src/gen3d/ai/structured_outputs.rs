@@ -423,6 +423,33 @@ fn schema_plan_op() -> serde_json::Value {
         },
         "required": ["kind", "components"],
     });
+    let set_mobility = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_mobility"]),
+            "mobility": schema_mobility(),
+        },
+        "required": ["kind", "mobility"],
+    });
+    let set_attack = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_attack"]),
+            "attack": schema_nullable(schema_attack()),
+        },
+        "required": ["kind", "attack"],
+    });
+    let set_collider = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["set_collider"]),
+            "collider": schema_nullable(schema_collider()),
+        },
+        "required": ["kind", "collider"],
+    });
     let set_attack_muzzle = json!({
         "type": "object",
         "additionalProperties": false,
@@ -449,6 +476,9 @@ fn schema_plan_op() -> serde_json::Value {
         set_attach_to,
         set_anchor,
         set_aim_components,
+        set_mobility,
+        set_attack,
+        set_collider,
         set_attack_muzzle,
         set_reuse_groups,
     ])

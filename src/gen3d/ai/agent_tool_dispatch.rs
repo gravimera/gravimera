@@ -978,6 +978,44 @@ fn build_capability_gaps_from_smoke_v1(
     let root_def = draft.root_def();
     let movable = root_def.and_then(|def| def.mobility.as_ref()).is_some();
 
+    let preserve_mode_plan_ops_fixits = |prompt_override: &str| -> Vec<serde_json::Value> {
+        if prompt_override.trim().is_empty() {
+            return Vec::new();
+        }
+        if job.planned_components.is_empty() {
+            return vec![serde_json::json!({
+                "tool_id": TOOL_ID_LLM_GENERATE_PLAN,
+                "args": {},
+            })];
+        }
+
+        let workspace_id = job.active_workspace_id().trim();
+        let key = format!("ws.{workspace_id}.plan_template.preserve_mode.v1");
+
+        vec![
+            serde_json::json!({
+                "tool_id": TOOL_ID_GET_PLAN_TEMPLATE,
+                "args": { "version": 2, "mode": "auto" },
+            }),
+            serde_json::json!({
+                "tool_id": TOOL_ID_LLM_GENERATE_PLAN_OPS,
+                "args": {
+                    "prompt": prompt_override,
+                    "max_ops": 12,
+                    "constraints": {
+                        "preserve_existing_components": true,
+                        "preserve_edit_policy": "additive",
+                    },
+                    "plan_template_kv": {
+                        "namespace": "gen3d",
+                        "key": key,
+                        "selector": { "kind": "latest" },
+                    },
+                },
+            }),
+        ]
+    };
+
     if movable {
         let has_move = job.planned_components.iter().any(|c| {
             c.attach_to.as_ref().is_some_and(|att| {
@@ -1002,6 +1040,10 @@ fn build_capability_gaps_from_smoke_v1(
     if movable {
         if let Some(root_def) = root_def {
             if matches!(root_def.collider, ColliderProfile::None) {
+                let fixits = preserve_mode_plan_ops_fixits(
+                    "QA fix needed: movable unit has collider.kind=\"none\".\n\
+Set plan.collider to a valid selection/click collider (circle_xz or aabb_xz) sized to the MAIN BODY footprint (do not inflate to cover tails/wings). Do not change components or attachment structure.",
+                );
                 gaps.push(serde_json::json!({
                     "kind": "missing_root_field",
                     "severity": "error",
@@ -1009,9 +1051,7 @@ fn build_capability_gaps_from_smoke_v1(
                     "evidence": {
                         "field": "collider",
                     },
-                    "fixits": [],
-                    "blocked": true,
-                    "blocked_reason": "No deterministic tool can set the root collider today (PlanOps do not support it). Replan via llm_generate_plan_v1 / llm_review_delta_v1, or add a deterministic root-patch tool.",
+                    "fixits": fixits,
                 }));
             }
         }
@@ -1031,22 +1071,44 @@ fn build_capability_gaps_from_smoke_v1(
         .unwrap_or(false);
 
     if attack_required_by_prompt && (!mobility_present || !attack_present) {
+        let missing_fields: Vec<&str> = [
+            (!mobility_present).then_some("mobility"),
+            (!attack_present).then_some("attack"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let message = if missing_fields.as_slice() == ["attack"] {
+            "Prompt implies the object should be attack-capable, but the draft has no root attack profile."
+        } else if missing_fields.as_slice() == ["mobility"] {
+            "Prompt implies the object should be attack-capable, but the draft is missing mobility."
+        } else {
+            "Prompt implies the object should be attack-capable, but the draft has no mobility/attack profile."
+        };
+
+        let fixits = preserve_mode_plan_ops_fixits(
+            "QA fix needed: prompt requires attack capability but the root mobility/attack profile is missing.\n\
+Set plan.mobility (ground/air) and plan.attack (melee or ranged_projectile) so the unit can actually attack. Do not change components or attachment structure.",
+        );
         gaps.push(serde_json::json!({
             "kind": "missing_root_field",
             "severity": "error",
-            "message": "Prompt implies the object should be attack-capable, but the draft has no mobility/attack profile.",
+            "message": message,
             "evidence": {
                 "attack_required_by_prompt": true,
                 "mobility_present": mobility_present,
                 "attack_present": attack_present,
+                "missing_fields": missing_fields,
             },
-            "fixits": [],
-            "blocked": true,
-            "blocked_reason": "No deterministic tool can set root mobility/attack today (PlanOps do not support it). Replan via llm_generate_plan_v1 / llm_review_delta_v1, or add deterministic root-field patch tools.",
+            "fixits": fixits,
         }));
     }
 
     if attack_present && !mobility_present {
+        let fixits = preserve_mode_plan_ops_fixits(
+            "QA fix needed: root has an attack profile but is missing mobility.\n\
+Set plan.mobility to a movable mode (ground/air) with a reasonable max_speed so the unit is movable. Do not change components or attachment structure.",
+        );
         gaps.push(serde_json::json!({
             "kind": "inconsistent_root_fields",
             "severity": "error",
@@ -1054,10 +1116,9 @@ fn build_capability_gaps_from_smoke_v1(
             "evidence": {
                 "mobility_present": mobility_present,
                 "attack_present": attack_present,
+                "field": "mobility",
             },
-            "fixits": [],
-            "blocked": true,
-            "blocked_reason": "No deterministic tool can set root mobility today (PlanOps do not support it). Replan via llm_generate_plan_v1 / llm_review_delta_v1, or add deterministic root-field patch tools.",
+            "fixits": fixits,
         }));
     }
 
@@ -8025,7 +8086,7 @@ mod tests {
     }
 
     #[test]
-    fn gen3d_capability_gaps_missing_root_interface_is_marked_blocked() {
+    fn gen3d_capability_gaps_missing_root_interface_includes_actionable_fixits() {
         let job = super::Gen3dAiJob::default();
         let draft = crate::gen3d::state::Gen3dDraft {
             defs: vec![make_test_root_def_movable(false)],
@@ -8042,16 +8103,78 @@ mod tests {
             .iter()
             .find(|g| g.get("kind").and_then(|v| v.as_str()) == Some("missing_root_field"))
             .expect("missing root gap");
-        assert_eq!(
-            gap.get("blocked").and_then(|v| v.as_bool()),
-            Some(true),
-            "expected blocked=true, got {gap:?}"
+        assert!(
+            gap.get("blocked").is_none(),
+            "expected no blocked marker, got {gap:?}"
+        );
+        let fixits = gap
+            .get("fixits")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            fixits.iter().any(|fixit| {
+                fixit.get("tool_id").and_then(|v| v.as_str())
+                    == Some(super::TOOL_ID_LLM_GENERATE_PLAN)
+            }),
+            "expected {}/fixit, got {gap:?}",
+            super::TOOL_ID_LLM_GENERATE_PLAN
+        );
+    }
+
+    #[test]
+    fn gen3d_capability_gaps_missing_root_interface_prefers_plan_ops_fixits_when_plan_exists() {
+        let mut job = super::Gen3dAiJob::default();
+        job.planned_components = vec![super::super::job::Gen3dPlannedComponent {
+            display_name: "1. root".into(),
+            name: "root".into(),
+            purpose: String::new(),
+            modeling_notes: String::new(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: Some(Vec3::ONE),
+            anchors: Vec::new(),
+            contacts: Vec::new(),
+            attach_to: None,
+        }];
+
+        let draft = crate::gen3d::state::Gen3dDraft {
+            defs: vec![make_test_root_def_movable(false)],
+        };
+
+        let smoke = serde_json::json!({
+            "attack_required_by_prompt": true,
+            "mobility_present": false,
+            "attack_present": false,
+        });
+
+        let gaps = super::build_capability_gaps_from_smoke_v1(&job, &draft, &smoke);
+        let gap = gaps
+            .iter()
+            .find(|g| g.get("kind").and_then(|v| v.as_str()) == Some("missing_root_field"))
+            .expect("missing root gap");
+
+        let fixits = gap
+            .get("fixits")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            fixits.iter().any(|fixit| {
+                fixit.get("tool_id").and_then(|v| v.as_str())
+                    == Some(super::TOOL_ID_GET_PLAN_TEMPLATE)
+            }),
+            "expected {}/fixit, got {gap:?}",
+            super::TOOL_ID_GET_PLAN_TEMPLATE
         );
         assert!(
-            gap.get("blocked_reason")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| !s.trim().is_empty()),
-            "expected blocked_reason, got {gap:?}"
+            fixits.iter().any(|fixit| {
+                fixit.get("tool_id").and_then(|v| v.as_str())
+                    == Some(super::TOOL_ID_LLM_GENERATE_PLAN_OPS)
+            }),
+            "expected {}/fixit, got {gap:?}",
+            super::TOOL_ID_LLM_GENERATE_PLAN_OPS
         );
     }
 

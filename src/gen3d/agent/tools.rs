@@ -139,11 +139,31 @@ PlanOp =\n\
   | { kind:\"set_attach_to\", component:string, set_attach_to: Attachment|null }\n\
   | { kind:\"set_anchor\", component:string, anchor:Anchor }\n\
   | { kind:\"set_aim_components\", components:string[] }\n\
+  | { kind:\"set_mobility\", mobility:Mobility }\n\
+  | { kind:\"set_attack\", attack:Attack|null }\n\
+  | { kind:\"set_collider\", collider:Collider|null }\n\
   | { kind:\"set_attack_muzzle\", component:string, anchor:string }\n\
   | { kind:\"set_reuse_groups\", reuse_groups:ReuseGroup[] }\n\
 \n\
+Mobility =\n\
+  | { kind:\"static\" }\n\
+  | { kind:\"ground\", max_speed:number }\n\
+  | { kind:\"air\", max_speed:number }\n\
+\n\
+Attack =\n\
+  | { kind:\"none\" }\n\
+  | { kind:\"melee\", cooldown_secs?:number, damage?:number, range?:number, radius?:number, arc_degrees?:number }\n\
+  | { kind:\"ranged_projectile\", cooldown_secs?:number, muzzle?:AnchorRef, projectile?:ProjectileSpec }\n\
+\n\
+Collider =\n\
+  | { kind:\"none\" }\n\
+  | { kind:\"circle_xz\", radius:number }\n\
+  | { kind:\"aabb_xz\", half_extents?:[number,number], min?:[number,number], max?:[number,number] }\n\
+\n\
 Anchor = { name:string, pos:[number,number,number], forward:[number,number,number], up:[number,number,number] }\n\
+AnchorRef = { component:string, anchor:string }\n\
 Contact = { name:string, kind:\"ground\", anchor:string, stance?: { phase_01:number, duty_factor_01:number } }\n\
+ProjectileSpec = { shape:\"sphere\"|\"capsule\"|\"cuboid\"|\"cylinder\", radius?:number, length?:number, size?:[number,number,number], color:[number,number,number,number], unlit?:bool, speed:number, ttl_secs:number, damage:number, obstacle_rule?:\"bullets_blockers\"|\"laser_blockers\", spawn_energy_impact?:bool }\n\
 Attachment = { parent:string, parent_anchor:string, child_anchor:string, offset?: { pos?:[number,number,number], forward?:[number,number,number], up?:[number,number,number], rot_frame?:\"join\"|\"parent\", rot_quat_xyzw?:[number,number,number,number], scale?:[number,number,number] }, joint?: Joint }\n\
 Joint = { kind:\"fixed\"|\"hinge\"|\"ball\"|\"free\", axis_join?:[number,number,number], limits_degrees?:[number,number], swing_limits_degrees?:[number,number], twist_limits_degrees?:[number,number] }\n\
 ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string, mode?:string, anchors?:string }",
