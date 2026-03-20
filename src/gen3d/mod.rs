@@ -1,5 +1,6 @@
 mod agent;
 mod ai;
+mod in_flight;
 mod images;
 mod preview;
 mod save;
@@ -140,6 +141,11 @@ pub(crate) use images::{
     gen3d_thumbnail_button_open_viewer, gen3d_thumbnail_button_style_on_interaction,
     gen3d_thumbnail_button_style_on_selection, gen3d_update_image_viewer_ui,
     gen3d_update_images_inline_visibility, gen3d_update_thumbnail_tooltip,
+};
+pub(crate) use in_flight::{
+    gen3d_flush_in_flight_dirty, gen3d_in_flight_label, load_gen3d_in_flight_entries,
+    mark_gen3d_in_flight_failed, remove_gen3d_in_flight_entry,
+    upsert_gen3d_in_flight_entry, Gen3dInFlightEntry, Gen3dInFlightStatus,
 };
 pub(crate) use preview::{
     gen3d_apply_draft_to_preview, gen3d_preview_orbit_controls,

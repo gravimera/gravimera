@@ -206,7 +206,7 @@ pub(crate) struct ModelLibraryListItem;
 
 #[derive(Component)]
 pub(crate) struct ModelLibrarySelectionMark {
-    pub(crate) model_id: u128,
+    pub(crate) prefab_id: u128,
 }
 
 #[derive(Component)]
@@ -217,7 +217,26 @@ pub(crate) struct ModelLibraryScrollbarThumb;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryItemButton {
-    pub(crate) model_id: u128,
+    kind: ModelLibraryItemKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModelLibraryItemKind {
+    Prefab { prefab_id: u128 },
+    InFlight { run_id: u128 },
+}
+
+impl ModelLibraryItemKind {
+    fn prefab_id(self) -> Option<u128> {
+        match self {
+            Self::Prefab { prefab_id } => Some(prefab_id),
+            Self::InFlight { .. } => None,
+        }
+    }
+
+    fn is_in_flight(self) -> bool {
+        matches!(self, Self::InFlight { .. })
+    }
 }
 
 #[derive(Component)]
@@ -231,6 +250,11 @@ pub(crate) struct ModelLibrarySearchField;
 
 #[derive(Component)]
 pub(crate) struct ModelLibrarySearchFieldText;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryInFlightRemoveButton {
+    run_id: u128,
+}
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryPreviewOverlayRoot;
@@ -699,7 +723,8 @@ pub(crate) fn model_library_rebuild_list_ui(
 
     let model_ids = crate::realm_prefab_packages::list_realm_prefab_packages(&active.realm_id)
         .unwrap_or_default();
-    if model_ids.is_empty() {
+    let in_flight_entries = crate::gen3d::load_gen3d_in_flight_entries(&active.realm_id);
+    if model_ids.is_empty() && in_flight_entries.is_empty() {
         commands.entity(list_entity).with_children(|list| {
             list.spawn((
                 Text::new("No realm prefabs yet.\nUse Gen3D to generate one."),
@@ -790,16 +815,98 @@ pub(crate) fn model_library_rebuild_list_ui(
     }
 
     #[derive(Debug)]
+    enum RowKind {
+        Prefab {
+            prefab_id: u128,
+            modified_at_ms: u128,
+            thumbnail: Option<Handle<Image>>,
+        },
+        InFlight {
+            run_id: u128,
+            status: crate::gen3d::Gen3dInFlightStatus,
+            created_at_ms: u128,
+            queue_pos: Option<usize>,
+        },
+    }
+
+    #[derive(Debug)]
     struct Row {
-        prefab_id: u128,
+        kind: RowKind,
         display_name: String,
-        modified_at_ms: u128,
         score: u32,
-        thumbnail: Option<Handle<Image>>,
+    }
+
+    impl Row {
+        fn sort_ms(&self) -> u128 {
+            match &self.kind {
+                RowKind::Prefab { modified_at_ms, .. } => *modified_at_ms,
+                RowKind::InFlight { created_at_ms, .. } => *created_at_ms,
+            }
+        }
+
+        fn prefab_id(&self) -> Option<u128> {
+            match &self.kind {
+                RowKind::Prefab { prefab_id, .. } => Some(*prefab_id),
+                RowKind::InFlight { .. } => None,
+            }
+        }
     }
 
     let query = state.search_query.trim().to_string();
-    let mut rows: Vec<Row> = Vec::new();
+    let mut prefab_rows: Vec<Row> = Vec::new();
+    let mut inflight_rows: Vec<Row> = Vec::new();
+
+    let mut queued_positions: HashMap<String, usize> = HashMap::new();
+    let mut queued_entries: Vec<&crate::gen3d::Gen3dInFlightEntry> = in_flight_entries
+        .iter()
+        .filter(|entry| matches!(entry.status, crate::gen3d::Gen3dInFlightStatus::Queued))
+        .collect();
+    queued_entries.sort_by_key(|entry| entry.created_at_ms);
+    for (idx, entry) in queued_entries.iter().enumerate() {
+        queued_positions.insert(entry.run_id.clone(), idx.saturating_add(1));
+    }
+
+    for entry in &in_flight_entries {
+        let run_id = match uuid::Uuid::parse_str(entry.run_id.trim()) {
+            Ok(id) => id.as_u128(),
+            Err(err) => {
+                debug!("Skipping invalid Gen3D in-flight run id {}: {err}", entry.run_id);
+                continue;
+            }
+        };
+        let display_name = entry.label.trim();
+        let display_name = if display_name.is_empty() {
+            "Untitled run".to_string()
+        } else {
+            display_name.to_string()
+        };
+        let score = relevance_score(
+            query.as_str(),
+            &display_name,
+            &[],
+            entry.error.as_deref(),
+            entry.run_id.as_str(),
+        );
+        if !query.is_empty() && score == 0 {
+            continue;
+        }
+        let queue_pos = match entry.status {
+            crate::gen3d::Gen3dInFlightStatus::Queued => {
+                queued_positions.get(&entry.run_id).copied()
+            }
+            _ => None,
+        };
+        inflight_rows.push(Row {
+            kind: RowKind::InFlight {
+                run_id,
+                status: entry.status.clone(),
+                created_at_ms: entry.created_at_ms,
+                queue_pos,
+            },
+            display_name,
+            score,
+        });
+    }
 
     for prefab_id in model_ids {
         let uuid = uuid::Uuid::from_u128(prefab_id).to_string();
@@ -890,34 +997,65 @@ pub(crate) fn model_library_rebuild_list_ui(
             }
         };
 
-        rows.push(Row {
-            prefab_id,
+        prefab_rows.push(Row {
+            kind: RowKind::Prefab {
+                prefab_id,
+                modified_at_ms,
+                thumbnail,
+            },
             display_name,
-            modified_at_ms,
             score,
-            thumbnail,
         });
     }
 
-    rows.sort_by(|a, b| {
-        if !query.is_empty() {
+    if !query.is_empty() {
+        inflight_rows.append(&mut prefab_rows);
+        inflight_rows.sort_by(|a, b| {
             b.score
                 .cmp(&a.score)
-                .then_with(|| b.modified_at_ms.cmp(&a.modified_at_ms))
+                .then_with(|| b.sort_ms().cmp(&a.sort_ms()))
                 .then_with(|| a.display_name.cmp(&b.display_name))
-                .then_with(|| a.prefab_id.cmp(&b.prefab_id))
-        } else {
-            b.modified_at_ms
-                .cmp(&a.modified_at_ms)
+        });
+    } else {
+        inflight_rows.sort_by(|a, b| {
+            let rank = |row: &Row| match &row.kind {
+                RowKind::InFlight { status, .. } => match status {
+                    crate::gen3d::Gen3dInFlightStatus::Running => 0,
+                    crate::gen3d::Gen3dInFlightStatus::Queued => 1,
+                    crate::gen3d::Gen3dInFlightStatus::Failed => 2,
+                },
+                RowKind::Prefab { .. } => 3,
+            };
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| b.sort_ms().cmp(&a.sort_ms()))
                 .then_with(|| a.display_name.cmp(&b.display_name))
-                .then_with(|| a.prefab_id.cmp(&b.prefab_id))
-        }
-    });
+        });
 
-    state.listed_prefabs = rows.iter().map(|row| row.prefab_id).collect();
+        prefab_rows.sort_by(|a, b| {
+            b.sort_ms()
+                .cmp(&a.sort_ms())
+                .then_with(|| a.display_name.cmp(&b.display_name))
+                .then_with(|| a.prefab_id().cmp(&b.prefab_id()))
+        });
+        inflight_rows.extend(prefab_rows);
+    }
+
+    state.listed_prefabs = inflight_rows
+        .iter()
+        .filter_map(|row| row.prefab_id())
+        .collect();
 
     commands.entity(list_entity).with_children(|list| {
-        for row in rows {
+        for row in inflight_rows {
+            let item_kind = match &row.kind {
+                RowKind::Prefab { prefab_id, .. } => ModelLibraryItemKind::Prefab {
+                    prefab_id: *prefab_id,
+                },
+                RowKind::InFlight { run_id, .. } => ModelLibraryItemKind::InFlight {
+                    run_id: *run_id,
+                },
+            };
             list.spawn((
                 Button,
                 Node {
@@ -932,26 +1070,26 @@ pub(crate) fn model_library_rebuild_list_ui(
                 BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
                 BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
                 ModelLibraryListItem,
-                ModelLibraryItemButton {
-                    model_id: row.prefab_id,
-                },
+                ModelLibraryItemButton { kind: item_kind },
             ))
             .with_children(|b| {
-                b.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(1.0),
-                        top: Val::Px(1.0),
-                        bottom: Val::Px(1.0),
-                        width: Val::Px(4.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.85)),
-                    Visibility::Hidden,
-                    ModelLibrarySelectionMark {
-                        model_id: row.prefab_id,
-                    },
-                ));
+                if let RowKind::Prefab { prefab_id, .. } = &row.kind {
+                    b.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(1.0),
+                            top: Val::Px(1.0),
+                            bottom: Val::Px(1.0),
+                            width: Val::Px(4.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.85)),
+                        Visibility::Hidden,
+                        ModelLibrarySelectionMark {
+                            prefab_id: *prefab_id,
+                        },
+                    ));
+                }
 
                 b.spawn((
                     Node {
@@ -964,15 +1102,17 @@ pub(crate) fn model_library_rebuild_list_ui(
                     BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
                 ))
                 .with_children(|thumb| {
-                    if let Some(handle) = row.thumbnail.as_ref() {
-                        thumb.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                            ImageNode::new(handle.clone()).with_mode(NodeImageMode::Stretch),
-                        ));
+                    if let RowKind::Prefab { thumbnail, .. } = &row.kind {
+                        if let Some(handle) = thumbnail.as_ref() {
+                            thumb.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                ImageNode::new(handle.clone()).with_mode(NodeImageMode::Stretch),
+                            ));
+                        }
                     }
                 });
 
@@ -984,6 +1124,91 @@ pub(crate) fn model_library_rebuild_list_ui(
                     },
                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                 ));
+
+                if let RowKind::InFlight {
+                    status,
+                    queue_pos,
+                    run_id,
+                    ..
+                } = &row.kind
+                {
+                    let status = status.clone();
+                    let queue_pos = *queue_pos;
+                    let run_id = *run_id;
+                    b.spawn((
+                        Node {
+                            flex_grow: 1.0,
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                    ));
+
+                    let status_text = match status {
+                        crate::gen3d::Gen3dInFlightStatus::Running => "Generating".to_string(),
+                        crate::gen3d::Gen3dInFlightStatus::Queued => queue_pos
+                            .map(|pos| format!("Queued #{pos}"))
+                            .unwrap_or_else(|| "Queued".to_string()),
+                        crate::gen3d::Gen3dInFlightStatus::Failed => "Failed".to_string(),
+                    };
+                    let (badge_bg, badge_border, badge_text) = match status {
+                        crate::gen3d::Gen3dInFlightStatus::Failed => (
+                            Color::srgba(0.35, 0.12, 0.12, 0.90),
+                            Color::srgba(0.65, 0.20, 0.20, 0.85),
+                            Color::srgb(0.98, 0.82, 0.82),
+                        ),
+                        _ => (
+                            Color::srgba(0.20, 0.30, 0.12, 0.90),
+                            Color::srgba(0.35, 0.55, 0.20, 0.85),
+                            Color::srgb(0.85, 0.98, 0.80),
+                        ),
+                    };
+
+                    b.spawn((
+                        Node {
+                            padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(badge_bg),
+                        BorderColor::all(badge_border),
+                    ))
+                    .with_children(|badge| {
+                        badge.spawn((
+                            Text::new(status_text),
+                            TextFont {
+                                font_size: 12.0,
+                                ..default()
+                            },
+                            TextColor(badge_text),
+                        ));
+                    });
+
+                    b.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(22.0),
+                            height: Val::Px(22.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92)),
+                        BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85)),
+                        bevy::ui::FocusPolicy::Block,
+                        ModelLibraryInFlightRemoveButton { run_id },
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("X"),
+                            TextFont {
+                                font_size: 12.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                        ));
+                    });
+                }
             });
         }
     });
@@ -2229,6 +2454,10 @@ pub(crate) fn model_library_gen3d_button_interactions(
 }
 
 pub(crate) fn model_library_item_button_interactions(
+    mut commands: Commands,
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    mut next_build_scene: ResMut<NextState<crate::types::BuildScene>>,
     mut state: ResMut<ModelLibraryUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut buttons: Query<(&Interaction, &ModelLibraryItemButton), Changed<Interaction>>,
@@ -2242,17 +2471,80 @@ pub(crate) fn model_library_item_button_interactions(
             continue;
         }
 
+        if button.kind.is_in_flight() {
+            if !matches!(mode.get(), GameMode::Build) {
+                continue;
+            }
+            if state.preview.is_some() {
+                close_model_library_preview(&mut commands, &mut state);
+            }
+            state.drag = None;
+            state.pending_preview = None;
+            if matches!(build_scene.get(), crate::types::BuildScene::Realm) {
+                next_build_scene.set(crate::types::BuildScene::Preview);
+            }
+            continue;
+        }
+
+        let Some(prefab_id) = button.kind.prefab_id() else {
+            continue;
+        };
+
         if state.drag.is_some() {
             continue;
         }
 
         if let Some(cursor) = cursor {
             state.drag = Some(ModelLibraryDrag {
-                model_id: button.model_id,
+                model_id: prefab_id,
                 start_cursor: cursor,
                 is_dragging: false,
                 preview_translation: None,
             });
+        }
+    }
+}
+
+pub(crate) fn model_library_in_flight_remove_button_interactions(
+    active: Res<crate::realm::ActiveRealmScene>,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut workshop: ResMut<crate::gen3d::Gen3dWorkshop>,
+    mut job: ResMut<crate::gen3d::Gen3dAiJob>,
+    mut buttons: Query<
+        (
+            &Interaction,
+            &ModelLibraryInFlightRemoveButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        Changed<Interaction>,
+    >,
+) {
+    for (interaction, button, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.16, 0.10, 0.10, 0.95));
+                *border = BorderColor::all(Color::srgba(0.65, 0.25, 0.25, 0.90));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.18, 0.08, 0.08, 0.98));
+                *border = BorderColor::all(Color::srgba(0.80, 0.25, 0.25, 0.95));
+
+                let run_id = uuid::Uuid::from_u128(button.run_id);
+                if job.run_id() == Some(run_id) && (job.is_running() || job.can_resume()) {
+                    crate::gen3d::gen3d_cancel_build_from_api(&mut workshop, &mut job);
+                }
+                if let Err(err) =
+                    crate::gen3d::remove_gen3d_in_flight_entry(&active.realm_id, run_id)
+                {
+                    warn!("Failed to remove Gen3D in-flight entry: {err}");
+                }
+                state.mark_models_dirty();
+            }
         }
     }
 }
@@ -2282,7 +2574,10 @@ pub(crate) fn model_library_update_list_item_styles(
             continue;
         }
 
-        let is_selected = selected_id == Some(button.model_id);
+        let is_selected = button
+            .kind
+            .prefab_id()
+            .is_some_and(|id| selected_id == Some(id));
 
         let (bg_color, border_color) = match *interaction {
             Interaction::Pressed => (
@@ -2327,7 +2622,7 @@ pub(crate) fn model_library_update_list_item_styles(
         if !selection_changed && !mark.is_added() {
             continue;
         }
-        *vis = if selected_id == Some(mark.model_id) {
+        *vis = if selected_id == Some(mark.prefab_id) {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -2389,7 +2684,9 @@ pub(crate) fn model_library_scroll_selected_item_into_view(
 
     let Some((item_node, item_transform)) = items
         .iter()
-        .find(|(button, _node, _transform)| button.model_id == selected_id)
+        .find(|(button, _node, _transform)| {
+            button.kind.prefab_id().is_some_and(|id| id == selected_id)
+        })
         .map(|(_button, node, transform)| (node, transform))
     else {
         return;

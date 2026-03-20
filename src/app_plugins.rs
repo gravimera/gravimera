@@ -220,6 +220,9 @@ impl Plugin for RenderedUiPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_item_button_interactions
                     .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_in_flight_remove_button_interactions
+                    .after(crate::model_library_ui::model_library_item_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_update_list_item_styles
                     .after(crate::model_library_ui::model_library_rebuild_list_ui)
                     .after(crate::model_library_ui::model_library_open_preview_panel)
@@ -431,6 +434,10 @@ impl Plugin for RenderedGen3dPlugin {
         app.add_systems(
             Update,
             crate::gen3d::gen3d_poll_ai_job.after(crate::gen3d::gen3d_generate_button),
+        );
+        app.add_systems(
+            Update,
+            crate::gen3d::gen3d_flush_in_flight_dirty.after(crate::gen3d::gen3d_poll_ai_job),
         );
         app.add_systems(
             Update,

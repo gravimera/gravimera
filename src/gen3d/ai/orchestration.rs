@@ -58,6 +58,7 @@ use super::super::{
 
 pub(crate) fn gen3d_generate_button(
     build_scene: Res<State<BuildScene>>,
+    active: Res<crate::realm::ActiveRealmScene>,
     config: Res<AppConfig>,
     log_sinks: Option<Res<crate::app::Gen3dLogSinks>>,
     mut workshop: ResMut<Gen3dWorkshop>,
@@ -90,6 +91,8 @@ pub(crate) fn gen3d_generate_button(
                 }
                 match gen3d_start_build_from_api(
                     build_scene.as_ref(),
+                    &active.realm_id,
+                    &active.scene_id,
                     &config,
                     log_sinks.clone(),
                     &mut workshop,
@@ -278,6 +281,14 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     workshop.error = None;
     workshop.status =
         "Build stopped. Click Continue to resume, or Build to start a new run.".to_string();
+
+    if let (Some(realm_id), Some(run_id)) = (job.run_realm_id(), job.run_id) {
+        if let Err(err) = crate::gen3d::remove_gen3d_in_flight_entry(realm_id, run_id) {
+            warn!("Failed to remove Gen3D in-flight entry: {err}");
+        } else {
+            job.mark_in_flight_dirty();
+        }
+    }
 }
 
 pub(crate) fn gen3d_resume_build_from_api(
@@ -322,6 +333,19 @@ pub(crate) fn gen3d_resume_build_from_api(
     job.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
     job.running = true;
     job.build_complete = false;
+    if let (Some(realm_id), Some(run_id)) = (job.run_realm_id(), job.run_id) {
+        if let Err(err) = crate::gen3d::upsert_gen3d_in_flight_entry(
+            realm_id,
+            run_id,
+            crate::gen3d::gen3d_in_flight_label(&workshop.prompt, job.user_images.len()),
+            crate::gen3d::Gen3dInFlightStatus::Running,
+            None,
+        ) {
+            warn!("Failed to update Gen3D in-flight entry: {err}");
+        } else {
+            job.mark_in_flight_dirty();
+        }
+    }
     job.mode = match config.gen3d_orchestrator {
         crate::config::Gen3dOrchestrator::Agent => Gen3dAiMode::Agent,
         crate::config::Gen3dOrchestrator::Pipeline => Gen3dAiMode::Pipeline,
@@ -511,7 +535,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job: &mut Gen3dAiJob,
     draft: &mut Gen3dDraft,
     realm_id: &str,
-    _scene_id: &str,
+    scene_id: &str,
     prefab_id: u128,
     mode: Gen3dSeededSessionMode,
 ) -> Result<(), String> {
@@ -610,6 +634,8 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     // Reset job state but keep the seeded draft.
     job.log_sinks = log_sinks;
     job.metrics = Gen3dRunMetrics::default();
+    job.run_realm_id = Some(realm_id.to_string());
+    job.run_scene_id = Some(scene_id.to_string());
     job.reset_session();
     job.running = false;
     job.cancel_flag = None;
@@ -977,6 +1003,8 @@ fn reconstruct_gen3d_draft_defs_from_saved_prefabs(
 
 pub(crate) fn gen3d_start_build_from_api(
     build_scene: &State<BuildScene>,
+    realm_id: &str,
+    scene_id: &str,
     config: &AppConfig,
     log_sinks: Option<crate::app::Gen3dLogSinks>,
     workshop: &mut Gen3dWorkshop,
@@ -1025,6 +1053,8 @@ pub(crate) fn gen3d_start_build_from_api(
 
     job.log_sinks = log_sinks;
     job.metrics = Gen3dRunMetrics::default();
+    job.run_realm_id = Some(realm_id.to_string());
+    job.run_scene_id = Some(scene_id.to_string());
 
     let image_paths: Vec<PathBuf> = workshop.images.iter().map(|i| i.path.clone()).collect();
     let (run_id, run_dir) = gen3d_make_run_dir(config);
@@ -1138,6 +1168,17 @@ pub(crate) fn gen3d_start_build_from_api(
         0
     };
     job.run_id = Some(run_id);
+    if let Err(err) = crate::gen3d::upsert_gen3d_in_flight_entry(
+        realm_id,
+        run_id,
+        crate::gen3d::gen3d_in_flight_label(&workshop.prompt, cached_image_paths.len()),
+        crate::gen3d::Gen3dInFlightStatus::Running,
+        None,
+    ) {
+        warn!("Failed to write Gen3D in-flight entry: {err}");
+    } else {
+        job.mark_in_flight_dirty();
+    }
     job.attempt = 0;
     job.pass = 0;
     job.plan_hash.clear();
@@ -3247,6 +3288,7 @@ fn poll_gen3d_parallel_components(
 
 pub(super) fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: impl Into<String>) {
     let err = err.into();
+    let err_short = truncate_for_ui(err.trim(), 240);
     error!("Gen3D: build failed: {}", truncate_for_ui(&err, 1200));
     workshop.status_log.finish_step_if_active(format!(
         "Error: {}",
@@ -3290,6 +3332,18 @@ pub(super) fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: 
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
+
+    if let (Some(realm_id), Some(run_id)) = (job.run_realm_id(), job.run_id) {
+        if let Err(err) = crate::gen3d::mark_gen3d_in_flight_failed(
+            realm_id,
+            run_id,
+            err_short.clone(),
+        ) {
+            warn!("Failed to mark Gen3D in-flight entry failed: {err}");
+        } else {
+            job.mark_in_flight_dirty();
+        }
+    }
 }
 
 fn abort_pending_agent_tool_call(job: &mut Gen3dAiJob, reason: String) {

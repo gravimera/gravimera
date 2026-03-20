@@ -580,6 +580,8 @@ pub(crate) struct Gen3dAiJob {
     pub(super) ai: Option<Gen3dAiServiceConfig>,
     pub(super) require_structured_outputs: bool,
     pub(super) run_id: Option<Uuid>,
+    pub(super) run_realm_id: Option<String>,
+    pub(super) run_scene_id: Option<String>,
     pub(super) attempt: u32,
     pub(super) pass: u32,
     pub(super) plan_hash: String,
@@ -647,6 +649,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) last_saved_prefab_id: Option<u128>,
     pub(super) seed_target_entity: Option<Entity>,
     pub(super) metrics: Gen3dRunMetrics,
+    pub(super) in_flight_dirty: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -849,6 +852,20 @@ impl Gen3dAiJob {
 
     pub(crate) fn run_id(&self) -> Option<Uuid> {
         self.run_id
+    }
+
+    pub(crate) fn run_realm_id(&self) -> Option<&str> {
+        self.run_realm_id.as_deref()
+    }
+
+    pub(crate) fn mark_in_flight_dirty(&mut self) {
+        self.in_flight_dirty = true;
+    }
+
+    pub(crate) fn take_in_flight_dirty(&mut self) -> bool {
+        let dirty = self.in_flight_dirty;
+        self.in_flight_dirty = false;
+        dirty
     }
 
     pub(crate) fn user_prompt_raw(&self) -> &str {

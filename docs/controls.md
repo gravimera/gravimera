@@ -90,3 +90,8 @@ Units in Build mode:
 ## Build Preview (Gen3D)
 
 Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdown (**Object Preview**) and the **Gen3D** button. Full workflow: `docs/gen3d/README.md`.
+
+While a Gen3D build is running:
+
+- A **Generating** entry appears in the Prefabs panel immediately. Click it to reopen Gen3D and see progress.
+- Cancel removes the entry; you can also remove it manually from the Prefabs panel. Entries persist across restarts for cleanup.

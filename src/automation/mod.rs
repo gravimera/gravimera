@@ -1398,6 +1398,8 @@ fn handle_gen3d_routes<
             let sinks = log_sinks.cloned();
             if let Err(err) = crate::gen3d::gen3d_start_build_from_api(
                 build_scene,
+                ctx.active_realm_id,
+                ctx.active_scene_id,
                 config,
                 sinks,
                 workshop,
