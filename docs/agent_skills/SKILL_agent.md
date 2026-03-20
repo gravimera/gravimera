@@ -22,6 +22,29 @@ Or use a config file with:
     disable_local_input = true
     pause_on_start = true
 
+## (Tip) Find the local Gravimera config quickly
+
+By default Gravimera loads:
+
+- `~/.gravimera/config.toml` (or `"$GRAVIMERA_HOME/config.toml"` when `GRAVIMERA_HOME` is set)
+
+Overrides (highest priority first):
+
+- CLI `--config /path/to/config.toml`
+- env `GRAVIMERA_CONFIG=/path/to/config.toml`
+
+For monitor integrations, the most relevant keys are:
+
+    [automation]
+    bind = "127.0.0.1:8791"   # host:port to listen on (use :0 for an ephemeral port)
+    token = "CHANGE_ME"       # optional; if set, clients must send Authorization: Bearer <token>
+
+If `[automation].bind` uses port `0`, the actual listen URL is printed on startup as:
+
+    Automation API listening on http://127.0.0.1:<port>
+
+Tip: if your HTTP client honors `HTTP(S)_PROXY`, ensure loopback is not proxied (set `NO_PROXY=127.0.0.1,localhost`).
+
 ## 1) Discover APIs (don’t hardcode)
 
 Use discovery to confirm the server is up and to get a “starter index” of endpoints:
@@ -116,4 +139,3 @@ The scene lives under `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/` and can
 ## Shutdown (clean exit)
 
     curl -s -X POST http://127.0.0.1:8791/v1/shutdown -H 'Content-Type: application/json' -d '{}'
-
