@@ -658,7 +658,12 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.descriptor_meta_override = None;
     job.pending_finish_run = None;
 
-    job.ai = Some(ai);
+    job.ai = Some(ai.clone());
+    job.session.mock_delay_remaining_ms = if ai.base_url().starts_with("mock://gen3d") {
+        config.gen3d_mock_delay_seconds.saturating_mul(1000)
+    } else {
+        0
+    };
     job.run_id = Some(run_id);
     job.run_dir = Some(run_dir.clone());
 
@@ -1127,6 +1132,11 @@ pub(crate) fn gen3d_start_build_from_api(
     job.plan_attempt = 0;
     job.max_parallel_components = config.gen3d_max_parallel_components.max(1);
     job.ai = Some(ai.clone());
+    job.session.mock_delay_remaining_ms = if ai.base_url().starts_with("mock://gen3d") {
+        config.gen3d_mock_delay_seconds.saturating_mul(1000)
+    } else {
+        0
+    };
     job.run_id = Some(run_id);
     job.attempt = 0;
     job.pass = 0;

@@ -120,6 +120,10 @@ max_parallel_components = 10
 # Budget: max OpenAI tokens per Build run across all requests (default: 10000000). Set to 0 to disable the token budget.
 # max_tokens = 10000000
 
+# Optional: add artificial delay (seconds) to mock://gen3d responses to simulate slow builds.
+# Default: 0 (no delay).
+# mock_delay_seconds = 60
+
 # Budget: max number of `llm_review_delta_v1` calls per Gen3D run.
 # Policy: capped to <= 2 to prevent oscillation.
 # Values: 0..2 (0 disables review-delta).

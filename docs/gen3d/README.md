@@ -21,6 +21,15 @@ cp config.example.toml ~/.gravimera/config.toml
 - Set your AI provider in `[openai]` / `[mimo]` / `[gemini]` / `[claude]`
 - (Optional) Configure Gen3D behavior under `[gen3d]` (notably `orchestrator`)
 
+### Mock backend (debug/test builds only)
+
+To test Gen3D without spending tokens:
+
+- Set your provider `base_url` to `mock://gen3d`.
+- (Optional) Set `[gen3d].mock_delay_seconds = 60` to simulate slow builds (useful for UI/progress
+  testing).
+- Note: the mock backend does not accept reference images; use prompt-only tests.
+
 ## Run artifacts
 
 By default, each Gen3D run writes artifacts under:

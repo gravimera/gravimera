@@ -989,6 +989,7 @@ impl Gen3dAiJob {
             self.session.responses_structured_outputs_supported;
         let chat_stream_required = self.session.chat_stream_required;
         let chat_structured_outputs_supported = self.session.chat_structured_outputs_supported;
+        let mock_delay_remaining_ms = self.session.mock_delay_remaining_ms;
         self.session = Gen3dAiSessionState::default();
         self.session.responses_supported = responses_supported;
         self.session.responses_stream_required = responses_stream_required;
@@ -998,6 +999,7 @@ impl Gen3dAiJob {
             responses_structured_outputs_supported;
         self.session.chat_stream_required = chat_stream_required;
         self.session.chat_structured_outputs_supported = chat_structured_outputs_supported;
+        self.session.mock_delay_remaining_ms = mock_delay_remaining_ms;
     }
 
     pub(super) fn start_run_metrics(&mut self) {
@@ -1296,6 +1298,7 @@ pub(super) struct Gen3dAiSessionState {
     pub(super) chat_stream_required: Option<bool>,
     pub(super) chat_structured_outputs_supported: Option<bool>,
     pub(super) chat_history: Vec<Gen3dChatHistoryMessage>,
+    pub(super) mock_delay_remaining_ms: u64,
 }
 
 #[derive(Clone, Debug)]

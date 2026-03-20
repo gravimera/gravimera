@@ -29,6 +29,61 @@ const CURL_HARD_TIMEOUT_SECS_DEFAULT: u32 = 1_200;
 const CLAUDE_MAX_TOKENS_DEFAULT: u32 = 8_192;
 const CLAUDE_ANTHROPIC_VERSION: &str = "2023-06-01";
 
+#[cfg(any(test, debug_assertions))]
+fn is_cancelled(cancel: Option<&AtomicBool>) -> bool {
+    match cancel {
+        Some(flag) => flag.load(Ordering::Relaxed),
+        None => false,
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+fn sleep_with_cancel(duration: std::time::Duration, cancel: Option<&AtomicBool>) -> bool {
+    if duration.is_zero() {
+        return is_cancelled(cancel);
+    }
+
+    let start = std::time::Instant::now();
+    let step = std::time::Duration::from_millis(50);
+    loop {
+        if is_cancelled(cancel) {
+            return true;
+        }
+        let elapsed = start.elapsed();
+        if elapsed >= duration {
+            return false;
+        }
+        let remaining = duration.saturating_sub(elapsed);
+        std::thread::sleep(step.min(remaining));
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+fn apply_mock_delay_for_session(
+    progress: &Arc<Mutex<Gen3dAiProgress>>,
+    session: &mut Gen3dAiSessionState,
+    cancel: Option<&AtomicBool>,
+    service_label: &str,
+) -> Result<(), String> {
+    let remaining_ms = session.mock_delay_remaining_ms;
+    if remaining_ms == 0 {
+        set_progress(progress, format!("Mocking {service_label}…"));
+        return Ok(());
+    }
+
+    session.mock_delay_remaining_ms = 0;
+    let delay = std::time::Duration::from_millis(remaining_ms);
+    let secs = (remaining_ms + 999) / 1000;
+    set_progress(
+        progress,
+        format!("Mocking {service_label}… (simulated delay {secs}s)"),
+    );
+    if sleep_with_cancel(delay, cancel) {
+        return Err("Cancelled".into());
+    }
+    Ok(())
+}
+
 fn is_claude_structured_outputs_rejected(body: &str) -> bool {
     let preview = body.trim().to_ascii_lowercase();
     let mentions_feature = preview.contains("output_config")
@@ -571,7 +626,8 @@ pub(super) fn generate_text_via_claude(
     if base_url.starts_with("mock://gen3d") {
         #[cfg(any(test, debug_assertions))]
         {
-            set_progress(progress, "Mocking Claude…");
+            let mut session = session;
+            apply_mock_delay_for_session(progress, &mut session, cancel_flag, "Claude")?;
             let text = format!(
                 "{{\"version\":1,\"mock\":true,\"service\":\"claude\",\"echo\":{}}}",
                 serde_json::to_string(user_text).unwrap_or_else(|_| "\"\"".into())

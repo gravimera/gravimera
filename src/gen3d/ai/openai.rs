@@ -385,6 +385,32 @@ fn sleep_with_cancel(duration: std::time::Duration, cancel: Option<&AtomicBool>)
     }
 }
 
+#[cfg(any(test, debug_assertions))]
+fn apply_mock_delay_for_session(
+    progress: &Arc<Mutex<Gen3dAiProgress>>,
+    session: &mut Gen3dAiSessionState,
+    cancel: Option<&AtomicBool>,
+    service_label: &str,
+) -> Result<(), String> {
+    let remaining_ms = session.mock_delay_remaining_ms;
+    if remaining_ms == 0 {
+        set_progress(progress, format!("Mocking {service_label}…"));
+        return Ok(());
+    }
+
+    session.mock_delay_remaining_ms = 0;
+    let delay = std::time::Duration::from_millis(remaining_ms);
+    let secs = (remaining_ms + 999) / 1000;
+    set_progress(
+        progress,
+        format!("Mocking {service_label}… (simulated delay {secs}s)"),
+    );
+    if sleep_with_cancel(delay, cancel) {
+        return Err("Cancelled".into());
+    }
+    Ok(())
+}
+
 fn read_stream_to_end(
     mut reader: impl std::io::Read,
     start: std::time::Instant,
@@ -747,10 +773,10 @@ pub(super) fn generate_text_via_openai(
     if base_url.starts_with("mock://gen3d") {
         #[cfg(any(test, debug_assertions))]
         {
-            set_progress(progress, "Mocking OpenAI…");
+            apply_mock_delay_for_session(progress, &mut session, cancel, "OpenAI")?;
             let resp = mock_generate_text_via_openai(
                 progress,
-                session.clone(),
+                session,
                 expected_schema,
                 system_instructions,
                 user_text,
