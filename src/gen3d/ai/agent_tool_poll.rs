@@ -1829,8 +1829,12 @@ pub(super) fn poll_agent_tool(
 
                     match parsed {
                         Ok(value) => {
+                            let workspace_id = job.active_workspace_id().trim().to_string();
+                            let if_assembly_rev = job.assembly_rev();
                             let json = serde_json::json!({
                                 "version": 1,
+                                "workspace_id": workspace_id,
+                                "if_assembly_rev": if_assembly_rev,
                                 "ops": value.ops,
                             });
                             if let Some(dir) = job.pass_dir.as_deref() {

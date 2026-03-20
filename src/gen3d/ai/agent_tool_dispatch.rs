@@ -1,19 +1,21 @@
 use bevy::prelude::*;
 use serde::Deserialize;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_BASIS_FROM_UP_FORWARD,
-    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE,
-    TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT,
-    TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE,
-    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_TOOL_DETAIL,
-    TOOL_ID_GET_USER_INPUTS, TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST,
-    TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH,
-    TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED,
-    TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
-    TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT, TOOL_ID_APPLY_LAST_DRAFT_OPS,
+    TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_BASIS_FROM_UP_FORWARD, TOOL_ID_COPY_COMPONENT,
+    TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE,
+    TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS,
+    TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
+    TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_GET_USER_INPUTS,
+    TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST, TOOL_ID_INFO_EVENTS_GET,
+    TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH, TOOL_ID_INFO_KV_GET,
+    TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED, TOOL_ID_INFO_KV_LIST_HISTORY,
+    TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS,
+    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
@@ -112,6 +114,89 @@ fn normalize_tool_call_args(call: &mut Gen3dToolCallJsonV1) -> Result<(), String
             }
         )),
     }
+}
+
+#[derive(Clone, Debug)]
+struct Gen3dPassArtifactRef {
+    attempt: u32,
+    pass: u32,
+    path: PathBuf,
+}
+
+fn parse_prefixed_u32(name: &str, prefix: &str) -> Option<u32> {
+    name.strip_prefix(prefix)?.trim().parse::<u32>().ok()
+}
+
+fn find_latest_gen3d_pass_artifact(
+    run_dir: &Path,
+    filename: &str,
+) -> Result<Gen3dPassArtifactRef, String> {
+    let mut best: Option<Gen3dPassArtifactRef> = None;
+    let attempts = std::fs::read_dir(run_dir).map_err(|err| {
+        format!(
+            "Failed to read Gen3D run_dir `{}`: {err}",
+            run_dir.display()
+        )
+    })?;
+    for attempt_entry in attempts {
+        let Ok(attempt_entry) = attempt_entry else {
+            continue;
+        };
+        let Ok(file_type) = attempt_entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let name = attempt_entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(attempt) = parse_prefixed_u32(name.as_ref(), "attempt_") else {
+            continue;
+        };
+        let attempt_dir = attempt_entry.path();
+        let passes = match std::fs::read_dir(&attempt_dir) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        for pass_entry in passes {
+            let Ok(pass_entry) = pass_entry else {
+                continue;
+            };
+            let Ok(file_type) = pass_entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let name = pass_entry.file_name();
+            let name = name.to_string_lossy();
+            let Some(pass) = parse_prefixed_u32(name.as_ref(), "pass_") else {
+                continue;
+            };
+            let path = pass_entry.path().join(filename);
+            if !path.is_file() {
+                continue;
+            }
+            let is_better = match best.as_ref() {
+                None => true,
+                Some(b) => attempt > b.attempt || (attempt == b.attempt && pass > b.pass),
+            };
+            if is_better {
+                best = Some(Gen3dPassArtifactRef {
+                    attempt,
+                    pass,
+                    path,
+                });
+            }
+        }
+    }
+
+    best.ok_or_else(|| {
+        format!(
+            "No `{filename}` artifact found under run_dir `{}`.",
+            run_dir.display()
+        )
+    })
 }
 
 const MAX_PLAN_TEMPLATE_BYTES: usize = 64 * 1024;
@@ -4384,6 +4469,461 @@ pub(super) fn execute_tool_call(
                     info_kv_ref_json(INFO_KV_NAMESPACE_GEN3D, key.as_str(), record.kv_rev),
                 );
             }
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
+        }
+        TOOL_ID_APPLY_LAST_DRAFT_OPS => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct ApplyLastDraftOpsArgsV1 {}
+
+            let _: ApplyLastDraftOpsArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid args for `{TOOL_ID_APPLY_LAST_DRAFT_OPS}`: {err}"),
+                    ));
+                }
+            };
+
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+
+            let run_dir = match job.run_dir_path() {
+                Some(v) => v.to_path_buf(),
+                None => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        "No active Gen3D run (missing run_dir).".into(),
+                    ));
+                }
+            };
+
+            let artifact = match find_latest_gen3d_pass_artifact(
+                run_dir.as_path(),
+                "draft_ops_suggested_last.json",
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "{err}\nHint: Call `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}` first to generate DraftOps suggestions."
+                        ),
+                    ));
+                }
+            };
+
+            let text = match std::fs::read_to_string(&artifact.path) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!("Failed to read `{}`: {err}", artifact.path.display()),
+                    ));
+                }
+            };
+            let suggested: serde_json::Value =
+                match serde_json::from_str(&text).or_else(|_| json5::from_str(&text)) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call_id,
+                            tool_id,
+                            format!("Invalid JSON in `{}`: {err}", artifact.path.display()),
+                        ));
+                    }
+                };
+
+            let ops = match suggested.get("ops") {
+                Some(serde_json::Value::Array(_)) => suggested.get("ops").cloned().unwrap(),
+                Some(_) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "Invalid `{}` payload: expected `ops` array.",
+                            artifact.path.display()
+                        ),
+                    ));
+                }
+                None => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "Invalid `{}` payload: missing `ops`.",
+                            artifact.path.display()
+                        ),
+                    ));
+                }
+            };
+
+            if let Some(ws) = suggested
+                .get("workspace_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
+                let current = job.active_workspace_id().trim();
+                if ws != current {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "DraftOps suggestions target workspace_id={ws:?}, but active_workspace_id is {current:?}. Switch workspaces via `{TOOL_ID_SET_ACTIVE_WORKSPACE}` or re-run `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`."
+                        ),
+                    ));
+                }
+            }
+
+            let suggested_if_assembly_rev = suggested
+                .get("if_assembly_rev")
+                .and_then(|v| v.as_u64())
+                .or_else(|| suggested.get("assembly_rev").and_then(|v| v.as_u64()))
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or_else(|| job.assembly_rev());
+
+            let apply_args = serde_json::json!({
+                "version": 1,
+                "atomic": true,
+                "if_assembly_rev": suggested_if_assembly_rev,
+                "ops": ops,
+            });
+            let mut json = match super::draft_ops::apply_draft_ops_v1(
+                job,
+                draft,
+                Some(call_id.as_str()),
+                apply_args,
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "{err}\nHint: If this is an `if_assembly_rev` mismatch, re-run `{TOOL_ID_QUERY_COMPONENT_PARTS}` + `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}` to get fresh DraftOps for the current draft."
+                        ),
+                    ));
+                }
+            };
+
+            let relative_path = artifact
+                .path
+                .strip_prefix(run_dir.as_path())
+                .ok()
+                .and_then(|p| p.to_str())
+                .map(|s| s.replace('\\', "/"))
+                .unwrap_or_else(|| artifact.path.display().to_string());
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert(
+                    "applied_from".into(),
+                    serde_json::json!({
+                        "kind": "draft_ops_suggested_last_artifact",
+                        "relative_path": relative_path,
+                        "attempt": artifact.attempt,
+                        "pass": artifact.pass,
+                        "tool_id": TOOL_ID_LLM_GENERATE_DRAFT_OPS,
+                        "if_assembly_rev": suggested_if_assembly_rev,
+                    }),
+                );
+            }
+
+            let workspace_id = job.active_workspace_id().trim().to_string();
+            let key = format!("ws.{workspace_id}.apply_draft_ops_last");
+            let ok = json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let committed = json
+                .get("committed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let record = match info_kv_put_for_tool(
+                job,
+                workspace_id.as_str(),
+                tool_id.as_str(),
+                call_id.as_str(),
+                key.as_str(),
+                json.clone(),
+                format!("apply last draft ops (ok={ok} committed={committed})"),
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert(
+                    "info_kv".into(),
+                    info_kv_ref_json(INFO_KV_NAMESPACE_GEN3D, key.as_str(), record.kv_rev),
+                );
+            }
+
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
+        }
+        TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct ApplyDraftOpsFromEventArgsV1 {
+                event_id: u64,
+            }
+
+            let args: ApplyDraftOpsFromEventArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid args for `{TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT}`: {err}"),
+                    ));
+                }
+            };
+            if args.event_id == 0 {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "args.event_id must be > 0.".into(),
+                ));
+            }
+
+            let call_id = call.call_id.clone();
+            let tool_id = call.tool_id.clone();
+
+            let (event_attempt, event_pass, event_assembly_rev, event_tool_id, event_call_id, data) =
+                match job.ensure_info_store() {
+                    Ok(store) => {
+                        let Some(event) = store.event_by_id(args.event_id) else {
+                            return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                                call_id,
+                                tool_id,
+                                format!("Unknown event_id {}.", args.event_id),
+                            ));
+                        };
+                        if event.kind != super::info_store::InfoEventKindV1::ToolCallResult {
+                            return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                                call_id,
+                                tool_id,
+                                format!(
+                                    "event_id {} is kind={:?} (expected tool_call_result).",
+                                    args.event_id, event.kind
+                                ),
+                            ));
+                        }
+                        (
+                            event.attempt,
+                            event.pass,
+                            event.assembly_rev,
+                            event.tool_id.clone(),
+                            event.call_id.clone(),
+                            event.data.clone(),
+                        )
+                    }
+                    Err(err) => {
+                        return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                            call_id, tool_id, err,
+                        ));
+                    }
+                };
+
+            if event_tool_id.as_deref() != Some(TOOL_ID_LLM_GENERATE_DRAFT_OPS) {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call_id,
+                    tool_id,
+                    format!(
+                        "event_id {} tool_id={:?} (expected `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`).",
+                        args.event_id, event_tool_id
+                    ),
+                ));
+            }
+
+            let data_obj = match data.as_object() {
+                Some(v) => v,
+                None => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "event_id {} data is not an object (expected a tool result record).",
+                            args.event_id
+                        ),
+                    ));
+                }
+            };
+            let ok = data_obj
+                .get("ok")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let tool_result_tool_id = data_obj
+                .get("tool_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let tool_error = data_obj
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let suggested = data_obj
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+
+            if !ok {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call_id,
+                    tool_id,
+                    format!(
+                        "event_id {} tool result is ok=false (tool_error={}): re-run `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`.",
+                        args.event_id,
+                        if tool_error.is_empty() { "<none>" } else { tool_error }
+                    ),
+                ));
+            }
+            if tool_result_tool_id != TOOL_ID_LLM_GENERATE_DRAFT_OPS {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call_id,
+                    tool_id,
+                    format!(
+                        "event_id {} tool result tool_id={} (expected `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`).",
+                        args.event_id, tool_result_tool_id
+                    ),
+                ));
+            }
+            let ops = match suggested.get("ops") {
+                Some(serde_json::Value::Array(_)) => suggested.get("ops").cloned().unwrap(),
+                Some(_) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "event_id {} payload invalid: expected `result.ops` array.",
+                            args.event_id
+                        ),
+                    ));
+                }
+                None => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "event_id {} payload invalid: missing `result.ops`.",
+                            args.event_id
+                        ),
+                    ));
+                }
+            };
+
+            if let Some(ws) = suggested
+                .get("workspace_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
+                let current = job.active_workspace_id().trim();
+                if ws != current {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "DraftOps suggestions target workspace_id={ws:?}, but active_workspace_id is {current:?}. Switch workspaces via `{TOOL_ID_SET_ACTIVE_WORKSPACE}` or re-run `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}`."
+                        ),
+                    ));
+                }
+            }
+
+            if let Some(if_rev) = suggested
+                .get("if_assembly_rev")
+                .and_then(|v| v.as_u64())
+                .and_then(|v| u32::try_from(v).ok())
+            {
+                if if_rev != event_assembly_rev {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "event_id {} payload if_assembly_rev={} does not match event.assembly_rev={event_assembly_rev}.",
+                            args.event_id, if_rev
+                        ),
+                    ));
+                }
+            }
+
+            let apply_args = serde_json::json!({
+                "version": 1,
+                "atomic": true,
+                "if_assembly_rev": event_assembly_rev,
+                "ops": ops,
+            });
+            let mut json = match super::draft_ops::apply_draft_ops_v1(
+                job,
+                draft,
+                Some(call_id.as_str()),
+                apply_args,
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id,
+                        tool_id,
+                        format!(
+                            "{err}\nHint: If this is an `if_assembly_rev` mismatch, re-run `{TOOL_ID_QUERY_COMPONENT_PARTS}` + `{TOOL_ID_LLM_GENERATE_DRAFT_OPS}` to get fresh DraftOps for the current draft."
+                        ),
+                    ));
+                }
+            };
+
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert(
+                    "applied_from".into(),
+                    serde_json::json!({
+                        "kind": "info_event",
+                        "event_id": args.event_id,
+                        "attempt": event_attempt,
+                        "pass": event_pass,
+                        "tool_id": TOOL_ID_LLM_GENERATE_DRAFT_OPS,
+                        "call_id": event_call_id,
+                        "assembly_rev": event_assembly_rev,
+                    }),
+                );
+            }
+
+            let workspace_id = job.active_workspace_id().trim().to_string();
+            let key = format!("ws.{workspace_id}.apply_draft_ops_last");
+            let ok = json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let committed = json
+                .get("committed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let record = match info_kv_put_for_tool(
+                job,
+                workspace_id.as_str(),
+                tool_id.as_str(),
+                call_id.as_str(),
+                key.as_str(),
+                json.clone(),
+                format!(
+                    "apply draft ops from event (ok={ok} committed={committed} event_id={})",
+                    args.event_id
+                ),
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call_id, tool_id, err,
+                    ));
+                }
+            };
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert(
+                    "info_kv".into(),
+                    info_kv_ref_json(INFO_KV_NAMESPACE_GEN3D, key.as_str(), record.kv_rev),
+                );
+            }
+
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
         }
         TOOL_ID_APPLY_PLAN_OPS => {

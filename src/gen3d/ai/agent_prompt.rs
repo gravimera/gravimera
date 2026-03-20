@@ -139,6 +139,7 @@ Rules:\n\
   - Do NOT retry force-regeneration while QA is clean/unknown.\n\
   - Exit this state deterministically (do NOT keep inspecting):\n\
     - Prefer deterministic edits via `apply_draft_ops_v1` (ex: recolor primitives, adjust attachment offsets).\n\
+    - For LLM-driven primitive edits, use DraftOps: `query_component_parts_v1` → `llm_generate_draft_ops_v1` → `apply_last_draft_ops_v1` (or `apply_draft_ops_from_event_v1`).\n\
     - If the request truly requires regeneration/style rebuild, disable preserve mode via `llm_generate_plan_v1` with `constraints.preserve_existing_components=false`, then regenerate without `force`.\n\
     - If QA is ok and you have no deterministic fixes to apply, output `done` and mention the blocked indices.\n\
 - Regen budgets: regenerating an already-generated component counts against a regen budget. If a regen tool returns skipped_due_to_regen_budget, stop trying to regenerate and fix via transform/anchor tweaks instead.\n\

@@ -28,6 +28,8 @@ pub(crate) const TOOL_ID_INFO_EVENTS_SEARCH: &str = "info_events_search_v1";
 pub(crate) const TOOL_ID_INFO_BLOBS_LIST: &str = "info_blobs_list_v1";
 pub(crate) const TOOL_ID_INFO_BLOBS_GET: &str = "info_blobs_get_v1";
 pub(crate) const TOOL_ID_APPLY_DRAFT_OPS: &str = "apply_draft_ops_v1";
+pub(crate) const TOOL_ID_APPLY_LAST_DRAFT_OPS: &str = "apply_last_draft_ops_v1";
+pub(crate) const TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT: &str = "apply_draft_ops_from_event_v1";
 pub(crate) const TOOL_ID_APPLY_PLAN_OPS: &str = "apply_plan_ops_v1";
 pub(crate) const TOOL_ID_RECENTER_ATTACHMENT_MOTION: &str = "recenter_attachment_motion_v1";
 pub(crate) const TOOL_ID_SNAPSHOT: &str = "snapshot_v1";
@@ -401,6 +403,22 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 }),
             },
             Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_APPLY_LAST_DRAFT_OPS,
+                title: "Apply last DraftOps",
+                one_line_summary:
+                    "Mutates draft: deterministically apply the latest `llm_generate_draft_ops_v1` suggestion saved as `draft_ops_suggested_last.json` (atomic + `if_assembly_rev` gated).",
+                args_schema: "{}",
+                args_example: serde_json::json!({}),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT,
+                title: "Apply DraftOps from event",
+                one_line_summary:
+                    "Mutates draft: apply DraftOps from a prior Info Store `tool_call_result` event_id for `llm_generate_draft_ops_v1` (atomic + `if_assembly_rev` gated).",
+                args_schema: "{ event_id: number }",
+                args_example: serde_json::json!({ "event_id": 123 }),
+            },
+            Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_RECENTER_ATTACHMENT_MOTION,
                 title: "Recenter attachment motion",
                 one_line_summary: "Mutates draft: deterministically recenter attachment delta rotations around neutral (fixes joint_rest_bias_large without changing motion).",
@@ -511,7 +529,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 tool_id: TOOL_ID_LLM_GENERATE_DRAFT_OPS,
                 title: "LLM: generate DraftOps",
                 one_line_summary:
-                    "LLM-only: suggests `apply_draft_ops_v1` ops for in-place primitive edits (no mutation by itself). Requires existing component parts snapshots (call query_component_parts_v1 first). The engine validates + clamps ops deterministically before returning them.",
+                    "LLM-only: suggests `apply_draft_ops_v1` ops for in-place primitive edits (no mutation by itself). Requires existing component parts snapshots (call query_component_parts_v1 first). The engine validates + clamps ops deterministically before returning them; result includes `workspace_id` + `if_assembly_rev` for safe application.",
                 args_schema:
                     "{ prompt: string, scope_components?: string[], max_ops?: number, strategy?: \"conservative\"|\"balanced\", allow_remove_parts?: bool }",
                 args_example: serde_json::json!({

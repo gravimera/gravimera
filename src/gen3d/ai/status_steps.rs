@@ -1,8 +1,8 @@
 use crate::gen3d::agent::tools::{
-    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_LLM_GENERATE_COMPONENT,
-    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_DRAFT_OPS,
-    TOOL_ID_LLM_GENERATE_MOTION_AUTHORING, TOOL_ID_LLM_GENERATE_PLAN,
-    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_QA,
+    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT, TOOL_ID_APPLY_LAST_DRAFT_OPS,
+    TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::Gen3dToolCallJsonV1;
@@ -52,6 +52,8 @@ fn tool_step_label(tool_id: &str, call: Option<&Gen3dToolCallJsonV1>) -> String 
         }
         TOOL_ID_LLM_GENERATE_DRAFT_OPS => "Draft ops (suggest)".into(),
         TOOL_ID_APPLY_DRAFT_OPS => "Draft ops (apply)".into(),
+        TOOL_ID_APPLY_LAST_DRAFT_OPS => "Draft ops (apply last)".into(),
+        TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT => "Draft ops (apply from event)".into(),
         TOOL_ID_VALIDATE => "Validate".into(),
         TOOL_ID_SMOKE_CHECK => "Smoke check".into(),
         TOOL_ID_QA => "QA".into(),
@@ -90,6 +92,13 @@ fn tool_step_why(tool_id: &str, call: Option<&Gen3dToolCallJsonV1>) -> String {
         TOOL_ID_QUERY_COMPONENT_PARTS => "Capture part snapshots for deterministic editing.".into(),
         TOOL_ID_LLM_GENERATE_DRAFT_OPS => "Suggest safe primitive edits (no regeneration).".into(),
         TOOL_ID_APPLY_DRAFT_OPS => "Apply DraftOps atomically (gated by assembly_rev).".into(),
+        TOOL_ID_APPLY_LAST_DRAFT_OPS => {
+            "Apply the latest suggested DraftOps atomically (gated by assembly_rev).".into()
+        }
+        TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT => {
+            "Apply DraftOps from a previous suggestion event atomically (gated by assembly_rev)."
+                .into()
+        }
         TOOL_ID_VALIDATE => "Validate structural rules for the draft.".into(),
         TOOL_ID_SMOKE_CHECK => "Run bounded behavior/motion checks for the draft.".into(),
         TOOL_ID_QA => "Run validate + smoke checks; collect errors and warnings.".into(),
@@ -162,6 +171,20 @@ pub(super) fn log_tool_call_finished(
                 }
             }
             TOOL_ID_APPLY_DRAFT_OPS => {
+                let rejected = result
+                    .result
+                    .as_ref()
+                    .and_then(|v| v.get("rejected_ops"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.len())
+                    .unwrap_or(0);
+                if rejected > 0 {
+                    format!("Rejected ops: {rejected}")
+                } else {
+                    "OK".into()
+                }
+            }
+            TOOL_ID_APPLY_LAST_DRAFT_OPS | TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT => {
                 let rejected = result
                     .result
                     .as_ref()
