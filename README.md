@@ -56,6 +56,13 @@ Copy/paste this into an external agent (e.g. OpenClaw). It links to the single s
 ```text
 Use this repo’s docs to drive a local Gravimera process as a live “agent monitor” via the Automation HTTP API:
 
-- docs/agent_skills/SKILL_agent.md (monitor workflow: scenes, units, toast, built-in TTS)
-- docs/automation_http_api.md      (API reference; start with GET /v1/discovery)
+Repo: https://github.com/gravimera/gravimera
+
+Read (single source of truth):
+- https://github.com/gravimera/gravimera/blob/main/docs/agent_skills/SKILL_agent.md (monitor workflow: scenes, units, toast, built-in TTS)
+- https://github.com/gravimera/gravimera/blob/main/docs/automation_http_api.md      (API reference; start with GET /v1/discovery)
+
+If you have a local checkout, the same docs are at:
+- docs/agent_skills/SKILL_agent.md
+- docs/automation_http_api.md
 ```
