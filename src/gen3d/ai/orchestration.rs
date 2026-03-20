@@ -61,6 +61,7 @@ pub(crate) fn gen3d_generate_button(
     active: Res<crate::realm::ActiveRealmScene>,
     config: Res<AppConfig>,
     log_sinks: Option<Res<crate::app::Gen3dLogSinks>>,
+    mut mock_jobs: ResMut<crate::gen3d::Gen3dMockJobManager>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut job: ResMut<Gen3dAiJob>,
     mut draft: ResMut<Gen3dDraft>,
@@ -86,7 +87,7 @@ pub(crate) fn gen3d_generate_button(
             Interaction::Pressed => {
                 *bg = BackgroundColor(Color::srgba(0.12, 0.20, 0.15, 0.98));
                 if job.running {
-                    gen3d_cancel_build_from_api(&mut workshop, &mut job);
+                    gen3d_cancel_build_from_api(&mut workshop, &mut job, Some(&mut mock_jobs));
                     continue;
                 }
                 match gen3d_start_build_from_api(
@@ -94,6 +95,7 @@ pub(crate) fn gen3d_generate_button(
                     &active.realm_id,
                     &active.scene_id,
                     &config,
+                    Some(&mut mock_jobs),
                     log_sinks.clone(),
                     &mut workshop,
                     &mut job,
@@ -221,7 +223,35 @@ pub(crate) fn gen3d_apply_pending_seed_from_prefab(
     }
 }
 
-pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {
+pub(crate) fn gen3d_cancel_build_from_api(
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    mut mock_jobs: Option<&mut crate::gen3d::Gen3dMockJobManager>,
+) {
+    if job.is_mock_mode() {
+        if let Some(run_id) = job.run_id() {
+            if let Some(manager) = mock_jobs.as_deref_mut() {
+                if let Some(realm_id) = job.run_realm_id() {
+                    if let Err(err) = crate::gen3d::gen3d_mock_cancel_run(manager, realm_id, run_id)
+                    {
+                        warn!("Failed to cancel Gen3D mock job: {err}");
+                    }
+                }
+            }
+        }
+        job.set_mock_mode(false);
+        job.running = false;
+        job.build_complete = false;
+        job.set_run_id_opt(None);
+        job.set_run_realm_id_opt(None);
+        job.set_run_scene_id_opt(None);
+        job.mark_in_flight_dirty();
+        workshop.status = "Mock build canceled.".into();
+        workshop
+            .status_log
+            .finish_step_if_active("Canceled.".to_string());
+        return;
+    }
     if !job.running {
         return;
     }
@@ -995,6 +1025,7 @@ pub(crate) fn gen3d_start_build_from_api(
     realm_id: &str,
     scene_id: &str,
     config: &AppConfig,
+    mut mock_jobs: Option<&mut crate::gen3d::Gen3dMockJobManager>,
     log_sinks: Option<crate::app::Gen3dLogSinks>,
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
@@ -1003,7 +1034,7 @@ pub(crate) fn gen3d_start_build_from_api(
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return Err("Gen3D build requires Build Preview scene.".into());
     }
-    if job.running {
+    if job.running && !config.gen3d_mock_enabled {
         return Err("Gen3D build is already running (stop it first).".into());
     }
     if workshop.images.is_empty() && workshop.prompt.trim().is_empty() {
@@ -1037,6 +1068,34 @@ pub(crate) fn gen3d_start_build_from_api(
         }
     }
     super::super::validate_gen3d_user_prompt_limits(&workshop.prompt)?;
+
+    if config.gen3d_mock_enabled {
+        let Some(manager) = mock_jobs.as_deref_mut() else {
+            return Err("Gen3D mock job manager unavailable.".into());
+        };
+        let run_id = crate::gen3d::gen3d_mock_enqueue_job(
+            config,
+            manager,
+            realm_id,
+            scene_id,
+            &workshop.prompt,
+            workshop.images.len(),
+        )?;
+        job.set_mock_mode(true);
+        job.set_run_id(run_id);
+        job.set_run_realm_id(realm_id.to_string());
+        job.set_run_scene_id(scene_id.to_string());
+        job.running = true;
+        job.build_complete = false;
+        job.phase = Gen3dAiPhase::Idle;
+        job.mark_in_flight_dirty();
+        workshop.status = "Mock generating…".into();
+        return Ok(());
+    }
+
+    if job.is_mock_mode() {
+        job.set_mock_mode(false);
+    }
 
     let ai = resolve_gen3d_ai_service_config(config)?;
 
@@ -1360,6 +1419,9 @@ pub(crate) fn gen3d_poll_ai_job(
     >,
     review_cameras: Query<Entity, With<Gen3dReviewCaptureCamera>>,
 ) {
+    if job.is_mock_mode() {
+        return;
+    }
     if !job.running {
         return;
     }
@@ -3323,11 +3385,9 @@ pub(super) fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: 
     job.review_delta_repair_attempt = 0;
 
     if let (Some(realm_id), Some(run_id)) = (job.run_realm_id(), job.run_id) {
-        if let Err(err) = crate::gen3d::mark_gen3d_in_flight_failed(
-            realm_id,
-            run_id,
-            err_short.clone(),
-        ) {
+        if let Err(err) =
+            crate::gen3d::mark_gen3d_in_flight_failed(realm_id, run_id, err_short.clone())
+        {
             warn!("Failed to mark Gen3D in-flight entry failed: {err}");
         } else {
             job.mark_in_flight_dirty();

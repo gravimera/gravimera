@@ -431,6 +431,7 @@ struct AutomationGen3d<'w> {
     job: Option<ResMut<'w, crate::gen3d::Gen3dAiJob>>,
     draft: Option<ResMut<'w, crate::gen3d::Gen3dDraft>>,
     pending_seed: Option<ResMut<'w, crate::gen3d::Gen3dPendingSeedFromPrefab>>,
+    mock_jobs: Option<ResMut<'w, crate::gen3d::Gen3dMockJobManager>>,
     asset_server: Option<Res<'w, AssetServer>>,
     assets: Option<Res<'w, SceneAssets>>,
     images: Option<ResMut<'w, Assets<Image>>>,
@@ -1127,6 +1128,7 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
     let mut gen3d_workshop = ctx.gen3d.workshop.as_deref_mut();
     let mut gen3d_job = ctx.gen3d.job.as_deref_mut();
     let mut gen3d_draft = ctx.gen3d.draft.as_deref_mut();
+    let mut gen3d_mock_jobs = ctx.gen3d.mock_jobs.as_deref_mut();
     let asset_server = ctx.gen3d.asset_server.as_deref();
     let assets = ctx.gen3d.assets.as_deref();
     let images = ctx.gen3d.images.as_deref_mut();
@@ -1217,7 +1219,7 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
             let Some(draft) = gen3d_draft.as_deref_mut() else {
                 return Some(json_error(501, "Gen3D is not available in this app mode."));
             };
-            if job.is_running() {
+            if job.is_running() && !config.gen3d_mock_enabled {
                 return Some(json_error(409, "Gen3D build is already running."));
             }
 
@@ -1227,6 +1229,7 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
                 ctx.active_realm_id,
                 ctx.active_scene_id,
                 config,
+                gen3d_mock_jobs.as_deref_mut(),
                 sinks,
                 workshop,
                 job,
@@ -1420,7 +1423,11 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
             let Some(job) = gen3d_job.as_deref_mut() else {
                 return Some(json_error(501, "Gen3D is not available in this app mode."));
             };
-            crate::gen3d::gen3d_cancel_build_from_api(workshop, job);
+            crate::gen3d::gen3d_cancel_build_from_api(
+                workshop,
+                job,
+                gen3d_mock_jobs.as_deref_mut(),
+            );
             Some(AutomationReply {
                 status: 200,
                 body: serde_json::json!({ "ok": true }).to_string().into_bytes(),

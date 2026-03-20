@@ -1,7 +1,8 @@
 mod agent;
 mod ai;
-mod in_flight;
 mod images;
+mod in_flight;
+mod mock_jobs;
 mod preview;
 mod save;
 mod state;
@@ -144,8 +145,12 @@ pub(crate) use images::{
 };
 pub(crate) use in_flight::{
     gen3d_flush_in_flight_dirty, gen3d_in_flight_label, load_gen3d_in_flight_entries,
-    mark_gen3d_in_flight_failed, remove_gen3d_in_flight_entry,
-    upsert_gen3d_in_flight_entry, Gen3dInFlightEntry, Gen3dInFlightStatus,
+    mark_gen3d_in_flight_failed, remove_gen3d_in_flight_entry, upsert_gen3d_in_flight_entry,
+    Gen3dInFlightEntry, Gen3dInFlightStatus,
+};
+pub(crate) use mock_jobs::{
+    gen3d_mock_cancel_run, gen3d_mock_enqueue_job, gen3d_mock_select_active_run,
+    gen3d_tick_mock_jobs, Gen3dMockJobManager,
 };
 pub(crate) use preview::{
     gen3d_apply_draft_to_preview, gen3d_preview_orbit_controls,

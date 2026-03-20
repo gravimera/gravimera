@@ -42,6 +42,22 @@ If generation fails, the Status log shows the step-by-step errors (why/result/du
 
 ---
 
+## Prefabs Panel In-Flight + Mock Concurrency
+
+- Every Build writes an in-flight entry in the Prefabs panel immediately (status: **Generating** / **Queued** / **Failed**).
+- Clicking an in-flight entry switches back to the Gen3D panel to show that run’s status.
+- Canceling a run (or clicking the `X` remove button) removes the in-flight entry.
+- In-flight entries persist across restarts for cleanup if needed.
+
+Mock mode (for testing without token cost):
+
+- Enable with `[gen3d].mock_enabled = true`.
+- Each mock run sleeps for `[gen3d].mock_delay_seconds` (default: 60s) and then saves a simple placeholder prefab.
+- Up to `[gen3d].max_parallel_jobs` mock runs execute concurrently; extra runs are queued FIFO.
+- This path is intended for UI/testing; real Gen3D runs still execute as a single visible job at a time.
+
+---
+
 ## Orchestrators (Agent + Pipeline)
 
 Gen3D supports two orchestrators, selected via `[gen3d].orchestrator` in `config.toml`:
