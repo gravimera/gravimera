@@ -233,6 +233,7 @@ Gen3D mock testing:
 - Set the provider `base_url` to `mock://gen3d` (debug/test builds only) to avoid real token usage.
 - Optional: `[gen3d].mock_delay_seconds = 60` adds a simulated delay (per build) so UI/progress can be tested under slow runs.
 - Note: the mock backend does not accept reference images; use prompt-only tests.
+- An isolated config is available at `test/gen3d_mock/config.toml`; run with `GRAVIMERA_CONFIG=./test/gen3d_mock/config.toml` and optionally set `GRAVIMERA_HOME` to isolate cache/logs.
 
 ---
 
