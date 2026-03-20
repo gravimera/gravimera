@@ -2136,77 +2136,77 @@ pub(crate) fn gen3d_auto_save_when_done(
                 job.last_motion_ok()
             ));
         } else {
-        match player_q.single() {
-            Ok((player_transform, player_collider)) => {
-                match gen3d_save_current_draft_seed_aware_from_api(
-                    &mut commands,
-                    &render.asset_server,
-                    &render.assets,
-                    &mut *render.meshes,
-                    &mut *render.materials,
-                    &mut *render.material_cache,
-                    &mut *render.mesh_cache,
-                    &env.active.realm_id,
-                    &env.active.scene_id,
-                    &mut library,
-                    &mut *prefab_descriptors,
-                    &mut workshop,
-                    &mut job,
-                    &draft,
-                    preview.show_collision,
-                    player_transform,
-                    player_collider,
-                    &world_objects,
-                    &children_q,
-                    &mut scene_saves,
-                ) {
-                    Ok(saved) => {
-                        model_library.mark_models_dirty();
+            match player_q.single() {
+                Ok((player_transform, player_collider)) => {
+                    match gen3d_save_current_draft_seed_aware_from_api(
+                        &mut commands,
+                        &render.asset_server,
+                        &render.assets,
+                        &mut *render.meshes,
+                        &mut *render.materials,
+                        &mut *render.material_cache,
+                        &mut *render.mesh_cache,
+                        &env.active.realm_id,
+                        &env.active.scene_id,
+                        &mut library,
+                        &mut *prefab_descriptors,
+                        &mut workshop,
+                        &mut job,
+                        &draft,
+                        preview.show_collision,
+                        player_transform,
+                        player_collider,
+                        &world_objects,
+                        &children_q,
+                        &mut scene_saves,
+                    ) {
+                        Ok(saved) => {
+                            model_library.mark_models_dirty();
 
-                        let thumbnail_path =
-                            crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
-                                &env.active.realm_id,
+                            let thumbnail_path =
+                                crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
+                                    &env.active.realm_id,
+                                    saved.prefab_id,
+                                );
+                            if let Err(err) = gen3d_request_prefab_thumbnail_capture(
+                                &mut commands,
+                                &mut *thumbnail_capture,
+                                &mut *render.images,
+                                &render.asset_server,
+                                &render.assets,
+                                &mut *render.meshes,
+                                &mut *render.materials,
+                                &mut *render.material_cache,
+                                &mut *render.mesh_cache,
+                                &*library,
                                 saved.prefab_id,
-                            );
-                        if let Err(err) = gen3d_request_prefab_thumbnail_capture(
-                            &mut commands,
-                            &mut *thumbnail_capture,
-                            &mut *render.images,
-                            &render.asset_server,
-                            &render.assets,
-                            &mut *render.meshes,
-                            &mut *render.materials,
-                            &mut *render.material_cache,
-                            &mut *render.mesh_cache,
-                            &*library,
-                            saved.prefab_id,
-                            thumbnail_path,
-                        ) {
-                            warn!("Gen3D: thumbnail capture skipped: {err}");
-                        }
+                                thumbnail_path,
+                            ) {
+                                warn!("Gen3D: thumbnail capture skipped: {err}");
+                            }
 
-                        let short = short_uuid(saved.prefab_id);
-                        save_note = format!("ok ({short})");
-                        workshop
-                            .status_log
-                            .finish_step_if_active(format!("OK ({short})"));
-                    }
-                    Err(err) => {
-                        let err = summarize_error(err.as_str());
-                        save_note = format!("failed ({err})");
-                        workshop
-                            .status_log
-                            .finish_step_if_active(format!("Error: {err}"));
+                            let short = short_uuid(saved.prefab_id);
+                            save_note = format!("ok ({short})");
+                            workshop
+                                .status_log
+                                .finish_step_if_active(format!("OK ({short})"));
+                        }
+                        Err(err) => {
+                            let err = summarize_error(err.as_str());
+                            save_note = format!("failed ({err})");
+                            workshop
+                                .status_log
+                                .finish_step_if_active(format!("Error: {err}"));
+                        }
                     }
                 }
+                Err(_) => {
+                    save_note = "failed (missing hero)".to_string();
+                    workshop
+                        .status_log
+                        .finish_step_if_active("Error: missing hero entity.".to_string());
+                }
             }
-            Err(_) => {
-                save_note = "failed (missing hero)".to_string();
-                workshop
-                    .status_log
-                    .finish_step_if_active("Error: missing hero entity.".to_string());
-            }
-        }
         }
     } else if job.last_saved_prefab_id().is_some() {
         save_note = "skipped (already saved)".to_string();
