@@ -1013,30 +1013,28 @@ pub(super) fn execute_agent_actions(
                     let ignore_idx = job.agent.done_ignored_due_to_qa_errors.saturating_add(1);
                     if ignore_idx <= MAX_IGNORES {
                         job.agent.done_ignored_due_to_qa_errors = ignore_idx;
-                    workshop.error = Some(
-                        format!(
+                        workshop.error = Some(format!(
                             "Agent requested done but latest QA reported errors; continuing (ignore {ignore_idx}/{MAX_IGNORES}). Run `qa_v1`, apply fixits, then retry."
-                        ),
-                    );
-                    workshop.status = "Continuing Gen3D build… (QA errors block overwrite save)"
-                        .to_string();
-                    append_gen3d_run_log(
-                        job.pass_dir.as_deref(),
-                        format!(
-                            "agent_done_ignored (qa errors; overwrite save) validate_ok={:?} smoke_ok={:?} motion_ok={:?}",
+                        ));
+                        workshop.status =
+                            "Continuing Gen3D build… (QA errors block overwrite save)".to_string();
+                        append_gen3d_run_log(
+                            job.pass_dir.as_deref(),
+                            format!(
+                                "agent_done_ignored (qa errors; overwrite save) validate_ok={:?} smoke_ok={:?} motion_ok={:?}",
+                                job.agent.last_validate_ok,
+                                job.agent.last_smoke_ok,
+                                job.agent.last_motion_ok
+                            ),
+                        );
+                        warn!(
+                            "Gen3D agent requested done but QA reported errors; continuing (overwrite save) validate_ok={:?} smoke_ok={:?} motion_ok={:?}",
                             job.agent.last_validate_ok,
                             job.agent.last_smoke_ok,
                             job.agent.last_motion_ok
-                        ),
-                    );
-                    warn!(
-                        "Gen3D agent requested done but QA reported errors; continuing (overwrite save) validate_ok={:?} smoke_ok={:?} motion_ok={:?}",
-                        job.agent.last_validate_ok,
-                        job.agent.last_smoke_ok,
-                        job.agent.last_motion_ok
-                    );
-                    job.agent.step_action_idx = job.agent.step_actions.len();
-                    continue;
+                        );
+                        job.agent.step_action_idx = job.agent.step_actions.len();
+                        continue;
                     }
                 }
 
