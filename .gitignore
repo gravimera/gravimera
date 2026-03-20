@@ -3,9 +3,10 @@
 /.idea
 /.vscode
 .DS_Store
+./cases
+./game_test
+./test
+./tests
+
 *.log
 config.toml
-cases
-game_test/
-test
-tests
