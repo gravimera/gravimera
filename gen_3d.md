@@ -228,6 +228,12 @@ Gen3D AI provider:
   - Gen3D requests Gemini Structured Outputs via `response_json_schema` for schema-constrained calls; use a Gemini model that supports it (Gemini 2.0+).
 - `[gen3d].ai_service = "claude"` uses `[claude]` config (`token` or env `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`).
 
+Gen3D mock testing:
+
+- Set the provider `base_url` to `mock://gen3d` (debug/test builds only) to avoid real token usage.
+- Optional: `[gen3d].mock_delay_seconds = 60` adds a simulated delay (per build) so UI/progress can be tested under slow runs.
+- Note: the mock backend does not accept reference images; use prompt-only tests.
+
 ---
 
 ## AI JSON Schemas (Strict)
