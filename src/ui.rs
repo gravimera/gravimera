@@ -26,6 +26,8 @@ const MODEL_SPEECH_BUBBLE_BASE_OFFSET_PX: Vec2 = Vec2::new(0.0, -48.0);
 const MODEL_SPEECH_BUBBLE_MIN_VALID_SIZE_PX: f32 = 0.5;
 const MODEL_SPEECH_BUBBLE_LAYOUT_STABLE_EPSILON_PX: f32 = 0.5;
 const MODEL_SPEECH_BUBBLE_LAYOUT_STABLE_FRAMES: u8 = 2;
+const UI_TOAST_MAX_COUNT: usize = 6;
+const UI_TOAST_FADE_OUT_SECS: f32 = 0.35;
 
 #[derive(Component)]
 pub(crate) struct HealthChangePopup {
@@ -575,6 +577,191 @@ pub(crate) fn update_model_speech_bubbles(
             bubble.last_size = bubble_size;
             *visibility = Visibility::Inherited;
         }
+    }
+}
+
+fn toast_style(kind: UiToastKind, alpha: f32) -> (Color, Color, Color) {
+    let alpha = alpha.clamp(0.0, 1.0);
+    match kind {
+        UiToastKind::Info => (
+            Color::srgba(0.25, 0.55, 0.95, 0.70 * alpha),
+            Color::srgba(0.03, 0.04, 0.06, 0.82 * alpha),
+            Color::srgba(0.92, 0.92, 0.96, 1.0),
+        ),
+        UiToastKind::Warn => (
+            Color::srgba(0.95, 0.75, 0.20, 0.75 * alpha),
+            Color::srgba(0.06, 0.05, 0.03, 0.86 * alpha),
+            Color::srgba(0.98, 0.95, 0.88, 1.0),
+        ),
+        UiToastKind::Error => (
+            Color::srgba(0.98, 0.25, 0.25, 0.78 * alpha),
+            Color::srgba(0.06, 0.03, 0.03, 0.88 * alpha),
+            Color::srgba(0.98, 0.92, 0.92, 1.0),
+        ),
+    }
+}
+
+fn toast_alpha(toast: &UiToast) -> f32 {
+    if toast.ttl_secs <= 0.0 || !toast.ttl_secs.is_finite() {
+        return 0.0;
+    }
+    let fade_out = UI_TOAST_FADE_OUT_SECS.clamp(0.0, toast.ttl_secs);
+    let fade_start = (toast.ttl_secs - fade_out).max(0.0);
+    if toast.elapsed_secs <= fade_start {
+        return 1.0;
+    }
+    if fade_out <= 0.0 {
+        return 0.0;
+    }
+    let t = ((toast.elapsed_secs - fade_start) / fade_out).clamp(0.0, 1.0);
+    1.0 - t
+}
+
+fn ensure_toast_root(
+    commands: &mut Commands,
+    existing: &Query<Entity, With<UiToastRoot>>,
+) -> Entity {
+    if let Some(root) = existing.iter().next() {
+        return root;
+    }
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(8.0),
+                ..default()
+            },
+            ZIndex(340),
+            UiToastRoot,
+        ))
+        .id()
+}
+
+pub(crate) fn apply_ui_toast_commands(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut events: MessageReader<UiToastCommand>,
+    ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
+    roots: Query<Entity, With<UiToastRoot>>,
+    existing_toasts: Query<Entity, With<UiToast>>,
+) {
+    for event in events.read() {
+        match event {
+            UiToastCommand::Show {
+                text,
+                kind,
+                ttl_secs,
+            } => {
+                let text = text.trim();
+                if text.is_empty() {
+                    continue;
+                }
+
+                let ttl_secs = ttl_secs.clamp(0.2, 120.0);
+                let root = ensure_toast_root(&mut commands, &roots);
+
+                let (border, bg, text_color) = toast_style(*kind, 1.0);
+                let shadow = TextShadow {
+                    offset: Vec2::splat(2.0),
+                    color: Color::linear_rgba(0.0, 0.0, 0.0, 0.55),
+                };
+
+                commands.entity(root).with_children(|parent| {
+                    parent
+                        .spawn((
+                            Node {
+                                max_width: Val::Px(620.0),
+                                min_width: Val::Px(260.0),
+                                padding: UiRect::axes(Val::Px(12.0), Val::Px(10.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(10.0)),
+                                ..default()
+                            },
+                            BackgroundColor(bg),
+                            BorderColor::all(border),
+                            UiToast {
+                                kind: *kind,
+                                ttl_secs,
+                                elapsed_secs: 0.0,
+                                created_at_secs: time.elapsed_secs(),
+                            },
+                        ))
+                        .with_children(|toast| {
+                            spawn_rich_text_line(
+                                toast,
+                                text,
+                                &ui_fonts,
+                                &emoji_atlas,
+                                &asset_server,
+                                15.0,
+                                text_color,
+                                (
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        flex_wrap: FlexWrap::Wrap,
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::Px(2.0),
+                                        row_gap: Val::Px(2.0),
+                                        ..default()
+                                    },
+                                    TextLayout {
+                                        justify: Justify::Center,
+                                        linebreak: LineBreak::WordBoundary,
+                                    },
+                                    UiToastText,
+                                ),
+                                Some(shadow),
+                            );
+                        });
+                });
+            }
+            UiToastCommand::ClearAll => {
+                for entity in existing_toasts.iter() {
+                    commands.entity(entity).try_despawn();
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn update_ui_toasts(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut toasts: Query<(Entity, &mut UiToast, &mut BackgroundColor, &mut BorderColor)>,
+) {
+    let dt = time.delta_secs();
+    let mut seen: Vec<(Entity, f32)> = Vec::new();
+    for (entity, mut toast, mut bg, mut border) in &mut toasts {
+        toast.elapsed_secs += dt;
+        if toast.elapsed_secs >= toast.ttl_secs {
+            commands.entity(entity).try_despawn();
+            continue;
+        }
+
+        let alpha = toast_alpha(&toast);
+        let (border_color, bg_color, _text_color) = toast_style(toast.kind, alpha);
+        bg.0 = bg_color;
+        *border = BorderColor::all(border_color);
+        seen.push((entity, toast.created_at_secs));
+    }
+
+    if seen.len() <= UI_TOAST_MAX_COUNT {
+        return;
+    }
+
+    seen.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let overflow = seen.len().saturating_sub(UI_TOAST_MAX_COUNT);
+    for idx in 0..overflow {
+        let entity = seen[idx].0;
+        commands.entity(entity).try_despawn();
     }
 }
 

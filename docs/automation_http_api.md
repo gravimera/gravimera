@@ -166,6 +166,236 @@ Notes:
 
 - `build_scene` is only meaningful when `mode="build"` and is one of: `realm`, `preview`.
 
+### `GET /v1/discovery`
+
+Return a machine-readable discovery payload: supported features and a list of commonly used endpoints.
+
+```bash
+curl -s http://127.0.0.1:8791/v1/discovery
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "name": "gravimera",
+  "version": "0.0.0",
+  "api": { "version": 1, "base_path": "/v1" },
+  "active": { "realm_id": "default", "scene_id": "default" },
+  "features": { "ui_toast": true, "speech_bubble": true, "tts": true, "realm_scene_switch": true },
+  "endpoints": [{ "method": "GET", "path": "/v1/health" }]
+}
+```
+
+Notes:
+
+- `features.ui_toast` and `features.speech_bubble` are `false` in headless mode (no window).
+- The `endpoints` list is intended as a “starter index”, not a complete schema registry; refer to this doc for full details.
+
+### `GET /v1/prefabs`
+
+List known prefab definitions available to the running world (builtins + any loaded/saved prefabs).
+
+```bash
+curl -s http://127.0.0.1:8791/v1/prefabs
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "prefabs": [
+    {
+      "prefab_id_uuid": "...",
+      "label": "Human",
+      "mobility": true,
+      "size": [1.0, 2.0, 1.0],
+      "tags": [],
+      "roles": [],
+      "provenance_source": "gen3d"
+    }
+  ]
+}
+```
+
+### `GET /v1/realm_scene/active`
+
+Return the currently active realm/scene selection plus on-disk directories.
+
+```bash
+curl -s http://127.0.0.1:8791/v1/realm_scene/active
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "realm_id": "default",
+  "scene_id": "default",
+  "scene_dir": "/abs/path/to/.gravimera/realm/default/scenes/default",
+  "scene_src_dir": "/abs/path/to/.gravimera/realm/default/scenes/default/src",
+  "scene_build_dir": "/abs/path/to/.gravimera/realm/default/scenes/default/build"
+}
+```
+
+### `GET /v1/realm_scene/list`
+
+List realms and their scenes found on disk.
+
+```bash
+curl -s http://127.0.0.1:8791/v1/realm_scene/list
+```
+
+Response (shape):
+
+```json
+{ "ok": true, "realms": [{ "realm_id": "default", "scenes": ["default", "OpenClaw"] }] }
+```
+
+Notes:
+
+- Only ids matching `[A-Za-z0-9._-]` are returned.
+
+### `POST /v1/realm_scene/create`
+
+Create a realm/scene scaffold on disk (scene sources + build dir). Optionally schedule a switch to it.
+
+Request body:
+
+```json
+{
+  "realm_id": "default",
+  "scene_id": "OpenClaw",
+  "label": "OpenClaw",
+  "description": "A monitoring scene for an external agent run.",
+  "switch_to": true
+}
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "realm_id": "default",
+  "scene_id": "OpenClaw",
+  "scheduled_switch": true,
+  "scene_dir": "/abs/path/to/.../scenes/OpenClaw",
+  "scene_src_dir": "/abs/path/to/.../scenes/OpenClaw/src",
+  "scene_build_dir": "/abs/path/to/.../scenes/OpenClaw/build"
+}
+```
+
+Notes:
+
+- `realm_id` defaults to the currently active realm.
+- IDs must match `[A-Za-z0-9._-]` (no slashes).
+- Switching is deferred; step a few frames after scheduling the switch.
+
+### `POST /v1/realm_scene/switch`
+
+Schedule a realm/scene switch (applies after a few frames).
+
+Request body:
+
+```json
+{ "realm_id": "default", "scene_id": "OpenClaw" }
+```
+
+Response:
+
+```json
+{ "ok": true, "realm_id": "default", "scene_id": "OpenClaw", "scheduled_switch": true }
+```
+
+Notes:
+
+- After calling, step 2–5 frames via `POST /v1/step` to let the switch apply.
+
+### `POST /v1/ui/toast`
+
+Show a non-modal “popup message box” toast in rendered mode.
+
+Request body:
+
+```json
+{ "text": "Searching files… 🔍", "kind": "info", "ttl_secs": 3.5 }
+```
+
+Response:
+
+```json
+{ "ok": true }
+```
+
+Notes:
+
+- Requires rendered mode (returns `501` in headless).
+- `kind` is one of: `info`, `warn`, `error` (default: `info`).
+- `ttl_secs` is clamped to `0.2..=120.0`.
+
+### `POST /v1/speak`
+
+Speak text via built-in TTS (ONNX if available, else system TTS) and optionally show a speech bubble above an object.
+
+Request body:
+
+```json
+{
+  "content": "Collecting materials.",
+  "voice": "dog",
+  "volume": 1.0,
+  "instance_id_uuid": "...",
+  "bubble": true
+}
+```
+
+Response (shape):
+
+```json
+{ "ok": true, "speech_id": 1, "voice": "dog", "bubble": true }
+```
+
+Notes:
+
+- Speaking is asynchronous; the response indicates the request was queued.
+- `voice` is one of: `dog`, `cow`, `dragon` (default: `dog`).
+- `content` is capped at 800 characters.
+- `bubble=true` requires `instance_id_uuid` and rendered mode (returns `501` otherwise).
+
+### `POST /v1/scene/save`
+
+Force a `scene.dat` save (async; performed by the scene store systems).
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/scene/save -H 'Content-Type: application/json' -d '{}'
+```
+
+Response:
+
+```json
+{ "ok": true }
+```
+
+### `POST /v1/despawn`
+
+Despawn a world instance by id (for cleanup of props/units).
+
+Request body:
+
+```json
+{ "instance_id_uuid": "..." }
+```
+
+Response:
+
+```json
+{ "ok": true, "despawned": true }
+```
+
 ### `POST /v1/scene_sources/import`
 
 Import a VCS-friendly **scene sources** directory (`src/`) into the running ECS world.

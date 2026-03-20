@@ -593,6 +593,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.add_message::<AppExit>();
     app.add_message::<HealthChangeEvent>();
     app.add_message::<ModelSpeechBubbleCommand>();
+    app.add_message::<UiToastCommand>();
     app.init_resource::<scene_store::SceneAutosaveState>();
     app.add_message::<scene_store::SceneSaveRequest>();
 

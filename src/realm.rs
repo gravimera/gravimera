@@ -75,15 +75,22 @@ pub(crate) fn realm_startup_init(mut active: ResMut<ActiveRealmScene>) {
 }
 
 pub(crate) fn ensure_realm_scene_scaffold(realm_id: &str, scene_id: &str) -> Result<(), String> {
-    ensure_scene_dirs(realm_id, scene_id)?;
-    std::fs::create_dir_all(crate::paths::realm_prefabs_dir(realm_id)).map_err(|err| {
+    let realm_id = sanitize_id(realm_id).ok_or_else(|| {
+        "realm id contains invalid characters (allowed: [A-Za-z0-9._-])".to_string()
+    })?;
+    let scene_id = sanitize_id(scene_id).ok_or_else(|| {
+        "scene id contains invalid characters (allowed: [A-Za-z0-9._-])".to_string()
+    })?;
+
+    ensure_scene_dirs(&realm_id, &scene_id)?;
+    std::fs::create_dir_all(crate::paths::realm_prefabs_dir(&realm_id)).map_err(|err| {
         format!(
             "Failed to create realm prefabs dir {}: {err}",
-            crate::paths::realm_prefabs_dir(realm_id).display()
+            crate::paths::realm_prefabs_dir(&realm_id).display()
         )
     })?;
-    crate::realm_prefab_packages::migrate_scene_prefab_packages_to_realm(realm_id)?;
-    ensure_scene_sources_scaffold(realm_id, scene_id)?;
+    crate::realm_prefab_packages::migrate_scene_prefab_packages_to_realm(&realm_id)?;
+    ensure_scene_sources_scaffold(&realm_id, &scene_id)?;
     Ok(())
 }
 
@@ -109,7 +116,9 @@ pub(crate) fn list_realms() -> Vec<String> {
         if name.is_empty() {
             continue;
         }
-        out.push(name.to_string());
+        if let Some(name) = sanitize_id(name) {
+            out.push(name);
+        }
     }
     out.sort();
     if out.is_empty() {
@@ -136,7 +145,9 @@ pub(crate) fn list_scenes(realm_id: &str) -> Vec<String> {
         if name.is_empty() {
             continue;
         }
-        out.push(name.to_string());
+        if let Some(name) = sanitize_id(name) {
+            out.push(name);
+        }
     }
     out.sort();
     if out.is_empty() {
@@ -173,11 +184,14 @@ pub(crate) fn save_scene_description(src_dir: &Path, description: &str) -> Resul
 }
 
 fn ensure_scene_dirs(realm_id: &str, scene_id: &str) -> Result<(), String> {
-    if realm_id.trim().is_empty() || scene_id.trim().is_empty() {
-        return Err("realm/scene ids must be non-empty".to_string());
-    }
+    let realm_id = sanitize_id(realm_id).ok_or_else(|| {
+        "realm id contains invalid characters (allowed: [A-Za-z0-9._-])".to_string()
+    })?;
+    let scene_id = sanitize_id(scene_id).ok_or_else(|| {
+        "scene id contains invalid characters (allowed: [A-Za-z0-9._-])".to_string()
+    })?;
 
-    let realm_dir = crate::paths::realm_dir(realm_id);
+    let realm_dir = crate::paths::realm_dir(&realm_id);
     std::fs::create_dir_all(realm_dir.join("scenes")).map_err(|err| {
         format!(
             "Failed to create realm scenes dir {}: {err}",
@@ -185,14 +199,16 @@ fn ensure_scene_dirs(realm_id: &str, scene_id: &str) -> Result<(), String> {
         )
     })?;
 
-    let scene_dir = crate::paths::scene_dir(realm_id, scene_id);
-    std::fs::create_dir_all(crate::paths::scene_build_dir(realm_id, scene_id)).map_err(|err| {
-        format!(
-            "Failed to create scene build dir {}: {err}",
-            scene_dir.display()
-        )
-    })?;
-    std::fs::create_dir_all(crate::paths::scene_src_dir(realm_id, scene_id)).map_err(|err| {
+    let scene_dir = crate::paths::scene_dir(&realm_id, &scene_id);
+    std::fs::create_dir_all(crate::paths::scene_build_dir(&realm_id, &scene_id)).map_err(
+        |err| {
+            format!(
+                "Failed to create scene build dir {}: {err}",
+                scene_dir.display()
+            )
+        },
+    )?;
+    std::fs::create_dir_all(crate::paths::scene_src_dir(&realm_id, &scene_id)).map_err(|err| {
         format!(
             "Failed to create scene src dir {}: {err}",
             scene_dir.display()
@@ -383,7 +399,7 @@ fn persist_active_selection_to_disk(realm_id: &str, scene_id: &str) -> Result<()
         .map_err(|err| format!("Failed to write {}: {err}", path.display()))
 }
 
-fn sanitize_id(raw: &str) -> Option<String> {
+pub(crate) fn sanitize_id(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;

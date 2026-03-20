@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::time::{TimeSystems, TimeUpdateStrategy, Virtual};
 use bevy::window::{CursorMoved, PrimaryWindow};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,10 +19,14 @@ use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
 use crate::geometry::{clamp_world_xz, safe_abs_scale_y, snap_to_grid};
+use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, MetaSpeakVoice};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::scene_store::SceneSaveRequest;
+use crate::threaded_result::{
+    new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
+};
 use crate::types::*;
 
 pub(crate) struct AutomationPlugin;
@@ -30,6 +34,7 @@ pub(crate) struct AutomationPlugin;
 impl Plugin for AutomationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AutomationRuntime>();
+        app.init_resource::<AutomationSpeakRuntime>();
         app.init_resource::<crate::scene_sources_runtime::SceneSourcesWorkspace>();
         app.add_systems(Startup, automation_startup);
         app.add_systems(
@@ -42,6 +47,10 @@ impl Plugin for AutomationPlugin {
             ),
         );
         app.add_systems(Update, automation_process_requests);
+        app.add_systems(
+            Update,
+            automation_poll_speak_jobs.after(automation_process_requests),
+        );
         app.add_systems(First, automation_time_control.before(TimeSystems));
         app.add_systems(First, automation_step_tick.after(TimeSystems));
     }
@@ -94,6 +103,19 @@ impl Drop for AutomationRuntime {
             }
         }
     }
+}
+
+struct AutomationSpeakJob {
+    speech_id: u64,
+    bubble_entity: Option<Entity>,
+    shared: SharedResult<MetaSpeakOutcome, String>,
+}
+
+#[derive(Resource, Default)]
+struct AutomationSpeakRuntime {
+    next_speech_id: u64,
+    jobs: Vec<AutomationSpeakJob>,
+    latest_bubble_by_entity: HashMap<Entity, u64>,
 }
 
 pub(crate) fn local_input_enabled(config: Res<AppConfig>) -> bool {
@@ -442,13 +464,24 @@ struct AutomationGen3d<'w> {
     scene_saves: MessageWriter<'w, SceneSaveRequest>,
 }
 
-struct AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w> {
+struct AutomationContext<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+> {
     commands: &'a mut Commands<'cmd_w, 'cmd_s>,
     config: &'a AppConfig,
     active_realm_id: &'a str,
     active_scene_id: &'a str,
     library: &'a mut ObjectLibrary,
     prefab_descriptors: &'a mut PrefabDescriptorLibrary,
+    meta_speak: &'a MetaSpeakRuntime,
     gen3d: &'a mut AutomationGen3d<'gen3d_w>,
     world: &'a AutomationWorld<'world_w, 'world_s>,
     mode: Option<&'a State<GameMode>>,
@@ -459,8 +492,12 @@ struct AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit
     fire: Option<&'a mut FireControl>,
     motion_ui: Option<&'a mut crate::motion_ui::MotionAlgorithmUiState>,
     runtime: &'a mut AutomationRuntime,
+    speak_runtime: &'a mut AutomationSpeakRuntime,
     scene_workspace: &'a mut crate::scene_sources_runtime::SceneSourcesWorkspace,
     scene_build_runtime: Option<&'a mut crate::scene_build_ai::SceneBuildAiRuntime>,
+    pending_realm_scene_switch: &'a mut crate::realm::PendingRealmSceneSwitch,
+    speech_events: &'a mut MessageWriter<'speech_w, ModelSpeechBubbleCommand>,
+    toast_events: &'a mut MessageWriter<'toast_w, UiToastCommand>,
     exit: &'a mut MessageWriter<'exit_w, AppExit>,
 }
 
@@ -471,8 +508,17 @@ struct AutomationUi<'w> {
     motion_ui: Option<ResMut<'w, crate::motion_ui::MotionAlgorithmUiState>>,
 }
 
+#[derive(SystemParam)]
+struct AutomationMonitorIo<'w> {
+    exit: MessageWriter<'w, AppExit>,
+    speech_events: MessageWriter<'w, ModelSpeechBubbleCommand>,
+    toast_events: MessageWriter<'w, UiToastCommand>,
+    meta_speak: Res<'w, MetaSpeakRuntime>,
+    speak_runtime: ResMut<'w, AutomationSpeakRuntime>,
+    pending_realm_scene_switch: ResMut<'w, crate::realm::PendingRealmSceneSwitch>,
+}
+
 fn automation_process_requests(
-    mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
     config: Res<AppConfig>,
     active: Option<Res<crate::realm::ActiveRealmScene>>,
@@ -483,6 +529,7 @@ fn automation_process_requests(
     mut next_mode: Option<ResMut<NextState<GameMode>>>,
     build_scene: Option<Res<State<BuildScene>>>,
     mut next_build_scene: Option<ResMut<NextState<BuildScene>>>,
+    mut io: AutomationMonitorIo,
     mut ui: AutomationUi,
     mut library: ResMut<ObjectLibrary>,
     mut prefab_descriptors: ResMut<PrefabDescriptorLibrary>,
@@ -540,6 +587,7 @@ fn automation_process_requests(
             active_scene_id,
             library: &mut library,
             prefab_descriptors: &mut prefab_descriptors,
+            meta_speak: &io.meta_speak,
             gen3d: &mut gen3d,
             world: &world,
             mode: mode.as_deref(),
@@ -550,9 +598,13 @@ fn automation_process_requests(
             fire: ui.fire.as_deref_mut(),
             motion_ui: ui.motion_ui.as_deref_mut(),
             runtime: &mut runtime,
+            speak_runtime: &mut io.speak_runtime,
             scene_workspace: &mut scene_workspace,
             scene_build_runtime: scene_build_runtime.as_deref_mut(),
-            exit: &mut exit,
+            pending_realm_scene_switch: &mut io.pending_realm_scene_switch,
+            speech_events: &mut io.speech_events,
+            toast_events: &mut io.toast_events,
+            exit: &mut io.exit,
         };
 
         let reply = handle_request_main_thread(&mut ctx, &msg);
@@ -562,6 +614,41 @@ fn automation_process_requests(
             // Deferred reply endpoint (currently `/v1/step`). Stop here to preserve ordering.
             break;
         }
+    }
+}
+
+fn automation_poll_speak_jobs(
+    mut speak: ResMut<AutomationSpeakRuntime>,
+    mut speech_events: MessageWriter<ModelSpeechBubbleCommand>,
+) {
+    if speak.jobs.is_empty() {
+        return;
+    }
+
+    let mut done: Vec<(usize, Option<Entity>, u64)> = Vec::new();
+    for (idx, job) in speak.jobs.iter().enumerate() {
+        if take_shared_result(&job.shared).is_none() {
+            continue;
+        }
+        done.push((idx, job.bubble_entity, job.speech_id));
+    }
+
+    for (_, entity, speech_id) in done.iter().copied() {
+        let Some(entity) = entity else {
+            continue;
+        };
+        let matches_latest = speak
+            .latest_bubble_by_entity
+            .get(&entity)
+            .is_some_and(|latest| *latest == speech_id);
+        if matches_latest {
+            speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+            speak.latest_bubble_by_entity.remove(&entity);
+        }
+    }
+
+    for (idx, ..) in done.into_iter().rev() {
+        speak.jobs.swap_remove(idx);
     }
 }
 
@@ -594,6 +681,53 @@ struct SpawnRequest {
 #[derive(Deserialize)]
 struct ModeRequest {
     mode: String,
+}
+
+#[derive(Deserialize)]
+struct RealmSceneCreateRequest {
+    #[serde(default)]
+    realm_id: Option<String>,
+    scene_id: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    switch_to: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct RealmSceneSwitchRequest {
+    #[serde(default)]
+    realm_id: Option<String>,
+    scene_id: String,
+}
+
+#[derive(Deserialize)]
+struct UiToastRequest {
+    text: String,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    ttl_secs: Option<f32>,
+}
+
+#[derive(Deserialize)]
+struct SpeakRequest {
+    content: String,
+    #[serde(default)]
+    voice: Option<String>,
+    #[serde(default)]
+    volume: Option<f32>,
+    #[serde(default)]
+    instance_id_uuid: Option<String>,
+    #[serde(default)]
+    bubble: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct DespawnRequest {
+    instance_id_uuid: String,
 }
 
 #[derive(Deserialize)]
@@ -702,8 +836,28 @@ struct SceneRunApplyPatchRequest {
     patch: crate::scene_sources_patch::SceneSourcesPatchV1,
 }
 
-fn handle_scene_sources_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
-    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
+fn handle_scene_sources_routes<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
     msg: &AutomationRequest,
 ) -> Option<AutomationReply> {
     let commands = &mut *ctx.commands;
@@ -1113,8 +1267,28 @@ fn handle_scene_sources_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s,
     }
 }
 
-fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
-    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
+fn handle_gen3d_routes<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
     msg: &AutomationRequest,
 ) -> Option<AutomationReply> {
     let commands = &mut *ctx.commands;
@@ -2033,8 +2207,28 @@ fn handle_gen3d_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w
     }
 }
 
-fn handle_scene_build_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
-    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
+fn handle_scene_build_routes<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
     msg: &AutomationRequest,
 ) -> Option<AutomationReply> {
     let commands = &mut *ctx.commands;
@@ -2139,8 +2333,28 @@ fn handle_scene_build_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, '
     }
 }
 
-fn handle_animation_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
-    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
+fn handle_animation_routes<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
     msg: &AutomationRequest,
 ) -> Option<AutomationReply> {
     let commands = &mut *ctx.commands;
@@ -2213,8 +2427,297 @@ fn handle_animation_routes<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'ex
     }
 }
 
-fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>(
-    ctx: &mut AutomationContext<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 'exit_w>,
+fn update_scene_sources_meta_best_effort(
+    realm_id: &str,
+    scene_id: &str,
+    label: Option<&str>,
+    description: Option<&str>,
+) -> Result<(), String> {
+    let src_dir = crate::paths::scene_src_dir(realm_id, scene_id);
+    let mut sources = crate::scene_sources::SceneSourcesV1::load_from_dir(&src_dir)
+        .map_err(|err| err.to_string())?;
+
+    let mut changed = false;
+    if let Some(label) = label.map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        sources.meta_json["label"] = serde_json::Value::from(label.to_string());
+        changed = true;
+    }
+    if let Some(description) = description.map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        sources.meta_json["description"] = serde_json::Value::from(description.to_string());
+        changed = true;
+    }
+
+    if changed {
+        sources
+            .write_to_dir(&src_dir)
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn handle_realm_scene_routes<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    match (msg.method.as_str(), msg.path.as_str()) {
+        ("GET", "/v1/realm_scene/active") => {
+            let realm_id = ctx.active_realm_id;
+            let scene_id = ctx.active_scene_id;
+            let scene_dir = crate::paths::scene_dir(realm_id, scene_id);
+            let src_dir = crate::paths::scene_src_dir(realm_id, scene_id);
+            let build_dir = crate::paths::scene_build_dir(realm_id, scene_id);
+            let body = serde_json::json!({
+                "ok": true,
+                "realm_id": realm_id,
+                "scene_id": scene_id,
+                "scene_dir": scene_dir.display().to_string(),
+                "scene_src_dir": src_dir.display().to_string(),
+                "scene_build_dir": build_dir.display().to_string(),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/realm_scene/list") => {
+            let realms = crate::realm::list_realms();
+            let realms_json: Vec<serde_json::Value> = realms
+                .iter()
+                .map(|realm_id| {
+                    let scenes = crate::realm::list_scenes(realm_id);
+                    serde_json::json!({
+                        "realm_id": realm_id,
+                        "scenes": scenes,
+                    })
+                })
+                .collect();
+
+            let body = serde_json::json!({ "ok": true, "realms": realms_json }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/realm_scene/create") => {
+            let req: RealmSceneCreateRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let realm_id_raw = req.realm_id.as_deref().unwrap_or(ctx.active_realm_id);
+            let Some(realm_id) = crate::realm::sanitize_id(realm_id_raw) else {
+                return Some(json_error(
+                    400,
+                    "Invalid realm_id (allowed: [A-Za-z0-9._-]).",
+                ));
+            };
+            let Some(scene_id) = crate::realm::sanitize_id(&req.scene_id) else {
+                return Some(json_error(
+                    400,
+                    "Invalid scene_id (allowed: [A-Za-z0-9._-]).",
+                ));
+            };
+
+            if let Err(err) = crate::realm::ensure_realm_scene_scaffold(&realm_id, &scene_id) {
+                return Some(json_error(409, err));
+            }
+            if let Err(err) = update_scene_sources_meta_best_effort(
+                &realm_id,
+                &scene_id,
+                req.label.as_deref(),
+                req.description.as_deref(),
+            ) {
+                return Some(json_error(409, err));
+            }
+
+            let switch_to = req.switch_to.unwrap_or(false);
+            if switch_to {
+                ctx.pending_realm_scene_switch.target = Some(crate::realm::ActiveRealmScene {
+                    realm_id: realm_id.clone(),
+                    scene_id: scene_id.clone(),
+                });
+            }
+
+            let scene_dir = crate::paths::scene_dir(&realm_id, &scene_id);
+            let src_dir = crate::paths::scene_src_dir(&realm_id, &scene_id);
+            let build_dir = crate::paths::scene_build_dir(&realm_id, &scene_id);
+            let body = serde_json::json!({
+                "ok": true,
+                "realm_id": realm_id,
+                "scene_id": scene_id,
+                "scheduled_switch": switch_to,
+                "scene_dir": scene_dir.display().to_string(),
+                "scene_src_dir": src_dir.display().to_string(),
+                "scene_build_dir": build_dir.display().to_string(),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/realm_scene/switch") => {
+            let req: RealmSceneSwitchRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let realm_id_raw = req.realm_id.as_deref().unwrap_or(ctx.active_realm_id);
+            let Some(realm_id) = crate::realm::sanitize_id(realm_id_raw) else {
+                return Some(json_error(
+                    400,
+                    "Invalid realm_id (allowed: [A-Za-z0-9._-]).",
+                ));
+            };
+            let Some(scene_id) = crate::realm::sanitize_id(&req.scene_id) else {
+                return Some(json_error(
+                    400,
+                    "Invalid scene_id (allowed: [A-Za-z0-9._-]).",
+                ));
+            };
+
+            if let Err(err) = crate::realm::ensure_realm_scene_scaffold(&realm_id, &scene_id) {
+                return Some(json_error(409, err));
+            }
+
+            ctx.pending_realm_scene_switch.target = Some(crate::realm::ActiveRealmScene {
+                realm_id: realm_id.clone(),
+                scene_id: scene_id.clone(),
+            });
+
+            let body = serde_json::json!({
+                "ok": true,
+                "realm_id": realm_id,
+                "scene_id": scene_id,
+                "scheduled_switch": true,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        _ => Some(json_error(404, "Not found")),
+    }
+}
+
+fn handle_ui_routes<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    let has_window = ctx.world.windows.iter().next().is_some();
+    match (msg.method.as_str(), msg.path.as_str()) {
+        ("POST", "/v1/ui/toast") => {
+            if !has_window {
+                return Some(json_error(
+                    501,
+                    "UI toast requires rendered mode (no window available).",
+                ));
+            }
+            let req: UiToastRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let kind = match req
+                .kind
+                .as_deref()
+                .unwrap_or("info")
+                .trim()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "info" => UiToastKind::Info,
+                "warn" | "warning" => UiToastKind::Warn,
+                "error" => UiToastKind::Error,
+                _ => return Some(json_error(400, "Invalid kind (expected info/warn/error).")),
+            };
+            let ttl_secs = req.ttl_secs.unwrap_or(3.5);
+
+            ctx.toast_events.write(UiToastCommand::Show {
+                text: req.text,
+                kind,
+                ttl_secs,
+            });
+
+            let body = serde_json::json!({ "ok": true }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        _ => Some(json_error(404, "Not found")),
+    }
+}
+
+fn handle_request_main_thread<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
     msg: &AutomationRequest,
 ) -> Option<AutomationReply> {
     if msg.path.starts_with("/v1/scene_sources/") {
@@ -2229,6 +2732,12 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
     if msg.path.starts_with("/v1/animation/") {
         return handle_animation_routes(ctx, msg);
     }
+    if msg.path.starts_with("/v1/realm_scene/") {
+        return handle_realm_scene_routes(ctx, msg);
+    }
+    if msg.path.starts_with("/v1/ui/") {
+        return handle_ui_routes(ctx, msg);
+    }
 
     let commands = &mut *ctx.commands;
     let library = &mut *ctx.library;
@@ -2238,6 +2747,7 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
     let materials = ctx.gen3d.materials.as_deref_mut();
     let material_cache = ctx.gen3d.material_cache.as_deref_mut();
     let mesh_cache = ctx.gen3d.mesh_cache.as_deref_mut();
+    let scene_saves = &mut ctx.gen3d.scene_saves;
 
     let windows = &ctx.world.windows;
     let players = &ctx.world.players;
@@ -2255,6 +2765,8 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
     let mut selection = ctx.selection.as_deref_mut();
     let mut fire = ctx.fire.as_deref_mut();
     let runtime = &mut *ctx.runtime;
+    let speak_runtime = &mut *ctx.speak_runtime;
+    let speech_events = &mut *ctx.speech_events;
     let exit = &mut *ctx.exit;
 
     match (msg.method.as_str(), msg.path.as_str()) {
@@ -2271,6 +2783,93 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
                 }
             })
             .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/discovery") => {
+            let has_window = windows.iter().next().is_some();
+
+            let endpoints = vec![
+                serde_json::json!({"method":"GET","path":"/v1/health"}),
+                serde_json::json!({"method":"GET","path":"/v1/discovery"}),
+                serde_json::json!({"method":"GET","path":"/v1/state"}),
+                serde_json::json!({"method":"GET","path":"/v1/prefabs"}),
+                serde_json::json!({"method":"GET","path":"/v1/realm_scene/active"}),
+                serde_json::json!({"method":"GET","path":"/v1/realm_scene/list"}),
+                serde_json::json!({"method":"POST","path":"/v1/realm_scene/create"}),
+                serde_json::json!({"method":"POST","path":"/v1/realm_scene/switch"}),
+                serde_json::json!({"method":"POST","path":"/v1/spawn"}),
+                serde_json::json!({"method":"POST","path":"/v1/despawn"}),
+                serde_json::json!({"method":"POST","path":"/v1/ui/toast"}),
+                serde_json::json!({"method":"POST","path":"/v1/speak"}),
+                serde_json::json!({"method":"POST","path":"/v1/scene/save"}),
+                serde_json::json!({"method":"POST","path":"/v1/step"}),
+                serde_json::json!({"method":"POST","path":"/v1/shutdown"}),
+                serde_json::json!({"method":"GET","path":"/v1/gen3d/status"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen3d/prompt"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen3d/build"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen3d/save"}),
+                serde_json::json!({"method":"GET","path":"/v1/scene_sources/signature"}),
+                serde_json::json!({"method":"POST","path":"/v1/scene_sources/patch_apply"}),
+            ];
+
+            let body = serde_json::json!({
+                "ok": true,
+                "name": "gravimera",
+                "version": env!("CARGO_PKG_VERSION"),
+                "api": { "version": 1, "base_path": "/v1" },
+                "active": { "realm_id": ctx.active_realm_id, "scene_id": ctx.active_scene_id },
+                "features": {
+                    "ui_toast": has_window,
+                    "speech_bubble": has_window,
+                    "tts": true,
+                    "realm_scene_switch": true,
+                },
+                "endpoints": endpoints,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/prefabs") => {
+            let mut rows: Vec<(String, String, serde_json::Value)> = Vec::new();
+            for (prefab_id, def) in library.iter() {
+                let prefab_id_uuid = uuid::Uuid::from_u128(*prefab_id).to_string();
+                let label = def.label.to_string();
+                let mobility = def.mobility.is_some();
+                let descriptor = ctx.prefab_descriptors.get(*prefab_id);
+                let tags = descriptor.map(|d| d.tags.clone()).unwrap_or_default();
+                let roles = descriptor.map(|d| d.roles.clone()).unwrap_or_default();
+                let provenance_source = descriptor
+                    .and_then(|d| d.provenance.as_ref())
+                    .and_then(|p| p.source.as_ref())
+                    .map(|v| v.trim().to_string());
+
+                let value = serde_json::json!({
+                    "prefab_id_uuid": prefab_id_uuid,
+                    "label": descriptor.and_then(|d| d.label.clone()).unwrap_or(label.clone()),
+                    "mobility": mobility,
+                    "size": [def.size.x, def.size.y, def.size.z],
+                    "tags": tags,
+                    "roles": roles,
+                    "provenance_source": provenance_source,
+                });
+                rows.push((
+                    label.to_ascii_lowercase(),
+                    uuid::Uuid::from_u128(*prefab_id).to_string(),
+                    value,
+                ));
+            }
+            rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+            let prefabs: Vec<serde_json::Value> = rows.into_iter().map(|(_, _, v)| v).collect();
+
+            let body = serde_json::json!({ "ok": true, "prefabs": prefabs }).to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),
@@ -2896,13 +3495,16 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
                 }
             };
 
-            let Ok((player_transform, player_collider)) = player_q.single() else {
-                return Some(json_error(500, "Cannot spawn: missing hero entity."));
-            };
-
             let mut pos = if let (Some(x), Some(z)) = (req.x, req.z) {
                 Vec3::new(x, req.y.unwrap_or(0.0), z)
             } else {
+                let Ok((player_transform, player_collider)) = player_q.single() else {
+                    return Some(json_error(
+                        500,
+                        "Cannot spawn without explicit x/z: missing hero entity.",
+                    ));
+                };
+
                 let forward = player_transform.rotation * Vec3::Z;
                 let mut dir = Vec3::new(forward.x, 0.0, forward.z);
                 if dir.length_squared() <= 1e-6 {
@@ -2916,10 +3518,8 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
                 Vec3::new(base.x, req.y.unwrap_or(0.0), base.z)
             };
 
-            if req.x.is_none() || req.z.is_none() {
-                pos.y = req
-                    .y
-                    .unwrap_or_else(|| library.ground_origin_y_or_default(prefab_id));
+            if req.y.is_none() {
+                pos.y = library.ground_origin_y_or_default(prefab_id);
             }
 
             pos.x = pos.x.clamp(
@@ -3217,6 +3817,176 @@ fn handle_request_main_thread<'a, 'cmd_w, 'cmd_s, 'gen3d_w, 'world_w, 'world_s, 
                 }
             }
             let body = serde_json::json!({ "ok": true }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/scene/save") => {
+            // Force a scene.dat save (async; written by the scene store systems).
+            scene_saves.write(SceneSaveRequest::new("force save via automation api"));
+            let body = serde_json::json!({ "ok": true }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/despawn") => {
+            let req: DespawnRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            let Ok(uuid) = uuid::Uuid::parse_str(req.instance_id_uuid.trim()) else {
+                return Some(json_error(400, "Invalid instance_id_uuid UUID."));
+            };
+            let id = ObjectId(uuid.as_u128());
+
+            let mut target = None;
+            for (entity, object_id, ..) in state_objects.iter() {
+                if object_id.0 == id.0 {
+                    target = Some(entity);
+                    break;
+                }
+            }
+            let Some(target) = target else {
+                return Some(json_error(404, "Instance not found."));
+            };
+
+            commands.entity(target).try_despawn();
+            let body = serde_json::json!({ "ok": true, "despawned": true }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/speak") => {
+            let req: SpeakRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let content = req.content.trim().to_string();
+            if content.is_empty() {
+                return Some(json_error(400, "content must be non-empty."));
+            }
+            const MAX_SPEAK_CHARS: usize = 800;
+            if content.chars().count() > MAX_SPEAK_CHARS {
+                return Some(json_error(
+                    400,
+                    format!("content too long (max {MAX_SPEAK_CHARS} chars)."),
+                ));
+            }
+
+            let voice_raw = req
+                .voice
+                .as_deref()
+                .unwrap_or("dog")
+                .trim()
+                .to_ascii_lowercase();
+            let voice = match voice_raw.as_str() {
+                "dog" => MetaSpeakVoice::Dog,
+                "cow" => MetaSpeakVoice::Cow,
+                "dragon" => MetaSpeakVoice::Dragon,
+                _ => return Some(json_error(400, "Invalid voice (expected dog/cow/dragon).")),
+            };
+
+            let mut volume = req.volume.unwrap_or(1.0);
+            if !volume.is_finite() {
+                volume = 1.0;
+            }
+            volume = volume.clamp(0.0, 1.0);
+
+            let bubble = req.bubble.unwrap_or(true);
+            let has_window = windows.iter().next().is_some();
+
+            let mut bubble_entity = None;
+            if let Some(instance_id_uuid) = req.instance_id_uuid.as_deref() {
+                let Ok(uuid) = uuid::Uuid::parse_str(instance_id_uuid.trim()) else {
+                    return Some(json_error(400, "Invalid instance_id_uuid UUID."));
+                };
+                let id = ObjectId(uuid.as_u128());
+                for (entity, object_id, ..) in state_objects.iter() {
+                    if object_id.0 == id.0 {
+                        bubble_entity = Some(entity);
+                        break;
+                    }
+                }
+                if bubble_entity.is_none() {
+                    return Some(json_error(404, "Instance not found."));
+                }
+            } else if bubble {
+                return Some(json_error(400, "bubble=true requires instance_id_uuid."));
+            }
+
+            if bubble && !has_window {
+                return Some(json_error(
+                    501,
+                    "Speech bubble requires rendered mode (no window available). Set bubble=false to speak only.",
+                ));
+            }
+
+            let mut speech_id = speak_runtime.next_speech_id.wrapping_add(1);
+            if speech_id == 0 {
+                speech_id = 1;
+            }
+            speak_runtime.next_speech_id = speech_id;
+
+            let adapter = ctx.meta_speak.adapter();
+            let request = MetaSpeakRequest {
+                voice,
+                content: content.clone(),
+                volume,
+            };
+
+            if bubble {
+                if let Some(entity) = bubble_entity {
+                    speech_events.write(ModelSpeechBubbleCommand::Start {
+                        entity,
+                        text: content.clone(),
+                        source: ModelSpeechSource::Network,
+                    });
+                    speak_runtime
+                        .latest_bubble_by_entity
+                        .insert(entity, speech_id);
+                }
+            }
+
+            let shared = new_shared_result::<MetaSpeakOutcome, String>();
+            let thread_name = format!("gravimera_automation_speak_{speech_id}");
+            if let Err(err) = spawn_worker_thread(
+                thread_name,
+                shared.clone(),
+                move || adapter.speak(request),
+                |_| {},
+            ) {
+                if bubble {
+                    if let Some(entity) = bubble_entity {
+                        speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+                        speak_runtime.latest_bubble_by_entity.remove(&entity);
+                    }
+                }
+                return Some(json_error(
+                    500,
+                    format!("Failed to spawn TTS worker: {err}"),
+                ));
+            }
+
+            speak_runtime.jobs.push(AutomationSpeakJob {
+                speech_id,
+                bubble_entity: if bubble { bubble_entity } else { None },
+                shared,
+            });
+
+            let body = serde_json::json!({
+                "ok": true,
+                "speech_id": speech_id,
+                "voice": voice_raw,
+                "bubble": bubble && bubble_entity.is_some(),
+            })
+            .to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),

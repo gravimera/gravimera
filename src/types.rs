@@ -730,6 +730,37 @@ pub(crate) enum ModelSpeechBubbleCommand {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UiToastKind {
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Message, Debug, Clone)]
+pub(crate) enum UiToastCommand {
+    Show {
+        text: String,
+        kind: UiToastKind,
+        ttl_secs: f32,
+    },
+    ClearAll,
+}
+
+#[derive(Component)]
+pub(crate) struct UiToastRoot;
+
+#[derive(Component, Debug, Clone)]
+pub(crate) struct UiToast {
+    pub(crate) kind: UiToastKind,
+    pub(crate) ttl_secs: f32,
+    pub(crate) elapsed_secs: f32,
+    pub(crate) created_at_secs: f32,
+}
+
+#[derive(Component)]
+pub(crate) struct UiToastText;
+
 #[derive(Resource)]
 pub(crate) struct Aim {
     pub(crate) direction: Vec3,

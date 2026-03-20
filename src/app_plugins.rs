@@ -716,6 +716,10 @@ impl Plugin for RenderedGameplayPlugin {
                 crate::ui::apply_model_speech_bubble_commands
                     .after(crate::ui::spawn_health_change_popups)
                     .in_set(UiSystems::Content),
+                crate::ui::apply_ui_toast_commands.in_set(UiSystems::Content),
+                crate::ui::update_ui_toasts
+                    .after(crate::ui::apply_ui_toast_commands)
+                    .in_set(UiSystems::Content),
                 crate::ui::update_health_change_popups
                     .after(crate::ui::spawn_health_change_popups)
                     .in_set(UiSystems::Content),

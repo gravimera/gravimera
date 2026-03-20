@@ -2187,10 +2187,12 @@ pub(crate) fn apply_pending_realm_scene_switch(
 
     if let Err(err) = crate::realm::ensure_realm_scene_scaffold(&target.realm_id, &target.scene_id)
     {
-        warn!("{err}");
+        warn!("Scene switch aborted: {err}");
+        return;
     }
     if let Err(err) = crate::realm::persist_active_selection(&target.realm_id, &target.scene_id) {
-        warn!("{err}");
+        warn!("Scene switch aborted: {err}");
+        return;
     }
 
     info!(
