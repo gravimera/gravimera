@@ -71,6 +71,9 @@ If `bind = "127.0.0.1:0"`, parse stdout for:
 
     Automation API listening on http://127.0.0.1:<port>
 
+Important: Gravimera **does not hot-reload** `config.toml`. If you change the config (ports, token, AI provider, etc.),
+you must **stop and restart** the Gravimera process for changes to take effect.
+
 Tip: if your HTTP client honors `HTTP(S)_PROXY`, ensure loopback is not proxied (set `NO_PROXY=127.0.0.1,localhost`).
 
 ### (Dev) Run from source instead (optional)
