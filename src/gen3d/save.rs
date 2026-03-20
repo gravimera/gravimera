@@ -2204,6 +2204,14 @@ pub(crate) fn gen3d_auto_save_when_done(
         save_note = "skipped (empty draft)".to_string();
     }
 
+    if let (Some(realm_id), Some(run_id)) = (job.run_realm_id(), job.run_id()) {
+        if let Err(err) = crate::gen3d::remove_gen3d_in_flight_entry(realm_id, run_id) {
+            warn!("Failed to remove Gen3D in-flight entry: {err}");
+        } else {
+            job.mark_in_flight_dirty();
+        }
+    }
+
     let summary = format!(
         "Done | comps={components} parts={parts} motion={motions} | attempt={attempt} pass={pass} | time={run_time} | auto-save={save_note}"
     );

@@ -8,6 +8,7 @@ const PACKAGE_MATERIALS_DIR_NAME: &str = "materials";
 const PACKAGE_GEN3D_SOURCE_DIR_NAME: &str = "gen3d_source_v1";
 const PACKAGE_GEN3D_EDIT_BUNDLE_FILE_NAME: &str = "gen3d_edit_bundle_v1.json";
 const PACKAGE_THUMBNAIL_FILE_NAME: &str = "thumbnail.png";
+const GEN3D_IN_FLIGHT_FILE_NAME: &str = "gen3d_in_flight_v1.json";
 
 pub(crate) fn realm_prefabs_root_dir(realm_id: &str) -> PathBuf {
     crate::paths::realm_prefabs_dir(realm_id)
@@ -41,6 +42,10 @@ pub(crate) fn realm_prefab_package_gen3d_edit_bundle_path(
 
 pub(crate) fn realm_prefab_package_thumbnail_path(realm_id: &str, root_prefab_id: u128) -> PathBuf {
     realm_prefab_package_dir(realm_id, root_prefab_id).join(PACKAGE_THUMBNAIL_FILE_NAME)
+}
+
+pub(crate) fn realm_gen3d_in_flight_path(realm_id: &str) -> PathBuf {
+    realm_prefabs_root_dir(realm_id).join(GEN3D_IN_FLIGHT_FILE_NAME)
 }
 
 pub(crate) fn list_realm_prefab_packages(realm_id: &str) -> Result<Vec<u128>, String> {

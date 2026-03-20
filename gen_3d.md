@@ -24,6 +24,7 @@ The AI is instructed to prioritize **basic structure and proportions** over smal
 4. Click **Build** (each click starts a fresh run and overwrites the current draft).
    - While building, click **Stop** to cancel.
    - You can switch back to **Realm** while building; Gen3D keeps working in the background. Return to Preview any time to inspect progress.
+   - A **Generating** entry appears in the Prefabs panel immediately. Click it to reopen Gen3D and see progress. Cancel removes the entry; you can also remove it manually from the Prefabs panel. Entries persist across restarts for cleanup.
 5. Review in the preview panel:
    - Orbit/zoom (LMB drag / mouse wheel).
    - Select preview motion channel via the **Anim** dropdown (lists available channels; canonical: Idle / Move / Attack).
