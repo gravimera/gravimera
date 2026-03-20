@@ -54,8 +54,9 @@ Rules:\n\
 - Prefer small, explainable steps that improve basic structure and correctness.\n\
 - Prioritize BASIC STRUCTURE over tiny details. This is a voxel/pixel-art game; do not chase micro-adjustments forever.\n\
 - STOP when the model is good enough:\n\
-  - If the latest review delta accepts the model / has no actionable fixes (and `qa_v1` has been run), output a \"done\" action.\n\
-  - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions, output a \"done\" action.\n\
+  - If the latest review delta accepts the model / has no actionable fixes AND required QA is ok (`state_summary.qa.last_validate_ok=true` AND `state_summary.qa.last_smoke_ok=true` AND `state_summary.qa.last_motion_ok` is not false), output a \"done\" action.\n\
+  - If required QA is not ok, do NOT output \"done\". Run `qa_v1`, apply the provided fixits, then rerun `qa_v1`.\n\
+  - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions (and required QA is ok), output a \"done\" action.\n\
   - If budgets prevent further improvement (regen budgets, review-delta rounds, time, tokens), output a \"done\" action with a best-effort reason.\n\
   - `done.reason` is treated as an unverified agent note; keep it brief and factual. Do NOT claim tool actions that did not occur.\n\
   - `qa_v1` may report warnings (non-fatal). Treat warnings as informational: do NOT spend steps trying to eliminate warnings.\n\
@@ -3088,6 +3089,7 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
             "last_validate_ok": job.agent.last_validate_ok,
             "last_smoke_ok": job.agent.last_smoke_ok,
             "last_motion_ok": job.agent.last_motion_ok,
+            "done_ignored_due_to_qa_errors": job.agent.done_ignored_due_to_qa_errors,
         },
         "budgets": {
             "regen": {

@@ -805,7 +805,7 @@ Notes:
 
 - Returns `400` if the prefab is not Gen3D-saved (descriptor provenance gate) or cannot be seeded.
 - After seeding, use `/v1/gen3d/resume` to continue generation, or `/v1/gen3d/save` to save immediately.
-- Overwrite sessions are QA-gated for safety: the agent will not finish while QA reports explicit errors, and engine auto-save skips overwriting when the latest QA indicates errors.
+- Overwrite sessions are QA-gated for safety: if the agent requests `done` while QA reports explicit errors, the engine will ignore `done` up to 2 times to encourage applying QA fixits. Engine auto-save skips overwriting when the latest QA indicates errors.
 
 ### `POST /v1/gen3d/fork_from_prefab`
 

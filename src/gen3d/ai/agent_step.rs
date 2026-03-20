@@ -1003,13 +1003,20 @@ pub(super) fn execute_agent_actions(
                     continue;
                 }
 
-                // If this is an edit-overwrite run, do not allow the agent to finish while QA has
-                // explicit errors. Overwrite saves are destructive: finishing early would
-                // auto-save an invalid prefab into the realm/scene.
+                // If this is an edit-overwrite run, don't allow the agent to finish immediately
+                // while QA has explicit errors. Overwrite saves are destructive: finishing early
+                // would auto-save an invalid prefab into the realm/scene. We give the agent a
+                // small bounded number of chances to apply QA fixits, then respect `done` as a
+                // best-effort stop.
                 if job.overwrite_save_blocked_by_qa_errors() {
+                    const MAX_IGNORES: u8 = 2;
+                    let ignore_idx = job.agent.done_ignored_due_to_qa_errors.saturating_add(1);
+                    if ignore_idx <= MAX_IGNORES {
+                        job.agent.done_ignored_due_to_qa_errors = ignore_idx;
                     workshop.error = Some(
-                        "Agent requested done but latest QA reported errors; continuing."
-                            .to_string(),
+                        format!(
+                            "Agent requested done but latest QA reported errors; continuing (ignore {ignore_idx}/{MAX_IGNORES}). Run `qa_v1`, apply fixits, then retry."
+                        ),
                     );
                     workshop.status = "Continuing Gen3D build… (QA errors block overwrite save)"
                         .to_string();
@@ -1030,6 +1037,7 @@ pub(super) fn execute_agent_actions(
                     );
                     job.agent.step_action_idx = job.agent.step_actions.len();
                     continue;
+                    }
                 }
 
                 // Stop means stop: respect `done` even if QA/review are incomplete.
