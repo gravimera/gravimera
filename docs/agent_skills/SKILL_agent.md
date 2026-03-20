@@ -4,90 +4,145 @@ This skill describes a generic pattern for any external tool/agent to use a **lo
 
 The API surface is the **Automation HTTP API (v1)** documented at `docs/automation_http_api.md`.
 
-## 0) Start Gravimera with Automation enabled
+## 0) Onboard (plugin-style)
 
-Minimal CLI (local-only):
+This flow treats Gravimera as a downloadable local “monitor plugin” you start per run.
 
-    cargo run -- \
-      --automation \
-      --automation-bind 127.0.0.1:8791 \
-      --automation-disable-local-input \
-      --automation-pause-on-start
+### 0.1 Download the `gravimera` binary (example: v0.1.0)
 
-Or use a config file with:
+```bash
+mkdir -p ./gravimera_monitor/bin
+curl -L -o ./gravimera_monitor/bin/gravimera \
+  https://github.com/gravimera/gravimera/releases/download/0.1.0/gravimera
+chmod +x ./gravimera_monitor/bin/gravimera
+```
 
-    [automation]
-    enabled = true
-    bind = "127.0.0.1:8791"
-    disable_local_input = true
-    pause_on_start = true
+### 0.2 Create an isolated config + home (do NOT use `~/.gravimera`)
 
-## (Tip) Find the local Gravimera config quickly
+Pick a monitor root directory (keep it stable if you want to review scenes later):
 
-By default Gravimera loads:
+```bash
+MONITOR_ROOT=./gravimera_monitor/run
+mkdir -p "$MONITOR_ROOT"
+```
 
-- `~/.gravimera/config.toml` (or `"$GRAVIMERA_HOME/config.toml"` when `GRAVIMERA_HOME` is set)
+Create `"$MONITOR_ROOT/config.toml"`:
 
-Overrides (highest priority first):
+```toml
+[automation]
+enabled = true
+bind = "127.0.0.1:0" # use ":0" for an ephemeral port, or a fixed port like "127.0.0.1:8791"
+disable_local_input = true
+pause_on_start = true
+# token = "CHANGE_ME" # optional; enables Authorization: Bearer <token>
 
-- CLI `--config /path/to/config.toml`
-- env `GRAVIMERA_CONFIG=/path/to/config.toml`
+# Optional: enable Gen3D later (requires an AI provider config).
+# [gen3d]
+# ai_service = "openai"  # or "gemini"
+#
+# If the external agent already uses GPT (gpt-5.2 / gpt-5.4+), reuse the same base_url + token here:
+# [openai]
+# base_url = "https://api.openai.com/v1" # or your OpenAI-compatible gateway
+# token = ""                              # or set env OPENAI_API_KEY
+# model = "gpt-5.4"
+#
+# If the external agent already uses Gemini (gemini 3.1+), reuse the same token here:
+# [gemini]
+# token = "" # or set env GEMINI_API_KEY / X_GOOG_API_KEY
+# model = "gemini-3.1-pro-preview"
+```
 
-For monitor integrations, the most relevant keys are:
+Credential policy:
 
-    [automation]
-    bind = "127.0.0.1:8791"   # host:port to listen on (use :0 for an ephemeral port)
-    token = "CHANGE_ME"       # optional; if set, clients must send Authorization: Bearer <token>
+- If you already have GPT (gpt-5.2 / gpt-5.4+) credentials in the external agent, reuse them in `[openai]`.
+- Else if you already have Gemini 3.1+ credentials, reuse them in `[gemini]`.
+- Otherwise: run monitor-only (skip Gen3D endpoints) and ask the user for a key only when you need Gen3D.
 
-If `[automation].bind` uses port `0`, the actual listen URL is printed on startup as:
+### 0.3 Start Gravimera using that config
+
+Run with an isolated `GRAVIMERA_HOME` so all state persists under the monitor root:
+
+```bash
+GRAVIMERA_HOME="$MONITOR_ROOT/home" \
+  ./gravimera_monitor/bin/gravimera --config "$MONITOR_ROOT/config.toml"
+```
+
+If `bind = "127.0.0.1:0"`, parse stdout for:
 
     Automation API listening on http://127.0.0.1:<port>
 
 Tip: if your HTTP client honors `HTTP(S)_PROXY`, ensure loopback is not proxied (set `NO_PROXY=127.0.0.1,localhost`).
 
+### (Dev) Run from source instead (optional)
+
+```bash
+cargo run -- \
+  --automation \
+  --automation-bind 127.0.0.1:8791 \
+  --automation-disable-local-input \
+  --automation-pause-on-start
+```
+
 ## 1) Discover APIs (don’t hardcode)
 
 Use discovery to confirm the server is up and to get a “starter index” of endpoints:
 
-    curl -s http://127.0.0.1:8791/v1/discovery
+```bash
+BASE_URL=http://127.0.0.1:8791 # or parse from "Automation API listening on ..."
+curl -s "$BASE_URL/v1/discovery"
+```
 
 Also use:
 
-    curl -s http://127.0.0.1:8791/v1/health
+```bash
+curl -s "$BASE_URL/v1/health"
+```
 
 ## 2) Create a dedicated scene for your run (reviewable later)
 
 Create a scene scaffold (id must match `[A-Za-z0-9._-]`):
 
-    curl -s -X POST http://127.0.0.1:8791/v1/realm_scene/create \
-      -H 'Content-Type: application/json' \
-      -d '{"scene_id":"OpenClaw","label":"OpenClaw","description":"External agent monitor scene","switch_to":true}'
+```bash
+curl -s -X POST "$BASE_URL/v1/realm_scene/create" \
+  -H 'Content-Type: application/json' \
+  -d '{"scene_id":"AgentMonitor","label":"AgentMonitor","description":"External agent monitor scene","switch_to":true}'
+```
 
 Scene switching is deferred; step a few frames after scheduling:
 
-    curl -s -X POST http://127.0.0.1:8791/v1/step -H 'Content-Type: application/json' -d '{"frames":3}'
+```bash
+curl -s -X POST "$BASE_URL/v1/step" -H 'Content-Type: application/json' -d '{"frames":3}'
+```
 
 At any time, check which scene is active:
 
-    curl -s http://127.0.0.1:8791/v1/realm_scene/active
+```bash
+curl -s "$BASE_URL/v1/realm_scene/active"
+```
 
 ## 3) Spawn “agent units” and props (visualize what you’re doing)
 
 List prefabs to find something by label (builtins + saved):
 
-    curl -s http://127.0.0.1:8791/v1/prefabs
+```bash
+curl -s "$BASE_URL/v1/prefabs"
+```
 
 Spawn a prefab instance:
 
-    curl -s -X POST http://127.0.0.1:8791/v1/spawn \
-      -H 'Content-Type: application/json' \
-      -d '{"prefab_id_uuid":"<from /v1/prefabs>","x":2.0,"z":2.0,"yaw":0.0}'
+```bash
+curl -s -X POST "$BASE_URL/v1/spawn" \
+  -H 'Content-Type: application/json' \
+  -d '{"prefab_id_uuid":"<from /v1/prefabs>","x":2.0,"z":2.0,"yaw":0.0}'
+```
 
 Clean up a prop/unit:
 
-    curl -s -X POST http://127.0.0.1:8791/v1/despawn \
-      -H 'Content-Type: application/json' \
-      -d '{"instance_id_uuid":"<from /v1/state>"}'
+```bash
+curl -s -X POST "$BASE_URL/v1/despawn" \
+  -H 'Content-Type: application/json' \
+  -d '{"instance_id_uuid":"<from /v1/state>"}'
+```
 
 Replication is just spawning the same prefab multiple times (or copying a spawned unit by reusing its `prefab_id_uuid`).
 
@@ -95,15 +150,19 @@ Replication is just spawning the same prefab multiple times (or copying a spawne
 
 Popup toast (rendered mode only):
 
-    curl -s -X POST http://127.0.0.1:8791/v1/ui/toast \
-      -H 'Content-Type: application/json' \
-      -d '{"text":"Searching… 🔍","kind":"info","ttl_secs":3.5}'
+```bash
+curl -s -X POST "$BASE_URL/v1/ui/toast" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Searching… 🔍","kind":"info","ttl_secs":3.5}'
+```
 
 Speak text via built-in TTS (async). If you pass `instance_id_uuid` and `bubble=true`, a speech bubble appears above that object:
 
-    curl -s -X POST http://127.0.0.1:8791/v1/speak \
-      -H 'Content-Type: application/json' \
-      -d '{"content":"Collecting materials.","voice":"dog","volume":1.0,"instance_id_uuid":"<unit id>","bubble":true}'
+```bash
+curl -s -X POST "$BASE_URL/v1/speak" \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"Collecting materials.","voice":"dog","volume":1.0,"instance_id_uuid":"<unit id>","bubble":true}'
+```
 
 Notes:
 
@@ -114,17 +173,23 @@ Notes:
 
 Gen3D runs in Build Preview:
 
-    curl -s -X POST http://127.0.0.1:8791/v1/mode -H 'Content-Type: application/json' -d '{"mode":"gen3d"}'
-    curl -s -X POST http://127.0.0.1:8791/v1/step -H 'Content-Type: application/json' -d '{"frames":3}'
+```bash
+curl -s -X POST "$BASE_URL/v1/mode" -H 'Content-Type: application/json' -d '{"mode":"gen3d"}'
+curl -s -X POST "$BASE_URL/v1/step" -H 'Content-Type: application/json' -d '{"frames":3}'
+```
 
 Prompt + build, stepping frames while polling status:
 
-    curl -s -X POST http://127.0.0.1:8791/v1/gen3d/prompt -H 'Content-Type: application/json' -d '{"prompt":"A small cute robotic claw assistant mascot, stylized"}'
-    curl -s -X POST http://127.0.0.1:8791/v1/gen3d/build -H 'Content-Type: application/json' -d '{}'
+```bash
+curl -s -X POST "$BASE_URL/v1/gen3d/prompt" -H 'Content-Type: application/json' -d '{"prompt":"A small cute assistant robot mascot, stylized"}'
+curl -s -X POST "$BASE_URL/v1/gen3d/build" -H 'Content-Type: application/json' -d '{}'
+```
 
 When `GET /v1/gen3d/status` reports `draft_ready=true`, save:
 
-    curl -s -X POST http://127.0.0.1:8791/v1/gen3d/save -H 'Content-Type: application/json' -d '{}'
+```bash
+curl -s -X POST "$BASE_URL/v1/gen3d/save" -H 'Content-Type: application/json' -d '{}'
+```
 
 Use the returned `prefab_id_uuid` to spawn the avatar back in your monitor scene (switch back to `mode=build`, then `spawn`).
 
@@ -132,10 +197,14 @@ Use the returned `prefab_id_uuid` to spawn the avatar back in your monitor scene
 
 Force-save `scene.dat`:
 
-    curl -s -X POST http://127.0.0.1:8791/v1/scene/save -H 'Content-Type: application/json' -d '{}'
+```bash
+curl -s -X POST "$BASE_URL/v1/scene/save" -H 'Content-Type: application/json' -d '{}'
+```
 
-The scene lives under `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/` and can be revisited by switching back to it later.
+The scene lives under `"$GRAVIMERA_HOME/realm/<realm_id>/scenes/<scene_id>/"` and can be revisited by switching back to it later.
 
 ## Shutdown (clean exit)
 
-    curl -s -X POST http://127.0.0.1:8791/v1/shutdown -H 'Content-Type: application/json' -d '{}'
+```bash
+curl -s -X POST "$BASE_URL/v1/shutdown" -H 'Content-Type: application/json' -d '{}'
+```
