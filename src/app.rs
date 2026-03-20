@@ -442,7 +442,13 @@ fn run_rendered_catching_panics(
 
 fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) {
     // Shared AI request limiter (Scene Build + Gen3D).
-    crate::ai_limiter::set_max_permits(config.gen3d_max_parallel_components.max(1) + 1);
+    let gen3d_jobs = config.gen3d_max_parallel_jobs.max(1);
+    let gen3d_components = config.gen3d_max_parallel_components.max(1);
+    crate::ai_limiter::set_max_permits(
+        gen3d_jobs
+            .saturating_mul(gen3d_components)
+            .saturating_add(1),
+    );
     let log_level = config.log_level;
 
     let mut app = App::new();
@@ -534,7 +540,13 @@ fn bevy_log_filter(level: bevy::log::Level) -> String {
 
 fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) -> AppExit {
     // Shared AI request limiter (Scene Build + Gen3D).
-    crate::ai_limiter::set_max_permits(config.gen3d_max_parallel_components.max(1) + 1);
+    let gen3d_jobs = config.gen3d_max_parallel_jobs.max(1);
+    let gen3d_components = config.gen3d_max_parallel_components.max(1);
+    crate::ai_limiter::set_max_permits(
+        gen3d_jobs
+            .saturating_mul(gen3d_components)
+            .saturating_add(1),
+    );
     let log_level = config.log_level;
 
     #[cfg(target_os = "linux")]
@@ -574,6 +586,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::gen3d::Gen3dDraft>();
     app.init_resource::<crate::gen3d::Gen3dPendingSeedFromPrefab>();
     app.init_resource::<crate::gen3d::Gen3dAiJob>();
+    app.init_resource::<crate::gen3d::Gen3dMockJobManager>();
     app.init_resource::<crate::gen3d::Gen3dToolFeedbackHistory>();
     app.init_resource::<crate::gen3d::Gen3dPrefabThumbnailCaptureRuntime>();
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();

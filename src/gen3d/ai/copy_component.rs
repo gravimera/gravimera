@@ -337,10 +337,9 @@ pub(super) fn copy_component_into(
 
             let chosen = match (alignment, alignment_frame) {
                 (Gen3dCopyAlignmentMode::Rotation, Gen3dCopyAlignmentFrame::Join) => rot_join_mat,
-                (
-                    Gen3dCopyAlignmentMode::Rotation,
-                    Gen3dCopyAlignmentFrame::ChildAnchor,
-                ) => rot_child_anchor_mat,
+                (Gen3dCopyAlignmentMode::Rotation, Gen3dCopyAlignmentFrame::ChildAnchor) => {
+                    rot_child_anchor_mat
+                }
                 (Gen3dCopyAlignmentMode::MirrorMountX, _) => mirror_join_mat,
             };
             Ok(transform_from_mat4(chosen))
@@ -1682,7 +1681,10 @@ mod tests {
         // use `attach_to.offset` to rotate the component to face left/right. JOIN-frame reuse would
         // cancel that offset rotation, leaving side windows oriented like the front window.
         fn setup() -> (Vec<Gen3dPlannedComponent>, Gen3dDraft, u128) {
-            let mut components = vec![stub_component("window_front"), stub_component("window_side")];
+            let mut components = vec![
+                stub_component("window_front"),
+                stub_component("window_side"),
+            ];
             components[0].actual_size = Some(Vec3::ONE);
             components[0].attach_to = Some(super::super::Gen3dPlannedAttachment {
                 parent: "wall".into(),
@@ -1696,7 +1698,9 @@ mod tests {
                 parent: "wall".into(),
                 parent_anchor: "win_side".into(),
                 child_anchor: "mount".into(),
-                offset: Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
+                offset: Transform::from_rotation(Quat::from_rotation_y(
+                    std::f32::consts::FRAC_PI_2,
+                )),
                 joint: None,
                 animations: Vec::new(),
             });
@@ -1745,7 +1749,11 @@ mod tests {
             None,
         )
         .expect("copy ok");
-        let target_def = draft.defs.iter().find(|d| d.object_id == target_id).unwrap();
+        let target_def = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == target_id)
+            .unwrap();
         let part = target_def
             .parts
             .iter()
@@ -1780,7 +1788,11 @@ mod tests {
             None,
         )
         .expect("copy ok");
-        let target_def = draft.defs.iter().find(|d| d.object_id == target_id).unwrap();
+        let target_def = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == target_id)
+            .unwrap();
         let part = target_def
             .parts
             .iter()

@@ -650,6 +650,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) seed_target_entity: Option<Entity>,
     pub(super) metrics: Gen3dRunMetrics,
     pub(super) in_flight_dirty: bool,
+    pub(super) mock_mode: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -856,6 +857,54 @@ impl Gen3dAiJob {
 
     pub(crate) fn run_realm_id(&self) -> Option<&str> {
         self.run_realm_id.as_deref()
+    }
+
+    pub(crate) fn is_mock_mode(&self) -> bool {
+        self.mock_mode
+    }
+
+    pub(crate) fn set_mock_mode(&mut self, enabled: bool) {
+        self.mock_mode = enabled;
+    }
+
+    pub(crate) fn set_run_id(&mut self, run_id: Uuid) {
+        self.run_id = Some(run_id);
+    }
+
+    pub(crate) fn set_run_id_opt(&mut self, run_id: Option<Uuid>) {
+        self.run_id = run_id;
+    }
+
+    pub(crate) fn set_run_realm_id(&mut self, realm_id: String) {
+        self.run_realm_id = Some(realm_id);
+    }
+
+    pub(crate) fn set_run_realm_id_opt(&mut self, realm_id: Option<String>) {
+        self.run_realm_id = realm_id;
+    }
+
+    pub(crate) fn set_run_scene_id(&mut self, scene_id: String) {
+        self.run_scene_id = Some(scene_id);
+    }
+
+    pub(crate) fn set_run_scene_id_opt(&mut self, scene_id: Option<String>) {
+        self.run_scene_id = scene_id;
+    }
+
+    pub(crate) fn set_user_prompt_raw(&mut self, prompt: String) {
+        self.user_prompt_raw = prompt;
+    }
+
+    pub(crate) fn set_plan_hash(&mut self, hash: String) {
+        self.plan_hash = hash;
+    }
+
+    pub(crate) fn set_running(&mut self, running: bool) {
+        self.running = running;
+    }
+
+    pub(crate) fn set_build_complete(&mut self, complete: bool) {
+        self.build_complete = complete;
     }
 
     pub(crate) fn mark_in_flight_dirty(&mut self) {

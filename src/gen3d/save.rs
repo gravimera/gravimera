@@ -1332,7 +1332,7 @@ fn collider_half_xz(collider: ColliderProfile, size: Vec3) -> Vec2 {
     }
 }
 
-fn save_gen3d_snapshot_to_scene_and_library(
+pub(crate) fn save_gen3d_snapshot_to_scene_and_library(
     realm_id: &str,
     _scene_id: &str,
     library: &mut ObjectLibrary,
@@ -1802,6 +1802,30 @@ pub(crate) fn gen3d_request_prefab_thumbnail_capture(
     Ok(())
 }
 
+pub(crate) fn gen3d_request_prefab_thumbnail_capture_from_render_world(
+    commands: &mut Commands,
+    render: &mut Gen3dSaveRenderWorld,
+    runtime: &mut Gen3dPrefabThumbnailCaptureRuntime,
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    thumbnail_path: PathBuf,
+) -> Result<(), String> {
+    gen3d_request_prefab_thumbnail_capture(
+        commands,
+        runtime,
+        &mut render.images,
+        &render.asset_server,
+        &render.assets,
+        &mut render.meshes,
+        &mut render.materials,
+        &mut render.material_cache,
+        &mut render.mesh_cache,
+        library,
+        prefab_id,
+        thumbnail_path,
+    )
+}
+
 fn start_gen3d_prefab_thumbnail_capture(
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -2065,6 +2089,9 @@ pub(crate) fn gen3d_auto_save_when_done(
     let Some(run_id) = job.run_id() else {
         return;
     };
+    if job.is_mock_mode() {
+        return;
+    }
     if job.is_running() || !job.is_build_complete() {
         return;
     }
