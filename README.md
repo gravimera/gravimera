@@ -45,5 +45,17 @@ cargo run
 - Gen3D workflow + schemas: [docs/gen3d/README.md](docs/gen3d/README.md)
 - Controls (rendered UI): [docs/controls.md](docs/controls.md)
 - Local Automation HTTP API: [docs/automation_http_api.md](docs/automation_http_api.md)
+- External agent monitor skill (scene + units + toast + TTS): [docs/agent_skills/SKILL_agent.md](docs/agent_skills/SKILL_agent.md)
 - Intelligence service: [docs/intelligence_service.md](docs/intelligence_service.md)
 - Publishing builds: [docs/publishing.md](docs/publishing.md)
+
+## Use Gravimera as an “Agent Monitor” (copy/paste prompt)
+
+Copy/paste this into an external agent (e.g. OpenClaw). It links to the single source of truth docs:
+
+```text
+Use this repo’s docs to drive a local Gravimera process as a live “agent monitor” via the Automation HTTP API:
+
+- docs/agent_skills/SKILL_agent.md (monitor workflow: scenes, units, toast, built-in TTS)
+- docs/automation_http_api.md      (API reference; start with GET /v1/discovery)
+```
