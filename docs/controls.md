@@ -89,4 +89,4 @@ Units in Build mode:
 
 ## Build Preview (Gen3D)
 
-Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdown (**Object Preview**) and the **Gen3D** button. Full workflow: `gen_3d.md`.
+Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdown (**Object Preview**) and the **Gen3D** button. Full workflow: `docs/gen3d/README.md`.

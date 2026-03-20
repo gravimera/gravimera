@@ -404,7 +404,7 @@ fn resolve_gen3d_ai_service_config(config: &AppConfig) -> Result<Gen3dAiServiceC
             Some(openai) => Ok(Gen3dAiServiceConfig::OpenAi(openai)),
             None => {
                 let details = if config.errors.is_empty() {
-                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                    "Missing config.toml. See docs/gen3d/README.md for setup.".to_string()
                 } else {
                     config.errors.join("\n")
                 };
@@ -415,7 +415,7 @@ fn resolve_gen3d_ai_service_config(config: &AppConfig) -> Result<Gen3dAiServiceC
             Some(mimo) => Ok(Gen3dAiServiceConfig::Mimo(mimo)),
             None => {
                 let details = if config.errors.is_empty() {
-                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                    "Missing config.toml. See docs/gen3d/README.md for setup.".to_string()
                 } else {
                     config.errors.join("\n")
                 };
@@ -426,7 +426,7 @@ fn resolve_gen3d_ai_service_config(config: &AppConfig) -> Result<Gen3dAiServiceC
             Some(gemini) => Ok(Gen3dAiServiceConfig::Gemini(gemini)),
             None => {
                 let details = if config.errors.is_empty() {
-                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                    "Missing config.toml. See docs/gen3d/README.md for setup.".to_string()
                 } else {
                     config.errors.join("\n")
                 };
@@ -437,7 +437,7 @@ fn resolve_gen3d_ai_service_config(config: &AppConfig) -> Result<Gen3dAiServiceC
             Some(claude) => Ok(Gen3dAiServiceConfig::Claude(claude)),
             None => {
                 let details = if config.errors.is_empty() {
-                    "Missing config.toml. See gen_3d.md for setup.".to_string()
+                    "Missing config.toml. See docs/gen3d/README.md for setup.".to_string()
                 } else {
                     config.errors.join("\n")
                 };

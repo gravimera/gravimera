@@ -35,7 +35,7 @@ How to see it working (after implementation):
 - [x] (2026-03-19 01:35 CST) Implemented edit-session pipeline flow (seeded Edit/Fork): plan-ops → DraftOps suggest+apply (atomic) → QA → (render/review) loops → finish.
 - [x] (2026-03-19 01:35 CST) Implemented deterministic fallback to agent-step (bounded retries; explicit status + Info Store event).
 - [x] (2026-03-19 01:35 CST) Added mock backend responses + offline tests so the pipeline is regression-tested without network.
-- [x] (2026-03-19 01:35 CST) Updated docs (`gen_3d.md`) to describe pipeline mode + fallback and the new DraftOps tool.
+- [x] (2026-03-19 01:35 CST) Updated docs (`docs/gen3d/README.md`) to describe pipeline mode + fallback and the new DraftOps tool.
 - [x] (2026-03-19 01:36 CST) Ran `cargo test`.
 - [x] (2026-03-19 01:48 CST) Ran the rendered smoke test (`cargo run -- --rendered-seconds 2`).
 
@@ -109,7 +109,7 @@ Gen3D lives under `src/gen3d/*`. The relevant parts for orchestration are:
 - `src/gen3d/ai/draft_ops.rs`: deterministic “patch language” for primitive edits (`apply_draft_ops_v1`) and component inspection (`query_component_parts_v1`).
 - `src/gen3d/ai/plan_ops.rs`: deterministic “patch language” for plan edits (`apply_plan_ops_v1`) and its schema.
 - `src/gen3d/agent/tools.rs`: tool registry and tool ids shown to the agent.
-- `gen_3d.md`: current (agent-driven) Gen3D implementation doc.
+- `docs/gen3d/README.md`: Gen3D workflow + tool contracts doc.
 
 Definitions used in this plan:
 
@@ -272,7 +272,7 @@ Add offline regression coverage so CI doesn’t need network access:
 
 ### 7) Documentation
 
-Update `gen_3d.md` to document:
+Update `docs/gen3d/README.md` to document:
 
 - The new deterministic pipeline mode.
 - The fallback behavior and what the player sees.

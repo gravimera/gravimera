@@ -27,7 +27,7 @@ How to see it working:
 - [x] (2026-03-20) Drafted this ExecPlan.
 - [x] (2026-03-20) Implemented root-field PlanOps (`set_mobility`, `set_attack`, `set_collider`) in `apply_plan_ops_v1` + structured-output schema.
 - [x] (2026-03-20) Made `qa_v1` root-field capability gaps include actionable fixits (prefer preserve-mode plan ops; fallback to replanning when no plan exists).
-- [x] (2026-03-20) Updated tool documentation (`src/gen3d/agent/tools.rs`) and user-facing docs (`gen_3d.md`) to reflect new PlanOps kinds and root-field remediation guidance.
+- [x] (2026-03-20) Updated tool documentation (`src/gen3d/agent/tools.rs`) and user-facing docs (`docs/gen3d/README.md`) to reflect new PlanOps kinds and root-field remediation guidance.
 - [ ] Add unit/regression tests for the new PlanOps operations and QA fixit generation.
 - [ ] Run `cargo test` and the rendered smoke test (`cargo run -- --rendered-seconds 2`).
 
@@ -137,7 +137,7 @@ The goal is that a single QA error is enough to tell an agent/pipeline the corre
 
 Docs:
 
-- Update `gen_3d.md` to mention that preserve-mode plan ops can now set root `mobility`/`attack`/`collider` (and that this is the recommended remediation path for root-field QA gaps).
+- Update `docs/gen3d/README.md` to mention that preserve-mode plan ops can now set root `mobility`/`attack`/`collider` (and that this is the recommended remediation path for root-field QA gaps).
 
 Tests:
 
