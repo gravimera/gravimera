@@ -29,6 +29,7 @@ To test Gen3D without spending tokens:
 - (Optional) Set `[gen3d].mock_delay_seconds = 60` to simulate slow builds (useful for UI/progress
   testing).
 - Note: the mock backend does not accept reference images; use prompt-only tests.
+- For an isolated mock config, see `test/gen3d_mock/` (use `GRAVIMERA_CONFIG=./test/gen3d_mock/config.toml`).
 
 ## Run artifacts
 

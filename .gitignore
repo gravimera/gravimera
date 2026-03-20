@@ -10,3 +10,9 @@ tests
 
 *.log
 config.toml
+
+!test/
+!test/gen3d_info_store_harness/
+!test/gen3d_info_store_harness/**
+!test/gen3d_mock/
+!test/gen3d_mock/**
