@@ -370,6 +370,7 @@ struct AutomationWorld<'w, 's> {
     windows: Query<'w, 's, (Entity, &'static Window), With<PrimaryWindow>>,
     players: Query<'w, 's, (), With<Player>>,
     player_q: Query<'w, 's, (&'static Transform, &'static Collider), With<Player>>,
+    status_contents: Query<'w, 's, &'static ObjectStatusBarContent>,
     commandables: Query<
         'w,
         's,
@@ -710,6 +711,12 @@ struct UiToastRequest {
     kind: Option<String>,
     #[serde(default)]
     ttl_secs: Option<f32>,
+}
+
+#[derive(Deserialize)]
+struct ObjectStatusBarRequest {
+    instance_id_uuid: String,
+    text: String,
 }
 
 #[derive(Deserialize)]
@@ -2651,6 +2658,56 @@ fn handle_ui_routes<
     msg: &AutomationRequest,
 ) -> Option<AutomationReply> {
     let has_window = ctx.world.windows.iter().next().is_some();
+
+    if msg.method.as_str() == "GET" && msg.path.starts_with("/v1/ui/object_status_bar/") {
+        let suffix = msg
+            .path
+            .strip_prefix("/v1/ui/object_status_bar/")
+            .unwrap_or_default()
+            .trim();
+        if suffix.is_empty() {
+            return Some(json_error(
+                400,
+                "Missing instance id. Use /v1/ui/object_status_bar/<instance_id_uuid>.",
+            ));
+        }
+
+        let Ok(uuid) = uuid::Uuid::parse_str(suffix) else {
+            return Some(json_error(400, "Invalid instance_id_uuid UUID."));
+        };
+        let id = ObjectId(uuid.as_u128());
+
+        let mut target = None;
+        for (entity, object_id, ..) in ctx.world.state_objects.iter() {
+            if object_id.0 == id.0 {
+                target = Some(entity);
+                break;
+            }
+        }
+        let Some(target) = target else {
+            return Some(json_error(404, "Instance not found."));
+        };
+
+        let text = ctx
+            .world
+            .status_contents
+            .get(target)
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+
+        let body = serde_json::json!({
+            "ok": true,
+            "instance_id_uuid": uuid.to_string(),
+            "text": text,
+        })
+        .to_string();
+        return Some(AutomationReply {
+            status: 200,
+            body: body.into_bytes(),
+            content_type: "application/json",
+        });
+    }
+
     match (msg.method.as_str(), msg.path.as_str()) {
         ("POST", "/v1/ui/toast") => {
             if !has_window {
@@ -2686,6 +2743,57 @@ fn handle_ui_routes<
             });
 
             let body = serde_json::json!({ "ok": true }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/ui/object_status_bar") => {
+            let req: ObjectStatusBarRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let Ok(uuid) = uuid::Uuid::parse_str(req.instance_id_uuid.trim()) else {
+                return Some(json_error(400, "Invalid instance_id_uuid UUID."));
+            };
+            let id = ObjectId(uuid.as_u128());
+
+            let mut target = None;
+            for (entity, object_id, ..) in ctx.world.state_objects.iter() {
+                if object_id.0 == id.0 {
+                    target = Some(entity);
+                    break;
+                }
+            }
+            let Some(target) = target else {
+                return Some(json_error(404, "Instance not found."));
+            };
+
+            let text = req.text.trim().to_string();
+            const MAX_STATUS_CHARS: usize = 400;
+            if text.chars().count() > MAX_STATUS_CHARS {
+                return Some(json_error(
+                    400,
+                    format!("text too long (max {MAX_STATUS_CHARS} chars)."),
+                ));
+            }
+
+            if text.is_empty() {
+                ctx.commands.entity(target).remove::<ObjectStatusBarContent>();
+            } else {
+                ctx.commands
+                    .entity(target)
+                    .insert(ObjectStatusBarContent { text: text.clone() });
+            }
+
+            let body = serde_json::json!({
+                "ok": true,
+                "instance_id_uuid": uuid.to_string(),
+                "text": text,
+            })
+            .to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),
@@ -2805,6 +2913,8 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"POST","path":"/v1/spawn"}),
                 serde_json::json!({"method":"POST","path":"/v1/despawn"}),
                 serde_json::json!({"method":"POST","path":"/v1/ui/toast"}),
+                serde_json::json!({"method":"POST","path":"/v1/ui/object_status_bar"}),
+                serde_json::json!({"method":"GET","path":"/v1/ui/object_status_bar/{instance_id_uuid}"}),
                 serde_json::json!({"method":"POST","path":"/v1/speak"}),
                 serde_json::json!({"method":"POST","path":"/v1/scene/save"}),
                 serde_json::json!({"method":"POST","path":"/v1/step"}),
@@ -2825,6 +2935,7 @@ fn handle_request_main_thread<
                 "active": { "realm_id": ctx.active_realm_id, "scene_id": ctx.active_scene_id },
                 "features": {
                     "ui_toast": has_window,
+                    "object_status_bar": has_window,
                     "speech_bubble": has_window,
                     "tts": true,
                     "realm_scene_switch": true,

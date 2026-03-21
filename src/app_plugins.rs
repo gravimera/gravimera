@@ -757,6 +757,9 @@ impl Plugin for RenderedGameplayPlugin {
                 crate::ui::apply_model_speech_bubble_commands
                     .after(crate::ui::spawn_health_change_popups)
                     .in_set(UiSystems::Content),
+                crate::ui::apply_object_status_bar_ui
+                    .after(crate::ui::apply_model_speech_bubble_commands)
+                    .in_set(UiSystems::Content),
                 crate::ui::apply_ui_toast_commands.in_set(UiSystems::Content),
                 crate::ui::update_ui_toasts
                     .after(crate::ui::apply_ui_toast_commands)
@@ -768,9 +771,14 @@ impl Plugin for RenderedGameplayPlugin {
         );
         app.add_systems(
             PostUpdate,
-            (crate::ui::update_model_speech_bubbles
-                .after(crate::ui::apply_model_speech_bubble_commands)
-                .in_set(UiSystems::PostLayout),),
+            (
+                crate::ui::update_model_speech_bubbles
+                    .after(crate::ui::apply_model_speech_bubble_commands)
+                    .in_set(UiSystems::PostLayout),
+                crate::ui::update_object_status_bars
+                    .after(crate::ui::apply_object_status_bar_ui)
+                    .in_set(UiSystems::PostLayout),
+            ),
         );
         app.add_systems(
             Update,

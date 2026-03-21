@@ -26,6 +26,11 @@ const MODEL_SPEECH_BUBBLE_BASE_OFFSET_PX: Vec2 = Vec2::new(0.0, -48.0);
 const MODEL_SPEECH_BUBBLE_MIN_VALID_SIZE_PX: f32 = 0.5;
 const MODEL_SPEECH_BUBBLE_LAYOUT_STABLE_EPSILON_PX: f32 = 0.5;
 const MODEL_SPEECH_BUBBLE_LAYOUT_STABLE_FRAMES: u8 = 2;
+const OBJECT_STATUS_BAR_MAX_CHARS: usize = 140;
+const OBJECT_STATUS_BAR_GAP_BELOW_BUBBLE_PX: f32 = 18.0;
+const OBJECT_STATUS_BAR_MIN_VALID_SIZE_PX: f32 = 0.5;
+const OBJECT_STATUS_BAR_LAYOUT_STABLE_EPSILON_PX: f32 = 0.5;
+const OBJECT_STATUS_BAR_LAYOUT_STABLE_FRAMES: u8 = 2;
 const UI_TOAST_MAX_COUNT: usize = 6;
 const UI_TOAST_FADE_OUT_SECS: f32 = 0.35;
 
@@ -52,6 +57,18 @@ pub(crate) struct ModelSpeechBubble {
 
 #[derive(Component, Debug, Clone, Copy)]
 pub(crate) struct ModelSpeechBubbleText;
+
+#[derive(Component, Debug, Clone)]
+pub(crate) struct ObjectStatusBarUi {
+    pub(crate) target: Entity,
+    pub(crate) text: String,
+    pub(crate) pending_show: bool,
+    pub(crate) stable_frames: u8,
+    pub(crate) last_size: Vec2,
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+pub(crate) struct ObjectStatusBarUiText;
 
 pub(crate) fn update_window_title(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
@@ -473,6 +490,260 @@ pub(crate) fn apply_model_speech_bubble_commands(
                     }
                 }
             }
+        }
+    }
+}
+
+pub(crate) fn apply_object_status_bar_ui(
+    mut commands: Commands,
+    ui_fonts: Res<UiFonts>,
+    emoji_atlas: Res<EmojiAtlas>,
+    asset_server: Res<AssetServer>,
+    mut removed: RemovedComponents<ObjectStatusBarContent>,
+    changed_objects: Query<
+        (Entity, &ObjectStatusBarContent),
+        Or<(Added<ObjectStatusBarContent>, Changed<ObjectStatusBarContent>)>,
+    >,
+    mut existing_bars: Query<(Entity, &mut ObjectStatusBarUi, &Children, &mut Visibility)>,
+    bar_texts: Query<Entity, With<ObjectStatusBarUiText>>,
+) {
+    for removed_entity in removed.read() {
+        for (bar_entity, bar, _, _) in &existing_bars {
+            if bar.target == removed_entity {
+                commands.entity(bar_entity).try_despawn();
+            }
+        }
+    }
+
+    let bar_text_color = Color::srgb(0.92, 0.92, 0.96);
+    let bar_font_size = 12.5;
+    let bar_shadow = TextShadow {
+        offset: Vec2::splat(1.0),
+        color: Color::linear_rgba(0.0, 0.0, 0.0, 0.35),
+    };
+
+    for (entity, content) in &changed_objects {
+        let raw = content.text.trim();
+        if raw.is_empty() {
+            commands.entity(entity).remove::<ObjectStatusBarContent>();
+            continue;
+        }
+
+        let mut truncated = String::new();
+        let mut chars = raw.chars();
+        for _ in 0..OBJECT_STATUS_BAR_MAX_CHARS {
+            let Some(ch) = chars.next() else {
+                break;
+            };
+            if ch == '\n' || ch == '\r' {
+                truncated.push(' ');
+                continue;
+            }
+            if ch.is_control() && ch != '\t' {
+                continue;
+            }
+            if ch == '\t' {
+                truncated.push(' ');
+                continue;
+            }
+            truncated.push(ch);
+        }
+        if chars.next().is_some() {
+            truncated.push_str("...");
+        }
+        if truncated.trim().is_empty() {
+            commands.entity(entity).remove::<ObjectStatusBarContent>();
+            continue;
+        }
+
+        if let Some((_, mut bar, children, mut visibility)) = existing_bars
+            .iter_mut()
+            .find(|(_, bar, _, _)| bar.target == entity)
+        {
+            bar.text = truncated.clone();
+            bar.pending_show = true;
+            bar.stable_frames = 0;
+            bar.last_size = Vec2::ZERO;
+            for child in children.iter() {
+                if let Ok(text_entity) = bar_texts.get(child) {
+                    set_rich_text_line(
+                        &mut commands,
+                        text_entity,
+                        &truncated,
+                        &ui_fonts,
+                        &emoji_atlas,
+                        &asset_server,
+                        bar_font_size,
+                        bar_text_color,
+                        Some(bar_shadow),
+                    );
+                    break;
+                }
+            }
+            *visibility = Visibility::Hidden;
+            continue;
+        }
+
+        let text_value = truncated.clone();
+        commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    max_width: Val::Px(360.0),
+                    min_width: Val::Px(96.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(9.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.06, 0.06, 0.08, 0.78)),
+                BorderColor::all(Color::srgba(0.30, 0.30, 0.36, 0.85)),
+                Visibility::Hidden,
+                ZIndex(219),
+                ObjectStatusBarUi {
+                    target: entity,
+                    text: truncated,
+                    pending_show: true,
+                    stable_frames: 0,
+                    last_size: Vec2::ZERO,
+                },
+            ))
+            .with_children(|parent| {
+                spawn_rich_text_line(
+                    parent,
+                    &text_value,
+                    &ui_fonts,
+                    &emoji_atlas,
+                    &asset_server,
+                    bar_font_size,
+                    bar_text_color,
+                    (
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_wrap: FlexWrap::NoWrap,
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(2.0),
+                            row_gap: Val::Px(2.0),
+                            ..default()
+                        },
+                        TextLayout {
+                            justify: Justify::Center,
+                            linebreak: LineBreak::NoWrap,
+                        },
+                        ObjectStatusBarUiText,
+                    ),
+                    Some(bar_shadow),
+                );
+            });
+    }
+}
+
+pub(crate) fn update_object_status_bars(
+    mut commands: Commands,
+    library: Res<ObjectLibrary>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    targets: Query<(&GlobalTransform, &ObjectPrefabId), With<ObjectStatusBarContent>>,
+    mut bars: Query<(
+        Entity,
+        &ComputedNode,
+        &mut Node,
+        &mut Visibility,
+        &mut ObjectStatusBarUi,
+    )>,
+) {
+    let Ok((camera, camera_global)) = camera_q.single() else {
+        return;
+    };
+
+    for (bar_entity, computed, mut node, mut visibility, mut bar) in &mut bars {
+        let Ok((target_global, prefab_id)) = targets.get(bar.target) else {
+            commands.entity(bar_entity).try_despawn();
+            continue;
+        };
+
+        let (target_scale, _target_rotation, target_translation) =
+            target_global.to_scale_rotation_translation();
+        let scale_y = target_scale.y.abs().max(1e-3);
+        let object_height = library
+            .size(prefab_id.0)
+            .unwrap_or(Vec3::splat(DEFAULT_OBJECT_SIZE_M))
+            .y
+            .abs()
+            .max(0.01)
+            * scale_y;
+        let ground_origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+        let ground_y = (target_translation.y - ground_origin_y).max(0.0);
+        let top_center_offset_y =
+            (ground_y + object_height - target_translation.y).max(MODEL_SPEECH_BUBBLE_MIN_OFFSET_Y);
+        let head_offset_y = library
+            .health_bar_offset_y(prefab_id.0)
+            .unwrap_or(top_center_offset_y)
+            .max(MODEL_SPEECH_BUBBLE_MIN_OFFSET_Y);
+        let center_world = target_translation;
+        let head_world = target_translation + Vec3::Y * head_offset_y;
+
+        let Ok(center_screen) = camera.world_to_viewport(camera_global, center_world) else {
+            bar.pending_show = true;
+            bar.stable_frames = 0;
+            bar.last_size = Vec2::ZERO;
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        let Ok(head_screen) = camera.world_to_viewport(camera_global, head_world) else {
+            bar.pending_show = true;
+            bar.stable_frames = 0;
+            bar.last_size = Vec2::ZERO;
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+
+        let bubble_bottom_screen =
+            Vec2::new(center_screen.x, head_screen.y) + MODEL_SPEECH_BUBBLE_BASE_OFFSET_PX;
+
+        // `world_to_viewport` returns logical pixels, while `ComputedNode::size` is physical pixels.
+        // Convert size to logical units so centering math uses one coordinate space.
+        let bar_size = Vec2::new(computed.size.x.max(0.0), computed.size.y.max(0.0))
+            * computed.inverse_scale_factor;
+        if bar_size.x <= OBJECT_STATUS_BAR_MIN_VALID_SIZE_PX
+            || bar_size.y <= OBJECT_STATUS_BAR_MIN_VALID_SIZE_PX
+        {
+            bar.pending_show = true;
+            bar.stable_frames = 0;
+            bar.last_size = Vec2::ZERO;
+            *visibility = Visibility::Hidden;
+            continue;
+        }
+
+        node.left = Val::Px(bubble_bottom_screen.x - bar_size.x * 0.5);
+        node.top = Val::Px(bubble_bottom_screen.y + OBJECT_STATUS_BAR_GAP_BELOW_BUBBLE_PX);
+
+        if bar.pending_show {
+            let size_delta = (bar_size - bar.last_size).abs();
+            let had_last_size = bar.last_size.x > OBJECT_STATUS_BAR_MIN_VALID_SIZE_PX
+                && bar.last_size.y > OBJECT_STATUS_BAR_MIN_VALID_SIZE_PX;
+            let stable_now = had_last_size
+                && size_delta.x <= OBJECT_STATUS_BAR_LAYOUT_STABLE_EPSILON_PX
+                && size_delta.y <= OBJECT_STATUS_BAR_LAYOUT_STABLE_EPSILON_PX;
+            if stable_now {
+                bar.stable_frames = bar.stable_frames.saturating_add(1);
+            } else {
+                bar.stable_frames = 0;
+            }
+            bar.last_size = bar_size;
+            if bar.stable_frames >= OBJECT_STATUS_BAR_LAYOUT_STABLE_FRAMES {
+                bar.pending_show = false;
+                *visibility = Visibility::Inherited;
+            } else {
+                *visibility = Visibility::Hidden;
+            }
+        } else {
+            bar.last_size = bar_size;
+            *visibility = Visibility::Inherited;
         }
     }
 }

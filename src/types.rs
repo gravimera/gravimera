@@ -730,6 +730,11 @@ pub(crate) enum ModelSpeechBubbleCommand {
     },
 }
 
+#[derive(Component, Debug, Clone)]
+pub(crate) struct ObjectStatusBarContent {
+    pub(crate) text: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UiToastKind {
     Info,

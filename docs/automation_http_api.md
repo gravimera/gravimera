@@ -190,7 +190,7 @@ Response (shape):
   "version": "0.0.0",
   "api": { "version": 1, "base_path": "/v1" },
   "active": { "realm_id": "default", "scene_id": "default" },
-  "features": { "ui_toast": true, "speech_bubble": true, "tts": true, "realm_scene_switch": true, "monitor_mode": false },
+  "features": { "ui_toast": true, "object_status_bar": true, "speech_bubble": true, "tts": true, "realm_scene_switch": true, "monitor_mode": false },
   "endpoints": [{ "method": "GET", "path": "/v1/health" }]
 }
 ```
@@ -343,6 +343,46 @@ Notes:
 - Requires rendered mode (returns `501` in headless).
 - `kind` is one of: `info`, `warn`, `error` (default: `info`).
 - `ttl_secs` is clamped to `0.2..=120.0`.
+
+### `POST /v1/ui/object_status_bar`
+
+Set (or clear) an ObjectStatusBar under an object's speech bubble.
+
+Request body:
+
+```json
+{ "instance_id_uuid": "...", "text": "Thinking…" }
+```
+
+Response (shape):
+
+```json
+{ "ok": true, "instance_id_uuid": "...", "text": "Thinking…" }
+```
+
+Notes:
+
+- If `text` is empty/whitespace, the status bar is cleared (hidden).
+- `text` is capped at 400 characters. The rendered UI may truncate further.
+- The UI is only visible in rendered mode, but the endpoint still works in headless mode.
+
+### `GET /v1/ui/object_status_bar/<instance_id_uuid>`
+
+Fetch the current ObjectStatusBar text for an object.
+
+```bash
+curl -s http://127.0.0.1:8791/v1/ui/object_status_bar/<instance_id_uuid>
+```
+
+Response (shape):
+
+```json
+{ "ok": true, "instance_id_uuid": "...", "text": "Thinking…" }
+```
+
+Notes:
+
+- If no status is set, `text` is an empty string.
 
 ### `POST /v1/speak`
 
