@@ -1266,6 +1266,7 @@ pub(crate) fn exit_gen3d_mode(
     preview_roots: Query<Entity, With<Gen3dPreviewSceneRoot>>,
     preview_lights: Query<Entity, With<Gen3dPreviewLight>>,
     viewer_roots: Query<Entity, With<Gen3dImageViewerRoot>>,
+    gen3d_jobs: Res<crate::gen3d::Gen3dJobManager>,
     job: Res<Gen3dAiJob>,
     mut preview_state: ResMut<Gen3dPreview>,
     mut workshop: ResMut<Gen3dWorkshop>,
@@ -1277,7 +1278,12 @@ pub(crate) fn exit_gen3d_mode(
         commands.entity(entity).try_despawn();
     }
 
-    if !job.is_running() {
+    let any_running = job.is_running()
+        || gen3d_jobs
+            .inactive_jobs()
+            .iter()
+            .any(|ctx| ctx.is_running());
+    if !any_running {
         for entity in &preview_cameras {
             commands.entity(entity).try_despawn();
         }
@@ -1310,6 +1316,7 @@ pub(crate) fn exit_gen3d_mode(
 
 pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
     mut commands: Commands,
+    gen3d_jobs: Res<crate::gen3d::Gen3dJobManager>,
     job: Res<Gen3dAiJob>,
     preview_cameras: Query<Entity, With<Gen3dPreviewCamera>>,
     review_cameras: Query<Entity, With<Gen3dReviewCaptureCamera>>,
@@ -1317,7 +1324,12 @@ pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
     preview_lights: Query<Entity, With<Gen3dPreviewLight>>,
     mut preview_state: ResMut<Gen3dPreview>,
 ) {
-    if job.is_running() {
+    if job.is_running()
+        || gen3d_jobs
+            .inactive_jobs()
+            .iter()
+            .any(|ctx| ctx.is_running())
+    {
         return;
     }
 

@@ -24,10 +24,10 @@ mod gemini;
 mod headless_prefab;
 mod info_store;
 mod job;
+mod mimo;
 mod motion_recenter;
 mod motion_repairs;
 mod motion_validation;
-mod mimo;
 mod openai;
 mod orchestration;
 mod parse;
@@ -71,8 +71,9 @@ pub(crate) use job::Gen3dAiJob;
 pub(crate) use job::Gen3dDescriptorMetaPolicy;
 pub(crate) use orchestration::{
     gen3d_apply_pending_seed_from_prefab, gen3d_cancel_build_from_api, gen3d_continue_button,
-    gen3d_generate_button, gen3d_poll_ai_job, gen3d_resume_build_from_api,
-    gen3d_start_build_from_api, gen3d_start_edit_session_from_prefab_id_from_api,
+    gen3d_generate_button, gen3d_poll_ai_job, gen3d_poll_inactive_ai_jobs,
+    gen3d_resume_build_from_api, gen3d_start_build_from_api,
+    gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };
 pub(crate) use snapshots::{

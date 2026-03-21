@@ -29,6 +29,23 @@ By default, each Gen3D run writes artifacts under:
   - `attempt_<n>/pass_<m>/...` (per-pass artifacts)
   - `info_store_v1/` (KV + events + blobs metadata)
 
+## Concurrent runs (Build UI)
+
+Gen3D supports up to **3 concurrent running builds**. The Prefabs panel surfaces these runs via a
+realm-local “in-flight” file:
+
+- `.../<realm>/prefabs/gen3d_in_flight_v1.json` (see `src/realm_prefab_packages.rs`)
+
+Behavior:
+
+- Clicking the **Gen3D** button in the Prefabs panel starts a **new Gen3D session** (empty prompt /
+  images). To view an existing run, click its row in the Prefabs list.
+- If there are already 3 `running` runs, clicking **Gen3D** shows a toast: `生成中任务已满`.
+- When a run finishes, its status updates to `completed` (the entry is not removed). Failures are
+  `failed`. The remove button deletes the entry (and cancels the run if it is still running).
+- Implementation detail: only the currently loaded session owns the preview/render context; inactive
+  runs continue polling AI in the background but defer any render-dependent tool/step until loaded.
+
 DraftOps-specific artifacts:
 
 - `attempt_*/pass_*/draft_ops_suggested_last.json` — latest `llm_generate_draft_ops_v1` suggestion

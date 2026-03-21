@@ -2022,10 +2022,13 @@ mod tests {
         )
         .expect("tool should return result JSON");
 
-        assert!(result
-            .get("accepted")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false), "expected accepted=true, got {result:?}");
+        assert!(
+            result
+                .get("accepted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            "expected accepted=true, got {result:?}"
+        );
         assert!(!result
             .get("still_pending")
             .and_then(|v| v.as_bool())

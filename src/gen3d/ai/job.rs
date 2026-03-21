@@ -708,8 +708,25 @@ impl Gen3dAiJob {
             && self.pass_dir.is_some()
     }
 
+    pub(crate) fn user_images_len(&self) -> usize {
+        self.user_images.len()
+    }
+
     pub(crate) fn is_capturing_motion_sheets(&self) -> bool {
         self.motion_capture.is_some()
+    }
+
+    pub(crate) fn requires_render_context(&self) -> bool {
+        self.motion_capture.is_some()
+            || self.review_capture.is_some()
+            || matches!(
+                self.phase,
+                Gen3dAiPhase::CapturingReview
+                    | Gen3dAiPhase::AgentCapturingRender
+                    | Gen3dAiPhase::AgentCapturingPassSnapshot
+            )
+            || self.agent.pending_render.is_some()
+            || self.agent.pending_pass_snapshot.is_some()
     }
 
     pub(crate) fn edit_base_prefab_id(&self) -> Option<u128> {
@@ -856,6 +873,10 @@ impl Gen3dAiJob {
 
     pub(crate) fn run_realm_id(&self) -> Option<&str> {
         self.run_realm_id.as_deref()
+    }
+
+    pub(crate) fn run_scene_id(&self) -> Option<&str> {
+        self.run_scene_id.as_deref()
     }
 
     pub(crate) fn set_run_id(&mut self, run_id: Uuid) {

@@ -825,7 +825,6 @@ pub(crate) fn model_library_rebuild_list_ui(
             run_id: u128,
             status: crate::gen3d::Gen3dInFlightStatus,
             created_at_ms: u128,
-            queue_pos: Option<usize>,
         },
     }
 
@@ -856,16 +855,6 @@ pub(crate) fn model_library_rebuild_list_ui(
     let mut prefab_rows: Vec<Row> = Vec::new();
     let mut inflight_rows: Vec<Row> = Vec::new();
 
-    let mut queued_positions: HashMap<String, usize> = HashMap::new();
-    let mut queued_entries: Vec<&crate::gen3d::Gen3dInFlightEntry> = in_flight_entries
-        .iter()
-        .filter(|entry| matches!(entry.status, crate::gen3d::Gen3dInFlightStatus::Queued))
-        .collect();
-    queued_entries.sort_by_key(|entry| entry.created_at_ms);
-    for (idx, entry) in queued_entries.iter().enumerate() {
-        queued_positions.insert(entry.run_id.clone(), idx.saturating_add(1));
-    }
-
     for entry in &in_flight_entries {
         let run_id = match uuid::Uuid::parse_str(entry.run_id.trim()) {
             Ok(id) => id.as_u128(),
@@ -893,18 +882,11 @@ pub(crate) fn model_library_rebuild_list_ui(
         if !query.is_empty() && score == 0 {
             continue;
         }
-        let queue_pos = match entry.status {
-            crate::gen3d::Gen3dInFlightStatus::Queued => {
-                queued_positions.get(&entry.run_id).copied()
-            }
-            _ => None,
-        };
         inflight_rows.push(Row {
             kind: RowKind::InFlight {
                 run_id,
                 status: entry.status.clone(),
                 created_at_ms: entry.created_at_ms,
-                queue_pos,
             },
             display_name,
             score,
@@ -1024,7 +1006,7 @@ pub(crate) fn model_library_rebuild_list_ui(
             let rank = |row: &Row| match &row.kind {
                 RowKind::InFlight { status, .. } => match status {
                     crate::gen3d::Gen3dInFlightStatus::Running => 0,
-                    crate::gen3d::Gen3dInFlightStatus::Queued => 1,
+                    crate::gen3d::Gen3dInFlightStatus::Completed => 1,
                     crate::gen3d::Gen3dInFlightStatus::Failed => 2,
                 },
                 RowKind::Prefab { .. } => 3,
@@ -1128,15 +1110,8 @@ pub(crate) fn model_library_rebuild_list_ui(
                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                 ));
 
-                if let RowKind::InFlight {
-                    status,
-                    queue_pos,
-                    run_id,
-                    ..
-                } = &row.kind
-                {
+                if let RowKind::InFlight { status, run_id, .. } = &row.kind {
                     let status = status.clone();
-                    let queue_pos = *queue_pos;
                     let run_id = *run_id;
                     b.spawn((
                         Node {
@@ -1148,9 +1123,7 @@ pub(crate) fn model_library_rebuild_list_ui(
 
                     let status_text = match status {
                         crate::gen3d::Gen3dInFlightStatus::Running => "Generating".to_string(),
-                        crate::gen3d::Gen3dInFlightStatus::Queued => queue_pos
-                            .map(|pos| format!("Queued #{pos}"))
-                            .unwrap_or_else(|| "Queued".to_string()),
+                        crate::gen3d::Gen3dInFlightStatus::Completed => "Completed".to_string(),
                         crate::gen3d::Gen3dInFlightStatus::Failed => "Failed".to_string(),
                     };
                     let (badge_bg, badge_border, badge_text) = match status {
@@ -1158,6 +1131,11 @@ pub(crate) fn model_library_rebuild_list_ui(
                             Color::srgba(0.35, 0.12, 0.12, 0.90),
                             Color::srgba(0.65, 0.20, 0.20, 0.85),
                             Color::srgb(0.98, 0.82, 0.82),
+                        ),
+                        crate::gen3d::Gen3dInFlightStatus::Completed => (
+                            Color::srgba(0.10, 0.16, 0.24, 0.90),
+                            Color::srgba(0.20, 0.32, 0.50, 0.85),
+                            Color::srgb(0.82, 0.90, 0.98),
                         ),
                         _ => (
                             Color::srgba(0.20, 0.30, 0.12, 0.90),
@@ -2420,6 +2398,14 @@ pub(crate) fn model_library_gen3d_button_interactions(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
     mut next_build_scene: ResMut<NextState<crate::types::BuildScene>>,
+    active: Res<crate::realm::ActiveRealmScene>,
+    mut gen3d_jobs: ResMut<crate::gen3d::Gen3dJobManager>,
+    mut gen3d_workshop: ResMut<crate::gen3d::Gen3dWorkshop>,
+    mut gen3d_draft: ResMut<crate::gen3d::Gen3dDraft>,
+    mut gen3d_preview: ResMut<crate::gen3d::Gen3dPreview>,
+    mut gen3d_feedback: ResMut<crate::gen3d::Gen3dToolFeedbackHistory>,
+    mut gen3d_job: ResMut<crate::gen3d::Gen3dAiJob>,
+    mut toasts: bevy::ecs::message::MessageWriter<crate::types::UiToastCommand>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         (Changed<Interaction>, With<ModelLibraryGen3dButton>),
@@ -2445,6 +2431,25 @@ pub(crate) fn model_library_gen3d_button_interactions(
 
                 match build_scene.get() {
                     crate::types::BuildScene::Realm => {
+                        if gen3d_jobs
+                            .start_new_loaded_job_session(
+                                &active.realm_id,
+                                &active.scene_id,
+                                &mut gen3d_workshop,
+                                &mut gen3d_draft,
+                                &mut gen3d_preview,
+                                &mut gen3d_feedback,
+                                &mut gen3d_job,
+                            )
+                            .is_err()
+                        {
+                            toasts.write(crate::types::UiToastCommand::Show {
+                                text: "生成中任务已满".to_string(),
+                                kind: crate::types::UiToastKind::Warn,
+                                ttl_secs: 2.5,
+                            });
+                            continue;
+                        }
                         next_build_scene.set(crate::types::BuildScene::Preview);
                     }
                     crate::types::BuildScene::Preview => {
@@ -2462,6 +2467,12 @@ pub(crate) fn model_library_item_button_interactions(
     build_scene: Res<State<crate::types::BuildScene>>,
     mut next_build_scene: ResMut<NextState<crate::types::BuildScene>>,
     mut state: ResMut<ModelLibraryUiState>,
+    mut gen3d_jobs: ResMut<crate::gen3d::Gen3dJobManager>,
+    mut gen3d_workshop: ResMut<crate::gen3d::Gen3dWorkshop>,
+    mut gen3d_draft: ResMut<crate::gen3d::Gen3dDraft>,
+    mut gen3d_preview: ResMut<crate::gen3d::Gen3dPreview>,
+    mut gen3d_feedback: ResMut<crate::gen3d::Gen3dToolFeedbackHistory>,
+    mut gen3d_job: ResMut<crate::gen3d::Gen3dAiJob>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut buttons: Query<(&Interaction, &ModelLibraryItemButton), Changed<Interaction>>,
 ) {
@@ -2483,6 +2494,16 @@ pub(crate) fn model_library_item_button_interactions(
             }
             state.drag = None;
             state.pending_preview = None;
+            if let ModelLibraryItemKind::InFlight { run_id } = button.kind {
+                gen3d_jobs.load_job_by_run_id(
+                    uuid::Uuid::from_u128(run_id),
+                    &mut gen3d_workshop,
+                    &mut gen3d_draft,
+                    &mut gen3d_preview,
+                    &mut gen3d_feedback,
+                    &mut gen3d_job,
+                );
+            }
             if matches!(build_scene.get(), crate::types::BuildScene::Realm) {
                 next_build_scene.set(crate::types::BuildScene::Preview);
             }
@@ -2511,8 +2532,12 @@ pub(crate) fn model_library_item_button_interactions(
 pub(crate) fn model_library_in_flight_remove_button_interactions(
     active: Res<crate::realm::ActiveRealmScene>,
     mut state: ResMut<ModelLibraryUiState>,
-    mut workshop: ResMut<crate::gen3d::Gen3dWorkshop>,
-    mut job: ResMut<crate::gen3d::Gen3dAiJob>,
+    mut gen3d_jobs: ResMut<crate::gen3d::Gen3dJobManager>,
+    mut gen3d_workshop: ResMut<crate::gen3d::Gen3dWorkshop>,
+    mut gen3d_draft: ResMut<crate::gen3d::Gen3dDraft>,
+    mut gen3d_preview: ResMut<crate::gen3d::Gen3dPreview>,
+    mut gen3d_feedback: ResMut<crate::gen3d::Gen3dToolFeedbackHistory>,
+    mut gen3d_job: ResMut<crate::gen3d::Gen3dAiJob>,
     mut buttons: Query<
         (
             &Interaction,
@@ -2538,10 +2563,34 @@ pub(crate) fn model_library_in_flight_remove_button_interactions(
                 *border = BorderColor::all(Color::srgba(0.80, 0.25, 0.25, 0.95));
 
                 let run_id = uuid::Uuid::from_u128(button.run_id);
-                if job.run_id() == Some(run_id) && (job.is_running() || job.can_resume()) {
-                    crate::gen3d::gen3d_cancel_build_from_api(&mut workshop, &mut job);
+                if gen3d_job.run_id() == Some(run_id)
+                    && (gen3d_job.is_running() || gen3d_job.can_resume())
+                {
+                    crate::gen3d::gen3d_cancel_build_from_api(&mut gen3d_workshop, &mut gen3d_job);
+                } else {
+                    if let Some(ctx) = gen3d_jobs
+                        .inactive_jobs_mut()
+                        .iter_mut()
+                        .find(|ctx| ctx.run_id() == Some(run_id))
+                    {
+                        if ctx.ai_job.is_running() || ctx.ai_job.can_resume() {
+                            crate::gen3d::gen3d_cancel_build_from_api(
+                                &mut ctx.workshop,
+                                &mut ctx.ai_job,
+                            );
+                        }
+                    }
                 }
-                if let Err(err) = crate::gen3d::remove_gen3d_in_flight_entry(&active.realm_id, run_id)
+                gen3d_jobs.remove_job_by_run_id(
+                    run_id,
+                    &mut gen3d_workshop,
+                    &mut gen3d_draft,
+                    &mut gen3d_preview,
+                    &mut gen3d_feedback,
+                    &mut gen3d_job,
+                );
+                if let Err(err) =
+                    crate::gen3d::remove_gen3d_in_flight_entry(&active.realm_id, run_id)
                 {
                     warn!("Failed to remove Gen3D in-flight entry: {err}");
                 }

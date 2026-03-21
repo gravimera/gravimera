@@ -221,10 +221,7 @@ pub(crate) fn gen3d_apply_pending_seed_from_prefab(
     }
 }
 
-pub(crate) fn gen3d_cancel_build_from_api(
-    workshop: &mut Gen3dWorkshop,
-    job: &mut Gen3dAiJob,
-) {
+pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {
     if !job.running {
         return;
     }
@@ -1346,17 +1343,17 @@ pub(super) fn poll_gen3d_descriptor_meta_in_flight(job: &mut Gen3dAiJob) {
     }
 }
 
-pub(crate) fn gen3d_poll_ai_job(
-    config: Res<AppConfig>,
-    time: Res<Time>,
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    mut workshop: ResMut<Gen3dWorkshop>,
-    mut feedback_history: ResMut<Gen3dToolFeedbackHistory>,
-    mut job: ResMut<Gen3dAiJob>,
-    mut draft: ResMut<Gen3dDraft>,
-    mut preview: ResMut<Gen3dPreview>,
-    mut preview_model: Query<
+pub(crate) fn gen3d_poll_ai_job_inner(
+    config: &AppConfig,
+    time: &Time,
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    workshop: &mut Gen3dWorkshop,
+    feedback_history: &mut Gen3dToolFeedbackHistory,
+    job: &mut Gen3dAiJob,
+    draft: &mut Gen3dDraft,
+    preview: &mut Gen3dPreview,
+    preview_model: &mut Query<
         (
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
@@ -1364,7 +1361,7 @@ pub(crate) fn gen3d_poll_ai_job(
         ),
         With<Gen3dPreviewModelRoot>,
     >,
-    review_cameras: Query<Entity, With<Gen3dReviewCaptureCamera>>,
+    render_allowed: bool,
 ) {
     if !job.running {
         return;
@@ -1372,8 +1369,11 @@ pub(crate) fn gen3d_poll_ai_job(
     if matches!(job.phase, Gen3dAiPhase::Idle) {
         return;
     }
+    if !render_allowed && job.requires_render_context() {
+        return;
+    }
 
-    poll_gen3d_descriptor_meta_in_flight(&mut job);
+    poll_gen3d_descriptor_meta_in_flight(job);
 
     // Hard budgets: stop the run when exceeded (best-effort draft stays in the preview).
     if config.gen3d_max_seconds > 0 {
@@ -1383,10 +1383,9 @@ pub(crate) fn gen3d_poll_ai_job(
                 let mins = secs / 60.0;
                 let max_mins = config.gen3d_max_seconds as f32 / 60.0;
                 finish_job_best_effort(
-                    &mut commands,
-                    &review_cameras,
-                    &mut workshop,
-                    &mut job,
+                    commands,
+                    workshop,
+                    job,
                     format!(
                         "Time budget exhausted ({secs:.1}s / {mins:.1}min >= {}s / {max_mins:.1}min).",
                         config.gen3d_max_seconds,
@@ -1400,10 +1399,9 @@ pub(crate) fn gen3d_poll_ai_job(
     if max_tokens > 0 && job.current_run_tokens >= max_tokens {
         let current_tokens = job.current_run_tokens;
         finish_job_best_effort(
-            &mut commands,
-            &review_cameras,
-            &mut workshop,
-            &mut job,
+            commands,
+            workshop,
+            job,
             format!("Token budget exhausted ({current_tokens} >= {max_tokens})."),
         );
         return;
@@ -1412,32 +1410,33 @@ pub(crate) fn gen3d_poll_ai_job(
     match job.mode {
         Gen3dAiMode::Agent => {
             agent_loop::poll_gen3d_agent(
-                &config,
-                &time,
-                &mut commands,
-                &mut images,
-                &review_cameras,
-                &mut workshop,
-                &mut feedback_history,
-                &mut job,
-                &mut draft,
-                &mut preview,
-                &mut preview_model,
+                config,
+                time,
+                commands,
+                images,
+                workshop,
+                feedback_history,
+                job,
+                draft,
+                preview,
+                preview_model,
+                render_allowed,
             );
             return;
         }
         Gen3dAiMode::Pipeline => {
             pipeline_orchestrator::poll_gen3d_pipeline(
-                &config,
-                &time,
-                &mut commands,
-                &mut images,
-                &mut workshop,
-                &mut feedback_history,
-                &mut job,
-                &mut draft,
-                &mut preview,
-                &mut preview_model,
+                config,
+                time,
+                commands,
+                images,
+                workshop,
+                feedback_history,
+                job,
+                draft,
+                preview,
+                preview_model,
+                render_allowed,
             );
             return;
         }
@@ -1447,7 +1446,7 @@ pub(crate) fn gen3d_poll_ai_job(
     let speed_mode = workshop.speed_mode;
 
     // Apply speed changes to the current run when possible.
-    let desired_total_passes = refine_passes_for_speed(&config, workshop.speed_mode);
+    let desired_total_passes = refine_passes_for_speed(config, workshop.speed_mode);
     let current_total_passes = job.auto_refine_passes_done + job.auto_refine_passes_remaining;
     if desired_total_passes == 0
         && matches!(
@@ -1458,7 +1457,7 @@ pub(crate) fn gen3d_poll_ai_job(
         && !job.capture_previews_only
     {
         debug!("Gen3D: auto-refine disabled mid-run; skipping review phase.");
-        for entity in &review_cameras {
+        for entity in collect_job_review_capture_cameras(job) {
             commands.entity(entity).try_despawn();
         }
         job.review_capture = None;
@@ -1478,7 +1477,7 @@ pub(crate) fn gen3d_poll_ai_job(
             desired_total_passes.saturating_sub(job.auto_refine_passes_done);
     }
 
-    let per_component_enabled = component_refine_cycles_for_speed(&config, workshop.speed_mode) > 0;
+    let per_component_enabled = component_refine_cycles_for_speed(config, workshop.speed_mode) > 0;
     if !per_component_enabled
         && matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent)
         && matches!(
@@ -1487,20 +1486,20 @@ pub(crate) fn gen3d_poll_ai_job(
         )
     {
         debug!("Gen3D: per-component review disabled mid-run; resuming build.");
-        for entity in &review_cameras {
+        for entity in collect_job_review_capture_cameras(job) {
             commands.entity(entity).try_despawn();
         }
         job.review_capture = None;
         job.shared_result = None;
         workshop.status = "Auto-review skipped due to speed mode change (continuing build).".into();
-        resume_after_per_component_review(&mut workshop, &mut job);
+        resume_after_per_component_review(workshop, job);
         return;
     }
 
     // Parallel component generation: we don't use `shared_result` during this phase.
     // (Keep the legacy single-request path working if `shared_result` is still set.)
     if matches!(job.phase, Gen3dAiPhase::WaitingComponent) && job.shared_result.is_none() {
-        poll_gen3d_parallel_components(&mut workshop, &mut job, &mut draft, speed_mode);
+        poll_gen3d_parallel_components(workshop, job, draft, speed_mode);
         return;
     }
 
@@ -1551,7 +1550,7 @@ pub(crate) fn gen3d_poll_ai_job(
                     if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
                         debug!("Gen3D: per-component review image missing; continuing build.");
                         workshop.status = "Auto-review failed (continuing build).".into();
-                        resume_after_per_component_review(&mut workshop, &mut job);
+                        resume_after_per_component_review(workshop, job);
                         return;
                     }
 
@@ -1594,12 +1593,12 @@ pub(crate) fn gen3d_poll_ai_job(
         if job.motion_capture.is_some() {
             poll_gen3d_motion_capture(
                 &time,
-                &mut commands,
-                &mut images,
-                &mut workshop,
-                &mut job,
+                commands,
+                images,
+                workshop,
+                job,
                 &draft,
-                &mut preview_model,
+                preview_model,
             );
             return;
         }
@@ -1613,7 +1612,7 @@ pub(crate) fn gen3d_poll_ai_job(
                 workshop.error = Some("Internal error: missing AI config.".into());
                 if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
                     workshop.status = "Auto-review failed (continuing build).".into();
-                    resume_after_per_component_review(&mut workshop, &mut job);
+                    resume_after_per_component_review(workshop, job);
                     return;
                 }
 
@@ -1631,7 +1630,7 @@ pub(crate) fn gen3d_poll_ai_job(
                 workshop.error = Some("Internal error: missing Gen3D pass dir.".into());
                 if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
                     workshop.status = "Auto-review failed (continuing build).".into();
-                    resume_after_per_component_review(&mut workshop, &mut job);
+                    resume_after_per_component_review(workshop, job);
                     return;
                 }
 
@@ -1800,7 +1799,7 @@ pub(crate) fn gen3d_poll_ai_job(
             workshop.error = Some("Internal error: missing Gen3D cache dir.".into());
             if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
                 workshop.status = "Auto-review failed (continuing build).".into();
-                resume_after_per_component_review(&mut workshop, &mut job);
+                resume_after_per_component_review(workshop, job);
                 return;
             }
 
@@ -1830,8 +1829,8 @@ pub(crate) fn gen3d_poll_ai_job(
             Gen3dReviewView::Top,
         ];
         match start_gen3d_review_capture(
-            &mut commands,
-            &mut images,
+            commands,
+            images,
             &run_dir,
             &draft,
             include_overlay,
@@ -1856,7 +1855,7 @@ pub(crate) fn gen3d_poll_ai_job(
                     debug!("Gen3D: per-component review capture failed; continuing build.");
                     job.review_capture = None;
                     workshop.status = "Auto-review failed (continuing build).".into();
-                    resume_after_per_component_review(&mut workshop, &mut job);
+                    resume_after_per_component_review(workshop, job);
                     return;
                 }
 
@@ -1876,11 +1875,7 @@ pub(crate) fn gen3d_poll_ai_job(
 
     // Phases that wait for an AI response.
     let Some(shared) = job.shared_result.as_ref() else {
-        fail_job(
-            &mut workshop,
-            &mut job,
-            "Internal error: missing AI job handle.",
-        );
+        fail_job(workshop, job, "Internal error: missing AI job handle.");
         return;
     };
 
@@ -1903,10 +1898,9 @@ pub(crate) fn gen3d_poll_ai_job(
             if max_tokens > 0 && job.current_run_tokens >= max_tokens {
                 let current_tokens = job.current_run_tokens;
                 finish_job_best_effort(
-                    &mut commands,
-                    &review_cameras,
-                    &mut workshop,
-                    &mut job,
+                    commands,
+                    workshop,
+                    job,
                     format!("Token budget exhausted ({current_tokens} >= {max_tokens})."),
                 );
                 return;
@@ -1932,16 +1926,10 @@ pub(crate) fn gen3d_poll_ai_job(
                         Ok(plan) => plan,
                         Err(err) => {
                             debug!("Gen3D: failed to parse AI plan: {err}");
-                            if retry_gen3d_plan(
-                                &mut workshop,
-                                &mut job,
-                                &mut draft,
-                                speed_mode,
-                                &err,
-                            ) {
+                            if retry_gen3d_plan(workshop, job, draft, speed_mode, &err) {
                                 return;
                             }
-                            fail_job(&mut workshop, &mut job, err);
+                            fail_job(workshop, job, err);
                             return;
                         }
                     };
@@ -2026,16 +2014,10 @@ pub(crate) fn gen3d_poll_ai_job(
 
                             if job.component_queue.is_empty() {
                                 let err = "AI plan did not include any components.".to_string();
-                                if retry_gen3d_plan(
-                                    &mut workshop,
-                                    &mut job,
-                                    &mut draft,
-                                    speed_mode,
-                                    &err,
-                                ) {
+                                if retry_gen3d_plan(workshop, job, draft, speed_mode, &err) {
                                     return;
                                 }
-                                fail_job(&mut workshop, &mut job, err);
+                                fail_job(workshop, job, err);
                                 return;
                             }
 
@@ -2052,24 +2034,18 @@ pub(crate) fn gen3d_poll_ai_job(
                         }
                         Err(err) => {
                             debug!("Gen3D: failed to build draft from plan: {err}");
-                            if retry_gen3d_plan(
-                                &mut workshop,
-                                &mut job,
-                                &mut draft,
-                                speed_mode,
-                                &err,
-                            ) {
+                            if retry_gen3d_plan(workshop, job, draft, speed_mode, &err) {
                                 return;
                             }
-                            fail_job(&mut workshop, &mut job, err);
+                            fail_job(workshop, job, err);
                         }
                     }
                 }
                 Gen3dAiPhase::WaitingComponent => {
                     if job.component_queue_pos >= job.component_queue.len() {
                         fail_job(
-                            &mut workshop,
-                            &mut job,
+                            workshop,
+                            job,
                             "Internal error: component queue out of range.",
                         );
                         return;
@@ -2077,8 +2053,8 @@ pub(crate) fn gen3d_poll_ai_job(
                     let idx = job.component_queue[job.component_queue_pos];
                     if idx >= job.planned_components.len() {
                         fail_job(
-                            &mut workshop,
-                            &mut job,
+                            workshop,
+                            job,
                             "Internal error: component index out of range.",
                         );
                         return;
@@ -2096,7 +2072,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         Ok(ai) => ai,
                         Err(err) => {
                             debug!("Gen3D: failed to parse component draft: {err}");
-                            fail_job(&mut workshop, &mut job, err);
+                            fail_job(workshop, job, err);
                             return;
                         }
                     };
@@ -2109,7 +2085,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         Ok(def) => def,
                         Err(err) => {
                             debug!("Gen3D: failed to convert component draft: {err}");
-                            fail_job(&mut workshop, &mut job, err);
+                            fail_job(workshop, job, err);
                             return;
                         }
                     };
@@ -2143,14 +2119,14 @@ pub(crate) fn gen3d_poll_ai_job(
                             &mut job.planned_components,
                             root_idx,
                         ) {
-                            fail_job(&mut workshop, &mut job, err);
+                            fail_job(workshop, job, err);
                             return;
                         }
                     }
                     convert::update_root_def_from_planned_components(
                         &job.planned_components,
                         &job.plan_collider,
-                        &mut draft,
+                        draft,
                     );
                     write_gen3d_assembly_snapshot(job.artifact_dir(), &job.planned_components);
                     job.assembly_rev = job.assembly_rev.saturating_add(1);
@@ -2216,7 +2192,7 @@ pub(crate) fn gen3d_poll_ai_job(
                                 return;
                             }
 
-                            resume_after_per_component_review(&mut workshop, &mut job);
+                            resume_after_per_component_review(workshop, job);
                             return;
                         }
 
@@ -2260,19 +2236,11 @@ pub(crate) fn gen3d_poll_ai_job(
                     let next_idx = job.component_queue[next_pos];
 
                     let Some(ai) = job.ai.clone() else {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: missing AI config.",
-                        );
+                        fail_job(workshop, job, "Internal error: missing AI config.");
                         return;
                     };
                     let Some(run_dir) = job.pass_dir.clone() else {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: missing Gen3D pass dir.",
-                        );
+                        fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
                         return;
                     };
 
@@ -2371,8 +2339,8 @@ pub(crate) fn gen3d_poll_ai_job(
                         Err(err) => {
                             warn!("Gen3D: failed to parse AI review-delta: {err}");
                             if retry_gen3d_review_delta(
-                                &mut workshop,
-                                &mut job,
+                                workshop,
+                                job,
                                 &config,
                                 speed_mode,
                                 &format!("Parse error: {err}"),
@@ -2383,7 +2351,7 @@ pub(crate) fn gen3d_poll_ai_job(
                             if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
                                 debug!("Gen3D: per-component review failed; continuing build.");
                                 workshop.status = "Auto-review failed (continuing build).".into();
-                                resume_after_per_component_review(&mut workshop, &mut job);
+                                resume_after_per_component_review(workshop, job);
                                 return;
                             }
 
@@ -2430,13 +2398,7 @@ pub(crate) fn gen3d_poll_ai_job(
                             expected_run_id, job.attempt, job.plan_hash, job.assembly_rev
                         );
                         warn!("Gen3D: review-delta rejected: {msg}");
-                        if retry_gen3d_review_delta(
-                            &mut workshop,
-                            &mut job,
-                            &config,
-                            speed_mode,
-                            &msg,
-                        ) {
+                        if retry_gen3d_review_delta(workshop, job, &config, speed_mode, &msg) {
                             return;
                         }
                         workshop.error = Some(msg);
@@ -2457,15 +2419,15 @@ pub(crate) fn gen3d_poll_ai_job(
                         delta,
                         &mut job.planned_components,
                         &plan_collider,
-                        &mut draft,
+                        draft,
                         artifact_dir.as_deref(),
                     ) {
                         Ok(apply) => apply,
                         Err(err) => {
                             warn!("Gen3D: failed to apply review-delta actions: {err}");
                             if retry_gen3d_review_delta(
-                                &mut workshop,
-                                &mut job,
+                                workshop,
+                                job,
                                 &config,
                                 speed_mode,
                                 &format!("Apply error: {err}"),
@@ -2488,8 +2450,8 @@ pub(crate) fn gen3d_poll_ai_job(
                     if !apply.tooling_feedback.is_empty() {
                         record_gen3d_tooling_feedback(
                             &config,
-                            &mut workshop,
-                            &mut feedback_history,
+                            workshop,
+                            feedback_history,
                             &job,
                             &apply.tooling_feedback,
                         );
@@ -2513,20 +2475,13 @@ pub(crate) fn gen3d_poll_ai_job(
                     }
 
                     if let Some(reason) = apply.replan_reason {
-                        if try_start_gen3d_replan(
-                            &config,
-                            &mut workshop,
-                            &mut job,
-                            &mut draft,
-                            reason,
-                        ) {
+                        if try_start_gen3d_replan(&config, workshop, job, draft, reason) {
                             return;
                         }
                         finish_job_best_effort(
-                            &mut commands,
-                            &review_cameras,
-                            &mut workshop,
-                            &mut job,
+                            commands,
+                            workshop,
+                            job,
                             format!(
                                 "Replan budget exhausted (max_replans={}).",
                                 config.gen3d_max_replans
@@ -2538,11 +2493,11 @@ pub(crate) fn gen3d_poll_ai_job(
                     if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
                         // Keep the old per-component review behavior for now.
                         if !apply.had_actions {
-                            resume_after_per_component_review(&mut workshop, &mut job);
+                            resume_after_per_component_review(workshop, job);
                             return;
                         }
                         if apply.regen_indices.is_empty() {
-                            resume_after_per_component_review(&mut workshop, &mut job);
+                            resume_after_per_component_review(workshop, job);
                             return;
                         }
                     } else if !apply.had_actions {
@@ -2561,8 +2516,8 @@ pub(crate) fn gen3d_poll_ai_job(
                         && apply.regen_indices.is_empty()
                     {
                         if job.auto_refine_passes_remaining > 0 {
-                            if let Err(err) = gen3d_advance_pass(&mut job) {
-                                fail_job(&mut workshop, &mut job, err);
+                            if let Err(err) = gen3d_advance_pass(job) {
+                                fail_job(workshop, job, err);
                                 return;
                             }
                             job.auto_refine_passes_remaining -= 1;
@@ -2627,10 +2582,9 @@ pub(crate) fn gen3d_poll_ai_job(
 
                         if regen_allowed.is_empty() {
                             finish_job_best_effort(
-                                &mut commands,
-                                &review_cameras,
-                                &mut workshop,
-                                &mut job,
+                                commands,
+                                workshop,
+                                job,
                                 format!(
                                     "Regen budget exhausted (max_regen_total={}, max_regen_per_component={}).",
                                     config.gen3d_max_regen_total, config.gen3d_max_regen_per_component
@@ -2659,8 +2613,8 @@ pub(crate) fn gen3d_poll_ai_job(
                     }
 
                     if !regen_allowed.is_empty() {
-                        if let Err(err) = gen3d_advance_pass(&mut job) {
-                            fail_job(&mut workshop, &mut job, err);
+                        if let Err(err) = gen3d_advance_pass(job) {
+                            fail_job(workshop, job, err);
                             return;
                         }
                     }
@@ -2670,19 +2624,11 @@ pub(crate) fn gen3d_poll_ai_job(
                     job.component_queue_pos = 0;
 
                     let Some(ai) = job.ai.clone() else {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: missing AI config.",
-                        );
+                        fail_job(workshop, job, "Internal error: missing AI config.");
                         return;
                     };
                     let Some(run_dir) = job.pass_dir.clone() else {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: missing Gen3D pass dir.",
-                        );
+                        fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
                         return;
                     };
 
@@ -2768,13 +2714,79 @@ pub(crate) fn gen3d_poll_ai_job(
         Err(err) => {
             debug!("Gen3D: AI job failed: {err}");
             if matches!(job.phase, Gen3dAiPhase::WaitingPlan)
-                && retry_gen3d_plan(&mut workshop, &mut job, &mut draft, speed_mode, &err)
+                && retry_gen3d_plan(workshop, job, draft, speed_mode, &err)
             {
                 return;
             }
 
-            fail_job(&mut workshop, &mut job, err);
+            fail_job(workshop, job, err);
         }
+    }
+}
+
+pub(crate) fn gen3d_poll_ai_job(
+    config: Res<AppConfig>,
+    time: Res<Time>,
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut feedback_history: ResMut<Gen3dToolFeedbackHistory>,
+    mut job: ResMut<Gen3dAiJob>,
+    mut draft: ResMut<Gen3dDraft>,
+    mut preview: ResMut<Gen3dPreview>,
+    mut preview_model: Query<
+        (
+            &mut AnimationChannelsActive,
+            &mut LocomotionClock,
+            &mut AttackClock,
+        ),
+        With<Gen3dPreviewModelRoot>,
+    >,
+) {
+    gen3d_poll_ai_job_inner(
+        config.as_ref(),
+        time.as_ref(),
+        &mut commands,
+        &mut images,
+        &mut workshop,
+        &mut feedback_history,
+        &mut job,
+        &mut draft,
+        &mut preview,
+        &mut preview_model,
+        true,
+    );
+}
+
+pub(crate) fn gen3d_poll_inactive_ai_jobs(
+    config: Res<AppConfig>,
+    time: Res<Time>,
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut gen3d_jobs: ResMut<crate::gen3d::Gen3dJobManager>,
+    mut preview_model: Query<
+        (
+            &mut AnimationChannelsActive,
+            &mut LocomotionClock,
+            &mut AttackClock,
+        ),
+        With<Gen3dPreviewModelRoot>,
+    >,
+) {
+    for ctx in gen3d_jobs.inactive_jobs_mut().iter_mut() {
+        gen3d_poll_ai_job_inner(
+            config.as_ref(),
+            time.as_ref(),
+            &mut commands,
+            &mut images,
+            &mut ctx.workshop,
+            &mut ctx.feedback_history,
+            &mut ctx.ai_job,
+            &mut ctx.draft,
+            &mut ctx.preview,
+            &mut preview_model,
+            false,
+        );
     }
 }
 
@@ -3383,7 +3395,6 @@ fn abort_pending_agent_tool_call(job: &mut Gen3dAiJob, reason: String) {
 
 pub(super) fn finish_job_best_effort(
     commands: &mut Commands,
-    review_cameras: &Query<Entity, With<Gen3dReviewCaptureCamera>>,
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
     reason: String,
@@ -3411,6 +3422,8 @@ pub(super) fn finish_job_best_effort(
         format!("Budget stop: {}", truncate_for_ui(reason.trim(), 600)),
         serde_json::json!({ "reason": reason.trim() }),
     );
+    let cameras_to_despawn = collect_job_review_capture_cameras(job);
+
     abort_pending_agent_tool_call(job, format!("Run stopped (best effort): {reason}"));
 
     workshop.error = None;
@@ -3419,7 +3432,7 @@ pub(super) fn finish_job_best_effort(
         truncate_for_ui(&reason, 600)
     );
 
-    for entity in review_cameras {
+    for entity in cameras_to_despawn {
         commands.entity(entity).try_despawn();
     }
     job.review_capture = None;
@@ -3440,6 +3453,28 @@ pub(super) fn finish_job_best_effort(
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
+}
+
+fn collect_job_review_capture_cameras(job: &Gen3dAiJob) -> Vec<Entity> {
+    let mut cameras: Vec<Entity> = Vec::new();
+    if let Some(state) = job.review_capture.as_ref() {
+        cameras.extend(state.cameras.iter().copied());
+    }
+    if let Some(motion) = job.motion_capture.as_ref() {
+        if let Some(state) = motion.frame_capture.as_ref() {
+            cameras.extend(state.cameras.iter().copied());
+        }
+    }
+    if let Some(state) = job.agent.pending_render.as_ref() {
+        cameras.extend(state.cameras.iter().copied());
+    }
+    if let Some(state) = job.agent.pending_pass_snapshot.as_ref() {
+        cameras.extend(state.cameras.iter().copied());
+    }
+
+    cameras.sort_unstable_by_key(|entity| entity.to_bits());
+    cameras.dedup();
+    cameras
 }
 
 fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {

@@ -2365,6 +2365,7 @@ fn execute_info_kv_get_paged_v1(
 
 pub(super) fn execute_tool_call(
     config: &AppConfig,
+    render_allowed: bool,
     _time: &Time,
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -7125,6 +7126,9 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
             ToolCallOutcome::StartedAsync
         }
         TOOL_ID_RENDER_PREVIEW => {
+            if !render_allowed {
+                return ToolCallOutcome::Deferred;
+            }
             if draft.total_non_projectile_primitive_parts() == 0 {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
@@ -7381,6 +7385,9 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 && !last_render_fresh
                 && can_render
             {
+                if !render_allowed {
+                    return ToolCallOutcome::Deferred;
+                }
                 let smoke_results = super::build_gen3d_smoke_results(
                     job.prompt_intent.as_ref().map(|i| i.requires_attack),
                     !job.user_images.is_empty(),
@@ -9229,6 +9236,7 @@ mod tests {
         };
         let outcome = super::execute_tool_call(
             &config,
+            true,
             &time,
             &mut commands,
             &mut images,

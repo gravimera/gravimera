@@ -443,9 +443,7 @@ fn run_rendered_catching_panics(
 fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) {
     // Shared AI request limiter (Scene Build + Gen3D).
     let gen3d_components = config.gen3d_max_parallel_components.max(1);
-    crate::ai_limiter::set_max_permits(
-        gen3d_components.saturating_add(1),
-    );
+    crate::ai_limiter::set_max_permits(gen3d_components.saturating_add(1));
     let log_level = config.log_level;
 
     let mut app = App::new();
@@ -538,9 +536,7 @@ fn bevy_log_filter(level: bevy::log::Level) -> String {
 fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) -> AppExit {
     // Shared AI request limiter (Scene Build + Gen3D).
     let gen3d_components = config.gen3d_max_parallel_components.max(1);
-    crate::ai_limiter::set_max_permits(
-        gen3d_components.saturating_add(1),
-    );
+    crate::ai_limiter::set_max_permits(gen3d_components.saturating_add(1));
     let log_level = config.log_level;
 
     #[cfg(target_os = "linux")]
@@ -575,6 +571,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<SpawnRatios>();
     app.init_resource::<AutoSpawnEnemies>();
     app.init_resource::<CommandConsole>();
+    app.init_resource::<crate::gen3d::Gen3dJobManager>();
     app.init_resource::<crate::gen3d::Gen3dWorkshop>();
     app.init_resource::<crate::gen3d::Gen3dPreview>();
     app.init_resource::<crate::gen3d::Gen3dDraft>();

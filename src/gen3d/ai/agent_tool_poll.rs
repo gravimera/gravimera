@@ -231,6 +231,7 @@ fn maybe_spawn_descriptor_meta_after_plan(
 
 pub(super) fn poll_agent_tool(
     config: &AppConfig,
+    render_allowed: bool,
     commands: &mut Commands,
     images: &mut Assets<Image>,
     workshop: &mut Gen3dWorkshop,
@@ -3223,6 +3224,7 @@ pub(super) fn poll_agent_tool(
         );
         super::agent_step::start_finish_run_sequence(
             config,
+            render_allowed,
             commands,
             images,
             workshop,

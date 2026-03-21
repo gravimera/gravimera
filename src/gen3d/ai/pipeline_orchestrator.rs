@@ -80,6 +80,7 @@ pub(super) fn poll_gen3d_pipeline(
         ),
         With<Gen3dPreviewModelRoot>,
     >,
+    render_allowed: bool,
 ) {
     if !matches!(job.mode, Gen3dAiMode::Pipeline) {
         return;
@@ -95,6 +96,7 @@ pub(super) fn poll_gen3d_pipeline(
         Gen3dAiPhase::AgentWaitingTool => {
             poll_agent_tool(
                 config,
+                render_allowed,
                 commands,
                 images,
                 workshop,
@@ -127,7 +129,15 @@ pub(super) fn poll_gen3d_pipeline(
             );
         }
         Gen3dAiPhase::AgentWaitingDescriptorMeta => {
-            poll_agent_descriptor_meta(config, commands, images, workshop, job, draft);
+            poll_agent_descriptor_meta(
+                config,
+                render_allowed,
+                commands,
+                images,
+                workshop,
+                job,
+                draft,
+            );
         }
         Gen3dAiPhase::AgentExecutingActions | Gen3dAiPhase::AgentWaitingStep => {
             poll_pipeline_tick(
@@ -141,6 +151,7 @@ pub(super) fn poll_gen3d_pipeline(
                 draft,
                 preview,
                 preview_model,
+                render_allowed,
             );
         }
         Gen3dAiPhase::Idle => {}
@@ -560,6 +571,7 @@ fn pipeline_record_tool_result(
 
 fn start_pipeline_tool_call(
     config: &AppConfig,
+    render_allowed: bool,
     time: &Time,
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -584,10 +596,13 @@ fn start_pipeline_tool_call(
         tool_id: tool_id.to_string(),
         args,
     };
-    pipeline_record_tool_call_start(workshop, job, &call);
+    let call_id_for_log = call.call_id.clone();
+    let tool_id_for_log = call.tool_id.clone();
+    let args_for_log = call.args.clone();
 
-    match execute_tool_call(
+    let outcome = execute_tool_call(
         config,
+        render_allowed,
         time,
         commands,
         images,
@@ -598,9 +613,24 @@ fn start_pipeline_tool_call(
         preview,
         preview_model,
         call,
-    ) {
+    );
+    if matches!(outcome, super::agent_step::ToolCallOutcome::Deferred) {
+        return None;
+    }
+    pipeline_record_tool_call_start(
+        workshop,
+        job,
+        &Gen3dToolCallJsonV1 {
+            call_id: call_id_for_log,
+            tool_id: tool_id_for_log,
+            args: args_for_log,
+        },
+    );
+
+    match outcome {
         super::agent_step::ToolCallOutcome::Immediate(result) => Some(result),
         super::agent_step::ToolCallOutcome::StartedAsync => None,
+        super::agent_step::ToolCallOutcome::Deferred => None,
     }
 }
 
@@ -622,6 +652,7 @@ fn poll_pipeline_tick(
         ),
         With<Gen3dPreviewModelRoot>,
     >,
+    render_allowed: bool,
 ) {
     // Stage bootstrap.
     if matches!(job.pipeline.stage, Gen3dPipelineStage::Start) {
@@ -779,6 +810,7 @@ fn poll_pipeline_tick(
 
         start_finish_run_sequence(
             config,
+            render_allowed,
             commands,
             images,
             workshop,
@@ -805,6 +837,7 @@ fn poll_pipeline_tick(
                 workshop.status = "Pipeline: planning…".into();
                 if let Some(result) = start_pipeline_tool_call(
                     config,
+                    render_allowed,
                     time,
                     commands,
                     images,
@@ -838,6 +871,7 @@ fn poll_pipeline_tick(
                 workshop.status = "Pipeline: preparing plan template…".into();
                 if let Some(result) = start_pipeline_tool_call(
                     config,
+                    render_allowed,
                     time,
                     commands,
                     images,
@@ -871,6 +905,7 @@ fn poll_pipeline_tick(
             workshop.status = "Pipeline: replanning…".into();
             if let Some(result) = start_pipeline_tool_call(
                 config,
+                render_allowed,
                 time,
                 commands,
                 images,
@@ -901,6 +936,7 @@ fn poll_pipeline_tick(
             workshop.status = "Pipeline: plan ops…".into();
             if let Some(result) = start_pipeline_tool_call(
                 config,
+                render_allowed,
                 time,
                 commands,
                 images,
@@ -939,6 +975,7 @@ fn poll_pipeline_tick(
                 workshop.status = "Pipeline: regenerating components…".into();
                 if let Some(result) = start_pipeline_tool_call(
                     config,
+                    render_allowed,
                     time,
                     commands,
                     images,
@@ -971,6 +1008,7 @@ fn poll_pipeline_tick(
                 workshop.status = "Pipeline: generating components…".into();
                 if let Some(result) = start_pipeline_tool_call(
                     config,
+                    render_allowed,
                     time,
                     commands,
                     images,
@@ -1023,6 +1061,7 @@ fn poll_pipeline_tick(
             );
             if let Some(result) = start_pipeline_tool_call(
                 config,
+                render_allowed,
                 time,
                 commands,
                 images,
@@ -1063,6 +1102,7 @@ fn poll_pipeline_tick(
             workshop.status = "Pipeline: suggesting DraftOps…".into();
             if let Some(result) = start_pipeline_tool_call(
                 config,
+                render_allowed,
                 time,
                 commands,
                 images,
@@ -1104,6 +1144,7 @@ fn poll_pipeline_tick(
             });
             if let Some(result) = start_pipeline_tool_call(
                 config,
+                render_allowed,
                 time,
                 commands,
                 images,
@@ -1156,6 +1197,7 @@ fn poll_pipeline_tick(
             workshop.status = "Pipeline: QA…".into();
             let qa_result = start_pipeline_tool_call(
                 config,
+                render_allowed,
                 time,
                 commands,
                 images,
@@ -1229,6 +1271,7 @@ fn poll_pipeline_tick(
                     workshop.status = "Pipeline: applying QA fixit…".into();
                     if let Some(result) = start_pipeline_tool_call(
                         config,
+                        render_allowed,
                         time,
                         commands,
                         images,
@@ -1264,6 +1307,7 @@ fn poll_pipeline_tick(
                     workshop.status = "Pipeline: authoring motion…".into();
                     if let Some(result) = start_pipeline_tool_call(
                         config,
+                        render_allowed,
                         time,
                         commands,
                         images,
@@ -1300,6 +1344,7 @@ fn poll_pipeline_tick(
                 workshop.status = "Pipeline: review-delta remediation…".into();
                 if let Some(result) = start_pipeline_tool_call(
                     config,
+                    render_allowed,
                     time,
                     commands,
                     images,
@@ -1326,6 +1371,7 @@ fn poll_pipeline_tick(
             workshop.status = "Pipeline: rendering preview…".into();
             if let Some(result) = start_pipeline_tool_call(
                 config,
+                render_allowed,
                 time,
                 commands,
                 images,
@@ -1372,6 +1418,7 @@ fn poll_pipeline_tick(
 
             if let Some(result) = start_pipeline_tool_call(
                 config,
+                render_allowed,
                 time,
                 commands,
                 images,

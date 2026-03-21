@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ai::Gen3dAiJob;
+use super::jobs::Gen3dJobManager;
 
 use crate::model_library_ui::ModelLibraryUiState;
 
@@ -16,7 +17,7 @@ struct Gen3dInFlightFileV1 {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Gen3dInFlightStatus {
     Running,
-    Queued,
+    Completed,
     Failed,
 }
 
@@ -189,10 +190,14 @@ fn now_ms() -> u128 {
 
 pub(crate) fn gen3d_flush_in_flight_dirty(
     mut job: ResMut<Gen3dAiJob>,
+    mut gen3d_jobs: ResMut<Gen3dJobManager>,
     mut model_library: ResMut<ModelLibraryUiState>,
 ) {
-    if !job.take_in_flight_dirty() {
-        return;
+    let mut dirty = job.take_in_flight_dirty();
+    for ctx in gen3d_jobs.inactive_jobs_mut().iter_mut() {
+        dirty |= ctx.ai_job.take_in_flight_dirty();
     }
-    model_library.mark_models_dirty();
+    if dirty {
+        model_library.mark_models_dirty();
+    }
 }

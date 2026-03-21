@@ -14,9 +14,7 @@ use crate::gen3d::agent::{
 };
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
-use super::super::state::{
-    Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dWorkshop,
-};
+use super::super::state::{Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dWorkshop};
 use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::agent_loop::spawn_agent_step_request;
 use super::agent_parsing::{is_transient_ai_error_message, parse_agent_step};
@@ -566,6 +564,7 @@ fn maybe_start_descriptor_meta_request(
 
 pub(super) fn start_finish_run_sequence(
     config: &AppConfig,
+    render_allowed: bool,
     commands: &mut Commands,
     images: &mut Assets<Image>,
     workshop: &mut Gen3dWorkshop,
@@ -579,6 +578,7 @@ pub(super) fn start_finish_run_sequence(
 
     if maybe_start_pass_snapshot_capture(
         config,
+        render_allowed,
         commands,
         images,
         workshop,
@@ -599,6 +599,7 @@ pub(super) fn start_finish_run_sequence(
 
 pub(super) fn poll_agent_descriptor_meta(
     config: &AppConfig,
+    render_allowed: bool,
     commands: &mut Commands,
     images: &mut Assets<Image>,
     workshop: &mut Gen3dWorkshop,
@@ -654,6 +655,7 @@ pub(super) fn poll_agent_descriptor_meta(
     // After metadata, optionally capture pass screenshots, then finish.
     if maybe_start_pass_snapshot_capture(
         config,
+        render_allowed,
         commands,
         images,
         workshop,
@@ -675,7 +677,6 @@ pub(super) fn poll_agent_descriptor_meta(
 pub(super) fn poll_agent_step(
     config: &AppConfig,
     commands: &mut Commands,
-    review_cameras: &Query<Entity, With<Gen3dReviewCaptureCamera>>,
     workshop: &mut Gen3dWorkshop,
     feedback_history: &mut Gen3dToolFeedbackHistory,
     job: &mut Gen3dAiJob,
@@ -818,7 +819,6 @@ pub(super) fn poll_agent_step(
                 if draft.total_non_projectile_primitive_parts() > 0 {
                     super::finish_job_best_effort(
                         commands,
-                        review_cameras,
                         workshop,
                         job,
                         format!(
@@ -839,6 +839,7 @@ pub(super) fn poll_agent_step(
 
 pub(super) fn execute_agent_actions(
     config: &AppConfig,
+    render_allowed: bool,
     time: &Time,
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -932,6 +933,7 @@ pub(super) fn execute_agent_actions(
                     append_qa_warnings_to_status(&mut status, &job.agent);
                     start_finish_run_sequence(
                         config,
+                        render_allowed,
                         commands,
                         images,
                         workshop,
@@ -958,6 +960,7 @@ pub(super) fn execute_agent_actions(
             // Step complete: request next step.
             if maybe_start_pass_snapshot_capture(
                 config,
+                render_allowed,
                 commands,
                 images,
                 workshop,
@@ -1185,6 +1188,7 @@ pub(super) fn execute_agent_actions(
                 workshop.error = None;
                 start_finish_run_sequence(
                     config,
+                    render_allowed,
                     commands,
                     images,
                     workshop,
@@ -1219,53 +1223,13 @@ pub(super) fn execute_agent_actions(
                     tool_id,
                     args,
                 };
-                job.metrics
-                    .note_tool_call_started(call.call_id.as_str(), call.tool_id.as_str());
-                status_steps::log_tool_call_started(workshop, &call);
-                append_agent_trace_event_v1(
-                    job.run_dir.as_deref(),
-                    &AgentTraceEventV1::ToolCall {
-                        call_id: call.call_id.clone(),
-                        tool_id: call.tool_id.clone(),
-                        args: call.args.clone(),
-                    },
-                );
-                append_gen3d_jsonl_artifact(
-                    job.pass_dir.as_deref(),
-                    "tool_calls.jsonl",
-                    &serde_json::json!({
-                        "call_id": call.call_id.clone(),
-                        "tool_id": call.tool_id.clone(),
-                        "args": call.args.clone(),
-                    }),
-                );
                 let call_id_for_log = call.call_id.clone();
                 let tool_id_for_log = call.tool_id.clone();
-                append_gen3d_run_log(
-                    job.pass_dir.as_deref(),
-                    format!(
-                        "tool_call_start call_id={} tool_id={} args={}",
-                        call.call_id,
-                        call.tool_id,
-                        truncate_json_for_log(&call.args, 600)
-                    ),
-                );
-                debug!(
-                    "Gen3D tool call start: call_id={} tool_id={} args={}",
-                    call.call_id,
-                    call.tool_id,
-                    truncate_json_for_log(&call.args, 600)
-                );
-                job.append_info_event_best_effort(
-                    super::info_store::InfoEventKindV1::ToolCallStart,
-                    Some(call.tool_id.clone()),
-                    Some(call.call_id.clone()),
-                    format!("Tool call start: {}", call.tool_id),
-                    serde_json::json!({ "args": call.args.clone() }),
-                );
+                let args_for_log = call.args.clone();
 
-                match execute_tool_call(
+                let outcome = execute_tool_call(
                     config,
+                    render_allowed,
                     time,
                     commands,
                     images,
@@ -1276,7 +1240,64 @@ pub(super) fn execute_agent_actions(
                     preview,
                     preview_model,
                     call,
-                ) {
+                );
+                if matches!(outcome, ToolCallOutcome::Deferred) {
+                    // Render/capture tools must run only when a render context is available.
+                    // Keep the action pending and retry once `render_allowed=true`.
+                    return;
+                }
+
+                job.metrics
+                    .note_tool_call_started(call_id_for_log.as_str(), tool_id_for_log.as_str());
+                status_steps::log_tool_call_started(
+                    workshop,
+                    &Gen3dToolCallJsonV1 {
+                        call_id: call_id_for_log.clone(),
+                        tool_id: tool_id_for_log.clone(),
+                        args: args_for_log.clone(),
+                    },
+                );
+                append_agent_trace_event_v1(
+                    job.run_dir.as_deref(),
+                    &AgentTraceEventV1::ToolCall {
+                        call_id: call_id_for_log.clone(),
+                        tool_id: tool_id_for_log.clone(),
+                        args: args_for_log.clone(),
+                    },
+                );
+                append_gen3d_jsonl_artifact(
+                    job.pass_dir.as_deref(),
+                    "tool_calls.jsonl",
+                    &serde_json::json!({
+                        "call_id": call_id_for_log.clone(),
+                        "tool_id": tool_id_for_log.clone(),
+                        "args": args_for_log.clone(),
+                    }),
+                );
+                append_gen3d_run_log(
+                    job.pass_dir.as_deref(),
+                    format!(
+                        "tool_call_start call_id={} tool_id={} args={}",
+                        call_id_for_log,
+                        tool_id_for_log,
+                        truncate_json_for_log(&args_for_log, 600)
+                    ),
+                );
+                debug!(
+                    "Gen3D tool call start: call_id={} tool_id={} args={}",
+                    call_id_for_log,
+                    tool_id_for_log,
+                    truncate_json_for_log(&args_for_log, 600)
+                );
+                job.append_info_event_best_effort(
+                    super::info_store::InfoEventKindV1::ToolCallStart,
+                    Some(tool_id_for_log.clone()),
+                    Some(call_id_for_log.clone()),
+                    format!("Tool call start: {}", tool_id_for_log),
+                    serde_json::json!({ "args": args_for_log.clone() }),
+                );
+
+                match outcome {
                     ToolCallOutcome::Immediate(result) => {
                         job.metrics.note_tool_result(&result);
                         status_steps::log_tool_call_finished(workshop, job, &*draft, &result);
@@ -1398,6 +1419,10 @@ pub(super) fn execute_agent_actions(
                         job.agent.step_action_idx += 1;
                         return;
                     }
+                    ToolCallOutcome::Deferred => {
+                        // Handled above.
+                        return;
+                    }
                 }
             }
         }
@@ -1406,6 +1431,7 @@ pub(super) fn execute_agent_actions(
 
 pub(super) fn maybe_start_pass_snapshot_capture(
     config: &AppConfig,
+    render_allowed: bool,
     commands: &mut Commands,
     images: &mut Assets<Image>,
     workshop: &mut Gen3dWorkshop,
@@ -1413,6 +1439,9 @@ pub(super) fn maybe_start_pass_snapshot_capture(
     draft: &Gen3dDraft,
     after: super::Gen3dAgentAfterPassSnapshot,
 ) -> bool {
+    if !render_allowed {
+        return false;
+    }
     if !config.gen3d_save_pass_screenshots {
         return false;
     }
@@ -1554,6 +1583,7 @@ pub(super) fn poll_agent_pass_snapshot_capture(
 pub(super) enum ToolCallOutcome {
     Immediate(Gen3dToolResultJsonV1),
     StartedAsync,
+    Deferred,
 }
 
 #[cfg(test)]

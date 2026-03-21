@@ -2,6 +2,7 @@ mod agent;
 mod ai;
 mod images;
 mod in_flight;
+mod jobs;
 mod preview;
 mod save;
 mod state;
@@ -132,7 +133,10 @@ pub(crate) use ai::{
     gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };
-pub(crate) use ai::{gen3d_continue_button, gen3d_generate_button, gen3d_poll_ai_job, Gen3dAiJob};
+pub(crate) use ai::{
+    gen3d_continue_button, gen3d_generate_button, gen3d_poll_ai_job, gen3d_poll_inactive_ai_jobs,
+    Gen3dAiJob,
+};
 #[allow(unused_imports)]
 pub(crate) use ai::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 pub(crate) use images::{
@@ -145,8 +149,9 @@ pub(crate) use images::{
 pub(crate) use in_flight::{
     gen3d_flush_in_flight_dirty, gen3d_in_flight_label, load_gen3d_in_flight_entries,
     mark_gen3d_in_flight_failed, remove_gen3d_in_flight_entry, upsert_gen3d_in_flight_entry,
-    Gen3dInFlightEntry, Gen3dInFlightStatus,
+    Gen3dInFlightStatus,
 };
+pub(crate) use jobs::Gen3dJobManager;
 pub(crate) use preview::{
     gen3d_apply_draft_to_preview, gen3d_preview_orbit_controls,
     gen3d_preview_tick_selected_animation, gen3d_update_collision_overlay,

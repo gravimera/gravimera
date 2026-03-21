@@ -37,9 +37,7 @@ use super::agent_tool_poll::poll_agent_tool;
 use super::agent_utils::compute_agent_state_hash;
 use crate::threaded_result::take_shared_result;
 
-use super::super::state::{
-    Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dWorkshop,
-};
+use super::super::state::{Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dWorkshop};
 use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 
 pub(super) fn poll_gen3d_agent(
@@ -47,7 +45,6 @@ pub(super) fn poll_gen3d_agent(
     time: &Time,
     commands: &mut Commands,
     images: &mut Assets<Image>,
-    review_cameras: &Query<Entity, With<Gen3dReviewCaptureCamera>>,
     workshop: &mut Gen3dWorkshop,
     feedback_history: &mut Gen3dToolFeedbackHistory,
     job: &mut Gen3dAiJob,
@@ -61,6 +58,7 @@ pub(super) fn poll_gen3d_agent(
         ),
         With<Gen3dPreviewModelRoot>,
     >,
+    render_allowed: bool,
 ) {
     super::orchestration::poll_gen3d_descriptor_meta_in_flight(job);
 
@@ -71,17 +69,12 @@ pub(super) fn poll_gen3d_agent(
         Gen3dAiPhase::AgentWaitingPromptIntent => {
             poll_agent_prompt_intent(config, workshop, job);
         }
-        Gen3dAiPhase::AgentWaitingStep => poll_agent_step(
-            config,
-            commands,
-            review_cameras,
-            workshop,
-            feedback_history,
-            job,
-            draft,
-        ),
+        Gen3dAiPhase::AgentWaitingStep => {
+            poll_agent_step(config, commands, workshop, feedback_history, job, draft)
+        }
         Gen3dAiPhase::AgentExecutingActions => execute_agent_actions(
             config,
+            render_allowed,
             time,
             commands,
             images,
@@ -94,6 +87,7 @@ pub(super) fn poll_gen3d_agent(
         ),
         Gen3dAiPhase::AgentWaitingTool => poll_agent_tool(
             config,
+            render_allowed,
             commands,
             images,
             workshop,
@@ -122,9 +116,15 @@ pub(super) fn poll_gen3d_agent(
             feedback_history,
             job,
         ),
-        Gen3dAiPhase::AgentWaitingDescriptorMeta => {
-            poll_agent_descriptor_meta(config, commands, images, workshop, job, draft)
-        }
+        Gen3dAiPhase::AgentWaitingDescriptorMeta => poll_agent_descriptor_meta(
+            config,
+            render_allowed,
+            commands,
+            images,
+            workshop,
+            job,
+            draft,
+        ),
         _ => fail_job(
             workshop,
             job,

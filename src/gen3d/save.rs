@@ -2063,6 +2063,7 @@ pub(crate) fn gen3d_auto_save_when_done(
     mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
+    mut gen3d_jobs: ResMut<super::jobs::Gen3dJobManager>,
     runtime: Gen3dSaveRuntime,
     draft: Res<Gen3dDraft>,
     preview: Res<Gen3dPreview>,
@@ -2079,181 +2080,276 @@ pub(crate) fn gen3d_auto_save_when_done(
     >,
     children_q: Query<&Children>,
     mut scene_saves: MessageWriter<SceneSaveRequest>,
-    mut last_handled_run: Local<Option<Uuid>>,
 ) {
     let Gen3dSaveRuntime {
         mut thumbnail_capture,
         mut job,
     } = runtime;
 
-    let Some(run_id) = job.run_id() else {
-        return;
-    };
-    if job.is_running() || !job.is_build_complete() {
-        return;
-    }
+    #[allow(clippy::too_many_arguments)]
+    fn finalize_run_if_done(
+        commands: &mut Commands,
+        render: &mut Gen3dSaveRenderWorld,
+        library: &mut ObjectLibrary,
+        prefab_descriptors: &mut crate::prefab_descriptors::PrefabDescriptorLibrary,
+        model_library: &mut crate::model_library_ui::ModelLibraryUiState,
+        thumbnail_capture: &mut Gen3dPrefabThumbnailCaptureRuntime,
+        workshop: &mut Gen3dWorkshop,
+        job: &mut Gen3dAiJob,
+        draft: &Gen3dDraft,
+        preview: &Gen3dPreview,
+        active_realm_id: &str,
+        active_scene_id: &str,
+        player_q: &Query<(&Transform, &Collider), With<Player>>,
+        world_objects: &Query<
+            (
+                Entity,
+                &ObjectId,
+                &Transform,
+                &ObjectPrefabId,
+                Option<&ObjectTint>,
+            ),
+            (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
+        >,
+        children_q: &Query<&Children>,
+        scene_saves: &mut MessageWriter<SceneSaveRequest>,
+        handled_run_id: &mut Option<Uuid>,
+    ) -> bool {
+        let Some(run_id) = job.run_id() else {
+            return false;
+        };
+        if job.is_running() || !job.is_build_complete() {
+            return false;
+        }
+        if *handled_run_id == Some(run_id) {
+            return false;
+        }
+        *handled_run_id = Some(run_id);
 
-    if *last_handled_run == Some(run_id) {
-        return;
-    }
-    *last_handled_run = Some(run_id);
+        let realm_id = job
+            .run_realm_id()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| active_realm_id.to_string());
+        let scene_id = job
+            .run_scene_id()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| active_scene_id.to_string());
 
-    let components = draft.component_count();
-    let parts = draft.total_primitive_parts();
-    let motions = preview.animation_channels.len();
-    let attempt = job.attempt() + 1;
-    let pass = job.pass() + 1;
+        let components = draft.component_count();
+        let parts = draft.total_primitive_parts();
+        let motions = preview.animation_channels.len();
+        let attempt = job.attempt() + 1;
+        let pass = job.pass() + 1;
 
-    let run_time = job
-        .run_elapsed()
-        .map(|d| {
-            let secs = d.as_secs();
-            if secs < 60 {
-                format!("{:.1}s", d.as_secs_f32())
-            } else {
-                format!("{}m {}s", secs / 60, secs % 60)
+        let run_time = job
+            .run_elapsed()
+            .map(|d| {
+                let secs = d.as_secs();
+                if secs < 60 {
+                    format!("{:.1}s", d.as_secs_f32())
+                } else {
+                    format!("{}m {}s", secs / 60, secs % 60)
+                }
+            })
+            .unwrap_or_else(|| "—".into());
+
+        // Close any dangling "active step" so summary entries don't implicitly mark it as interrupted.
+        workshop
+            .status_log
+            .finish_step_if_active("Run finished.".to_string());
+
+        fn short_uuid(prefab_id: u128) -> String {
+            let uuid = Uuid::from_u128(prefab_id).to_string();
+            uuid.chars().take(8).collect()
+        }
+
+        fn summarize_error(err: &str) -> String {
+            let first_line = err.trim().lines().next().unwrap_or("").trim();
+            if first_line.is_empty() {
+                return "error".to_string();
             }
-        })
-        .unwrap_or_else(|| "—".into());
-
-    // Close any dangling "active step" so summary entries don't implicitly mark it as interrupted.
-    workshop
-        .status_log
-        .finish_step_if_active("Run finished.".to_string());
-
-    fn short_uuid(prefab_id: u128) -> String {
-        let uuid = Uuid::from_u128(prefab_id).to_string();
-        uuid.chars().take(8).collect()
-    }
-
-    fn summarize_error(err: &str) -> String {
-        let first_line = err.trim().lines().next().unwrap_or("").trim();
-        if first_line.is_empty() {
-            return "error".to_string();
+            const MAX: usize = 72;
+            let mut out: String = first_line.chars().take(MAX).collect();
+            if first_line.chars().count() > MAX {
+                out.push('…');
+            }
+            out
         }
-        const MAX: usize = 72;
-        let mut out: String = first_line.chars().take(MAX).collect();
-        if first_line.chars().count() > MAX {
-            out.push('…');
-        }
-        out
-    }
 
-    let mut save_note = "skipped".to_string();
+        let mut save_note = "skipped".to_string();
 
-    let wants_auto_save = draft.root_def().is_some()
-        && draft.total_non_projectile_primitive_parts() > 0
-        && job.last_saved_prefab_id().is_none();
+        let wants_auto_save = draft.root_def().is_some()
+            && draft.total_non_projectile_primitive_parts() > 0
+            && job.last_saved_prefab_id().is_none();
 
-    if wants_auto_save {
-        workshop.status_log.start_step(
-            "Auto-save".to_string(),
-            "Build completed; save a prefab and refresh the Prefab tab.".to_string(),
-        );
+        if wants_auto_save {
+            workshop.status_log.start_step(
+                "Auto-save".to_string(),
+                "Build completed; save a prefab and refresh the Prefab tab.".to_string(),
+            );
 
-        if job.overwrite_save_blocked_by_qa_errors() {
-            save_note = "skipped (qa errors)".to_string();
-            workshop.status_log.finish_step_if_active(format!(
-                "Skipped: QA errors block overwrite save (validate_ok={:?} smoke_ok={:?} motion_ok={:?}).",
-                job.last_validate_ok(),
-                job.last_smoke_ok(),
-                job.last_motion_ok()
-            ));
-        } else {
-            match player_q.single() {
-                Ok((player_transform, player_collider)) => {
-                    match gen3d_save_current_draft_seed_aware_from_api(
-                        &mut commands,
-                        &render.asset_server,
-                        &render.assets,
-                        &mut *render.meshes,
-                        &mut *render.materials,
-                        &mut *render.material_cache,
-                        &mut *render.mesh_cache,
-                        &env.active.realm_id,
-                        &env.active.scene_id,
-                        &mut library,
-                        &mut *prefab_descriptors,
-                        &mut workshop,
-                        &mut job,
-                        &draft,
-                        preview.show_collision,
-                        player_transform,
-                        player_collider,
-                        &world_objects,
-                        &children_q,
-                        &mut scene_saves,
-                    ) {
-                        Ok(saved) => {
-                            model_library.mark_models_dirty();
+            if job.overwrite_save_blocked_by_qa_errors() {
+                save_note = "skipped (qa errors)".to_string();
+                workshop.status_log.finish_step_if_active(format!(
+                    "Skipped: QA errors block overwrite save (validate_ok={:?} smoke_ok={:?} motion_ok={:?}).",
+                    job.last_validate_ok(),
+                    job.last_smoke_ok(),
+                    job.last_motion_ok()
+                ));
+            } else {
+                match player_q.single() {
+                    Ok((player_transform, player_collider)) => {
+                        match gen3d_save_current_draft_seed_aware_from_api(
+                            commands,
+                            &render.asset_server,
+                            &render.assets,
+                            &mut *render.meshes,
+                            &mut *render.materials,
+                            &mut *render.material_cache,
+                            &mut *render.mesh_cache,
+                            realm_id.as_str(),
+                            scene_id.as_str(),
+                            library,
+                            prefab_descriptors,
+                            workshop,
+                            job,
+                            draft,
+                            preview.show_collision,
+                            player_transform,
+                            player_collider,
+                            world_objects,
+                            children_q,
+                            scene_saves,
+                        ) {
+                            Ok(saved) => {
+                                model_library.mark_models_dirty();
 
-                            let thumbnail_path =
-                                crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
-                                    &env.active.realm_id,
-                                    saved.prefab_id,
-                                );
-                            if let Err(err) = gen3d_request_prefab_thumbnail_capture(
-                                &mut commands,
-                                &mut *thumbnail_capture,
-                                &mut *render.images,
-                                &render.asset_server,
-                                &render.assets,
-                                &mut *render.meshes,
-                                &mut *render.materials,
-                                &mut *render.material_cache,
-                                &mut *render.mesh_cache,
-                                &*library,
-                                saved.prefab_id,
-                                thumbnail_path,
-                            ) {
-                                warn!("Gen3D: thumbnail capture skipped: {err}");
+                                if thumbnail_capture.active.is_none() {
+                                    let thumbnail_path = crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
+                                        realm_id.as_str(),
+                                        saved.prefab_id,
+                                    );
+                                    if let Err(err) = gen3d_request_prefab_thumbnail_capture(
+                                        commands,
+                                        thumbnail_capture,
+                                        &mut *render.images,
+                                        &render.asset_server,
+                                        &render.assets,
+                                        &mut *render.meshes,
+                                        &mut *render.materials,
+                                        &mut *render.material_cache,
+                                        &mut *render.mesh_cache,
+                                        &*library,
+                                        saved.prefab_id,
+                                        thumbnail_path,
+                                    ) {
+                                        warn!("Gen3D: thumbnail capture skipped: {err}");
+                                    }
+                                } else {
+                                    warn!("Gen3D: thumbnail capture skipped (busy).");
+                                }
+
+                                let short = short_uuid(saved.prefab_id);
+                                save_note = format!("ok ({short})");
+                                workshop
+                                    .status_log
+                                    .finish_step_if_active(format!("OK ({short})"));
                             }
-
-                            let short = short_uuid(saved.prefab_id);
-                            save_note = format!("ok ({short})");
-                            workshop
-                                .status_log
-                                .finish_step_if_active(format!("OK ({short})"));
-                        }
-                        Err(err) => {
-                            let err = summarize_error(err.as_str());
-                            save_note = format!("failed ({err})");
-                            workshop
-                                .status_log
-                                .finish_step_if_active(format!("Error: {err}"));
+                            Err(err) => {
+                                let err = summarize_error(err.as_str());
+                                save_note = format!("failed ({err})");
+                                workshop
+                                    .status_log
+                                    .finish_step_if_active(format!("Error: {err}"));
+                            }
                         }
                     }
-                }
-                Err(_) => {
-                    save_note = "failed (missing hero)".to_string();
-                    workshop
-                        .status_log
-                        .finish_step_if_active("Error: missing hero entity.".to_string());
+                    Err(_) => {
+                        save_note = "failed (missing hero)".to_string();
+                        workshop
+                            .status_log
+                            .finish_step_if_active("Error: missing hero entity.".to_string());
+                    }
                 }
             }
+        } else if job.last_saved_prefab_id().is_some() {
+            save_note = "skipped (already saved)".to_string();
+        } else if draft.root_def().is_none() || draft.total_non_projectile_primitive_parts() == 0 {
+            save_note = "skipped (empty draft)".to_string();
         }
-    } else if job.last_saved_prefab_id().is_some() {
-        save_note = "skipped (already saved)".to_string();
-    } else if draft.root_def().is_none() || draft.total_non_projectile_primitive_parts() == 0 {
-        save_note = "skipped (empty draft)".to_string();
+
+        if !realm_id.trim().is_empty() {
+            if let Err(err) = crate::gen3d::upsert_gen3d_in_flight_entry(
+                realm_id.as_str(),
+                run_id,
+                crate::gen3d::gen3d_in_flight_label(&workshop.prompt, job.user_images_len()),
+                crate::gen3d::Gen3dInFlightStatus::Completed,
+                None,
+            ) {
+                warn!("Failed to mark Gen3D in-flight entry completed: {err}");
+            } else {
+                job.mark_in_flight_dirty();
+            }
+        }
+
+        let summary = format!(
+            "Done | comps={components} parts={parts} motion={motions} | attempt={attempt} pass={pass} | time={run_time} | auto-save={save_note}"
+        );
+        workshop.status_log.start_step(
+            "Build summary".to_string(),
+            "Final counters for this run.".to_string(),
+        );
+        workshop.status_log.finish_step(summary);
+
+        true
     }
 
-    if let (Some(realm_id), Some(run_id)) = (job.run_realm_id(), job.run_id()) {
-        if let Err(err) = crate::gen3d::remove_gen3d_in_flight_entry(realm_id, run_id) {
-            warn!("Failed to remove Gen3D in-flight entry: {err}");
-        } else {
-            job.mark_in_flight_dirty();
-        }
-    }
+    let active_realm_id = env.active.realm_id.as_str();
+    let active_scene_id = env.active.scene_id.as_str();
 
-    let summary = format!(
-        "Done | comps={components} parts={parts} motion={motions} | attempt={attempt} pass={pass} | time={run_time} | auto-save={save_note}"
+    let mut loaded_handled_run_id = gen3d_jobs.loaded_auto_save_handled_run_id();
+    finalize_run_if_done(
+        &mut commands,
+        &mut render,
+        &mut library,
+        &mut prefab_descriptors,
+        &mut model_library,
+        &mut thumbnail_capture,
+        &mut workshop,
+        &mut job,
+        draft.as_ref(),
+        preview.as_ref(),
+        active_realm_id,
+        active_scene_id,
+        &player_q,
+        &world_objects,
+        &children_q,
+        &mut scene_saves,
+        &mut loaded_handled_run_id,
     );
-    workshop.status_log.start_step(
-        "Build summary".to_string(),
-        "Final counters for this run.".to_string(),
-    );
-    workshop.status_log.finish_step(summary);
+    gen3d_jobs.set_loaded_auto_save_handled_run_id(loaded_handled_run_id);
+
+    for ctx in gen3d_jobs.inactive_jobs_mut().iter_mut() {
+        finalize_run_if_done(
+            &mut commands,
+            &mut render,
+            &mut library,
+            &mut prefab_descriptors,
+            &mut model_library,
+            &mut thumbnail_capture,
+            &mut ctx.workshop,
+            &mut ctx.ai_job,
+            &ctx.draft,
+            &ctx.preview,
+            active_realm_id,
+            active_scene_id,
+            &player_q,
+            &world_objects,
+            &children_q,
+            &mut scene_saves,
+            &mut ctx.auto_save_handled_run_id,
+        );
+    }
 }
 
 pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
