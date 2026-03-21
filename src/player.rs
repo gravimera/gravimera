@@ -368,10 +368,6 @@ pub(crate) fn camera_follow(
     mut camera_q: Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
     player_q: Query<&Transform, With<Player>>,
 ) {
-    let player_transform = match player_q.single() {
-        Ok(t) => t,
-        Err(_) => return,
-    };
     let mut camera_transform = match camera_q.single_mut() {
         Ok(t) => t,
         Err(_) => return,
@@ -385,7 +381,11 @@ pub(crate) fn camera_follow(
     }
 
     if !focus.initialized {
-        focus.position = player_transform.translation;
+        focus.position = player_q
+            .iter()
+            .next()
+            .map(|t| t.translation)
+            .unwrap_or(Vec3::new(0.0, PLAYER_Y, 0.0));
         focus.initialized = true;
     }
 
