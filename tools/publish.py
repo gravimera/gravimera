@@ -10,7 +10,7 @@ Platform notes:
   - Windows: creates a zip containing `gravimera.exe` + `assets/`.
   - Linux: creates a tar.gz containing `gravimera` + `assets/`.
 
-Runtime data is stored under `~/.gravimera/` (config, scene, cache).
+Runtime data is stored under `<root_dir>/` (default: `~/.gravimera/`; override via `root_dir` in config or env `GRAVIMERA_HOME`).
 """
 
 from __future__ import annotations
@@ -253,4 +253,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

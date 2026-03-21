@@ -40,8 +40,8 @@ Note: PAC/WPAD auto-config proxies are not evaluated; in those setups, set the p
 
 - `src/main.rs`: entrypoint
 - `src/app.rs`: app wiring + headless/render fallback
-- `src/config.rs`: config loading (`GRAVIMERA_CONFIG`, `~/.gravimera/config.toml` default)
-- `src/paths.rs`: default paths (`GRAVIMERA_HOME`, `~/.gravimera/`)
+- `src/config.rs`: config loading (`GRAVIMERA_CONFIG`; default `config.toml` search under `<root_dir>`; parses `root_dir`)
+- `src/paths.rs`: default paths (`GRAVIMERA_HOME` env override; `root_dir` config; default `~/.gravimera/`)
 - `src/setup.rs`: scene + initial entities
 - `src/ui.rs`: window title, UI overlays, minimap, health change popups
 - `src/automation/*`: local Automation HTTP API (for tooling/tests)

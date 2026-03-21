@@ -43,8 +43,10 @@ mode = "embedded"
 
 Config location:
 
-- Default: `~/.gravimera/config.toml`
-- Override base dir: `GRAVIMERA_HOME=/path/to/dir` (config becomes `$GRAVIMERA_HOME/config.toml`)
+- Default: `<root_dir>/config.toml` (default `<root_dir>` is `~/.gravimera/`)
+- Override base dir:
+  - Config: set `root_dir = "/path/to/dir"` (top-level or under `[app]` in `config.toml`)
+  - Env: `GRAVIMERA_HOME=/path/to/dir` (highest precedence; default config becomes `$GRAVIMERA_HOME/config.toml`)
 - Override config path: `GRAVIMERA_CONFIG=/path/to/config.toml`
 
 ## Embedded mode (default)

@@ -25,7 +25,7 @@ cp config.example.toml ~/.gravimera/config.toml
 
 By default, each Gen3D run writes artifacts under:
 
-- `~/.gravimera/cache/gen3d/<run_id>/`
+- `<root_dir>/cache/gen3d/<run_id>/` (default `<root_dir>` is `~/.gravimera/`)
   - `attempt_<n>/pass_<m>/...` (per-pass artifacts)
   - `info_store_v1/` (KV + events + blobs metadata)
 

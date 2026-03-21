@@ -6,13 +6,13 @@ const CONFIG_OVERRIDE_ENV: &str = "GRAVIMERA_CONFIG";
 
 #[derive(Resource, Clone, Debug)]
 pub(crate) struct AppConfig {
+    pub(crate) root_dir: PathBuf,
     pub(crate) openai: Option<OpenAiConfig>,
     pub(crate) mimo: Option<MimoConfig>,
     pub(crate) gemini: Option<GeminiConfig>,
     pub(crate) claude: Option<ClaudeConfig>,
     pub(crate) log_path: Option<PathBuf>,
     pub(crate) log_level: bevy::log::Level,
-    pub(crate) scene_dat_path: Option<PathBuf>,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
     pub(crate) gen3d_ai_service: Gen3dAiService,
     pub(crate) gen3d_orchestrator: Gen3dOrchestrator,
@@ -65,14 +65,16 @@ impl IntelligenceServiceMode {
 
 impl Default for AppConfig {
     fn default() -> Self {
+        let root_dir = crate::paths::gravimera_dir();
+        let log_path = root_dir.join("gravimera.log");
         Self {
+            root_dir,
             openai: None,
             mimo: None,
             gemini: None,
             claude: None,
-            log_path: Some(crate::paths::gravimera_dir().join("gravimera.log")),
+            log_path: Some(log_path),
             log_level: bevy::log::Level::INFO,
-            scene_dat_path: None,
             gen3d_cache_dir: None,
             gen3d_ai_service: Gen3dAiService::OpenAi,
             gen3d_orchestrator: Gen3dOrchestrator::Agent,
@@ -161,6 +163,9 @@ pub(crate) fn default_config_path() -> PathBuf {
 }
 
 pub(crate) fn load_config_with_override(config_path: Option<&Path>) -> AppConfig {
+    // Avoid leaking a previous `root_dir` across multiple loads in the same process.
+    crate::paths::clear_root_dir_override();
+
     if let Some(path) = config_path {
         return load_config_from_path(path);
     }
@@ -228,9 +233,9 @@ fn load_config_from_path(path: &Path) -> AppConfig {
 }
 
 fn parse_config_text_into(out: &mut AppConfig, text: &str) {
+    parse_root_dir_into_config(out, text);
     parse_log_path_into_config(out, text);
     parse_log_level_into_config(out, text);
-    parse_scene_dat_path_into_config(out, text);
     parse_gen3d_cache_dir_into_config(out, text);
     parse_gen3d_ai_service_into_config(out, text);
     parse_gen3d_orchestrator_into_config(out, text);
@@ -443,6 +448,29 @@ fn parse_gen3d_orchestrator_into_config(out: &mut AppConfig, text: &str) {
     }
 }
 
+fn parse_root_dir_into_config(out: &mut AppConfig, text: &str) {
+    match parse_root_dir(text) {
+        Ok(Some(path)) => {
+            let resolved = if path.is_relative() {
+                match out.loaded_from.as_ref().and_then(|p| p.parent()) {
+                    Some(dir) => dir.join(&path),
+                    None => path,
+                }
+            } else {
+                path
+            };
+
+            crate::paths::set_root_dir_override(resolved);
+        }
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+
+    // Sync effective root dir + derived defaults after `root_dir` override.
+    out.root_dir = crate::paths::gravimera_dir();
+    out.log_path = Some(out.root_dir.join("gravimera.log"));
+}
+
 fn parse_log_path_into_config(out: &mut AppConfig, text: &str) {
     match parse_log_path(text) {
         Ok(Some(ParsedLogPath::Disabled)) => out.log_path = None,
@@ -465,24 +493,6 @@ fn parse_log_path_into_config(out: &mut AppConfig, text: &str) {
 fn parse_log_level_into_config(out: &mut AppConfig, text: &str) {
     match parse_log_level(text) {
         Ok(Some(value)) => out.log_level = value,
-        Ok(None) => {}
-        Err(err) => out.errors.push(err),
-    }
-}
-
-fn parse_scene_dat_path_into_config(out: &mut AppConfig, text: &str) {
-    match parse_scene_dat_path(text) {
-        Ok(Some(path)) => {
-            let resolved = if path.is_relative() {
-                match out.loaded_from.as_ref().and_then(|p| p.parent()) {
-                    Some(dir) => dir.join(&path),
-                    None => path,
-                }
-            } else {
-                path
-            };
-            out.scene_dat_path = Some(resolved);
-        }
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -872,7 +882,7 @@ enum ParsedLogPath {
     Path(PathBuf),
 }
 
-fn parse_scene_dat_path(text: &str) -> Result<Option<PathBuf>, String> {
+fn parse_root_dir(text: &str) -> Result<Option<PathBuf>, String> {
     let mut section: Option<String> = None;
     let mut out: Option<PathBuf> = None;
 
@@ -896,22 +906,20 @@ fn parse_scene_dat_path(text: &str) -> Result<Option<PathBuf>, String> {
             continue;
         };
         let key = key.trim();
-        if key != "scene_dat_path" {
+        if key != "root_dir" {
             continue;
         }
 
-        // Accept `scene_dat_path` at top-level, or under `[scene]` / `[app]` for convenience.
-        if let Some(sec) = section.as_deref() {
-            if sec != "scene" && sec != "app" {
-                continue;
-            }
-        }
+        // Accept at top-level, or under `[app]` for convenience.
+        if section.as_deref().is_some_and(|sec| sec != "app") {
+            continue;
+        };
 
         let value = value.trim();
         let value = if value.starts_with('"') || value.starts_with('\'') {
             parse_toml_string(value).ok_or_else(|| {
                 format!(
-                    "config.toml:{line_no}: expected a quoted string value for key `scene_dat_path` (example: scene_dat_path = \"./scene.dat\")"
+                    "config.toml:{line_no}: expected a quoted string value for key `root_dir` (example: root_dir = \"~/.gravimera\")"
                 )
             })?
         } else {

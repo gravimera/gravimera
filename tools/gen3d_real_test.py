@@ -59,21 +59,21 @@ def _parse_automation_bind(config_text: str) -> str:
     raise ValueError("config.toml: missing [automation].bind (example: bind = \"127.0.0.1:18792\")")
 
 
-def _parse_scene_dat_path(config_text: str) -> str | None:
+def _parse_root_dir(config_text: str) -> str | None:
     # Best-effort parse (no external TOML dependency).
-    in_scene = False
+    section = None
     for raw in config_text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         if line.startswith("[") and line.endswith("]"):
-            in_scene = line == "[scene]"
+            name = line.strip("[]").strip()
+            section = name if name else None
             continue
-        if not in_scene:
-            continue
-        m = re.match(r'scene_dat_path\s*=\s*"([^"]+)"\s*$', line)
+        m = re.match(r'root_dir\s*=\s*"([^"]+)"\s*$', line)
         if m:
-            return m.group(1)
+            if section in (None, "app"):
+                return m.group(1)
     return None
 
 
@@ -1052,7 +1052,7 @@ def main() -> int:
     ap.add_argument(
         "--reset-scene",
         action="store_true",
-        help="Delete configured [scene].scene_dat_path before running (test isolation).",
+        help="Delete the default scene.dat under <root_dir>/realm/default/scenes/default/build/scene.dat before running (test isolation).",
     )
     ap.add_argument(
         "--reset-scene-each-prompt",
@@ -1074,12 +1074,6 @@ def main() -> int:
     config_text = _read_text(config_path)
     bind = _parse_automation_bind(config_text)
     api_base = f"http://{bind}"
-    scene_dat_path_raw = _parse_scene_dat_path(config_text)
-    scene_dat_path: Path | None = None
-    if scene_dat_path_raw:
-        scene_dat_path = Path(scene_dat_path_raw)
-        if not scene_dat_path.is_absolute():
-            scene_dat_path = (config_path.parent / scene_dat_path).resolve()
 
     bin_path = Path(args.bin) if args.bin else Path("target/debug/gravimera")
     if not bin_path.is_absolute():
@@ -1087,6 +1081,24 @@ def main() -> int:
 
     workdir = Path(args.workdir).expanduser().resolve() if args.workdir else config_path.parent
     stdout_path = workdir / "gravimera_stdout.log"
+
+    root_dir_env = os.environ.get("GRAVIMERA_HOME", "").strip()
+    if root_dir_env:
+        root_dir = Path(root_dir_env).expanduser()
+        if not root_dir.is_absolute():
+            root_dir = (workdir / root_dir).resolve()
+    else:
+        root_dir_raw = _parse_root_dir(config_text)
+        if root_dir_raw:
+            root_dir = Path(root_dir_raw).expanduser()
+            if not root_dir.is_absolute():
+                root_dir = (config_path.parent / root_dir).resolve()
+        else:
+            root_dir = Path("~/.gravimera").expanduser()
+
+    scene_dat_path = (
+        root_dir / "realm" / "default" / "scenes" / "default" / "build" / "scene.dat"
+    )
 
     prompts = list(args.prompt)
     if not prompts:
@@ -1107,9 +1119,6 @@ def main() -> int:
 
     def reset_scene_file() -> None:
         if not args.reset_scene:
-            return
-        if scene_dat_path is None:
-            print("warn: --reset-scene requested but config.toml has no [scene].scene_dat_path")
             return
         try:
             scene_dat_path.unlink(missing_ok=True)

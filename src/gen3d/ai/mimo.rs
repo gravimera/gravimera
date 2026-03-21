@@ -8,20 +8,20 @@ use crate::gen3d::agent::{
 };
 use crate::openai_shared::{
     curl_auth_header_file, extract_openai_chat_completions_sse_last_json,
-    extract_openai_chat_completions_sse_output_text, split_curl_http_status, CURL_HTTP_STATUS_MARKER,
-    CURL_HTTP_STATUS_WRITEOUT_ARG,
+    extract_openai_chat_completions_sse_output_text, split_curl_http_status,
+    CURL_HTTP_STATUS_MARKER, CURL_HTTP_STATUS_WRITEOUT_ARG,
 };
 
+use super::super::{GEN3D_MAX_CHAT_HISTORY_MESSAGES, GEN3D_MAX_REQUEST_IMAGES};
 use super::artifacts::{
     append_gen3d_run_log, write_gen3d_json_artifact, write_gen3d_text_artifact,
 };
 use super::parse::extract_json_object;
+use super::structured_outputs::Gen3dAiJsonSchemaKind;
 use super::{
     set_progress, truncate_for_ui, Gen3dAiApi, Gen3dAiProgress, Gen3dAiSessionState,
     Gen3dAiTextResponse, Gen3dChatHistoryMessage,
 };
-use super::super::{GEN3D_MAX_CHAT_HISTORY_MESSAGES, GEN3D_MAX_REQUEST_IMAGES};
-use super::structured_outputs::Gen3dAiJsonSchemaKind;
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 // Curl timeout strategy:
@@ -733,7 +733,11 @@ fn mimo_chat_completions_flow(
         }
     };
 
-    write_gen3d_text_artifact(run_dir, format!("{artifact_prefix}_mimo_chat_raw.txt"), &body);
+    write_gen3d_text_artifact(
+        run_dir,
+        format!("{artifact_prefix}_mimo_chat_raw.txt"),
+        &body,
+    );
 
     let body_trim = body.trim();
     let json_opt: Option<serde_json::Value> = serde_json::from_str(body_trim).ok();
@@ -969,7 +973,11 @@ pub(super) fn generate_text_via_mimo(
             );
             append_gen3d_run_log(
                 run_dir,
-                format!("request_failed prefix={} service=mimo err={}", artifact_prefix, err.short()),
+                format!(
+                    "request_failed prefix={} service=mimo err={}",
+                    artifact_prefix,
+                    err.short()
+                ),
             );
             return Err(format!(
                 "MiMo request failed.\n/chat/completions: {err}\n(See terminal logs for details.)"

@@ -89,17 +89,20 @@ tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered
 
 ## Data directory
 
-By default Gravimera stores runtime data under `~/.gravimera/`:
+Gravimera stores runtime data under `<root_dir>` (default: `~/.gravimera/`):
 
-- `~/.gravimera/config.toml` (settings, AI providers)
-- `~/.gravimera/openai_capabilities_cache.json` (cached OpenAI-compatible endpoint capabilities, keyed by `base_url` + `model`; includes whether the gateway requires `stream=true`)
-- `~/.gravimera/realm/` (realms + scenes)
-- `~/.gravimera/realm/active.json` (active realm/scene selection)
-- `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
-- `~/.gravimera/realm/<realm_id>/prefabs/` (realm prefab packages; Gen3D saves prefabs here; layout spec `docs/gamedesign/39_realm_prefab_packages_v1.md`)
-- `~/.gravimera/cache/` (Gen3D artifacts, logs, screenshots)
+- `<root_dir>/config.toml` (settings, AI providers)
+- `<root_dir>/openai_capabilities_cache.json` (cached OpenAI-compatible endpoint capabilities, keyed by `base_url` + `model`; includes whether the gateway requires `stream=true`)
+- `<root_dir>/realm/` (realms + scenes)
+- `<root_dir>/realm/active.json` (active realm/scene selection)
+- `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
+- `<root_dir>/realm/<realm_id>/prefabs/` (realm prefab packages; Gen3D saves prefabs here; layout spec `docs/gamedesign/39_realm_prefab_packages_v1.md`)
+- `<root_dir>/cache/` (Gen3D artifacts, logs, screenshots)
 
-Override the base directory with `GRAVIMERA_HOME=/path/to/dir`.
+Override the base directory:
+
+- Config: set `root_dir = "/path/to/dir"` (top-level or under `[app]` in `config.toml`).
+- Env: `GRAVIMERA_HOME=/path/to/dir` (highest precedence).
 
 ## WSL (WSLg)
 

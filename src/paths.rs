@@ -1,10 +1,13 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, RwLock};
 
 const GRAVIMERA_HOME_ENV: &str = "GRAVIMERA_HOME";
 const REALMS_DIR_NAME: &str = "realm";
 const DEFAULT_REALM_ID: &str = "default";
 const DEFAULT_SCENE_ID: &str = "default";
+
+static ROOT_DIR_OVERRIDE: LazyLock<RwLock<Option<PathBuf>>> = LazyLock::new(|| RwLock::new(None));
 
 pub(crate) fn home_dir() -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
@@ -26,9 +29,38 @@ pub(crate) fn home_dir() -> Option<PathBuf> {
     }
 }
 
+pub(crate) fn set_root_dir_override(path: PathBuf) {
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    let mut guard = ROOT_DIR_OVERRIDE
+        .write()
+        .expect("ROOT_DIR_OVERRIDE lock poisoned");
+    *guard = Some(path);
+}
+
+pub(crate) fn clear_root_dir_override() {
+    let mut guard = ROOT_DIR_OVERRIDE
+        .write()
+        .expect("ROOT_DIR_OVERRIDE lock poisoned");
+    *guard = None;
+}
+
+fn root_dir_override() -> Option<PathBuf> {
+    ROOT_DIR_OVERRIDE
+        .read()
+        .expect("ROOT_DIR_OVERRIDE lock poisoned")
+        .as_ref()
+        .cloned()
+}
+
 pub(crate) fn gravimera_dir() -> PathBuf {
     if let Some(override_dir) = std::env::var_os(GRAVIMERA_HOME_ENV).and_then(|v| path_from_env(&v))
     {
+        return override_dir;
+    }
+
+    if let Some(override_dir) = root_dir_override() {
         return override_dir;
     }
 

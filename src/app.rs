@@ -115,16 +115,16 @@ pub(crate) fn run() {
     }
 
     let args = CliArgs::parse();
-    if let Err(err) = crate::paths::ensure_default_dirs() {
-        eprintln!(
-            "Warning: failed to create default data directories under {}: {err}",
-            crate::paths::gravimera_dir().display()
-        );
-    }
     let headless_exit_after = args.headless_exit_after_seconds();
     let rendered_exit_after = args.rendered_exit_after_seconds();
     let mut config = crate::config::load_config_with_override(args.config_path.as_deref());
     args.apply_automation_overrides(&mut config);
+    if let Err(err) = crate::paths::ensure_default_dirs() {
+        eprintln!(
+            "Warning: failed to create default data directories under {}: {err}",
+            config.root_dir.display()
+        );
+    }
 
     if args.headless {
         run_headless(headless_exit_after, config);

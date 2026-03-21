@@ -1,10 +1,16 @@
 # Copy this file to `~/.gravimera/config.toml` and fill in your settings.
 # NOTE: `config.toml` is gitignored in this repo to avoid committing secrets.
 
+# Optional: override the base runtime data directory.
+#
+# Default: `~/.gravimera` (or env `GRAVIMERA_HOME`).
+# If relative, it is resolved relative to this config file.
+# root_dir = "~/.gravimera"
+
 [log]
 
 # Optional: override where the main log file is written.
-# Default: `~/.gravimera/gravimera.log`.
+# Default: `<root_dir>/gravimera.log`.
 # Relative paths are resolved relative to the config file directory.
 # If the path can't be opened, Gravimera logs a warning and falls back next to the running binary.
 # Set to an empty string to disable file logging.
@@ -19,11 +25,6 @@
 # level = "info"
 
 [scene]
-
-# Optional: override where build scene persistence is stored.
-# Default (active realm+scene): `~/.gravimera/realm/<realm_id>/scenes/<scene_id>/build/scene.dat`.
-# Relative paths are resolved relative to the config file directory.
-# scene_dat_path = "./scene.dat"
 
 [intelligence_service]
 
@@ -81,7 +82,7 @@
 # orchestrator = "agent"
 
 # Optional: override where Gen3D artifacts are cached.
-# Default: `~/.gravimera/cache/gen3d/`.
+# Default: `<root_dir>/cache/gen3d/`.
 # Relative paths are resolved relative to the config file directory.
 # cache_dir = "./gen3d_cache"
 

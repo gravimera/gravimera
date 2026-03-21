@@ -10,7 +10,7 @@ This script:
 - Captures a final screenshot into the run_dir
 
 Artifacts are written under the scene build run directory:
-  ~/.gravimera/realm/<realm_id>/scenes/<scene_id>/runs/<run_id>/
+  <root_dir>/realm/<realm_id>/scenes/<scene_id>/runs/<run_id>/
 """
 
 from __future__ import annotations

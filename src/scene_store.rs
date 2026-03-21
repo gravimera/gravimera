@@ -7,7 +7,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::assets::SceneAssets;
-use crate::config::AppConfig;
 use crate::constants::*;
 use crate::object::registry::{
     AnchorDef, AnchorRef, AttachmentDef, ColliderProfile, MaterialKey, MeleeAttackProfile, MeshKey,
@@ -114,7 +113,6 @@ fn restore_camera(
 
 #[derive(SystemParam)]
 pub(crate) struct WorkspaceSwitchDeps<'w> {
-    config: Res<'w, AppConfig>,
     active: Res<'w, crate::realm::ActiveRealmScene>,
     asset_server: Res<'w, AssetServer>,
     assets: Res<'w, SceneAssets>,
@@ -680,20 +678,8 @@ struct SceneDatTorusParams {
     major_radius: f32,
 }
 
-fn scene_dat_path(config: &AppConfig, active: &crate::realm::ActiveRealmScene) -> PathBuf {
-    if let Some(path) = config.scene_dat_path.as_ref().cloned() {
-        return path;
-    }
-
-    crate::realm::scene_dat_path(active)
-}
-
-fn workspace_scene_dat_path(
-    config: &AppConfig,
-    active: &crate::realm::ActiveRealmScene,
-    tab: WorkspaceTab,
-) -> PathBuf {
-    let base = scene_dat_path(config, active);
+fn workspace_scene_dat_path(active: &crate::realm::ActiveRealmScene, tab: WorkspaceTab) -> PathBuf {
+    let base = crate::realm::scene_dat_path(active);
     match tab {
         WorkspaceTab::ObjectPreview => base,
         WorkspaceTab::SceneBuild => {
@@ -1977,7 +1963,6 @@ fn spawn_scene_instance_from_scene(
 
 pub(crate) fn load_scene_dat(
     mut commands: Commands,
-    config: Res<AppConfig>,
     active: Res<crate::realm::ActiveRealmScene>,
     workspace_ui: Res<crate::workspace_ui::WorkspaceUiState>,
     asset_server: Res<AssetServer>,
@@ -1994,7 +1979,7 @@ pub(crate) fn load_scene_dat(
     // Prefab descriptors are realm-level and loaded by UI/tooling on demand. Scene loading does not
     // depend on them, but we keep the cache so panels (Meta/Gen3D) stay stable across scene loads.
 
-    let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
+    let path = workspace_scene_dat_path(&active, workspace_ui.tab);
     match load_scene_dat_from_path(
         &mut commands,
         &asset_server,
@@ -2065,7 +2050,7 @@ pub(crate) fn apply_pending_workspace_switch(
         &mut deps.camera_focus,
     );
 
-    let from_path = workspace_scene_dat_path(&deps.config, &deps.active, switch.from);
+    let from_path = workspace_scene_dat_path(&deps.active, switch.from);
     match save_scene_dat_internal(&objects, &deps.library, &from_path) {
         Ok(instance_count) => {
             info!(
@@ -2092,7 +2077,7 @@ pub(crate) fn apply_pending_workspace_switch(
     *deps.library = ObjectLibrary::default();
     // Prefab descriptors are realm-level and reused across workspace tabs.
 
-    let to_path = workspace_scene_dat_path(&deps.config, &deps.active, switch.to);
+    let to_path = workspace_scene_dat_path(&deps.active, switch.to);
     match load_scene_dat_from_path(
         &mut commands,
         &deps.asset_server,
@@ -2124,7 +2109,6 @@ pub(crate) fn apply_pending_workspace_switch(
 
 pub(crate) fn apply_pending_realm_scene_switch(
     mut commands: Commands,
-    config: Res<AppConfig>,
     mut active: ResMut<crate::realm::ActiveRealmScene>,
     mut pending: ResMut<crate::realm::PendingRealmSceneSwitch>,
     mut autosave: ResMut<SceneAutosaveState>,
@@ -2184,7 +2168,7 @@ pub(crate) fn apply_pending_realm_scene_switch(
         prefab_descriptors.clear();
     }
 
-    let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
+    let path = workspace_scene_dat_path(&active, workspace_ui.tab);
     match load_scene_dat_from_path(
         &mut commands,
         &asset_server,
@@ -2444,7 +2428,6 @@ pub(crate) fn scene_save_requests(
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
-    config: Res<AppConfig>,
     active: Res<crate::realm::ActiveRealmScene>,
     workspace_ui: Res<crate::workspace_ui::WorkspaceUiState>,
     library: Res<ObjectLibrary>,
@@ -2458,7 +2441,7 @@ pub(crate) fn scene_save_requests(
         return;
     };
 
-    let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
+    let path = workspace_scene_dat_path(&active, workspace_ui.tab);
     match save_scene_dat_internal(&objects, &library, &path) {
         Ok(instance_count) => {
             info!(
@@ -2487,7 +2470,6 @@ pub(crate) fn scene_autosave_tick(
         ),
         (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
     >,
-    config: Res<AppConfig>,
     active: Res<crate::realm::ActiveRealmScene>,
     workspace_ui: Res<crate::workspace_ui::WorkspaceUiState>,
     library: Res<ObjectLibrary>,
@@ -2498,7 +2480,7 @@ pub(crate) fn scene_autosave_tick(
         return;
     }
 
-    let path = workspace_scene_dat_path(&config, &active, workspace_ui.tab);
+    let path = workspace_scene_dat_path(&active, workspace_ui.tab);
     match save_scene_dat_internal(&objects, &library, &path) {
         Ok(instance_count) => {
             info!(
