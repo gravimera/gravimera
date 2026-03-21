@@ -78,9 +78,6 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
 
     let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress::default()));
     let mut session = Gen3dAiSessionState::default();
-    if llm.base_url().starts_with("mock://gen3d") && config.gen3d_mock_delay_seconds > 0 {
-        session.mock_delay_remaining_ms = config.gen3d_mock_delay_seconds.saturating_mul(1000);
-    }
 
     let speed = Gen3dSpeedMode::default();
     let image_paths: Vec<std::path::PathBuf> = Vec::new();

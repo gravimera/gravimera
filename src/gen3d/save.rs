@@ -2089,9 +2089,6 @@ pub(crate) fn gen3d_auto_save_when_done(
     let Some(run_id) = job.run_id() else {
         return;
     };
-    if job.is_mock_mode() {
-        return;
-    }
     if job.is_running() || !job.is_build_complete() {
         return;
     }

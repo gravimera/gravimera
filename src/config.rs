@@ -27,12 +27,9 @@ pub(crate) struct AppConfig {
     pub(crate) automation_disable_local_input: bool,
     pub(crate) automation_pause_on_start: bool,
     pub(crate) refine_iterations: u32,
-    pub(crate) gen3d_max_parallel_jobs: usize,
     pub(crate) gen3d_max_parallel_components: usize,
     pub(crate) gen3d_max_seconds: u64,
     pub(crate) gen3d_max_tokens: u64,
-    pub(crate) gen3d_mock_enabled: bool,
-    pub(crate) gen3d_mock_delay_seconds: u64,
     pub(crate) gen3d_review_delta_rounds_max: u32,
     pub(crate) gen3d_no_progress_tries_max: u32,
     pub(crate) gen3d_inspection_steps_max: u32,
@@ -89,12 +86,9 @@ impl Default for AppConfig {
             automation_disable_local_input: true,
             automation_pause_on_start: true,
             refine_iterations: 1,
-            gen3d_max_parallel_jobs: 3,
             gen3d_max_parallel_components: 10,
             gen3d_max_seconds: 60 * 30,
             gen3d_max_tokens: 10_000_000,
-            gen3d_mock_enabled: false,
-            gen3d_mock_delay_seconds: 60,
             gen3d_review_delta_rounds_max: 2,
             gen3d_no_progress_tries_max: 3,
             gen3d_inspection_steps_max: 12,
@@ -249,12 +243,9 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_automation_pause_on_start_into_config(out, text);
     parse_automation_token_into_config(out, text);
     parse_refine_iterations_into_config(out, text);
-    parse_gen3d_max_parallel_jobs_into_config(out, text);
     parse_gen3d_max_parallel_components_into_config(out, text);
     parse_gen3d_max_seconds_into_config(out, text);
     parse_gen3d_max_tokens_into_config(out, text);
-    parse_gen3d_mock_enabled_into_config(out, text);
-    parse_gen3d_mock_delay_seconds_into_config(out, text);
     parse_gen3d_review_delta_rounds_max_into_config(out, text);
     parse_gen3d_no_progress_tries_max_into_config(out, text);
     parse_gen3d_inspection_steps_max_into_config(out, text);
@@ -607,14 +598,6 @@ fn parse_refine_iterations_into_config(out: &mut AppConfig, text: &str) {
     }
 }
 
-fn parse_gen3d_max_parallel_jobs_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_max_parallel_jobs(text) {
-        Ok(Some(value)) => out.gen3d_max_parallel_jobs = value,
-        Ok(None) => {}
-        Err(err) => out.errors.push(err),
-    }
-}
-
 fn parse_gen3d_max_parallel_components_into_config(out: &mut AppConfig, text: &str) {
     match parse_gen3d_max_parallel_components(text) {
         Ok(Some(value)) => out.gen3d_max_parallel_components = value,
@@ -634,22 +617,6 @@ fn parse_gen3d_max_seconds_into_config(out: &mut AppConfig, text: &str) {
 fn parse_gen3d_max_tokens_into_config(out: &mut AppConfig, text: &str) {
     match parse_gen3d_max_tokens(text) {
         Ok(Some(value)) => out.gen3d_max_tokens = value,
-        Ok(None) => {}
-        Err(err) => out.errors.push(err),
-    }
-}
-
-fn parse_gen3d_mock_enabled_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_mock_enabled(text) {
-        Ok(Some(value)) => out.gen3d_mock_enabled = value,
-        Ok(None) => {}
-        Err(err) => out.errors.push(err),
-    }
-}
-
-fn parse_gen3d_mock_delay_seconds_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_mock_delay_seconds(text) {
-        Ok(Some(value)) => out.gen3d_mock_delay_seconds = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -1842,80 +1809,6 @@ fn parse_gen3d_max_parallel_components(text: &str) -> Result<Option<usize>, Stri
     Ok(out)
 }
 
-fn parse_gen3d_max_parallel_jobs(text: &str) -> Result<Option<usize>, String> {
-    const MAX_ALLOWED: usize = 16;
-
-    let mut section: Option<String> = None;
-    let mut out: Option<usize> = None;
-
-    for (line_no, raw_line) in text.lines().enumerate() {
-        let line_no = line_no + 1;
-        let line = strip_comment(raw_line).trim().to_string();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            let name = line.trim_matches(&['[', ']'][..]).trim();
-            section = if name.is_empty() {
-                None
-            } else {
-                Some(name.to_string())
-            };
-            continue;
-        }
-
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if key != "max_parallel_jobs" && key != "gen3d_max_parallel_jobs" {
-            continue;
-        }
-
-        if let Some(sec) = section.as_deref() {
-            if sec != "gen3d" && sec != "app" {
-                continue;
-            }
-        }
-
-        let value = value.trim();
-        if value.is_empty() {
-            out = None;
-            continue;
-        }
-
-        let value = if value.starts_with('"') || value.starts_with('\'') {
-            parse_toml_string(value).ok_or_else(|| {
-                format!(
-                    "config.toml:{line_no}: expected an integer for `max_parallel_jobs` (example: max_parallel_jobs = 3)"
-                )
-            })?
-        } else {
-            value.to_string()
-        };
-
-        let parsed: i64 = value.trim().parse().map_err(|_| {
-            format!(
-                "config.toml:{line_no}: expected an integer for `max_parallel_jobs` (example: max_parallel_jobs = 3)"
-            )
-        })?;
-        if parsed < 1 {
-            return Err(format!(
-                "config.toml:{line_no}: `max_parallel_jobs` must be >= 1 (got {parsed})"
-            ));
-        }
-        let parsed = parsed as usize;
-        if parsed > MAX_ALLOWED {
-            return Err(format!(
-                "config.toml:{line_no}: `max_parallel_jobs` too large ({parsed} > {MAX_ALLOWED})"
-            ));
-        }
-        out = Some(parsed);
-    }
-
-    Ok(out)
-}
-
 fn parse_gen3d_max_seconds(text: &str) -> Result<Option<u64>, String> {
     const MAX_ALLOWED: u64 = 24 * 60 * 60;
 
@@ -2203,141 +2096,6 @@ fn parse_gen3d_max_tokens(text: &str) -> Result<Option<u64>, String> {
         if parsed < 0 {
             return Err(format!(
                 "config.toml:{line_no}: `max_tokens` must be >= 0 (0 disables the token budget)"
-            ));
-        }
-
-        out = Some((parsed as u64).min(MAX_ALLOWED));
-    }
-
-    Ok(out)
-}
-
-fn parse_gen3d_mock_enabled(text: &str) -> Result<Option<bool>, String> {
-    let mut section: Option<String> = None;
-    let mut out: Option<bool> = None;
-
-    for (line_no, raw_line) in text.lines().enumerate() {
-        let line_no = line_no + 1;
-        let line = strip_comment(raw_line).trim().to_string();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            let name = line.trim_matches(&['[', ']'][..]).trim();
-            section = if name.is_empty() {
-                None
-            } else {
-                Some(name.to_string())
-            };
-            continue;
-        }
-
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if key != "mock_enabled" && key != "gen3d_mock_enabled" {
-            continue;
-        }
-
-        if let Some(sec) = section.as_deref() {
-            if sec != "gen3d" && sec != "app" {
-                continue;
-            }
-        }
-
-        let value = value.trim();
-        if value.is_empty() {
-            out = None;
-            continue;
-        }
-
-        let value = if value.starts_with('"') || value.starts_with('\'') {
-            parse_toml_string(value).ok_or_else(|| {
-                format!(
-                    "config.toml:{line_no}: expected true/false for `mock_enabled` (example: mock_enabled = true)"
-                )
-            })?
-        } else {
-            value.to_string()
-        };
-
-        let parsed = match value.trim() {
-            "true" | "True" | "TRUE" => true,
-            "false" | "False" | "FALSE" => false,
-            _ => {
-                return Err(format!(
-                    "config.toml:{line_no}: expected true/false for `mock_enabled` (example: mock_enabled = true)"
-                ))
-            }
-        };
-        out = Some(parsed);
-    }
-
-    Ok(out)
-}
-
-fn parse_gen3d_mock_delay_seconds(text: &str) -> Result<Option<u64>, String> {
-    const MAX_ALLOWED: u64 = 60 * 60;
-
-    let mut section: Option<String> = None;
-    let mut out: Option<u64> = None;
-
-    for (line_no, raw_line) in text.lines().enumerate() {
-        let line_no = line_no + 1;
-        let line = strip_comment(raw_line).trim().to_string();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            let name = line.trim_matches(&['[', ']'][..]).trim();
-            section = if name.is_empty() {
-                None
-            } else {
-                Some(name.to_string())
-            };
-            continue;
-        }
-
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if key != "mock_delay_seconds" && key != "gen3d_mock_delay_seconds" {
-            continue;
-        }
-
-        // Accept at top-level, or under `[gen3d]` / `[app]` for convenience.
-        if let Some(sec) = section.as_deref() {
-            if sec != "gen3d" && sec != "app" {
-                continue;
-            }
-        }
-
-        let value = value.trim();
-        if value.is_empty() {
-            out = None;
-            continue;
-        }
-
-        let value = if value.starts_with('"') || value.starts_with('\'') {
-            parse_toml_string(value).ok_or_else(|| {
-                format!(
-                    "config.toml:{line_no}: expected an integer for `mock_delay_seconds` (example: mock_delay_seconds = 60)"
-                )
-            })?
-        } else {
-            value.to_string()
-        };
-
-        let parsed: i128 = value.trim().parse().map_err(|_| {
-            format!(
-                "config.toml:{line_no}: expected an integer for `mock_delay_seconds` (example: mock_delay_seconds = 60)"
-            )
-        })?;
-        if parsed < 0 {
-            return Err(format!(
-                "config.toml:{line_no}: `mock_delay_seconds` must be >= 0"
             ));
         }
 
@@ -3259,9 +3017,6 @@ fn parse_claude_config(text: &str) -> Result<ClaudeConfig, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_gen3d_max_parallel_jobs;
-    use super::parse_gen3d_mock_delay_seconds;
-    use super::parse_gen3d_mock_enabled;
     use super::parse_gen3d_require_structured_outputs;
     use super::parse_gen3d_review_appearance;
     use super::parse_gen3d_save_pass_screenshots;
@@ -3309,23 +3064,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_gen3d_mock_enabled_from_gen3d_section() {
-        let text = r#"
-        [gen3d]
-        mock_enabled = true
-        "#;
-        assert_eq!(parse_gen3d_mock_enabled(text).unwrap(), Some(true));
-    }
-
-    #[test]
-    fn parses_gen3d_max_parallel_jobs_from_top_level() {
-        let text = r#"
-        gen3d_max_parallel_jobs = 4
-        "#;
-        assert_eq!(parse_gen3d_max_parallel_jobs(text).unwrap(), Some(4));
-    }
-
-    #[test]
     fn parses_gen3d_require_structured_outputs_from_gen3d_section() {
         let text = r#"
         [gen3d]
@@ -3346,23 +3084,6 @@ mod tests {
             parse_gen3d_require_structured_outputs(text).unwrap(),
             Some(true)
         );
-    }
-
-    #[test]
-    fn parses_gen3d_mock_delay_seconds_from_gen3d_section() {
-        let text = r#"
-        [gen3d]
-        mock_delay_seconds = 60
-        "#;
-        assert_eq!(parse_gen3d_mock_delay_seconds(text).unwrap(), Some(60));
-    }
-
-    #[test]
-    fn parses_gen3d_mock_delay_seconds_from_top_level() {
-        let text = r#"
-        gen3d_mock_delay_seconds = 120
-        "#;
-        assert_eq!(parse_gen3d_mock_delay_seconds(text).unwrap(), Some(120));
     }
 
     #[test]

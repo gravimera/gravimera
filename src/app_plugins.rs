@@ -437,10 +437,6 @@ impl Plugin for RenderedGen3dPlugin {
         );
         app.add_systems(
             Update,
-            crate::gen3d::gen3d_tick_mock_jobs.after(crate::gen3d::gen3d_poll_ai_job),
-        );
-        app.add_systems(
-            Update,
             crate::gen3d::gen3d_flush_in_flight_dirty.after(crate::gen3d::gen3d_poll_ai_job),
         );
         app.add_systems(

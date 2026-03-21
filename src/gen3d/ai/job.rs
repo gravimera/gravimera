@@ -650,7 +650,6 @@ pub(crate) struct Gen3dAiJob {
     pub(super) seed_target_entity: Option<Entity>,
     pub(super) metrics: Gen3dRunMetrics,
     pub(super) in_flight_dirty: bool,
-    pub(super) mock_mode: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -857,14 +856,6 @@ impl Gen3dAiJob {
 
     pub(crate) fn run_realm_id(&self) -> Option<&str> {
         self.run_realm_id.as_deref()
-    }
-
-    pub(crate) fn is_mock_mode(&self) -> bool {
-        self.mock_mode
-    }
-
-    pub(crate) fn set_mock_mode(&mut self, enabled: bool) {
-        self.mock_mode = enabled;
     }
 
     pub(crate) fn set_run_id(&mut self, run_id: Uuid) {

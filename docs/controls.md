@@ -93,5 +93,5 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
 
 While a Gen3D build is running:
 
-- An in-flight entry appears in the Prefabs panel immediately (status: **Generating** / **Queued** / **Failed**). Click it to reopen Gen3D and see progress.
+- An in-flight entry appears in the Prefabs panel immediately (status: **Generating** / **Failed**). Click it to reopen Gen3D and see progress.
 - Cancel removes the entry; you can also remove it manually from the Prefabs panel. Entries persist across restarts for cleanup.

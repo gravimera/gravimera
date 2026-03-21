@@ -2461,8 +2461,6 @@ pub(crate) fn model_library_item_button_interactions(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
     mut next_build_scene: ResMut<NextState<crate::types::BuildScene>>,
-    config: Res<crate::config::AppConfig>,
-    mut mock_jobs: ResMut<crate::gen3d::Gen3dMockJobManager>,
     mut state: ResMut<ModelLibraryUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut buttons: Query<(&Interaction, &ModelLibraryItemButton), Changed<Interaction>>,
@@ -2485,12 +2483,6 @@ pub(crate) fn model_library_item_button_interactions(
             }
             state.drag = None;
             state.pending_preview = None;
-            if config.gen3d_mock_enabled {
-                if let ModelLibraryItemKind::InFlight { run_id } = button.kind {
-                    let run_id = uuid::Uuid::from_u128(run_id);
-                    let _ = crate::gen3d::gen3d_mock_select_active_run(&mut mock_jobs, run_id);
-                }
-            }
             if matches!(build_scene.get(), crate::types::BuildScene::Realm) {
                 next_build_scene.set(crate::types::BuildScene::Preview);
             }
@@ -2521,7 +2513,6 @@ pub(crate) fn model_library_in_flight_remove_button_interactions(
     mut state: ResMut<ModelLibraryUiState>,
     mut workshop: ResMut<crate::gen3d::Gen3dWorkshop>,
     mut job: ResMut<crate::gen3d::Gen3dAiJob>,
-    mut mock_jobs: ResMut<crate::gen3d::Gen3dMockJobManager>,
     mut buttons: Query<
         (
             &Interaction,
@@ -2547,25 +2538,12 @@ pub(crate) fn model_library_in_flight_remove_button_interactions(
                 *border = BorderColor::all(Color::srgba(0.80, 0.25, 0.25, 0.95));
 
                 let run_id = uuid::Uuid::from_u128(button.run_id);
-                let mut removed = false;
-                if let Ok(found) =
-                    crate::gen3d::gen3d_mock_cancel_run(&mut mock_jobs, &active.realm_id, run_id)
-                {
-                    removed = found;
-                }
                 if job.run_id() == Some(run_id) && (job.is_running() || job.can_resume()) {
-                    crate::gen3d::gen3d_cancel_build_from_api(
-                        &mut workshop,
-                        &mut job,
-                        Some(&mut mock_jobs),
-                    );
+                    crate::gen3d::gen3d_cancel_build_from_api(&mut workshop, &mut job);
                 }
-                if !removed {
-                    if let Err(err) =
-                        crate::gen3d::remove_gen3d_in_flight_entry(&active.realm_id, run_id)
-                    {
-                        warn!("Failed to remove Gen3D in-flight entry: {err}");
-                    }
+                if let Err(err) = crate::gen3d::remove_gen3d_in_flight_entry(&active.realm_id, run_id)
+                {
+                    warn!("Failed to remove Gen3D in-flight entry: {err}");
                 }
                 state.mark_models_dirty();
             }

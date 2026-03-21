@@ -105,11 +105,6 @@
 # Note: higher values can hit provider rate limits.
 max_parallel_components = 10
 
-# Max number of concurrent Gen3D runs (default: 3).
-# Note: if you only need the UI flow, Gen3D still runs one visible job at a time, but queued
-# mock runs can simulate concurrency for testing.
-max_parallel_jobs = 3
-
 # Step-specific reasoning-effort caps for the Gen3D agent.
 # Effective effort = min(openai.model_reasoning_effort, reasoning_effort_*).
 # Values: "none" | "low" | "medium" | "high"
@@ -124,15 +119,6 @@ max_parallel_jobs = 3
 
 # Budget: max OpenAI tokens per Build run across all requests (default: 10000000). Set to 0 to disable the token budget.
 # max_tokens = 10000000
-
-# Optional: add artificial delay (seconds) to mock://gen3d responses to simulate slow builds.
-# Default: 60.
-# mock_delay_seconds = 60
-
-# Optional: enable mock Gen3D runs without changing your AI provider config.
-# When enabled, Gen3D Build enqueues mock runs that simulate slow generation.
-# Default: false.
-# mock_enabled = false
 
 # Budget: max number of `llm_review_delta_v1` calls per Gen3D run.
 # Policy: capped to <= 2 to prevent oscillation.
