@@ -40,7 +40,7 @@ Behavior:
 
 - Clicking the **Gen3D** button in the Prefabs panel starts a **new Gen3D session** (empty prompt /
   images). To view an existing run, click its row in the Prefabs list.
-- If there are already 3 `running` runs, clicking **Gen3D** shows a toast: `生成中任务已满`.
+- If there are already 3 `running` runs, clicking **Gen3D** shows a toast: `Too many Gen3D jobs running.`.
 - When a run finishes, its status updates to `completed` (the entry is not removed). Failures are
   `failed`. The remove button deletes the entry (and cancels the run if it is still running).
 - Implementation detail: only the currently loaded session owns the preview/render context; inactive

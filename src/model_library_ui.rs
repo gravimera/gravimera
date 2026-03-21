@@ -2444,7 +2444,7 @@ pub(crate) fn model_library_gen3d_button_interactions(
                             .is_err()
                         {
                             toasts.write(crate::types::UiToastCommand::Show {
-                                text: "生成中任务已满".to_string(),
+                                text: "Too many Gen3D jobs running.".to_string(),
                                 kind: crate::types::UiToastKind::Warn,
                                 ttl_secs: 2.5,
                             });

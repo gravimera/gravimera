@@ -6,7 +6,7 @@ This plan must be maintained in accordance with `PLANS.md` at the repository roo
 
 ## Purpose / Big Picture
 
-Players can start up to **three** Gen3D generation jobs without waiting for the previous job to finish. Each job appears immediately in the **Prefabs** panel as a “Generating” entry. Clicking an entry opens the Gen3D panel for that specific job. When a job finishes, the Prefabs entry becomes “Completed” (and remains visible). When there are already three generating jobs, clicking the Prefabs **Gen3D** button shows a toast (“生成中任务已满”) and does not start another job. Gen3D uses **real** generation (no mock queue/delay).
+Players can start up to **three** Gen3D generation jobs without waiting for the previous job to finish. Each job appears immediately in the **Prefabs** panel as a “Generating” entry. Clicking an entry opens the Gen3D panel for that specific job. When a job finishes, the Prefabs entry becomes “Completed” (and remains visible). When there are already three generating jobs, clicking the Prefabs **Gen3D** button shows a toast (“Too many Gen3D jobs running.”) and does not start another job. Gen3D uses **real** generation (no mock queue/delay).
 
 The Gen3D panel itself does not show queue position or task switching controls; selection happens only via the Prefabs panel.
 
@@ -14,7 +14,7 @@ The Gen3D panel itself does not show queue position or task switching controls; 
 
 - [ ] (2026-03-21) Replace single-job Gen3D resources with a `Gen3dJobManager` that can hold up to 3 jobs concurrently (in-memory).
 - [ ] (2026-03-21) Make Gen3D orchestration poll **all** running jobs each frame, with deterministic, non-heuristic scheduling for any shared resources.
-- [ ] (2026-03-21) Update Prefabs Gen3D button: create a new job when <3 running, otherwise toast “生成中任务已满”.
+- [ ] (2026-03-21) Update Prefabs Gen3D button: create a new job when <3 running, otherwise toast “Too many Gen3D jobs running.”.
 - [ ] (2026-03-21) Update Prefabs in-flight persistence and UI: statuses are `running|completed|failed` (no `queued` UI); completion marks `completed` instead of deleting.
 - [ ] (2026-03-21) Update docs under `docs/` to describe the 3-job cap and statuses (keep `README.md` clean).
 - [ ] (2026-03-21) Run rendered smoke test: `tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2`.
@@ -78,7 +78,7 @@ All scheduling must be deterministic and generic (no heuristics). If a shared re
 
 - Start the game and open Prefabs panel.
 - Click Prefabs **Gen3D** 3 times and start 3 builds; all 3 appear as “Generating”.
-- Click Prefabs **Gen3D** a 4th time: see toast “生成中任务已满” and no new job appears.
+- Click Prefabs **Gen3D** a 4th time: see toast “Too many Gen3D jobs running.” and no new job appears.
 - While jobs run, click each “Generating” Prefabs row: Gen3D panel shows that job’s status.
 - When a job finishes, its Prefabs row becomes “Completed” (not removed).
 - Rendered smoke test passes:
@@ -106,4 +106,3 @@ New public/internal interfaces to introduce:
   - `Running`, `Completed`, `Failed`
 
 All existing orchestration entrypoints (start/cancel/resume/save) should be adapted to accept a target `run_id` (from the active job) or to operate on a passed mutable job context.
-
