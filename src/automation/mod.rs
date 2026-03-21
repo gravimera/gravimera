@@ -2778,6 +2778,7 @@ fn handle_request_main_thread<
                 "automation": {
                     "disable_local_input": runtime.disable_local_input,
                     "pause_on_start": runtime.pause_on_start,
+                    "monitor_mode": ctx.config.automation_monitor_mode,
                     "paused": runtime.time_paused,
                     "listen_addr": runtime.listen_addr,
                 }
@@ -2827,6 +2828,7 @@ fn handle_request_main_thread<
                     "speech_bubble": has_window,
                     "tts": true,
                     "realm_scene_switch": true,
+                    "monitor_mode": ctx.config.automation_monitor_mode,
                 },
                 "endpoints": endpoints,
             })
@@ -3635,7 +3637,7 @@ fn handle_request_main_thread<
                 ));
             };
             if selection.selected.is_empty() {
-                return Some(json_error(400, "No selected units."));
+                return Some(json_error(400, "No selected instances."));
             }
 
             let req: MoveRequest = match serde_json::from_slice(&msg.body) {
@@ -3646,10 +3648,27 @@ fn handle_request_main_thread<
             let goal_ground_y = req.y.unwrap_or(0.0).max(0.0);
 
             let obstacles = collect_nav_obstacles(build_objects, library);
-            let mut any_order = false;
+            let mut any_action = false;
 
             for entity in selection.selected.iter().copied() {
                 let Ok((_entity, transform, collider, prefab_id)) = commandables.get(entity) else {
+                    if let Ok((transform, collider, _dimensions, prefab_id)) =
+                        build_objects.get(entity)
+                    {
+                        let mut next = transform.clone();
+                        next.translation.x = clamp_world_xz(goal.x, collider.half_extents.x);
+                        next.translation.z = clamp_world_xz(goal.y, collider.half_extents.y);
+
+                        if let Some(goal_ground_y) = req.y {
+                            let scale_y = safe_abs_scale_y(next.scale);
+                            let origin_y =
+                                library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+                            next.translation.y = (goal_ground_y.max(0.0) + origin_y).max(0.0);
+                        }
+
+                        commands.entity(entity).insert(next);
+                        any_action = true;
+                    }
                     continue;
                 };
                 let Some(mobility) = library.mobility(prefab_id.0) else {
@@ -3709,10 +3728,10 @@ fn handle_request_main_thread<
                 }
 
                 commands.entity(entity).insert(order);
-                any_order = true;
+                any_action = true;
             }
 
-            if !any_order {
+            if !any_action {
                 return Some(json_error(409, "No move orders could be issued."));
             }
 

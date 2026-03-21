@@ -179,6 +179,7 @@ struct CliArgs {
     automation_token: Option<String>,
     automation_disable_local_input: Option<bool>,
     automation_pause_on_start: Option<bool>,
+    automation_monitor_mode: Option<bool>,
 }
 
 impl CliArgs {
@@ -255,6 +256,8 @@ impl CliArgs {
                 }
                 "--automation-pause-on-start" => parsed.automation_pause_on_start = Some(true),
                 "--automation-no-pause-on-start" => parsed.automation_pause_on_start = Some(false),
+                "--automation-monitor-mode" => parsed.automation_monitor_mode = Some(true),
+                "--automation-no-monitor-mode" => parsed.automation_monitor_mode = Some(false),
                 "--help" | "-h" => {
                     println!(
                         "Gravimera (Bevy shooter demo)\n\n\
@@ -275,7 +278,9 @@ impl CliArgs {
                            --automation-disable-local-input  Ignore keyboard/mouse input\n\
                            --automation-enable-local-input   Allow keyboard/mouse input\n\
                            --automation-pause-on-start       Start with time paused\n\
-                           --automation-no-pause-on-start    Start unpaused\n"
+                           --automation-no-pause-on-start    Start unpaused\n\
+                           --automation-monitor-mode         Local UI is read-only; API drives mutations\n\
+                           --automation-no-monitor-mode      Disable monitor mode\n"
                     );
                     std::process::exit(0);
                 }
@@ -304,6 +309,9 @@ impl CliArgs {
         }
         if let Some(value) = self.automation_pause_on_start {
             config.automation_pause_on_start = value;
+        }
+        if let Some(value) = self.automation_monitor_mode {
+            config.automation_monitor_mode = value;
         }
     }
 

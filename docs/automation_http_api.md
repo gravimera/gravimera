@@ -11,9 +11,7 @@ The API is “semantic” (game actions). It intentionally does **not** expose r
 ```bash
 cargo run -- \
   --automation \
-  --automation-bind 127.0.0.1:8791 \
-  --automation-disable-local-input \
-  --automation-pause-on-start
+  --automation-bind 127.0.0.1:8791
 ```
 
 ### config.toml
@@ -22,8 +20,14 @@ cargo run -- \
 [automation]
 enabled = true
 bind = "127.0.0.1:8791"
-disable_local_input = true
-pause_on_start = true
+# Optional: local UI becomes read-only (camera + browsing allowed; mutations via API).
+# monitor_mode = true
+#
+# Optional: ignore keyboard/mouse input while automation is enabled (default: false).
+# disable_local_input = true
+#
+# Optional: start with time paused (default: false). Use the API to resume/step.
+# pause_on_start = true
 # token = "CHANGE_ME" # optional; enables Authorization check
 ```
 
@@ -66,6 +70,8 @@ Local input masking notes:
 
 - When `[automation].disable_local_input=true`, Gravimera drains platform keyboard/mouse events so they do not affect gameplay.
   - This is useful for automation rigs where you don’t want the developer’s local input to interfere.
+- When `[automation].monitor_mode=true`, Gravimera leaves camera + browsing input enabled, but blocks **local world mutations**
+  (Gen3D/build placement/moving instances/etc). The Automation API still has full control.
 
 ## Time control (important for tests)
 
@@ -95,9 +101,10 @@ Response:
   "name": "gravimera",
   "version": "0.0.0",
   "automation": {
-    "disable_local_input": true,
-    "pause_on_start": true,
-    "paused": true,
+    "disable_local_input": false,
+    "pause_on_start": false,
+    "monitor_mode": false,
+    "paused": false,
     "listen_addr": "http://127.0.0.1:8791"
   }
 }
@@ -183,7 +190,7 @@ Response (shape):
   "version": "0.0.0",
   "api": { "version": 1, "base_path": "/v1" },
   "active": { "realm_id": "default", "scene_id": "default" },
-  "features": { "ui_toast": true, "speech_bubble": true, "tts": true, "realm_scene_switch": true },
+  "features": { "ui_toast": true, "speech_bubble": true, "tts": true, "realm_scene_switch": true, "monitor_mode": false },
   "endpoints": [{ "method": "GET", "path": "/v1/health" }]
 }
 ```
@@ -789,7 +796,9 @@ Notes:
 
 ### `POST /v1/move`
 
-Issue a move order to the destination (`x`, `z`) for currently selected units that can move.
+Issue a move order to the destination (`x`, `z`) for currently selected **commandable units** that can move.
+
+If the selection includes **build objects**, they are repositioned instantly (teleport) to the destination.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/move \
@@ -805,6 +814,11 @@ curl -s -X POST http://127.0.0.1:8791/v1/move \
   -d '{"x":10.0,"z":-2.0,"y":0.0}'
 ```
 
+Notes:
+
+- For build objects, `y` (when provided) is interpreted as the desired **ground** height; Gravimera keeps the object’s origin offset.
+- If `y` is omitted, build objects keep their current `translation.y`.
+
 Response:
 
 ```json
@@ -814,7 +828,7 @@ Response:
 Errors:
 
 - `400` if no selection.
-- `409` if no move orders could be issued (e.g. selected objects aren’t movable or no path found).
+- `409` if no move actions could be applied (e.g. selected objects aren’t movable or no path found).
 
 ### `POST /v1/fire`
 

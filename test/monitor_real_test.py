@@ -256,6 +256,13 @@ def main() -> int:
         disc = get("/v1/discovery")
         if not disc.get("ok"):
             raise RuntimeError(f"discovery not ok: {disc}")
+        if not bool(((disc.get("features") or {}).get("monitor_mode"))):
+            raise RuntimeError(f"discovery did not report monitor_mode=true: {disc}")
+
+        health = get("/v1/health")
+        automation = health.get("automation") or {}
+        if not bool(automation.get("monitor_mode")):
+            raise RuntimeError(f"health did not report automation.monitor_mode=true: {health}")
 
         scene_id = "MonitorTest"
         post(
@@ -278,6 +285,12 @@ def main() -> int:
         else:
             raise RuntimeError(f"Timed out waiting for scene switch to {scene_id}. Active: {active}")
 
+        initial_state = get("/v1/state")
+        if initial_state.get("objects"):
+            raise RuntimeError(
+                f"Newly created monitor scene should start empty, got objects={initial_state.get('objects')}"
+            )
+
         prefabs = get("/v1/prefabs")
         items = prefabs.get("prefabs") or []
         human_id = None
@@ -288,10 +301,41 @@ def main() -> int:
         if not human_id:
             raise RuntimeError("Failed to find prefab with label 'Human' in /v1/prefabs")
 
+        # Also validate build-object move via /v1/move (teleport).
+        build_prefab_id = None
+        for p in items:
+            if p.get("mobility") is False and str(p.get("prefab_id_uuid") or "").strip():
+                build_prefab_id = str(p.get("prefab_id_uuid") or "").strip()
+                break
+        if not build_prefab_id:
+            raise RuntimeError("Failed to find a non-mobility prefab for build-object move test.")
+
         spawned = post("/v1/spawn", {"prefab_id_uuid": human_id, "x": 0.0, "z": 0.0, "yaw": 0.0})
         instance_id = str(spawned.get("instance_id_uuid") or "").strip()
         if not instance_id:
             raise RuntimeError(f"spawn returned no instance_id_uuid: {spawned}")
+
+        build_spawned = post(
+            "/v1/spawn", {"prefab_id_uuid": build_prefab_id, "x": 2.0, "z": 0.0, "yaw": 0.0}
+        )
+        build_instance_id = str(build_spawned.get("instance_id_uuid") or "").strip()
+        if not build_instance_id:
+            raise RuntimeError(f"build spawn returned no instance_id_uuid: {build_spawned}")
+        post("/v1/step", {"frames": 2, "dt_secs": args.dt_secs})
+
+        post("/v1/select", {"instance_ids": [build_instance_id]})
+        post("/v1/move", {"x": -3.0, "z": 1.0})
+        post("/v1/step", {"frames": 2, "dt_secs": args.dt_secs})
+        state = get("/v1/state")
+        moved = next(
+            (o for o in (state.get("objects") or []) if o.get("instance_id_uuid") == build_instance_id),
+            None,
+        )
+        if not moved:
+            raise RuntimeError("Moved build object not found in /v1/state.")
+        pos = moved.get("pos") or []
+        if len(pos) != 3 or abs(float(pos[0]) - (-3.0)) > 0.08 or abs(float(pos[2]) - 1.0) > 0.08:
+            raise RuntimeError(f"Build object did not move as expected. pos={pos}")
 
         post("/v1/ui/toast", {"text": "Monitor test toast ✅", "kind": "info", "ttl_secs": 1.2})
         post(

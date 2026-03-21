@@ -32,8 +32,7 @@ Create `"$MONITOR_ROOT/config.toml"`:
 [automation]
 enabled = true
 bind = "127.0.0.1:0" # use ":0" for an ephemeral port, or a fixed port like "127.0.0.1:8791"
-disable_local_input = true
-pause_on_start = true
+monitor_mode = true  # local UI is read-only (camera + browsing allowed; mutations via API)
 # token = "CHANGE_ME" # optional; enables Authorization: Bearer <token>
 
 # Optional: enable Gen3D later (requires an AI provider config).
@@ -51,6 +50,11 @@ pause_on_start = true
 # token = "" # or set env GEMINI_API_KEY / X_GOOG_API_KEY
 # model = "gemini-3.1-pro-preview"
 ```
+
+Config discovery tips (for agents):
+
+- Default config path: `~/.gravimera/config.toml` (unless overridden by `--config` or env `GRAVIMERA_CONFIG`).
+- In this plugin-style flow: config is `"$MONITOR_ROOT/config.toml"` and all persistent state is under `"$MONITOR_ROOT/home"` via `GRAVIMERA_HOME`.
 
 Credential policy:
 
@@ -82,8 +86,7 @@ Tip: if your HTTP client honors `HTTP(S)_PROXY`, ensure loopback is not proxied 
 cargo run -- \
   --automation \
   --automation-bind 127.0.0.1:8791 \
-  --automation-disable-local-input \
-  --automation-pause-on-start
+  --automation-monitor-mode
 ```
 
 ## 1) Discover APIs (don’t hardcode)

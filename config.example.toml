@@ -57,10 +57,13 @@
 # Optional: require `Authorization: Bearer <token>` on every request.
 # token = "CHANGE_ME"
 
-# Optional: ignore keyboard/mouse input while automation is enabled (default: true).
+# Optional: local UI becomes read-only (camera + browsing allowed; mutations via API).
+# monitor_mode = true
+
+# Optional: ignore keyboard/mouse input while automation is enabled (default: false).
 # disable_local_input = true
 
-# Optional: start with time paused (default: true). Use the API to resume/step.
+# Optional: start with time paused (default: false). Use the API to resume/step.
 # pause_on_start = true
 
 [gen3d]

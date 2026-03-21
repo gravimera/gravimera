@@ -133,13 +133,16 @@ impl Plugin for RenderedUiPlugin {
         app.add_systems(
             PreUpdate,
             (
-                crate::scene_authoring_ui::scene_ui_text_input,
+                crate::scene_authoring_ui::scene_ui_text_input
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::scene_authoring_ui::scene_ui_clear_keyboard_state_when_captured
                     .after(crate::scene_authoring_ui::scene_ui_text_input),
-                crate::workspace_scenes_ui::scenes_panel_text_input,
+                crate::workspace_scenes_ui::scenes_panel_text_input
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::workspace_scenes_ui::scenes_panel_clear_keyboard_state_when_captured
                     .after(crate::workspace_scenes_ui::scenes_panel_text_input),
-                crate::motion_ui::meta_speak_ui_text_input,
+                crate::motion_ui::meta_speak_ui_text_input
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::motion_ui::meta_speak_ui_clear_keyboard_state_when_captured
                     .after(crate::motion_ui::meta_speak_ui_text_input),
             )
@@ -188,8 +191,10 @@ impl Plugin for RenderedUiPlugin {
             Update,
             (
                 crate::workspace_ui::workspace_toolbar_toggle_buttons,
-                crate::workspace_ui::workspace_toolbar_scene_builder_button_interactions,
-                crate::build::handle_game_mode_toggle_button,
+                crate::workspace_ui::workspace_toolbar_scene_builder_button_interactions
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::build::handle_game_mode_toggle_button
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::action_log_ui::handle_action_log_toggle_button,
             )
                 .run_if(console::console_closed)
@@ -209,7 +214,8 @@ impl Plugin for RenderedUiPlugin {
             Update,
             (
                 crate::model_library_ui::model_library_gen3d_button_interactions
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::model_library_ui::model_library_search_field_focus
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_search_text_input
@@ -268,16 +274,19 @@ impl Plugin for RenderedUiPlugin {
             Update,
             (
                 crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::workspace_scenes_ui::scenes_panel_scene_select_button_actions
                     .after(crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions)
                     .run_if(crate::automation::local_input_enabled),
                 crate::workspace_scenes_ui::scenes_panel_add_panel_buttons
                     .after(crate::workspace_scenes_ui::scenes_panel_scene_select_button_actions)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::workspace_scenes_ui::scenes_panel_name_field_focus
                     .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::workspace_scenes_ui::scenes_panel_scroll_wheel
                     .after(crate::workspace_scenes_ui::scenes_panel_name_field_focus)
                     .run_if(crate::automation::local_input_enabled),
@@ -296,13 +305,15 @@ impl Plugin for RenderedUiPlugin {
             )
                 .run_if(in_state(BuildScene::Realm))
                 .run_if(crate::scene_authoring_ui::scene_ui_closed)
-                .run_if(crate::automation::local_input_enabled),
+                .run_if(crate::automation::local_input_enabled)
+                .run_if(crate::monitor_mode::local_world_mutations_allowed),
         );
 
         app.add_systems(
             Update,
             (
-                crate::scene_authoring_ui::scene_ui_toggle_button,
+                crate::scene_authoring_ui::scene_ui_toggle_button
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::scene_authoring_ui::scene_ui_close_button
                     .after(crate::scene_authoring_ui::scene_ui_toggle_button),
                 crate::scene_authoring_ui::scene_ui_panel_visibility
@@ -321,9 +332,11 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::scene_authoring_ui::scene_ui_realm_option_buttons),
                 crate::scene_authoring_ui::scene_ui_update_realm_scene_button_styles
                     .after(crate::scene_authoring_ui::scene_ui_scene_tab_buttons),
-                crate::scene_authoring_ui::scene_ui_text_field_focus,
+                crate::scene_authoring_ui::scene_ui_text_field_focus
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::scene_authoring_ui::scene_ui_action_buttons
-                    .after(crate::scene_authoring_ui::scene_ui_text_field_focus),
+                    .after(crate::scene_authoring_ui::scene_ui_text_field_focus)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::scene_build_ai::scene_build_ai_poll
                     .after(crate::scene_authoring_ui::scene_ui_action_buttons),
                 crate::scene_authoring_ui::scene_ui_update_texts
@@ -337,7 +350,8 @@ impl Plugin for RenderedUiPlugin {
         app.add_systems(
             Update,
             (
-                crate::gen3d::handle_gen3d_toggle_button,
+                crate::gen3d::handle_gen3d_toggle_button
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::update_gen3d_toggle_button_label
                     .after(crate::gen3d::handle_gen3d_toggle_button),
             )
@@ -361,16 +375,21 @@ impl Plugin for RenderedGen3dPlugin {
             Update,
             (
                 crate::gen3d::gen3d_handle_drag_and_drop
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_clear_images_button
                     .after(crate::gen3d::gen3d_handle_drag_and_drop)
-                    .run_if(crate::automation::local_input_enabled),
-                crate::gen3d::gen3d_prompt_box_focus.run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_prompt_box_focus
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_side_panel_toggle_button
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_side_tab_buttons.run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_clear_prompt_button
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_preview_animation_dropdown_button
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_animation_option_buttons
@@ -380,13 +399,16 @@ impl Plugin for RenderedGen3dPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_generate_button
                     .after(crate::gen3d::gen3d_prompt_box_focus)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_continue_button
                     .after(crate::gen3d::gen3d_prompt_box_focus)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_save_button
                     .after(crate::gen3d::gen3d_poll_ai_job)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
             )
                 .run_if(in_state(BuildScene::Preview)),
         );
@@ -472,7 +494,8 @@ impl Plugin for RenderedGen3dPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_prompt_text_input
                     .after(crate::gen3d::gen3d_prompt_box_focus)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_image_viewer_click_to_close
                     .after(crate::gen3d::gen3d_thumbnail_button_open_viewer)
                     .run_if(crate::automation::local_input_enabled),
@@ -560,18 +583,21 @@ impl Plugin for RenderedGameplayPlugin {
                 .run_if(console::console_closed)
                 .run_if(crate::scene_authoring_ui::scene_ui_closed)
                 .run_if(in_state(BuildScene::Realm))
-                .run_if(crate::automation::local_input_enabled),
+                .run_if(crate::automation::local_input_enabled)
+                .run_if(crate::monitor_mode::local_world_mutations_allowed),
         );
         app.add_systems(
             Update,
             (
                 crate::world_drag::world_drag_start
                     .before(rts::selection_input)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::world_drag::world_drag_update
                     .after(crate::world_drag::world_drag_start)
                     .before(rts::selection_input)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
             )
                 .run_if(in_state(GameMode::Build))
                 .run_if(console::console_closed)
@@ -585,34 +611,44 @@ impl Plugin for RenderedGameplayPlugin {
                 rts::draw_box_selection_preview_gizmos.after(rts::selection_input),
                 rts::draw_hover_selection_circle_gizmos.after(rts::selection_input),
                 crate::object_forms::object_forms_copy_mode_start_cancel
-                    .after(rts::selection_input),
+                    .after(rts::selection_input)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::object_forms::object_forms_copy_mode_update_cursor
                     .after(crate::object_forms::object_forms_copy_mode_start_cancel)
-                    .after(player::update_edge_scroll_cursor_indicator),
+                    .after(player::update_edge_scroll_cursor_indicator)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::object_forms::object_forms_copy_mode_confirm_on_release
-                    .after(crate::object_forms::object_forms_copy_mode_update_cursor),
-                crate::object_forms::object_forms_tab_switch_selected.after(rts::selection_input),
+                    .after(crate::object_forms::object_forms_copy_mode_update_cursor)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::object_forms::object_forms_tab_switch_selected
+                    .after(rts::selection_input)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 rts::toggle_slow_move_mode
                     .after(rts::selection_input)
                     .before(rts::keyboard_move_input)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 rts::update_selection_box_ui.after(rts::selection_input),
                 rts::draw_selected_player_gizmos.after(rts::selection_input),
                 rts::unit_animation_hotkeys
                     .after(rts::selection_input)
                     .before(rts::update_fire_control)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 rts::update_fire_control
                     .after(rts::selection_input)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 rts::move_command_input
                     .after(rts::selection_input)
                     .before(build::build_remove_object)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 rts::keyboard_move_input
                     .after(rts::move_command_input)
                     .before(rts::execute_move_orders)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 rts::execute_move_orders.after(rts::keyboard_move_input),
                 rts::update_unit_aim_yaw_delta
                     .after(rts::execute_move_orders)
@@ -660,19 +696,24 @@ impl Plugin for RenderedGameplayPlugin {
                     .after(crate::motion_ui::motion_algorithm_ui_keyboard),
                 crate::motion_ui::meta_brain_ui_button_clicks
                     .after(crate::motion_ui::motion_algorithm_ui_update)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::motion_ui::meta_gen3d_ui_button_clicks
                     .after(crate::motion_ui::motion_algorithm_ui_update)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::motion_ui::meta_protagonist_ui_button_clicks
                     .after(crate::motion_ui::motion_algorithm_ui_update)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::motion_ui::meta_speak_ui_content_field_focus
                     .after(crate::motion_ui::motion_algorithm_ui_update)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::motion_ui::meta_speak_ui_button_clicks
                     .after(crate::motion_ui::meta_speak_ui_content_field_focus)
-                    .run_if(crate::automation::local_input_enabled),
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::motion_ui::meta_brain_ui_button_styles
                     .after(crate::motion_ui::meta_brain_ui_button_clicks),
                 crate::motion_ui::meta_gen3d_ui_button_styles
@@ -816,7 +857,9 @@ impl Plugin for RenderedGameplayPlugin {
             OnEnter(GameMode::Play),
             (
                 build::enter_play_mode,
-                rts::ensure_default_selection_on_enter_play.after(build::enter_play_mode),
+                scene_store::ensure_player_exists_on_enter_play.after(build::enter_play_mode),
+                rts::ensure_default_selection_on_enter_play
+                    .after(scene_store::ensure_player_exists_on_enter_play),
             ),
         );
         app.add_systems(
@@ -855,13 +898,16 @@ impl Plugin for RenderedGameplayPlugin {
                 .run_if(in_state(BuildScene::Realm))
                 .run_if(console::console_closed)
                 .run_if(crate::scene_authoring_ui::scene_ui_closed)
-                .run_if(crate::automation::local_input_enabled),
+                .run_if(crate::automation::local_input_enabled)
+                .run_if(crate::monitor_mode::local_world_mutations_allowed),
         );
 
         app.add_systems(
             Update,
             (
-                combat::switch_player_weapon.run_if(crate::automation::local_input_enabled),
+                combat::switch_player_weapon
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 combat::player_fire
                     .after(rts::update_fire_control)
                     .after(combat::switch_player_weapon),

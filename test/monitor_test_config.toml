@@ -1,5 +1,5 @@
 [automation]
 enabled = true
 bind = "127.0.0.1:0"
-disable_local_input = true
+monitor_mode = true
 pause_on_start = true

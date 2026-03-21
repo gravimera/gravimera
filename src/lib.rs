@@ -24,6 +24,7 @@ pub mod meta_speak;
 mod model_library_ui;
 mod model_tool;
 mod models;
+mod monitor_mode;
 mod motion_ui;
 mod navigation;
 mod object;

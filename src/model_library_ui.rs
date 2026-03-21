@@ -10,6 +10,7 @@ use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
 
 use crate::assets::SceneAssets;
+use crate::config::AppConfig;
 use crate::constants::*;
 use crate::geometry::{clamp_world_xz, snap_to_grid};
 use crate::object::registry::ObjectLibrary;
@@ -132,7 +133,7 @@ impl Default for ModelLibraryUiState {
     fn default() -> Self {
         Self {
             models_dirty: true,
-            open: true,
+            open: false,
             search_query: String::new(),
             search_focused: false,
             drag: None,
@@ -2428,6 +2429,7 @@ pub(crate) fn model_library_scroll_selected_item_into_view(
 pub(crate) fn model_library_drag_update(
     mut commands: Commands,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    config: Res<AppConfig>,
     env: ModelLibraryEnv,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<crate::types::MainCamera>>,
@@ -2463,22 +2465,27 @@ pub(crate) fn model_library_drag_update(
             return;
         }
         if drag.is_dragging && drag.preview_translation.is_some() {
-            let spawn_translation = drag.preview_translation.unwrap();
-            let spawned = spawn_prefab_instance(
-                &mut commands,
-                &asset_server,
-                &assets,
-                &mut meshes,
-                &mut materials,
-                &mut material_cache,
-                &mut mesh_cache,
-                &library,
-                prefab_id,
-                spawn_translation,
-            );
-            if spawned.is_some() {
-                state.spawn_seq = state.spawn_seq.wrapping_add(1);
-                scene_saves.write(SceneSaveRequest::new("spawned prefab from realm"));
+            if config.automation_enabled && config.automation_monitor_mode {
+                // Monitor mode is local read-only: don’t allow spawning from the panel.
+                state.pending_preview = Some(prefab_id);
+            } else {
+                let spawn_translation = drag.preview_translation.unwrap();
+                let spawned = spawn_prefab_instance(
+                    &mut commands,
+                    &asset_server,
+                    &assets,
+                    &mut meshes,
+                    &mut materials,
+                    &mut material_cache,
+                    &mut mesh_cache,
+                    &library,
+                    prefab_id,
+                    spawn_translation,
+                );
+                if spawned.is_some() {
+                    state.spawn_seq = state.spawn_seq.wrapping_add(1);
+                    scene_saves.write(SceneSaveRequest::new("spawned prefab from realm"));
+                }
             }
         } else {
             state.pending_preview = Some(prefab_id);

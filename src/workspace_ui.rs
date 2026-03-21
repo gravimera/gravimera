@@ -57,9 +57,7 @@ pub(crate) struct TopPanelUiState {
 
 impl Default for TopPanelUiState {
     fn default() -> Self {
-        Self {
-            selected: Some(TopPanelTab::Models),
-        }
+        Self { selected: None }
     }
 }
 

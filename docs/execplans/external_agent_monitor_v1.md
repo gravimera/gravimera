@@ -38,6 +38,10 @@ How to see it working (after implementation):
 - [x] (2026-03-21) Add a real rendered API smoke script under `test/` (no secrets).
 - [x] (2026-03-21) Run rendered smoke tests (`python3 test/monitor_real_test.py` and `cargo run -- --rendered-seconds 2`).
 - [x] (2026-03-21) Commit changes.
+- [x] (2026-03-21) Add `monitor_mode` (local read-only) so users can browse camera/UI without mutating the world.
+- [x] (2026-03-21) Extend `POST /v1/move` to also reposition build objects (props/buildings) via API.
+- [x] (2026-03-21) Stop persisting/spawning the hero in `scene.dat` (hero is no longer part of authored scenes).
+- [x] (2026-03-21) Default UI no longer auto-opens the Prefabs/Models panel on startup.
 
 
 ## Surprises & Discoveries
@@ -63,6 +67,14 @@ How to see it working (after implementation):
   Rationale: Modal OS dialogs are brittle for automation and can block the render loop. Toasts satisfy “human-visible status” and are easy to spam safely with TTL + max-count.
   Date/Author: 2026-03-21 / assistant
 
+- Decision: Add a `monitor_mode` flag instead of requiring `disable_local_input=true`.
+  Rationale: `disable_local_input` blocks camera browsing. Monitor mode keeps camera/UI browsing enabled while blocking local world mutations (agent drives via HTTP).
+  Date/Author: 2026-03-21 / assistant + user
+
+- Decision: Remove the hero from `scene.dat` persistence and stop auto-spawning a protagonist on scene load.
+  Rationale: Monitor scenes are authored for reviewable world content; the hero is noise and not needed.
+  Date/Author: 2026-03-21 / assistant + user
+
 
 ## Outcomes & Retrospective
 
@@ -75,6 +87,9 @@ How to see it working (after implementation):
 - Added a small toast overlay UI (stacked, TTL + fade) and a speak runtime that reaps async TTS jobs and stops bubbles when they finish.
 - Updated `docs/automation_http_api.md` and added `docs/agent_skills/SKILL_agent.md` with a concise “monitor loop”.
 - Added a rendered real test driver (`test/monitor_real_test.py`) and minimal config (`test/monitor_test_config.toml`) to exercise the new endpoints end-to-end.
+- Added `monitor_mode` (local read-only) so developers can move camera/browse while an external agent mutates the scene via API.
+- Extended `/v1/move` to support build-object repositioning for prop visualization.
+- Stopped persisting/spawning the hero in authored scenes to keep monitor scenes clean and reviewable.
 
 
 ## Context and Orientation

@@ -26,6 +26,7 @@ pub(crate) struct AppConfig {
     pub(crate) automation_token: Option<String>,
     pub(crate) automation_disable_local_input: bool,
     pub(crate) automation_pause_on_start: bool,
+    pub(crate) automation_monitor_mode: bool,
     pub(crate) refine_iterations: u32,
     pub(crate) gen3d_max_parallel_components: usize,
     pub(crate) gen3d_max_seconds: u64,
@@ -83,8 +84,9 @@ impl Default for AppConfig {
             automation_enabled: false,
             automation_bind: None,
             automation_token: None,
-            automation_disable_local_input: true,
-            automation_pause_on_start: true,
+            automation_disable_local_input: false,
+            automation_pause_on_start: false,
+            automation_monitor_mode: false,
             refine_iterations: 1,
             gen3d_max_parallel_components: 10,
             gen3d_max_seconds: 60 * 30,
@@ -241,6 +243,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_automation_bind_into_config(out, text);
     parse_automation_disable_local_input_into_config(out, text);
     parse_automation_pause_on_start_into_config(out, text);
+    parse_automation_monitor_mode_into_config(out, text);
     parse_automation_token_into_config(out, text);
     parse_refine_iterations_into_config(out, text);
     parse_gen3d_max_parallel_components_into_config(out, text);
@@ -530,6 +533,14 @@ fn parse_automation_disable_local_input_into_config(out: &mut AppConfig, text: &
 fn parse_automation_pause_on_start_into_config(out: &mut AppConfig, text: &str) {
     match parse_automation_pause_on_start(text) {
         Ok(Some(value)) => out.automation_pause_on_start = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_automation_monitor_mode_into_config(out: &mut AppConfig, text: &str) {
+    match parse_automation_monitor_mode(text) {
+        Ok(Some(value)) => out.automation_monitor_mode = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -1665,6 +1676,62 @@ fn parse_automation_pause_on_start(text: &str) -> Result<Option<bool>, String> {
         let parsed = parse_toml_bool(value).ok_or_else(|| {
             format!(
                 "config.toml:{line_no}: expected a boolean for `automation.pause_on_start` (example: [automation]\\npause_on_start = true)"
+            )
+        })?;
+        out = Some(parsed);
+    }
+
+    Ok(out)
+}
+
+fn parse_automation_monitor_mode(text: &str) -> Result<Option<bool>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<bool> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "automation_monitor_mode"
+            && !(section.as_deref() == Some("automation") && key == "monitor_mode")
+        {
+            continue;
+        }
+
+        if let Some(sec) = section.as_deref() {
+            if sec != "automation" && sec != "app" && key == "automation_monitor_mode" {
+                continue;
+            }
+            if sec != "automation" && key == "monitor_mode" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let parsed = parse_toml_bool(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a boolean for `automation.monitor_mode` (example: [automation]\\nmonitor_mode = true)"
             )
         })?;
         out = Some(parsed);
