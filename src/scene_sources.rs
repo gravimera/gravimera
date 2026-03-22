@@ -448,23 +448,61 @@ mod tests {
         Cow::Owned(out)
     }
 
-    fn fixture_src_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/scene_generation/fixtures/minimal/src")
+    fn write_minimal_fixture(src_dir: &Path) -> Result<(), SceneSourcesError> {
+        fs::create_dir_all(src_dir).map_err(|error| SceneSourcesError::Io {
+            path: src_dir.to_path_buf(),
+            error,
+        })?;
+
+        let index = serde_json::json!({
+            "format_version": 1,
+            "layers_dir": "layers",
+            "markers_path": "markers.json",
+            "meta_path": "meta.json",
+            "pinned_instances_dir": "pinned_instances",
+            "portals_dir": "portals",
+            "style_pack_ref_path": "style/style_pack_ref.json",
+        });
+        write_json_file_canonical(&src_dir.join("index.json"), &index)?;
+
+        let meta = serde_json::json!({
+            "format_version": 1,
+            "scene_id": "fixture_minimal",
+        });
+        write_json_file_canonical(&src_dir.join("meta.json"), &meta)?;
+
+        let markers = serde_json::json!({
+            "format_version": 1,
+            "markers": {},
+        });
+        write_json_file_canonical(&src_dir.join("markers.json"), &markers)?;
+
+        let style_pack_ref = serde_json::json!({
+            "format_version": 1,
+            "kind": "builtin",
+            "style_pack_id": "default",
+        });
+        write_json_file_canonical(&src_dir.join("style/style_pack_ref.json"), &style_pack_ref)?;
+
+        Ok(())
     }
 
     #[test]
     fn canonicalize_fixture_minimal_no_changes() {
-        let fixture_src = fixture_src_dir();
         let temp_root = make_temp_dir("gravimera_scene_sources_fixture").unwrap();
         let temp_src = temp_root.join("src");
-        copy_dir_recursive(&fixture_src, &temp_src).unwrap();
+        write_minimal_fixture(&temp_src).unwrap();
+
+        let rel_files = collect_relative_json_files(&temp_src).unwrap();
+        let mut expected_by_rel: BTreeMap<PathBuf, Vec<u8>> = BTreeMap::new();
+        for rel in rel_files {
+            let bytes = read_file_bytes(&temp_src.join(&rel)).unwrap();
+            expected_by_rel.insert(rel, bytes);
+        }
 
         SceneSourcesV1::canonicalize_dir_in_place(&temp_src).unwrap();
 
-        let rel_files = collect_relative_json_files(&fixture_src).unwrap();
-        for rel in rel_files {
-            let expected = read_file_bytes(&fixture_src.join(&rel)).unwrap();
+        for (rel, expected) in expected_by_rel {
             let got = read_file_bytes(&temp_src.join(&rel)).unwrap();
             let expected = normalize_crlf(&expected);
             let got = normalize_crlf(&got);
@@ -556,10 +594,9 @@ mod tests {
 
     #[test]
     fn write_to_dir_prunes_removed_extra_json_files() {
-        let fixture_src = fixture_src_dir();
         let temp_root = make_temp_dir("gravimera_scene_sources_prune").unwrap();
         let temp_src = temp_root.join("src");
-        copy_dir_recursive(&fixture_src, &temp_src).unwrap();
+        write_minimal_fixture(&temp_src).unwrap();
 
         let stale_rel = PathBuf::from("layers/stale_layer.json");
         let stale_abs = temp_src.join(&stale_rel);

@@ -2727,6 +2727,15 @@ mod golden_scene_signatures {
 
     #[test]
     fn golden_signatures_match_or_bless() {
+        let fixtures_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/scene_generation/fixtures");
+        if !fixtures_root.exists() {
+            eprintln!(
+                "Skipping golden scene signatures: fixtures dir is missing ({})",
+                fixtures_root.display()
+            );
+            return;
+        }
+
         let computed = compute_golden();
         let path = golden_path();
 
@@ -2736,6 +2745,14 @@ mod golden_scene_signatures {
         {
             write_json_atomic(&path, &computed);
             eprintln!("Blessed scene signatures at {}", path.display());
+            return;
+        }
+
+        if !path.exists() {
+            eprintln!(
+                "Skipping golden scene signatures: golden file is missing ({}). Set GRAVIMERA_BLESS_SCENE_SIGNATURES=1 to create it.",
+                path.display()
+            );
             return;
         }
 

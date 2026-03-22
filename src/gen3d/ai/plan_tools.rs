@@ -932,6 +932,7 @@ mod tests {
             actual_size: None,
             anchors: Vec::new(),
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: parent.map(|p| super::super::job::Gen3dPlannedAttachment {
                 parent: p.to_string(),
                 parent_anchor: "origin".into(),

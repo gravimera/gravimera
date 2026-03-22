@@ -15,7 +15,9 @@ use crate::gen3d::agent::{
 use crate::threaded_result::take_shared_result;
 use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
 
-use super::super::state::{Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dWorkshop};
+use super::super::state::{
+    Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dWorkshop,
+};
 use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::agent_render_capture::poll_agent_render_capture;
 use super::agent_step::{
@@ -29,8 +31,8 @@ use super::agent_utils::{
 use super::artifacts::{append_gen3d_jsonl_artifact, append_gen3d_run_log};
 use super::status_steps;
 use super::{
-    fail_job, Gen3dAiJob, Gen3dAiMode, Gen3dAiPhase, Gen3dAiProgress, Gen3dPendingFinishRun,
-    Gen3dPipelineStage,
+    fail_job, finish_job_best_effort, Gen3dAiJob, Gen3dAiMode, Gen3dAiPhase, Gen3dAiProgress,
+    Gen3dPendingFinishRun, Gen3dPipelineStage,
 };
 
 fn truncate_text_to_max_words_preserving_whitespace(
@@ -67,6 +69,7 @@ pub(super) fn poll_gen3d_pipeline(
     time: &Time,
     commands: &mut Commands,
     images: &mut Assets<Image>,
+    review_cameras: &Query<Entity, With<Gen3dReviewCaptureCamera>>,
     workshop: &mut Gen3dWorkshop,
     feedback_history: &mut Gen3dToolFeedbackHistory,
     job: &mut Gen3dAiJob,
@@ -135,6 +138,7 @@ pub(super) fn poll_gen3d_pipeline(
                 time,
                 commands,
                 images,
+                review_cameras,
                 workshop,
                 feedback_history,
                 job,
@@ -145,14 +149,26 @@ pub(super) fn poll_gen3d_pipeline(
         }
         Gen3dAiPhase::Idle => {}
         other => {
-            fallback_to_agent_step(
-                config,
+            let _ = config;
+            finish_job_best_effort(
+                commands,
+                review_cameras,
                 workshop,
                 job,
-                format!("unexpected_pipeline_phase:{other:?}"),
+                format!("Pipeline internal error: unexpected phase {other:?}."),
             );
         }
     }
+}
+
+fn stop_pipeline_best_effort(
+    commands: &mut Commands,
+    review_cameras: &Query<Entity, With<Gen3dReviewCaptureCamera>>,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    reason: String,
+) {
+    finish_job_best_effort(commands, review_cameras, workshop, job, reason);
 }
 
 fn poll_pipeline_user_image_summary(
@@ -632,6 +648,7 @@ fn poll_pipeline_tick(
     time: &Time,
     commands: &mut Commands,
     images: &mut Assets<Image>,
+    review_cameras: &Query<Entity, With<Gen3dReviewCaptureCamera>>,
     workshop: &mut Gen3dWorkshop,
     feedback_history: &mut Gen3dToolFeedbackHistory,
     job: &mut Gen3dAiJob,
@@ -692,12 +709,26 @@ fn poll_pipeline_tick(
             }
 
             if !last.ok {
-                // Any LLM tool already had schema-repair attempts; if it still fails here, fall back.
-                fallback_to_agent_step(
-                    config,
+                let stage = format!("{:?}", job.pipeline.stage);
+                let err = last.error.as_deref().unwrap_or("").trim();
+                let first = err.lines().next().unwrap_or("").trim();
+                let hint = if first.is_empty() {
+                    "Retry Build. If this repeats, open a bug with the run cache directory.".into()
+                } else {
+                    format!(
+                        "Error: {}. Retry Build. If this repeats, open a bug with the run cache directory.",
+                        super::orchestration::truncate_for_ui(first, 420)
+                    )
+                };
+                stop_pipeline_best_effort(
+                    commands,
+                    review_cameras,
                     workshop,
                     job,
-                    format!("tool_failed:{}:{:?}", last.tool_id, last.error.as_deref()),
+                    format!(
+                        "Pipeline stopped at stage={stage} due to tool failure: tool_id={} call_id={}. {hint}",
+                        last.tool_id, last.call_id
+                    ),
                 );
                 return;
             }
@@ -706,15 +737,14 @@ fn poll_pipeline_tick(
                 && config.gen3d_no_progress_tries_max > 0
                 && job.pipeline.no_progress_tries >= config.gen3d_no_progress_tries_max
             {
-                fallback_to_agent_step(
-                    config,
+                stop_pipeline_best_effort(
+                    commands,
+                    review_cameras,
                     workshop,
                     job,
                     format!(
-                        "no_progress_guard_triggered:{}:{}/{}",
-                        last.tool_id,
-                        job.pipeline.no_progress_tries,
-                        config.gen3d_no_progress_tries_max
+                        "Pipeline stopped: no-progress guard triggered (tool_id={} tries={}/{}). Retry Build; if this repeats, simplify the edit request.",
+                        last.tool_id, job.pipeline.no_progress_tries, config.gen3d_no_progress_tries_max
                     ),
                 );
                 return;
@@ -850,11 +880,13 @@ fn poll_pipeline_tick(
         Gen3dPipelineStage::PreserveReplanTemplate | Gen3dPipelineStage::EditPlanTemplate => {
             // Ensure we have an accepted plan to template.
             if job.planned_components.is_empty() || job.plan_hash.trim().is_empty() {
-                fallback_to_agent_step(
-                    config,
+                let _ = config;
+                stop_pipeline_best_effort(
+                    commands,
+                    review_cameras,
                     workshop,
                     job,
-                    "missing_plan_for_preserve_template".into(),
+                    "Pipeline stopped: missing accepted plan for preserve-mode template (expected existing plan_hash + planned_components). Retry Build.".into(),
                 );
                 return;
             }
@@ -984,11 +1016,16 @@ fn poll_pipeline_tick(
                 job.pipeline.components_attempts =
                     job.pipeline.components_attempts.saturating_add(1);
                 if job.pipeline.components_attempts > 6 {
-                    fallback_to_agent_step(
-                        config,
+                    let stage = format!("{:?}", job.pipeline.stage);
+                    stop_pipeline_best_effort(
+                        commands,
+                        review_cameras,
                         workshop,
                         job,
-                        "components_generation_stalled".into(),
+                        format!(
+                            "Pipeline stopped at stage={stage}: component generation stalled (attempts={} > 6). Retry Build; if this repeats, check the model/service health.",
+                            job.pipeline.components_attempts
+                        ),
                     );
                     return;
                 }
@@ -1026,11 +1063,13 @@ fn poll_pipeline_tick(
         }
         Gen3dPipelineStage::EditQueryComponentParts => {
             if job.planned_components.is_empty() {
-                fallback_to_agent_step(
-                    config,
+                let _ = config;
+                stop_pipeline_best_effort(
+                    commands,
+                    review_cameras,
                     workshop,
                     job,
-                    "no_components_to_query_parts".into(),
+                    "Pipeline stopped: no components available for query_component_parts_v1. Retry Build.".into(),
                 );
                 return;
             }
@@ -1069,8 +1108,22 @@ fn poll_pipeline_tick(
         }
         Gen3dPipelineStage::EditSuggestDraftOps => {
             let attempts = job.pipeline.draft_ops_attempts;
-            if attempts >= 3 {
-                fallback_to_agent_step(config, workshop, job, "draft_ops_suggest_exhausted".into());
+            if attempts >= 2 {
+                let rejected = job
+                    .pipeline
+                    .draft_ops_last_rejected
+                    .as_ref()
+                    .map(|v| super::agent_utils::truncate_json_for_log(v, 600))
+                    .unwrap_or_else(|| "<none>".into());
+                stop_pipeline_best_effort(
+                    commands,
+                    review_cameras,
+                    workshop,
+                    job,
+                    format!(
+                        "Pipeline stopped: DraftOps suggestion attempts exhausted (attempts={attempts}, max=2). rejected_ops={rejected}. Retry Build; if this repeats, simplify the edit request."
+                    ),
+                );
                 return;
             }
 
@@ -1172,7 +1225,16 @@ fn poll_pipeline_tick(
         Gen3dPipelineStage::Qa => {
             job.pipeline.qa_attempts = job.pipeline.qa_attempts.saturating_add(1);
             if job.pipeline.qa_attempts > 12 {
-                fallback_to_agent_step(config, workshop, job, "qa_loop_exhausted".into());
+                stop_pipeline_best_effort(
+                    commands,
+                    review_cameras,
+                    workshop,
+                    job,
+                    format!(
+                        "Pipeline stopped: QA loop exhausted (attempts={} > 12). Retry Build; if this repeats, capture the QA output and file a bug.",
+                        job.pipeline.qa_attempts
+                    ),
+                );
                 return;
             }
 
@@ -1240,7 +1302,18 @@ fn poll_pipeline_tick(
                         return;
                     }
 
-                    fallback_to_agent_step(config, workshop, job, "qa_ok_but_not_complete".into());
+                    stop_pipeline_best_effort(
+                        commands,
+                        review_cameras,
+                        workshop,
+                        job,
+                        format!(
+                            "Pipeline stopped: QA ok but run not complete (missing_move_slots={} motion_authoring_attempts={} appearance_review_enabled={}). Retry Build; if this repeats, file a bug with the run cache directory.",
+                            pipeline_missing_move_slot_coverage(job, draft),
+                            job.pipeline.motion_authoring_attempts,
+                            appearance_review_enabled(job)
+                        ),
+                    );
                     return;
                 }
 
@@ -1336,12 +1409,13 @@ fn poll_pipeline_tick(
                 let rounds_used = job.review_delta_rounds_used;
                 let rounds_remaining = rounds_max.saturating_sub(rounds_used);
                 if rounds_max == 0 || rounds_remaining == 0 {
-                    fallback_to_agent_step(
-                        config,
+                    stop_pipeline_best_effort(
+                        commands,
+                        review_cameras,
                         workshop,
                         job,
                         format!(
-                            "qa_failed_review_delta_budget_exhausted:used={rounds_used} max={rounds_max}"
+                            "Pipeline stopped: QA failed and review-delta budget exhausted (used={rounds_used} max={rounds_max}). Retry Build; if this repeats, simplify the request or adjust review-delta budget.",
                         ),
                     );
                     return;
@@ -1404,11 +1478,14 @@ fn poll_pipeline_tick(
             let rounds_used = job.review_delta_rounds_used;
             let rounds_remaining = rounds_max.saturating_sub(rounds_used);
             if rounds_max == 0 || rounds_remaining == 0 {
-                fallback_to_agent_step(
-                    config,
+                stop_pipeline_best_effort(
+                    commands,
+                    review_cameras,
                     workshop,
                     job,
-                    format!("review_delta_budget_exhausted:used={rounds_used} max={rounds_max}"),
+                    format!(
+                        "Pipeline stopped: review-delta budget exhausted (used={rounds_used} max={rounds_max}). Retry Build; if this repeats, simplify the request or adjust review-delta budget."
+                    ),
                 );
                 return;
             }
@@ -1458,60 +1535,5 @@ fn poll_pipeline_tick(
             return;
         }
         Gen3dPipelineStage::Finish | Gen3dPipelineStage::Start => {}
-    }
-}
-
-fn fallback_to_agent_step(
-    config: &AppConfig,
-    workshop: &mut Gen3dWorkshop,
-    job: &mut Gen3dAiJob,
-    reason: String,
-) {
-    let Some(pass_dir) = job.pass_dir.clone() else {
-        fail_job(
-            workshop,
-            job,
-            "Internal error: missing pass dir for pipeline fallback.",
-        );
-        return;
-    };
-
-    job.append_info_event_best_effort(
-        super::info_store::InfoEventKindV1::EngineLog,
-        None,
-        None,
-        format!("Pipeline fallback → agent-step (reason: {reason})"),
-        serde_json::json!({
-            "reason": reason,
-        }),
-    );
-
-    status_steps::log_note(
-        workshop,
-        &format!(
-            "Pipeline fallback → agent-step (reason: {})",
-            super::orchestration::truncate_for_ui(&reason, 240)
-        ),
-    );
-
-    workshop.status = format!("Pipeline fallback → agent-step (reason: {reason})");
-    job.mode = Gen3dAiMode::Agent;
-
-    let needs_user_image_summary =
-        !job.user_images.is_empty() && job.user_image_object_summary.is_none();
-    job.phase = if needs_user_image_summary {
-        Gen3dAiPhase::AgentWaitingUserImageSummary
-    } else {
-        Gen3dAiPhase::AgentWaitingStep
-    };
-
-    let spawn_result = if needs_user_image_summary {
-        super::agent_loop::spawn_agent_user_image_summary_request(config, workshop, job, pass_dir)
-    } else {
-        super::agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir)
-    };
-
-    if let Err(err) = spawn_result {
-        fail_job(workshop, job, err);
     }
 }

@@ -1505,65 +1505,290 @@ pub(super) fn poll_agent_tool(
                         kind: &str,
                         obj: &serde_json::Map<String, serde_json::Value>,
                     ) -> Result<(), String> {
-                        let allowed: std::collections::HashSet<&'static str> = match kind {
-                            "set_anchor_transform" => {
-                                ["kind", "component", "anchor", "set"].into_iter().collect()
-                            }
-                            "set_attachment_offset" => {
-                                ["kind", "child_component", "set"].into_iter().collect()
-                            }
-                            "set_attachment_joint" => {
-                                ["kind", "child_component", "set_joint"].into_iter().collect()
-                            }
-                            "update_primitive_part" => [
-                                "kind",
-                                "component",
-                                "part_id_uuid",
-                                "set_transform",
-                                "set_primitive",
-                                "set_render_priority",
-                            ]
-                            .into_iter()
-                            .collect(),
-                            "add_primitive_part" => [
-                                "kind",
-                                "component",
-                                "part_id_uuid",
-                                "primitive",
-                                "transform",
-                                "render_priority",
-                            ]
-                            .into_iter()
-                            .collect(),
-                            "remove_primitive_part" => {
-                                ["kind", "component", "part_id_uuid"].into_iter().collect()
-                            }
-                            "upsert_animation_slot" => {
-                                ["kind", "child_component", "channel", "slot"]
-                                    .into_iter()
-                                    .collect()
-                            }
-                            "scale_animation_slot_rotation" => {
-                                ["kind", "child_component", "channel", "scale"]
-                                    .into_iter()
-                                    .collect()
-                            }
-                            "remove_animation_slot" => {
-                                ["kind", "child_component", "channel"].into_iter().collect()
-                            }
-                            other => {
-                                return Err(format!("Unknown DraftOp kind={other:?}"));
-                            }
-                        };
+                        fn allowed_keys_for_kind(kind: &str) -> Option<&'static [&'static str]> {
+                            Some(match kind {
+                                "set_anchor_transform" => &["kind", "component", "anchor", "set"],
+                                "set_attachment_offset" => &["kind", "child_component", "set"],
+                                "set_attachment_joint" => &["kind", "child_component", "set_joint"],
+                                "update_primitive_part" => &[
+                                    "kind",
+                                    "component",
+                                    "part_id_uuid",
+                                    "set_transform",
+                                    "set_primitive",
+                                    "set_render_priority",
+                                ],
+                                "add_primitive_part" => &[
+                                    "kind",
+                                    "component",
+                                    "part_id_uuid",
+                                    "primitive",
+                                    "transform",
+                                    "render_priority",
+                                ],
+                                "remove_primitive_part" => &["kind", "component", "part_id_uuid"],
+                                "upsert_animation_slot" => {
+                                    &["kind", "child_component", "channel", "slot"]
+                                }
+                                "scale_animation_slot_rotation" => {
+                                    &["kind", "child_component", "channel", "scale"]
+                                }
+                                "remove_animation_slot" => &["kind", "child_component", "channel"],
+                                _ => {
+                                    return None;
+                                }
+                            })
+                        }
+
+                        let allowed = allowed_keys_for_kind(kind)
+                            .ok_or_else(|| format!("Unknown DraftOp kind={kind:?}"))?;
+                        let allowed_set: std::collections::HashSet<&'static str> =
+                            allowed.iter().copied().collect();
 
                         for key in obj.keys() {
-                            if !allowed.contains(key.as_str()) {
+                            if !allowed_set.contains(key.as_str()) {
                                 return Err(format!(
-                                    "DraftOp kind={kind:?} includes unknown key {key:?}"
+                                    "DraftOp kind={kind:?} includes unknown key {key:?}. Allowed keys: {allowed:?}."
                                 ));
                             }
                         }
                         Ok(())
+                    }
+
+                    fn normalize_draft_ops(
+                        ops: Vec<serde_json::Value>,
+                    ) -> (Vec<serde_json::Value>, Option<serde_json::Value>) {
+                        fn insert_if_missing(
+                            obj: &mut serde_json::Map<String, serde_json::Value>,
+                            key: &'static str,
+                            value: serde_json::Value,
+                        ) {
+                            if !obj.contains_key(key) {
+                                obj.insert(key.to_string(), value);
+                            }
+                        }
+
+                        fn take_alias(
+                            obj: &mut serde_json::Map<String, serde_json::Value>,
+                            from: &'static str,
+                            to: &'static str,
+                            changes: &mut Vec<String>,
+                        ) {
+                            if obj.contains_key(to) {
+                                return;
+                            }
+                            let Some(v) = obj.remove(from) else {
+                                return;
+                            };
+                            obj.insert(to.to_string(), v);
+                            changes.push(format!("{from}->{to}"));
+                        }
+
+                        fn try_normalize_upsert_animation_slot_legacy(
+                            original: &serde_json::Map<String, serde_json::Value>,
+                        ) -> Option<(serde_json::Map<String, serde_json::Value>, Vec<String>)> {
+                            if original.contains_key("slot") {
+                                return None;
+                            }
+
+                            let has_legacy_shape = original.contains_key("driver")
+                                || original.contains_key("clip")
+                                || original.contains_key("clip_kind")
+                                || original.contains_key("keyframes")
+                                || original.contains_key("keyframe_times");
+                            if !has_legacy_shape {
+                                return None;
+                            }
+
+                            let mut obj = original.clone();
+                            let mut changes: Vec<String> = Vec::new();
+
+                            // Common alias: component -> child_component.
+                            take_alias(&mut obj, "component", "child_component", &mut changes);
+
+                            let driver = obj.remove("driver")?;
+                            if driver.as_str().unwrap_or("").trim().is_empty() {
+                                return None;
+                            }
+                            changes.push("driver->slot.driver".into());
+
+                            let speed_scale = obj.remove("speed_scale").unwrap_or_else(|| {
+                                changes.push("speed_scale=1.0 (default)".into());
+                                serde_json::json!(1.0)
+                            });
+
+                            let time_offset_units =
+                                obj.remove("time_offset_units").unwrap_or_else(|| {
+                                    changes.push("time_offset_units=0.0 (default)".into());
+                                    serde_json::json!(0.0)
+                                });
+
+                            let clip_top = obj.remove("clip")?;
+                            let mut clip_obj = match clip_top {
+                                serde_json::Value::Object(v) => v,
+                                _ => return None,
+                            };
+
+                            // Legacy: clip_kind at DraftOp top-level.
+                            if let Some(kind) = obj.remove("clip_kind") {
+                                if !clip_obj.contains_key("kind") {
+                                    clip_obj.insert("kind".into(), kind);
+                                    changes.push("clip_kind->slot.clip.kind".into());
+                                }
+                            }
+
+                            // Legacy: duration_secs.
+                            if !clip_obj.contains_key("duration_units") {
+                                if let Some(v) = clip_obj.remove("duration_secs") {
+                                    clip_obj.insert("duration_units".into(), v);
+                                    changes.push("slot.clip.duration_secs->duration_units".into());
+                                }
+                            }
+
+                            // Keyframes can appear either as:
+                            // - slot.clip.keyframes (canonical), or
+                            // - DraftOp.keyframes + slot.clip.keyframe_times (legacy).
+                            if !clip_obj.contains_key("keyframes") {
+                                let keyframes = obj.remove("keyframes");
+                                let times = clip_obj
+                                    .remove("keyframe_times")
+                                    .or_else(|| obj.remove("keyframe_times"));
+
+                                match (keyframes, times) {
+                                    (Some(serde_json::Value::Array(deltas)), Some(serde_json::Value::Array(ts))) => {
+                                        if deltas.is_empty() || deltas.len() != ts.len() {
+                                            return None;
+                                        }
+                                        let mut keyframes_out: Vec<serde_json::Value> =
+                                            Vec::with_capacity(deltas.len());
+                                        for (delta_v, t_v) in deltas.into_iter().zip(ts.into_iter()) {
+                                            let t_units = match t_v {
+                                                serde_json::Value::Number(_) => t_v,
+                                                _ => return None,
+                                            };
+                                            let delta_obj = match delta_v {
+                                                serde_json::Value::Object(mut raw) => {
+                                                    // Filter to only known delta keys to avoid later deny_unknown_fields errors.
+                                                    let mut filtered = serde_json::Map::new();
+                                                    for k in ["pos", "rot_quat_xyzw", "scale"] {
+                                                        if let Some(v) = raw.remove(k) {
+                                                            filtered.insert(k.to_string(), v);
+                                                        }
+                                                    }
+                                                    serde_json::Value::Object(filtered)
+                                                }
+                                                _ => return None,
+                                            };
+                                            keyframes_out.push(serde_json::json!({
+                                                "t_units": t_units,
+                                                "delta": delta_obj,
+                                            }));
+                                        }
+                                        clip_obj.insert(
+                                            "keyframes".into(),
+                                            serde_json::Value::Array(keyframes_out),
+                                        );
+                                        changes.push("keyframes+keyframe_times->slot.clip.keyframes".into());
+                                    }
+                                    (Some(serde_json::Value::Array(kfs)), None) => {
+                                        // Canonical-ish keyframes mistakenly placed at DraftOp top-level.
+                                        // Accept only if the objects already have t_units + delta.
+                                        let canonical = kfs.iter().all(|v| {
+                                            v.as_object()
+                                                .is_some_and(|o| o.contains_key("t_units") && o.contains_key("delta"))
+                                        });
+                                        if !canonical {
+                                            return None;
+                                        }
+                                        clip_obj.insert("keyframes".into(), serde_json::Value::Array(kfs));
+                                        changes.push("keyframes->slot.clip.keyframes".into());
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            let mut slot_obj = serde_json::Map::new();
+                            slot_obj.insert("driver".into(), driver);
+                            slot_obj.insert("speed_scale".into(), speed_scale);
+                            slot_obj.insert("time_offset_units".into(), time_offset_units);
+                            slot_obj.insert("clip".into(), serde_json::Value::Object(clip_obj));
+
+                            obj.insert("slot".into(), serde_json::Value::Object(slot_obj));
+                            changes.push("slot constructed (legacy upsert_animation_slot)".into());
+
+                            Some((obj, changes))
+                        }
+
+                        let mut repaired_ops: Vec<serde_json::Value> = Vec::new();
+                        let mut repair_events: Vec<serde_json::Value> = Vec::new();
+
+                        for (idx, op) in ops.into_iter().enumerate() {
+                            let serde_json::Value::Object(mut obj) = op else {
+                                repaired_ops.push(op);
+                                continue;
+                            };
+
+                            let kind = obj
+                                .get("kind")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .trim()
+                                .to_string();
+                            if kind.is_empty() {
+                                repaired_ops.push(serde_json::Value::Object(obj));
+                                continue;
+                            }
+
+                            let mut changes: Vec<String> = Vec::new();
+
+                            match kind.as_str() {
+                                // Common alias: component -> child_component.
+                                "set_attachment_offset"
+                                | "set_attachment_joint"
+                                | "upsert_animation_slot"
+                                | "scale_animation_slot_rotation"
+                                | "remove_animation_slot" => {
+                                    take_alias(&mut obj, "component", "child_component", &mut changes);
+                                }
+                                _ => {}
+                            }
+
+                            if kind == "upsert_animation_slot" {
+                                if let Some((normalized, mut more)) =
+                                    try_normalize_upsert_animation_slot_legacy(&obj)
+                                {
+                                    obj = normalized;
+                                    changes.append(&mut more);
+                                } else {
+                                    // Even in non-legacy cases, ensure slot.time_offset_units is present for schema-alignment.
+                                    if let Some(slot) = obj.get_mut("slot").and_then(|v| v.as_object_mut()) {
+                                        insert_if_missing(
+                                            slot,
+                                            "time_offset_units",
+                                            serde_json::json!(0.0),
+                                        );
+                                    }
+                                }
+                            }
+
+                            if !changes.is_empty() {
+                                repair_events.push(serde_json::json!({
+                                    "index": idx,
+                                    "kind": kind,
+                                    "changes": changes,
+                                }));
+                            }
+
+                            repaired_ops.push(serde_json::Value::Object(obj));
+                        }
+
+                        let repair_diff = (!repair_events.is_empty()).then(|| {
+                            serde_json::json!({
+                                "normalized_ops": repair_events.len(),
+                                "ops": repair_events,
+                            })
+                        });
+                        (repaired_ops, repair_diff)
                     }
 
                     fn validate_draft_ops(
@@ -1793,6 +2018,173 @@ pub(super) fn poll_agent_tool(
                                     if channel.is_empty() {
                                         return Err(format!("ops[{idx}] {kind} requires channel"));
                                     }
+
+                                    if kind == "upsert_animation_slot" {
+                                        let Some(slot) = op.get("slot") else {
+                                            return Err(format!(
+                                                "ops[{idx}] upsert_animation_slot requires slot={{driver,speed_scale,time_offset_units,clip}}"
+                                            ));
+                                        };
+                                        let Some(slot_obj) = slot.as_object() else {
+                                            return Err(format!("ops[{idx}] slot must be an object"));
+                                        };
+
+                                        let driver = slot_obj
+                                            .get("driver")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .trim();
+                                        if !matches!(
+                                            driver,
+                                            "always" | "move_phase" | "move_distance" | "attack_time"
+                                        ) {
+                                            return Err(format!(
+                                                "ops[{idx}] slot.driver must be one of: always, move_phase, move_distance, attack_time"
+                                            ));
+                                        }
+                                        if slot_obj
+                                            .get("speed_scale")
+                                            .and_then(|v| v.as_f64())
+                                            .is_none()
+                                        {
+                                            return Err(format!(
+                                                "ops[{idx}] slot.speed_scale must be a number"
+                                            ));
+                                        }
+                                        // time_offset_units may be omitted (defaults to 0.0 in apply_draft_ops_v1), but should be a number when present.
+                                        if let Some(v) = slot_obj.get("time_offset_units") {
+                                            if v.as_f64().is_none() {
+                                                return Err(format!(
+                                                    "ops[{idx}] slot.time_offset_units must be a number"
+                                                ));
+                                            }
+                                        }
+
+                                        let Some(clip) = slot_obj.get("clip") else {
+                                            return Err(format!("ops[{idx}] slot.clip is missing"));
+                                        };
+                                        let Some(clip_obj) = clip.as_object() else {
+                                            return Err(format!("ops[{idx}] slot.clip must be an object"));
+                                        };
+                                        let clip_kind = clip_obj
+                                            .get("kind")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .trim();
+                                        match clip_kind {
+                                            "loop" | "once" | "ping_pong" => {
+                                                for key in clip_obj.keys() {
+                                                    if !matches!(key.as_str(), "kind" | "duration_units" | "keyframes") {
+                                                        return Err(format!(
+                                                            "ops[{idx}] slot.clip has unknown key {key:?} for kind={clip_kind:?} (allowed: kind,duration_units,keyframes)"
+                                                        ));
+                                                    }
+                                                }
+                                                if clip_obj
+                                                    .get("duration_units")
+                                                    .and_then(|v| v.as_f64())
+                                                    .is_none()
+                                                {
+                                                    return Err(format!(
+                                                        "ops[{idx}] slot.clip.duration_units must be a number"
+                                                    ));
+                                                }
+                                                let Some(kfs) =
+                                                    clip_obj.get("keyframes").and_then(|v| v.as_array())
+                                                else {
+                                                    return Err(format!(
+                                                        "ops[{idx}] slot.clip.keyframes must be an array"
+                                                    ));
+                                                };
+                                                if kfs.is_empty() {
+                                                    return Err(format!(
+                                                        "ops[{idx}] slot.clip.keyframes must be non-empty"
+                                                    ));
+                                                }
+                                                for (kf_idx, kf) in kfs.iter().enumerate() {
+                                                    let Some(kf_obj) = kf.as_object() else {
+                                                        return Err(format!(
+                                                            "ops[{idx}] slot.clip.keyframes[{kf_idx}] must be an object"
+                                                        ));
+                                                    };
+                                                    for key in kf_obj.keys() {
+                                                        if !matches!(key.as_str(), "t_units" | "delta") {
+                                                            return Err(format!(
+                                                                "ops[{idx}] slot.clip.keyframes[{kf_idx}] has unknown key {key:?} (allowed: t_units,delta)"
+                                                            ));
+                                                        }
+                                                    }
+                                                    if kf_obj
+                                                        .get("t_units")
+                                                        .and_then(|v| v.as_f64())
+                                                        .is_none()
+                                                    {
+                                                        return Err(format!(
+                                                            "ops[{idx}] slot.clip.keyframes[{kf_idx}].t_units must be a number"
+                                                        ));
+                                                    }
+                                                    let Some(delta) = kf_obj.get("delta") else {
+                                                        return Err(format!(
+                                                            "ops[{idx}] slot.clip.keyframes[{kf_idx}].delta is missing"
+                                                        ));
+                                                    };
+                                                    let Some(delta_obj) = delta.as_object() else {
+                                                        return Err(format!(
+                                                            "ops[{idx}] slot.clip.keyframes[{kf_idx}].delta must be an object"
+                                                        ));
+                                                    };
+                                                    for key in delta_obj.keys() {
+                                                        if !matches!(key.as_str(), "pos" | "rot_quat_xyzw" | "scale") {
+                                                            return Err(format!(
+                                                                "ops[{idx}] slot.clip.keyframes[{kf_idx}].delta has unknown key {key:?} (allowed: pos,rot_quat_xyzw,scale)"
+                                                            ));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "spin" => {
+                                                for key in clip_obj.keys() {
+                                                    if !matches!(key.as_str(), "kind" | "axis" | "radians_per_unit" | "axis_space") {
+                                                        return Err(format!(
+                                                            "ops[{idx}] slot.clip has unknown key {key:?} for kind=\"spin\" (allowed: kind,axis,radians_per_unit,axis_space)"
+                                                        ));
+                                                    }
+                                                }
+                                                let axis_ok = clip_obj
+                                                    .get("axis")
+                                                    .and_then(|v| v.as_array())
+                                                    .is_some_and(|a| a.len() == 3 && a.iter().all(|n| n.as_f64().is_some()));
+                                                if !axis_ok {
+                                                    return Err(format!(
+                                                        "ops[{idx}] slot.clip.axis must be [x,y,z] numbers"
+                                                    ));
+                                                }
+                                                if clip_obj
+                                                    .get("radians_per_unit")
+                                                    .and_then(|v| v.as_f64())
+                                                    .is_none()
+                                                {
+                                                    return Err(format!(
+                                                        "ops[{idx}] slot.clip.radians_per_unit must be a number"
+                                                    ));
+                                                }
+                                                if let Some(space) =
+                                                    clip_obj.get("axis_space").and_then(|v| v.as_str())
+                                                {
+                                                    if !matches!(space.trim(), "join" | "child_local") {
+                                                        return Err(format!(
+                                                            "ops[{idx}] slot.clip.axis_space must be \"join\" or \"child_local\""
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                return Err(format!(
+                                                    "ops[{idx}] slot.clip.kind must be one of: loop, once, ping_pong, spin"
+                                                ));
+                                            }
+                                        }
+                                    }
                                 }
                                 other => {
                                     return Err(format!("Unknown DraftOp kind={other:?}"));
@@ -1814,20 +2206,34 @@ pub(super) fn poll_agent_tool(
                                 value.version
                             ));
                         }
-                        validate_draft_ops(job, &call, value.ops.as_slice())?;
-                        Ok(value)
+                        let (ops, repair_diff) = normalize_draft_ops(value.ops);
+                        validate_draft_ops(job, &call, ops.as_slice())?;
+                        Ok((ops, repair_diff))
                     })();
 
                     match parsed {
-                        Ok(value) => {
+                        Ok((ops, repair_diff)) => {
                             let workspace_id = job.active_workspace_id().trim().to_string();
                             let if_assembly_rev = job.assembly_rev();
-                            let json = serde_json::json!({
+                            let mut json = serde_json::json!({
                                 "version": 1,
                                 "workspace_id": workspace_id,
                                 "if_assembly_rev": if_assembly_rev,
-                                "ops": value.ops,
+                                "ops": ops,
                             });
+                            if let Some(diff) = repair_diff {
+                                if let Some(obj) = json.as_object_mut() {
+                                    obj.insert("repaired".into(), serde_json::Value::Bool(true));
+                                    obj.insert("repair_diff".into(), diff);
+                                }
+                                if let Some(dir) = job.pass_dir.as_deref() {
+                                    write_gen3d_json_artifact(
+                                        Some(dir),
+                                        "draft_ops_generated_normalized.json",
+                                        &json,
+                                    );
+                                }
+                            }
                             if let Some(dir) = job.pass_dir.as_deref() {
                                 write_gen3d_json_artifact(Some(dir), "draft_ops_suggested_last.json", &json);
                             }
@@ -3269,6 +3675,7 @@ mod tests {
                         transform: Transform::IDENTITY,
                     }],
                     contacts: Vec::new(),
+                    root_animations: Vec::new(),
                     attach_to: if idx == 0 {
                         None
                     } else {

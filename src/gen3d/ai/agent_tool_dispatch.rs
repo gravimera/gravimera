@@ -8423,6 +8423,7 @@ mod tests {
             actual_size: Some(Vec3::ONE),
             anchors: Vec::new(),
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: None,
         }];
 
@@ -8504,6 +8505,7 @@ mod tests {
                     transform: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
                 }],
                 contacts: Vec::new(),
+                root_animations: Vec::new(),
                 attach_to: None,
             },
             super::super::job::Gen3dPlannedComponent {
@@ -8520,6 +8522,7 @@ mod tests {
                     transform: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
                 }],
                 contacts: Vec::new(),
+                root_animations: Vec::new(),
                 attach_to: Some(super::super::job::Gen3dPlannedAttachment {
                     parent: "root".into(),
                     parent_anchor: "origin".into(),
@@ -8672,6 +8675,7 @@ mod tests {
             actual_size: Some(Vec3::ONE),
             anchors: Vec::new(),
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: None,
         }];
 

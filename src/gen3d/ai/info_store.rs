@@ -1034,9 +1034,77 @@ mod tests {
 
     #[test]
     fn gen3d_info_store_fixture_harness() {
-        let run_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/gen3d_info_store_harness/example_run");
-        let store = Gen3dInfoStore::open_or_create(&run_dir).expect("open store fixture");
+        let run_dir = make_temp_dir("gravimera_info_store_fixture_harness");
+        let mut blob_id: Option<String> = None;
+        {
+            let mut store = Gen3dInfoStore::open_or_create(&run_dir).expect("open store");
+            store
+                .kv_put(
+                    0,
+                    1,
+                    1,
+                    "main",
+                    "gen3d",
+                    "ws.main.scene_graph_summary",
+                    serde_json::json!({ "components_total": 2 }),
+                    "scene_graph_summary".into(),
+                    None,
+                )
+                .expect("kv put #1");
+            store
+                .kv_put(
+                    0,
+                    1,
+                    2,
+                    "main",
+                    "gen3d",
+                    "ws.main.scene_graph_summary",
+                    serde_json::json!({ "components_total": 3 }),
+                    "scene_graph_summary".into(),
+                    None,
+                )
+                .expect("kv put #2");
+
+            store
+                .append_event(
+                    0,
+                    1,
+                    2,
+                    InfoEventKindV1::EngineLog,
+                    None,
+                    None,
+                    "fixture event 1".into(),
+                    serde_json::json!({}),
+                )
+                .expect("event #1");
+            store
+                .append_event(
+                    0,
+                    1,
+                    2,
+                    InfoEventKindV1::EngineLog,
+                    None,
+                    None,
+                    "fixture event 2".into(),
+                    serde_json::json!({}),
+                )
+                .expect("event #2");
+
+            let blob = store
+                .register_blob_file(
+                    0,
+                    1,
+                    2,
+                    "image/png",
+                    123,
+                    vec!["fixture".into()],
+                    "attempt_0/pass_1/render.png".into(),
+                )
+                .expect("register blob");
+            blob_id = Some(blob.blob_id);
+        }
+
+        let store = Gen3dInfoStore::open_or_create(&run_dir).expect("reopen store");
 
         let latest = store
             .kv_latest_record("gen3d", "ws.main.scene_graph_summary")
@@ -1052,8 +1120,11 @@ mod tests {
 
         assert_eq!(store.events().len(), 2);
         assert_eq!(store.blobs().len(), 1);
+        let blob_id = blob_id.expect("blob id");
         assert!(store
-            .blob_by_id("00000000-0000-0000-0000-000000000001")
+            .blob_by_id(blob_id.as_str())
             .is_some());
+
+        let _ = std::fs::remove_dir_all(&run_dir);
     }
 }

@@ -2603,6 +2603,7 @@ mod tests {
             actual_size: Some(Vec3::ONE),
             anchors,
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: None,
         }
     }

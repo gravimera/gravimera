@@ -831,6 +831,7 @@ mod tests {
                 actual_size: Some(Vec3::new(4.0, 5.0, 6.0)),
                 anchors: vec![],
                 contacts: vec![],
+                root_animations: vec![],
                 attach_to: None,
             },
             Gen3dPlannedComponent {
@@ -844,6 +845,7 @@ mod tests {
                 actual_size: Some(Vec3::new(1.0, 1.2, 1.4)),
                 anchors: vec![],
                 contacts: vec![],
+                root_animations: vec![],
                 attach_to: Some(super::super::Gen3dPlannedAttachment {
                     parent: "torso".into(),
                     parent_anchor: "head_socket".into(),
@@ -1090,6 +1092,15 @@ Hard rules:\n\
 - Do NOT invent part_id_uuid for updates/removals.\n\
 - Only add new primitives when necessary; prefer updating existing primitives (transform/color/mesh params).\n\
 - Removals are allowed, but use `remove_primitive_part` ONLY when required to satisfy the user request.\n\
+\n\
+Animation slot rules (IMPORTANT):\n\
+- For `upsert_animation_slot`, the ONLY allowed top-level keys are: kind, child_component, channel, slot.\n\
+- The animation clip MUST be nested under `slot.clip` (NOT `clip` at the DraftOp top level).\n\
+- The clip kind MUST be `slot.clip.kind` (NOT `clip_kind`).\n\
+- Root is allowed: `child_component` may refer to the root component (the engine will treat it as the implicit root edge).\n\
+\n\
+Minimal example (copy/paste shape):\n\
+{\"version\":1,\"ops\":[{\"kind\":\"upsert_animation_slot\",\"child_component\":\"arm_lower_l\",\"channel\":\"dance\",\"slot\":{\"driver\":\"always\",\"speed_scale\":1.0,\"time_offset_units\":0.0,\"clip\":{\"kind\":\"loop\",\"duration_units\":1.0,\"keyframes\":[{\"t_units\":0.0,\"delta\":{\"pos\":null,\"rot_quat_xyzw\":null,\"scale\":null}},{\"t_units\":1.0,\"delta\":{\"pos\":null,\"rot_quat_xyzw\":null,\"scale\":null}}]}}}]} \n\
 \n\
 Allowed DraftOp kinds:\n\
 - set_anchor_transform\n\

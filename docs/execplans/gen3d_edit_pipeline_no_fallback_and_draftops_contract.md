@@ -18,6 +18,9 @@ After this change:
   - If tool output is malformed, the engine returns a precise error and automatically performs exactly one schema-repair retry (two total attempts: first + repair).
   - If the repair attempt still fails, the pipeline stops with an actionable error (no fallback).
 - Edit sessions can request *any* supported DraftOps modification (including animation slot edits like `upsert_animation_slot`) without common schema mismatch traps (e.g. mistakenly placing `clip` at the DraftOp top level).
+- DraftOps animation-slot edits are no longer blocked by over-strict “ambiguity” checks:
+  - Root component animation slots are supported (the root has an implicit “root edge” from the draft root to the root component).
+  - When multiple slots exist for a channel (common for `attack_primary` variants), DraftOps operations apply deterministically instead of rejecting as ambiguous.
 
 How to see it working (after implementation):
 
@@ -31,11 +34,14 @@ How to see it working (after implementation):
 ## Progress
 
 - [x] (2026-03-23) Investigated a real run cache that fell back from pipeline → agent-step due to malformed DraftOps (`run_id=694d0671-16c8-44d3-8d25-30f950f8bbdf`).
-- [ ] Draft a “contract-first” checklist for all edit-session tools and record current gaps (completed: DraftOps top-level key validation; remaining: nested slot/clip guidance, normalization/repair hints, pipeline stop semantics).
-- [ ] Remove pipeline → agent-step fallback and replace with explicit pipeline stop behavior (completed: plan; remaining: code + tests).
-- [ ] Harden `llm_generate_draft_ops_v1` for animation-slot edits (`upsert_animation_slot`) with clearer schema guidance + more actionable repair prompts (completed: plan; remaining: code + tests).
-- [ ] Add a global per-stage iteration budget for pipeline edit runs (two attempts: initial + repair; two cycles max for “rejected_ops” re-suggest) and stop deterministically when exhausted.
-- [ ] Validate with `cargo test` and the rendered smoke test, then verify on a real edit run.
+- [x] Draft/validate a “contract-first” checklist for edit-session tools and close the motivating gaps (DraftOps nested slot/clip guidance, normalization/repair hints, pipeline stop semantics).
+- [x] Remove pipeline → agent-step fallback and replace with explicit pipeline stop behavior.
+- [x] Harden `llm_generate_draft_ops_v1` for animation-slot edits (`upsert_animation_slot`) with clearer schema guidance + more actionable repair prompts.
+- [x] Add deterministic DraftOps normalization for legacy/alias shapes (e.g. `component`→`child_component`, `duration_secs`→`duration_units`, top-level `clip`/`driver` moved into `slot`).
+- [x] Support editing animation slots on the root component (store root slots in planned state; sync into the draft root’s object-ref part).
+- [x] Add bounded iteration budgets for pipeline edit runs (two total schema attempts: initial + 1 repair; two cycles max for `rejected_ops` re-suggest) and stop deterministically when exhausted.
+- [x] Validate with `cargo test`.
+- [ ] Run the rendered smoke test and verify on a real edit run.
 
 
 ## Surprises & Discoveries
@@ -47,9 +53,13 @@ How to see it working (after implementation):
   Evidence: `~/.gravimera/cache/gen3d/694d0671-16c8-44d3-8d25-30f950f8bbdf/attempt_0/pass_1/gen3d_run.log` includes:
     - `DraftOp kind="upsert_animation_slot" includes unknown key "clip"`
     - `DraftOp kind="upsert_animation_slot" includes unknown key "clip_kind"`
+  Additional evidence: `~/.gravimera/cache/gen3d/694d0671-16c8-44d3-8d25-30f950f8bbdf/attempt_0/pass_1/draft_ops_raw.txt` shows a legacy-ish shape with top-level `driver`, `clip.duration_secs`, `clip.keyframe_times`, and a separate `keyframes` array.
 
 - Observation: The schema-repair prompt is generic and does not include tool-specific “allowed keys” or a tiny correct example for the failing sub-shape.
   Evidence: `src/gen3d/ai/agent_tool_poll.rs::schedule_llm_tool_schema_repair` appends a generic REPAIR REQUEST with the error string only.
+
+- Observation: Root component motion cannot be authored today because “motion authoring” only targets attachment edges (child components with `attach_to`).
+  Evidence: `src/gen3d/ai/agent_tool_poll.rs` rejects motion-authoring edges that reference the root (`attach_to=None`).
 
 - Observation: `AGENTS.md` references `docs/agent_skills/tool_authoring_rules.md` and `docs/agent_skills/prompt_tool_contract_review.md`, but these files are not present in this working tree.
   Evidence: `docs/execplans/gen3d_deterministic_pipeline.md` already notes this; `docs/agent_skills/` only contains `SKILL_agent.md`.
@@ -69,6 +79,9 @@ How to see it working (after implementation):
   Rationale: Strictness prevents silent misinterpretation; deterministic normalization improves robustness without heuristics. “Repaired=true + repair_diff” makes the behavior observable and debuggable.
   Date/Author: 2026-03-23 / user + assistant
 
+- Decision: DraftOps animation-slot edits must be able to target the root component and must not reject “multiple slots per channel” as ambiguous.
+  Rationale: Root is a valid component in any object; users must be able to animate it (and common rigs have multiple `attack_primary` variants). Ambiguity rejection blocks valid edits; deterministic bulk semantics keep the tool generic and usable.
+  Date/Author: 2026-03-23 / user + assistant
 
 ## Outcomes & Retrospective
 
@@ -121,6 +134,12 @@ At minimum, document these buckets and their deterministic mechanisms:
   - “Slot-level” edits: `upsert_animation_slot` / `remove_animation_slot` in DraftOps.
   - “Rig-level clip authoring”: `llm_generate_motion_authoring_v1` (LLM+mutates).
 
+Important clarification for motion edits:
+
+- DraftOps `*_animation_slot` ops edit animation slots on the component reference part:
+  - For non-root components, this is the attachment edge stored under `attach_to` (parent→child).
+  - For the root component, this is the implicit “root edge” stored on the draft root’s object-ref part (root→root_component).
+
 Then, for each bucket, list the current “failure surface”:
 
 - What malformed output patterns do we see in real caches?
@@ -128,6 +147,19 @@ Then, for each bucket, list the current “failure surface”:
 - Does the pipeline stop deterministically when retries are exhausted?
 
 This inventory becomes the acceptance checklist for “support all modifications” (meaning: any modification the engine already supports via tools should be reachable in edit sessions without fallback and with actionable errors when the LLM misformats).
+
+## Decision Log
+
+- (2026-03-23) Pipeline mode never falls back to `agent_step`; persistent tool failures stop the run via `finish_job_best_effort(...)` with an explicit stage/tool/call_id reason.
+- (2026-03-23) Treat root motion as an “implicit root edge”: root animations live on the draft root’s object-ref part and are edited via DraftOps when `child_component` is the root.
+- (2026-03-23) DraftOps animation-slot ops apply deterministically when multiple slots exist for a channel (edit/remove/scale all matches instead of rejecting as ambiguous).
+- (2026-03-23) Schema repair is capped to exactly one retry (two total attempts: initial + repair) to prevent long runs from repeated re-authoring loops.
+
+## Outcomes & Retrospective (So Far)
+
+- The motivating failure mode (“unknown key clip/clip_kind” → schema repair exhaustion → pipeline fallback → long run) is addressed by a clearer DraftOps contract, normalization for legacy-ish shapes, and removing pipeline fallback.
+- Root/torso animation edits are supported without rewires by adding `root_animations` to planned state and syncing it through `sync_attachment_tree_to_defs(...)`.
+- Remaining validation: run the rendered smoke test and confirm behavior on a real seeded edit session.
 
 ### 2) Harden DraftOps for animation slots (the motivating `clip`/`clip_kind` mismatch)
 
@@ -153,6 +185,19 @@ Deterministic normalization (only when unambiguous):
   - `clip_kind` can be rewritten into `clip.kind` when `clip` object exists.
 
 Important: if the normalization cannot be done unambiguously, do not guess. Fail with a precise error and trigger schema repair.
+
+### 2.5) Support root animation slots (generic torso/root fix)
+
+Implement root animation support in a way that does not require plan rewires:
+
+- Extend the planned component state with a `root_animations` list (only meaningful when `attach_to=None`).
+- Update `sync_attachment_tree_to_defs(...)` to copy `root_animations` into the draft root’s object-ref part that references the root component.
+- Update DraftOps animation-slot ops so that when `child_component` is the root:
+  - `upsert_animation_slot` edits `root_animations`.
+  - `remove_animation_slot` removes from `root_animations`.
+  - `scale_animation_slot_rotation` scales in `root_animations`.
+
+This makes “torso is root → cannot animate torso” go away without relying on heuristics or unsafe rewires.
 
 ### 3) Remove pipeline → agent-step fallback and replace with deterministic pipeline stops
 
@@ -251,4 +296,3 @@ Key evidence:
 - Pipeline fallback event:
 
     ~/.gravimera/cache/gen3d/694d0671-16c8-44d3-8d25-30f950f8bbdf/info_store_v1/events.jsonl
-

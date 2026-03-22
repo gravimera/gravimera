@@ -259,7 +259,7 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
 }
 
 #[test]
-fn gen3d_mock_pipeline_falls_back_to_agent_step_on_persistent_draft_ops_schema_failure() {
+fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure() {
     let create_prompt = "A warcar with a cannon as weapon";
     let edit_prompt = "__MOCK_INVALID_DRAFT_OPS_ALWAYS__ Make the cannon longer and darken it.";
 
@@ -345,16 +345,27 @@ fn gen3d_mock_pipeline_falls_back_to_agent_step_on_persistent_draft_ops_schema_f
 
     let job = app.world().resource::<Gen3dAiJob>();
     assert!(
-        matches!(job.mode, Gen3dAiMode::Agent),
-        "expected pipeline fallback to agent-step (mode={:?})",
+        matches!(job.mode, Gen3dAiMode::Pipeline),
+        "expected pipeline mode to stop without fallback (mode={:?})",
         job.mode
+    );
+    assert!(
+        job.build_complete && !job.running,
+        "expected best-effort stop to finish the run (build_complete={} running={})",
+        job.build_complete,
+        job.running
     );
 
     let events_path = run_dir.join("info_store_v1").join("events.jsonl");
     let events = std::fs::read_to_string(&events_path).expect("read info_store events.jsonl");
     assert!(
-        events.contains("Pipeline fallback"),
-        "expected info_store to record pipeline fallback (events_path={})",
-        events_path.display()
+        events.contains("\"kind\":\"budget_stop\"") && events.contains("llm_generate_draft_ops_v1"),
+        "expected budget_stop event mentioning llm_generate_draft_ops_v1 (events_path={})",
+        events_path.display(),
+    );
+    assert!(
+        !events.contains("Pipeline fallback"),
+        "expected no pipeline fallback in events (events_path={})",
+        events_path.display(),
     );
 }

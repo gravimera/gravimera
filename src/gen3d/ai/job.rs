@@ -13,7 +13,7 @@ use super::info_store::{Gen3dInfoStore, InfoEventKindV1};
 use super::reuse_groups;
 use super::schema::*;
 
-pub(super) const GEN3D_LLM_TOOL_SCHEMA_REPAIR_MAX_ATTEMPTS: u8 = 2;
+pub(super) const GEN3D_LLM_TOOL_SCHEMA_REPAIR_MAX_ATTEMPTS: u8 = 1;
 pub(super) const GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES: u8 = 6;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1352,6 +1352,9 @@ pub(super) struct Gen3dPlannedComponent {
     pub(super) actual_size: Option<Vec3>,
     pub(super) anchors: Vec<crate::object::registry::AnchorDef>,
     pub(super) contacts: Vec<AiContactJson>,
+    /// Animation slots applied on the implicit draft-root -> root-component object_ref edge.
+    /// Only meaningful for the root component (`attach_to=None`).
+    pub(super) root_animations: Vec<PartAnimationSlot>,
     pub(super) attach_to: Option<Gen3dPlannedAttachment>,
 }
 

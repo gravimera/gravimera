@@ -948,6 +948,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
             actual_size: None,
             anchors,
             contacts,
+            root_animations: Vec::new(),
             attach_to,
         });
     }
@@ -1632,11 +1633,14 @@ pub(super) fn sync_attachment_tree_to_defs(
         .iter_mut()
         .find(|d| d.object_id == root_id)
         .ok_or_else(|| "Internal error: missing Gen3D draft root def.".to_string())?;
-    let root_part = ObjectPartDef::object_ref(root_component_id, Transform::IDENTITY)
+    let mut root_part = ObjectPartDef::object_ref(root_component_id, Transform::IDENTITY)
         .with_attachment(crate::object::registry::AttachmentDef {
             parent_anchor: "origin".into(),
             child_anchor: "origin".into(),
         });
+    root_part
+        .animations
+        .extend(components[root_idx].root_animations.clone());
     root_def.parts.push(root_part);
 
     // Rebuild component child references according to the plan tree.
@@ -2941,6 +2945,7 @@ mod tests {
                 transform: Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
             }],
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: None,
         };
 
@@ -2993,6 +2998,7 @@ mod tests {
             actual_size: None,
             anchors: Vec::new(),
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: None,
         };
 
@@ -3040,6 +3046,7 @@ mod tests {
                 transform: Transform::IDENTITY,
             }],
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: None,
         };
 
@@ -3090,6 +3097,7 @@ mod tests {
                     .with_rotation(plan_rotation_from_forward_up_lossy(Vec3::X, Some(Vec3::Y))),
             }],
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: Some(Gen3dPlannedAttachment {
                 parent: "tail_boom".into(),
                 parent_anchor: "tail_rotor_mount".into(),
@@ -3172,6 +3180,7 @@ mod tests {
                 transform: Transform::from_translation(Vec3::new(0.0, 0.5, 0.0)),
             }],
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: None,
         };
 

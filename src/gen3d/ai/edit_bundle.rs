@@ -61,6 +61,10 @@ pub(crate) struct Gen3dPlannedComponentBundleV1 {
     pub(crate) anchors: Vec<AnchorDefBundleV1>,
     #[serde(default)]
     pub(crate) contacts: Vec<AiContactJson>,
+    /// Animation slots applied on the implicit draft-root -> root-component object_ref edge.
+    /// Only meaningful for the root component (`attach_to=None`).
+    #[serde(default)]
+    pub(crate) root_animations: Vec<PartAnimationSlotBundleV1>,
     #[serde(default)]
     pub(crate) attach_to: Option<Gen3dPlannedAttachmentBundleV1>,
 }
@@ -296,6 +300,35 @@ fn hydrate_planned_attachment_animations_from_defs(
         defs_by_id.insert(def.object_id, def);
     }
 
+    // Root animation slots live on the implicit draft-root -> root-component object_ref part.
+    if let Some(root_comp) = planned_components
+        .iter_mut()
+        .find(|c| c.attach_to.is_none())
+    {
+        if root_comp.root_animations.is_empty() {
+            let root_def_id = super::super::gen3d_draft_object_id();
+            let root_component_id = crate::object::registry::builtin_object_id(&format!(
+                "gravimera/gen3d/component/{}",
+                root_comp.name.trim()
+            ));
+            if let Some(root_def) = defs_by_id.get(&root_def_id) {
+                for part in root_def.parts.iter() {
+                    let ObjectPartKind::ObjectRef { object_id } = part.kind else {
+                        continue;
+                    };
+                    if object_id != root_component_id {
+                        continue;
+                    }
+                    if part.animations.is_empty() {
+                        continue;
+                    }
+                    root_comp.root_animations = part.animations.clone();
+                    break;
+                }
+            }
+        }
+    }
+
     for comp in planned_components.iter_mut() {
         let Some(att) = comp.attach_to.as_mut() else {
             continue;
@@ -353,6 +386,11 @@ impl Gen3dPlannedComponentBundleV1 {
                 .map(AnchorDefBundleV1::from_anchor)
                 .collect(),
             contacts: c.contacts.clone(),
+            root_animations: c
+                .root_animations
+                .iter()
+                .map(PartAnimationSlotBundleV1::from_slot)
+                .collect(),
             attach_to: c
                 .attach_to
                 .as_ref()
@@ -392,6 +430,11 @@ impl Gen3dPlannedComponentBundleV1 {
                 .map(AnchorDefBundleV1::to_anchor)
                 .collect::<Result<Vec<_>, _>>()?,
             contacts: self.contacts.clone(),
+            root_animations: self
+                .root_animations
+                .iter()
+                .map(PartAnimationSlotBundleV1::to_slot)
+                .collect::<Result<Vec<_>, _>>()?,
             attach_to: self
                 .attach_to
                 .as_ref()
@@ -483,6 +526,7 @@ mod tests {
             actual_size: Some(Vec3::ONE),
             anchors: Vec::new(),
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: Some(Gen3dPlannedAttachment {
                 parent: parent_name.into(),
                 parent_anchor: "rotor_mount".into(),

@@ -529,7 +529,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 tool_id: TOOL_ID_LLM_GENERATE_DRAFT_OPS,
                 title: "LLM: generate DraftOps",
                 one_line_summary:
-                    "LLM-only: suggests `apply_draft_ops_v1` ops for in-place primitive edits (no mutation by itself). Requires existing component parts snapshots (call query_component_parts_v1 first). The engine validates + clamps ops deterministically before returning them; result includes `workspace_id` + `if_assembly_rev` for safe application.",
+                    "LLM-only: suggests `apply_draft_ops_v1` ops for in-place draft edits (no mutation by itself). Requires existing component parts snapshots (call query_component_parts_v1 first). The engine validates ops deterministically and may normalize clearly-unambiguous legacy/alias shapes (reports repaired=true + repair_diff; writes draft_ops_generated_normalized.json). Result includes `workspace_id` + `if_assembly_rev` for safe application.",
                 args_schema:
                     "{ prompt: string, scope_components?: string[], max_ops?: number, strategy?: \"conservative\"|\"balanced\" }",
                 args_example: serde_json::json!({

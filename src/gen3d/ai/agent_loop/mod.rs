@@ -1023,6 +1023,7 @@ mod tests {
                 actual_size: Some(Vec3::ONE),
                 anchors: Vec::new(),
                 contacts: Vec::new(),
+                root_animations: Vec::new(),
                 attach_to: None,
             },
             super::super::Gen3dPlannedComponent {
@@ -1036,6 +1037,7 @@ mod tests {
                 actual_size: Some(Vec3::ONE),
                 anchors: Vec::new(),
                 contacts: Vec::new(),
+                root_animations: Vec::new(),
                 attach_to: None,
             },
         ];
@@ -1260,6 +1262,7 @@ mod tests {
                 actual_size: None,
                 anchors: Vec::new(),
                 contacts: Vec::new(),
+                root_animations: Vec::new(),
                 attach_to: None,
             },
             super::super::Gen3dPlannedComponent {
@@ -1273,6 +1276,7 @@ mod tests {
                 actual_size: None,
                 anchors: Vec::new(),
                 contacts: Vec::new(),
+                root_animations: Vec::new(),
                 attach_to: None,
             },
         ];

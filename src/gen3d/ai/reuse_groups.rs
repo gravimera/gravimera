@@ -613,6 +613,7 @@ mod tests {
                 transform: Transform::IDENTITY,
             }],
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to: None,
         }
     }

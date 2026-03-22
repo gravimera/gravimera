@@ -936,42 +936,68 @@ fn apply_one_op(
             let child_name = child_component.trim();
             let channel = channel.trim().to_string();
             let planned_child = find_planned_component_mut(planned, child_name).map_err(reject)?;
-            let Some(att) = planned_child.attach_to.as_mut() else {
-                return Err(reject(format!(
-                    "Component `{}` has no attach_to (cannot edit animation slots on root)",
-                    child_name
-                )));
-            };
 
             let replacement = animation_slot_from_spec(&channel, slot).map_err(reject)?;
 
-            let mut existing_indices: Vec<usize> = att
-                .animations
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| s.channel.as_ref() == channel)
-                .map(|(idx, _)| idx)
-                .collect();
-            if existing_indices.len() > 1 {
-                return Err(reject(format!(
-                    "Ambiguous animation slot (multiple slots found for channel `{}` on `{}`)",
-                    channel, child_name
-                )));
-            }
-
             let mut diff = serde_json::Map::new();
-            if let Some(idx) = existing_indices.pop() {
-                att.animations[idx] = replacement;
-                diff.insert("updated".into(), serde_json::Value::Bool(true));
+            let mut affected: usize = 0;
+
+            if let Some(att) = planned_child.attach_to.as_mut() {
+                let indices: Vec<usize> = att
+                    .animations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.channel.as_ref() == channel)
+                    .map(|(idx, _)| idx)
+                    .collect();
+                if indices.is_empty() {
+                    att.animations.push(replacement);
+                    affected = 1;
+                    diff.insert("added".into(), serde_json::Value::Bool(true));
+                } else {
+                    affected = indices.len();
+                    for idx in indices {
+                        att.animations[idx] = replacement.clone();
+                    }
+                    diff.insert("updated".into(), serde_json::Value::Bool(true));
+                    diff.insert(
+                        "updated_count".into(),
+                        serde_json::Value::Number(affected.into()),
+                    );
+                }
+                mark_changed_component(state, att.parent.as_str());
             } else {
-                att.animations.push(replacement);
-                diff.insert("added".into(), serde_json::Value::Bool(true));
+                let indices: Vec<usize> = planned_child
+                    .root_animations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.channel.as_ref() == channel)
+                    .map(|(idx, _)| idx)
+                    .collect();
+                if indices.is_empty() {
+                    planned_child.root_animations.push(replacement);
+                    affected = 1;
+                    diff.insert("added".into(), serde_json::Value::Bool(true));
+                    diff.insert("root".into(), serde_json::Value::Bool(true));
+                } else {
+                    affected = indices.len();
+                    for idx in indices {
+                        planned_child.root_animations[idx] = replacement.clone();
+                    }
+                    diff.insert("updated".into(), serde_json::Value::Bool(true));
+                    diff.insert(
+                        "updated_count".into(),
+                        serde_json::Value::Number(affected.into()),
+                    );
+                    diff.insert("root".into(), serde_json::Value::Bool(true));
+                }
             }
 
             state.needs_sync_attachments = true;
-            state.animation_slots_upserted = state.animation_slots_upserted.saturating_add(1);
+            state.animation_slots_upserted = state
+                .animation_slots_upserted
+                .saturating_add(affected.max(1) as u32);
             mark_changed_component(state, child_name);
-            mark_changed_component(state, att.parent.as_str());
             serde_json::Value::Object(diff)
         }
         DraftOpJsonV1::ScaleAnimationSlotRotation {
@@ -989,34 +1015,6 @@ fn apply_one_op(
             }
 
             let planned_child = find_planned_component_mut(planned, child_name).map_err(reject)?;
-            let Some(att) = planned_child.attach_to.as_mut() else {
-                return Err(reject(format!(
-                    "Component `{}` has no attach_to (cannot edit animation slots on root)",
-                    child_name
-                )));
-            };
-
-            let mut matches: Vec<usize> = att
-                .animations
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| s.channel.as_ref() == channel)
-                .map(|(idx, _)| idx)
-                .collect();
-            if matches.is_empty() {
-                return Err(reject(format!(
-                    "Animation slot not found for channel `{}` on `{}`",
-                    channel, child_name
-                )));
-            }
-            if matches.len() > 1 {
-                return Err(reject(format!(
-                    "Ambiguous animation slot (multiple slots found for channel `{}` on `{}`)",
-                    channel, child_name
-                )));
-            }
-            let idx = matches.pop().unwrap_or(0);
-            let slot = &mut att.animations[idx];
 
             fn scale_delta_rotation(delta: &mut Transform, scale: f32) -> Result<(), String> {
                 if !delta.rotation.is_finite() {
@@ -1039,33 +1037,97 @@ fn apply_one_op(
             }
 
             let mut scaled_keyframes: u32 = 0;
-            match &mut slot.spec.clip {
-                PartAnimationDef::Loop { keyframes, .. }
-                | PartAnimationDef::Once { keyframes, .. }
-                | PartAnimationDef::PingPong { keyframes, .. } => {
-                    for k in keyframes.iter_mut() {
-                        scale_delta_rotation(&mut k.delta, *scale).map_err(reject)?;
-                        scaled_keyframes = scaled_keyframes.saturating_add(1);
-                    }
+            let mut scaled_slots: u32 = 0;
+
+            if let Some(att) = planned_child.attach_to.as_mut() {
+                let indices: Vec<usize> = att
+                    .animations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.channel.as_ref() == channel)
+                    .map(|(idx, _)| idx)
+                    .collect();
+                if indices.is_empty() {
+                    return Err(reject(format!(
+                        "Animation slot not found for channel `{}` on `{}`",
+                        channel, child_name
+                    )));
                 }
-                PartAnimationDef::Spin {
-                    radians_per_unit, ..
-                } => {
-                    let next = *radians_per_unit * *scale;
-                    if !next.is_finite() {
-                        return Err(reject(
-                            "scaled spin radians_per_unit became non-finite".into(),
-                        ));
+
+                for idx in indices {
+                    let slot = &mut att.animations[idx];
+                    match &mut slot.spec.clip {
+                        PartAnimationDef::Loop { keyframes, .. }
+                        | PartAnimationDef::Once { keyframes, .. }
+                        | PartAnimationDef::PingPong { keyframes, .. } => {
+                            for k in keyframes.iter_mut() {
+                                scale_delta_rotation(&mut k.delta, *scale).map_err(reject)?;
+                                scaled_keyframes = scaled_keyframes.saturating_add(1);
+                            }
+                        }
+                        PartAnimationDef::Spin {
+                            radians_per_unit, ..
+                        } => {
+                            let next = *radians_per_unit * *scale;
+                            if !next.is_finite() {
+                                return Err(reject(
+                                    "scaled spin radians_per_unit became non-finite".into(),
+                                ));
+                            }
+                            *radians_per_unit = next;
+                        }
                     }
-                    *radians_per_unit = next;
+                    scaled_slots = scaled_slots.saturating_add(1);
+                }
+                mark_changed_component(state, att.parent.as_str());
+            } else {
+                let indices: Vec<usize> = planned_child
+                    .root_animations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.channel.as_ref() == channel)
+                    .map(|(idx, _)| idx)
+                    .collect();
+                if indices.is_empty() {
+                    return Err(reject(format!(
+                        "Animation slot not found for channel `{}` on `{}`",
+                        channel, child_name
+                    )));
+                }
+
+                for idx in indices {
+                    let slot = &mut planned_child.root_animations[idx];
+                    match &mut slot.spec.clip {
+                        PartAnimationDef::Loop { keyframes, .. }
+                        | PartAnimationDef::Once { keyframes, .. }
+                        | PartAnimationDef::PingPong { keyframes, .. } => {
+                            for k in keyframes.iter_mut() {
+                                scale_delta_rotation(&mut k.delta, *scale).map_err(reject)?;
+                                scaled_keyframes = scaled_keyframes.saturating_add(1);
+                            }
+                        }
+                        PartAnimationDef::Spin {
+                            radians_per_unit, ..
+                        } => {
+                            let next = *radians_per_unit * *scale;
+                            if !next.is_finite() {
+                                return Err(reject(
+                                    "scaled spin radians_per_unit became non-finite".into(),
+                                ));
+                            }
+                            *radians_per_unit = next;
+                        }
+                    }
+                    scaled_slots = scaled_slots.saturating_add(1);
                 }
             }
 
             state.needs_sync_attachments = true;
-            state.animation_slots_scaled = state.animation_slots_scaled.saturating_add(1);
+            state.animation_slots_scaled = state
+                .animation_slots_scaled
+                .saturating_add(scaled_slots.max(1));
             mark_changed_component(state, child_name);
-            mark_changed_component(state, att.parent.as_str());
-            serde_json::json!({"scaled": true, "channel": channel, "scale": scale, "scaled_keyframes": scaled_keyframes})
+            serde_json::json!({"scaled": true, "channel": channel, "scale": scale, "scaled_slots": scaled_slots, "scaled_keyframes": scaled_keyframes})
         }
         DraftOpJsonV1::RemoveAnimationSlot {
             child_component,
@@ -1077,34 +1139,39 @@ fn apply_one_op(
                 return Err(reject("channel must be non-empty".into()));
             }
             let planned_child = find_planned_component_mut(planned, child_name).map_err(reject)?;
-            let Some(att) = planned_child.attach_to.as_mut() else {
-                return Err(reject(format!(
-                    "Component `{}` has no attach_to (cannot edit animation slots on root)",
-                    child_name
-                )));
+            let removed = if let Some(att) = planned_child.attach_to.as_mut() {
+                let before = att.animations.len();
+                att.animations.retain(|s| s.channel.as_ref() != channel);
+                let removed = before.saturating_sub(att.animations.len());
+                if removed == 0 {
+                    return Err(reject(format!(
+                        "Animation slot not found for channel `{}` on `{}`",
+                        channel, child_name
+                    )));
+                }
+                mark_changed_component(state, att.parent.as_str());
+                removed
+            } else {
+                let before = planned_child.root_animations.len();
+                planned_child
+                    .root_animations
+                    .retain(|s| s.channel.as_ref() != channel);
+                let removed = before.saturating_sub(planned_child.root_animations.len());
+                if removed == 0 {
+                    return Err(reject(format!(
+                        "Animation slot not found for channel `{}` on `{}`",
+                        channel, child_name
+                    )));
+                }
+                removed
             };
 
-            let before = att.animations.len();
-            att.animations.retain(|s| s.channel.as_ref() != channel);
-            let removed = before.saturating_sub(att.animations.len());
-            if removed == 0 {
-                return Err(reject(format!(
-                    "Animation slot not found for channel `{}` on `{}`",
-                    channel, child_name
-                )));
-            }
-            if removed > 1 {
-                return Err(reject(format!(
-                    "Ambiguous animation slot removal (removed {removed} slots for channel `{}` on `{}`)",
-                    channel, child_name
-                )));
-            }
-
             state.needs_sync_attachments = true;
-            state.animation_slots_removed = state.animation_slots_removed.saturating_add(1);
+            state.animation_slots_removed = state
+                .animation_slots_removed
+                .saturating_add(removed.max(1) as u32);
             mark_changed_component(state, child_name);
-            mark_changed_component(state, att.parent.as_str());
-            serde_json::json!({"removed": true})
+            serde_json::json!({"removed": true, "removed_count": removed})
         }
     };
 
@@ -1677,6 +1744,7 @@ mod tests {
                     transform: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
                 }],
                 contacts: Vec::new(),
+                root_animations: Vec::new(),
                 attach_to: if idx == 0 {
                     None
                 } else {
@@ -1730,6 +1798,66 @@ mod tests {
             .find(|a| a.name.as_ref() == "mount")
             .unwrap();
         assert!((mount.transform.translation.y - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn apply_upserts_root_animation_slot() {
+        let mut job = make_job_with_components(&["root"]);
+        let mut draft = Gen3dDraft {
+            defs: vec![make_root_def(), make_component_def("root")],
+        };
+
+        let args = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "ops": [
+                {
+                    "kind": "upsert_animation_slot",
+                    "child_component": "root",
+                    "channel": "ambient",
+                    "slot": {
+                        "driver": "always",
+                        "speed_scale": 1.0,
+                        "time_offset_units": 0.0,
+                        "clip": {
+                            "kind": "loop",
+                            "duration_units": 1.0,
+                            "keyframes": [
+                                { "t_units": 0.0, "delta": {} }
+                            ]
+                        }
+                    }
+                }
+            ]
+        });
+        let out = apply_draft_ops_v1(&mut job, &mut draft, Some("test"), args).unwrap();
+        assert!(out.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+
+        assert_eq!(job.planned_components.len(), 1);
+        assert_eq!(job.planned_components[0].root_animations.len(), 1);
+        assert_eq!(
+            job.planned_components[0].root_animations[0].channel.as_ref(),
+            "ambient"
+        );
+
+        let root_def = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == gen3d_draft_object_id())
+            .expect("draft root def");
+        let root_ref = root_def
+            .parts
+            .iter()
+            .find(|p| matches!(p.kind, ObjectPartKind::ObjectRef { .. }) && p.attachment.is_some())
+            .expect("draft root object-ref part");
+        assert!(
+            root_ref
+                .animations
+                .iter()
+                .any(|s| s.channel.as_ref() == "ambient"),
+            "expected root object-ref animations to include ambient, got {:?}",
+            root_ref.animations
+        );
     }
 
     #[test]

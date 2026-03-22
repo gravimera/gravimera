@@ -1746,6 +1746,7 @@ pub(crate) fn gen3d_poll_ai_job(
                 &time,
                 &mut commands,
                 &mut images,
+                &review_cameras,
                 &mut workshop,
                 &mut feedback_history,
                 &mut job,

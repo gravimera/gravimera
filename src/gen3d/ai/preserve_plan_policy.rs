@@ -238,6 +238,7 @@ mod tests {
             actual_size: None,
             anchors: Vec::new(),
             contacts: Vec::new(),
+            root_animations: Vec::new(),
             attach_to,
         }
     }

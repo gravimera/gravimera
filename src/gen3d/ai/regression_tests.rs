@@ -453,6 +453,7 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
                 transform: Transform::IDENTITY,
             }],
             contacts: vec![],
+            root_animations: vec![],
             attach_to: None,
         },
         super::Gen3dPlannedComponent {
@@ -469,6 +470,7 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
                 transform: Transform::IDENTITY,
             }],
             contacts: vec![],
+            root_animations: vec![],
             attach_to: Some(super::Gen3dPlannedAttachment {
                 parent: "root".into(),
                 parent_anchor: "child_mount".into(),
