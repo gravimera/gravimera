@@ -48,7 +48,7 @@ The work must be validated by:
 - [x] (2026-03-22 12:55 CST) UI: Gen3D panel remove “Clear Prompt”; unify “Clear” to clear both text+images; merge Build/Continue into one button labeled `Build|Edit|Stop`.
 - [x] (2026-03-22 19:52 CST) Automation: Add Gen3D task queue endpoints (list + status) and allow running Gen3D tasks without switching to Build Preview.
 - [x] (2026-03-22 19:52 CST) Validation: `cargo test`, rendered smoke test, and a `test/run_1/...` automation script.
-- [ ] (2026-03-22) Commit(s): clear, scoped messages per milestone.
+- [x] (2026-03-22 19:55 CST) Commit(s): clear, scoped messages per milestone.
 
 
 ## Surprises & Discoveries
@@ -77,7 +77,9 @@ The work must be validated by:
 
 ## Outcomes & Retrospective
 
-(Fill in at completion.)
+- Gen3D now supports multiple sessions/panels with a single serialized runner (FIFO), including Prefabs UI indicators + new-build placeholders.
+- Automation API now exposes Gen3D task queue endpoints (`/v1/gen3d/tasks*`) that run without switching to Build Preview, plus a `test/run_1/...` real test script.
+- Documentation (`docs/automation_http_api.md`, `docs/todo.md`) is updated to match the new workflow and endpoints.
 
 
 ## Context and Orientation
