@@ -1,6 +1,6 @@
 [x] gen3d Pipeline mode does not generate motion. Fix it.
 [x] Remove Copy, Edit, Fork buttons from the Meta panel. And add a close button in the top-right corner to the Meta panel. 
-[] After double clicking an object, besides opening the Meta panel (if it is a unit), also opening the Prefabs panel with the corresponding prefab item selected and pop the Preview panel (if the object has Prefab).
+[x] After double clicking an object, besides opening the Meta panel (if it is a unit), also opening the Prefabs panel with the corresponding prefab item selected and pop the Preview panel (if the object has Prefab).
 [] On the Preview panel (from Prefab panel)
   [] Add two buttons
     [] Modify: open gen3d panel to do modification

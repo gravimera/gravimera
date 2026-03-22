@@ -1,3 +1,4 @@
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
@@ -27,6 +28,13 @@ pub(crate) struct HoverSelectionState {
 pub(crate) struct BoxSelectionPreviewState {
     pub(crate) active: bool,
     pub(crate) started_at_secs: f32,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct SelectionInputUi<'w> {
+    model_library: ResMut<'w, crate::model_library_ui::ModelLibraryUiState>,
+    top_panel: ResMut<'w, crate::workspace_ui::TopPanelUiState>,
+    next_mode: ResMut<'w, NextState<GameMode>>,
 }
 
 fn wrap_angle(angle: f32) -> f32 {
@@ -202,7 +210,7 @@ pub(crate) fn selection_input(
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<GameMode>>,
     build: Res<BuildState>,
-    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    mut ui: SelectionInputUi,
     world_drag: Res<crate::world_drag::WorldDragState>,
     mut motion_ui: ResMut<crate::motion_ui::MotionAlgorithmUiState>,
     ui_buttons: Query<&Interaction, With<Button>>,
@@ -239,7 +247,7 @@ pub(crate) fn selection_input(
         return;
     }
 
-    if model_library.is_drag_active() {
+    if ui.model_library.is_drag_active() {
         selection.drag_start = None;
         selection.drag_end = None;
         return;
@@ -251,7 +259,7 @@ pub(crate) fn selection_input(
         return;
     }
 
-    if model_library.is_preview_open() {
+    if ui.model_library.is_preview_open() {
         if let Ok(window) = windows.single() {
             if let Some(cursor) = window.physical_cursor_position() {
                 if crate::model_library_ui::model_library_preview_overlay_contains_cursor(
@@ -334,12 +342,31 @@ pub(crate) fn selection_input(
             if picked.is_unit {
                 selection.selected.clear();
                 selection.selected.insert(picked.entity);
-                let now = time.elapsed_secs();
-                if motion_ui.record_click_and_check_double(picked.entity, now) {
-                    motion_ui.open_for(picked.entity);
-                }
             } else {
                 selection.selected.insert(picked.entity);
+            }
+
+            let now = time.elapsed_secs();
+            if motion_ui.record_click_and_check_double(picked.entity, now) {
+                if picked.is_unit {
+                    motion_ui.open_for(picked.entity);
+                }
+                let prefab_id = if picked.is_unit {
+                    commandables
+                        .get(picked.entity)
+                        .ok()
+                        .map(|(_entity, _transform, _collider, prefab_id, _player)| prefab_id.0)
+                } else {
+                    build_objects
+                        .get(picked.entity)
+                        .ok()
+                        .map(|(_entity, _transform, _collider, prefab_id)| prefab_id.0)
+                };
+                if let Some(prefab_id) = prefab_id {
+                    ui.top_panel.selected = Some(crate::workspace_ui::TopPanelTab::Models);
+                    ui.next_mode.set(GameMode::Build);
+                    ui.model_library.request_preview(prefab_id);
+                }
             }
         } else {
             selection.selected.clear();

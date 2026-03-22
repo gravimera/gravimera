@@ -172,6 +172,10 @@ impl ModelLibraryUiState {
         }
     }
 
+    pub(crate) fn request_preview(&mut self, prefab_id: u128) {
+        self.pending_preview = Some(prefab_id);
+    }
+
     pub(crate) fn is_drag_active(&self) -> bool {
         self.drag.is_some()
     }
@@ -457,7 +461,6 @@ pub(crate) fn model_library_update_visibility(
     if !visible {
         state.drag = None;
         state.search_focused = false;
-        state.pending_preview = None;
         state.scrollbar_drag = None;
         state.preview_scrollbar_drag = None;
         close_model_library_preview(&mut commands, &mut state);
@@ -1180,8 +1183,11 @@ pub(crate) fn model_library_open_preview_panel(
     descriptors: Res<PrefabDescriptorLibrary>,
     mut state: ResMut<ModelLibraryUiState>,
 ) {
-    if !state.is_open() || !matches!(env.build_scene.get(), crate::types::BuildScene::Realm) {
+    if !matches!(env.build_scene.get(), crate::types::BuildScene::Realm) {
         state.pending_preview = None;
+        return;
+    }
+    if !state.is_open() {
         return;
     }
 
