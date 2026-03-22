@@ -5,7 +5,7 @@ use bevy::window::{Ime, PrimaryWindow};
 
 use crate::assets::SceneAssets;
 use crate::rich_text::set_rich_text_line;
-use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
+use crate::types::{BuildScene, EmojiAtlas, UiFonts};
 
 use super::ai::Gen3dAiJob;
 use super::preview;
@@ -147,62 +147,6 @@ mod tests {
     }
 }
 
-pub(crate) fn handle_gen3d_toggle_button(
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<Gen3dToggleButton>),
-    >,
-    mode: Res<State<GameMode>>,
-    build_scene: Res<State<BuildScene>>,
-    mut next_build_scene: ResMut<NextState<BuildScene>>,
-) {
-    if !matches!(mode.get(), GameMode::Build) {
-        return;
-    }
-    for (interaction, mut bg) in &mut buttons {
-        match *interaction {
-            Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.75));
-            }
-            Interaction::Pressed => {
-                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.85));
-                match build_scene.get() {
-                    BuildScene::Preview => next_build_scene.set(BuildScene::Realm),
-                    BuildScene::Realm => next_build_scene.set(BuildScene::Preview),
-                }
-            }
-        }
-    }
-}
-
-pub(crate) fn update_gen3d_toggle_button_label(
-    mode: Res<State<GameMode>>,
-    build_scene: Res<State<BuildScene>>,
-    mut buttons: Query<&mut Visibility, With<Gen3dToggleButton>>,
-    mut texts: Query<&mut Text, With<Gen3dToggleButtonText>>,
-) {
-    let visible = matches!(mode.get(), GameMode::Build);
-    for mut visibility in &mut buttons {
-        *visibility = if visible {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-
-    let label = match (mode.get(), build_scene.get()) {
-        (GameMode::Build, BuildScene::Preview) => "Realm",
-        (GameMode::Build, BuildScene::Realm) => "Preview",
-        _ => "Preview",
-    };
-    for mut text in &mut texts {
-        **text = label.into();
-    }
-}
-
 pub(crate) fn enter_gen3d_mode(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -289,7 +233,7 @@ pub(crate) fn enter_gen3d_mode(
                 Node {
                     position_type: PositionType::Absolute,
                     top: Val::Px(12.0),
-                    left: Val::Px(12.0),
+                    right: Val::Px(12.0),
                     width: Val::Px(92.0),
                     height: Val::Px(34.0),
                     justify_content: JustifyContent::Center,
@@ -306,17 +250,16 @@ pub(crate) fn enter_gen3d_mode(
                     offset: Val::Px(0.0),
                 },
                 ZIndex(910),
-                Gen3dToggleButton,
+                Gen3dExitButton,
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new("Realm"),
+                    Text::new("Exit"),
                     TextFont {
                         font_size: 16.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                    Gen3dToggleButtonText,
                 ));
             });
 
@@ -349,15 +292,6 @@ pub(crate) fn enter_gen3d_mode(
                     BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
                 ))
                 .with_children(|panel| {
-                    panel.spawn((
-                        Text::new("Preview"),
-                        TextFont {
-                            font_size: 18.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.95, 0.85, 0.25)),
-                    ));
-
                     spawn_gen3d_preview_panel(
                         panel,
                         Node {
@@ -375,7 +309,7 @@ pub(crate) fn enter_gen3d_mode(
                                 .spawn((
                                     Node {
                                         position_type: PositionType::Absolute,
-                                        left: Val::Px(8.0),
+                                        right: Val::Px(8.0),
                                         top: Val::Px(8.0),
                                         flex_direction: FlexDirection::Column,
                                         row_gap: Val::Px(6.0),
@@ -493,47 +427,6 @@ pub(crate) fn enter_gen3d_mode(
                         },
                     );
 
-                    panel
-                        .spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                flex_direction: FlexDirection::Row,
-                                justify_content: JustifyContent::SpaceBetween,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::NONE),
-                            Visibility::Inherited,
-                        ))
-                        .with_children(|row| {
-                            row.spawn((
-                                Button,
-                                Node {
-                                    width: Val::Px(130.0),
-                                    height: Val::Px(28.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
-                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                                Visibility::Inherited,
-                                Gen3dCollisionToggleButton,
-                            ))
-                            .with_children(|button| {
-                                button.spawn((
-                                    Text::new("Collision: Off"),
-                                    TextFont {
-                                        font_size: 14.0,
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                    Visibility::Inherited,
-                                    Gen3dCollisionToggleText,
-                                ));
-                            });
-                        });
                 });
             });
 
@@ -542,7 +435,7 @@ pub(crate) fn enter_gen3d_mode(
                 Button,
                 Node {
                     position_type: PositionType::Absolute,
-                    right: Val::Px(12.0),
+                    left: Val::Px(12.0),
                     top: Val::Px(12.0),
                     width: Val::Px(28.0),
                     height: Val::Px(28.0),
@@ -572,7 +465,7 @@ pub(crate) fn enter_gen3d_mode(
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    right: Val::Px(12.0),
+                    left: Val::Px(12.0),
                     top: Val::Px(48.0),
                     bottom: Val::Px(12.0),
                     width: Val::Px(520.0),
@@ -1346,6 +1239,51 @@ pub(crate) fn gen3d_prompt_box_focus(
     }
 }
 
+pub(crate) fn gen3d_exit_button(
+    build_scene: Res<State<BuildScene>>,
+    mut next_build_scene: ResMut<NextState<BuildScene>>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Gen3dExitButton>),
+    >,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+    for (interaction, mut bg) in &mut buttons {
+        match *interaction {
+            Interaction::Pressed => {
+                next_build_scene.set(BuildScene::Realm);
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.85));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.75));
+            }
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
+            }
+        }
+    }
+}
+
+pub(crate) fn gen3d_exit_on_escape(
+    build_scene: Res<State<BuildScene>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    workshop: Res<Gen3dWorkshop>,
+    mut next_build_scene: ResMut<NextState<BuildScene>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+    if !keys.just_pressed(KeyCode::Escape) {
+        return;
+    }
+    if workshop.image_viewer.is_some() {
+        return;
+    }
+    next_build_scene.set(BuildScene::Realm);
+}
+
 pub(crate) fn gen3d_side_panel_toggle_button(
     build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
@@ -1810,34 +1748,6 @@ fn push_prompt_text(workshop: &mut Gen3dWorkshop, text: &str) {
     }
 }
 
-pub(crate) fn gen3d_collision_toggle_button(
-    build_scene: Res<State<BuildScene>>,
-    mut preview_state: ResMut<Gen3dPreview>,
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<Gen3dCollisionToggleButton>),
-    >,
-) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return;
-    }
-    for (interaction, mut bg) in &mut buttons {
-        match *interaction {
-            Interaction::Pressed => {
-                preview_state.show_collision = !preview_state.show_collision;
-                preview_state.collision_dirty = true;
-                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.78));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70));
-            }
-            Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65));
-            }
-        }
-    }
-}
-
 pub(crate) fn gen3d_preview_animation_dropdown_button(
     build_scene: Res<State<BuildScene>>,
     mut preview_state: ResMut<Gen3dPreview>,
@@ -2278,7 +2188,6 @@ pub(crate) struct Gen3dUpdateUiTextDeps<'w, 's> {
             Query<'w, 's, &'static mut Text, With<Gen3dStatusText>>,
             Query<'w, 's, &'static mut Text, With<Gen3dStatusLogsText>>,
             Query<'w, 's, &'static mut Text, With<Gen3dGenerateButtonText>>,
-            Query<'w, 's, &'static mut Text, With<Gen3dCollisionToggleText>>,
             Query<'w, 's, &'static mut Text, With<Gen3dPreviewStatsText>>,
         ),
     >,
@@ -2539,18 +2448,6 @@ Step: {step_status}",
         }
     }
 
-    let collision_label = if preview_state.show_collision {
-        "Collision: On"
-    } else {
-        "Collision: Off"
-    };
-    {
-        let mut collision = texts.p3();
-        for mut text in &mut collision {
-            **text = collision_label.into();
-        }
-    }
-
     let run_time = job
         .run_elapsed()
         .map(|d| {
@@ -2568,7 +2465,7 @@ Step: {step_status}",
         "Run time: {run_time}\nTokens (run): {run_tokens}\nTokens (total): {total_tokens}",
     );
     {
-        let mut stats = texts.p4();
+        let mut stats = texts.p3();
         for mut text in &mut stats {
             **text = stats_text.clone();
         }

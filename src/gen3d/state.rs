@@ -112,10 +112,7 @@ impl Gen3dSpeedMode {
 }
 
 #[derive(Component)]
-pub(crate) struct Gen3dToggleButton;
-
-#[derive(Component)]
-pub(crate) struct Gen3dToggleButtonText;
+pub(crate) struct Gen3dExitButton;
 
 #[derive(Resource, Default)]
 pub(crate) struct Gen3dWorkshop {
@@ -389,12 +386,6 @@ pub(crate) struct Gen3dPreviewPanelImage;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewStatsText;
-
-#[derive(Component)]
-pub(crate) struct Gen3dCollisionToggleButton;
-
-#[derive(Component)]
-pub(crate) struct Gen3dCollisionToggleText;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewAnimationDropdownButton;

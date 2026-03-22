@@ -375,18 +375,6 @@ impl Plugin for RenderedUiPlugin {
                 .run_if(in_state(BuildScene::Realm))
                 .run_if(crate::automation::local_input_enabled),
         );
-        app.add_systems(
-            Update,
-            (
-                crate::gen3d::handle_gen3d_toggle_button
-                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::gen3d::update_gen3d_toggle_button_label
-                    .after(crate::gen3d::handle_gen3d_toggle_button),
-            )
-                .run_if(console::console_closed)
-                .run_if(crate::scene_authoring_ui::scene_ui_closed)
-                .run_if(crate::automation::local_input_enabled),
-        );
     }
 }
 
@@ -412,15 +400,16 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_prompt_box_focus
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_exit_button.run_if(crate::automation::local_input_enabled),
+                crate::gen3d::gen3d_exit_on_escape
+                    .run_if(crate::automation::local_input_enabled)
+                    .before(crate::gen3d::gen3d_image_viewer_keyboard_navigation),
                 crate::gen3d::gen3d_side_panel_toggle_button
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_side_tab_buttons.run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_animation_dropdown_button
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_animation_option_buttons
-                    .run_if(crate::automation::local_input_enabled),
-                crate::gen3d::gen3d_collision_toggle_button
-                    .after(crate::gen3d::gen3d_prompt_box_focus)
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_generate_button
                     .after(crate::gen3d::gen3d_prompt_box_focus)
@@ -460,8 +449,7 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_apply_draft_to_preview)
                     .before(crate::object::visuals::update_part_animations),
                 crate::gen3d::gen3d_update_collision_overlay
-                    .after(crate::gen3d::gen3d_apply_draft_to_preview)
-                    .after(crate::gen3d::gen3d_collision_toggle_button),
+                    .after(crate::gen3d::gen3d_apply_draft_to_preview),
             )
                 .run_if(in_state(BuildScene::Preview)),
         );
@@ -478,8 +466,7 @@ impl Plugin for RenderedGen3dPlugin {
         app.add_systems(
             Update,
             crate::gen3d::gen3d_apply_draft_to_preview
-                .after(crate::gen3d::gen3d_poll_ai_job)
-                .after(crate::gen3d::gen3d_collision_toggle_button),
+                .after(crate::gen3d::gen3d_poll_ai_job),
         );
         app.add_systems(
             Update,
@@ -543,7 +530,6 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_clear_images_button)
                     .after(crate::gen3d::gen3d_preview_animation_dropdown_button)
                     .after(crate::gen3d::gen3d_preview_animation_option_buttons)
-                    .after(crate::gen3d::gen3d_collision_toggle_button)
                     .after(crate::gen3d::gen3d_poll_ai_job),
                 crate::gen3d::gen3d_rebuild_preview_animation_dropdown_options_ui
                     .after(crate::gen3d::gen3d_apply_draft_to_preview),
