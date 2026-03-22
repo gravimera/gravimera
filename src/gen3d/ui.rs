@@ -2314,7 +2314,11 @@ pub(crate) fn gen3d_update_ui_text(
     }
 
     let prompt_text = if workshop.prompt.trim().is_empty() {
-        "Drop images (optional) and add style/notes… (default: Voxel/Pixel Art)".to_string()
+        if job.edit_base_prefab_id().is_some() {
+            "Want to improve it? Tell me!".to_string()
+        } else {
+            "Anything you want to create? Tell me!".to_string()
+        }
     } else {
         workshop.prompt.clone()
     };
