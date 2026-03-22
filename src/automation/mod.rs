@@ -1316,11 +1316,6 @@ fn handle_gen3d_routes<
     let material_cache = ctx.gen3d.material_cache.as_deref_mut();
     let mesh_cache = ctx.gen3d.mesh_cache.as_deref_mut();
     let prefab_thumbnail_capture = ctx.gen3d.prefab_thumbnail_capture.as_deref_mut();
-    let scene_saves = &mut ctx.gen3d.scene_saves;
-
-    let player_q = &ctx.world.player_q;
-    let world_objects = &ctx.world.world_objects;
-    let children_q = &ctx.world.children_q;
     let mode = ctx.mode;
     let build_scene = ctx.build_scene;
 
@@ -2140,18 +2135,7 @@ fn handle_gen3d_routes<
                 ));
             };
 
-            let Ok((player_transform, player_collider)) = player_q.single() else {
-                return Some(json_error(500, "Cannot save: missing hero entity."));
-            };
-
             let saved = match crate::gen3d::gen3d_save_current_draft_seed_aware_from_api(
-                commands,
-                asset_server,
-                assets,
-                meshes,
-                materials,
-                material_cache,
-                mesh_cache,
                 active_realm_id,
                 active_scene_id,
                 library,
@@ -2160,11 +2144,6 @@ fn handle_gen3d_routes<
                 job,
                 draft,
                 false,
-                player_transform,
-                player_collider,
-                world_objects,
-                children_q,
-                scene_saves,
             ) {
                 Ok(saved) => saved,
                 Err(err) => return Some(json_error(400, err)),
@@ -2198,10 +2177,8 @@ fn handle_gen3d_routes<
 
             let body = serde_json::json!({
                 "ok": true,
-                "instance_id_uuid": uuid::Uuid::from_u128(saved.instance_id.0).to_string(),
                 "prefab_id_uuid": uuid::Uuid::from_u128(saved.prefab_id).to_string(),
                 "mobility": saved.mobility,
-                "pos": [saved.position.x, saved.position.y, saved.position.z],
             })
             .to_string();
             Some(AutomationReply {
@@ -2781,7 +2758,9 @@ fn handle_ui_routes<
             }
 
             if text.is_empty() {
-                ctx.commands.entity(target).remove::<ObjectStatusBarContent>();
+                ctx.commands
+                    .entity(target)
+                    .remove::<ObjectStatusBarContent>();
             } else {
                 ctx.commands
                     .entity(target)

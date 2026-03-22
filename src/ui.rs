@@ -502,7 +502,10 @@ pub(crate) fn apply_object_status_bar_ui(
     mut removed: RemovedComponents<ObjectStatusBarContent>,
     changed_objects: Query<
         (Entity, &ObjectStatusBarContent),
-        Or<(Added<ObjectStatusBarContent>, Changed<ObjectStatusBarContent>)>,
+        Or<(
+            Added<ObjectStatusBarContent>,
+            Changed<ObjectStatusBarContent>,
+        )>,
     >,
     mut existing_bars: Query<(Entity, &mut ObjectStatusBarUi, &Children, &mut Visibility)>,
     bar_texts: Query<Entity, With<ObjectStatusBarUiText>>,

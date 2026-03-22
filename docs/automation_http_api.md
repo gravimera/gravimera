@@ -1065,7 +1065,7 @@ Seed a Gen3D edit session from a **Gen3D-saved** prefab id.
 
 Save semantics:
 
-- `POST /v1/gen3d/save` overwrites the same `prefab_id_uuid` (all instances referencing it update).
+- `POST /v1/gen3d/save` overwrites the same `prefab_id_uuid` (future spawns use the updated prefab; respawn to see changes).
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/gen3d/edit_from_prefab \
@@ -1161,10 +1161,15 @@ Notes:
 
 ### `POST /v1/gen3d/save`
 
-Save the current draft into the world:
+Save the current draft to prefabs:
 
-- saves prefab defs (and an optional descriptor) into the active realm’s prefab store under `<root_dir>/realm/<realm_id>/prefabs/<prefab_uuid>/prefabs/` (and for Gen3D-saved prefabs also persists `gen3d_source_v1/` + `gen3d_edit_bundle_v1.json`; best-effort writes `thumbnail.png` at `<root_dir>/realm/<realm_id>/prefabs/<prefab_uuid>/thumbnail.png`), and
-- spawns an instance near the hero and persists to the Object Preview workspace (`scene.dat` under `<root_dir>/realm/.../build/scene.dat`).
+- saves prefab defs (and an optional descriptor) into the active realm’s prefab store under `<root_dir>/realm/<realm_id>/prefabs/<prefab_uuid>/prefabs/`.
+- for Gen3D-saved prefabs, persists `gen3d_source_v1/` + `gen3d_edit_bundle_v1.json` (provenance).
+- best-effort writes `thumbnail.png` at `<root_dir>/realm/<realm_id>/prefabs/<prefab_uuid>/thumbnail.png`.
+
+Notes:
+
+- Does **not** spawn an instance into the world. Use the Prefabs UI or `POST /v1/spawn` to spawn.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/gen3d/save \
@@ -1177,10 +1182,8 @@ Response (shape):
 ```json
 {
   "ok": true,
-  "instance_id_uuid": "52904bf2-0855-4796-bac9-fdd3d39ac3a0",
   "prefab_id_uuid": "41d2d0fb-24ff-498f-ad05-c0884aa620ba",
-  "mobility": true,
-  "pos": [2.35, 1.02, 0.70]
+  "mobility": true
 }
 ```
 
