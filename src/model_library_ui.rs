@@ -1050,35 +1050,68 @@ pub(crate) fn model_library_rebuild_list_ui(
                     thumb.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            right: Val::Px(4.0),
-                            top: Val::Px(4.0),
-                            width: Val::Px(10.0),
-                            height: Val::Px(10.0),
+                            right: Val::Px(3.0),
+                            top: Val::Px(3.0),
+                            width: Val::Px(14.0),
+                            height: Val::Px(14.0),
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(999.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.75)),
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                        BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                        UiTransform::default(),
                         Visibility::Hidden,
                         ModelLibraryGen3dThumbnailIndicator {
                             prefab_id: row.prefab_id,
                             kind: ModelLibraryGen3dIndicatorKind::Working,
                         },
-                    ));
+                    ))
+                    .with_children(|spinner| {
+                        spinner.spawn((
+                            Text::new("↻"),
+                            TextFont {
+                                font_size: 12.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                        ));
+                    });
+
                     thumb.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            right: Val::Px(4.0),
-                            top: Val::Px(4.0),
-                            width: Val::Px(10.0),
-                            height: Val::Px(10.0),
+                            right: Val::Px(3.0),
+                            top: Val::Px(3.0),
+                            width: Val::Px(14.0),
+                            height: Val::Px(14.0),
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(999.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.95, 0.85, 0.25, 0.65)),
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+                        BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.70)),
+                        UiTransform::default(),
                         Visibility::Hidden,
                         ModelLibraryGen3dThumbnailIndicator {
                             prefab_id: row.prefab_id,
                             kind: ModelLibraryGen3dIndicatorKind::Waiting,
                         },
-                    ));
+                    ))
+                    .with_children(|spinner| {
+                        spinner.spawn((
+                            Text::new("↻"),
+                            TextFont {
+                                font_size: 12.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgba(0.95, 0.85, 0.25, 0.70)),
+                        ));
+                    });
                 });
 
                 b.spawn((
@@ -1236,35 +1269,68 @@ pub(crate) fn model_library_sync_gen3d_placeholders(
                     thumb.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            right: Val::Px(4.0),
-                            top: Val::Px(4.0),
-                            width: Val::Px(10.0),
-                            height: Val::Px(10.0),
+                            right: Val::Px(3.0),
+                            top: Val::Px(3.0),
+                            width: Val::Px(14.0),
+                            height: Val::Px(14.0),
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(999.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.75)),
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                        BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                        UiTransform::default(),
                         Visibility::Hidden,
                         ModelLibraryGen3dPlaceholderIndicator {
                             session_id,
                             kind: ModelLibraryGen3dIndicatorKind::Working,
                         },
-                    ));
+                    ))
+                    .with_children(|spinner| {
+                        spinner.spawn((
+                            Text::new("↻"),
+                            TextFont {
+                                font_size: 12.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                        ));
+                    });
+
                     thumb.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            right: Val::Px(4.0),
-                            top: Val::Px(4.0),
-                            width: Val::Px(10.0),
-                            height: Val::Px(10.0),
+                            right: Val::Px(3.0),
+                            top: Val::Px(3.0),
+                            width: Val::Px(14.0),
+                            height: Val::Px(14.0),
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(999.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.95, 0.85, 0.25, 0.65)),
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+                        BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.70)),
+                        UiTransform::default(),
                         Visibility::Hidden,
                         ModelLibraryGen3dPlaceholderIndicator {
                             session_id,
                             kind: ModelLibraryGen3dIndicatorKind::Waiting,
                         },
-                    ));
+                    ))
+                    .with_children(|spinner| {
+                        spinner.spawn((
+                            Text::new("↻"),
+                            TextFont {
+                                font_size: 12.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgba(0.30, 0.97, 0.45, 0.70)),
+                        ));
+                    });
                 });
 
                 b.spawn((
@@ -1333,14 +1399,14 @@ pub(crate) fn model_library_update_gen3d_thumbnail_indicators(
     task_queue: Res<crate::gen3d::Gen3dTaskQueue>,
     mut indicators: Query<(
         &ModelLibraryGen3dThumbnailIndicator,
-        &mut BackgroundColor,
         &mut Visibility,
+        &mut UiTransform,
     )>,
 ) {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum PrefabState {
-        Working,
         Waiting,
+        Working,
     }
 
     let mut prefab_states: HashMap<u128, PrefabState> = HashMap::new();
@@ -1353,12 +1419,11 @@ pub(crate) fn model_library_update_gen3d_thumbnail_indicators(
 
         let state = match meta.task_state {
             crate::gen3d::Gen3dTaskState::Waiting => PrefabState::Waiting,
-            crate::gen3d::Gen3dTaskState::Running | crate::gen3d::Gen3dTaskState::Idle => {
-                PrefabState::Working
-            }
+            crate::gen3d::Gen3dTaskState::Running => PrefabState::Working,
             crate::gen3d::Gen3dTaskState::Done
             | crate::gen3d::Gen3dTaskState::Failed
             | crate::gen3d::Gen3dTaskState::Canceled => continue,
+            crate::gen3d::Gen3dTaskState::Idle => continue,
         };
 
         prefab_states
@@ -1372,7 +1437,7 @@ pub(crate) fn model_library_update_gen3d_thumbnail_indicators(
     }
 
     let t = time.elapsed_secs();
-    for (indicator, mut bg, mut vis) in &mut indicators {
+    for (indicator, mut vis, mut ui_transform) in &mut indicators {
         let state = prefab_states.get(&indicator.prefab_id).copied();
         let show = match (state, indicator.kind) {
             (Some(PrefabState::Working), ModelLibraryGen3dIndicatorKind::Working) => true,
@@ -1388,19 +1453,12 @@ pub(crate) fn model_library_update_gen3d_thumbnail_indicators(
             continue;
         }
 
-        let offset = (indicator.prefab_id as u64 % 97) as f32 * 0.08;
-        match indicator.kind {
-            ModelLibraryGen3dIndicatorKind::Working => {
-                let pulse = (t * 6.0 + offset).sin() * 0.5 + 0.5;
-                let alpha = 0.35 + 0.55 * pulse;
-                *bg = BackgroundColor(Color::srgba(0.25, 0.95, 0.85, alpha));
-            }
-            ModelLibraryGen3dIndicatorKind::Waiting => {
-                let pulse = (t * 3.0 + offset).sin() * 0.5 + 0.5;
-                let alpha = 0.25 + 0.40 * pulse;
-                *bg = BackgroundColor(Color::srgba(0.95, 0.85, 0.25, alpha));
-            }
-        }
+        let offset = ((indicator.prefab_id % 97) as f32) * 0.23;
+        let speed = match indicator.kind {
+            ModelLibraryGen3dIndicatorKind::Working => 7.0,
+            ModelLibraryGen3dIndicatorKind::Waiting => 3.0,
+        };
+        ui_transform.rotation = Rot2::radians(t * speed + offset);
     }
 }
 
@@ -1409,12 +1467,12 @@ pub(crate) fn model_library_update_gen3d_placeholder_indicators(
     task_queue: Res<crate::gen3d::Gen3dTaskQueue>,
     mut indicators: Query<(
         &ModelLibraryGen3dPlaceholderIndicator,
-        &mut BackgroundColor,
         &mut Visibility,
+        &mut UiTransform,
     )>,
 ) {
     let t = time.elapsed_secs();
-    for (indicator, mut bg, mut vis) in &mut indicators {
+    for (indicator, mut vis, mut ui_transform) in &mut indicators {
         let state = task_queue
             .metas
             .get(&indicator.session_id)
@@ -1437,19 +1495,12 @@ pub(crate) fn model_library_update_gen3d_placeholder_indicators(
             continue;
         }
 
-        let offset = (indicator.session_id.as_u128() as u64 % 97) as f32 * 0.08;
-        match indicator.kind {
-            ModelLibraryGen3dIndicatorKind::Working => {
-                let pulse = (t * 6.0 + offset).sin() * 0.5 + 0.5;
-                let alpha = 0.35 + 0.55 * pulse;
-                *bg = BackgroundColor(Color::srgba(0.25, 0.95, 0.85, alpha));
-            }
-            ModelLibraryGen3dIndicatorKind::Waiting => {
-                let pulse = (t * 3.0 + offset).sin() * 0.5 + 0.5;
-                let alpha = 0.25 + 0.40 * pulse;
-                *bg = BackgroundColor(Color::srgba(0.95, 0.85, 0.25, alpha));
-            }
-        }
+        let offset = ((indicator.session_id.as_u128() % 97) as f32) * 0.23;
+        let speed = match indicator.kind {
+            ModelLibraryGen3dIndicatorKind::Working => 7.0,
+            ModelLibraryGen3dIndicatorKind::Waiting => 3.0,
+        };
+        ui_transform.rotation = Rot2::radians(t * speed + offset);
     }
 }
 
@@ -3118,8 +3169,7 @@ pub(crate) fn model_library_drag_update(
                     .is_some_and(|meta| {
                         matches!(
                             meta.task_state,
-                            crate::gen3d::Gen3dTaskState::Idle
-                                | crate::gen3d::Gen3dTaskState::Waiting
+                            crate::gen3d::Gen3dTaskState::Waiting
                                 | crate::gen3d::Gen3dTaskState::Running
                         )
                     });
