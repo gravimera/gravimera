@@ -983,7 +983,95 @@ Limitations:
 
 ## Gen3D endpoints
 
-Gen3D build/save require rendered mode and the Build Preview scene (`mode=build`, `build_scene=preview`).
+Gen3D requires rendered mode (no `--headless`).
+
+There are two ways to drive Gen3D via the API:
+
+- **Workshop endpoints** (`/v1/gen3d/status`, `/v1/gen3d/build`, `/v1/gen3d/save`, …) operate on the active Gen3D workshop session and require the Build Preview scene (`mode=build`, `build_scene=preview`).
+- **Task queue endpoints** (`/v1/gen3d/tasks*`) enqueue background Gen3D work without switching scenes; tasks run FIFO and only one task runs at a time.
+
+### `GET /v1/gen3d/tasks`
+
+List all non-idle Gen3D tasks (waiting/running/done/failed/canceled).
+
+```bash
+curl -s http://127.0.0.1:8791/v1/gen3d/tasks
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "tasks": [
+    {
+      "task_id": "f6fb3f8a-0d66-4c0f-8bf8-66db7f8bda41",
+      "kind": "build",
+      "prefab_id_uuid": null,
+      "state": "waiting",
+      "run_id": null,
+      "status": "",
+      "error": null,
+      "result_prefab_id_uuid": null
+    }
+  ]
+}
+```
+
+### `POST /v1/gen3d/tasks/enqueue`
+
+Enqueue a Gen3D task that will run in the background (no Build Preview scene switch required).
+
+Request:
+
+- `kind`: `build` | `edit_from_prefab` | `fork_from_prefab`
+- `prompt`:
+  - required for `kind=build`
+  - optional for seeded kinds; when present, overrides the session prompt used by `Resume`
+- `prefab_id_uuid`: required for `kind=edit_from_prefab|fork_from_prefab`
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen3d/tasks/enqueue \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"build","prompt":"A warcar with a cannon as weapon"}'
+```
+
+Response:
+
+```json
+{"ok":true,"task_id":"f6fb3f8a-0d66-4c0f-8bf8-66db7f8bda41"}
+```
+
+Notes:
+
+- Tasks are serialized: only one task runs at a time; additional tasks wait (FIFO).
+- Step frames (via `/v1/step`) while polling `/v1/gen3d/tasks` to drive progress.
+
+### `GET /v1/gen3d/tasks/{task_id}`
+
+Fetch one task.
+
+```bash
+curl -s http://127.0.0.1:8791/v1/gen3d/tasks/f6fb3f8a-0d66-4c0f-8bf8-66db7f8bda41
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "task": {
+    "task_id": "f6fb3f8a-0d66-4c0f-8bf8-66db7f8bda41",
+    "kind": "build",
+    "prefab_id_uuid": null,
+    "state": "running",
+    "run_id": "1e973ac3-ce48-4319-9582-cabf9c929598",
+    "status": "Planning components…",
+    "error": null,
+    "result_prefab_id_uuid": null
+  }
+}
+```
 
 ### `GET /v1/gen3d/status`
 

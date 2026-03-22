@@ -49,6 +49,7 @@ fn build_test_app(
     app.insert_resource(job);
     app.insert_resource(draft);
     app.insert_resource(preview);
+    app.init_resource::<crate::gen3d::Gen3dTaskQueue>();
 
     app.add_systems(Update, super::gen3d_poll_ai_job);
     app

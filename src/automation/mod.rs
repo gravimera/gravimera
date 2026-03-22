@@ -453,6 +453,7 @@ struct AutomationGen3d<'w> {
     workshop: Option<ResMut<'w, crate::gen3d::Gen3dWorkshop>>,
     job: Option<ResMut<'w, crate::gen3d::Gen3dAiJob>>,
     draft: Option<ResMut<'w, crate::gen3d::Gen3dDraft>>,
+    task_queue: Option<ResMut<'w, crate::gen3d::Gen3dTaskQueue>>,
     pending_seed: Option<ResMut<'w, crate::gen3d::Gen3dPendingSeedFromPrefab>>,
     asset_server: Option<Res<'w, AssetServer>>,
     assets: Option<Res<'w, SceneAssets>>,
@@ -793,6 +794,15 @@ struct Gen3dPromptRequest {
 #[derive(Deserialize)]
 struct Gen3dSeedFromPrefabRequest {
     prefab_id_uuid: String,
+}
+
+#[derive(Deserialize)]
+struct Gen3dTaskEnqueueRequest {
+    kind: String,
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    prefab_id_uuid: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1308,6 +1318,7 @@ fn handle_gen3d_routes<
     let mut gen3d_workshop = ctx.gen3d.workshop.as_deref_mut();
     let mut gen3d_job = ctx.gen3d.job.as_deref_mut();
     let mut gen3d_draft = ctx.gen3d.draft.as_deref_mut();
+    let mut gen3d_task_queue = ctx.gen3d.task_queue.as_deref_mut();
     let asset_server = ctx.gen3d.asset_server.as_deref();
     let assets = ctx.gen3d.assets.as_deref();
     let images = ctx.gen3d.images.as_deref_mut();
@@ -1346,6 +1357,279 @@ fn handle_gen3d_routes<
                 "status": workshop.status.clone(),
                 "error": workshop.error.clone(),
                 "run_dir": job.run_dir_path().map(|p| p.display().to_string()),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/gen3d/tasks") => {
+            let Some(queue) = gen3d_task_queue.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(active_workshop) = gen3d_workshop.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(active_job) = gen3d_job.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            fn state_label(state: crate::gen3d::Gen3dTaskState) -> &'static str {
+                match state {
+                    crate::gen3d::Gen3dTaskState::Idle => "idle",
+                    crate::gen3d::Gen3dTaskState::Waiting => "waiting",
+                    crate::gen3d::Gen3dTaskState::Running => "running",
+                    crate::gen3d::Gen3dTaskState::Done => "done",
+                    crate::gen3d::Gen3dTaskState::Failed => "failed",
+                    crate::gen3d::Gen3dTaskState::Canceled => "canceled",
+                }
+            }
+
+            let mut tasks: Vec<(u128, serde_json::Value)> = Vec::new();
+            for meta in queue.metas.values() {
+                if meta.task_state == crate::gen3d::Gen3dTaskState::Idle {
+                    continue;
+                }
+
+                let (workshop, job) = if meta.id == queue.active_session_id {
+                    (active_workshop, active_job)
+                } else {
+                    let Some(state) = queue.inactive_states.get(&meta.id) else {
+                        continue;
+                    };
+                    (&state.workshop, &state.job)
+                };
+
+                let kind = match meta.kind {
+                    crate::gen3d::Gen3dSessionKind::NewBuild => "build",
+                    crate::gen3d::Gen3dSessionKind::EditOverwrite { .. } => "edit_from_prefab",
+                    crate::gen3d::Gen3dSessionKind::Fork { .. } => "fork_from_prefab",
+                };
+                let prefab_id_uuid = match meta.kind {
+                    crate::gen3d::Gen3dSessionKind::EditOverwrite { prefab_id }
+                    | crate::gen3d::Gen3dSessionKind::Fork { prefab_id } => {
+                        Some(uuid::Uuid::from_u128(prefab_id).to_string())
+                    }
+                    crate::gen3d::Gen3dSessionKind::NewBuild => None,
+                };
+                let result_prefab_id_uuid = job
+                    .last_saved_prefab_id()
+                    .map(|id| uuid::Uuid::from_u128(id).to_string());
+
+                let task = serde_json::json!({
+                    "task_id": meta.id.to_string(),
+                    "kind": kind,
+                    "prefab_id_uuid": prefab_id_uuid,
+                    "state": state_label(meta.task_state),
+                    "run_id": job.run_id().map(|id| id.to_string()),
+                    "status": workshop.status.clone(),
+                    "error": workshop.error.clone(),
+                    "result_prefab_id_uuid": result_prefab_id_uuid,
+                });
+                tasks.push((meta.created_at_ms, task));
+            }
+
+            tasks.sort_by(|a, b| a.0.cmp(&b.0));
+            let tasks: Vec<serde_json::Value> = tasks.into_iter().map(|(_, v)| v).collect();
+
+            let body = serde_json::json!({
+                "ok": true,
+                "tasks": tasks,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/tasks/enqueue") => {
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(501, "Gen3D tasks require rendered mode."));
+            };
+            let Some(queue) = gen3d_task_queue.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let req: Gen3dTaskEnqueueRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let kind = req.kind.trim().to_lowercase();
+            let prompt = req.prompt.unwrap_or_default();
+            let prompt = prompt.trim().to_string();
+
+            let task_id = match kind.as_str() {
+                "build" => {
+                    if prompt.is_empty() {
+                        return Some(json_error(400, "Missing prompt (kind=build)."));
+                    }
+                    if let Err(err) = crate::gen3d::validate_gen3d_user_prompt_limits(&prompt) {
+                        return Some(json_error(400, err));
+                    }
+
+                    let mut state = crate::gen3d::Gen3dSessionState::default();
+                    state.workshop.prompt = prompt;
+                    let task_id = queue.create_session(crate::gen3d::Gen3dSessionKind::NewBuild, state);
+                    queue.queue.push_back(task_id);
+                    queue.set_task_state(task_id, crate::gen3d::Gen3dTaskState::Waiting);
+                    task_id
+                }
+                "edit_from_prefab" | "fork_from_prefab" => {
+                    let Some(prefab_id_uuid) = req.prefab_id_uuid.as_deref() else {
+                        return Some(json_error(400, "Missing prefab_id_uuid."));
+                    };
+                    let uuid = match uuid::Uuid::parse_str(prefab_id_uuid.trim()) {
+                        Ok(v) => v,
+                        Err(err) => return Some(json_error(400, format!("Invalid prefab_id_uuid: {err}"))),
+                    };
+
+                    if !prompt.is_empty() {
+                        if let Err(err) = crate::gen3d::validate_gen3d_user_prompt_limits(&prompt) {
+                            return Some(json_error(400, err));
+                        }
+                    }
+
+                    let prefab_id = uuid.as_u128();
+                    let mut state = crate::gen3d::Gen3dSessionState::default();
+                    let sinks = log_sinks.cloned();
+                    let seed = if kind == "edit_from_prefab" {
+                        crate::gen3d::gen3d_start_edit_session_from_prefab_id_from_api(
+                            build_scene,
+                            config,
+                            sinks,
+                            &mut state.workshop,
+                            &mut state.job,
+                            &mut state.draft,
+                            active_realm_id,
+                            active_scene_id,
+                            prefab_id,
+                        )
+                    } else {
+                        crate::gen3d::gen3d_start_fork_session_from_prefab_id_from_api(
+                            build_scene,
+                            config,
+                            sinks,
+                            &mut state.workshop,
+                            &mut state.job,
+                            &mut state.draft,
+                            active_realm_id,
+                            active_scene_id,
+                            prefab_id,
+                        )
+                    };
+                    if let Err(err) = seed {
+                        return Some(json_error(400, err));
+                    }
+                    if !prompt.is_empty() {
+                        state.workshop.prompt = prompt;
+                    }
+
+                    let session_kind = if kind == "edit_from_prefab" {
+                        crate::gen3d::Gen3dSessionKind::EditOverwrite { prefab_id }
+                    } else {
+                        crate::gen3d::Gen3dSessionKind::Fork { prefab_id }
+                    };
+                    let task_id = queue.create_session(session_kind, state);
+                    queue.queue.push_back(task_id);
+                    queue.set_task_state(task_id, crate::gen3d::Gen3dTaskState::Waiting);
+                    task_id
+                }
+                _ => {
+                    return Some(json_error(
+                        400,
+                        "Invalid kind (expected build|edit_from_prefab|fork_from_prefab).",
+                    ))
+                }
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "task_id": task_id.to_string(),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", path) if path.starts_with("/v1/gen3d/tasks/") => {
+            let task_id = path.trim_start_matches("/v1/gen3d/tasks/").trim();
+            if task_id.is_empty() {
+                return Some(json_error(404, "Not found"));
+            }
+
+            let Some(queue) = gen3d_task_queue.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(active_workshop) = gen3d_workshop.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(active_job) = gen3d_job.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let uuid = match uuid::Uuid::parse_str(task_id) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid task_id: {err}"))),
+            };
+
+            let Some(meta) = queue.metas.get(&uuid) else {
+                return Some(json_error(404, "Unknown task_id."));
+            };
+
+            fn state_label(state: crate::gen3d::Gen3dTaskState) -> &'static str {
+                match state {
+                    crate::gen3d::Gen3dTaskState::Idle => "idle",
+                    crate::gen3d::Gen3dTaskState::Waiting => "waiting",
+                    crate::gen3d::Gen3dTaskState::Running => "running",
+                    crate::gen3d::Gen3dTaskState::Done => "done",
+                    crate::gen3d::Gen3dTaskState::Failed => "failed",
+                    crate::gen3d::Gen3dTaskState::Canceled => "canceled",
+                }
+            }
+
+            let (workshop, job) = if meta.id == queue.active_session_id {
+                (active_workshop, active_job)
+            } else {
+                let Some(state) = queue.inactive_states.get(&meta.id) else {
+                    return Some(json_error(404, "Unknown task state."));
+                };
+                (&state.workshop, &state.job)
+            };
+
+            let kind = match meta.kind {
+                crate::gen3d::Gen3dSessionKind::NewBuild => "build",
+                crate::gen3d::Gen3dSessionKind::EditOverwrite { .. } => "edit_from_prefab",
+                crate::gen3d::Gen3dSessionKind::Fork { .. } => "fork_from_prefab",
+            };
+            let prefab_id_uuid = match meta.kind {
+                crate::gen3d::Gen3dSessionKind::EditOverwrite { prefab_id }
+                | crate::gen3d::Gen3dSessionKind::Fork { prefab_id } => {
+                    Some(uuid::Uuid::from_u128(prefab_id).to_string())
+                }
+                crate::gen3d::Gen3dSessionKind::NewBuild => None,
+            };
+            let result_prefab_id_uuid = job
+                .last_saved_prefab_id()
+                .map(|id| uuid::Uuid::from_u128(id).to_string());
+
+            let body = serde_json::json!({
+                "ok": true,
+                "task": {
+                    "task_id": meta.id.to_string(),
+                    "kind": kind,
+                    "prefab_id_uuid": prefab_id_uuid,
+                    "state": state_label(meta.task_state),
+                    "run_id": job.run_id().map(|id| id.to_string()),
+                    "status": workshop.status.clone(),
+                    "error": workshop.error.clone(),
+                    "result_prefab_id_uuid": result_prefab_id_uuid,
+                }
             })
             .to_string();
             Some(AutomationReply {
@@ -2901,6 +3185,9 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/status"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/prompt"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/build"}),
+                serde_json::json!({"method":"GET","path":"/v1/gen3d/tasks"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen3d/tasks/enqueue"}),
+                serde_json::json!({"method":"GET","path":"/v1/gen3d/tasks/{task_id}"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/save"}),
                 serde_json::json!({"method":"GET","path":"/v1/scene_sources/signature"}),
                 serde_json::json!({"method":"POST","path":"/v1/scene_sources/patch_apply"}),

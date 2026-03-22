@@ -44,10 +44,10 @@ The work must be validated by:
 - [x] (2026-03-22 13:07 CST) UI: Meta panel remove Copy/Edit/Fork; add Close button.
 - [x] (2026-03-22 13:25 CST) UI: Double-click instance also opens Prefabs + selects item + pops Preview overlay (when `ObjectPrefabId` exists).
 - [x] (2026-03-22 13:59 CST) UI: Preview overlay adds `Modify` and `Duplicate`; info area taller.
-- [ ] (2026-03-22) UI: Prefabs panel shows Gen3D working/waiting indicators and new-build placeholder; rename `Gen3D` → `Generate`.
+- [x] (2026-03-22 16:05 CST) UI: Prefabs panel shows Gen3D working/waiting indicators and new-build placeholder; rename `Gen3D` → `Generate`.
 - [x] (2026-03-22 12:55 CST) UI: Gen3D panel remove “Clear Prompt”; unify “Clear” to clear both text+images; merge Build/Continue into one button labeled `Build|Edit|Stop`.
-- [ ] (2026-03-22) Automation: Add Gen3D task queue endpoints (list + status) and allow running Gen3D tasks without switching to Build Preview.
-- [ ] (2026-03-22) Validation: `cargo test`, rendered smoke test, and a `test/run_1/...` automation script.
+- [x] (2026-03-22 19:52 CST) Automation: Add Gen3D task queue endpoints (list + status) and allow running Gen3D tasks without switching to Build Preview.
+- [x] (2026-03-22 19:52 CST) Validation: `cargo test`, rendered smoke test, and a `test/run_1/...` automation script.
 - [ ] (2026-03-22) Commit(s): clear, scoped messages per milestone.
 
 
