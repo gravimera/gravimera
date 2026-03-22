@@ -618,6 +618,31 @@ pub(crate) fn workspace_toolbar_toggle_buttons(
     }
 }
 
+pub(crate) fn workspace_toolbar_close_models_panel_on_escape(
+    keys: Res<ButtonInput<KeyCode>>,
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    mut top_panel: ResMut<TopPanelUiState>,
+    model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+) {
+    if !keys.just_pressed(KeyCode::Escape) {
+        return;
+    }
+    if top_panel.selected != Some(TopPanelTab::Models) {
+        return;
+    }
+    if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Realm) {
+        return;
+    }
+    if model_library.is_preview_open() || model_library.is_search_focused() {
+        return;
+    }
+    if model_library.is_drag_active() {
+        return;
+    }
+    top_panel.selected = None;
+}
+
 pub(crate) fn workspace_toolbar_sync_model_library_open(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,

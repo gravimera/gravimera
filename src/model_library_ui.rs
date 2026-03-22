@@ -135,6 +135,7 @@ pub(crate) struct ModelLibraryUiState {
     preview_scrollbar_drag: Option<ModelLibraryScrollbarDrag>,
     thumbnail_cache: HashMap<u128, ModelLibraryThumbnailCacheEntry>,
     listed_prefabs: Vec<u128>,
+    selected_prefab_id: Option<u128>,
     pending_preview: Option<u128>,
     preview: Option<ModelLibraryPrefabPreview>,
     last_rebuilt_scene: Option<(String, String)>,
@@ -153,6 +154,7 @@ impl Default for ModelLibraryUiState {
             preview_scrollbar_drag: None,
             thumbnail_cache: HashMap::new(),
             listed_prefabs: Vec::new(),
+            selected_prefab_id: None,
             pending_preview: None,
             preview: None,
             last_rebuilt_scene: None,
@@ -183,12 +185,26 @@ impl ModelLibraryUiState {
         }
     }
 
+    pub(crate) fn select_prefab(&mut self, prefab_id: u128) {
+        self.selected_prefab_id = Some(prefab_id);
+        self.search_focused = false;
+    }
+
     pub(crate) fn request_preview(&mut self, prefab_id: u128) {
+        self.select_prefab(prefab_id);
         self.pending_preview = Some(prefab_id);
+    }
+
+    pub(crate) fn selected_prefab_id(&self) -> Option<u128> {
+        self.selected_prefab_id
     }
 
     pub(crate) fn is_drag_active(&self) -> bool {
         self.drag.is_some()
+    }
+
+    pub(crate) fn is_search_focused(&self) -> bool {
+        self.search_focused
     }
 
     pub(crate) fn is_preview_open(&self) -> bool {
@@ -1703,7 +1719,7 @@ pub(crate) fn model_library_open_preview_panel(
     let Some(prefab_id) = state.pending_preview.take() else {
         return;
     };
-    state.search_focused = false;
+    state.select_prefab(prefab_id);
 
     if state
         .preview
@@ -2292,7 +2308,7 @@ pub(crate) fn model_library_preview_duplicate_button_interactions(
         };
 
         state.mark_models_dirty();
-        state.pending_preview = Some(duplicated);
+        state.request_preview(duplicated);
         close_model_library_preview(&mut commands, &mut state);
         break;
     }
@@ -2350,7 +2366,7 @@ pub(crate) fn model_library_preview_keyboard_navigation(
     let next_index = (current_index + direction).clamp(0, max_index) as usize;
     let next_prefab = state.listed_prefabs[next_index];
     if next_prefab != current_prefab {
-        state.pending_preview = Some(next_prefab);
+        state.request_preview(next_prefab);
     }
 }
 
@@ -2973,7 +2989,7 @@ pub(crate) fn model_library_update_list_item_styles(
     >,
     mut marks: Query<(Ref<ModelLibrarySelectionMark>, &mut Visibility)>,
 ) {
-    let selected_id = state.preview.as_ref().map(|p| p.prefab_id);
+    let selected_id = state.selected_prefab_id();
     let selection_changed = *last_selected != selected_id;
     if selection_changed {
         *last_selected = selected_id;
@@ -3077,7 +3093,7 @@ pub(crate) fn model_library_scroll_selected_item_into_view(
         return;
     }
 
-    let Some(selected_id) = state.preview.as_ref().map(|p| p.prefab_id) else {
+    let Some(selected_id) = state.selected_prefab_id() else {
         *last_scrolled = None;
         return;
     };
@@ -3199,7 +3215,7 @@ pub(crate) fn model_library_drag_update(
         if drag.is_dragging && drag.preview_translation.is_some() {
             if env.config.automation_enabled && env.config.automation_monitor_mode {
                 // Monitor mode is local read-only: don’t allow spawning from the panel.
-                state.pending_preview = Some(prefab_id);
+                state.request_preview(prefab_id);
             } else {
                 let spawn_translation = drag.preview_translation.unwrap();
                 let spawned = spawn_prefab_instance(
@@ -3220,7 +3236,7 @@ pub(crate) fn model_library_drag_update(
                 }
             }
         } else {
-            state.pending_preview = Some(prefab_id);
+            state.request_preview(prefab_id);
         }
 
         state.drag = None;

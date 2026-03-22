@@ -365,7 +365,7 @@ pub(crate) fn selection_input(
                 if let Some(prefab_id) = prefab_id {
                     ui.top_panel.selected = Some(crate::workspace_ui::TopPanelTab::Models);
                     ui.next_mode.set(GameMode::Build);
-                    ui.model_library.request_preview(prefab_id);
+                    ui.model_library.select_prefab(prefab_id);
                 }
             }
         } else {

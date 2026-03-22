@@ -157,6 +157,11 @@ impl Plugin for RenderedUiPlugin {
                 crate::workspace_ui::workspace_ui_update_visibility,
                 crate::workspace_ui::workspace_toolbar_update_visibility
                     .after(crate::workspace_ui::workspace_ui_update_visibility),
+                crate::workspace_ui::workspace_toolbar_close_models_panel_on_escape
+                    .before(crate::workspace_ui::workspace_toolbar_sync_model_library_open)
+                    .run_if(console::console_closed)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::scene_authoring_ui::scene_ui_closed),
                 crate::workspace_ui::workspace_toolbar_sync_model_library_open
                     .after(crate::workspace_ui::workspace_toolbar_update_visibility),
                 crate::workspace_ui::workspace_toolbar_update_toggle_button_styles

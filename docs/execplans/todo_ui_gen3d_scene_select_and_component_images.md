@@ -28,8 +28,8 @@ After this change, a player can:
 ## Progress
 
 - [x] (2026-03-23 00:45 CST) Draft ExecPlan from `docs/todo.md` and code inspection.
-- [ ] Implement Prefabs selection without preview on scene double-click (and scroll into view).
-- [ ] Implement Escape-to-close Prefabs panel.
+- [x] (2026-03-23 00:56 CST) Implement scene double-click selects Prefab without opening preview; Prefabs list highlights + scrolls to selection.
+- [x] (2026-03-23 00:56 CST) Implement Escape-to-close Prefabs panel (when not searching and no Prefabs preview overlay is open).
 - [ ] Rearrange Gen3D UI (remove Preview label + Collision toggle; move Status overlay left; move run stats right; add Exit button + ESC exit).
 - [ ] Send user images to component LLM calls (max 2; downsample large images; update manifests and prompts).
 - [ ] Update docs (`docs/todo.md`, any relevant UI/Gen3D docs) to match behavior.
@@ -224,4 +224,3 @@ Acceptance is met when:
 
 - Update `docs/todo.md` by checking off completed items.
 - If any UI behavior is not automatable via HTTP, record a short manual QA checklist in `docs/real_tests/` and keep it in sync with the todo.
-
