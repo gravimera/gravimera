@@ -5,18 +5,12 @@ use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
 use serde_json::json;
 
-use crate::assets::SceneAssets;
-use crate::constants::{BUILD_GRID_SIZE, BUILD_UNIT_SIZE, PLAYER_MAX_HEALTH};
-use crate::gen3d::{
-    Gen3dPendingSeedFromPrefab, Gen3dSeedFromPrefabMode, Gen3dSeedFromPrefabRequest,
-};
-use crate::geometry::{clamp_world_xz, snap_to_grid};
+use crate::constants::PLAYER_MAX_HEALTH;
 use crate::intelligence::host_plugin::{IntelligenceHostRuntime, StandaloneBrain};
 use crate::intelligence::protocol::{DespawnBrainInstanceRequest, PROTOCOL_VERSION};
 use crate::intelligence::sidecar_client::SidecarClient;
 use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, MetaSpeakVoice};
 use crate::object::registry::ObjectLibrary;
-use crate::object::visuals;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::rich_text::spawn_rich_text_line;
 use crate::scene_store::SceneSaveRequest;
@@ -24,9 +18,8 @@ use crate::threaded_result::{
     new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
 };
 use crate::types::{
-    BuildScene, CameraFocus, Collider, Commandable, EmojiAtlas, GameMode, Health, LaserDamageAccum,
-    ModelSpeechBubbleCommand, ModelSpeechSource, MoveOrder, ObjectForms, ObjectId, ObjectPrefabId,
-    ObjectTint, Player, PlayerAnimator, SelectionState, UiFonts,
+    CameraFocus, Commandable, EmojiAtlas, Health, LaserDamageAccum, ModelSpeechBubbleCommand,
+    ModelSpeechSource, MoveOrder, ObjectPrefabId, Player, PlayerAnimator, SelectionState, UiFonts,
 };
 
 const PANEL_Z_INDEX: i32 = 940;
@@ -148,6 +141,12 @@ pub(crate) struct MotionAlgorithmUiTitle;
 pub(crate) struct MotionAlgorithmUiSubtitle;
 
 #[derive(Component)]
+pub(crate) struct MotionAlgorithmUiCloseButton;
+
+#[derive(Component)]
+pub(crate) struct MotionAlgorithmUiCloseButtonText;
+
+#[derive(Component)]
 pub(crate) struct MotionAlgorithmUiList;
 
 #[derive(Component)]
@@ -165,18 +164,6 @@ pub(crate) struct MotionAlgorithmUiScrollbarThumb;
 #[derive(Component, Clone, Debug)]
 pub(crate) struct MetaBrainUiButton {
     pub(crate) module_id: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MetaGen3dUiAction {
-    Copy,
-    Edit,
-    Fork,
-}
-
-#[derive(Component, Clone, Copy, Debug)]
-pub(crate) struct MetaGen3dUiButton {
-    pub(crate) action: MetaGen3dUiAction,
 }
 
 #[derive(Component)]
@@ -221,14 +208,53 @@ pub(crate) fn setup_motion_algorithm_ui(mut commands: Commands) {
         ))
         .with_children(|root| {
             root.spawn((
-                Text::new("Meta"),
-                TextFont {
-                    font_size: 18.0,
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
                     ..default()
                 },
-                TextColor(Color::srgb(0.95, 0.95, 0.97)),
-                MotionAlgorithmUiTitle,
-            ));
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|header| {
+                header.spawn((
+                    Text::new("Meta"),
+                    TextFont {
+                        font_size: 18.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.95, 0.95, 0.97)),
+                    MotionAlgorithmUiTitle,
+                ));
+
+                header
+                    .spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(26.0),
+                            height: Val::Px(26.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                        MotionAlgorithmUiCloseButton,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("✕"),
+                            TextFont {
+                                font_size: 14.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                            MotionAlgorithmUiCloseButtonText,
+                        ));
+                    });
+            });
 
             root.spawn((
                 Text::new(""),
@@ -335,6 +361,27 @@ pub(crate) fn motion_algorithm_ui_keyboard(
     }
 }
 
+pub(crate) fn motion_algorithm_ui_close_button_clicks(
+    mut state: ResMut<MotionAlgorithmUiState>,
+    mut speech_events: MessageWriter<ModelSpeechBubbleCommand>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<MotionAlgorithmUiCloseButton>)>,
+) {
+    if !state.open {
+        return;
+    }
+
+    for interaction in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if let Some(entity) = state.speak_target.or(state.target) {
+            speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
+            state.speak_target = None;
+        }
+        state.close();
+    }
+}
+
 pub(crate) fn motion_algorithm_ui_update(
     mut commands: Commands,
     library: Res<ObjectLibrary>,
@@ -432,10 +479,6 @@ pub(crate) fn motion_algorithm_ui_update(
         .and_then(|def| def.mobility.as_ref())
         .map(|m| m.mode);
     let descriptor = descriptors.get(prefab_id.0);
-    let is_gen3d_saved = descriptor
-        .and_then(|d| d.provenance.as_ref())
-        .and_then(|p| p.source.as_deref())
-        .is_some_and(|v| v.trim() == "gen3d");
 
     if let Ok(mut subtitle) = subtitle.single_mut() {
         let label = descriptor
@@ -601,38 +644,6 @@ pub(crate) fn motion_algorithm_ui_update(
         let button_color = TextColor(Color::srgb(0.92, 0.92, 0.96));
         let button_bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
         let button_border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
-
-        if is_gen3d_saved {
-            list.spawn((
-                Text::new("Gen3D"),
-                section_font.clone(),
-                section_color,
-                MotionAlgorithmUiListItem,
-            ));
-
-            for (label, action) in [
-                ("Copy (duplicate instance)", MetaGen3dUiAction::Copy),
-                ("Edit (overwrite prefab)", MetaGen3dUiAction::Edit),
-                ("Fork (new prefab id)", MetaGen3dUiAction::Fork),
-            ] {
-                list.spawn((
-                    Button,
-                    Node {
-                        width: Val::Percent(100.0),
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        ..default()
-                    },
-                    button_bg,
-                    button_border,
-                    MotionAlgorithmUiListItem,
-                    MetaGen3dUiButton { action },
-                ))
-                .with_children(|b| {
-                    b.spawn((Text::new(label), button_font.clone(), button_color));
-                });
-            }
-        }
 
         list.spawn((
             Text::new("Player Character"),
@@ -1328,11 +1339,11 @@ pub(crate) fn meta_brain_ui_button_styles(
     }
 }
 
-pub(crate) fn meta_gen3d_ui_button_styles(
+pub(crate) fn motion_algorithm_ui_close_button_styles(
     state: Res<MotionAlgorithmUiState>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        (With<Button>, With<MetaGen3dUiButton>),
+        (With<Button>, With<MotionAlgorithmUiCloseButton>),
     >,
 ) {
     if !state.open {
@@ -1778,129 +1789,6 @@ pub(crate) fn meta_speak_ui_button_clicks(
             text: content,
             source: ModelSpeechSource::MetaUi,
         });
-        state.needs_rebuild = true;
-    }
-}
-
-pub(crate) fn meta_gen3d_ui_button_clicks(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    assets: Res<SceneAssets>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut material_cache: ResMut<crate::object::visuals::MaterialCache>,
-    mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
-    library: Res<ObjectLibrary>,
-    descriptors: Res<PrefabDescriptorLibrary>,
-    mut pending_seed: ResMut<Gen3dPendingSeedFromPrefab>,
-    mut next_mode: ResMut<NextState<GameMode>>,
-    mut next_build_scene: ResMut<NextState<BuildScene>>,
-    mut state: ResMut<MotionAlgorithmUiState>,
-    mut speech_events: MessageWriter<ModelSpeechBubbleCommand>,
-    units: Query<
-        (
-            &Transform,
-            &ObjectPrefabId,
-            &Collider,
-            Option<&ObjectTint>,
-            Option<&ObjectForms>,
-        ),
-        With<Commandable>,
-    >,
-    mut buttons: Query<(&Interaction, &MetaGen3dUiButton), Changed<Interaction>>,
-) {
-    if !state.open {
-        return;
-    }
-    let Some(target) = state.target else {
-        return;
-    };
-
-    for (interaction, button) in &mut buttons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-
-        let Ok((transform, prefab_id, collider, tint, forms)) = units.get(target) else {
-            state.needs_rebuild = true;
-            continue;
-        };
-
-        match button.action {
-            MetaGen3dUiAction::Copy => {
-                let snap_step = BUILD_GRID_SIZE.max(0.01);
-                let offset_step = BUILD_UNIT_SIZE.max(snap_step);
-                let offset = Vec3::new(offset_step, 0.0, offset_step);
-
-                let radius = collider.radius.max(0.01);
-                let forms = forms
-                    .cloned()
-                    .unwrap_or_else(|| ObjectForms::new_single(prefab_id.0));
-
-                let mut new_transform = *transform;
-                new_transform.translation += offset;
-                new_transform.translation.x = snap_to_grid(new_transform.translation.x, snap_step);
-                new_transform.translation.z = snap_to_grid(new_transform.translation.z, snap_step);
-                new_transform.translation.x = clamp_world_xz(new_transform.translation.x, radius);
-                new_transform.translation.z = clamp_world_xz(new_transform.translation.z, radius);
-
-                let tint_color = tint.map(|t| t.0);
-                let mut entity_commands = commands.spawn((
-                    ObjectId::new_v4(),
-                    *prefab_id,
-                    forms,
-                    Commandable,
-                    Collider { radius },
-                    new_transform,
-                    Visibility::Inherited,
-                ));
-                if let Some(tint_color) = tint_color {
-                    entity_commands.insert(ObjectTint(tint_color));
-                }
-                visuals::spawn_object_visuals(
-                    &mut entity_commands,
-                    &library,
-                    &asset_server,
-                    &assets,
-                    &mut meshes,
-                    &mut materials,
-                    &mut material_cache,
-                    &mut mesh_cache,
-                    prefab_id.0,
-                    tint_color,
-                );
-            }
-            MetaGen3dUiAction::Edit | MetaGen3dUiAction::Fork => {
-                let is_gen3d_saved = descriptors
-                    .get(prefab_id.0)
-                    .and_then(|d| d.provenance.as_ref())
-                    .and_then(|p| p.source.as_deref())
-                    .is_some_and(|v| v.trim() == "gen3d");
-                if !is_gen3d_saved {
-                    state.needs_rebuild = true;
-                    continue;
-                }
-
-                let mode = match button.action {
-                    MetaGen3dUiAction::Edit => Gen3dSeedFromPrefabMode::EditOverwrite,
-                    MetaGen3dUiAction::Fork => Gen3dSeedFromPrefabMode::Fork,
-                    MetaGen3dUiAction::Copy => unreachable!(),
-                };
-                pending_seed.request = Some(Gen3dSeedFromPrefabRequest {
-                    mode,
-                    prefab_id: prefab_id.0,
-                    target_entity: Some(target),
-                });
-                next_mode.set(GameMode::Build);
-                next_build_scene.set(BuildScene::Preview);
-                if let Some(entity) = state.speak_target.or(Some(target)) {
-                    speech_events.write(ModelSpeechBubbleCommand::Stop { entity });
-                    state.speak_target = None;
-                }
-                state.close();
-            }
-        }
-
         state.needs_rebuild = true;
     }
 }

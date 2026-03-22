@@ -685,13 +685,12 @@ impl Plugin for RenderedGameplayPlugin {
             (
                 crate::motion_ui::motion_algorithm_ui_keyboard
                     .run_if(crate::automation::local_input_enabled),
+                crate::motion_ui::motion_algorithm_ui_close_button_clicks
+                    .after(crate::motion_ui::motion_algorithm_ui_keyboard)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::motion_algorithm_ui_update
-                    .after(crate::motion_ui::motion_algorithm_ui_keyboard),
+                    .after(crate::motion_ui::motion_algorithm_ui_close_button_clicks),
                 crate::motion_ui::meta_brain_ui_button_clicks
-                    .after(crate::motion_ui::motion_algorithm_ui_update)
-                    .run_if(crate::automation::local_input_enabled)
-                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::motion_ui::meta_gen3d_ui_button_clicks
                     .after(crate::motion_ui::motion_algorithm_ui_update)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
@@ -707,17 +706,17 @@ impl Plugin for RenderedGameplayPlugin {
                     .after(crate::motion_ui::meta_speak_ui_content_field_focus)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::motion_ui::motion_algorithm_ui_close_button_styles
+                    .after(crate::motion_ui::motion_algorithm_ui_close_button_clicks),
                 crate::motion_ui::meta_brain_ui_button_styles
                     .after(crate::motion_ui::meta_brain_ui_button_clicks),
-                crate::motion_ui::meta_gen3d_ui_button_styles
-                    .after(crate::motion_ui::meta_gen3d_ui_button_clicks),
                 crate::motion_ui::meta_protagonist_ui_button_styles
                     .after(crate::motion_ui::meta_protagonist_ui_button_clicks),
                 crate::motion_ui::meta_speak_ui_button_styles
                     .after(crate::motion_ui::meta_speak_ui_button_clicks),
                 crate::motion_ui::motion_algorithm_ui_scroll_wheel
+                    .after(crate::motion_ui::motion_algorithm_ui_close_button_styles)
                     .after(crate::motion_ui::meta_brain_ui_button_styles)
-                    .after(crate::motion_ui::meta_gen3d_ui_button_styles)
                     .after(crate::motion_ui::meta_protagonist_ui_button_styles)
                     .after(crate::motion_ui::meta_speak_ui_button_styles)
                     .run_if(crate::automation::local_input_enabled),
