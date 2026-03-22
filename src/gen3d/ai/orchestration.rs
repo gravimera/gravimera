@@ -96,14 +96,20 @@ pub(crate) fn gen3d_generate_button(
                     .running_session_id
                     .is_some_and(|id| id != active_session_id);
                 if other_session_running {
-                    let already_waiting = task_queue
-                        .metas
-                        .get(&active_session_id)
-                        .is_some_and(|meta| meta.task_state == crate::gen3d::Gen3dTaskState::Waiting)
-                        || task_queue.queue.contains(&active_session_id);
+                    let already_waiting =
+                        task_queue
+                            .metas
+                            .get(&active_session_id)
+                            .is_some_and(|meta| {
+                                meta.task_state == crate::gen3d::Gen3dTaskState::Waiting
+                            })
+                            || task_queue.queue.contains(&active_session_id);
                     if !already_waiting {
                         task_queue.queue.push_back(active_session_id);
-                        task_queue.set_task_state(active_session_id, crate::gen3d::Gen3dTaskState::Waiting);
+                        task_queue.set_task_state(
+                            active_session_id,
+                            crate::gen3d::Gen3dTaskState::Waiting,
+                        );
                     }
 
                     let queued_idx = task_queue
@@ -154,7 +160,10 @@ pub(crate) fn gen3d_generate_button(
                 match started {
                     Ok(()) => {
                         task_queue.running_session_id = Some(active_session_id);
-                        task_queue.set_task_state(active_session_id, crate::gen3d::Gen3dTaskState::Running);
+                        task_queue.set_task_state(
+                            active_session_id,
+                            crate::gen3d::Gen3dTaskState::Running,
+                        );
                     }
                     Err(err) => {
                         workshop.error = Some(err);
@@ -673,6 +682,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.assembly_rev = 0;
     job.user_prompt_raw = prompt_from_descriptor.unwrap_or_default();
     job.user_images.clear();
+    job.user_images_component.clear();
     job.planned_components.clear();
     job.assembly_notes.clear();
     job.plan_collider = None;
@@ -1055,7 +1065,7 @@ pub(crate) fn gen3d_start_build_from_api(
     };
 
     let cached_inputs = cache_gen3d_inputs(&attempt_dir, &workshop.prompt, &image_paths);
-    let cached_image_paths = cached_inputs.cached_image_paths;
+    let cached_image_paths = cached_inputs.cached_image_paths.clone();
     append_gen3d_run_log(
         Some(&pass_dir),
         format!(
@@ -1133,7 +1143,8 @@ pub(crate) fn gen3d_start_build_from_api(
     job.preserve_existing_components_mode = false;
     job.assembly_rev = 0;
     job.user_prompt_raw = workshop.prompt.clone();
-    job.user_images = cached_image_paths.clone();
+    job.user_images = cached_inputs.cached_image_paths;
+    job.user_images_component = cached_inputs.component_reference_image_paths;
     job.user_image_object_summary = None;
     job.prompt_intent = None;
     job.run_dir = Some(run_dir.clone());
@@ -2377,7 +2388,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         reasoning_effort,
                         system,
                         user_text,
-                        Vec::new(),
+                        job.user_images_component.clone(),
                         run_dir,
                         prefix,
                     );
@@ -2775,7 +2786,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         reasoning_effort,
                         system,
                         user_text,
-                        Vec::new(),
+                        job.user_images_component.clone(),
                         run_dir,
                         prefix,
                     );
@@ -3189,8 +3200,8 @@ fn poll_gen3d_parallel_components(
         };
 
         let attempt = *job.component_attempts.get(idx).unwrap_or(&0);
-        let sent_images = false;
-        let image_paths: Vec<PathBuf> = Vec::new();
+        let image_paths = job.user_images_component.clone();
+        let sent_images = !image_paths.is_empty();
 
         let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
         let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
@@ -3541,7 +3552,7 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
         reasoning_effort,
         system,
         user_text,
-        Vec::new(),
+        job.user_images_component.clone(),
         run_dir,
         prefix,
     );
@@ -3583,6 +3594,7 @@ fn try_start_gen3d_replan(
     let attempt_dir = gen3d_attempt_dir(&run_dir, next_attempt);
     let cached_inputs = cache_gen3d_inputs(&attempt_dir, &job.user_prompt_raw, &job.user_images);
     job.user_images = cached_inputs.cached_image_paths;
+    job.user_images_component = cached_inputs.component_reference_image_paths;
 
     // Reset build state but keep the same run/session/tokens.
     job.review_kind = Gen3dAutoReviewKind::EndOfRun;
@@ -3752,6 +3764,7 @@ pub(super) fn gen3d_advance_pass(job: &mut Gen3dAiJob) -> Result<(), String> {
 #[derive(Clone, Debug)]
 struct Gen3dCachedInputs {
     cached_image_paths: Vec<PathBuf>,
+    component_reference_image_paths: Vec<PathBuf>,
 }
 
 fn cache_gen3d_inputs(
@@ -3759,6 +3772,13 @@ fn cache_gen3d_inputs(
     prompt_raw: &str,
     image_paths: &[PathBuf],
 ) -> Gen3dCachedInputs {
+    fn path_display_rel_attempt_dir(attempt_dir: &Path, path: &Path) -> String {
+        path.strip_prefix(attempt_dir)
+            .ok()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| path.display().to_string())
+    }
+
     let inputs_dir = attempt_dir.join("inputs");
     let images_dir = inputs_dir.join("images");
     if let Err(err) = std::fs::create_dir_all(&images_dir) {
@@ -3823,15 +3843,178 @@ fn cache_gen3d_inputs(
         }
     }
 
+    let mut component_reference_image_paths: Vec<PathBuf> = Vec::new();
+    let mut manifest_component_reference_images: Vec<serde_json::Value> = Vec::new();
+    let component_reference_images_dir = inputs_dir.join("component_reference_images");
+
+    if let Err(err) = std::fs::create_dir_all(&component_reference_images_dir) {
+        debug!(
+            "Gen3D: failed to create component reference images dir {}: {err}",
+            component_reference_images_dir.display()
+        );
+    }
+
+    let mut selected_slots_used: usize = 0;
+    for (idx, src) in cached_image_paths.iter().enumerate() {
+        if selected_slots_used >= super::super::GEN3D_MAX_COMPONENT_REFERENCE_IMAGES {
+            break;
+        }
+
+        let source_index = idx + 1;
+        let src_display = path_display_rel_attempt_dir(attempt_dir, src);
+
+        let (w, h) = match image::image_dimensions(src) {
+            Ok(dim) => dim,
+            Err(err) => {
+                debug!(
+                    "Gen3D: failed to read input image dimensions {}: {err}",
+                    src.display()
+                );
+                manifest_component_reference_images.push(serde_json::json!({
+                    "source_index": source_index,
+                    "selected_slot": null,
+                    "source_path": src_display,
+                    "used_path": null,
+                    "downsampled": false,
+                    "error": err.to_string(),
+                }));
+                continue;
+            }
+        };
+
+        let max_dim = w.max(h);
+        if max_dim <= super::super::GEN3D_COMPONENT_REFERENCE_IMAGE_MAX_DIM_PX {
+            let selected_slot = selected_slots_used + 1;
+            selected_slots_used += 1;
+            component_reference_image_paths.push(src.clone());
+            manifest_component_reference_images.push(serde_json::json!({
+                "source_index": source_index,
+                "selected_slot": selected_slot,
+                "source_path": src_display,
+                "used_path": src_display,
+                "downsampled": false,
+                "original_dimensions_px": [w, h],
+                "used_dimensions_px": [w, h],
+            }));
+            continue;
+        }
+
+        let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+        let sanitized = stem
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+
+        let selected_slot = selected_slots_used + 1;
+        let dst_name = format!(
+            "slot{:02}_src{:02}_{sanitized}.jpg",
+            selected_slot, source_index
+        );
+        let dst = component_reference_images_dir.join(dst_name);
+
+        let ratio =
+            super::super::GEN3D_COMPONENT_REFERENCE_IMAGE_MAX_DIM_PX as f32 / max_dim.max(1) as f32;
+        let new_w = ((w.max(1) as f32) * ratio)
+            .round()
+            .clamp(1.0, u32::MAX as f32) as u32;
+        let new_h = ((h.max(1) as f32) * ratio)
+            .round()
+            .clamp(1.0, u32::MAX as f32) as u32;
+
+        let downsampled = (|| -> Result<u64, String> {
+            use image::codecs::jpeg::JpegEncoder;
+            use image::imageops::FilterType;
+            use image::ColorType;
+            use image::ImageEncoder;
+
+            let img = image::open(src)
+                .map_err(|err| format!("Failed to decode image {}: {err}", src.display()))?;
+            let resized = img.resize_exact(new_w, new_h, FilterType::Triangle);
+            let rgb = resized.to_rgb8();
+
+            let mut file = std::fs::File::create(&dst).map_err(|err| {
+                format!(
+                    "Failed to create downsampled image {}: {err}",
+                    dst.display()
+                )
+            })?;
+            let encoder = JpegEncoder::new_with_quality(
+                &mut file,
+                super::super::GEN3D_COMPONENT_REFERENCE_JPEG_QUALITY,
+            );
+            encoder
+                .write_image(rgb.as_raw(), new_w, new_h, ColorType::Rgb8.into())
+                .map_err(|err| {
+                    format!(
+                        "Failed to encode downsampled image {}: {err}",
+                        dst.display()
+                    )
+                })?;
+            std::fs::metadata(&dst)
+                .map(|m| m.len())
+                .map_err(|err| format!("Failed to stat downsampled image {}: {err}", dst.display()))
+        })();
+
+        match downsampled {
+            Ok(bytes) => {
+                selected_slots_used += 1;
+                let dst_display = path_display_rel_attempt_dir(attempt_dir, &dst);
+                component_reference_image_paths.push(dst.clone());
+                manifest_component_reference_images.push(serde_json::json!({
+                    "source_index": source_index,
+                    "selected_slot": selected_slot,
+                    "source_path": src_display,
+                    "used_path": dst_display,
+                    "downsampled": true,
+                    "original_dimensions_px": [w, h],
+                    "used_dimensions_px": [new_w, new_h],
+                    "jpeg_quality": super::super::GEN3D_COMPONENT_REFERENCE_JPEG_QUALITY,
+                    "bytes": bytes,
+                }));
+            }
+            Err(err) => {
+                debug!(
+                    "Gen3D: failed to downsample component reference image {}: {err}",
+                    src.display()
+                );
+                manifest_component_reference_images.push(serde_json::json!({
+                    "source_index": source_index,
+                    "selected_slot": null,
+                    "source_path": src_display,
+                    "used_path": null,
+                    "downsampled": false,
+                    "original_dimensions_px": [w, h],
+                    "error": err,
+                }));
+            }
+        }
+    }
+
     let manifest = serde_json::json!({
-        "version": 1,
+        "version": 2,
         "user_prompt_file": "inputs/user_prompt.txt",
         "images_dir": "inputs/images",
         "images": manifest_images,
+        "component_reference_images": {
+            "max_images": super::super::GEN3D_MAX_COMPONENT_REFERENCE_IMAGES,
+            "max_dim_px": super::super::GEN3D_COMPONENT_REFERENCE_IMAGE_MAX_DIM_PX,
+            "jpeg_quality": super::super::GEN3D_COMPONENT_REFERENCE_JPEG_QUALITY,
+            "images_dir": "inputs/component_reference_images",
+            "images": manifest_component_reference_images,
+        },
     });
     write_gen3d_json_artifact(Some(attempt_dir), "inputs_manifest.json", &manifest);
 
-    Gen3dCachedInputs { cached_image_paths }
+    Gen3dCachedInputs {
+        cached_image_paths,
+        component_reference_image_paths,
+    }
 }
 
 pub(super) fn start_gen3d_review_capture(

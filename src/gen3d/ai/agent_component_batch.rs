@@ -298,8 +298,8 @@ pub(super) fn poll_agent_component_batch(
         };
 
         let attempt = *job.component_attempts.get(idx).unwrap_or(&0);
-        let sent_images = false;
-        let image_paths = Vec::new();
+        let image_paths = job.user_images_component.clone();
+        let sent_images = !image_paths.is_empty();
 
         let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
         let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {

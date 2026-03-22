@@ -17,6 +17,9 @@ const GEN3D_MAX_IMAGES: usize = 3;
 const GEN3D_MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024; // < 5 MiB each.
                                                     // Some Gen3D steps include extra internal preview renders in addition to user reference images.
                                                     // Keep a slightly higher cap for a single OpenAI request.
+const GEN3D_MAX_COMPONENT_REFERENCE_IMAGES: usize = 2;
+const GEN3D_COMPONENT_REFERENCE_IMAGE_MAX_DIM_PX: u32 = 1024;
+const GEN3D_COMPONENT_REFERENCE_JPEG_QUALITY: u8 = 85;
 const GEN3D_REVIEW_VIEW_IMAGES: usize = 9; // 6 horizontal + 1 top + 2 motion sheets
 const GEN3D_MAX_REQUEST_IMAGES: usize = GEN3D_MAX_IMAGES + GEN3D_REVIEW_VIEW_IMAGES;
 const GEN3D_MAX_PARTS: usize = 1024;
@@ -164,13 +167,12 @@ pub(crate) use tool_feedback_ui::{
     gen3d_update_prefab_scrollbar_ui, gen3d_update_side_tab_ui,
 };
 pub(crate) use ui::{
-    enter_gen3d_mode, exit_gen3d_mode, gen3d_cleanup_preview_scene_when_idle,
-    gen3d_exit_button, gen3d_exit_on_escape,
-    gen3d_preview_animation_dropdown_button, gen3d_preview_animation_dropdown_scroll_wheel,
-    gen3d_preview_animation_option_buttons, gen3d_prompt_box_focus, gen3d_prompt_scroll_wheel,
-    gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
-    gen3d_rebuild_preview_animation_dropdown_options_ui, gen3d_side_panel_toggle_button,
-    gen3d_update_preview_animation_dropdown_ui, gen3d_update_preview_panel_image_fit,
-    gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
-    spawn_gen3d_preview_panel,
+    enter_gen3d_mode, exit_gen3d_mode, gen3d_cleanup_preview_scene_when_idle, gen3d_exit_button,
+    gen3d_exit_on_escape, gen3d_preview_animation_dropdown_button,
+    gen3d_preview_animation_dropdown_scroll_wheel, gen3d_preview_animation_option_buttons,
+    gen3d_prompt_box_focus, gen3d_prompt_scroll_wheel, gen3d_prompt_scrollbar_drag,
+    gen3d_prompt_text_input, gen3d_rebuild_preview_animation_dropdown_options_ui,
+    gen3d_side_panel_toggle_button, gen3d_update_preview_animation_dropdown_ui,
+    gen3d_update_preview_panel_image_fit, gen3d_update_prompt_scrollbar_ui,
+    gen3d_update_side_panel_ui, gen3d_update_ui_text, spawn_gen3d_preview_panel,
 };

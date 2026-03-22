@@ -122,8 +122,10 @@ pub(super) fn build_gen3d_effective_user_prompt(
     out.push_str(
         "Reference inputs:\n\
 - If reference photos were provided, the engine pre-processed them into a short text summary.\n\
-- IMPORTANT: The LLM does NOT receive raw user photos directly.\n\
-- Only use the user notes and/or the photo summary; do NOT invent missing details.\n",
+- Some calls may also include a small number of the raw reference images.\n\
+  - If images are included in this request, use them as primary ground truth.\n\
+  - Otherwise, rely on the text summary only.\n\
+- Only use the user notes and/or the photo summary/images; do NOT invent missing details.\n",
     );
     if let Some(summary) = image_object_summary
         .map(|s| s.trim())
@@ -1417,6 +1419,7 @@ pub(super) fn build_gen3d_component_system_instructions() -> String {
     format!(
         "You are a 3D modeling assistant.\n\
          Return STRICT JSON for a single component.\n\n\
+         You may receive up to 2 user reference images (optional). If present, use them to match the component's shape and proportions.\n\n\
          Requirements:\n\
          - Use ONLY primitives (cuboid, cylinder, sphere, cone).\n\
          - You MUST output `anchors` with the same names as the plan requires.\n\

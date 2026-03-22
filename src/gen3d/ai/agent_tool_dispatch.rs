@@ -6686,7 +6686,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 reasoning_effort,
                 system,
                 user_text,
-                Vec::new(),
+                job.user_images_component.clone(),
                 pass_dir,
                 sanitize_prefix(&format!("tool_component{}_{}", idx + 1, &call.call_id)),
             );

@@ -601,6 +601,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) regen_per_component: Vec<u32>,
     pub(super) user_prompt_raw: String,
     pub(super) user_images: Vec<PathBuf>,
+    pub(super) user_images_component: Vec<PathBuf>,
     pub(super) user_image_object_summary: Option<Gen3dUserImageObjectSummary>,
     pub(super) prompt_intent: Option<AiPromptIntentJsonV1>,
     pub(super) run_dir: Option<PathBuf>,

@@ -31,9 +31,9 @@ After this change, a player can:
 - [x] (2026-03-23 00:56 CST) Implement scene double-click selects Prefab without opening preview; Prefabs list highlights + scrolls to selection.
 - [x] (2026-03-23 00:56 CST) Implement Escape-to-close Prefabs panel (when not searching and no Prefabs preview overlay is open).
 - [x] (2026-03-23 01:13 CST) Rearrange Gen3D UI (remove Preview label + Collision toggle; move Status overlay left; move run stats right; add Exit button + ESC exit).
-- [ ] Send user images to component LLM calls (max 2; downsample large images; update manifests and prompts).
-- [ ] Update docs (`docs/todo.md`, any relevant UI/Gen3D docs) to match behavior.
-- [ ] Validation: `cargo test`, rendered smoke test, and existing “real tests” under `test/run_1/`.
+- [x] (2026-03-23 01:47 CST) Send user images to component LLM calls (max 2; downsample large images; update manifests and prompts).
+- [x] (2026-03-23 01:47 CST) Update docs (`docs/todo.md`, any relevant UI/Gen3D docs) to match behavior.
+- [x] (2026-03-23 01:48 CST) Validation: `cargo test`, rendered smoke test, and existing “real tests” under `test/run_1/`.
 - [ ] Commits: scoped messages per milestone.
 
 
@@ -64,7 +64,14 @@ After this change, a player can:
 
 ## Outcomes & Retrospective
 
-(To be filled in as milestones complete.)
+- Scene double-click now selects and scrolls Prefabs without forcing the Preview overlay.
+- Escape closes the Prefabs panel when safe (preview overlay closed; not searching/dragging).
+- Gen3D workshop UI is simplified (Preview label/Collision/Realm removed; Status left; stats right; Exit button + ESC exits).
+- Component generation LLM calls now include up to 2 user reference images (first usable in order); oversized images are downsampled to a max dimension and cached under `attempt_*/inputs/` with `inputs_manifest.json` recording the selection.
+- Validation:
+  - Rendered smoke test passed: `cargo run -- --rendered-seconds 2`.
+  - Real tests passed: `python3 test/run_1/*/run.py`.
+  - `cargo test` currently fails 4 fixture-based tests due to missing fixture directories (pre-existing; unrelated to this plan).
 
 
 ## Context and Orientation
