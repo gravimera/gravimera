@@ -79,10 +79,9 @@ struct Gen3dPrefabThumbnailCapture {
     prefab_id: u128,
     thumbnail_path: PathBuf,
     root: Entity,
-    camera: Entity,
-    screenshot: Entity,
     progress: Arc<Mutex<Gen3dPrefabThumbnailCaptureProgress>>,
     started_at: Instant,
+    warned_timeout: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1668,7 +1667,7 @@ fn start_gen3d_prefab_thumbnail_capture(
     }));
     let path_for_capture = thumbnail_path.clone();
     let progress_for_capture = progress.clone();
-    let screenshot = commands
+    let _screenshot = commands
         .spawn(Screenshot::image(target))
         .observe(move |event: On<ScreenshotCaptured>| {
             let mut saver = save_to_disk(path_for_capture.clone());
@@ -1678,16 +1677,14 @@ fn start_gen3d_prefab_thumbnail_capture(
             }
         })
         .id();
-    commands.entity(root).add_child(screenshot);
 
     Ok(Gen3dPrefabThumbnailCapture {
         prefab_id,
         thumbnail_path,
         root,
-        camera,
-        screenshot,
         progress,
         started_at: Instant::now(),
+        warned_timeout: false,
     })
 }
 
@@ -1696,8 +1693,6 @@ fn cleanup_gen3d_prefab_thumbnail_capture(
     capture: Gen3dPrefabThumbnailCapture,
 ) {
     commands.entity(capture.root).try_despawn();
-    commands.entity(capture.camera).try_despawn();
-    commands.entity(capture.screenshot).try_despawn();
 }
 
 pub(crate) fn gen3d_prefab_thumbnail_capture_poll(
@@ -1705,41 +1700,51 @@ pub(crate) fn gen3d_prefab_thumbnail_capture_poll(
     mut runtime: ResMut<Gen3dPrefabThumbnailCaptureRuntime>,
     mut model_library: Option<ResMut<crate::model_library_ui::ModelLibraryUiState>>,
 ) {
-    let Some(capture) = runtime.active.as_ref() else {
-        return;
-    };
+    let done = {
+        let Some(capture) = runtime.active.as_mut() else {
+            return;
+        };
 
-    let done = match capture.progress.lock() {
-        Ok(guard) => guard.completed >= guard.expected.max(1),
-        Err(_) => true,
-    };
-    let timed_out =
-        capture.started_at.elapsed() > Duration::from_secs(GEN3D_SAVE_THUMBNAIL_TIMEOUT_SECS);
+        let done = match capture.progress.lock() {
+            Ok(guard) => guard.completed >= guard.expected.max(1),
+            Err(_) => true,
+        };
 
-    if !done && !timed_out {
-        return;
-    }
-    if timed_out && !done {
-        warn!("Gen3D: thumbnail capture timed out.");
-    }
-
-    if done {
-        let thumbnail_exists = std::fs::metadata(&capture.thumbnail_path).is_ok();
-        if !thumbnail_exists {
-            debug!(
-                "Gen3D: thumbnail capture finished but output is missing (prefab={}): {}",
-                Uuid::from_u128(capture.prefab_id),
-                capture.thumbnail_path.display()
+        if !done
+            && capture.started_at.elapsed() > Duration::from_secs(GEN3D_SAVE_THUMBNAIL_TIMEOUT_SECS)
+            && !capture.warned_timeout
+        {
+            capture.warned_timeout = true;
+            warn!(
+                "Gen3D: thumbnail capture is taking longer than {}s.",
+                GEN3D_SAVE_THUMBNAIL_TIMEOUT_SECS
             );
         }
-        if let Some(state) = model_library.as_mut() {
-            state.mark_models_dirty();
-        }
+
+        done
+    };
+
+    if !done {
+        return;
     }
 
-    if let Some(capture) = runtime.active.take() {
-        cleanup_gen3d_prefab_thumbnail_capture(&mut commands, capture);
+    let Some(capture) = runtime.active.take() else {
+        return;
+    };
+
+    let thumbnail_exists = std::fs::metadata(&capture.thumbnail_path).is_ok();
+    if !thumbnail_exists {
+        debug!(
+            "Gen3D: thumbnail capture finished but output is missing (prefab={}): {}",
+            Uuid::from_u128(capture.prefab_id),
+            capture.thumbnail_path.display()
+        );
     }
+    if let Some(state) = model_library.as_mut() {
+        state.mark_models_dirty();
+    }
+
+    cleanup_gen3d_prefab_thumbnail_capture(&mut commands, capture);
 }
 
 pub(crate) fn gen3d_auto_save_when_done(
