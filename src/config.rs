@@ -77,7 +77,7 @@ impl Default for AppConfig {
             log_level: bevy::log::Level::INFO,
             gen3d_cache_dir: None,
             gen3d_ai_service: Gen3dAiService::OpenAi,
-            gen3d_orchestrator: Gen3dOrchestrator::Agent,
+            gen3d_orchestrator: Gen3dOrchestrator::Pipeline,
             intelligence_service_enabled: false,
             intelligence_service_mode: IntelligenceServiceMode::Embedded,
             intelligence_service_addr: None,

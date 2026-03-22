@@ -40,17 +40,7 @@ DraftOps-specific artifacts:
 
 Gen3D supports two orchestrators (config: `[gen3d].orchestrator`):
 
-### 1) Agent-step (default)
-
-The engine asks the model for a strict JSON `gen3d_agent_step_v1` object:
-
-- `status_summary` is shown to the player
-- `actions[]` contains tool calls (or `done`)
-
-The engine executes the tool calls and re-prompts the agent with a bounded tool list + recent tool
-results until the run ends.
-
-### 2) Deterministic pipeline
+### 1) Deterministic pipeline (default)
 
 When `[gen3d].orchestrator = "pipeline"`, the engine runs a deterministic state machine:
 
@@ -60,6 +50,16 @@ When `[gen3d].orchestrator = "pipeline"`, the engine runs a deterministic state 
 
 If the pipeline cannot make progress (schema repair exhausted, repeated DraftOps rejections, etc.),
 it falls back to agent-step with an explicit reason.
+
+### 2) Agent-step
+
+The engine asks the model for a strict JSON `gen3d_agent_step_v1` object:
+
+- `status_summary` is shown to the player
+- `actions[]` contains tool calls (or `done`)
+
+The engine executes the tool calls and re-prompts the agent with a bounded tool list + recent tool
+results until the run ends.
 
 ## DraftOps-first primitive editing (seeded edits)
 
