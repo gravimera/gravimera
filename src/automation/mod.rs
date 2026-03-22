@@ -681,6 +681,11 @@ struct SpawnRequest {
 }
 
 #[derive(Deserialize)]
+struct PrefabDuplicateRequest {
+    prefab_id_uuid: String,
+}
+
+#[derive(Deserialize)]
 struct ModeRequest {
     mode: String,
 }
@@ -3169,6 +3174,7 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"GET","path":"/v1/discovery"}),
                 serde_json::json!({"method":"GET","path":"/v1/state"}),
                 serde_json::json!({"method":"GET","path":"/v1/prefabs"}),
+                serde_json::json!({"method":"POST","path":"/v1/prefabs/duplicate"}),
                 serde_json::json!({"method":"GET","path":"/v1/realm_scene/active"}),
                 serde_json::json!({"method":"GET","path":"/v1/realm_scene/list"}),
                 serde_json::json!({"method":"POST","path":"/v1/realm_scene/create"}),
@@ -3249,6 +3255,39 @@ fn handle_request_main_thread<
             let prefabs: Vec<serde_json::Value> = rows.into_iter().map(|(_, _, v)| v).collect();
 
             let body = serde_json::json!({ "ok": true, "prefabs": prefabs }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/prefabs/duplicate") => {
+            let req: PrefabDuplicateRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            let uuid = match uuid::Uuid::parse_str(req.prefab_id_uuid.trim()) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid prefab_id_uuid: {err}"))),
+            };
+
+            let src_prefab_id = uuid.as_u128();
+            let new_prefab_id = match crate::model_library_ui::duplicate_realm_prefab_package(
+                ctx.active_realm_id,
+                src_prefab_id,
+                library,
+                ctx.prefab_descriptors,
+            ) {
+                Ok(id) => id,
+                Err(err) => return Some(json_error(400, err)),
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "src_prefab_id_uuid": uuid::Uuid::from_u128(src_prefab_id).to_string(),
+                "new_prefab_id_uuid": uuid::Uuid::from_u128(new_prefab_id).to_string(),
+            })
+            .to_string();
             Some(AutomationReply {
                 status: 200,
                 body: body.into_bytes(),

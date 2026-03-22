@@ -2228,7 +2228,7 @@ pub(crate) fn model_library_preview_duplicate_button_interactions(
         }
 
         let duplicated = match duplicate_realm_prefab_package(
-            env.active.as_ref(),
+            env.active.realm_id.as_str(),
             prefab_id,
             &mut library,
             &mut descriptors,
@@ -3318,16 +3318,12 @@ fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> Result<()
     Ok(())
 }
 
-fn duplicate_realm_prefab_package(
-    active: &crate::realm::ActiveRealmScene,
+pub(crate) fn duplicate_realm_prefab_package(
+    realm_id: &str,
     src_prefab_id: u128,
     library: &mut ObjectLibrary,
     descriptors: &mut PrefabDescriptorLibrary,
 ) -> Result<u128, String> {
-    ensure_realm_prefab_loaded(active, src_prefab_id, library)?;
-
-    let realm_id = active.realm_id.as_str();
-
     let src_prefabs_dir = crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(
         realm_id,
         src_prefab_id,
@@ -3339,26 +3335,42 @@ fn duplicate_realm_prefab_package(
         ));
     }
 
-    let entries = std::fs::read_dir(&src_prefabs_dir)
-        .map_err(|err| format!("Failed to list {}: {err}", src_prefabs_dir.display()))?;
-    let mut def_ids: Vec<u128> = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|err| format!("Failed to read dir entry: {err}"))?;
-        let path = entry.path();
-        let Some(file_name) = path.file_name().and_then(|v| v.to_str()) else {
-            continue;
-        };
-        if !file_name.ends_with(".json") || file_name.ends_with(".desc.json") {
-            continue;
+    // Ensure all defs in this package are loaded (the root may already be present without internal
+    // defs, which would make duplication fail with "Missing prefab def ... referenced by ...").
+    crate::realm_prefabs::load_prefabs_into_library_from_dir(&src_prefabs_dir, library)?;
+
+    fn collect_def_ids_recursive(root: &std::path::Path) -> Result<Vec<u128>, String> {
+        let mut out: Vec<u128> = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(next) = stack.pop() {
+            let entries = std::fs::read_dir(&next)
+                .map_err(|err| format!("Failed to list {}: {err}", next.display()))?;
+            for entry in entries {
+                let entry = entry.map_err(|err| format!("Failed to read dir entry: {err}"))?;
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                let Some(file_name) = path.file_name().and_then(|v| v.to_str()) else {
+                    continue;
+                };
+                if !file_name.ends_with(".json") || file_name.ends_with(".desc.json") {
+                    continue;
+                }
+                let Some(stem) = file_name.strip_suffix(".json") else {
+                    continue;
+                };
+                let Ok(uuid) = uuid::Uuid::parse_str(stem.trim()) else {
+                    continue;
+                };
+                out.push(uuid.as_u128());
+            }
         }
-        let Some(stem) = file_name.strip_suffix(".json") else {
-            continue;
-        };
-        let Ok(uuid) = uuid::Uuid::parse_str(stem.trim()) else {
-            continue;
-        };
-        def_ids.push(uuid.as_u128());
+        Ok(out)
     }
+
+    let mut def_ids = collect_def_ids_recursive(&src_prefabs_dir)?;
 
     if def_ids.is_empty() {
         return Err(format!(
@@ -3458,6 +3470,12 @@ fn duplicate_realm_prefab_package(
     let dst_materials_dir =
         crate::realm_prefab_packages::realm_prefab_package_materials_dir(realm_id, new_root_id);
     copy_dir_recursive(&src_materials_dir, &dst_materials_dir)?;
+
+    let src_gen3d_source_dir =
+        crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(realm_id, src_prefab_id);
+    let dst_gen3d_source_dir =
+        crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(realm_id, new_root_id);
+    copy_dir_recursive(&src_gen3d_source_dir, &dst_gen3d_source_dir)?;
 
     let src_thumb =
         crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(realm_id, src_prefab_id);
@@ -3724,5 +3742,124 @@ fn draw_dashed_line(
         let segment_end = start + dir * (dist + dash_len).min(length);
         gizmos.line(segment_start, segment_end, color);
         dist += step;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn duplicate_realm_prefab_package_loads_missing_internal_defs() {
+        let _guard = ENV_MUTEX.lock().expect("lock env mutex");
+
+        let temp_root = std::env::temp_dir().join(format!(
+            "gravimera_duplicate_prefab_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_root).expect("create temp root");
+        std::env::set_var("GRAVIMERA_HOME", &temp_root);
+
+        let realm_id = "default";
+        let root_id = uuid::Uuid::new_v4().as_u128();
+        let internal_id = uuid::Uuid::new_v4().as_u128();
+
+        let internal_def = crate::object::registry::ObjectDef {
+            object_id: internal_id,
+            label: "Internal".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: crate::object::registry::ColliderProfile::None,
+            interaction: crate::object::registry::ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![crate::object::registry::ObjectPartDef::primitive(
+                crate::object::registry::PrimitiveVisualDef::Primitive {
+                    mesh: crate::object::registry::MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(0.6, 0.6, 0.7),
+                    unlit: false,
+                },
+                Transform::default(),
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        let root_def = crate::object::registry::ObjectDef {
+            object_id: root_id,
+            label: "Root".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: crate::object::registry::ColliderProfile::None,
+            interaction: crate::object::registry::ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![crate::object::registry::ObjectPartDef::object_ref(
+                internal_id,
+                Transform::default(),
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        };
+
+        crate::realm_prefab_packages::save_realm_prefab_package_defs(
+            realm_id,
+            root_id,
+            &[root_def, internal_def],
+        )
+        .expect("save realm prefab package");
+
+        // Simulate a partially loaded library: root def is present, internal defs are not.
+        let root_uuid = uuid::Uuid::from_u128(root_id).to_string();
+        let src_prefabs_dir =
+            crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(realm_id, root_id);
+        let root_json = src_prefabs_dir.join(format!("{root_uuid}.json"));
+
+        let partial_dir = temp_root.join("partial_root_only");
+        std::fs::create_dir_all(&partial_dir).expect("create partial dir");
+        std::fs::copy(&root_json, partial_dir.join(format!("{root_uuid}.json")))
+            .expect("copy root def json");
+
+        let mut library = ObjectLibrary::default();
+        crate::realm_prefabs::load_prefabs_into_library_from_dir(&partial_dir, &mut library)
+            .expect("load root def only");
+        assert!(library.get(root_id).is_some(), "root def should be loaded");
+        assert!(
+            library.get(internal_id).is_none(),
+            "internal def should be missing"
+        );
+
+        let mut descriptors = PrefabDescriptorLibrary::default();
+        let new_root_id =
+            duplicate_realm_prefab_package(realm_id, root_id, &mut library, &mut descriptors)
+                .expect("duplicate prefab package");
+        assert_ne!(new_root_id, root_id, "duplicate should allocate a new root id");
+
+        let dst_prefabs_dir =
+            crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(realm_id, new_root_id);
+        let dst_root_uuid = uuid::Uuid::from_u128(new_root_id).to_string();
+        assert!(
+            dst_prefabs_dir.join(format!("{dst_root_uuid}.json")).exists(),
+            "duplicate package should contain root def json"
+        );
+
+        std::env::remove_var("GRAVIMERA_HOME");
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 }

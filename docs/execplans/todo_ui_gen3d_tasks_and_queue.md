@@ -49,6 +49,7 @@ The work must be validated by:
 - [x] (2026-03-22 19:52 CST) Automation: Add Gen3D task queue endpoints (list + status) and allow running Gen3D tasks without switching to Build Preview.
 - [x] (2026-03-22 19:52 CST) Validation: `cargo test`, rendered smoke test, and a `test/run_1/...` automation script.
 - [x] (2026-03-22 19:55 CST) Commit(s): clear, scoped messages per milestone.
+- [x] (2026-03-22 21:10 CST) Fix: Preview `Duplicate` loads all package defs from disk (no “Missing prefab def … referenced by …/prefabs”); duplicate now copies `gen3d_source_v1/`. Added `POST /v1/prefabs/duplicate` + a real test script.
 
 
 ## Surprises & Discoveries

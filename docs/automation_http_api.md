@@ -227,6 +227,33 @@ Response (shape):
 }
 ```
 
+### `POST /v1/prefabs/duplicate`
+
+Duplicate a **realm prefab package** into a new prefab id (new package folder) in the active realm.
+
+Request:
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/prefabs/duplicate \
+  -H 'Content-Type: application/json' \
+  -d '{"prefab_id_uuid":"..."}'
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "src_prefab_id_uuid": "...",
+  "new_prefab_id_uuid": "..."
+}
+```
+
+Notes:
+
+- This duplicates on-disk packages under `realm/<realm_id>/prefabs/<prefab_id_uuid>/` (the “realm prefabs” system).
+- Built-in prefabs that are not backed by a realm prefab package cannot be duplicated via this endpoint.
+
 ### `GET /v1/realm_scene/active`
 
 Return the currently active realm/scene selection plus on-disk directories.
