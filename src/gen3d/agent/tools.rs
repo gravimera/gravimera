@@ -531,13 +531,12 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 one_line_summary:
                     "LLM-only: suggests `apply_draft_ops_v1` ops for in-place primitive edits (no mutation by itself). Requires existing component parts snapshots (call query_component_parts_v1 first). The engine validates + clamps ops deterministically before returning them; result includes `workspace_id` + `if_assembly_rev` for safe application.",
                 args_schema:
-                    "{ prompt: string, scope_components?: string[], max_ops?: number, strategy?: \"conservative\"|\"balanced\", allow_remove_parts?: bool }",
+                    "{ prompt: string, scope_components?: string[], max_ops?: number, strategy?: \"conservative\"|\"balanced\" }",
                 args_example: serde_json::json!({
                     "prompt": "Make the cannon longer and darken it.",
                     "scope_components": ["cannon"],
                     "max_ops": 16,
-                    "strategy": "conservative",
-                    "allow_remove_parts": false
+                    "strategy": "conservative"
                 }),
             },
             Gen3dToolDescriptorV1 {

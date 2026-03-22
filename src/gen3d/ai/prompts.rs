@@ -1089,7 +1089,18 @@ Hard rules:\n\
 - Use ONLY component names and part_id_uuid values present in the provided snapshots.\n\
 - Do NOT invent part_id_uuid for updates/removals.\n\
 - Only add new primitives when necessary; prefer updating existing primitives (transform/color/mesh params).\n\
-- Unless allow_remove_parts=true, do NOT output `remove_primitive_part`.\n"
+- Removals are allowed, but use `remove_primitive_part` ONLY when required to satisfy the user request.\n\
+\n\
+Allowed DraftOp kinds:\n\
+- set_anchor_transform\n\
+- set_attachment_offset\n\
+- set_attachment_joint\n\
+- update_primitive_part\n\
+- add_primitive_part\n\
+- remove_primitive_part\n\
+- upsert_animation_slot\n\
+- scale_animation_slot_rotation\n\
+- remove_animation_slot\n"
     .to_string()
 }
 
@@ -1103,7 +1114,6 @@ pub(super) fn build_gen3d_draft_ops_user_text(
     assembly_rev: u32,
     strategy: &str,
     max_ops: usize,
-    allow_remove_parts: bool,
     scene_graph_summary: &serde_json::Value,
     component_parts_snapshots: &[serde_json::Value],
     scope_components: &[String],
@@ -1130,10 +1140,7 @@ Do NOT regenerate components.\n\n",
     out.push_str("\nGuards:\n");
     out.push_str(&format!("- max_ops: {max_ops}\n"));
     out.push_str(&format!("- strategy: {strategy}\n"));
-    out.push_str(&format!(
-        "- allow_remove_parts: {}\n",
-        if allow_remove_parts { "true" } else { "false" }
-    ));
+    out.push_str("- removals: allowed (prefer non-destructive edits; remove only if required)\n");
     if scope_components.is_empty() {
         out.push_str("- scope_components: (none)\n");
     } else {

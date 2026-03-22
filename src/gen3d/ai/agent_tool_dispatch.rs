@@ -6282,8 +6282,6 @@ pub(super) fn execute_tool_call(
                 max_ops: Option<u32>,
                 #[serde(default)]
                 strategy: Option<String>,
-                #[serde(default)]
-                allow_remove_parts: Option<bool>,
             }
 
             let args: GenerateDraftOpsArgsV1 = match serde_json::from_value(call.args.clone()) {
@@ -6322,7 +6320,6 @@ pub(super) fn execute_tool_call(
                     ),
                 ));
             }
-            let allow_remove_parts = args.allow_remove_parts.unwrap_or(false);
 
             let mut scope_components: Vec<String> = Vec::new();
             let mut seen = std::collections::HashSet::<String>::new();
@@ -6455,7 +6452,6 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 job.assembly_rev,
                 strategy.as_str(),
                 max_ops,
-                allow_remove_parts,
                 &scene_graph_summary,
                 &snapshots,
                 scope_components.as_slice(),

@@ -1100,8 +1100,7 @@ fn poll_pipeline_tick(
                 serde_json::json!({
                     "prompt": prompt,
                     "max_ops": 24,
-                    "strategy": "conservative",
-                    "allow_remove_parts": false
+                    "strategy": "conservative"
                 }),
             ) {
                 pipeline_record_tool_result(workshop, job, &*draft, &result);

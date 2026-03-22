@@ -206,7 +206,7 @@ Add a new tool id and contract:
 - Purpose: Produce a bounded list of DraftOps (`ops`) that can be applied by `apply_draft_ops_v1` to satisfy the user’s edit prompt, using only component/part information supplied by the engine (especially `query_component_parts_v1` output with `part_id_uuid` and `recipes`).
 - Must be strict structured output (JSON schema, `additionalProperties=false`).
 - Must never mutate state by itself.
-- Must be safe by default: limited op count, avoids deleting parts unless explicitly asked, and must preserve “movable unit” requirements (do not accidentally remove move slots, etc.).
+- Must be safe by default: limited op count; prefer non-destructive edits (transforms/recolors) and only remove parts when required to satisfy the user request.
 
 Suggested tool args (engine-validated; actionable errors):
 
@@ -214,7 +214,6 @@ Suggested tool args (engine-validated; actionable errors):
 - `scope_components?: string[]` (optional; if omitted, the tool may consider all components described in the supplied “component parts snapshot” text)
 - `max_ops?: number` (default 24, clamp 1..64)
 - `strategy?: "conservative"|"balanced"` (optional; influences whether it prefers recolor/scale vs adding/removing primitives)
-- `allow_remove_parts?: bool` (default false; when false, the engine must reject `remove_primitive_part` ops deterministically)
 
 Suggested tool output schema:
 
@@ -230,7 +229,7 @@ Prompting requirements (system + user prompt builders):
   - For each component in scope: the `query_component_parts_v1` snapshot, including part ids and copy/pasteable recipes (bounded).
   - Any relevant guards (atomic apply, `if_assembly_rev` usage, op limits).
 
-Engine-side validation requirements (contract-first): regardless of prompting, the tool handler must enforce safety and gatekeeping deterministically. At minimum: clamp `max_ops`, reject unknown keys, reject ops referencing unknown components/part ids, reject `RemovePrimitivePart` unless `allow_remove_parts=true`, and require `if_assembly_rev` + `atomic=true` on application.
+Engine-side validation requirements (contract-first): regardless of prompting, the tool handler must enforce safety deterministically. At minimum: clamp `max_ops`, reject unknown keys, reject ops referencing unknown components/part ids, and require `if_assembly_rev` + `atomic=true` on application.
 
 Concrete integration checklist for this tool (to avoid prompt/tool mismatches and “silent” behavior changes):
 

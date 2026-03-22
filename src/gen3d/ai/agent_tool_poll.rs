@@ -1584,12 +1584,6 @@ pub(super) fn poll_agent_tool(
                             ));
                         }
 
-                        let allow_remove_parts = call
-                            .args
-                            .get("allow_remove_parts")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-
                         let planned_components = job.planned_components.clone();
                         let planned_names: std::collections::HashSet<String> = planned_components
                             .iter()
@@ -1698,9 +1692,6 @@ pub(super) fn poll_agent_tool(
                                     }
                                 }
                                 "remove_primitive_part" => {
-                                    if !allow_remove_parts {
-                                        return Err("remove_primitive_part rejected: allow_remove_parts=false".into());
-                                    }
                                     let component = component.ok_or_else(|| {
                                         "remove_primitive_part requires component".to_string()
                                     })?;
@@ -1878,11 +1869,6 @@ pub(super) fn poll_agent_tool(
                                     .unwrap_or("balanced")
                                     .trim()
                                     .to_string();
-                                let allow_remove_parts = call
-                                    .args
-                                    .get("allow_remove_parts")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
 
                                 let image_object_summary = job
                                     .user_image_object_summary
@@ -1942,7 +1928,6 @@ pub(super) fn poll_agent_tool(
                                     job.assembly_rev,
                                     strategy.as_str(),
                                     max_ops,
-                                    allow_remove_parts,
                                     &scene_graph_summary,
                                     &snapshots,
                                     scope_components.as_slice(),
