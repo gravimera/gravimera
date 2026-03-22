@@ -3116,9 +3116,9 @@ pub(crate) fn model_library_scroll_selected_item_into_view(
     let panel_scale = panel_node.inverse_scale_factor();
     let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
     let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
-    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
-        scroll.y = 0.0;
-        *last_scrolled = Some(selected_id);
+    if viewport_h < 1.0 || content_h < 1.0 {
+        // UI layout not ready yet (content size often reports 0 for one frame after a rebuild).
+        // Retry next frame; do not lock-in `last_scrolled`.
         return;
     }
     let max_scroll = (content_h - viewport_h).max(0.0);
@@ -3129,6 +3129,18 @@ pub(crate) fn model_library_scroll_selected_item_into_view(
         ui_rect_global_y_bounds(item_node.border_box(), *item_transform);
 
     let margin_physical = 6.0;
+    if max_scroll <= 0.5 {
+        // Content fits in the viewport. If the selected item isn't visible, it likely means the UI
+        // transforms aren't stable yet. Retry next frame.
+        let in_view = item_top_y >= panel_top_y + margin_physical
+            && item_bottom_y <= panel_bottom_y - margin_physical;
+        if !in_view {
+            return;
+        }
+        scroll.y = 0.0;
+        *last_scrolled = Some(selected_id);
+        return;
+    }
     let mut next_scroll = scroll.y;
 
     if item_top_y < panel_top_y + margin_physical {
