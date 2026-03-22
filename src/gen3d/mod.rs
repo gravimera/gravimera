@@ -131,7 +131,7 @@ pub(crate) use ai::{
     gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };
-pub(crate) use ai::{gen3d_continue_button, gen3d_generate_button, gen3d_poll_ai_job, Gen3dAiJob};
+pub(crate) use ai::{gen3d_generate_button, gen3d_poll_ai_job, Gen3dAiJob};
 #[allow(unused_imports)]
 pub(crate) use ai::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
 pub(crate) use images::{
@@ -160,7 +160,7 @@ pub(crate) use tool_feedback_ui::{
 };
 pub(crate) use ui::{
     enter_gen3d_mode, exit_gen3d_mode, gen3d_cleanup_preview_scene_when_idle,
-    gen3d_clear_prompt_button, gen3d_collision_toggle_button,
+    gen3d_collision_toggle_button,
     gen3d_preview_animation_dropdown_button, gen3d_preview_animation_dropdown_scroll_wheel,
     gen3d_preview_animation_option_buttons, gen3d_prompt_box_focus, gen3d_prompt_scroll_wheel,
     gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,

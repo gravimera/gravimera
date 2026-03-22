@@ -395,6 +395,26 @@ fn appearance_review_enabled(job: &Gen3dAiJob) -> bool {
     llm_available && job.review_appearance
 }
 
+fn pipeline_missing_move_slot_coverage(job: &Gen3dAiJob, draft: &Gen3dDraft) -> bool {
+    let movable = draft
+        .root_def()
+        .and_then(|def| def.mobility.as_ref())
+        .is_some();
+    if !movable {
+        return false;
+    }
+
+    let has_move = job.planned_components.iter().any(|c| {
+        c.attach_to.as_ref().is_some_and(|att| {
+            att.animations
+                .iter()
+                .any(|slot| slot.channel.as_ref() == "move")
+        })
+    });
+
+    !has_move
+}
+
 fn run_complete_enough_for_pipeline_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> bool {
     if draft.total_non_projectile_primitive_parts() == 0 {
         return false;
@@ -416,6 +436,9 @@ fn run_complete_enough_for_pipeline_finish(job: &Gen3dAiJob, draft: &Gen3dDraft)
         return false;
     }
     if job.agent.last_motion_ok == Some(false) {
+        return false;
+    }
+    if pipeline_missing_move_slot_coverage(job, draft) {
         return false;
     }
 
@@ -1178,18 +1201,46 @@ fn poll_pipeline_tick(
                     .unwrap_or(false);
 
                 if ok {
+                    if pipeline_missing_move_slot_coverage(job, draft)
+                        && job.pipeline.motion_authoring_attempts < 2
+                    {
+                        job.pipeline.motion_authoring_attempts =
+                            job.pipeline.motion_authoring_attempts.saturating_add(1);
+                        // Force a QA re-run after motion authoring (do not reuse stale ok flags).
+                        job.agent.last_validate_ok = None;
+                        job.agent.last_smoke_ok = None;
+                        job.agent.last_motion_ok = None;
+
+                        workshop.status = "Pipeline: authoring motion…".into();
+                        if let Some(result) = start_pipeline_tool_call(
+                            config,
+                            time,
+                            commands,
+                            images,
+                            workshop,
+                            feedback_history,
+                            job,
+                            draft,
+                            preview,
+                            preview_model,
+                            TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+                            serde_json::json!({}),
+                        ) {
+                            pipeline_record_tool_result(workshop, job, &*draft, &result);
+                        }
+                        return;
+                    }
+
                     if appearance_review_enabled(job) {
                         job.pipeline.stage = Gen3dPipelineStage::RenderPreview;
-                    } else if run_complete_enough_for_pipeline_finish(job, draft) {
-                        job.pipeline.stage = Gen3dPipelineStage::Finish;
-                    } else {
-                        fallback_to_agent_step(
-                            config,
-                            workshop,
-                            job,
-                            "qa_ok_but_not_complete".into(),
-                        );
+                        return;
                     }
+                    if run_complete_enough_for_pipeline_finish(job, draft) {
+                        job.pipeline.stage = Gen3dPipelineStage::Finish;
+                        return;
+                    }
+
+                    fallback_to_agent_step(config, workshop, job, "qa_ok_but_not_complete".into());
                     return;
                 }
 

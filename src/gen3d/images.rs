@@ -16,14 +16,17 @@ pub(crate) fn gen3d_update_images_inline_visibility(
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
-    let show = workshop.images.is_empty();
+    let has_images = !workshop.images.is_empty();
+    let has_prompt = !workshop.prompt.trim().is_empty();
+    let show = has_images || has_prompt;
     for (mut node, mut vis) in &mut panels {
         if show {
-            node.display = Display::None;
-            *vis = Visibility::Hidden;
-        } else {
             node.display = Display::Flex;
             *vis = Visibility::Visible;
+            node.width = Val::Px(if has_images { 240.0 } else { 72.0 });
+        } else {
+            node.display = Display::None;
+            *vis = Visibility::Hidden;
         }
     }
 }
@@ -32,6 +35,7 @@ pub(crate) fn gen3d_clear_images_button(
     build_scene: Res<State<BuildScene>>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut job: ResMut<Gen3dAiJob>,
+    mut scroll_panels: Query<&mut ScrollPosition, With<Gen3dPromptScrollPanel>>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Gen3dClearImagesButton>),
@@ -44,12 +48,18 @@ pub(crate) fn gen3d_clear_images_button(
         match *interaction {
             Interaction::Pressed => {
                 if job.is_running() {
-                    workshop.error = Some("Cannot clear images while building.".into());
+                    workshop.error = Some("Cannot clear while building.".into());
                     continue;
                 }
                 workshop.images.clear();
+                workshop.prompt.clear();
                 workshop.image_viewer = None;
                 workshop.error = None;
+                workshop.prompt_focused = true;
+                workshop.prompt_scrollbar_drag = None;
+                if let Ok(mut scroll) = scroll_panels.single_mut() {
+                    scroll.y = 0.0;
+                }
                 job.reset_session();
                 if !job.is_running() {
                     workshop.status = format!(

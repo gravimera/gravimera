@@ -305,12 +305,6 @@ pub(crate) struct Gen3dGenerateButton;
 pub(crate) struct Gen3dGenerateButtonText;
 
 #[derive(Component)]
-pub(crate) struct Gen3dContinueButton;
-
-#[derive(Component)]
-pub(crate) struct Gen3dContinueButtonText;
-
-#[derive(Component)]
 pub(crate) struct Gen3dSaveButton;
 
 #[derive(Component)]
@@ -378,12 +372,6 @@ pub(crate) struct Gen3dPrefabScrollbarThumb;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPrefabDetailsText;
-
-#[derive(Component)]
-pub(crate) struct Gen3dClearPromptButton;
-
-#[derive(Component)]
-pub(crate) struct Gen3dClearPromptButtonText;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewCamera;

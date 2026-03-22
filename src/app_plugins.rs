@@ -387,9 +387,6 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_side_panel_toggle_button
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_side_tab_buttons.run_if(crate::automation::local_input_enabled),
-                crate::gen3d::gen3d_clear_prompt_button
-                    .run_if(crate::automation::local_input_enabled)
-                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_preview_animation_dropdown_button
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_animation_option_buttons
@@ -398,10 +395,6 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_prompt_box_focus)
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_generate_button
-                    .after(crate::gen3d::gen3d_prompt_box_focus)
-                    .run_if(crate::automation::local_input_enabled)
-                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::gen3d::gen3d_continue_button
                     .after(crate::gen3d::gen3d_prompt_box_focus)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
@@ -507,7 +500,7 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_image_viewer_click_to_close),
                 crate::gen3d::gen3d_update_ui_text
                     .after(crate::gen3d::gen3d_prompt_text_input)
-                    .after(crate::gen3d::gen3d_clear_prompt_button)
+                    .after(crate::gen3d::gen3d_clear_images_button)
                     .after(crate::gen3d::gen3d_preview_animation_dropdown_button)
                     .after(crate::gen3d::gen3d_preview_animation_option_buttons)
                     .after(crate::gen3d::gen3d_collision_toggle_button)

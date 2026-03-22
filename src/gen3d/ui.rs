@@ -1117,33 +1117,6 @@ pub(crate) fn enter_gen3d_mode(
                                 Button,
                                 Node {
                                     width: Val::Percent(100.0),
-                                    height: Val::Px(42.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
-                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                                Gen3dClearPromptButton,
-                            ))
-                            .with_children(|button| {
-                                button.spawn((
-                                    Text::new("Clear Prompt"),
-                                    TextFont {
-                                        font_size: 14.0,
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                    Gen3dClearPromptButtonText,
-                                ));
-                            });
-
-                        column
-                            .spawn((
-                                Button,
-                                Node {
-                                    width: Val::Percent(100.0),
                                     height: Val::Px(52.0),
                                     justify_content: JustifyContent::Center,
                                     align_items: AlignItems::Center,
@@ -1168,33 +1141,6 @@ pub(crate) fn enter_gen3d_mode(
                                     },
                                     TextColor(Color::srgb(0.70, 1.0, 0.82)),
                                     Gen3dGenerateButtonText,
-                                ));
-                            });
-
-                        column
-                            .spawn((
-                                Button,
-                                Node {
-                                    width: Val::Percent(100.0),
-                                    height: Val::Px(42.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.06, 0.11, 0.08, 0.80)),
-                                BorderColor::all(Color::srgb(0.20, 0.65, 0.35)),
-                                Gen3dContinueButton,
-                            ))
-                            .with_children(|button| {
-                                button.spawn((
-                                    Text::new("Continue"),
-                                    TextFont {
-                                        font_size: 16.0,
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.70, 1.0, 0.82)),
-                                    Gen3dContinueButtonText,
                                 ));
                             });
 
@@ -2285,44 +2231,6 @@ fn apply_gen3d_preview_animation_option_style(
     *border = BorderColor::all(border_color);
 }
 
-pub(crate) fn gen3d_clear_prompt_button(
-    build_scene: Res<State<BuildScene>>,
-    mut workshop: ResMut<Gen3dWorkshop>,
-    job: Res<Gen3dAiJob>,
-    mut scroll_panels: Query<&mut ScrollPosition, With<Gen3dPromptScrollPanel>>,
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<Gen3dClearPromptButton>),
-    >,
-) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return;
-    }
-    for (interaction, mut bg) in &mut buttons {
-        match *interaction {
-            Interaction::Pressed => {
-                if job.is_running() {
-                    workshop.error = Some("Cannot clear prompt while building.".into());
-                } else {
-                    workshop.prompt.clear();
-                    workshop.error = None;
-                    workshop.prompt_focused = true;
-                    if let Ok(mut scroll) = scroll_panels.single_mut() {
-                        scroll.y = 0.0;
-                    }
-                }
-                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.78));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.70));
-            }
-            Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65));
-            }
-        }
-    }
-}
-
 #[derive(SystemParam)]
 pub(crate) struct Gen3dUpdateUiTextDeps<'w, 's> {
     commands: Commands<'w, 's>,
@@ -2333,8 +2241,6 @@ pub(crate) struct Gen3dUpdateUiTextDeps<'w, 's> {
     ui_fonts: Res<'w, UiFonts>,
     emoji_atlas: Res<'w, EmojiAtlas>,
     asset_server: Res<'w, AssetServer>,
-    continue_buttons:
-        Query<'w, 's, (&'static mut Node, &'static mut Visibility), With<Gen3dContinueButton>>,
     scroll_panels: ParamSet<
         'w,
         's,
@@ -2386,7 +2292,6 @@ pub(crate) fn gen3d_update_ui_text(
         ui_fonts,
         emoji_atlas,
         asset_server,
-        mut continue_buttons,
         mut scroll_panels,
         mut texts,
         rich_text,
@@ -2604,23 +2509,17 @@ Step: {step_status}",
         *status_log_follow_tail = max_scroll <= 1.0 || (max_scroll - scroll.y) <= 24.0;
     }
 
-    let label = if job.is_running() { "Stop" } else { "Build" };
+    let label = if job.is_running() {
+        "Stop"
+    } else if job.edit_base_prefab_id().is_some() {
+        "Edit"
+    } else {
+        "Build"
+    };
     {
         let mut button = texts.p2();
         for mut text in &mut button {
             **text = label.into();
-        }
-    }
-
-    let show_continue = job.can_resume();
-    for (mut node, mut vis) in &mut continue_buttons {
-        if show_continue {
-            node.display = Display::Flex;
-            *vis = Visibility::Visible;
-        } else {
-            // `Visibility::Hidden` keeps the element in the layout, so also disable it via `Display::None`.
-            node.display = Display::None;
-            *vis = Visibility::Hidden;
         }
     }
 

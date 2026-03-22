@@ -42,7 +42,7 @@ use super::parse;
 use super::reuse_groups;
 
 use super::super::state::{
-    Gen3dContinueButton, Gen3dDraft, Gen3dGenerateButton, Gen3dPendingSeedFromPrefab, Gen3dPreview,
+    Gen3dDraft, Gen3dGenerateButton, Gen3dPendingSeedFromPrefab, Gen3dPreview,
     Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dSeedFromPrefabMode, Gen3dSpeedMode,
     Gen3dWorkshop,
 };
@@ -88,68 +88,34 @@ pub(crate) fn gen3d_generate_button(
                     gen3d_cancel_build_from_api(&mut workshop, &mut job);
                     continue;
                 }
-                match gen3d_start_build_from_api(
-                    build_scene.as_ref(),
-                    &config,
-                    log_sinks.clone(),
-                    &mut workshop,
-                    &mut job,
-                    &mut draft,
-                ) {
-                    Ok(()) => {}
-                    Err(err) => {
-                        workshop.error = Some(err);
-                    }
-                }
-            }
-        }
-    }
-}
-
-pub(crate) fn gen3d_continue_button(
-    build_scene: Res<State<BuildScene>>,
-    config: Res<AppConfig>,
-    log_sinks: Option<Res<crate::app::Gen3dLogSinks>>,
-    mut workshop: ResMut<Gen3dWorkshop>,
-    mut job: ResMut<Gen3dAiJob>,
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<Gen3dContinueButton>),
-    >,
-) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return;
-    }
-
-    let log_sinks = log_sinks.map(|sinks| sinks.into_inner().clone());
-
-    for (interaction, mut bg) in &mut buttons {
-        match *interaction {
-            Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.06, 0.11, 0.08, 0.80));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.08, 0.15, 0.10, 0.88));
-            }
-            Interaction::Pressed => {
-                *bg = BackgroundColor(Color::srgba(0.10, 0.18, 0.12, 0.95));
-                if job.is_running() {
-                    workshop.error =
-                        Some("Cannot Continue while building. Click Stop first.".into());
-                    continue;
-                }
-                if !job.can_resume() {
-                    workshop.error =
-                        Some("No resumable Gen3D session yet. Click Build first.".into());
-                    continue;
-                }
-                if let Err(err) = gen3d_resume_build_from_api(
-                    build_scene.as_ref(),
-                    &config,
-                    log_sinks.clone(),
-                    &mut workshop,
-                    &mut job,
-                ) {
+                let started = if job.can_resume() {
+                    gen3d_resume_build_from_api(
+                        build_scene.as_ref(),
+                        &config,
+                        log_sinks.clone(),
+                        &mut workshop,
+                        &mut job,
+                    )
+                } else if job.edit_base_prefab_id().is_some() {
+                    // Seeded Edit/Fork sessions may be "Done" (build_complete=true) but should still behave as edits.
+                    gen3d_resume_build_from_api(
+                        build_scene.as_ref(),
+                        &config,
+                        log_sinks.clone(),
+                        &mut workshop,
+                        &mut job,
+                    )
+                } else {
+                    gen3d_start_build_from_api(
+                        build_scene.as_ref(),
+                        &config,
+                        log_sinks.clone(),
+                        &mut workshop,
+                        &mut job,
+                        &mut draft,
+                    )
+                };
+                if let Err(err) = started {
                     workshop.error = Some(err);
                 }
             }
@@ -302,7 +268,7 @@ pub(crate) fn gen3d_resume_build_from_api(
 
     workshop.status_log.start_step(
         "Resume build".to_string(),
-        "User clicked Continue; resuming the previous run.".to_string(),
+        "User clicked Build/Edit; resuming the previous run.".to_string(),
     );
     workshop.status_log.finish_step("OK".to_string());
 
