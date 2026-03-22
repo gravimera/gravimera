@@ -338,10 +338,7 @@ pub(super) fn poll_agent_component_batch(
             )
         };
 
-        let reasoning_effort = super::openai::cap_reasoning_effort(
-            ai.model_reasoning_effort(),
-            &config.gen3d_reasoning_effort_component,
-        );
+        let reasoning_effort = ai.model_reasoning_effort().to_string();
         spawn_gen3d_ai_text_thread(
             shared.clone(),
             progress.clone(),

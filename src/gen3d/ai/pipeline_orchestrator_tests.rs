@@ -67,7 +67,7 @@ fn gen3d_mock_pipeline_builds_warcar_prompt_end_to_end() {
     let openai = OpenAiConfig {
         base_url: "mock://gen3d".into(),
         model: "mock".into(),
-        model_reasoning_effort: "none".into(),
+        reasoning_effort: "none".into(),
         api_key: "mock".into(),
     };
 
@@ -147,7 +147,7 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
     let openai = OpenAiConfig {
         base_url: "mock://gen3d".into(),
         model: "mock".into(),
-        model_reasoning_effort: "none".into(),
+        reasoning_effort: "none".into(),
         api_key: "mock".into(),
     };
 
@@ -271,7 +271,7 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
     let openai = OpenAiConfig {
         base_url: "mock://gen3d".into(),
         model: "mock".into(),
-        model_reasoning_effort: "none".into(),
+        reasoning_effort: "none".into(),
         api_key: "mock".into(),
     };
 

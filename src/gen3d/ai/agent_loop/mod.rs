@@ -19,7 +19,7 @@ use super::{
 #[cfg(test)]
 use crate::gen3d::agent::tools::TOOL_ID_QA;
 use crate::threaded_result::{new_shared_result, SharedResult};
-use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
+use crate::types::{ActionClock, AnimationChannelsActive, AttackClock, LocomotionClock};
 
 #[cfg(test)]
 use super::agent_parsing::{parse_delta_transform, resolve_component_index_by_name_hint};
@@ -58,6 +58,7 @@ pub(super) fn poll_gen3d_agent(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut ActionClock,
         ),
         With<Gen3dPreviewModelRoot>,
     >,
@@ -193,7 +194,7 @@ pub(super) fn spawn_agent_user_image_summary_request(
         &job.user_prompt_raw,
         job.user_images.len(),
     );
-    let reasoning_effort = super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
@@ -263,7 +264,7 @@ pub(super) fn spawn_agent_prompt_intent_request(
             .as_ref()
             .map(|s| s.text.as_str()),
     );
-    let reasoning_effort = super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
@@ -275,7 +276,7 @@ pub(super) fn spawn_agent_prompt_intent_request(
         reasoning_effort,
         system,
         user_text,
-        Vec::new(),
+        job.user_images_component.clone(),
         pass_dir,
         "prompt_intent".into(),
     );
@@ -626,10 +627,7 @@ pub(super) fn spawn_agent_step_request(
         job.planned_components.len(),
     );
 
-    let reasoning_effort = super::openai::cap_reasoning_effort(
-        ai.model_reasoning_effort(),
-        &config.gen3d_reasoning_effort_agent_step,
-    );
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
@@ -751,6 +749,18 @@ mod tests {
             )
             .expect("register move_sheet")
             .blob_id;
+        let action_sheet = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:motion_sheet".into(), "motion:action".into()],
+                "action_sheet.png".into(),
+            )
+            .expect("register action_sheet")
+            .blob_id;
         let attack_sheet = store
             .register_blob_file(
                 0,
@@ -771,9 +781,11 @@ mod tests {
             top.clone(),
             bottom.clone(),
             move_sheet,
+            action_sheet,
             attack_sheet,
         ];
-        let selected = select_review_preview_blob_ids(&store, &preview_blob_ids, false, false);
+        let selected =
+            select_review_preview_blob_ids(&store, &preview_blob_ids, false, false, false);
         assert_eq!(selected, vec![front, left_back, right_back, top, bottom,]);
         let _ = std::fs::remove_dir_all(&run_dir);
     }
@@ -860,6 +872,18 @@ mod tests {
             )
             .expect("register move_sheet")
             .blob_id;
+        let action_sheet = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:motion_sheet".into(), "motion:action".into()],
+                "action_sheet.png".into(),
+            )
+            .expect("register action_sheet")
+            .blob_id;
         let attack_sheet = store
             .register_blob_file(
                 0,
@@ -880,9 +904,10 @@ mod tests {
             top.clone(),
             bottom.clone(),
             move_sheet.clone(),
+            action_sheet.clone(),
             attack_sheet.clone(),
         ];
-        let selected = select_review_preview_blob_ids(&store, &preview_blob_ids, true, true);
+        let selected = select_review_preview_blob_ids(&store, &preview_blob_ids, true, true, true);
         assert_eq!(
             selected,
             vec![
@@ -892,6 +917,7 @@ mod tests {
                 top,
                 bottom,
                 move_sheet,
+                action_sheet,
                 attack_sheet,
             ]
         );
@@ -927,6 +953,18 @@ mod tests {
             )
             .expect("register move_sheet")
             .blob_id;
+        let action_sheet = store
+            .register_blob_file(
+                0,
+                0,
+                0,
+                "image/png",
+                1,
+                vec!["kind:motion_sheet".into(), "motion:action".into()],
+                "action_sheet.png".into(),
+            )
+            .expect("register action_sheet")
+            .blob_id;
         let attack_sheet = store
             .register_blob_file(
                 0,
@@ -940,8 +978,13 @@ mod tests {
             .expect("register attack_sheet")
             .blob_id;
 
-        let preview_blob_ids = vec![move_sheet.clone(), attack_sheet.clone()];
-        let selected = select_review_preview_blob_ids(&store, &preview_blob_ids, false, false);
+        let preview_blob_ids = vec![
+            move_sheet.clone(),
+            action_sheet.clone(),
+            attack_sheet.clone(),
+        ];
+        let selected =
+            select_review_preview_blob_ids(&store, &preview_blob_ids, false, false, false);
         assert_eq!(selected, preview_blob_ids);
         let _ = std::fs::remove_dir_all(&run_dir);
     }
@@ -960,7 +1003,7 @@ mod tests {
         });
         assert_eq!(
             motion_sheets_needed_from_smoke_results(&smoke_results),
-            (true, true)
+            (true, false, true)
         );
     }
 
@@ -973,7 +1016,7 @@ mod tests {
         });
         assert_eq!(
             motion_sheets_needed_from_smoke_results(&smoke_results),
-            (true, false)
+            (true, true, false)
         );
     }
 
@@ -1319,7 +1362,7 @@ mod tests {
         let openai = OpenAiConfig {
             base_url: "mock://gen3d".into(),
             model: "mock".into(),
-            model_reasoning_effort: "none".into(),
+            reasoning_effort: "none".into(),
             api_key: "mock".into(),
         };
 
@@ -1386,6 +1429,7 @@ mod tests {
                     &mut AnimationChannelsActive,
                     &mut LocomotionClock,
                     &mut AttackClock,
+                    &mut ActionClock,
                 ),
                 With<Gen3dPreviewModelRoot>,
             >,

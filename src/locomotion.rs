@@ -2,7 +2,8 @@ use bevy::prelude::*;
 
 use crate::object::registry::ObjectLibrary;
 use crate::types::{
-    AnimationChannelsActive, AttackClock, Commandable, LocomotionClock, MoveOrder, ObjectPrefabId,
+    ActionClock, AnimationChannelsActive, AttackClock, Commandable, LocomotionClock, MoveOrder,
+    ObjectPrefabId,
 };
 
 pub(crate) fn ensure_animation_channels_active(
@@ -23,6 +24,7 @@ pub(crate) fn update_animation_channels_active(
     mut q: Query<(Entity, Option<&MoveOrder>, &mut AnimationChannelsActive), With<Commandable>>,
     locomotion: Query<&LocomotionClock>,
     attacks: Query<&AttackClock>,
+    actions: Query<&ActionClock>,
 ) {
     let wall_time = time.elapsed_secs();
     for (entity, order, mut channels) in &mut q {
@@ -34,6 +36,13 @@ pub(crate) fn update_animation_channels_active(
         let order_active = order.and_then(|o| o.target).is_some();
         channels.moving = speed_mps > 0.05 || order_active;
         channels.attacking_primary = attacks
+            .get(entity)
+            .map(|clock| {
+                clock.duration_secs > 0.0
+                    && (wall_time - clock.started_at_secs).max(0.0) <= clock.duration_secs
+            })
+            .unwrap_or(false);
+        channels.acting = actions
             .get(entity)
             .map(|clock| {
                 clock.duration_secs > 0.0

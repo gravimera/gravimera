@@ -27,7 +27,7 @@ use crate::gen3d::agent::tools::{
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
-use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
+use crate::types::{ActionClock, AnimationChannelsActive, AttackClock, LocomotionClock};
 
 use super::super::state::{Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dWorkshop};
 use super::super::tool_feedback::Gen3dToolFeedbackHistory;
@@ -2378,6 +2378,7 @@ pub(super) fn execute_tool_call(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut ActionClock,
         ),
         With<Gen3dPreviewModelRoot>,
     >,
@@ -5930,10 +5931,7 @@ pub(super) fn execute_tool_call(
                     &required_component_names,
                 )
             };
-            let reasoning_effort = super::openai::cap_reasoning_effort(
-                ai.model_reasoning_effort(),
-                &config.gen3d_reasoning_effort_plan,
-            );
+            let reasoning_effort = ai.model_reasoning_effort().to_string();
 
             let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
             job.shared_result = Some(shared.clone());
@@ -5955,7 +5953,7 @@ pub(super) fn execute_tool_call(
                 reasoning_effort,
                 system,
                 user_text,
-                Vec::new(),
+                job.user_images_component.clone(),
                 pass_dir,
                 sanitize_prefix(&format!("tool_plan_{}", &call.call_id)),
             );
@@ -6213,10 +6211,7 @@ pub(super) fn execute_tool_call(
                     max_ops,
                 );
 
-            let reasoning_effort = super::openai::cap_reasoning_effort(
-                ai.model_reasoning_effort(),
-                &config.gen3d_reasoning_effort_plan,
-            );
+            let reasoning_effort = ai.model_reasoning_effort().to_string();
 
             let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
             job.shared_result = Some(shared.clone());
@@ -6457,10 +6452,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 scope_components.as_slice(),
             );
 
-            let reasoning_effort = super::openai::cap_reasoning_effort(
-                ai.model_reasoning_effort(),
-                &config.gen3d_reasoning_effort_component,
-            );
+            let reasoning_effort = ai.model_reasoning_effort().to_string();
 
             let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
             job.shared_result = Some(shared.clone());
@@ -6667,10 +6659,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 idx,
             );
             job.agent.pending_llm_repair_attempt = 0;
-            let reasoning_effort = super::openai::cap_reasoning_effort(
-                ai.model_reasoning_effort(),
-                &config.gen3d_reasoning_effort_component,
-            );
+            let reasoning_effort = ai.model_reasoning_effort().to_string();
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
@@ -7096,8 +7085,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 &job.planned_components,
                 draft,
             );
-            let reasoning_effort =
-                super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "medium");
+            let reasoning_effort = ai.model_reasoning_effort().to_string();
             spawn_gen3d_ai_text_thread(
                 shared,
                 progress,
@@ -7384,9 +7372,10 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     &job.planned_components,
                     draft,
                 );
-                let (include_move_sheet, include_attack_sheet) =
+                let (include_move_sheet, include_action_sheet, include_attack_sheet) =
                     motion_sheets_needed_from_smoke_results(&smoke_results);
-                let include_motion_sheets = include_move_sheet || include_attack_sheet;
+                let include_motion_sheets =
+                    include_move_sheet || include_action_sheet || include_attack_sheet;
 
                 let prefix = sanitize_prefix(&format!("review_prerender_{}", call.call_id));
                 let views = [
@@ -9214,6 +9203,7 @@ mod tests {
                 &mut crate::types::AnimationChannelsActive,
                 &mut crate::types::LocomotionClock,
                 &mut crate::types::AttackClock,
+                &mut crate::types::ActionClock,
             ),
             With<crate::gen3d::state::Gen3dPreviewModelRoot>,
         >,
@@ -9252,7 +9242,7 @@ mod tests {
         let openai = crate::config::OpenAiConfig {
             base_url: "mock://gen3d".into(),
             model: "mock".into(),
-            model_reasoning_effort: "none".into(),
+            reasoning_effort: "none".into(),
             api_key: "mock".into(),
         };
 

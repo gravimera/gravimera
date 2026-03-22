@@ -6,7 +6,7 @@ use crate::gen3d::agent::tools::TOOL_ID_LLM_REVIEW_DELTA;
 use crate::gen3d::agent::{
     append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolCallJsonV1, Gen3dToolResultJsonV1,
 };
-use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
+use crate::types::{ActionClock, AnimationChannelsActive, AttackClock, LocomotionClock};
 
 use super::super::state::{Gen3dDraft, Gen3dPreviewModelRoot, Gen3dWorkshop};
 use super::agent_review_delta::start_agent_llm_review_delta_call;
@@ -27,6 +27,7 @@ pub(super) fn poll_agent_render_capture(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut ActionClock,
         ),
         With<Gen3dPreviewModelRoot>,
     >,
@@ -36,6 +37,7 @@ pub(super) fn poll_agent_render_capture(
         blob_ids: Vec<String>,
         static_blob_ids: Vec<String>,
         move_sheet_blob_id: Option<String>,
+        action_sheet_blob_id: Option<String>,
         attack_sheet_blob_id: Option<String>,
     }
 
@@ -92,6 +94,7 @@ pub(super) fn poll_agent_render_capture(
             blob_ids: Vec::new(),
             static_blob_ids: Vec::new(),
             move_sheet_blob_id: None,
+            action_sheet_blob_id: None,
             attack_sheet_blob_id: None,
         };
 
@@ -140,6 +143,9 @@ pub(super) fn poll_agent_render_capture(
                 if file_name == "move_sheet.png" {
                     labels.push("kind:motion_sheet".into());
                     labels.push("motion:move".into());
+                } else if file_name == "action_sheet.png" {
+                    labels.push("kind:motion_sheet".into());
+                    labels.push("motion:action".into());
                 } else if file_name == "attack_sheet.png" {
                     labels.push("kind:motion_sheet".into());
                     labels.push("motion:attack".into());
@@ -168,6 +174,7 @@ pub(super) fn poll_agent_render_capture(
 
                 match file_name {
                     "move_sheet.png" => blobs.move_sheet_blob_id = Some(blob.blob_id.clone()),
+                    "action_sheet.png" => blobs.action_sheet_blob_id = Some(blob.blob_id.clone()),
                     "attack_sheet.png" => blobs.attack_sheet_blob_id = Some(blob.blob_id.clone()),
                     _ => blobs.static_blob_ids.push(blob.blob_id.clone()),
                 }
@@ -277,7 +284,11 @@ pub(super) fn poll_agent_render_capture(
             serde_json::json!({
                 "blob_ids": blobs.blob_ids,
                 "static_blob_ids": blobs.static_blob_ids,
-                "motion_sheet_blob_ids": { "move": blobs.move_sheet_blob_id, "attack": blobs.attack_sheet_blob_id },
+                "motion_sheet_blob_ids": {
+                    "move": blobs.move_sheet_blob_id,
+                    "action": blobs.action_sheet_blob_id,
+                    "attack": blobs.attack_sheet_blob_id
+                },
             }),
         );
         job.metrics.note_tool_result(&result);
@@ -350,7 +361,8 @@ pub(super) fn poll_agent_render_capture(
     let paths = state.image_paths.clone();
 
     if job.agent.pending_render_include_motion_sheets {
-        // Capture motion sprite sheets (move + attack) and return them alongside the static renders.
+        // Capture motion sprite sheets (move + action + attack) and return them alongside the
+        // static renders.
         job.review_static_paths = paths;
         job.motion_capture = Some(super::Gen3dMotionCaptureState::new());
         super::poll_gen3d_motion_capture(
@@ -431,7 +443,11 @@ pub(super) fn poll_agent_render_capture(
         serde_json::json!({
             "blob_ids": blobs.blob_ids,
             "static_blob_ids": blobs.static_blob_ids,
-            "motion_sheet_blob_ids": { "move": blobs.move_sheet_blob_id, "attack": blobs.attack_sheet_blob_id },
+            "motion_sheet_blob_ids": {
+                "move": blobs.move_sheet_blob_id,
+                "action": blobs.action_sheet_blob_id,
+                "attack": blobs.attack_sheet_blob_id
+            },
         }),
     );
     job.metrics.note_tool_result(&result);

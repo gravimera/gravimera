@@ -109,15 +109,6 @@
 # Note: higher values can hit provider rate limits.
 max_parallel_components = 10
 
-# Step-specific reasoning-effort caps for the Gen3D agent.
-# Effective effort = min(openai.model_reasoning_effort, reasoning_effort_*).
-# Values: "none" | "low" | "medium" | "high"
-# reasoning_effort_plan = "high"
-# reasoning_effort_agent_step = "low"
-# reasoning_effort_component = "medium"
-# reasoning_effort_review = "medium"
-# reasoning_effort_repair = "low"
-
 # Budget: max wall-clock seconds per Build run (default: 1800). Set to 0 to disable the time budget.
 # max_seconds = 1800
 
@@ -160,8 +151,9 @@ base_url = "https://api.openai.com/v1"
 # Any Responses API model that supports images.
 model = "gpt-5.4"
 
-# "low" | "medium" | "high"
-model_reasoning_effort = "high"
+# Reasoning effort for all OpenAI-backed AI steps.
+# Values: "none" | "low" | "medium" | "high"
+reasoning_effort = "high"
 
 # API token (OpenAI API key). Can also be provided via env `OPENAI_API_KEY`.
 token = "YOUR_OPENAI_API_KEY_HERE"

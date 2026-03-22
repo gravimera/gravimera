@@ -2179,6 +2179,7 @@ fn save_generated_prefab_descriptor_best_effort(
                 PartAnimationDriver::MovePhase => "move_phase",
                 PartAnimationDriver::MoveDistance => "move_distance",
                 PartAnimationDriver::AttackTime => "attack_time",
+                PartAnimationDriver::ActionTime => "action_time",
             }
         }
 

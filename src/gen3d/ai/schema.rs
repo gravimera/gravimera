@@ -623,6 +623,7 @@ pub(crate) enum AiAnimationDriverJsonV1 {
     MovePhase,
     MoveDistance,
     AttackTime,
+    ActionTime,
     #[serde(other)]
     Unknown,
 }

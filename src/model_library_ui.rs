@@ -464,18 +464,8 @@ pub(crate) fn setup_model_library_ui(
                     ModelLibraryScrollPanel,
                 ))
                 .with_children(|scroll| {
-                    scroll.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(6.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::NONE),
-                        ModelLibraryList,
-                    ))
-                    .with_children(|list| {
-                        list.spawn((
+                    scroll
+                        .spawn((
                             Node {
                                 width: Val::Percent(100.0),
                                 flex_direction: FlexDirection::Column,
@@ -483,19 +473,30 @@ pub(crate) fn setup_model_library_ui(
                                 ..default()
                             },
                             BackgroundColor(Color::NONE),
-                            ModelLibraryGen3dPlaceholderList,
-                        ));
-                        list.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(6.0),
-                                ..default()
-                            },
-                            BackgroundColor(Color::NONE),
-                            ModelLibraryPrefabList,
-                        ));
-                    });
+                            ModelLibraryList,
+                        ))
+                        .with_children(|list| {
+                            list.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(6.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                                ModelLibraryGen3dPlaceholderList,
+                            ));
+                            list.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(6.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                                ModelLibraryPrefabList,
+                            ));
+                        });
                 });
 
                 row.spawn((
@@ -1162,8 +1163,8 @@ pub(crate) fn model_library_rebuild_list_ui(
                                 ..default()
                             },
                             TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
-                        ));
-                    });
+                            ));
+                        });
 
                     thumb.spawn((
                         Node {
@@ -1195,8 +1196,8 @@ pub(crate) fn model_library_rebuild_list_ui(
                                 ..default()
                             },
                             TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
-                        ));
-                    });
+                            ));
+                        });
                 });
 
                 b.spawn((
@@ -1256,8 +1257,11 @@ pub(crate) fn model_library_sync_gen3d_placeholders(
         s.chars().take(8).collect()
     }
 
-    let mut placeholders: Vec<(crate::gen3d::Gen3dSessionId, crate::gen3d::Gen3dTaskState, u128)> =
-        Vec::new();
+    let mut placeholders: Vec<(
+        crate::gen3d::Gen3dSessionId,
+        crate::gen3d::Gen3dTaskState,
+        u128,
+    )> = Vec::new();
     for meta in task_queue.metas.values() {
         if !matches!(meta.kind, crate::gen3d::Gen3dSessionKind::NewBuild) {
             continue;
@@ -1368,38 +1372,39 @@ pub(crate) fn model_library_sync_gen3d_placeholders(
                         TextColor(Color::srgba(0.92, 0.92, 0.96, 0.85)),
                     ));
 
-                    thumb.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            right: Val::Px(3.0),
-                            top: Val::Px(3.0),
-                            width: Val::Px(14.0),
-                            height: Val::Px(14.0),
-                            border: UiRect::all(Val::Px(2.0)),
-                            border_radius: BorderRadius::all(Val::Px(999.0)),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-                        BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
-                        UiTransform::default(),
-                        Visibility::Hidden,
-                        ModelLibraryGen3dPlaceholderIndicator {
-                            session_id,
-                            kind: ModelLibraryGen3dIndicatorKind::Working,
-                        },
-                    ))
-                    .with_children(|spinner| {
-                        spinner.spawn((
-                            Text::new("↻"),
-                            TextFont {
-                                font_size: 12.0,
+                    thumb
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                right: Val::Px(3.0),
+                                top: Val::Px(3.0),
+                                width: Val::Px(14.0),
+                                height: Val::Px(14.0),
+                                border: UiRect::all(Val::Px(2.0)),
+                                border_radius: BorderRadius::all(Val::Px(999.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
                                 ..default()
                             },
-                            TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
-                        ));
-                    });
+                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                            BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                            UiTransform::default(),
+                            Visibility::Hidden,
+                            ModelLibraryGen3dPlaceholderIndicator {
+                                session_id,
+                                kind: ModelLibraryGen3dIndicatorKind::Working,
+                            },
+                        ))
+                        .with_children(|spinner| {
+                            spinner.spawn((
+                                Text::new("↻"),
+                                TextFont {
+                                    font_size: 12.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                            ));
+                        });
 
                     thumb.spawn((
                         Node {
@@ -1431,8 +1436,8 @@ pub(crate) fn model_library_sync_gen3d_placeholders(
                                 ..default()
                             },
                             TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
-                        ));
-                    });
+                            ));
+                        });
                 });
 
                 b.spawn((
@@ -1598,12 +1603,14 @@ pub(crate) fn model_library_update_gen3d_placeholder_indicators(
             .get(&indicator.session_id)
             .map(|meta| meta.task_state);
         let show = match (state, indicator.kind) {
-            (Some(crate::gen3d::Gen3dTaskState::Running), ModelLibraryGen3dIndicatorKind::Working) => {
-                true
-            }
-            (Some(crate::gen3d::Gen3dTaskState::Waiting), ModelLibraryGen3dIndicatorKind::Waiting) => {
-                true
-            }
+            (
+                Some(crate::gen3d::Gen3dTaskState::Running),
+                ModelLibraryGen3dIndicatorKind::Working,
+            ) => true,
+            (
+                Some(crate::gen3d::Gen3dTaskState::Waiting),
+                ModelLibraryGen3dIndicatorKind::Waiting,
+            ) => true,
             _ => false,
         };
         *vis = if show {
@@ -2406,7 +2413,10 @@ pub(crate) fn model_library_preview_duplicate_button_interactions(
     mut state: ResMut<ModelLibraryUiState>,
     mut buttons: Query<
         &Interaction,
-        (Changed<Interaction>, With<ModelLibraryPreviewDuplicateButton>),
+        (
+            Changed<Interaction>,
+            With<ModelLibraryPreviewDuplicateButton>,
+        ),
     >,
 ) {
     let Some(prefab_id) = state.preview.as_ref().map(|p| p.prefab_id) else {
@@ -3314,17 +3324,13 @@ pub(crate) fn model_library_drag_update(
         let prefab_id = drag.model_id;
         if !drag.is_dragging {
             if let Some(session_id) = gen3d.task_queue.find_session_for_prefab(prefab_id) {
-                let open_session = gen3d
-                    .task_queue
-                    .metas
-                    .get(&session_id)
-                    .is_some_and(|meta| {
-                        matches!(
-                            meta.task_state,
-                            crate::gen3d::Gen3dTaskState::Waiting
-                                | crate::gen3d::Gen3dTaskState::Running
-                        )
-                    });
+                let open_session = gen3d.task_queue.metas.get(&session_id).is_some_and(|meta| {
+                    matches!(
+                        meta.task_state,
+                        crate::gen3d::Gen3dTaskState::Waiting
+                            | crate::gen3d::Gen3dTaskState::Running
+                    )
+                });
                 if open_session {
                     if let Err(err) = gen3d.task_queue.swap_active_session(
                         session_id,
@@ -3526,10 +3532,8 @@ pub(crate) fn duplicate_realm_prefab_package(
     library: &mut ObjectLibrary,
     descriptors: &mut PrefabDescriptorLibrary,
 ) -> Result<u128, String> {
-    let src_prefabs_dir = crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(
-        realm_id,
-        src_prefab_id,
-    );
+    let src_prefabs_dir =
+        crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(realm_id, src_prefab_id);
     if !src_prefabs_dir.exists() {
         return Err(format!(
             "Prefab package not found in this realm: {}",
@@ -3673,8 +3677,10 @@ pub(crate) fn duplicate_realm_prefab_package(
         crate::realm_prefab_packages::realm_prefab_package_materials_dir(realm_id, new_root_id);
     copy_dir_recursive(&src_materials_dir, &dst_materials_dir)?;
 
-    let src_gen3d_source_dir =
-        crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(realm_id, src_prefab_id);
+    let src_gen3d_source_dir = crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(
+        realm_id,
+        src_prefab_id,
+    );
     let dst_gen3d_source_dir =
         crate::realm_prefab_packages::realm_prefab_package_gen3d_source_dir(realm_id, new_root_id);
     copy_dir_recursive(&src_gen3d_source_dir, &dst_gen3d_source_dir)?;
@@ -3699,10 +3705,8 @@ pub(crate) fn duplicate_realm_prefab_package(
         .unwrap_or(0);
     let new_uuid = uuid::Uuid::from_u128(new_root_id).to_string();
 
-    let mut new_descriptor = descriptors
-        .get(src_prefab_id)
-        .cloned()
-        .unwrap_or_else(|| crate::prefab_descriptors::PrefabDescriptorFileV1 {
+    let mut new_descriptor = descriptors.get(src_prefab_id).cloned().unwrap_or_else(|| {
+        crate::prefab_descriptors::PrefabDescriptorFileV1 {
             format_version: crate::prefab_descriptors::PREFAB_DESCRIPTOR_FORMAT_VERSION,
             prefab_id: new_uuid.clone(),
             label: None,
@@ -3712,7 +3716,8 @@ pub(crate) fn duplicate_realm_prefab_package(
             interfaces: None,
             provenance: None,
             extra: std::collections::BTreeMap::new(),
-        });
+        }
+    });
     new_descriptor.prefab_id = new_uuid.clone();
     if let Some(prov) = new_descriptor.provenance.as_mut() {
         prov.modified_at_ms = Some(now_ms);
@@ -3723,11 +3728,9 @@ pub(crate) fn duplicate_realm_prefab_package(
             gen3d.run_id = None;
         }
     }
-    let desc_path = crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(
-        realm_id,
-        new_root_id,
-    )
-    .join(format!("{new_uuid}.desc.json"));
+    let desc_path =
+        crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(realm_id, new_root_id)
+            .join(format!("{new_uuid}.desc.json"));
     crate::prefab_descriptors::save_prefab_descriptor_file(&desc_path, &new_descriptor)?;
     descriptors.upsert(new_root_id, new_descriptor);
 
@@ -4051,13 +4054,18 @@ mod tests {
         let new_root_id =
             duplicate_realm_prefab_package(realm_id, root_id, &mut library, &mut descriptors)
                 .expect("duplicate prefab package");
-        assert_ne!(new_root_id, root_id, "duplicate should allocate a new root id");
+        assert_ne!(
+            new_root_id, root_id,
+            "duplicate should allocate a new root id"
+        );
 
         let dst_prefabs_dir =
             crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(realm_id, new_root_id);
         let dst_root_uuid = uuid::Uuid::from_u128(new_root_id).to_string();
         assert!(
-            dst_prefabs_dir.join(format!("{dst_root_uuid}.json")).exists(),
+            dst_prefabs_dir
+                .join(format!("{dst_root_uuid}.json"))
+                .exists(),
             "duplicate package should contain root def json"
         );
 

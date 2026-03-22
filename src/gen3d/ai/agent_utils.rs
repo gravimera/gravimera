@@ -66,6 +66,7 @@ fn motion_values_digest(job: &Gen3dAiJob) -> String {
             PartAnimationDriver::MovePhase => 1,
             PartAnimationDriver::MoveDistance => 2,
             PartAnimationDriver::AttackTime => 3,
+            PartAnimationDriver::ActionTime => 4,
         }
     }
 

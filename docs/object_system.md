@@ -84,8 +84,8 @@ This avoids ambiguous Euler rotations and makes assembly more deterministic (esp
 
 Parts can optionally have one or more animation **slots**, each in a named **channel**.
 
-- Channels: `ambient`, `idle`, `move`, `attack_primary`
-- Priority (highest wins): `attack_primary > move > idle > ambient`
+- Channels: `ambient`, `idle`, `move`, `action`, `attack_primary`
+- Priority (highest wins): `attack_primary > action > move > idle > ambient`
 
 - The runtime applies `animated = delta(t) * base_transform` in the part’s local space.
 - For an attached `ObjectRef`, this effectively animates the **attachment offset**, which gives component-level animation (e.g., a door hinge, an arm swing, a lever).
@@ -93,13 +93,14 @@ Parts can optionally have one or more animation **slots**, each in a named **cha
 Animation slots are driven by generic gameplay signals and do not depend on hard-coded object ids:
 
 - `move` is active while the owning entity is moving.
+- `action` is active while the owning entity is performing an “action” window (operating/handling something important).
 - `attack_primary` is active while the owning entity is attacking/firing.
-- `idle` is active when not moving or attacking.
+- `idle` is active when not moving, acting, or attacking.
 - `ambient` is always active (fallback motions like fans/propellers).
 
 Animation specs are data-driven:
 
-- Drivers (what `t` means): wall time, locomotion phase, or movement distance.
+- Drivers (what `t` means): wall time, locomotion phase, movement distance, seconds since attack start, or seconds since action start.
 - Clips: loop keyframes or a procedural `Spin` (better for wheels/fans than keyframing 360°).
 
 ## Collision (Simple Now; Derivable for Combined Types)

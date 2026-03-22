@@ -12,7 +12,7 @@ use crate::gen3d::agent::{
     append_agent_trace_event_v1, AgentTraceEventV1, Gen3dAgentActionJsonV1, Gen3dToolCallJsonV1,
     Gen3dToolResultJsonV1,
 };
-use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
+use crate::types::{ActionClock, AnimationChannelsActive, AttackClock, LocomotionClock};
 
 use super::super::state::{
     Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dWorkshop,
@@ -296,6 +296,7 @@ fn descriptor_meta_motion_summary_json(draft: &Gen3dDraft) -> serde_json::Value 
             PartAnimationDriver::MovePhase => "move_phase",
             PartAnimationDriver::MoveDistance => "move_distance",
             PartAnimationDriver::AttackTime => "attack_time",
+            PartAnimationDriver::ActionTime => "action_time",
         }
     }
 
@@ -542,7 +543,7 @@ fn maybe_start_descriptor_meta_request(
     set_progress(&progress, "Generating prefab metadata…");
     append_gen3d_run_log(Some(&pass_dir), "descriptor_meta_start");
 
-    let reasoning_effort = super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
@@ -852,6 +853,7 @@ pub(super) fn execute_agent_actions(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut ActionClock,
         ),
         With<Gen3dPreviewModelRoot>,
     >,

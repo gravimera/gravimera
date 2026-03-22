@@ -327,6 +327,12 @@ pub(crate) struct AttackClock {
 }
 
 #[derive(Component, Copy, Clone, Debug, Default)]
+pub(crate) struct ActionClock {
+    pub(crate) started_at_secs: f32,
+    pub(crate) duration_secs: f32,
+}
+
+#[derive(Component, Copy, Clone, Debug, Default)]
 pub(crate) struct AttackCooldown {
     pub(crate) remaining_secs: f32,
 }
@@ -341,6 +347,7 @@ pub(crate) struct AimYawDelta(pub(crate) f32);
 #[derive(Component, Copy, Clone, Debug, Default)]
 pub(crate) struct AnimationChannelsActive {
     pub(crate) moving: bool,
+    pub(crate) acting: bool,
     pub(crate) attacking_primary: bool,
 }
 

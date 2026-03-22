@@ -1424,6 +1424,7 @@ pub(super) struct Gen3dReviewCaptureState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dMotionCaptureKind {
     Move,
+    Action,
     Attack,
 }
 
@@ -1431,6 +1432,7 @@ impl Gen3dMotionCaptureKind {
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::Move => "move",
+            Self::Action => "action",
             Self::Attack => "attack",
         }
     }
@@ -1438,6 +1440,7 @@ impl Gen3dMotionCaptureKind {
     pub(super) fn sheet_filename(self) -> &'static str {
         match self {
             Self::Move => "move_sheet.png",
+            Self::Action => "action_sheet.png",
             Self::Attack => "attack_sheet.png",
         }
     }

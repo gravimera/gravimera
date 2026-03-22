@@ -94,8 +94,8 @@ pub(super) fn validate_review_images_for_llm(
 
 pub(super) fn motion_sheets_needed_from_smoke_results(
     smoke_results: &serde_json::Value,
-) -> (bool, bool) {
-    // Returns (include_move_sheet, include_attack_sheet).
+) -> (bool, bool, bool) {
+    // Returns (include_move_sheet, include_action_sheet, include_attack_sheet).
     //
     // We rely on motion_validation's structured issue list rather than prompt heuristics so we can
     // be conservative with large motion-sheet images unless smoke_check has concrete errors.
@@ -111,11 +111,13 @@ pub(super) fn motion_sheets_needed_from_smoke_results(
         .and_then(|v| v.as_array())
     else {
         // If validation failed but the issue list is missing/unparseable, fall back to including
-        // the move sheet for extra visual context (it is usually the most informative).
-        return (!motion_ok, false);
+        // the move+action sheets for extra visual context (they are usually the most
+        // informative).
+        return (!motion_ok, !motion_ok, false);
     };
 
     let mut include_move_sheet = false;
+    let mut include_action_sheet = false;
     let mut include_attack_sheet = false;
     for issue in issues {
         let severity = issue
@@ -130,17 +132,23 @@ pub(super) fn motion_sheets_needed_from_smoke_results(
         match issue.get("channel").and_then(|v| v.as_str()).map(str::trim) {
             Some("attack_primary") => include_attack_sheet = true,
             Some("move") => include_move_sheet = true,
+            Some("action") => include_action_sheet = true,
             Some(_) | None => include_move_sheet = true,
         }
     }
 
-    (include_move_sheet || !motion_ok, include_attack_sheet)
+    (
+        include_move_sheet || !motion_ok,
+        include_action_sheet,
+        include_attack_sheet,
+    )
 }
 
 pub(super) fn select_review_preview_blob_ids(
     store: &super::info_store::Gen3dInfoStore,
     preview_blob_ids: &[String],
     include_move_sheet: bool,
+    include_action_sheet: bool,
     include_attack_sheet: bool,
 ) -> Vec<String> {
     fn has_label(blob: &super::info_store::InfoBlob, label: &str) -> bool {
@@ -198,6 +206,27 @@ pub(super) fn select_review_preview_blob_ids(
             store
                 .blob_by_id(id.as_str())
                 .map(|blob| has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:move"))
+                .unwrap_or(false)
+        }) {
+            out.push(id.clone());
+        }
+    }
+    if include_action_sheet
+        && !out.iter().any(|id| {
+            store
+                .blob_by_id(id.as_str())
+                .map(|blob| {
+                    has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:action")
+                })
+                .unwrap_or(false)
+        })
+    {
+        if let Some(id) = preview_blob_ids.iter().find(|id| {
+            store
+                .blob_by_id(id.as_str())
+                .map(|blob| {
+                    has_label(blob, "kind:motion_sheet") && has_label(blob, "motion:action")
+                })
                 .unwrap_or(false)
         }) {
             out.push(id.clone());

@@ -471,8 +471,7 @@ impl Plugin for RenderedGen3dPlugin {
         );
         app.add_systems(
             Update,
-            crate::gen3d::gen3d_apply_draft_to_preview
-                .after(crate::gen3d::gen3d_poll_ai_job),
+            crate::gen3d::gen3d_apply_draft_to_preview.after(crate::gen3d::gen3d_poll_ai_job),
         );
         app.add_systems(
             Update,

@@ -1121,9 +1121,7 @@ mod tests {
         assert_eq!(store.events().len(), 2);
         assert_eq!(store.blobs().len(), 1);
         let blob_id = blob_id.expect("blob id");
-        assert!(store
-            .blob_by_id(blob_id.as_str())
-            .is_some());
+        assert!(store.blob_by_id(blob_id.as_str()).is_some());
 
         let _ = std::fs::remove_dir_all(&run_dir);
     }

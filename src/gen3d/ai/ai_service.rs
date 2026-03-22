@@ -50,7 +50,7 @@ impl Gen3dAiServiceConfig {
 
     pub(super) fn model_reasoning_effort(&self) -> &str {
         match self {
-            Self::OpenAi(cfg) => cfg.model_reasoning_effort.as_str(),
+            Self::OpenAi(cfg) => cfg.reasoning_effort.as_str(),
             // MiMo uses the OpenAI Chat Completions format, but does not support the OpenAI
             // `reasoning_effort` request parameter. Keep the same logging/budget surface.
             Self::Mimo(_) => "high",
@@ -566,7 +566,7 @@ mod tests {
         let ai = Gen3dAiServiceConfig::OpenAi(OpenAiConfig {
             base_url: "mock://gen3d".into(),
             model: "gpt-mock".into(),
-            model_reasoning_effort: "high".into(),
+            reasoning_effort: "high".into(),
             api_key: "test".into(),
         });
 

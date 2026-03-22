@@ -614,7 +614,7 @@ pub(crate) fn start_scene_build_from_description(
         openai_base_url: openai.base_url.clone(),
         openai_api_key: openai.api_key.clone(),
         openai_model: openai.model.clone(),
-        openai_reasoning_effort: openai.model_reasoning_effort.clone(),
+        openai_reasoning_effort: openai.reasoning_effort.clone(),
         phase: SceneBuildAiPhase::Cleanup,
         plan_steps: Vec::new(),
         next_run_step: 1,

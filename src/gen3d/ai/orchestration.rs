@@ -37,7 +37,6 @@ use super::structured_outputs::Gen3dAiJsonSchemaKind;
 
 use super::convert;
 use super::motion_validation;
-use super::openai;
 use super::parse;
 use super::reuse_groups;
 
@@ -1611,6 +1610,7 @@ pub(crate) fn gen3d_poll_ai_job(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut crate::types::ActionClock,
         ),
         With<Gen3dPreviewModelRoot>,
     >,
@@ -4482,6 +4482,7 @@ pub(super) fn poll_gen3d_motion_capture(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut crate::types::ActionClock,
         ),
         With<Gen3dPreviewModelRoot>,
     >,
@@ -4493,7 +4494,8 @@ pub(super) fn poll_gen3d_motion_capture(
     };
 
     let mut iter = preview_model.iter_mut();
-    let Some((mut channels, mut locomotion, mut attack_clock)) = iter.next() else {
+    let Some((mut channels, mut locomotion, mut attack_clock, mut action_clock)) = iter.next()
+    else {
         debug!("Gen3D: motion capture skipped (missing preview model root).");
         job.motion_capture = None;
         return;
@@ -4600,6 +4602,37 @@ pub(super) fn poll_gen3d_motion_capture(
         best.unwrap_or(1.0)
     }
 
+    fn infer_action_window_secs(components: &[Gen3dPlannedComponent]) -> f32 {
+        let mut best: Option<f32> = None;
+        for comp in components.iter() {
+            let Some(att) = comp.attach_to.as_ref() else {
+                continue;
+            };
+            for slot in att.animations.iter() {
+                if slot.channel.as_ref() != "action" {
+                    continue;
+                }
+                let (duration_secs, repeats) = match &slot.spec.clip {
+                    PartAnimationDef::Loop { duration_secs, .. }
+                    | PartAnimationDef::Once { duration_secs, .. } => (*duration_secs, 1.0),
+                    PartAnimationDef::PingPong { duration_secs, .. } => (*duration_secs, 2.0),
+                    PartAnimationDef::Spin { .. } => continue,
+                };
+                if !duration_secs.is_finite() || duration_secs <= 0.0 {
+                    continue;
+                }
+                let speed = slot.spec.speed_scale.max(1e-3);
+                let wall_duration = (repeats * duration_secs / speed).abs();
+                if !wall_duration.is_finite() || wall_duration <= 1e-3 {
+                    continue;
+                }
+                best = Some(best.map_or(wall_duration, |b| b.max(wall_duration)));
+            }
+        }
+
+        best.unwrap_or(1.0)
+    }
+
     if motion.frame_capture.is_none() {
         match motion.kind {
             Gen3dMotionCaptureKind::Move => {
@@ -4607,17 +4640,28 @@ pub(super) fn poll_gen3d_motion_capture(
                     infer_move_cycle_m(job.rig_move_cycle_m, &job.planned_components).max(1e-3);
                 let sample_m = (sample_phase_01 * cycle_m).clamp(0.0, cycle_m);
                 channels.moving = true;
+                channels.acting = false;
                 channels.attacking_primary = false;
                 locomotion.t = sample_m;
                 locomotion.distance_m = sample_m;
                 locomotion.signed_distance_m = sample_m;
                 locomotion.speed_mps = 1.0;
             }
+            Gen3dMotionCaptureKind::Action => {
+                let window_secs = infer_action_window_secs(&job.planned_components).max(1e-3);
+                let sample_secs = (sample_phase_01 * window_secs).clamp(0.0, window_secs);
+                channels.moving = false;
+                channels.acting = true;
+                channels.attacking_primary = false;
+                action_clock.duration_secs = window_secs;
+                action_clock.started_at_secs = time.elapsed_secs() - sample_secs;
+            }
             Gen3dMotionCaptureKind::Attack => {
                 let window_secs =
                     infer_attack_window_secs(draft, &job.planned_components).max(1e-3);
                 let sample_secs = (sample_phase_01 * window_secs).clamp(0.0, window_secs);
                 channels.moving = false;
+                channels.acting = false;
                 channels.attacking_primary = true;
                 attack_clock.duration_secs = window_secs;
                 attack_clock.started_at_secs = time.elapsed_secs() - sample_secs;
@@ -4706,9 +4750,11 @@ pub(super) fn poll_gen3d_motion_capture(
     motion.frame_paths.clear();
     motion.frame_capture = None;
     motion.kind = match motion.kind {
-        Gen3dMotionCaptureKind::Move => Gen3dMotionCaptureKind::Attack,
+        Gen3dMotionCaptureKind::Move => Gen3dMotionCaptureKind::Action,
+        Gen3dMotionCaptureKind::Action => Gen3dMotionCaptureKind::Attack,
         Gen3dMotionCaptureKind::Attack => {
             channels.moving = false;
+            channels.acting = false;
             channels.attacking_primary = false;
             job.motion_capture = None;
             return;
@@ -5056,6 +5102,7 @@ pub(super) fn build_gen3d_scene_graph_summary(
                                 crate::object::registry::PartAnimationDriver::MovePhase => "move_phase",
                                 crate::object::registry::PartAnimationDriver::MoveDistance => "move_distance",
                                 crate::object::registry::PartAnimationDriver::AttackTime => "attack_time",
+                                crate::object::registry::PartAnimationDriver::ActionTime => "action_time",
                             },
                             "speed_scale": spec.speed_scale,
                             "clip": clip,
@@ -5688,7 +5735,7 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
             motion_summary_json.as_ref(),
         );
 
-        let reasoning_effort = openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+        let reasoning_effort = ai.model_reasoning_effort().to_string();
         let resp = generate_text_via_ai_service(
             &progress,
             session,

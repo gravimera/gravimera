@@ -447,6 +447,7 @@ enum SceneDatPartAnimationDriver {
     MovePhase = 1,
     MoveDistance = 2,
     AttackTime = 3,
+    ActionTime = 4,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
@@ -1148,6 +1149,7 @@ fn part_animation_spec_to_dat(spec: &PartAnimationSpec) -> SceneDatPartAnimation
         PartAnimationDriver::MovePhase => SceneDatPartAnimationDriver::MovePhase as i32,
         PartAnimationDriver::MoveDistance => SceneDatPartAnimationDriver::MoveDistance as i32,
         PartAnimationDriver::AttackTime => SceneDatPartAnimationDriver::AttackTime as i32,
+        PartAnimationDriver::ActionTime => SceneDatPartAnimationDriver::ActionTime as i32,
     };
     let speed_scale = if spec.speed_scale.is_finite() && spec.speed_scale > 0.0 {
         spec.speed_scale
@@ -1176,6 +1178,7 @@ fn part_animation_spec_from_dat(animation: &SceneDatPartAnimation) -> Option<Par
             PartAnimationDriver::MoveDistance
         }
         x if x == SceneDatPartAnimationDriver::AttackTime as i32 => PartAnimationDriver::AttackTime,
+        x if x == SceneDatPartAnimationDriver::ActionTime as i32 => PartAnimationDriver::ActionTime,
         _ => PartAnimationDriver::Always,
     };
     let speed_scale = if animation.speed_scale.is_finite() && animation.speed_scale > 0.0 {

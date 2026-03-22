@@ -552,6 +552,7 @@ enum PartAnimationDriverJson {
     MovePhase,
     MoveDistance,
     AttackTime,
+    ActionTime,
 }
 
 impl PartAnimationDriverJson {
@@ -561,6 +562,7 @@ impl PartAnimationDriverJson {
             PartAnimationDriver::MovePhase => Self::MovePhase,
             PartAnimationDriver::MoveDistance => Self::MoveDistance,
             PartAnimationDriver::AttackTime => Self::AttackTime,
+            PartAnimationDriver::ActionTime => Self::ActionTime,
         }
     }
 
@@ -570,6 +572,7 @@ impl PartAnimationDriverJson {
             Self::MovePhase => PartAnimationDriver::MovePhase,
             Self::MoveDistance => PartAnimationDriver::MoveDistance,
             Self::AttackTime => PartAnimationDriver::AttackTime,
+            Self::ActionTime => PartAnimationDriver::ActionTime,
         }
     }
 }

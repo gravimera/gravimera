@@ -14,7 +14,8 @@ use crate::object::registry::{
 };
 use crate::object::types::characters;
 use crate::types::{
-    AnimationChannelsActive, AttackClock, ForcedAnimationChannel, LocomotionClock, ObjectPrefabId,
+    ActionClock, AnimationChannelsActive, AttackClock, ForcedAnimationChannel, LocomotionClock,
+    ObjectPrefabId,
 };
 
 const MAX_VISUAL_DEPTH: usize = 32;
@@ -795,6 +796,7 @@ pub(crate) fn update_part_animations(
     prefabs: Query<&ObjectPrefabId>,
     locomotion: Query<&LocomotionClock>,
     attacks: Query<&AttackClock>,
+    actions: Query<&ActionClock>,
     channels: Query<&AnimationChannelsActive>,
     forced: Query<&ForcedAnimationChannel>,
     aim_deltas: Query<&crate::types::AimYawDelta>,
@@ -865,8 +867,9 @@ pub(crate) fn update_part_animations(
             .unwrap_or_default();
 
         let attack_active = active.attacking_primary;
+        let action_active = active.acting;
         let move_active = active.moving;
-        let idle_active = !attack_active && !move_active;
+        let idle_active = !attack_active && !action_active && !move_active;
 
         let mut chosen: Option<&PartAnimationSpec> = None;
         let attack_clock = attacks.get(player.root_entity).ok();
@@ -888,9 +891,10 @@ pub(crate) fn update_part_animations(
         }
 
         if chosen.is_none() {
-            for channel in ["attack_primary", "move", "idle", "ambient"] {
+            for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
                 let channel_active = match channel {
                     "attack_primary" => attack_active,
+                    "action" => action_active,
                     "move" => move_active,
                     "idle" => idle_active,
                     // Ambient is always active (fallback animation like fans/spinners).
@@ -990,6 +994,16 @@ pub(crate) fn update_part_animations(
                     .map(|clock| move_distance_units_for_clip(&spec.clip, clock))
                     .unwrap_or(0.0),
                 PartAnimationDriver::AttackTime => attacks
+                    .get(player.root_entity)
+                    .map(|clock| {
+                        if clock.duration_secs > 0.0 {
+                            (wall_time - clock.started_at_secs).max(0.0)
+                        } else {
+                            0.0
+                        }
+                    })
+                    .unwrap_or(0.0),
+                PartAnimationDriver::ActionTime => actions
                     .get(player.root_entity)
                     .map(|clock| {
                         if clock.duration_secs > 0.0 {
@@ -1366,6 +1380,7 @@ mod tests {
             .world_mut()
             .spawn(AnimationChannelsActive {
                 moving: false,
+                acting: false,
                 attacking_primary: false,
             })
             .id();
@@ -1506,6 +1521,7 @@ mod tests {
             .world_mut()
             .spawn(AnimationChannelsActive {
                 moving: false,
+                acting: false,
                 attacking_primary: false,
             })
             .id();
@@ -1712,6 +1728,7 @@ mod tests {
                 AimYawDelta(aim_delta),
                 AnimationChannelsActive {
                     moving: false,
+                    acting: false,
                     attacking_primary: false,
                 },
             ))
@@ -1749,6 +1766,7 @@ mod tests {
             .entity_mut(root)
             .insert(AnimationChannelsActive {
                 moving: false,
+                acting: false,
                 attacking_primary: true,
             });
         app.update();
@@ -1783,6 +1801,7 @@ mod tests {
             .world_mut()
             .spawn(AnimationChannelsActive {
                 moving: true,
+                acting: false,
                 attacking_primary: false,
             })
             .id();
@@ -1858,6 +1877,7 @@ mod tests {
             .world_mut()
             .spawn(AnimationChannelsActive {
                 moving: true,
+                acting: false,
                 attacking_primary: false,
             })
             .id();

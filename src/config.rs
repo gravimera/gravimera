@@ -40,11 +40,6 @@ pub(crate) struct AppConfig {
     pub(crate) gen3d_save_pass_screenshots: bool,
     pub(crate) gen3d_review_appearance: bool,
     pub(crate) gen3d_require_structured_outputs: bool,
-    pub(crate) gen3d_reasoning_effort_plan: String,
-    pub(crate) gen3d_reasoning_effort_agent_step: String,
-    pub(crate) gen3d_reasoning_effort_component: String,
-    pub(crate) gen3d_reasoning_effort_review: String,
-    pub(crate) gen3d_reasoning_effort_repair: String,
     pub(crate) loaded_from: Option<PathBuf>,
     pub(crate) errors: Vec<String>,
 }
@@ -102,11 +97,6 @@ impl Default for AppConfig {
             gen3d_save_pass_screenshots: !cfg!(test),
             gen3d_review_appearance: false,
             gen3d_require_structured_outputs: true,
-            gen3d_reasoning_effort_plan: "high".into(),
-            gen3d_reasoning_effort_agent_step: "high".into(),
-            gen3d_reasoning_effort_component: "high".into(),
-            gen3d_reasoning_effort_review: "high".into(),
-            gen3d_reasoning_effort_repair: "high".into(),
             loaded_from: None,
             errors: Vec::new(),
         }
@@ -117,7 +107,7 @@ impl Default for AppConfig {
 pub(crate) struct OpenAiConfig {
     pub(crate) base_url: String,
     pub(crate) model: String,
-    pub(crate) model_reasoning_effort: String,
+    pub(crate) reasoning_effort: String,
     pub(crate) api_key: String,
 }
 
@@ -263,11 +253,6 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_gen3d_save_pass_screenshots_into_config(out, text);
     parse_gen3d_review_appearance_into_config(out, text);
     parse_gen3d_require_structured_outputs_into_config(out, text);
-    parse_gen3d_reasoning_effort_plan_into_config(out, text);
-    parse_gen3d_reasoning_effort_agent_step_into_config(out, text);
-    parse_gen3d_reasoning_effort_component_into_config(out, text);
-    parse_gen3d_reasoning_effort_review_into_config(out, text);
-    parse_gen3d_reasoning_effort_repair_into_config(out, text);
     populate_openai_config(out, text);
     populate_mimo_config(out, text);
     populate_gemini_config(out, text);
@@ -710,46 +695,6 @@ fn parse_gen3d_review_appearance_into_config(out: &mut AppConfig, text: &str) {
 fn parse_gen3d_require_structured_outputs_into_config(out: &mut AppConfig, text: &str) {
     match parse_gen3d_require_structured_outputs(text) {
         Ok(Some(value)) => out.gen3d_require_structured_outputs = value,
-        Ok(None) => {}
-        Err(err) => out.errors.push(err),
-    }
-}
-
-fn parse_gen3d_reasoning_effort_plan_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_reasoning_effort_plan(text) {
-        Ok(Some(value)) => out.gen3d_reasoning_effort_plan = value,
-        Ok(None) => {}
-        Err(err) => out.errors.push(err),
-    }
-}
-
-fn parse_gen3d_reasoning_effort_agent_step_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_reasoning_effort_agent_step(text) {
-        Ok(Some(value)) => out.gen3d_reasoning_effort_agent_step = value,
-        Ok(None) => {}
-        Err(err) => out.errors.push(err),
-    }
-}
-
-fn parse_gen3d_reasoning_effort_component_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_reasoning_effort_component(text) {
-        Ok(Some(value)) => out.gen3d_reasoning_effort_component = value,
-        Ok(None) => {}
-        Err(err) => out.errors.push(err),
-    }
-}
-
-fn parse_gen3d_reasoning_effort_review_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_reasoning_effort_review(text) {
-        Ok(Some(value)) => out.gen3d_reasoning_effort_review = value,
-        Ok(None) => {}
-        Err(err) => out.errors.push(err),
-    }
-}
-
-fn parse_gen3d_reasoning_effort_repair_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_reasoning_effort_repair(text) {
-        Ok(Some(value)) => out.gen3d_reasoning_effort_repair = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -2598,127 +2543,6 @@ fn parse_gen3d_max_regen_per_component(text: &str) -> Result<Option<u32>, String
     Ok(out)
 }
 
-fn parse_gen3d_reasoning_effort_value(
-    text: &str,
-    accepted_keys: &[&str],
-    display_key: &str,
-) -> Result<Option<String>, String> {
-    let mut section: Option<String> = None;
-    let mut out: Option<String> = None;
-
-    for (line_no, raw_line) in text.lines().enumerate() {
-        let line_no = line_no + 1;
-        let line = strip_comment(raw_line).trim().to_string();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            let name = line.trim_matches(&['[', ']'][..]).trim();
-            section = if name.is_empty() {
-                None
-            } else {
-                Some(name.to_string())
-            };
-            continue;
-        }
-
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if !accepted_keys.iter().any(|k| k == &key) {
-            continue;
-        }
-
-        // Accept at top-level, or under `[gen3d]` / `[app]` for convenience.
-        if let Some(sec) = section.as_deref() {
-            if sec != "gen3d" && sec != "app" {
-                continue;
-            }
-        }
-
-        let value = value.trim();
-        if value.is_empty() {
-            out = None;
-            continue;
-        }
-
-        let value = if value.starts_with('"') || value.starts_with('\'') {
-            parse_toml_string(value).ok_or_else(|| {
-                format!(
-                    "config.toml:{line_no}: expected a quoted string for `{display_key}` (example: {display_key} = \"medium\")"
-                )
-            })?
-        } else {
-            value.to_string()
-        };
-
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            out = None;
-            continue;
-        }
-
-        let normalized = trimmed.to_ascii_lowercase();
-        match normalized.as_str() {
-            "none" | "low" | "medium" | "high" => out = Some(normalized),
-            _ => {
-                return Err(format!(
-                    "config.toml:{line_no}: invalid `{display_key}` value `{trimmed}` (expected one of: \"none\", \"low\", \"medium\", \"high\")"
-                ));
-            }
-        }
-    }
-
-    Ok(out)
-}
-
-fn parse_gen3d_reasoning_effort_plan(text: &str) -> Result<Option<String>, String> {
-    parse_gen3d_reasoning_effort_value(
-        text,
-        &["reasoning_effort_plan", "gen3d_reasoning_effort_plan"],
-        "reasoning_effort_plan",
-    )
-}
-
-fn parse_gen3d_reasoning_effort_agent_step(text: &str) -> Result<Option<String>, String> {
-    parse_gen3d_reasoning_effort_value(
-        text,
-        &[
-            "reasoning_effort_agent_step",
-            "gen3d_reasoning_effort_agent_step",
-        ],
-        "reasoning_effort_agent_step",
-    )
-}
-
-fn parse_gen3d_reasoning_effort_component(text: &str) -> Result<Option<String>, String> {
-    parse_gen3d_reasoning_effort_value(
-        text,
-        &[
-            "reasoning_effort_component",
-            "gen3d_reasoning_effort_component",
-        ],
-        "reasoning_effort_component",
-    )
-}
-
-fn parse_gen3d_reasoning_effort_review(text: &str) -> Result<Option<String>, String> {
-    parse_gen3d_reasoning_effort_value(
-        text,
-        &["reasoning_effort_review", "gen3d_reasoning_effort_review"],
-        "reasoning_effort_review",
-    )
-}
-
-fn parse_gen3d_reasoning_effort_repair(text: &str) -> Result<Option<String>, String> {
-    parse_gen3d_reasoning_effort_value(
-        text,
-        &["reasoning_effort_repair", "gen3d_reasoning_effort_repair"],
-        "reasoning_effort_repair",
-    )
-}
-
 fn parse_gen3d_auto_refine_passes(text: &str) -> Result<Option<u32>, String> {
     let mut section: Option<String> = None;
     let mut passes: Option<u32> = None;
@@ -2913,7 +2737,7 @@ fn parse_openai_config(text: &str) -> Result<OpenAiConfig, String> {
         match key {
             "base_url" => base_url = Some(value),
             "model" => model = Some(value),
-            "model_reasoning_effort" => effort = Some(value),
+            "reasoning_effort" => effort = Some(value),
             "token" | "api_key" => api_key = Some(value),
             "OPENAI_API_KEY" => api_key = Some(value),
             _ => {}
@@ -2928,7 +2752,7 @@ fn parse_openai_config(text: &str) -> Result<OpenAiConfig, String> {
     Ok(OpenAiConfig {
         base_url,
         model,
-        model_reasoning_effort: effort,
+        reasoning_effort: effort,
         api_key,
     })
 }

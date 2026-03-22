@@ -1138,6 +1138,7 @@ fn sample_animation_slot_delta(
         PartAnimationDriver::MovePhase => sample_phase_01,
         PartAnimationDriver::MoveDistance => sample_t_m,
         PartAnimationDriver::AttackTime => sample_phase_01,
+        PartAnimationDriver::ActionTime => sample_phase_01,
     };
     let mut t = if driver_t.is_finite() { driver_t } else { 0.0 };
     t *= slot.spec.speed_scale.max(0.0);
@@ -2166,10 +2167,11 @@ fn validate_attack_self_intersection(
         let t_secs = phase_01 * attack_window_secs;
 
         idle_world = compute_world_transforms_for_channels(
-            components, &children, root_idx, t_secs, 0.0, 0.0, 0.0, false, false, true,
+            components, &children, root_idx, t_secs, 0.0, 0.0, 0.0, 0.0, false, false, false, true,
         );
         attack_world = compute_world_transforms_for_channels(
-            components, &children, root_idx, t_secs, 0.0, 0.0, t_secs, true, false, false,
+            components, &children, root_idx, t_secs, 0.0, 0.0, t_secs, 0.0, true, false, false,
+            false,
         );
 
         for idx in 0..n {
@@ -2302,7 +2304,9 @@ fn compute_world_transforms_for_channels(
     move_phase_m: f32,
     move_distance_m: f32,
     attack_elapsed_secs: f32,
+    action_elapsed_secs: f32,
     attacking_primary: bool,
+    acting: bool,
     moving: bool,
     idle: bool,
 ) -> Vec<Transform> {
@@ -2314,12 +2318,14 @@ fn compute_world_transforms_for_channels(
     fn choose_slot<'a>(
         att: &'a Gen3dPlannedAttachment,
         attacking_primary: bool,
+        acting: bool,
         moving: bool,
         idle: bool,
     ) -> Option<&'a PartAnimationSlot> {
-        for channel in ["attack_primary", "move", "idle", "ambient"] {
+        for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
             let active = match channel {
                 "attack_primary" => attacking_primary,
+                "action" => acting,
                 "move" => moving,
                 "idle" => idle,
                 "ambient" => true,
@@ -2345,12 +2351,14 @@ fn compute_world_transforms_for_channels(
         move_phase_m: f32,
         move_distance_m: f32,
         attack_elapsed_secs: f32,
+        action_elapsed_secs: f32,
     ) -> Transform {
         let driver_t = match slot.spec.driver {
             PartAnimationDriver::Always => wall_time_secs,
             PartAnimationDriver::MovePhase => move_phase_m,
             PartAnimationDriver::MoveDistance => move_distance_m,
             PartAnimationDriver::AttackTime => attack_elapsed_secs,
+            PartAnimationDriver::ActionTime => action_elapsed_secs,
         };
 
         let mut t = if driver_t.is_finite() { driver_t } else { 0.0 };
@@ -2369,7 +2377,9 @@ fn compute_world_transforms_for_channels(
         move_phase_m: f32,
         move_distance_m: f32,
         attack_elapsed_secs: f32,
+        action_elapsed_secs: f32,
         attacking_primary: bool,
+        acting: bool,
         moving: bool,
         idle: bool,
         world: &mut [Transform],
@@ -2393,13 +2403,14 @@ fn compute_world_transforms_for_channels(
                 anchor_transform_from_component(&components[child_idx], att.child_anchor.as_str());
 
             let mut animated_offset = att.offset;
-            if let Some(slot) = choose_slot(att, attacking_primary, moving, idle) {
+            if let Some(slot) = choose_slot(att, attacking_primary, acting, moving, idle) {
                 let delta = sample_slot_delta_runtime(
                     slot,
                     wall_time_secs,
                     move_phase_m,
                     move_distance_m,
                     attack_elapsed_secs,
+                    action_elapsed_secs,
                 );
                 animated_offset = match &slot.spec.clip {
                     PartAnimationDef::Spin {
@@ -2430,7 +2441,9 @@ fn compute_world_transforms_for_channels(
                 move_phase_m,
                 move_distance_m,
                 attack_elapsed_secs,
+                action_elapsed_secs,
                 attacking_primary,
+                acting,
                 moving,
                 idle,
                 world,
@@ -2451,7 +2464,9 @@ fn compute_world_transforms_for_channels(
         move_phase_m,
         move_distance_m,
         attack_elapsed_secs,
+        action_elapsed_secs,
         attacking_primary,
+        acting,
         moving,
         idle,
         &mut world,

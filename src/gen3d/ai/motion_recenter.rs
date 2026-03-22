@@ -294,6 +294,7 @@ fn sample_animation_slot_delta(
         PartAnimationDriver::MovePhase => sample_phase_01,
         PartAnimationDriver::MoveDistance => sample_t_m,
         PartAnimationDriver::AttackTime => sample_phase_01,
+        PartAnimationDriver::ActionTime => sample_phase_01,
     };
 
     let mut t = if driver_t.is_finite() { driver_t } else { 0.0 };

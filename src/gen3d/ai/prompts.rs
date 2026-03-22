@@ -2041,14 +2041,14 @@ Schema:\n\
   \"applies_to\": {\"run_id\":\"uuid\",\"attempt\":0,\"plan_hash\":\"sha256:...\",\"assembly_rev\":0},\n\
   \"decision\": \"author_clips\" | \"regen_geometry_required\",\n\
   \"reason\": \"short reason\",\n\
-  \"replace_channels\": [\"idle\",\"move\",\"attack_primary\"],\n\
+  \"replace_channels\": [\"idle\",\"move\",\"action\",\"attack_primary\"],\n\
   \"edges\": [\n\
     {\n\
       \"component\": \"child_component_name\",\n\
       \"slots\": [\n\
         {\n\
-          \"channel\": \"idle|move|attack_primary|ambient\",\n\
-          \"driver\": \"always|move_phase|move_distance|attack_time\",\n\
+          \"channel\": \"idle|move|action|attack_primary|ambient\",\n\
+          \"driver\": \"always|move_phase|move_distance|attack_time|action_time\",\n\
           \"speed_scale\": 1.0,\n\
           \"time_offset_units\": 0.0,\n\
           \"clip\": {\n\
@@ -2077,7 +2077,7 @@ Rules:\n\
   - Keep deltas small and stable; avoid large translations.\n\
   - Output compact JSON (no pretty formatting).\n\
 - Driver units (IMPORTANT):\n\
-  - `always` and `attack_time`: time units are seconds.\n\
+  - `always`, `attack_time`, and `action_time`: time units are seconds.\n\
   - `move_phase` and `move_distance`: time units are meters traveled.\n\
   - `time_offset_units` and `clip.duration_units` are expressed in the SAME units as the driver.\n\
 - Coordinate frames:\n\
@@ -2103,7 +2103,8 @@ Rules:\n\
 - `replace_channels`:\n\
   - If decision=author_clips, list the channels you want the engine to REPLACE on targeted edges before adding your slots.\n\
   - If decision=regen_geometry_required, set replace_channels=[] and edges=[] (do not author clips).\n\
-- For movable units, prefer authoring at least `idle` + `move` (and `attack_primary` if the unit has an attack).\n\
+- For movable units, prefer authoring at least `idle` + `move` + `action` (and `attack_primary` if the unit has an attack).\n\
+  - `action` means the unit is operating/working (waving hands, turning handles, manipulating a console/lever). Prefer driver=`action_time`.\n\
 - If the prompt implies motion that cannot be achieved with the existing articulation (for example: a snake with only one rigid body component), use decision=regen_geometry_required.\n\
   - In that case, do NOT author clips. Explain what articulation is missing in `reason`/`notes`.\n"
         .to_string()

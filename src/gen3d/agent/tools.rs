@@ -559,7 +559,8 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
                 title: "LLM: generate motion authoring",
-                one_line_summary: "LLM+mutates: author animation clips (idle/move/attack) on attachment edges.",
+                one_line_summary:
+                    "LLM+mutates: author animation clips (idle/move/action/attack_primary) on attachment edges.",
                 args_schema: "{ prompt?: string }",
                 args_example: serde_json::json!({}),
             },

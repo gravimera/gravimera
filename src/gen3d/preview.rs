@@ -6,8 +6,8 @@ use crate::assets::SceneAssets;
 use crate::object::registry::{ColliderProfile, ObjectDef, ObjectLibrary, ObjectPartKind};
 use crate::object::visuals::{MaterialCache, VisualSpawnSettings};
 use crate::types::{
-    AnimationChannelsActive, AttackClock, BuildScene, ForcedAnimationChannel, LocomotionClock,
-    ObjectPrefabId,
+    ActionClock, AnimationChannelsActive, AttackClock, BuildScene, ForcedAnimationChannel,
+    LocomotionClock, ObjectPrefabId,
 };
 
 use super::ai::Gen3dAiJob;
@@ -278,6 +278,7 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut ActionClock,
             &mut ForcedAnimationChannel,
         ),
         With<Gen3dPreviewUiModelRoot>,
@@ -306,13 +307,18 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
         *last_channel = selected.clone();
     }
 
-    for (_entity, mut channels, mut locomotion, mut attack, mut forced) in &mut roots {
+    for (_entity, mut channels, mut locomotion, mut attack, mut action, mut forced) in &mut roots {
         forced.channel = selected.clone();
 
         let wants_move =
             selected == "move" || library.channel_uses_move_driver(object_id, &selected);
         channels.moving = wants_move;
         channels.attacking_primary = selected == "attack_primary";
+        let wants_action = selected == "action"
+            || library
+                .channel_action_duration_secs(object_id, &selected)
+                .is_some();
+        channels.acting = wants_action;
 
         let speed_mps = library
             .mobility(object_id)
@@ -351,6 +357,20 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
             }
         } else {
             attack.duration_secs = 0.0;
+        }
+
+        if let Some(duration_secs) = library.channel_action_duration_secs(object_id, &selected) {
+            if channel_changed || action.duration_secs <= 0.0 {
+                action.started_at_secs = wall_time;
+                action.duration_secs = duration_secs;
+            }
+
+            let elapsed = (wall_time - action.started_at_secs).max(0.0);
+            if action.duration_secs > 0.0 && elapsed > action.duration_secs {
+                preview.animation_channel = "idle".to_string();
+            }
+        } else {
+            action.duration_secs = 0.0;
         }
     }
 }
@@ -600,6 +620,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
                         last_translation: Vec3::ZERO,
                     },
                     AttackClock::default(),
+                    ActionClock::default(),
                 ));
                 crate::object::visuals::spawn_object_visuals_with_settings(
                     &mut model_entity,
@@ -621,7 +642,11 @@ pub(crate) fn gen3d_apply_draft_to_preview(
                 commands.entity(preview_root).add_child(model_id);
 
                 let mut ordered = library.animation_channels_ordered(super::gen3d_draft_object_id());
-                let mut channels: Vec<String> = vec!["idle".to_string(), "move".to_string()];
+                let mut channels: Vec<String> = vec![
+                    "idle".to_string(),
+                    "move".to_string(),
+                    "action".to_string(),
+                ];
                 for ch in ordered.drain(..) {
                     let trimmed = ch.trim();
                     if trimmed.is_empty() {
@@ -703,6 +728,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
                     last_translation: Vec3::ZERO,
                 },
                 AttackClock::default(),
+                ActionClock::default(),
             ));
             crate::object::visuals::spawn_object_visuals_with_settings(
                 &mut model_entity,

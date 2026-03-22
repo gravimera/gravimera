@@ -83,7 +83,7 @@ pub(super) fn start_agent_llm_review_delta_call(
 
     let mut images_to_send: Vec<PathBuf> = Vec::new();
     if review_appearance {
-        let (include_move_sheet, include_attack_sheet) =
+        let (include_move_sheet, include_action_sheet, include_attack_sheet) =
             motion_sheets_needed_from_smoke_results(&smoke_results);
 
         let selected_blob_ids = {
@@ -95,6 +95,7 @@ pub(super) fn start_agent_llm_review_delta_call(
                     store,
                     &preview_blob_ids,
                     include_move_sheet,
+                    include_action_sheet,
                     include_attack_sheet,
                 )
             }
@@ -165,10 +166,7 @@ pub(super) fn start_agent_llm_review_delta_call(
     set_progress(&progress, "Calling model for review delta…");
     job.agent.pending_llm_repair_attempt = 0;
 
-    let reasoning_effort = super::openai::cap_reasoning_effort(
-        ai.model_reasoning_effort(),
-        &config.gen3d_reasoning_effort_review,
-    );
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,

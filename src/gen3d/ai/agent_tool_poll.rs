@@ -211,7 +211,7 @@ fn maybe_spawn_descriptor_meta_after_plan(
     let progress = Arc::new(Mutex::new(Gen3dAiProgress {
         message: "Generating prefab metadata…".into(),
     }));
-    let reasoning_effort = super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
         shared,
         progress,
@@ -1191,7 +1191,7 @@ pub(super) fn poll_agent_tool(
 	                                    &call,
                                     kind,
                                     ai,
-                                    &config.gen3d_reasoning_effort_repair,
+                                    "high",
                                     pass_dir,
                                     system,
                                     user_text,
@@ -1454,7 +1454,7 @@ pub(super) fn poll_agent_tool(
                                     &call,
                                     kind,
                                     ai,
-                                    &config.gen3d_reasoning_effort_repair,
+                                    "high",
                                     pass_dir,
                                     system,
                                     user_text,
@@ -2345,7 +2345,7 @@ pub(super) fn poll_agent_tool(
                                     &call,
                                     kind,
                                     ai,
-                                    &config.gen3d_reasoning_effort_repair,
+                                    "high",
                                     pass_dir,
                                     system,
                                     user_text,
@@ -2470,7 +2470,7 @@ pub(super) fn poll_agent_tool(
                                         &call,
                                         kind,
                                         ai,
-                                        &config.gen3d_reasoning_effort_repair,
+                                        "high",
                                         pass_dir,
                                         system,
                                         user_text,
@@ -2520,7 +2520,7 @@ pub(super) fn poll_agent_tool(
                                     &call,
                                     kind,
                                     ai,
-                                    &config.gen3d_reasoning_effort_repair,
+                                    "high",
                                     pass_dir,
                                     system,
                                     user_text,
@@ -2659,6 +2659,9 @@ pub(super) fn poll_agent_tool(
                                         }
                                         super::schema::AiAnimationDriverJsonV1::AttackTime => {
                                             Some(PartAnimationDriver::AttackTime)
+                                        }
+                                        super::schema::AiAnimationDriverJsonV1::ActionTime => {
+                                            Some(PartAnimationDriver::ActionTime)
                                         }
                                         super::schema::AiAnimationDriverJsonV1::Unknown => None,
                                     }
@@ -2936,7 +2939,7 @@ pub(super) fn poll_agent_tool(
                                     &call,
                                     kind,
                                     ai,
-                                    &config.gen3d_reasoning_effort_repair,
+                                    "high",
                                     pass_dir,
                                     system,
                                     user_text,
@@ -3257,7 +3260,7 @@ pub(super) fn poll_agent_tool(
 
                                             let mut selected_blob_ids: Vec<String> = Vec::new();
                                             if review_appearance {
-                                                let (include_move_sheet, include_attack_sheet) =
+                                                let (include_move_sheet, include_action_sheet, include_attack_sheet) =
                                                     motion_sheets_needed_from_smoke_results(
                                                         &smoke_results,
                                                     );
@@ -3271,6 +3274,7 @@ pub(super) fn poll_agent_tool(
                                                                     store,
                                                                     &preview_blob_ids,
                                                                     include_move_sheet,
+                                                                    include_action_sheet,
                                                                     include_attack_sheet,
                                                                 );
                                                         }
@@ -3321,7 +3325,7 @@ pub(super) fn poll_agent_tool(
 	                                                        &call,
 	                                                        kind,
 	                                                        ai,
-	                                                        &config.gen3d_reasoning_effort_repair,
+	                                                        "high",
 	                                                        pass_dir,
 	                                                        system,
 	                                                        user_text,
@@ -3426,7 +3430,7 @@ pub(super) fn poll_agent_tool(
 
                                 let mut selected_blob_ids: Vec<String> = Vec::new();
                                 if review_appearance {
-                                    let (include_move_sheet, include_attack_sheet) =
+                                    let (include_move_sheet, include_action_sheet, include_attack_sheet) =
                                         motion_sheets_needed_from_smoke_results(&smoke_results);
                                     if preview_blob_ids_were_explicit {
                                         selected_blob_ids = preview_blob_ids;
@@ -3437,6 +3441,7 @@ pub(super) fn poll_agent_tool(
                                                     store,
                                                     &preview_blob_ids,
                                                     include_move_sheet,
+                                                    include_action_sheet,
                                                     include_attack_sheet,
                                                 );
                                             }
@@ -3481,7 +3486,7 @@ pub(super) fn poll_agent_tool(
 	                                            &call,
 	                                            kind,
 	                                            ai,
-	                                            &config.gen3d_reasoning_effort_repair,
+	                                            "high",
 	                                            pass_dir,
 	                                            system,
 	                                            user_text,

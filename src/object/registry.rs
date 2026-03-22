@@ -144,6 +144,8 @@ pub(crate) enum PartAnimationDriver {
     MoveDistance,
     /// Driven by the owning entity's last attack event time (seconds since the attack started).
     AttackTime,
+    /// Driven by the owning entity's current "action" window (seconds since the action started).
+    ActionTime,
 }
 
 #[derive(Clone, Debug)]
@@ -576,7 +578,7 @@ impl ObjectLibrary {
         }
 
         let mut out: Vec<String> = Vec::new();
-        for key in ["idle", "move", "attack_primary"] {
+        for key in ["idle", "move", "action", "attack_primary"] {
             if channels.remove(key) {
                 out.push(key.to_string());
             }
@@ -678,6 +680,64 @@ impl ObjectLibrary {
                         continue;
                     }
                     if slot.spec.driver != PartAnimationDriver::AttackTime {
+                        continue;
+                    }
+
+                    let candidate = match &slot.spec.clip {
+                        PartAnimationDef::Loop { duration_secs, .. }
+                        | PartAnimationDef::Once { duration_secs, .. }
+                        | PartAnimationDef::PingPong { duration_secs, .. } => {
+                            let speed = slot.spec.speed_scale.max(1e-3);
+                            (duration_secs / speed).abs()
+                        }
+                        PartAnimationDef::Spin { .. } => 1.0,
+                    };
+
+                    if candidate.is_finite() && candidate > 1e-3 {
+                        *best = Some(best.map_or(candidate, |b| b.max(candidate)));
+                    }
+                }
+                if let ObjectPartKind::ObjectRef { object_id: child } = &part.kind {
+                    visit(library, *child, visited, channel, best);
+                }
+            }
+        }
+
+        let mut visited: HashSet<u128> = HashSet::new();
+        let mut best: Option<f32> = None;
+        visit(self, object_id, &mut visited, channel, &mut best);
+        best.map(|v| v.clamp(0.05, 10.0))
+    }
+
+    pub(crate) fn channel_action_duration_secs(
+        &self,
+        object_id: u128,
+        channel: &str,
+    ) -> Option<f32> {
+        let channel = channel.trim();
+        if channel.is_empty() {
+            return None;
+        }
+
+        fn visit(
+            library: &ObjectLibrary,
+            object_id: u128,
+            visited: &mut HashSet<u128>,
+            channel: &str,
+            best: &mut Option<f32>,
+        ) {
+            if !visited.insert(object_id) {
+                return;
+            }
+            let Some(def) = library.get(object_id) else {
+                return;
+            };
+            for part in def.parts.iter() {
+                for slot in part.animations.iter() {
+                    if slot.channel.as_ref() != channel {
+                        continue;
+                    }
+                    if slot.spec.driver != PartAnimationDriver::ActionTime {
                         continue;
                     }
 

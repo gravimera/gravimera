@@ -135,6 +135,7 @@ pub(crate) enum PartAnimationDriverBundleV1 {
     MovePhase,
     MoveDistance,
     AttackTime,
+    ActionTime,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -693,6 +694,7 @@ impl PartAnimationDriverBundleV1 {
             PartAnimationDriver::MovePhase => Self::MovePhase,
             PartAnimationDriver::MoveDistance => Self::MoveDistance,
             PartAnimationDriver::AttackTime => Self::AttackTime,
+            PartAnimationDriver::ActionTime => Self::ActionTime,
         }
     }
 
@@ -702,6 +704,7 @@ impl PartAnimationDriverBundleV1 {
             Self::MovePhase => PartAnimationDriver::MovePhase,
             Self::MoveDistance => PartAnimationDriver::MoveDistance,
             Self::AttackTime => PartAnimationDriver::AttackTime,
+            Self::ActionTime => PartAnimationDriver::ActionTime,
         }
     }
 }

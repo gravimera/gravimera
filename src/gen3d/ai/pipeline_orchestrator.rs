@@ -13,7 +13,7 @@ use crate::gen3d::agent::{
     append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolCallJsonV1, Gen3dToolResultJsonV1,
 };
 use crate::threaded_result::take_shared_result;
-use crate::types::{AnimationChannelsActive, AttackClock, LocomotionClock};
+use crate::types::{ActionClock, AnimationChannelsActive, AttackClock, LocomotionClock};
 
 use super::super::state::{
     Gen3dDraft, Gen3dPreview, Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dWorkshop,
@@ -80,6 +80,7 @@ pub(super) fn poll_gen3d_pipeline(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut ActionClock,
         ),
         With<Gen3dPreviewModelRoot>,
     >,
@@ -317,8 +318,7 @@ fn poll_pipeline_prompt_intent(
                 .as_ref()
                 .map(|s| s.text.as_str()),
         );
-        let reasoning_effort =
-            super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), "low");
+        let reasoning_effort = ai.model_reasoning_effort().to_string();
 
         super::spawn_gen3d_ai_text_thread(
             shared,
@@ -331,7 +331,7 @@ fn poll_pipeline_prompt_intent(
             reasoning_effort,
             system,
             user_text,
-            Vec::new(),
+            job.user_images_component.clone(),
             pass_dir,
             "prompt_intent".into(),
         );
@@ -420,15 +420,25 @@ fn pipeline_missing_move_slot_coverage(job: &Gen3dAiJob, draft: &Gen3dDraft) -> 
         return false;
     }
 
-    let has_move = job.planned_components.iter().any(|c| {
-        c.attach_to.as_ref().is_some_and(|att| {
-            att.animations
-                .iter()
-                .any(|slot| slot.channel.as_ref() == "move")
-        })
-    });
+    let mut has_move = false;
+    let mut has_action = false;
+    for comp in job.planned_components.iter() {
+        let Some(att) = comp.attach_to.as_ref() else {
+            continue;
+        };
+        for slot in att.animations.iter() {
+            match slot.channel.as_ref() {
+                "move" => has_move = true,
+                "action" => has_action = true,
+                _ => {}
+            }
+        }
+        if has_move && has_action {
+            break;
+        }
+    }
 
-    !has_move
+    !has_move || !has_action
 }
 
 fn run_complete_enough_for_pipeline_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> bool {
@@ -612,6 +622,7 @@ fn start_pipeline_tool_call(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut ActionClock,
         ),
         With<Gen3dPreviewModelRoot>,
     >,
@@ -659,6 +670,7 @@ fn poll_pipeline_tick(
             &mut AnimationChannelsActive,
             &mut LocomotionClock,
             &mut AttackClock,
+            &mut ActionClock,
         ),
         With<Gen3dPreviewModelRoot>,
     >,

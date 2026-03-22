@@ -1191,6 +1191,13 @@ pub(crate) fn unit_animation_hotkeys(
                 started_at_secs: wall_time,
                 duration_secs,
             });
+        } else if let Some(duration_secs) =
+            library.channel_action_duration_secs(prefab_id.0, channel)
+        {
+            commands.entity(entity).insert(ActionClock {
+                started_at_secs: wall_time,
+                duration_secs,
+            });
         }
     }
 }
@@ -1205,7 +1212,8 @@ pub(crate) fn clear_forced_animation_channel_after_one_shot(
             Entity,
             &ObjectPrefabId,
             &ForcedAnimationChannel,
-            &AttackClock,
+            Option<&AttackClock>,
+            Option<&ActionClock>,
         ),
         Without<Player>,
     >,
@@ -1215,27 +1223,37 @@ pub(crate) fn clear_forced_animation_channel_after_one_shot(
     }
 
     let wall_time = time.elapsed_secs();
-    for (entity, prefab_id, forced, attack_clock) in &q {
+    for (entity, prefab_id, forced, attack_clock, action_clock) in &q {
         let channel = forced.channel.trim();
         if channel.is_empty() {
             continue;
         }
 
-        if library
-            .channel_attack_duration_secs(prefab_id.0, channel)
-            .is_none()
-        {
+        if let Some(duration) = library.channel_attack_duration_secs(prefab_id.0, channel) {
+            let Some(clock) = attack_clock else {
+                continue;
+            };
+            if !duration.is_finite() || duration <= 0.0 {
+                continue;
+            }
+            let elapsed = (wall_time - clock.started_at_secs).max(0.0);
+            if elapsed > duration {
+                commands.entity(entity).remove::<ForcedAnimationChannel>();
+            }
             continue;
         }
 
-        let duration = attack_clock.duration_secs;
-        if !duration.is_finite() || duration <= 0.0 {
-            continue;
-        }
-
-        let elapsed = (wall_time - attack_clock.started_at_secs).max(0.0);
-        if elapsed > duration {
-            commands.entity(entity).remove::<ForcedAnimationChannel>();
+        if let Some(duration) = library.channel_action_duration_secs(prefab_id.0, channel) {
+            let Some(clock) = action_clock else {
+                continue;
+            };
+            if !duration.is_finite() || duration <= 0.0 {
+                continue;
+            }
+            let elapsed = (wall_time - clock.started_at_secs).max(0.0);
+            if elapsed > duration {
+                commands.entity(entity).remove::<ForcedAnimationChannel>();
+            }
         }
     }
 }

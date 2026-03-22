@@ -419,6 +419,7 @@ fn animation_driver_from_json(
         AiAnimationDriverJsonV1::MovePhase => PartAnimationDriver::MovePhase,
         AiAnimationDriverJsonV1::MoveDistance => PartAnimationDriver::MoveDistance,
         AiAnimationDriverJsonV1::AttackTime => PartAnimationDriver::AttackTime,
+        AiAnimationDriverJsonV1::ActionTime => PartAnimationDriver::ActionTime,
         AiAnimationDriverJsonV1::Unknown => {
             return Err("animation driver must not be unknown".into())
         }
@@ -1836,7 +1837,9 @@ mod tests {
         assert_eq!(job.planned_components.len(), 1);
         assert_eq!(job.planned_components[0].root_animations.len(), 1);
         assert_eq!(
-            job.planned_components[0].root_animations[0].channel.as_ref(),
+            job.planned_components[0].root_animations[0]
+                .channel
+                .as_ref(),
             "ambient"
         );
 

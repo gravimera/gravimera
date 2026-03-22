@@ -146,10 +146,7 @@ impl Gen3dTaskQueue {
         };
         self.inactive_states.insert(current_id, current_state);
 
-        let next_state = self
-            .inactive_states
-            .remove(&target_id)
-            .unwrap_or_default();
+        let next_state = self.inactive_states.remove(&target_id).unwrap_or_default();
         *workshop = next_state.workshop;
         *job = next_state.job;
         *draft = next_state.draft;

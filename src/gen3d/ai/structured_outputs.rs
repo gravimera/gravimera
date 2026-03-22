@@ -817,7 +817,13 @@ fn schema_motion_authoring() -> serde_json::Value {
         ("channel", schema_string()),
         (
             "driver",
-            schema_enum(&["always", "move_phase", "move_distance", "attack_time"]),
+            schema_enum(&[
+                "always",
+                "move_phase",
+                "move_distance",
+                "attack_time",
+                "action_time",
+            ]),
         ),
         ("speed_scale", schema_number()),
         ("time_offset_units", schema_number()),
@@ -944,7 +950,13 @@ fn schema_animation_slot_spec_draft_ops() -> serde_json::Value {
     schema_object(vec![
         (
             "driver",
-            schema_enum(&["always", "move_phase", "move_distance", "attack_time"]),
+            schema_enum(&[
+                "always",
+                "move_phase",
+                "move_distance",
+                "attack_time",
+                "action_time",
+            ]),
         ),
         ("speed_scale", schema_number()),
         ("time_offset_units", schema_number()),

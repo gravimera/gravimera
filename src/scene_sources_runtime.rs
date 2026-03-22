@@ -2727,7 +2727,8 @@ mod golden_scene_signatures {
 
     #[test]
     fn golden_signatures_match_or_bless() {
-        let fixtures_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/scene_generation/fixtures");
+        let fixtures_root =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/scene_generation/fixtures");
         if !fixtures_root.exists() {
             eprintln!(
                 "Skipping golden scene signatures: fixtures dir is missing ({})",

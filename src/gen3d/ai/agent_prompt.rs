@@ -62,9 +62,9 @@ Rules:\n\
   - `qa_v1` may report warnings (non-fatal). Treat warnings as informational: do NOT spend steps trying to eliminate warnings.\n\
     - If warnings>0, mention them explicitly in \"done.reason\" (do not claim \"no warnings\").\n\
 - Motion authoring (required for movable units):\n\
-  - If the draft is a movable unit (mobility is ground/air) and `state_summary.motion_coverage.has_move` is false, call `llm_generate_motion_authoring_v1` before finishing.\n\
-  - This tool authors explicit per-edge animation clips (idle/move/attack) baked into the prefab; the engine does not provide runtime motion algorithms.\n\
-  - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if move slots already exist.\n\
+  - If the draft is a movable unit (mobility is ground/air) and (`state_summary.motion_coverage.has_move` is false OR `state_summary.motion_coverage.has_action` is false), call `llm_generate_motion_authoring_v1` before finishing.\n\
+  - This tool authors explicit per-edge animation clips (idle/move/action/attack_primary) baked into the prefab; the engine does not provide runtime motion algorithms.\n\
+  - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if move/action slots already exist.\n\
   - If `qa_v1` reports `joint_rest_bias_large`, prefer calling `recenter_attachment_motion_v1` on the offending child components/channels first; it is deterministic and preserves motion exactly by re-parameterizing offset vs delta.\n\
     - If it returns applied=false or the issue persists, then call `llm_generate_motion_authoring_v1` to re-author the offending clips/channels.\n\
   - If `qa_v1` reports `hinge_limit_exceeded`, call `suggest_motion_repairs_v1` to get deterministic patch options (relax joint limits vs scale rotation), then explicitly apply ONE chosen patch via `apply_draft_ops_v1`.\n\
@@ -817,6 +817,11 @@ pub(super) fn build_agent_user_text(
                     .and_then(|v| v.as_str())
                     .map(str::trim)
                     .filter(|s| !s.is_empty());
+                let action_sheet = motion_sheet_blob_ids
+                    .and_then(|v| v.get("action"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
                 let attack_sheet = motion_sheet_blob_ids
                     .and_then(|v| v.get("attack"))
                     .and_then(|v| v.as_str())
@@ -841,11 +846,16 @@ pub(super) fn build_agent_user_text(
                         out.push(']');
                     }
                 }
-                if move_sheet.is_some() || attack_sheet.is_some() {
+                if move_sheet.is_some() || action_sheet.is_some() || attack_sheet.is_some() {
                     out.push_str(" motion_sheets={");
                     if let Some(move_sheet) = move_sheet {
                         out.push_str("move=");
                         out.push_str(move_sheet);
+                        out.push(' ');
+                    }
+                    if let Some(action_sheet) = action_sheet {
+                        out.push_str("action=");
+                        out.push_str(action_sheet);
                         out.push(' ');
                     }
                     if let Some(attack_sheet) = attack_sheet {
@@ -2963,7 +2973,9 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         let mut edges_with_any_slots = 0usize;
         let mut slots_total = 0usize;
         let mut move_edges = 0usize;
+        let mut action_edges = 0usize;
         let mut has_move = false;
+        let mut has_action = false;
         let mut has_idle = false;
         let mut has_attack = false;
         let mut has_ambient = false;
@@ -2979,6 +2991,7 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
                 edges_with_any_slots += 1;
             }
             let mut edge_has_move = false;
+            let mut edge_has_action = false;
             for slot in att.animations.iter() {
                 slots_total += 1;
                 let channel = slot.channel.as_ref();
@@ -2987,6 +3000,10 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
                     "move" => {
                         has_move = true;
                         edge_has_move = true;
+                    }
+                    "action" => {
+                        has_action = true;
+                        edge_has_action = true;
                     }
                     "idle" => has_idle = true,
                     "attack_primary" => has_attack = true,
@@ -2997,6 +3014,9 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
             if edge_has_move {
                 move_edges += 1;
             }
+            if edge_has_action {
+                action_edges += 1;
+            }
         }
 
         serde_json::json!({
@@ -3004,7 +3024,9 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
             "edges_with_any_slots": edges_with_any_slots,
             "slots_total": slots_total,
             "move_edges": move_edges,
+            "action_edges": action_edges,
             "has_move": has_move,
+            "has_action": has_action,
             "has_idle": has_idle,
             "has_attack_primary": has_attack,
             "has_ambient": has_ambient,
