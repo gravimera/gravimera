@@ -17,7 +17,60 @@ use super::state::{
     Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel, Gen3dPreviewSceneRoot,
     Gen3dReviewOverlayRoot, Gen3dSidePanelRoot, Gen3dSidePanelToggleButton,
 };
-use super::task_queue::Gen3dTaskQueue;
+use super::task_queue::{Gen3dSessionKind, Gen3dTaskQueue};
+
+pub(crate) fn gen3d_update_preview_camera_render_layers(
+    build_scene: Res<State<BuildScene>>,
+    task_queue: Res<Gen3dTaskQueue>,
+    job: Res<Gen3dAiJob>,
+    draft: Res<Gen3dDraft>,
+    mut cameras: Query<&mut bevy::camera::visibility::RenderLayers, With<Gen3dPreviewCamera>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+
+    let active_id = task_queue.active_session_id;
+    let running_id = if job.is_running() {
+        Some(active_id)
+    } else {
+        task_queue.running_session_id.and_then(|id| {
+            if id == active_id {
+                None
+            } else if task_queue
+                .inactive_states
+                .get(&id)
+                .is_some_and(|state| state.job.is_running())
+            {
+                Some(id)
+            } else {
+                None
+            }
+        })
+    };
+
+    let active_is_new_build = task_queue
+        .active_meta()
+        .is_some_and(|meta| matches!(meta.kind, Gen3dSessionKind::NewBuild));
+    let active_is_fresh = active_is_new_build && draft.defs.is_empty();
+
+    // If another session is running in the background, keep the preview scene rendering it for AI
+    // capture, but don't show it in the user-facing Gen3D preview when the active session is a
+    // fresh (empty) build opened from the UI.
+    let should_hide_running_preview = active_is_fresh && running_id.is_some_and(|id| id != active_id);
+
+    let desired = if should_hide_running_preview {
+        bevy::camera::visibility::RenderLayers::none()
+    } else {
+        bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_LAYER)
+    };
+
+    for mut layers in &mut cameras {
+        if *layers != desired {
+            *layers = desired.clone();
+        }
+    }
+}
 
 pub(super) fn setup_preview_scene(
     commands: &mut Commands,

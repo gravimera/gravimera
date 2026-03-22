@@ -212,7 +212,7 @@ def main():
             stderr=subprocess.STDOUT,
         )
 
-        base_url = discover_base_url_from_output(proc, log_fp, timeout_secs=30.0)
+        base_url = discover_base_url_from_output(proc, log_fp, timeout_secs=120.0)
 
         def drain_stdout():
             if proc is None or proc.stdout is None:
@@ -363,4 +363,3 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

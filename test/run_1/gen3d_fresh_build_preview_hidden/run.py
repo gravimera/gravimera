@@ -8,7 +8,6 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -47,7 +46,10 @@ def discover_base_url_from_output(proc: subprocess.Popen, log_fp, timeout_secs: 
             url = line[idx + len(prefix) :].strip()
             if url.startswith("http://"):
                 return url
-    raise RuntimeError(f"Timed out waiting for Automation API listen address. Last output:\n{buf[-4000:].decode('utf-8', errors='replace')}")
+    raise RuntimeError(
+        "Timed out waiting for Automation API listen address. Last output:\n"
+        + buf[-4000:].decode("utf-8", errors="replace")
+    )
 
 
 def http_json(method: str, url: str, data=None, timeout_secs: float = 10.0):
@@ -144,72 +146,57 @@ def main():
 
         wait_for_health(base_url, timeout_secs=30.0)
 
-        prompts = [
-            "A warcar with a cannon as weapon (mock)",
-            "A snake enemy unit (mock)",
-        ]
+        # Enter Build Preview scene so the Gen3D preview camera exists.
+        status, payload = http_json("POST", f"{base_url}/v1/mode", {"mode": "build_preview"})
+        if status != 200 or payload.get("ok") is not True:
+            raise RuntimeError(f"/v1/mode failed: status={status} payload={payload}")
+        http_json("POST", f"{base_url}/v1/step", {"frames": 3})
 
-        task_ids = []
-        for prompt in prompts:
-            status, payload = http_json(
-                "POST",
-                f"{base_url}/v1/gen3d/tasks/enqueue",
-                {"kind": "build", "prompt": prompt},
-            )
-            if status != 200 or payload.get("ok") is not True:
-                raise RuntimeError(f"enqueue failed: status={status} payload={payload}")
-            task_id = payload.get("task_id")
-            if not task_id:
-                raise RuntimeError(f"enqueue missing task_id: payload={payload}")
-            task_ids.append(task_id)
+        # Enqueue a background Gen3D task so there is a running session different from the active
+        # (fresh) workshop session.
+        status, payload = http_json(
+            "POST",
+            f"{base_url}/v1/gen3d/tasks/enqueue",
+            {"kind": "build", "prompt": "A test object (mock)"},
+        )
+        if status != 200 or payload.get("ok") is not True:
+            raise RuntimeError(f"enqueue failed: status={status} payload={payload}")
+        task_id = payload.get("task_id")
+        if not task_id:
+            raise RuntimeError(f"enqueue missing task_id: payload={payload}")
 
-        # Exercise per-task endpoint.
-        for task_id in task_ids:
+        deadline = time.time() + 30.0
+        state = None
+        while time.time() < deadline:
             status, payload = http_json("GET", f"{base_url}/v1/gen3d/tasks/{task_id}", None)
             if status != 200 or payload.get("ok") is not True:
                 raise RuntimeError(f"task status failed: status={status} payload={payload}")
-
-        first_id, second_id = task_ids[0], task_ids[1]
-
-        deadline = time.time() + 120.0
-        while time.time() < deadline:
-            status, payload = http_json("GET", f"{base_url}/v1/gen3d/tasks", None)
-            if status != 200 or payload.get("ok") is not True:
-                raise RuntimeError(f"tasks list failed: status={status} payload={payload}")
-
-            tasks = payload.get("tasks", [])
-            by_id = {t.get("task_id"): t for t in tasks if isinstance(t, dict)}
-
-            def state(task_id: str):
-                return by_id.get(task_id, {}).get("state")
-
-            s1 = state(first_id)
-            s2 = state(second_id)
-            running = [t for t in (s1, s2) if t == "running"]
-            if len(running) > 1:
-                raise RuntimeError(f"more than one task running: s1={s1} s2={s2}")
-
-            # FIFO: task 2 must not run until task 1 completes.
-            if s2 == "running" and s1 not in ("done", "failed", "canceled"):
-                raise RuntimeError(f"FIFO violated: s1={s1} s2={s2}")
-
-            done_states = ("done", "failed", "canceled")
-            if s1 in done_states and s2 in done_states:
-                if s1 != "done" or s2 != "done":
-                    raise RuntimeError(f"tasks did not finish cleanly: s1={s1} s2={s2}")
-
-                result_1 = by_id.get(first_id, {}).get("result_prefab_id_uuid")
-                result_2 = by_id.get(second_id, {}).get("result_prefab_id_uuid")
-                if not result_1 or not result_2:
-                    raise RuntimeError(
-                        f"missing result_prefab_id_uuid: result_1={result_1} result_2={result_2}"
-                    )
+            state = payload.get("task", {}).get("state")
+            if state in ("running", "done", "failed", "canceled"):
                 break
+            http_json("POST", f"{base_url}/v1/step", {"frames": 3})
 
-            # Advance time (paused by config).
-            http_json("POST", f"{base_url}/v1/step", {"frames": 5})
-        else:
-            raise RuntimeError("timed out waiting for Gen3D tasks to complete")
+        if state != "running":
+            raise RuntimeError(f"expected task to be running, got state={state}")
+
+        # Give systems a frame to apply camera layer changes.
+        http_json("POST", f"{base_url}/v1/step", {"frames": 2})
+
+        status, payload = http_json("GET", f"{base_url}/v1/gen3d/preview", None)
+        if status != 200 or payload.get("ok") is not True:
+            raise RuntimeError(f"/v1/gen3d/preview failed: status={status} payload={payload}")
+
+        if payload.get("should_hide_running_preview") is not True:
+            raise RuntimeError(
+                f"expected should_hide_running_preview=true, got payload={payload}"
+            )
+
+        camera = payload.get("preview_camera", {})
+        if camera.get("present") is not True:
+            raise RuntimeError(f"expected preview camera present, got payload={payload}")
+        layers = camera.get("render_layers", None)
+        if layers != []:
+            raise RuntimeError(f"expected preview camera render_layers=[], got layers={layers}")
 
         # Graceful shutdown.
         try:
@@ -217,39 +204,35 @@ def main():
         except Exception:
             pass
 
-        try:
-            proc.wait(timeout=10.0)
-        except subprocess.TimeoutExpired:
-            proc.terminate()
-
-        print("OK: Gen3D task queue endpoints (mock://gen3d)")
         ok = True
-        return 0
-    except Exception as e:
-        print(f"ERROR: {e}\nArtifacts kept at: {run_root}\nLog: {log_path}", file=sys.stderr)
-        raise
     finally:
         if proc is not None and proc.poll() is None:
             try:
                 proc.send_signal(signal.SIGINT)
-                proc.wait(timeout=5.0)
             except Exception:
+                pass
+            time.sleep(0.5)
+        if proc is not None and proc.poll() is None:
+            try:
                 proc.kill()
+            except Exception:
+                pass
         if drain_thread is not None:
             try:
-                drain_thread.join(timeout=2.0)
+                drain_thread.join(timeout=1.0)
             except Exception:
                 pass
         if log_fp is not None:
-            log_fp.close()
-        if ok:
             try:
-                import shutil
-
-                shutil.rmtree(run_root, ignore_errors=True)
+                log_fp.close()
             except Exception:
                 pass
 
+    if not ok:
+        print(f"FAIL (log: {log_path})", file=sys.stderr)
+        sys.exit(1)
+    print("OK")
+
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

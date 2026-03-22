@@ -490,6 +490,12 @@ impl Plugin for RenderedGen3dPlugin {
         );
         app.add_systems(
             Update,
+            crate::gen3d::gen3d_update_preview_camera_render_layers
+                .after(crate::gen3d::gen3d_task_queue_runner)
+                .run_if(in_state(BuildScene::Preview)),
+        );
+        app.add_systems(
+            Update,
             crate::gen3d::gen3d_cleanup_preview_scene_when_idle
                 .after(crate::gen3d::gen3d_apply_draft_to_preview)
                 .run_if(in_state(BuildScene::Realm)),

@@ -368,6 +368,12 @@ fn respond_json(request: tiny_http::Request, status: u16, body_json: String) {
 #[derive(SystemParam)]
 struct AutomationWorld<'w, 's> {
     windows: Query<'w, 's, (Entity, &'static Window), With<PrimaryWindow>>,
+    gen3d_preview_cameras: Query<
+        'w,
+        's,
+        &'static bevy::camera::visibility::RenderLayers,
+        With<crate::gen3d::Gen3dPreviewCamera>,
+    >,
     players: Query<'w, 's, (), With<Player>>,
     player_q: Query<'w, 's, (&'static Transform, &'static Collider), With<Player>>,
     status_contents: Query<'w, 's, &'static ObjectStatusBarContent>,
@@ -1362,6 +1368,77 @@ fn handle_gen3d_routes<
                 "status": workshop.status.clone(),
                 "error": workshop.error.clone(),
                 "run_dir": job.run_dir_path().map(|p| p.display().to_string()),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/gen3d/preview") => {
+            let Some(queue) = gen3d_task_queue.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(job) = gen3d_job.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let active_id = queue.active_session_id;
+
+            let active_meta = queue.metas.get(&active_id);
+            let active_kind = active_meta.map(|meta| match meta.kind {
+                crate::gen3d::Gen3dSessionKind::NewBuild => "build",
+                crate::gen3d::Gen3dSessionKind::EditOverwrite { .. } => "edit_from_prefab",
+                crate::gen3d::Gen3dSessionKind::Fork { .. } => "fork_from_prefab",
+            });
+
+            let running_id = if job.is_running() {
+                Some(active_id)
+            } else {
+                queue.running_session_id.and_then(|id| {
+                    if id == active_id {
+                        None
+                    } else if queue
+                        .inactive_states
+                        .get(&id)
+                        .is_some_and(|state| state.job.is_running())
+                    {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                })
+            };
+
+            let active_is_new_build = active_meta
+                .is_some_and(|meta| matches!(meta.kind, crate::gen3d::Gen3dSessionKind::NewBuild));
+            let active_is_fresh = active_is_new_build && draft.defs.is_empty();
+            let should_hide_running_preview = active_is_fresh
+                && running_id.is_some_and(|id| id != active_id);
+
+            let mut preview_camera_layers: Vec<usize> = Vec::new();
+            let mut has_preview_camera = false;
+            for layers in ctx.world.gen3d_preview_cameras.iter() {
+                has_preview_camera = true;
+                preview_camera_layers = layers.iter().collect();
+                break;
+            }
+
+            let body = serde_json::json!({
+                "ok": true,
+                "active_session_id": active_id.to_string(),
+                "active_kind": active_kind,
+                "running_session_id": running_id.map(|id| id.to_string()),
+                "active_draft_empty": draft.defs.is_empty(),
+                "should_hide_running_preview": should_hide_running_preview,
+                "preview_camera": {
+                    "present": has_preview_camera,
+                    "render_layers": preview_camera_layers,
+                },
             })
             .to_string();
             Some(AutomationReply {
@@ -3189,6 +3266,7 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"POST","path":"/v1/step"}),
                 serde_json::json!({"method":"POST","path":"/v1/shutdown"}),
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/status"}),
+                serde_json::json!({"method":"GET","path":"/v1/gen3d/preview"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/prompt"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/build"}),
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/tasks"}),

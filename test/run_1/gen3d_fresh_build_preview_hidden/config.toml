@@ -1,0 +1,10 @@
+[gen3d]
+ai_service = "openai"
+orchestrator = "pipeline"
+
+[openai]
+base_url = "mock://gen3d"
+model = "gpt-5.4"
+model_reasoning_effort = "none"
+token = ""
+

@@ -1133,6 +1133,37 @@ Notes:
 - When `save_overwrite_prefab_id` is non-null, `POST /v1/gen3d/save` overwrites that prefab id
   instead of generating a new root prefab id.
 
+### `GET /v1/gen3d/preview`
+
+Debug endpoint to inspect the Gen3D preview camera and whether the app is currently hiding a
+background-running session from the user-facing preview (e.g. when opening a fresh Gen3D build while
+another Gen3D task is running).
+
+```bash
+curl -s http://127.0.0.1:8791/v1/gen3d/preview
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "active_session_id": "f6fb3f8a-0d66-4c0f-8bf8-66db7f8bda41",
+  "active_kind": "build",
+  "running_session_id": "1e973ac3-ce48-4319-9582-cabf9c929598",
+  "active_draft_empty": true,
+  "should_hide_running_preview": true,
+  "preview_camera": {
+    "present": true,
+    "render_layers": []
+  }
+}
+```
+
+Notes:
+
+- `preview_camera.render_layers=[]` means the camera renders **no** layers (the preview is visually blank).
+
 ### `POST /v1/gen3d/prompt`
 
 ```bash
