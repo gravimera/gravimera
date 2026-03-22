@@ -244,6 +244,12 @@ pub(crate) struct ModelLibraryPreviewOverlayRoot;
 pub(crate) struct ModelLibraryPreviewCloseButton;
 
 #[derive(Component)]
+pub(crate) struct ModelLibraryPreviewModifyButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewDuplicateButton;
+
+#[derive(Component)]
 pub(crate) struct ModelLibraryPreviewInfoScrollPanel;
 
 #[derive(Component)]
@@ -1433,7 +1439,7 @@ pub(crate) fn model_library_open_preview_panel(
                 top: Val::Px(64.0),
                 left: Val::Px(300.0),
                 width: Val::Px(720.0),
-                height: Val::Px(560.0),
+                height: Val::Px(680.0),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(10.0),
                 padding: UiRect::all(Val::Px(12.0)),
@@ -1472,25 +1478,83 @@ pub(crate) fn model_library_open_preview_panel(
                 ));
 
                 row.spawn((
-                    Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                        border: UiRect::all(Val::Px(1.0)),
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(8.0),
+                        align_items: AlignItems::Center,
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
-                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                    ModelLibraryPreviewCloseButton,
+                    BackgroundColor(Color::NONE),
                 ))
-                .with_children(|b| {
-                    b.spawn((
-                        Text::new("Exit"),
-                        TextFont {
-                            font_size: 14.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                    ));
+                .with_children(|buttons| {
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryPreviewModifyButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Modify"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ));
+                        });
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryPreviewDuplicateButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Duplicate"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ));
+                        });
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryPreviewCloseButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Exit"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ));
+                        });
                 });
             });
 
@@ -1620,6 +1684,74 @@ pub(crate) fn model_library_preview_close_button_interactions(
             close_model_library_preview(&mut commands, &mut state);
             break;
         }
+    }
+}
+
+pub(crate) fn model_library_preview_modify_button_interactions(
+    mut commands: Commands,
+    mut pending_seed: ResMut<crate::gen3d::Gen3dPendingSeedFromPrefab>,
+    mut next_mode: ResMut<NextState<GameMode>>,
+    mut next_build_scene: ResMut<NextState<crate::types::BuildScene>>,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<ModelLibraryPreviewModifyButton>)>,
+) {
+    let Some(prefab_id) = state.preview.as_ref().map(|p| p.prefab_id) else {
+        return;
+    };
+    for interaction in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        pending_seed.request = Some(crate::gen3d::Gen3dSeedFromPrefabRequest {
+            mode: crate::gen3d::Gen3dSeedFromPrefabMode::EditOverwrite,
+            prefab_id,
+            target_entity: None,
+        });
+        next_mode.set(GameMode::Build);
+        next_build_scene.set(crate::types::BuildScene::Preview);
+        close_model_library_preview(&mut commands, &mut state);
+        break;
+    }
+}
+
+pub(crate) fn model_library_preview_duplicate_button_interactions(
+    mut commands: Commands,
+    env: ModelLibraryEnv,
+    mut library: ResMut<ObjectLibrary>,
+    mut descriptors: ResMut<PrefabDescriptorLibrary>,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<ModelLibraryPreviewDuplicateButton>),
+    >,
+) {
+    let Some(prefab_id) = state.preview.as_ref().map(|p| p.prefab_id) else {
+        return;
+    };
+
+    for interaction in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        let duplicated = match duplicate_realm_prefab_package(
+            env.active.as_ref(),
+            prefab_id,
+            &mut library,
+            &mut descriptors,
+        ) {
+            Ok(id) => id,
+            Err(err) => {
+                warn!("{err}");
+                return;
+            }
+        };
+
+        state.mark_models_dirty();
+        state.pending_preview = Some(duplicated);
+        close_model_library_preview(&mut commands, &mut state);
+        break;
     }
 }
 
@@ -2607,6 +2739,262 @@ fn ensure_realm_prefab_loaded(
     }
 
     Ok(())
+}
+
+fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+    if !from.exists() {
+        return Ok(());
+    }
+    if !from.is_dir() {
+        return Err(format!("Expected directory: {}", from.display()));
+    }
+
+    std::fs::create_dir_all(to)
+        .map_err(|err| format!("Failed to create {}: {err}", to.display()))?;
+
+    let entries = std::fs::read_dir(from)
+        .map_err(|err| format!("Failed to list {}: {err}", from.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("Failed to read dir entry: {err}"))?;
+        let src_path = entry.path();
+        let dst_path = to.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|err| {
+                format!(
+                    "Failed to copy {} -> {}: {err}",
+                    src_path.display(),
+                    dst_path.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn duplicate_realm_prefab_package(
+    active: &crate::realm::ActiveRealmScene,
+    src_prefab_id: u128,
+    library: &mut ObjectLibrary,
+    descriptors: &mut PrefabDescriptorLibrary,
+) -> Result<u128, String> {
+    ensure_realm_prefab_loaded(active, src_prefab_id, library)?;
+
+    let realm_id = active.realm_id.as_str();
+
+    let src_prefabs_dir = crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(
+        realm_id,
+        src_prefab_id,
+    );
+    if !src_prefabs_dir.exists() {
+        return Err(format!(
+            "Prefab package not found in this realm: {}",
+            uuid::Uuid::from_u128(src_prefab_id)
+        ));
+    }
+
+    let entries = std::fs::read_dir(&src_prefabs_dir)
+        .map_err(|err| format!("Failed to list {}: {err}", src_prefabs_dir.display()))?;
+    let mut def_ids: Vec<u128> = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("Failed to read dir entry: {err}"))?;
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        if !file_name.ends_with(".json") || file_name.ends_with(".desc.json") {
+            continue;
+        }
+        let Some(stem) = file_name.strip_suffix(".json") else {
+            continue;
+        };
+        let Ok(uuid) = uuid::Uuid::parse_str(stem.trim()) else {
+            continue;
+        };
+        def_ids.push(uuid.as_u128());
+    }
+
+    if def_ids.is_empty() {
+        return Err(format!(
+            "Prefab package has no defs: {}",
+            src_prefabs_dir.display()
+        ));
+    }
+
+    def_ids.sort();
+    def_ids.dedup();
+
+    let mut defs: Vec<crate::object::registry::ObjectDef> = Vec::with_capacity(def_ids.len());
+    for id in &def_ids {
+        let Some(def) = library.get(*id) else {
+            return Err(format!(
+                "Missing prefab def {} referenced by {}",
+                uuid::Uuid::from_u128(*id),
+                src_prefabs_dir.display()
+            ));
+        };
+        defs.push(def.clone());
+    }
+
+    let new_root_id = loop {
+        let id = uuid::Uuid::new_v4().as_u128();
+        let dir = crate::realm_prefab_packages::realm_prefab_package_dir(realm_id, id);
+        if !dir.exists() {
+            break id;
+        }
+    };
+
+    let mut id_map: std::collections::HashMap<u128, u128> = std::collections::HashMap::new();
+    for def in &defs {
+        let new_id = if def.object_id == src_prefab_id {
+            new_root_id
+        } else {
+            uuid::Uuid::new_v4().as_u128()
+        };
+        id_map.insert(def.object_id, new_id);
+    }
+    if !id_map.contains_key(&src_prefab_id) {
+        return Err(format!(
+            "Internal error: prefab package is missing its root def {}.",
+            uuid::Uuid::from_u128(src_prefab_id)
+        ));
+    }
+
+    let mut out_defs: Vec<crate::object::registry::ObjectDef> = Vec::with_capacity(defs.len());
+    for def in &defs {
+        let Some(new_id) = id_map.get(&def.object_id).copied() else {
+            continue;
+        };
+
+        let mut new_def = def.clone();
+        new_def.object_id = new_id;
+
+        for part in &mut new_def.parts {
+            if let crate::object::registry::ObjectPartKind::ObjectRef { object_id } = &mut part.kind
+            {
+                if let Some(mapped) = id_map.get(object_id) {
+                    *object_id = *mapped;
+                }
+            }
+        }
+
+        if let Some(attack) = new_def.attack.as_mut() {
+            if matches!(
+                attack.kind,
+                crate::object::registry::UnitAttackKind::RangedProjectile
+            ) {
+                if let Some(ranged) = attack.ranged.as_mut() {
+                    if let Some(mapped) = id_map.get(&ranged.projectile_prefab) {
+                        ranged.projectile_prefab = *mapped;
+                    }
+                    if let Some(mapped) = id_map.get(&ranged.muzzle.object_id) {
+                        ranged.muzzle.object_id = *mapped;
+                    }
+                }
+            }
+        }
+
+        if let Some(aim) = new_def.aim.as_mut() {
+            for component_id in aim.components.iter_mut() {
+                if let Some(mapped) = id_map.get(component_id) {
+                    *component_id = *mapped;
+                }
+            }
+        }
+
+        out_defs.push(new_def);
+    }
+
+    crate::realm_prefab_packages::save_realm_prefab_package_defs(realm_id, new_root_id, &out_defs)?;
+
+    let src_materials_dir =
+        crate::realm_prefab_packages::realm_prefab_package_materials_dir(realm_id, src_prefab_id);
+    let dst_materials_dir =
+        crate::realm_prefab_packages::realm_prefab_package_materials_dir(realm_id, new_root_id);
+    copy_dir_recursive(&src_materials_dir, &dst_materials_dir)?;
+
+    let src_thumb =
+        crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(realm_id, src_prefab_id);
+    let dst_thumb =
+        crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(realm_id, new_root_id);
+    if src_thumb.exists() {
+        std::fs::copy(&src_thumb, &dst_thumb).map_err(|err| {
+            format!(
+                "Failed to copy thumbnail {} -> {}: {err}",
+                src_thumb.display(),
+                dst_thumb.display()
+            )
+        })?;
+    }
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let new_uuid = uuid::Uuid::from_u128(new_root_id).to_string();
+
+    let mut new_descriptor = descriptors
+        .get(src_prefab_id)
+        .cloned()
+        .unwrap_or_else(|| crate::prefab_descriptors::PrefabDescriptorFileV1 {
+            format_version: crate::prefab_descriptors::PREFAB_DESCRIPTOR_FORMAT_VERSION,
+            prefab_id: new_uuid.clone(),
+            label: None,
+            text: None,
+            tags: Vec::new(),
+            roles: Vec::new(),
+            interfaces: None,
+            provenance: None,
+            extra: std::collections::BTreeMap::new(),
+        });
+    new_descriptor.prefab_id = new_uuid.clone();
+    if let Some(prov) = new_descriptor.provenance.as_mut() {
+        prov.modified_at_ms = Some(now_ms);
+        if prov.created_at_ms.is_none() {
+            prov.created_at_ms = Some(now_ms);
+        }
+        if let Some(gen3d) = prov.gen3d.as_mut() {
+            gen3d.run_id = None;
+        }
+    }
+    let desc_path = crate::realm_prefab_packages::realm_prefab_package_prefabs_dir(
+        realm_id,
+        new_root_id,
+    )
+    .join(format!("{new_uuid}.desc.json"));
+    crate::prefab_descriptors::save_prefab_descriptor_file(&desc_path, &new_descriptor)?;
+    descriptors.upsert(new_root_id, new_descriptor);
+
+    let src_edit_bundle = crate::realm_prefab_packages::realm_prefab_package_gen3d_edit_bundle_path(
+        realm_id,
+        src_prefab_id,
+    );
+    if src_edit_bundle.exists() {
+        let bytes =
+            std::fs::read(&src_edit_bundle).map_err(|err| format!("Failed to read: {err}"))?;
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|err| format!("Invalid JSON: {err}"))?;
+        if let Some(field) = value.get_mut("root_prefab_id_uuid") {
+            *field = serde_json::Value::String(new_uuid.clone());
+        }
+        let dst_edit_bundle =
+            crate::realm_prefab_packages::realm_prefab_package_gen3d_edit_bundle_path(
+                realm_id,
+                new_root_id,
+            );
+        let payload =
+            serde_json::to_vec_pretty(&value).map_err(|err| format!("Failed to encode: {err}"))?;
+        std::fs::write(&dst_edit_bundle, payload)
+            .map_err(|err| format!("Failed to write {}: {err}", dst_edit_bundle.display()))?;
+    }
+
+    for def in &out_defs {
+        library.upsert(def.clone());
+    }
+
+    Ok(new_root_id)
 }
 
 fn prefab_bounds(library: &ObjectLibrary, prefab_id: u128, scale: Vec3) -> (Vec3, Vec2, f32) {

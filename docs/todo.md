@@ -1,11 +1,11 @@
 [x] gen3d Pipeline mode does not generate motion. Fix it.
 [x] Remove Copy, Edit, Fork buttons from the Meta panel. And add a close button in the top-right corner to the Meta panel. 
 [x] After double clicking an object, besides opening the Meta panel (if it is a unit), also opening the Prefabs panel with the corresponding prefab item selected and pop the Preview panel (if the object has Prefab).
-[] On the Preview panel (from Prefab panel)
-  [] Add two buttons
-    [] Modify: open gen3d panel to do modification
-    [] Duplicate: copy a new prefab (new id)
-  [] Make the info section taller, to show more text.
+[x] On the Preview panel (from Prefab panel)
+  [x] Add two buttons
+    [x] Modify: open gen3d panel to do modification
+    [x] Duplicate: copy a new prefab (new id)
+  [x] Make the info section taller, to show more text.
 [] On Prefabs panel
   []  We support multiple gen3d panels, triggered by different places. But only one gen3d task can really run at the same time. The others are waiting.
   [] When a prefab item is being edit, mark a working animation on the thumbnail. Click the item to show its current gen3d panel.

@@ -42,7 +42,7 @@ The work must be validated by:
 - [x] (2026-03-22 12:55 CST) Fix: pipeline mode must author motion when required (movable drafts must have `move` coverage).
 - [x] (2026-03-22 13:07 CST) UI: Meta panel remove Copy/Edit/Fork; add Close button.
 - [x] (2026-03-22 13:25 CST) UI: Double-click instance also opens Prefabs + selects item + pops Preview overlay (when `ObjectPrefabId` exists).
-- [ ] (2026-03-22) UI: Preview overlay adds `Modify` and `Duplicate`; info area taller.
+- [x] (2026-03-22 13:59 CST) UI: Preview overlay adds `Modify` and `Duplicate`; info area taller.
 - [ ] (2026-03-22) UI: Prefabs panel shows Gen3D working/waiting indicators and new-build placeholder; rename `Gen3D` → `Generate`.
 - [x] (2026-03-22 12:55 CST) UI: Gen3D panel remove “Clear Prompt”; unify “Clear” to clear both text+images; merge Build/Continue into one button labeled `Build|Edit|Stop`.
 - [ ] (2026-03-22) Automation: Add Gen3D task queue endpoints (list + status) and allow running Gen3D tasks without switching to Build Preview.
@@ -208,6 +208,7 @@ Commands (from repo root):
 - (2026-03-22 12:55 CST) Marked pipeline-motion fix and Gen3D panel UX work as complete in `Progress`, and recorded the `Build` vs `Edit` button-label decision. This keeps the ExecPlan aligned with current implementation.
 - (2026-03-22 13:07 CST) Marked the Meta-panel close-button change as complete in `Progress`. This keeps the plan’s UI checklist aligned with the implemented behavior.
 - (2026-03-22 13:25 CST) Marked the double-click Prefabs+Preview workflow as complete in `Progress`. This keeps the plan aligned with the updated selection behavior.
+- (2026-03-22 13:59 CST) Marked the Preview overlay `Modify`/`Duplicate` actions as complete in `Progress`. This keeps the plan aligned with the new prefab workflow affordances.
 
     - Start Gravimera with `--automation`.
     - Enqueue two Gen3D tasks via HTTP.

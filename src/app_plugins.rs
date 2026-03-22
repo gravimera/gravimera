@@ -257,6 +257,14 @@ impl Plugin for RenderedUiPlugin {
                 crate::model_library_ui::model_library_preview_orbit_controls
                     .after(crate::model_library_ui::model_library_open_preview_panel)
                     .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_preview_modify_button_interactions
+                    .after(crate::model_library_ui::model_library_open_preview_panel)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::model_library_ui::model_library_preview_duplicate_button_interactions
+                    .after(crate::model_library_ui::model_library_open_preview_panel)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::model_library_ui::model_library_preview_close_button_interactions
                     .after(crate::model_library_ui::model_library_open_preview_panel)
                     .run_if(crate::automation::local_input_enabled),
