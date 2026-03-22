@@ -5,6 +5,8 @@ mod preview;
 mod save;
 mod state;
 mod status;
+mod task_queue;
+mod task_queue_runner;
 mod tool_feedback;
 mod tool_feedback_ui;
 mod ui;
@@ -153,6 +155,8 @@ pub(crate) use save::gen3d_save_current_draft_seed_aware_from_api;
 pub(crate) use save::Gen3dPrefabThumbnailCaptureRuntime;
 pub(crate) use state::*;
 pub(crate) use status::{gen3d_status_scroll_wheel, gen3d_update_status_scrollbar_ui};
+pub(crate) use task_queue::*;
+pub(crate) use task_queue_runner::gen3d_task_queue_runner;
 pub(crate) use tool_feedback::{gen3d_load_tool_feedback_history, Gen3dToolFeedbackHistory};
 pub(crate) use tool_feedback_ui::{
     gen3d_prefab_scroll_wheel, gen3d_side_tab_buttons, gen3d_update_prefab_details_text,

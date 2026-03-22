@@ -19,6 +19,7 @@ use crate::object::visuals;
 
 use super::ai::{Gen3dAiJob, Gen3dDescriptorMetaPolicy};
 use super::state::{Gen3dDraft, Gen3dPreview, Gen3dSaveButton, Gen3dWorkshop};
+use super::task_queue::Gen3dTaskQueue;
 
 #[derive(SystemParam)]
 pub(crate) struct Gen3dSaveRenderWorld<'w> {
@@ -1753,17 +1754,78 @@ pub(crate) fn gen3d_auto_save_when_done(
     mut render: Gen3dSaveRenderWorld,
     mut library: ResMut<ObjectLibrary>,
     mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
+    mut task_queue: ResMut<Gen3dTaskQueue>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
     runtime: Gen3dSaveRuntime,
-    draft: Res<Gen3dDraft>,
+    mut draft: ResMut<Gen3dDraft>,
     preview: Res<Gen3dPreview>,
     mut last_handled_run: Local<Option<Uuid>>,
 ) {
+    struct SwapGuard {
+        workshop_a: *mut Gen3dWorkshop,
+        job_a: *mut Gen3dAiJob,
+        draft_a: *mut Gen3dDraft,
+        workshop_b: *mut Gen3dWorkshop,
+        job_b: *mut Gen3dAiJob,
+        draft_b: *mut Gen3dDraft,
+    }
+
+    impl SwapGuard {
+        unsafe fn new(
+            workshop_a: &mut Gen3dWorkshop,
+            job_a: &mut Gen3dAiJob,
+            draft_a: &mut Gen3dDraft,
+            workshop_b: &mut Gen3dWorkshop,
+            job_b: &mut Gen3dAiJob,
+            draft_b: &mut Gen3dDraft,
+        ) -> Self {
+            std::mem::swap(workshop_a, workshop_b);
+            std::mem::swap(job_a, job_b);
+            std::mem::swap(draft_a, draft_b);
+            Self {
+                workshop_a: workshop_a as *mut Gen3dWorkshop,
+                job_a: job_a as *mut Gen3dAiJob,
+                draft_a: draft_a as *mut Gen3dDraft,
+                workshop_b: workshop_b as *mut Gen3dWorkshop,
+                job_b: job_b as *mut Gen3dAiJob,
+                draft_b: draft_b as *mut Gen3dDraft,
+            }
+        }
+    }
+
+    impl Drop for SwapGuard {
+        fn drop(&mut self) {
+            unsafe {
+                std::mem::swap(&mut *self.workshop_a, &mut *self.workshop_b);
+                std::mem::swap(&mut *self.job_a, &mut *self.job_b);
+                std::mem::swap(&mut *self.draft_a, &mut *self.draft_b);
+            }
+        }
+    }
+
     let Gen3dSaveRuntime {
         mut thumbnail_capture,
         mut job,
     } = runtime;
+
+    let _swap_guard = task_queue
+        .running_session_id
+        .and_then(|running_id| {
+            (running_id != task_queue.active_session_id)
+                .then_some(running_id)
+                .and_then(|id| task_queue.inactive_states.get_mut(&id))
+        })
+        .map(|state| unsafe {
+            SwapGuard::new(
+                &mut *workshop,
+                &mut *job,
+                &mut *draft,
+                &mut state.workshop,
+                &mut state.job,
+                &mut state.draft,
+            )
+        });
 
     let Some(run_id) = job.run_id() else {
         return;

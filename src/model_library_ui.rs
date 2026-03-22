@@ -329,7 +329,7 @@ pub(crate) fn setup_model_library_ui(
                 ))
                 .with_children(|b| {
                     b.spawn((
-                        Text::new("Gen3D"),
+                        Text::new("Generate"),
                         TextFont {
                             font_size: 14.0,
                             ..default()

@@ -46,6 +46,7 @@ use super::super::state::{
     Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dSeedFromPrefabMode, Gen3dSpeedMode,
     Gen3dWorkshop,
 };
+use super::super::task_queue::Gen3dTaskQueue;
 use super::super::tool_feedback::{
     append_gen3d_tool_feedback_entry, gen3d_tool_feedback_history_path, Gen3dToolFeedbackEntry,
     Gen3dToolFeedbackHistory,
@@ -247,15 +248,12 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
 }
 
 pub(crate) fn gen3d_resume_build_from_api(
-    build_scene: &State<BuildScene>,
+    _build_scene: &State<BuildScene>,
     config: &AppConfig,
     log_sinks: Option<crate::app::Gen3dLogSinks>,
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
 ) -> Result<(), String> {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return Err("Gen3D resume requires Build Preview scene.".into());
-    }
     if job.running {
         return Err("Gen3D build is already running (stop it first).".into());
     }
@@ -470,7 +468,7 @@ pub(crate) fn gen3d_start_fork_session_from_prefab_id_from_api(
 }
 
 fn gen3d_start_seeded_session_from_prefab_id_from_api(
-    build_scene: &State<BuildScene>,
+    _build_scene: &State<BuildScene>,
     config: &AppConfig,
     log_sinks: Option<crate::app::Gen3dLogSinks>,
     workshop: &mut Gen3dWorkshop,
@@ -481,9 +479,6 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     prefab_id: u128,
     mode: Gen3dSeededSessionMode,
 ) -> Result<(), String> {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return Err("Gen3D edit/fork requires Build Preview scene.".into());
-    }
     if job.running {
         return Err("Gen3D build is already running (stop it first).".into());
     }
@@ -937,16 +932,13 @@ fn reconstruct_gen3d_draft_defs_from_saved_prefabs(
 }
 
 pub(crate) fn gen3d_start_build_from_api(
-    build_scene: &State<BuildScene>,
+    _build_scene: &State<BuildScene>,
     config: &AppConfig,
     log_sinks: Option<crate::app::Gen3dLogSinks>,
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
     draft: &mut Gen3dDraft,
 ) -> Result<(), String> {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        return Err("Gen3D build requires Build Preview scene.".into());
-    }
     if job.running {
         return Err("Gen3D build is already running (stop it first).".into());
     }
@@ -1271,6 +1263,7 @@ pub(crate) fn gen3d_poll_ai_job(
     time: Res<Time>,
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
+    mut task_queue: ResMut<Gen3dTaskQueue>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut feedback_history: ResMut<Gen3dToolFeedbackHistory>,
     mut job: ResMut<Gen3dAiJob>,
@@ -1286,6 +1279,70 @@ pub(crate) fn gen3d_poll_ai_job(
     >,
     review_cameras: Query<Entity, With<Gen3dReviewCaptureCamera>>,
 ) {
+    struct SwapGuard {
+        workshop_a: *mut Gen3dWorkshop,
+        job_a: *mut Gen3dAiJob,
+        draft_a: *mut Gen3dDraft,
+        workshop_b: *mut Gen3dWorkshop,
+        job_b: *mut Gen3dAiJob,
+        draft_b: *mut Gen3dDraft,
+    }
+
+    impl SwapGuard {
+        unsafe fn new(
+            workshop_a: &mut Gen3dWorkshop,
+            job_a: &mut Gen3dAiJob,
+            draft_a: &mut Gen3dDraft,
+            workshop_b: &mut Gen3dWorkshop,
+            job_b: &mut Gen3dAiJob,
+            draft_b: &mut Gen3dDraft,
+        ) -> Self {
+            std::mem::swap(workshop_a, workshop_b);
+            std::mem::swap(job_a, job_b);
+            std::mem::swap(draft_a, draft_b);
+            Self {
+                workshop_a: workshop_a as *mut Gen3dWorkshop,
+                job_a: job_a as *mut Gen3dAiJob,
+                draft_a: draft_a as *mut Gen3dDraft,
+                workshop_b: workshop_b as *mut Gen3dWorkshop,
+                job_b: job_b as *mut Gen3dAiJob,
+                draft_b: draft_b as *mut Gen3dDraft,
+            }
+        }
+    }
+
+    impl Drop for SwapGuard {
+        fn drop(&mut self) {
+            unsafe {
+                std::mem::swap(&mut *self.workshop_a, &mut *self.workshop_b);
+                std::mem::swap(&mut *self.job_a, &mut *self.job_b);
+                std::mem::swap(&mut *self.draft_a, &mut *self.draft_b);
+            }
+        }
+    }
+
+    let _swap_guard = if !job.running {
+        task_queue
+            .running_session_id
+            .and_then(|running_id| {
+                (running_id != task_queue.active_session_id)
+                    .then_some(running_id)
+                    .and_then(|id| task_queue.inactive_states.get_mut(&id))
+            })
+            .map(|state| unsafe {
+                SwapGuard::new(
+                    &mut *workshop,
+                    &mut *job,
+                    &mut *draft,
+                    &mut state.workshop,
+                    &mut state.job,
+                    &mut state.draft,
+                )
+            })
+    } else {
+        None
+    };
+
     if !job.running {
         return;
     }

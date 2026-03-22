@@ -17,6 +17,7 @@ use super::state::{
     Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel, Gen3dPreviewSceneRoot,
     Gen3dReviewOverlayRoot, Gen3dSidePanelRoot, Gen3dSidePanelToggleButton,
 };
+use super::task_queue::Gen3dTaskQueue;
 
 pub(super) fn setup_preview_scene(
     commands: &mut Commands,
@@ -233,6 +234,8 @@ pub(super) fn setup_preview_scene(
     preview.last_cursor = None;
     preview.show_collision = false;
     preview.collision_dirty = true;
+    preview.applied_session_id = None;
+    preview.applied_assembly_rev = None;
 
     target
 }
@@ -454,6 +457,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
 pub(crate) fn gen3d_apply_draft_to_preview(
     build_scene: Res<State<BuildScene>>,
     job: Res<Gen3dAiJob>,
+    task_queue: Res<Gen3dTaskQueue>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
@@ -466,14 +470,40 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     mut preview: ResMut<Gen3dPreview>,
     existing: Query<Entity, With<Gen3dPreviewModelRoot>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) && !job.is_running() {
+    let mut running_session = None;
+    if job.is_running() {
+        running_session = Some(task_queue.active_session_id);
+    } else if let Some(id) = task_queue.running_session_id {
+        if id != task_queue.active_session_id {
+            if let Some(state) = task_queue.inactive_states.get(&id) {
+                if state.job.is_running() {
+                    running_session = Some(id);
+                }
+            }
+        }
+    }
+
+    if !matches!(build_scene.get(), BuildScene::Preview) && running_session.is_none() {
         return;
     }
     let Some(preview_root) = preview.root else {
         return;
     };
 
-    let needs_rebuild = draft.is_changed() || existing.is_empty();
+    let (job_ref, draft_ref, session_id) = match running_session {
+        Some(id) if id != task_queue.active_session_id => {
+            let Some(state) = task_queue.inactive_states.get(&id) else {
+                return;
+            };
+            (&state.job, &state.draft, id)
+        }
+        Some(id) => (&*job, &*draft, id),
+        None => (&*job, &*draft, task_queue.active_session_id),
+    };
+
+    let needs_rebuild = existing.is_empty()
+        || preview.applied_session_id != Some(session_id)
+        || preview.applied_assembly_rev != Some(job_ref.assembly_rev());
     if !needs_rebuild {
         return;
     }
@@ -482,14 +512,17 @@ pub(crate) fn gen3d_apply_draft_to_preview(
         commands.entity(entity).try_despawn();
     }
 
-    if draft.defs.is_empty() {
+    preview.applied_session_id = Some(session_id);
+    preview.applied_assembly_rev = Some(job_ref.assembly_rev());
+
+    if draft_ref.defs.is_empty() {
         preview.collision_dirty = true;
         return;
     }
 
-    preview.focus = compute_draft_focus(&draft);
+    preview.focus = compute_draft_focus(draft_ref);
 
-    for mut def in draft.defs.clone() {
+    for mut def in draft_ref.defs.clone() {
         if def.object_id == super::gen3d_draft_object_id() {
             def.object_id = super::gen3d_draft_object_id();
             def.label = "gen3d_draft".into();

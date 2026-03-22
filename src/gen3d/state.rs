@@ -169,6 +169,8 @@ pub(crate) struct Gen3dPreview {
     pub(crate) root: Option<Entity>,
     pub(crate) show_collision: bool,
     pub(crate) collision_dirty: bool,
+    pub(crate) applied_session_id: Option<uuid::Uuid>,
+    pub(crate) applied_assembly_rev: Option<u32>,
     pub(crate) focus: Vec3,
     pub(crate) yaw: f32,
     pub(crate) pitch: f32,

@@ -10,6 +10,7 @@ use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 use super::ai::Gen3dAiJob;
 use super::preview;
 use super::state::*;
+use super::task_queue::Gen3dTaskQueue;
 
 fn aspect_fit_size(content_w_px: f32, content_h_px: f32, aspect: f32) -> (f32, f32) {
     let content_w_px = content_w_px.max(1.0);
@@ -1213,6 +1214,7 @@ pub(crate) fn exit_gen3d_mode(
     preview_lights: Query<Entity, With<Gen3dPreviewLight>>,
     viewer_roots: Query<Entity, With<Gen3dImageViewerRoot>>,
     job: Res<Gen3dAiJob>,
+    task_queue: Res<Gen3dTaskQueue>,
     mut preview_state: ResMut<Gen3dPreview>,
     mut workshop: ResMut<Gen3dWorkshop>,
 ) {
@@ -1223,7 +1225,8 @@ pub(crate) fn exit_gen3d_mode(
         commands.entity(entity).try_despawn();
     }
 
-    if !job.is_running() {
+    let any_running = job.is_running() || task_queue.running_session_id.is_some();
+    if !any_running {
         for entity in &preview_cameras {
             commands.entity(entity).try_despawn();
         }
@@ -1242,6 +1245,8 @@ pub(crate) fn exit_gen3d_mode(
         preview_state.root = None;
         preview_state.last_cursor = None;
         preview_state.collision_dirty = false;
+        preview_state.applied_session_id = None;
+        preview_state.applied_assembly_rev = None;
         preview_state.animation_channel = "idle".to_string();
         preview_state.animation_channels.clear();
         preview_state.animation_dropdown_open = false;
@@ -1257,13 +1262,14 @@ pub(crate) fn exit_gen3d_mode(
 pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
     mut commands: Commands,
     job: Res<Gen3dAiJob>,
+    task_queue: Res<Gen3dTaskQueue>,
     preview_cameras: Query<Entity, With<Gen3dPreviewCamera>>,
     review_cameras: Query<Entity, With<Gen3dReviewCaptureCamera>>,
     preview_roots: Query<Entity, With<Gen3dPreviewSceneRoot>>,
     preview_lights: Query<Entity, With<Gen3dPreviewLight>>,
     mut preview_state: ResMut<Gen3dPreview>,
 ) {
-    if job.is_running() {
+    if job.is_running() || task_queue.running_session_id.is_some() {
         return;
     }
 
@@ -1296,6 +1302,8 @@ pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
     preview_state.root = None;
     preview_state.last_cursor = None;
     preview_state.collision_dirty = false;
+    preview_state.applied_session_id = None;
+    preview_state.applied_assembly_rev = None;
     preview_state.animation_channel = "idle".to_string();
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;

@@ -39,6 +39,7 @@ The work must be validated by:
 ## Progress
 
 - [x] (2026-03-22 10:05 CST) Drafted this ExecPlan from `docs/todo.md`.
+- [x] (2026-03-22 14:25 CST) ExecPlan: expanded detailed design for Gen3D sessions/queue and HTTP task endpoints.
 - [x] (2026-03-22 12:55 CST) Fix: pipeline mode must author motion when required (movable drafts must have `move` coverage).
 - [x] (2026-03-22 13:07 CST) UI: Meta panel remove Copy/Edit/Fork; add Close button.
 - [x] (2026-03-22 13:25 CST) UI: Double-click instance also opens Prefabs + selects item + pops Preview overlay (when `ObjectPrefabId` exists).
@@ -156,13 +157,59 @@ Acceptance: Preview overlay shows the two new buttons; Duplicate results in a ne
 In `src/model_library_ui.rs`:
 
 - Rename the header button from `Gen3D` to `Generate`.
-- Clicking `Generate` should bring the player to a fresh Gen3D build context (switch to BuildScene Preview and clear the Gen3D prompt/images if no active task is running; otherwise create a waiting task panel).
+- Clicking `Generate` should bring the player to a fresh Gen3D build context (switch to BuildScene Preview and open a fresh Gen3D session/panel; if another task is running, the new session exists but its Build is queued).
 - Add thumbnail overlays:
   - Working indicator: active Gen3D task editing that prefab, or active new build placeholder.
   - Waiting indicator: queued task for that prefab/placeholder.
 - Insert a placeholder row in the list immediately after a new-build task is started; replace it after the task saves a prefab.
 
 Acceptance: Prefabs list shows real-time Gen3D status and new-build placeholder behavior.
+
+#### Design details: Gen3D sessions + single-runner queue
+
+The core requirement is “multiple Gen3D panels exist, but only one Gen3D task runs at a time”. The existing Gen3D implementation is single-session (`Gen3dWorkshop` + `Gen3dAiJob` + `Gen3dDraft` resources). We will keep those resources as the **active session** (the one shown in the Gen3D Workshop UI), and add a new resource that holds **inactive sessions** (other panels) plus a serialized “task queue”.
+
+Definitions:
+
+- “Session / panel”: a set of Gen3D UI state + draft + job state (prompt, images, status log, seeded edit metadata, etc.). A session can exist without running.
+- “Task”: a session that the user (or HTTP) requested to run (Build/Edit clicked). Tasks have a queue state: `idle` (not queued), `waiting`, `running`, `done`, `failed`, `canceled`.
+- “Runner”: at most one session whose `Gen3D` job is actively running. The runner keeps progressing even when the active UI session changes.
+
+Data model (new resource):
+
+- Add `Gen3dTaskQueue` resource (in `src/gen3d/`), which tracks:
+  - `active_session_id`: which session is currently loaded into the global Gen3D resources (`Gen3dWorkshop`, `Gen3dAiJob`, `Gen3dDraft`) and therefore shown in the Gen3D panel UI.
+  - `running_session_id`: optional session id for the currently running task (must be unique).
+  - `queue`: ordered list of session ids that are `waiting`.
+  - `sessions`: per-session metadata (kind, associated prefab id if any, last known status/error, timestamps).
+  - `inactive_states`: the full session state (`Gen3dWorkshop`, `Gen3dAiJob`, `Gen3dDraft`) for sessions that are not currently active.
+
+Session kinds we need for the todo:
+
+- `NewBuild`: no prefab id (creates a placeholder while waiting/running until saved).
+- `EditPrefab { prefab_id }`: seeded edit-overwrite session for a Gen3D-saved prefab id.
+
+Queue runner behavior:
+
+- When the user clicks Build/Edit for the active session:
+  - If no session is currently running, start the task immediately (becomes `running`).
+  - If another session is running, mark this session `waiting` and append to `queue` (the running task continues).
+- When a running session finishes (`job.running=false` and `job.build_complete=true`), automatically start the next session in `queue` (first-in-first-out), without requiring BuildScene Preview to be active.
+- If a queued task fails, mark it `failed` and continue to the next task.
+
+Prefabs panel representation:
+
+- “Working” indicator is shown when a prefab has an associated session and it is not `waiting` (either the active edit session, or the running edit session).
+- “Waiting” indicator is shown when a prefab has an associated session that is `waiting`.
+- Placeholder rows are derived from sessions of kind `NewBuild` that are `waiting` or `running` **and** do not yet have a saved prefab id:
+  - The placeholder is inserted at the top of the list (most recent).
+  - It has the same indicator logic (working if running, waiting if queued).
+  - When the session saves a prefab (auto-save or manual), the placeholder disappears and the real prefab package appears via the normal on-disk prefab scan.
+
+Prefab click behavior:
+
+- Clicking a prefab with an associated session selects that Gen3D session and switches to Gen3D Workshop (BuildScene Preview).
+- Dragging still spawns the prefab instance as before (drag threshold remains the gate). Placeholders are not spawnable/previewable; clicking them only opens the Gen3D session.
 
 ### 6) Gen3D panel UX updates
 
@@ -182,10 +229,47 @@ Acceptance: no “Clear Prompt” button exists; Clear works for both text+image
 In `src/automation/mod.rs` and `docs/automation_http_api.md`:
 
 - Add endpoints to manage a Gen3D task queue (list + per-task status; enqueue build/edit/fork).
-- Ensure tasks can run while staying in BuildScene Realm (no need to open the Gen3D workshop UI).
+- Ensure tasks can run while staying in BuildScene Realm (no need to open the Gen3D workshop UI / no need to switch scenes).
 - Ensure at most one task runs at a time (others remain waiting).
 
 Acceptance: automation can enqueue multiple tasks, poll list/status, and observe serialized execution.
+
+#### API design details
+
+We will keep the existing “single-session” endpoints (`/v1/gen3d/prompt`, `/v1/gen3d/build`, etc.) for interactive/manual workflows, but add a task-oriented API so automation can run multiple Gen3D requests deterministically:
+
+- `GET /v1/gen3d/tasks`
+  - Returns a list of tasks (queued + running + recently completed) with stable `task_id`s and an explicit `state` field (`waiting|running|done|failed|canceled`).
+  - Each task includes:
+    - `kind`: `build` or `edit_from_prefab` or `fork_from_prefab`
+    - `prefab_id_uuid` when applicable (edit/fork)
+    - `run_id` when started
+    - `status` and `error` (last known UI status/error string)
+    - `result_prefab_id_uuid` when saved (new build or fork)
+- `POST /v1/gen3d/tasks/enqueue`
+  - Enqueues a new Gen3D task without requiring BuildScene Preview or local UI.
+  - Request body (v1):
+    - `kind`: `"build"` | `"edit_from_prefab"` | `"fork_from_prefab"`
+    - `prompt`: string (required for build; optional for edit/fork; uses existing prompt limits)
+    - `prefab_id_uuid`: string (required for edit/fork)
+  - Response:
+    - `task_id`
+- `GET /v1/gen3d/tasks/<task_id>`
+  - Returns a single task’s status (same shape as an entry in `/v1/gen3d/tasks`).
+
+Error handling requirements (contract-first):
+
+- Enqueue must validate inputs and return actionable errors:
+  - bad UUIDs, missing required fields, prompt over limits, edit/fork for non-Gen3D-saved prefabs, etc.
+- The runner must enforce the single-runner constraint deterministically:
+  - never start a second run while one is running; tasks must remain `waiting`.
+
+Testing expectation:
+
+- Add a “real test” script that starts Gravimera with automation enabled and mock Gen3D backend (`mock://gen3d`), enqueues two tasks, steps frames while polling `/v1/gen3d/tasks`, and asserts that:
+  - exactly one task is `running` at a time
+  - both tasks reach `done`
+  - at least one resulting prefab id is produced (for build/fork tasks)
 
 
 ## Concrete Steps

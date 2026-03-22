@@ -582,6 +582,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::gen3d::Gen3dDraft>();
     app.init_resource::<crate::gen3d::Gen3dPendingSeedFromPrefab>();
     app.init_resource::<crate::gen3d::Gen3dAiJob>();
+    app.init_resource::<crate::gen3d::Gen3dTaskQueue>();
     app.init_resource::<crate::gen3d::Gen3dToolFeedbackHistory>();
     app.init_resource::<crate::gen3d::Gen3dPrefabThumbnailCaptureRuntime>();
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
