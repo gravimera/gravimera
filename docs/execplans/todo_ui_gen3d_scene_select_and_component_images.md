@@ -34,7 +34,7 @@ After this change, a player can:
 - [x] (2026-03-23 01:47 CST) Send user images to component LLM calls (max 2; downsample large images; update manifests and prompts).
 - [x] (2026-03-23 01:47 CST) Update docs (`docs/todo.md`, any relevant UI/Gen3D docs) to match behavior.
 - [x] (2026-03-23 01:48 CST) Validation: `cargo test`, rendered smoke test, and existing “real tests” under `test/run_1/`.
-- [ ] Commits: scoped messages per milestone.
+- [x] (2026-03-23 01:48 CST) Commits: scoped messages per milestone.
 
 
 ## Surprises & Discoveries
