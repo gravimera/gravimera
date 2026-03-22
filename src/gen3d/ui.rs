@@ -215,7 +215,11 @@ pub(crate) fn enter_gen3d_mode(
     mut meta_roots: Query<&mut Visibility, With<crate::motion_ui::MotionAlgorithmUiRoot>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if !job.is_running() {
+    let show_intro = !job.is_running()
+        && job.run_id().is_none()
+        && job.edit_base_prefab_id().is_none()
+        && workshop.status.trim().is_empty();
+    if show_intro {
         workshop.status = format!(
             "Drop 0–{} images (optional) and/or type a prompt, then click Build.",
             super::GEN3D_MAX_IMAGES

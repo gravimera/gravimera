@@ -61,6 +61,7 @@ pub(crate) fn gen3d_generate_button(
     build_scene: Res<State<BuildScene>>,
     config: Res<AppConfig>,
     log_sinks: Option<Res<crate::app::Gen3dLogSinks>>,
+    mut task_queue: ResMut<Gen3dTaskQueue>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut job: ResMut<Gen3dAiJob>,
     mut draft: ResMut<Gen3dDraft>,
@@ -74,6 +75,7 @@ pub(crate) fn gen3d_generate_button(
     }
 
     let log_sinks = log_sinks.map(|sinks| sinks.into_inner().clone());
+    let active_session_id = task_queue.active_session_id;
 
     for (interaction, mut bg) in &mut buttons {
         match *interaction {
@@ -88,6 +90,39 @@ pub(crate) fn gen3d_generate_button(
                 if job.running {
                     gen3d_cancel_build_from_api(&mut workshop, &mut job);
                     continue;
+                }
+
+                let other_session_running = task_queue
+                    .running_session_id
+                    .is_some_and(|id| id != active_session_id);
+                if other_session_running {
+                    let already_waiting = task_queue
+                        .metas
+                        .get(&active_session_id)
+                        .is_some_and(|meta| meta.task_state == crate::gen3d::Gen3dTaskState::Waiting)
+                        || task_queue.queue.contains(&active_session_id);
+                    if !already_waiting {
+                        task_queue.queue.push_back(active_session_id);
+                        task_queue.set_task_state(active_session_id, crate::gen3d::Gen3dTaskState::Waiting);
+                    }
+
+                    let queued_idx = task_queue
+                        .queue
+                        .iter()
+                        .position(|id| *id == active_session_id)
+                        .map(|i| i + 1)
+                        .unwrap_or(0);
+                    workshop.error = None;
+                    workshop.status = if queued_idx == 0 {
+                        "Queued Gen3D run; waiting for another task to finish…".into()
+                    } else {
+                        format!("Queued Gen3D run (position {queued_idx}).")
+                    };
+                    continue;
+                }
+
+                if !task_queue.queue.is_empty() {
+                    task_queue.queue.retain(|id| *id != active_session_id);
                 }
                 let started = if job.can_resume() {
                     gen3d_resume_build_from_api(
@@ -116,8 +151,14 @@ pub(crate) fn gen3d_generate_button(
                         &mut draft,
                     )
                 };
-                if let Err(err) = started {
-                    workshop.error = Some(err);
+                match started {
+                    Ok(()) => {
+                        task_queue.running_session_id = Some(active_session_id);
+                        task_queue.set_task_state(active_session_id, crate::gen3d::Gen3dTaskState::Running);
+                    }
+                    Err(err) => {
+                        workshop.error = Some(err);
+                    }
                 }
             }
         }

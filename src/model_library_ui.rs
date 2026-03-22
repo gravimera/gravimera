@@ -34,8 +34,19 @@ const PREFAB_PREVIEW_HEIGHT_PX: u32 = 360;
 
 #[derive(SystemParam)]
 pub(crate) struct ModelLibraryEnv<'w> {
+    config: Res<'w, AppConfig>,
     build_scene: Res<'w, State<crate::types::BuildScene>>,
     active: Res<'w, crate::realm::ActiveRealmScene>,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct ModelLibraryGen3dSessionOpener<'w> {
+    next_mode: ResMut<'w, NextState<GameMode>>,
+    next_build_scene: ResMut<'w, NextState<crate::types::BuildScene>>,
+    task_queue: ResMut<'w, crate::gen3d::Gen3dTaskQueue>,
+    gen3d_workshop: ResMut<'w, crate::gen3d::Gen3dWorkshop>,
+    gen3d_job: ResMut<'w, crate::gen3d::Gen3dAiJob>,
+    gen3d_draft: ResMut<'w, crate::gen3d::Gen3dDraft>,
 }
 
 #[derive(SystemParam)]
@@ -207,6 +218,12 @@ pub(crate) struct ModelLibraryScrollPanel;
 pub(crate) struct ModelLibraryList;
 
 #[derive(Component)]
+pub(crate) struct ModelLibraryGen3dPlaceholderList;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPrefabList;
+
+#[derive(Component)]
 pub(crate) struct ModelLibraryListItem;
 
 #[derive(Component)]
@@ -223,6 +240,29 @@ pub(crate) struct ModelLibraryScrollbarThumb;
 #[derive(Component)]
 pub(crate) struct ModelLibraryItemButton {
     pub(crate) model_id: u128,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModelLibraryGen3dIndicatorKind {
+    Working,
+    Waiting,
+}
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryGen3dThumbnailIndicator {
+    pub(crate) prefab_id: u128,
+    kind: ModelLibraryGen3dIndicatorKind,
+}
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryGen3dPlaceholderItem {
+    pub(crate) session_id: crate::gen3d::Gen3dSessionId,
+}
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryGen3dPlaceholderIndicator {
+    pub(crate) session_id: crate::gen3d::Gen3dSessionId,
+    kind: ModelLibraryGen3dIndicatorKind,
 }
 
 #[derive(Component)]
@@ -412,7 +452,29 @@ pub(crate) fn setup_model_library_ui(
                         },
                         BackgroundColor(Color::NONE),
                         ModelLibraryList,
-                    ));
+                    ))
+                    .with_children(|list| {
+                        list.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(6.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                            ModelLibraryGen3dPlaceholderList,
+                        ));
+                        list.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(6.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                            ModelLibraryPrefabList,
+                        ));
+                    });
                 });
 
                 row.spawn((
@@ -674,7 +736,7 @@ pub(crate) fn model_library_rebuild_list_ui(
     mut images: ResMut<Assets<Image>>,
     mut descriptors: ResMut<PrefabDescriptorLibrary>,
     mut state: ResMut<ModelLibraryUiState>,
-    lists: Query<Entity, With<ModelLibraryList>>,
+    lists: Query<Entity, With<ModelLibraryPrefabList>>,
     existing_items: Query<Entity, With<ModelLibraryListItem>>,
 ) {
     let active_changed = match state.last_rebuilt_scene.as_ref() {
@@ -712,7 +774,7 @@ pub(crate) fn model_library_rebuild_list_ui(
     if model_ids.is_empty() {
         commands.entity(list_entity).with_children(|list| {
             list.spawn((
-                Text::new("No realm prefabs yet.\nUse Gen3D to generate one."),
+                Text::new("No realm prefabs yet.\nUse Generate to create one."),
                 TextFont {
                     font_size: 14.0,
                     ..default()
@@ -984,6 +1046,39 @@ pub(crate) fn model_library_rebuild_list_ui(
                             ImageNode::new(handle.clone()).with_mode(NodeImageMode::Stretch),
                         ));
                     }
+
+                    thumb.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            right: Val::Px(4.0),
+                            top: Val::Px(4.0),
+                            width: Val::Px(10.0),
+                            height: Val::Px(10.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.75)),
+                        Visibility::Hidden,
+                        ModelLibraryGen3dThumbnailIndicator {
+                            prefab_id: row.prefab_id,
+                            kind: ModelLibraryGen3dIndicatorKind::Working,
+                        },
+                    ));
+                    thumb.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            right: Val::Px(4.0),
+                            top: Val::Px(4.0),
+                            width: Val::Px(10.0),
+                            height: Val::Px(10.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.95, 0.85, 0.25, 0.65)),
+                        Visibility::Hidden,
+                        ModelLibraryGen3dThumbnailIndicator {
+                            prefab_id: row.prefab_id,
+                            kind: ModelLibraryGen3dIndicatorKind::Waiting,
+                        },
+                    ));
                 });
 
                 b.spawn((
@@ -999,6 +1094,363 @@ pub(crate) fn model_library_rebuild_list_ui(
     });
 
     state.models_dirty = false;
+}
+
+pub(crate) fn model_library_sync_gen3d_placeholders(
+    mut commands: Commands,
+    state: Res<ModelLibraryUiState>,
+    task_queue: Res<crate::gen3d::Gen3dTaskQueue>,
+    gen3d_workshop: Res<crate::gen3d::Gen3dWorkshop>,
+    gen3d_job: Res<crate::gen3d::Gen3dAiJob>,
+    lists: Query<Entity, With<ModelLibraryGen3dPlaceholderList>>,
+    existing: Query<(Entity, &ModelLibraryGen3dPlaceholderItem)>,
+    mut last_sig: Local<Vec<(crate::gen3d::Gen3dSessionId, crate::gen3d::Gen3dTaskState)>>,
+) {
+    let Ok(list_entity) = lists.single() else {
+        return;
+    };
+
+    if !state.is_open() {
+        if !last_sig.is_empty() {
+            for (entity, _) in &existing {
+                commands.entity(entity).try_despawn();
+            }
+            last_sig.clear();
+        }
+        return;
+    }
+
+    fn short_id(id: crate::gen3d::Gen3dSessionId) -> String {
+        let s = id.to_string();
+        s.chars().take(8).collect()
+    }
+
+    let mut placeholders: Vec<(crate::gen3d::Gen3dSessionId, crate::gen3d::Gen3dTaskState, u128)> =
+        Vec::new();
+    for meta in task_queue.metas.values() {
+        if !matches!(meta.kind, crate::gen3d::Gen3dSessionKind::NewBuild) {
+            continue;
+        }
+        if !matches!(
+            meta.task_state,
+            crate::gen3d::Gen3dTaskState::Waiting | crate::gen3d::Gen3dTaskState::Running
+        ) {
+            continue;
+        }
+
+        let saved_prefab_id = if meta.id == task_queue.active_session_id {
+            gen3d_job.last_saved_prefab_id()
+        } else {
+            task_queue
+                .inactive_states
+                .get(&meta.id)
+                .and_then(|state| state.job.last_saved_prefab_id())
+        };
+        if saved_prefab_id.is_some() {
+            continue;
+        }
+
+        placeholders.push((meta.id, meta.task_state, meta.created_at_ms));
+    }
+
+    placeholders.sort_by(|a, b| b.2.cmp(&a.2));
+    let sig: Vec<(crate::gen3d::Gen3dSessionId, crate::gen3d::Gen3dTaskState)> = placeholders
+        .iter()
+        .map(|(id, state, _)| (*id, *state))
+        .collect();
+    if *last_sig == sig {
+        return;
+    }
+    *last_sig = sig;
+
+    for (entity, _) in &existing {
+        commands.entity(entity).try_despawn();
+    }
+
+    commands.entity(list_entity).with_children(|list| {
+        for (session_id, task_state, _created_at_ms) in placeholders {
+            let prompt = if session_id == task_queue.active_session_id {
+                gen3d_workshop.prompt.trim()
+            } else {
+                task_queue
+                    .inactive_states
+                    .get(&session_id)
+                    .map(|state| state.workshop.prompt.trim())
+                    .unwrap_or("")
+            };
+            let label = match task_state {
+                crate::gen3d::Gen3dTaskState::Running => "Generating…",
+                crate::gen3d::Gen3dTaskState::Waiting => "Queued…",
+                _ => "Generating…",
+            };
+            let short = short_id(session_id);
+            let title = if prompt.is_empty() {
+                format!("{label} (new prefab) [{short}]")
+            } else {
+                let snippet: String = prompt.chars().take(42).collect();
+                if prompt.chars().count() > 42 {
+                    format!("{label}: {snippet}… [{short}]")
+                } else {
+                    format!("{label}: {snippet} [{short}]")
+                }
+            };
+
+            list.spawn((
+                Button,
+                Node {
+                    width: Val::Percent(100.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                ModelLibraryGen3dPlaceholderItem { session_id },
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Node {
+                        width: Val::Px(42.0),
+                        height: Val::Px(42.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                ))
+                .with_children(|thumb| {
+                    thumb.spawn((
+                        Text::new("…"),
+                        TextFont {
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgba(0.92, 0.92, 0.96, 0.85)),
+                    ));
+
+                    thumb.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            right: Val::Px(4.0),
+                            top: Val::Px(4.0),
+                            width: Val::Px(10.0),
+                            height: Val::Px(10.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.75)),
+                        Visibility::Hidden,
+                        ModelLibraryGen3dPlaceholderIndicator {
+                            session_id,
+                            kind: ModelLibraryGen3dIndicatorKind::Working,
+                        },
+                    ));
+                    thumb.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            right: Val::Px(4.0),
+                            top: Val::Px(4.0),
+                            width: Val::Px(10.0),
+                            height: Val::Px(10.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.95, 0.85, 0.25, 0.65)),
+                        Visibility::Hidden,
+                        ModelLibraryGen3dPlaceholderIndicator {
+                            session_id,
+                            kind: ModelLibraryGen3dIndicatorKind::Waiting,
+                        },
+                    ));
+                });
+
+                b.spawn((
+                    Text::new(title),
+                    TextFont {
+                        font_size: 14.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                ));
+            });
+        }
+    });
+}
+
+pub(crate) fn model_library_gen3d_placeholder_item_interactions(
+    mode: Res<State<GameMode>>,
+    mut gen3d: ModelLibraryGen3dSessionOpener,
+    mut buttons: Query<
+        (
+            &Interaction,
+            &ModelLibraryGen3dPlaceholderItem,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        Changed<Interaction>,
+    >,
+) {
+    for (interaction, item, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if !matches!(mode.get(), GameMode::Build) {
+                    continue;
+                }
+
+                if let Err(err) = gen3d.task_queue.swap_active_session(
+                    item.session_id,
+                    &mut gen3d.gen3d_workshop,
+                    &mut gen3d.gen3d_job,
+                    &mut gen3d.gen3d_draft,
+                ) {
+                    gen3d.gen3d_workshop.error = Some(err);
+                }
+                gen3d.next_mode.set(GameMode::Build);
+                gen3d
+                    .next_build_scene
+                    .set(crate::types::BuildScene::Preview);
+            }
+        }
+    }
+}
+
+pub(crate) fn model_library_update_gen3d_thumbnail_indicators(
+    time: Res<Time>,
+    task_queue: Res<crate::gen3d::Gen3dTaskQueue>,
+    mut indicators: Query<(
+        &ModelLibraryGen3dThumbnailIndicator,
+        &mut BackgroundColor,
+        &mut Visibility,
+    )>,
+) {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum PrefabState {
+        Working,
+        Waiting,
+    }
+
+    let mut prefab_states: HashMap<u128, PrefabState> = HashMap::new();
+    for meta in task_queue.metas.values() {
+        let prefab_id = match meta.kind {
+            crate::gen3d::Gen3dSessionKind::EditOverwrite { prefab_id }
+            | crate::gen3d::Gen3dSessionKind::Fork { prefab_id } => prefab_id,
+            crate::gen3d::Gen3dSessionKind::NewBuild => continue,
+        };
+
+        let state = match meta.task_state {
+            crate::gen3d::Gen3dTaskState::Waiting => PrefabState::Waiting,
+            crate::gen3d::Gen3dTaskState::Running | crate::gen3d::Gen3dTaskState::Idle => {
+                PrefabState::Working
+            }
+            crate::gen3d::Gen3dTaskState::Done
+            | crate::gen3d::Gen3dTaskState::Failed
+            | crate::gen3d::Gen3dTaskState::Canceled => continue,
+        };
+
+        prefab_states
+            .entry(prefab_id)
+            .and_modify(|prev| {
+                if matches!((*prev, state), (PrefabState::Waiting, PrefabState::Working)) {
+                    *prev = PrefabState::Working;
+                }
+            })
+            .or_insert(state);
+    }
+
+    let t = time.elapsed_secs();
+    for (indicator, mut bg, mut vis) in &mut indicators {
+        let state = prefab_states.get(&indicator.prefab_id).copied();
+        let show = match (state, indicator.kind) {
+            (Some(PrefabState::Working), ModelLibraryGen3dIndicatorKind::Working) => true,
+            (Some(PrefabState::Waiting), ModelLibraryGen3dIndicatorKind::Waiting) => true,
+            _ => false,
+        };
+        *vis = if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if !show {
+            continue;
+        }
+
+        let offset = (indicator.prefab_id as u64 % 97) as f32 * 0.08;
+        match indicator.kind {
+            ModelLibraryGen3dIndicatorKind::Working => {
+                let pulse = (t * 6.0 + offset).sin() * 0.5 + 0.5;
+                let alpha = 0.35 + 0.55 * pulse;
+                *bg = BackgroundColor(Color::srgba(0.25, 0.95, 0.85, alpha));
+            }
+            ModelLibraryGen3dIndicatorKind::Waiting => {
+                let pulse = (t * 3.0 + offset).sin() * 0.5 + 0.5;
+                let alpha = 0.25 + 0.40 * pulse;
+                *bg = BackgroundColor(Color::srgba(0.95, 0.85, 0.25, alpha));
+            }
+        }
+    }
+}
+
+pub(crate) fn model_library_update_gen3d_placeholder_indicators(
+    time: Res<Time>,
+    task_queue: Res<crate::gen3d::Gen3dTaskQueue>,
+    mut indicators: Query<(
+        &ModelLibraryGen3dPlaceholderIndicator,
+        &mut BackgroundColor,
+        &mut Visibility,
+    )>,
+) {
+    let t = time.elapsed_secs();
+    for (indicator, mut bg, mut vis) in &mut indicators {
+        let state = task_queue
+            .metas
+            .get(&indicator.session_id)
+            .map(|meta| meta.task_state);
+        let show = match (state, indicator.kind) {
+            (Some(crate::gen3d::Gen3dTaskState::Running), ModelLibraryGen3dIndicatorKind::Working) => {
+                true
+            }
+            (Some(crate::gen3d::Gen3dTaskState::Waiting), ModelLibraryGen3dIndicatorKind::Waiting) => {
+                true
+            }
+            _ => false,
+        };
+        *vis = if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if !show {
+            continue;
+        }
+
+        let offset = (indicator.session_id.as_u128() as u64 % 97) as f32 * 0.08;
+        match indicator.kind {
+            ModelLibraryGen3dIndicatorKind::Working => {
+                let pulse = (t * 6.0 + offset).sin() * 0.5 + 0.5;
+                let alpha = 0.35 + 0.55 * pulse;
+                *bg = BackgroundColor(Color::srgba(0.25, 0.95, 0.85, alpha));
+            }
+            ModelLibraryGen3dIndicatorKind::Waiting => {
+                let pulse = (t * 3.0 + offset).sin() * 0.5 + 0.5;
+                let alpha = 0.25 + 0.40 * pulse;
+                *bg = BackgroundColor(Color::srgba(0.95, 0.85, 0.25, alpha));
+            }
+        }
+    }
 }
 
 fn close_model_library_preview(commands: &mut Commands, state: &mut ModelLibraryUiState) {
@@ -1689,7 +2141,12 @@ pub(crate) fn model_library_preview_close_button_interactions(
 
 pub(crate) fn model_library_preview_modify_button_interactions(
     mut commands: Commands,
-    mut pending_seed: ResMut<crate::gen3d::Gen3dPendingSeedFromPrefab>,
+    env: ModelLibraryEnv,
+    log_sinks: Option<Res<crate::app::Gen3dLogSinks>>,
+    mut task_queue: ResMut<crate::gen3d::Gen3dTaskQueue>,
+    mut gen3d_workshop: ResMut<crate::gen3d::Gen3dWorkshop>,
+    mut gen3d_job: ResMut<crate::gen3d::Gen3dAiJob>,
+    mut gen3d_draft: ResMut<crate::gen3d::Gen3dDraft>,
     mut next_mode: ResMut<NextState<GameMode>>,
     mut next_build_scene: ResMut<NextState<crate::types::BuildScene>>,
     mut state: ResMut<ModelLibraryUiState>,
@@ -1703,11 +2160,46 @@ pub(crate) fn model_library_preview_modify_button_interactions(
             continue;
         }
 
-        pending_seed.request = Some(crate::gen3d::Gen3dSeedFromPrefabRequest {
-            mode: crate::gen3d::Gen3dSeedFromPrefabMode::EditOverwrite,
-            prefab_id,
-            target_entity: None,
-        });
+        let existing_session_id = task_queue
+            .metas
+            .values()
+            .find(|meta| match meta.kind {
+                crate::gen3d::Gen3dSessionKind::EditOverwrite { prefab_id: id } => id == prefab_id,
+                _ => false,
+            })
+            .map(|meta| meta.id)
+            .or_else(|| task_queue.find_session_for_prefab(prefab_id))
+            .unwrap_or_else(|| {
+                task_queue.create_session(
+                    crate::gen3d::Gen3dSessionKind::EditOverwrite { prefab_id },
+                    crate::gen3d::Gen3dSessionState::default(),
+                )
+            });
+
+        if let Err(err) = task_queue.swap_active_session(
+            existing_session_id,
+            &mut gen3d_workshop,
+            &mut gen3d_job,
+            &mut gen3d_draft,
+        ) {
+            gen3d_workshop.error = Some(err);
+        } else if gen3d_job.edit_base_prefab_id() != Some(prefab_id) {
+            let sinks = log_sinks.as_deref().cloned();
+            if let Err(err) = crate::gen3d::gen3d_start_edit_session_from_prefab_id_from_api(
+                env.build_scene.as_ref(),
+                &env.config,
+                sinks,
+                &mut gen3d_workshop,
+                &mut gen3d_job,
+                &mut gen3d_draft,
+                &env.active.realm_id,
+                &env.active.scene_id,
+                prefab_id,
+            ) {
+                gen3d_workshop.error = Some(err);
+            }
+        }
+
         next_mode.set(GameMode::Build);
         next_build_scene.set(crate::types::BuildScene::Preview);
         close_model_library_preview(&mut commands, &mut state);
@@ -2331,6 +2823,10 @@ pub(crate) fn model_library_gen3d_button_interactions(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
     mut next_build_scene: ResMut<NextState<crate::types::BuildScene>>,
+    mut task_queue: ResMut<crate::gen3d::Gen3dTaskQueue>,
+    mut gen3d_workshop: ResMut<crate::gen3d::Gen3dWorkshop>,
+    mut gen3d_job: ResMut<crate::gen3d::Gen3dAiJob>,
+    mut gen3d_draft: ResMut<crate::gen3d::Gen3dDraft>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         (Changed<Interaction>, With<ModelLibraryGen3dButton>),
@@ -2354,13 +2850,29 @@ pub(crate) fn model_library_gen3d_button_interactions(
                     continue;
                 }
 
-                match build_scene.get() {
-                    crate::types::BuildScene::Realm => {
-                        next_build_scene.set(crate::types::BuildScene::Preview);
-                    }
-                    crate::types::BuildScene::Preview => {
-                        next_build_scene.set(crate::types::BuildScene::Realm);
-                    }
+                let session_id = task_queue.create_session(
+                    crate::gen3d::Gen3dSessionKind::NewBuild,
+                    crate::gen3d::Gen3dSessionState::default(),
+                );
+                if let Err(err) = task_queue.swap_active_session(
+                    session_id,
+                    &mut gen3d_workshop,
+                    &mut gen3d_job,
+                    &mut gen3d_draft,
+                ) {
+                    gen3d_workshop.error = Some(err);
+                    continue;
+                }
+
+                if !gen3d_job.is_running() && gen3d_workshop.status.trim().is_empty() {
+                    gen3d_workshop.status =
+                        "Drop 0–3 images (optional) and/or type a prompt, then click Build."
+                            .to_string();
+                    gen3d_workshop.speed_mode = crate::gen3d::Gen3dSpeedMode::Level3;
+                }
+
+                if !matches!(build_scene.get(), crate::types::BuildScene::Preview) {
+                    next_build_scene.set(crate::types::BuildScene::Preview);
                 }
             }
         }
@@ -2567,8 +3079,8 @@ pub(crate) fn model_library_scroll_selected_item_into_view(
 pub(crate) fn model_library_drag_update(
     mut commands: Commands,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
-    config: Res<AppConfig>,
     env: ModelLibraryEnv,
+    mut gen3d: ModelLibraryGen3dSessionOpener,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<crate::types::MainCamera>>,
     asset_server: Res<AssetServer>,
@@ -2597,13 +3109,45 @@ pub(crate) fn model_library_drag_update(
     if !mouse_buttons.pressed(MouseButton::Left) {
         // Mouse was released; treat as either click-to-preview or drag-spawn.
         let prefab_id = drag.model_id;
+        if !drag.is_dragging {
+            if let Some(session_id) = gen3d.task_queue.find_session_for_prefab(prefab_id) {
+                let open_session = gen3d
+                    .task_queue
+                    .metas
+                    .get(&session_id)
+                    .is_some_and(|meta| {
+                        matches!(
+                            meta.task_state,
+                            crate::gen3d::Gen3dTaskState::Idle
+                                | crate::gen3d::Gen3dTaskState::Waiting
+                                | crate::gen3d::Gen3dTaskState::Running
+                        )
+                    });
+                if open_session {
+                    if let Err(err) = gen3d.task_queue.swap_active_session(
+                        session_id,
+                        &mut gen3d.gen3d_workshop,
+                        &mut gen3d.gen3d_job,
+                        &mut gen3d.gen3d_draft,
+                    ) {
+                        gen3d.gen3d_workshop.error = Some(err);
+                    }
+                    gen3d.next_mode.set(GameMode::Build);
+                    gen3d
+                        .next_build_scene
+                        .set(crate::types::BuildScene::Preview);
+                    state.drag = None;
+                    return;
+                }
+            }
+        }
         if let Err(err) = ensure_realm_prefab_loaded(&env.active, prefab_id, &mut library) {
             warn!("{err}");
             state.drag = None;
             return;
         }
         if drag.is_dragging && drag.preview_translation.is_some() {
-            if config.automation_enabled && config.automation_monitor_mode {
+            if env.config.automation_enabled && env.config.automation_monitor_mode {
                 // Monitor mode is local read-only: don’t allow spawning from the panel.
                 state.pending_preview = Some(prefab_id);
             } else {

@@ -208,6 +208,12 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::workspace_ui::workspace_toolbar_sync_model_library_open),
                 crate::model_library_ui::model_library_rebuild_list_ui
                     .after(crate::model_library_ui::model_library_update_visibility),
+                crate::model_library_ui::model_library_sync_gen3d_placeholders
+                    .after(crate::model_library_ui::model_library_rebuild_list_ui),
+                crate::model_library_ui::model_library_update_gen3d_thumbnail_indicators
+                    .after(crate::model_library_ui::model_library_rebuild_list_ui),
+                crate::model_library_ui::model_library_update_gen3d_placeholder_indicators
+                    .after(crate::model_library_ui::model_library_sync_gen3d_placeholders),
             ),
         );
         app.add_systems(
@@ -274,6 +280,15 @@ impl Plugin for RenderedUiPlugin {
                 crate::model_library_ui::model_library_draw_drag_preview_gizmos
                     .after(crate::model_library_ui::model_library_drag_update),
             )
+                .run_if(console::console_closed)
+                .run_if(crate::scene_authoring_ui::scene_ui_closed),
+        );
+        app.add_systems(
+            Update,
+            crate::model_library_ui::model_library_gen3d_placeholder_item_interactions
+                .after(crate::model_library_ui::model_library_sync_gen3d_placeholders)
+                .run_if(crate::automation::local_input_enabled)
+                .run_if(crate::monitor_mode::local_world_mutations_allowed)
                 .run_if(console::console_closed)
                 .run_if(crate::scene_authoring_ui::scene_ui_closed),
         );

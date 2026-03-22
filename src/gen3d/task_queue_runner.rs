@@ -161,53 +161,69 @@ pub(crate) fn gen3d_task_queue_runner(
             Gen3dSessionKind::NewBuild => start_or_resume_active_session(
                 &build_scene,
                 &config,
-                sinks,
+                sinks.clone(),
                 session.workshop,
                 session.job,
                 session.draft,
             ),
-            Gen3dSessionKind::EditOverwrite { prefab_id } => gen3d_start_edit_session_from_prefab_id_from_api(
-                &build_scene,
-                &config,
-                sinks,
-                session.workshop,
-                session.job,
-                session.draft,
-                &active.realm_id,
-                &active.scene_id,
-                prefab_id,
-            )
-            .and_then(|()| {
-                start_or_resume_active_session(
-                    &build_scene,
-                    &config,
-                    None,
-                    session.workshop,
-                    session.job,
-                    session.draft,
-                )
-            }),
-            Gen3dSessionKind::Fork { prefab_id } => gen3d_start_fork_session_from_prefab_id_from_api(
-                &build_scene,
-                &config,
-                sinks,
-                session.workshop,
-                session.job,
-                session.draft,
-                &active.realm_id,
-                &active.scene_id,
-                prefab_id,
-            )
-            .and_then(|()| {
-                start_or_resume_active_session(
-                    &build_scene,
-                    &config,
-                    None,
-                    session.workshop,
-                    session.job,
-                    session.draft,
-                )
-            }),
+            Gen3dSessionKind::EditOverwrite { prefab_id } => {
+                let seeded_ok = session.job.edit_base_prefab_id() == Some(prefab_id)
+                    && session.job.save_overwrite_prefab_id() == Some(prefab_id);
+                let seeded = if seeded_ok {
+                    Ok(())
+                } else {
+                    gen3d_start_edit_session_from_prefab_id_from_api(
+                        &build_scene,
+                        &config,
+                        sinks.clone(),
+                        session.workshop,
+                        session.job,
+                        session.draft,
+                        &active.realm_id,
+                        &active.scene_id,
+                        prefab_id,
+                    )
+                };
+                seeded.and_then(|()| {
+                    start_or_resume_active_session(
+                        &build_scene,
+                        &config,
+                        sinks.clone(),
+                        session.workshop,
+                        session.job,
+                        session.draft,
+                    )
+                })
+            }
+            Gen3dSessionKind::Fork { prefab_id } => {
+                let seeded_ok = session.job.edit_base_prefab_id() == Some(prefab_id)
+                    && session.job.save_overwrite_prefab_id().is_none();
+                let seeded = if seeded_ok {
+                    Ok(())
+                } else {
+                    gen3d_start_fork_session_from_prefab_id_from_api(
+                        &build_scene,
+                        &config,
+                        sinks.clone(),
+                        session.workshop,
+                        session.job,
+                        session.draft,
+                        &active.realm_id,
+                        &active.scene_id,
+                        prefab_id,
+                    )
+                };
+                seeded.and_then(|()| {
+                    start_or_resume_active_session(
+                        &build_scene,
+                        &config,
+                        sinks.clone(),
+                        session.workshop,
+                        session.job,
+                        session.draft,
+                    )
+                })
+            }
         };
 
         match started {
