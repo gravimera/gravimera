@@ -1417,8 +1417,8 @@ fn handle_gen3d_routes<
             let active_is_new_build = active_meta
                 .is_some_and(|meta| matches!(meta.kind, crate::gen3d::Gen3dSessionKind::NewBuild));
             let active_is_fresh = active_is_new_build && draft.defs.is_empty();
-            let should_hide_running_preview = active_is_fresh
-                && running_id.is_some_and(|id| id != active_id);
+            let should_hide_running_preview =
+                active_is_fresh && running_id.is_some_and(|id| id != active_id);
 
             let mut preview_camera_layers: Vec<usize> = Vec::new();
             let mut has_preview_camera = false;
@@ -1555,7 +1555,8 @@ fn handle_gen3d_routes<
 
                     let mut state = crate::gen3d::Gen3dSessionState::default();
                     state.workshop.prompt = prompt;
-                    let task_id = queue.create_session(crate::gen3d::Gen3dSessionKind::NewBuild, state);
+                    let task_id =
+                        queue.create_session(crate::gen3d::Gen3dSessionKind::NewBuild, state);
                     queue.queue.push_back(task_id);
                     queue.set_task_state(task_id, crate::gen3d::Gen3dTaskState::Waiting);
                     task_id
@@ -1566,7 +1567,9 @@ fn handle_gen3d_routes<
                     };
                     let uuid = match uuid::Uuid::parse_str(prefab_id_uuid.trim()) {
                         Ok(v) => v,
-                        Err(err) => return Some(json_error(400, format!("Invalid prefab_id_uuid: {err}"))),
+                        Err(err) => {
+                            return Some(json_error(400, format!("Invalid prefab_id_uuid: {err}")))
+                        }
                     };
 
                     if !prompt.is_empty() {
@@ -1930,14 +1933,27 @@ fn handle_gen3d_routes<
             let Some(job) = gen3d_job.as_deref_mut() else {
                 return Some(json_error(501, "Gen3D is not available in this app mode."));
             };
+            let Some(draft) = gen3d_draft.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
             if job.is_running() {
                 return Some(json_error(409, "Gen3D build is already running."));
             }
 
             let sinks = log_sinks.cloned();
-            if let Err(err) =
+            let started = if job.edit_base_prefab_id().is_some() && job.has_prior_run() {
+                crate::gen3d::gen3d_start_edit_run_from_current_draft_from_api(
+                    build_scene,
+                    config,
+                    sinks,
+                    workshop,
+                    job,
+                    draft,
+                )
+            } else {
                 crate::gen3d::gen3d_resume_build_from_api(build_scene, config, sinks, workshop, job)
-            {
+            };
+            if let Err(err) = started {
                 return Some(json_error(400, err));
             }
 

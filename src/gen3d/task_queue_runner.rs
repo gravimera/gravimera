@@ -6,7 +6,9 @@ use crate::types::BuildScene;
 
 use super::ai::{
     gen3d_resume_build_from_api, gen3d_start_build_from_api,
-    gen3d_start_edit_session_from_prefab_id_from_api, gen3d_start_fork_session_from_prefab_id_from_api,
+    gen3d_start_edit_run_from_current_draft_from_api,
+    gen3d_start_edit_session_from_prefab_id_from_api,
+    gen3d_start_fork_session_from_prefab_id_from_api,
 };
 use super::preview;
 use super::state::{Gen3dDraft, Gen3dPreview, Gen3dSpeedMode, Gen3dWorkshop};
@@ -26,11 +28,14 @@ fn session_state_mut<'a>(
             draft,
         });
     }
-    queue.inactive_states.get_mut(&id).map(|state| SessionStateMut {
-        workshop: &mut state.workshop,
-        job: &mut state.job,
-        draft: &mut state.draft,
-    })
+    queue
+        .inactive_states
+        .get_mut(&id)
+        .map(|state| SessionStateMut {
+            workshop: &mut state.workshop,
+            job: &mut state.job,
+            draft: &mut state.draft,
+        })
 }
 
 struct SessionStateMut<'a> {
@@ -62,7 +67,20 @@ fn start_or_resume_active_session(
     job: &mut super::ai::Gen3dAiJob,
     draft: &mut Gen3dDraft,
 ) -> Result<(), String> {
-    if job.can_resume() || job.edit_base_prefab_id().is_some() {
+    if job.edit_base_prefab_id().is_some() {
+        if job.has_prior_run() {
+            gen3d_start_edit_run_from_current_draft_from_api(
+                build_scene,
+                config,
+                log_sinks,
+                workshop,
+                job,
+                draft,
+            )
+        } else {
+            gen3d_resume_build_from_api(build_scene, config, log_sinks, workshop, job)
+        }
+    } else if job.can_resume() {
         gen3d_resume_build_from_api(build_scene, config, log_sinks, workshop, job)
     } else {
         gen3d_start_build_from_api(build_scene, config, log_sinks, workshop, job, draft)
@@ -144,7 +162,9 @@ pub(crate) fn gen3d_task_queue_runner(
             continue;
         };
 
-        let Some(session) = session_state_mut(&mut queue, next_id, &mut workshop, &mut job, &mut draft) else {
+        let Some(session) =
+            session_state_mut(&mut queue, next_id, &mut workshop, &mut job, &mut draft)
+        else {
             continue;
         };
 

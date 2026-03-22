@@ -671,6 +671,10 @@ impl Gen3dAiJob {
         self.running
     }
 
+    pub(crate) fn has_prior_run(&self) -> bool {
+        self.last_run_elapsed.is_some()
+    }
+
     pub(crate) fn is_build_complete(&self) -> bool {
         self.build_complete
     }

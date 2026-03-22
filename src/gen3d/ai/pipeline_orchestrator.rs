@@ -795,7 +795,8 @@ fn poll_pipeline_tick(
             ))
     {
         let mut status =
-            "Build finished. Orbit/zoom the preview. Click Build to start a new run.".to_string();
+            "Build finished. Orbit/zoom the preview. Click Build/Edit to start a new run."
+                .to_string();
         if appearance_review_enabled(job) && job.agent.last_qa_warnings_count.unwrap_or(0) > 0 {
             status.push_str("\n(See Status for QA warnings.)");
         }

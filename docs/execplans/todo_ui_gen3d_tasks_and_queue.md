@@ -222,7 +222,7 @@ In `src/gen3d/ui.rs` and `src/gen3d/images.rs`:
 - Make a single “Clear” button appear when either prompt text or images are present; clicking clears both and resets the session.
 - Merge Build/Continue into one main button:
   - When running: label `Stop` and stop the run.
-  - When not running and session is resumable: label `Edit` and resume.
+  - When not running and a seeded Edit/Fork session exists: label `Edit` and run (first click starts the seeded run; subsequent clicks start a fresh run dir / cache folder).
   - When not running and no session: label `Build` and start a new build.
 
 Acceptance: no “Clear Prompt” button exists; Clear works for both text+images; only one main build/edit/stop button exists.

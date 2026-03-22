@@ -130,16 +130,28 @@ pub(crate) fn gen3d_generate_button(
                 if !task_queue.queue.is_empty() {
                     task_queue.queue.retain(|id| *id != active_session_id);
                 }
-                let started = if job.can_resume() {
-                    gen3d_resume_build_from_api(
-                        build_scene.as_ref(),
-                        &config,
-                        log_sinks.clone(),
-                        &mut workshop,
-                        &mut job,
-                    )
-                } else if job.edit_base_prefab_id().is_some() {
-                    // Seeded Edit/Fork sessions may be "Done" (build_complete=true) but should still behave as edits.
+                let started = if job.edit_base_prefab_id().is_some() {
+                    // Each Edit click is a new run (new cache folder) once the session has run at
+                    // least once. A freshly seeded session (pass_0 seed) uses resume to start.
+                    if job.has_prior_run() {
+                        gen3d_start_edit_run_from_current_draft_from_api(
+                            build_scene.as_ref(),
+                            &config,
+                            log_sinks.clone(),
+                            &mut workshop,
+                            &mut job,
+                            &draft,
+                        )
+                    } else {
+                        gen3d_resume_build_from_api(
+                            build_scene.as_ref(),
+                            &config,
+                            log_sinks.clone(),
+                            &mut workshop,
+                            &mut job,
+                        )
+                    }
+                } else if job.can_resume() {
                     gen3d_resume_build_from_api(
                         build_scene.as_ref(),
                         &config,
@@ -293,8 +305,7 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
         .clear();
 
     workshop.error = None;
-    workshop.status =
-        "Build stopped. Click Continue to resume, or Build to start a new run.".to_string();
+    workshop.status = "Build stopped. Click Build/Edit to run again.".to_string();
 }
 
 pub(crate) fn gen3d_resume_build_from_api(
@@ -386,6 +397,259 @@ pub(crate) fn gen3d_resume_build_from_api(
         job.ai.as_ref().map(|c| c.model()).unwrap_or(""),
         job.user_images.len()
     );
+
+    if matches!(job.mode, Gen3dAiMode::Agent) {
+        let spawn_result = if matches!(job.phase, Gen3dAiPhase::AgentWaitingUserImageSummary) {
+            agent_loop::spawn_agent_user_image_summary_request(
+                config,
+                workshop,
+                job,
+                pass_dir.clone(),
+            )
+        } else if matches!(job.phase, Gen3dAiPhase::AgentWaitingPromptIntent) {
+            agent_loop::spawn_agent_prompt_intent_request(config, workshop, job, pass_dir.clone())
+        } else {
+            agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir.clone())
+        };
+        if let Err(err) = spawn_result {
+            job.finish_run_metrics();
+            job.running = false;
+            job.build_complete = false;
+            job.phase = Gen3dAiPhase::Idle;
+            return Err(err);
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn gen3d_start_edit_run_from_current_draft_from_api(
+    _build_scene: &State<BuildScene>,
+    config: &AppConfig,
+    log_sinks: Option<crate::app::Gen3dLogSinks>,
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &Gen3dDraft,
+) -> Result<(), String> {
+    if job.running {
+        return Err("Gen3D build is already running (stop it first).".into());
+    }
+    let Some(base_prefab_id) = job.edit_base_prefab_id() else {
+        return Err(
+            "Cannot start Edit run: no base prefab id (seed an Edit/Fork session first).".into(),
+        );
+    };
+    if draft.root_def().is_none() || draft.total_non_projectile_primitive_parts() == 0 {
+        return Err("Cannot start Edit run: draft is empty.".into());
+    }
+
+    let next_prompt = if !workshop.prompt.trim().is_empty() {
+        workshop.prompt.clone()
+    } else {
+        job.user_prompt_raw().to_string()
+    };
+    let image_paths: Vec<PathBuf> = if !workshop.images.is_empty() {
+        workshop.images.iter().map(|i| i.path.clone()).collect()
+    } else {
+        job.user_images.clone()
+    };
+
+    if image_paths.is_empty() && next_prompt.trim().is_empty() {
+        return Err("Provide at least 1 image or a text prompt.".into());
+    }
+    if image_paths.len() > super::super::GEN3D_MAX_IMAGES {
+        return Err(format!(
+            "Too many images: {} (max {}).",
+            image_paths.len(),
+            super::super::GEN3D_MAX_IMAGES
+        ));
+    }
+    for image_path in image_paths.iter() {
+        match std::fs::metadata(image_path) {
+            Ok(meta) => {
+                if meta.len() >= super::super::GEN3D_MAX_IMAGE_BYTES {
+                    let mib = meta.len() as f64 / (1024.0 * 1024.0);
+                    return Err(format!(
+                        "Image is too large: {:.2} MiB (max per image is <5 MiB): {}",
+                        mib,
+                        image_path.display()
+                    ));
+                }
+            }
+            Err(err) => {
+                return Err(format!(
+                    "Failed to read image file metadata for {}: {err}",
+                    image_path.display()
+                ));
+            }
+        }
+    }
+    super::super::validate_gen3d_user_prompt_limits(&next_prompt)?;
+
+    let ai = resolve_gen3d_ai_service_config(config)?;
+
+    job.log_sinks = log_sinks;
+    job.metrics = Gen3dRunMetrics::default();
+
+    let (run_id, run_dir) = gen3d_make_run_dir(config);
+    std::fs::create_dir_all(&run_dir).map_err(|err| {
+        format!(
+            "Failed to create Gen3D cache dir {}: {err}",
+            run_dir.display()
+        )
+    })?;
+
+    let kind = if job.save_overwrite_prefab_id().is_some() {
+        "edit_overwrite"
+    } else {
+        "fork"
+    };
+    write_gen3d_json_artifact(
+        Some(&run_dir),
+        "run.json",
+        &serde_json::json!({
+            "version": 1,
+            "run_id": run_id.to_string(),
+            "created_at_ms": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0),
+            "seed": {
+                "kind": kind,
+                "prefab_id": uuid::Uuid::from_u128(base_prefab_id).to_string(),
+            },
+            "ai": {
+                "service": ai.service_label(),
+                "model": ai.model(),
+                "reasoning_effort": ai.model_reasoning_effort(),
+                "base_url": ai.base_url(),
+            },
+        }),
+    );
+
+    gen3d_set_current_attempt_pass(job, &run_dir, 0, 0)?;
+    let attempt_dir = gen3d_attempt_dir(&run_dir, 0);
+    let Some(pass_dir) = job.pass_dir.clone() else {
+        return Err("Internal error: missing Gen3D pass dir.".into());
+    };
+
+    let cached_inputs = cache_gen3d_inputs(&attempt_dir, &next_prompt, &image_paths);
+    let cached_image_paths = cached_inputs.cached_image_paths.clone();
+    append_gen3d_run_log(
+        Some(&pass_dir),
+        format!(
+            "run_start kind={} base_prefab_id={} speed={} max_parallel={} service={} model={} reasoning_effort={} base_url={} review_appearance={} images={} prompt_chars={}",
+            kind,
+            uuid::Uuid::from_u128(base_prefab_id),
+            workshop.speed_mode.short_label(),
+            config.gen3d_max_parallel_components.max(1),
+            ai.service_label(),
+            ai.model(),
+            ai.model_reasoning_effort(),
+            ai.base_url(),
+            config.gen3d_review_appearance,
+            cached_image_paths.len(),
+            next_prompt.chars().count()
+        ),
+    );
+
+    workshop.status_log.clear();
+    workshop.status_log.start_step(
+        "Run started".to_string(),
+        format!(
+            "Edit {kind} | Service: {} | Model: {} | Images: {}",
+            ai.service_label(),
+            ai.model(),
+            cached_image_paths.len()
+        ),
+    );
+    workshop.status_log.finish_step("OK".to_string());
+
+    workshop.error = None;
+    workshop.status = format!(
+        "Editing…\nService: {}\nModel: {}\nImages: {}",
+        ai.service_label(),
+        ai.model(),
+        cached_image_paths.len()
+    );
+
+    // Each Edit click is a fresh run (new cache dir + fresh AI session), but preserves the draft + seeded metadata.
+    job.reset_session();
+    job.start_run_metrics();
+    if let Some(flag) = job.cancel_flag.take() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    job.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
+    job.running = true;
+    job.build_complete = false;
+    job.mode = match config.gen3d_orchestrator {
+        crate::config::Gen3dOrchestrator::Agent => Gen3dAiMode::Agent,
+        crate::config::Gen3dOrchestrator::Pipeline => Gen3dAiMode::Pipeline,
+    };
+    job.phase = match job.mode {
+        Gen3dAiMode::Agent => {
+            if cached_image_paths.is_empty() {
+                Gen3dAiPhase::AgentWaitingPromptIntent
+            } else {
+                Gen3dAiPhase::AgentWaitingUserImageSummary
+            }
+        }
+        Gen3dAiMode::Pipeline => {
+            if cached_image_paths.is_empty() {
+                Gen3dAiPhase::AgentWaitingPromptIntent
+            } else {
+                Gen3dAiPhase::AgentWaitingUserImageSummary
+            }
+        }
+        Gen3dAiMode::LegacyPhaseMachine => Gen3dAiPhase::WaitingPlan,
+    };
+    job.capture_previews_only = false;
+    job.plan_attempt = 0;
+    job.max_parallel_components = config.gen3d_max_parallel_components.max(1);
+    job.ai = Some(ai.clone());
+    job.run_id = Some(run_id);
+    job.run_dir = Some(run_dir.clone());
+    job.pass_dir = Some(pass_dir.clone());
+    job.attempt = 0;
+    job.pass = 0;
+    job.user_prompt_raw = next_prompt;
+    job.user_images = cached_inputs.cached_image_paths;
+    job.user_images_component = cached_inputs.component_reference_image_paths;
+    job.user_image_object_summary = None;
+    job.prompt_intent = None;
+    job.require_structured_outputs = config.gen3d_require_structured_outputs;
+    job.review_kind = Gen3dAutoReviewKind::EndOfRun;
+    job.review_appearance = config.gen3d_review_appearance;
+    job.review_component_idx = None;
+    job.auto_refine_passes_done = 0;
+    job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
+    job.per_component_refine_passes_remaining = 0;
+    job.per_component_refine_passes_done = 0;
+    job.per_component_resume = None;
+    job.replan_attempts = 0;
+    job.review_delta_rounds_used = 0;
+    job.regen_total = 0;
+    job.regen_per_component.clear();
+    job.descriptor_meta_cache = None;
+    job.descriptor_meta_in_flight = None;
+    job.pending_finish_run = None;
+    job.pending_plan_attempt = None;
+    job.component_queue.clear();
+    job.component_queue_pos = 0;
+    job.component_attempts.clear();
+    job.component_in_flight.clear();
+    job.last_review_inputs.clear();
+    job.last_review_user_text.clear();
+    job.review_delta_repair_attempt = 0;
+    job.shared_progress = None;
+    job.shared_result = None;
+    job.review_capture = None;
+    job.review_static_paths.clear();
+    job.motion_capture = None;
+    job.agent = Gen3dAgentState::default();
+    job.pipeline = super::Gen3dPipelineState::default();
+    job.save_seq = 0;
+    job.last_saved_prefab_id = None;
 
     if matches!(job.mode, Gen3dAiMode::Agent) {
         let spawn_result = if matches!(job.phase, Gen3dAiPhase::AgentWaitingUserImageSummary) {
@@ -746,10 +1010,10 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     workshop.error = None;
     workshop.status = match mode {
         Gen3dSeededSessionMode::EditOverwrite => {
-            "Edit session loaded. Click Continue to resume generation; Save overwrites the same prefab id.".into()
+            "Edit session loaded. Click Edit to run; Save overwrites the same prefab id.".into()
         }
         Gen3dSeededSessionMode::Fork => {
-            "Fork session loaded. Click Continue to resume generation; Save writes a new prefab id.".into()
+            "Fork session loaded. Click Edit to run; Save writes a new prefab id.".into()
         }
     };
 
@@ -1498,7 +1762,7 @@ pub(crate) fn gen3d_poll_ai_job(
         job.build_complete = true;
         job.phase = Gen3dAiPhase::Idle;
         workshop.status =
-            "Build finished. (Auto-review skipped due to speed mode change.) Orbit/zoom the preview. Click Build to start a new run."
+            "Build finished. (Auto-review skipped due to speed mode change.) Orbit/zoom the preview. Click Build/Edit to start a new run."
                 .into();
         return;
     }
@@ -1605,7 +1869,7 @@ pub(crate) fn gen3d_poll_ai_job(
                 job.phase = Gen3dAiPhase::Idle;
                 job.shared_progress = None;
                 workshop.status =
-                    "Build finished. (Preview renders saved.) Orbit/zoom the preview. Click Build to start a new run."
+                    "Build finished. (Preview renders saved.) Orbit/zoom the preview. Click Build/Edit to start a new run."
                         .into();
                 return;
             }
@@ -2280,7 +2544,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         job.phase = Gen3dAiPhase::Idle;
                         job.shared_progress = None;
                         workshop.status =
-                            "Build finished. Orbit/zoom the preview. Click Build to start a new run."
+                            "Build finished. Orbit/zoom the preview. Click Build/Edit to start a new run."
                                 .into();
                         return;
                     }
@@ -2531,7 +2795,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         job.phase = Gen3dAiPhase::Idle;
                         job.shared_progress = None;
                         workshop.status =
-                            "Build finished. (Reviewer accepted.) Orbit/zoom the preview. Click Build to start a new run."
+                            "Build finished. (Reviewer accepted.) Orbit/zoom the preview. Click Build/Edit to start a new run."
                                 .into();
                         return;
                     }
@@ -2581,7 +2845,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         job.phase = Gen3dAiPhase::Idle;
                         job.shared_progress = None;
                         workshop.status =
-                            "Build finished. (Auto-review made no changes.) Orbit/zoom the preview. Click Build to start a new run."
+                            "Build finished. (Auto-review made no changes.) Orbit/zoom the preview. Click Build/Edit to start a new run."
                                 .into();
                         return;
                     }
@@ -2617,7 +2881,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         job.phase = Gen3dAiPhase::Idle;
                         job.shared_progress = None;
                         workshop.status =
-                            "Build finished (auto-review applied tweaks). Orbit/zoom the preview. Click Build to start a new run."
+                            "Build finished (auto-review applied tweaks). Orbit/zoom the preview. Click Build/Edit to start a new run."
                                 .into();
                         return;
                     }
@@ -3305,7 +3569,8 @@ fn poll_gen3d_parallel_components(
             job.build_complete = true;
             job.phase = Gen3dAiPhase::Idle;
             workshop.status =
-                "Build finished. Orbit/zoom the preview. Click Build to start a new run.".into();
+                "Build finished. Orbit/zoom the preview. Click Build/Edit to start a new run."
+                    .into();
         }
     }
 }
@@ -3481,7 +3746,7 @@ fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen
         job.phase = Gen3dAiPhase::Idle;
         job.shared_progress = None;
         workshop.status =
-            "Build finished. Orbit/zoom the preview. Click Build to start a new run.".into();
+            "Build finished. Orbit/zoom the preview. Click Build/Edit to start a new run.".into();
         return;
     }
 

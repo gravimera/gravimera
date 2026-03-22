@@ -133,6 +133,7 @@ pub(crate) use ai::{
     gen3d_diff_snapshots_from_api, gen3d_diff_workspaces_from_api, gen3d_list_snapshots_from_api,
     gen3d_merge_workspace_from_api, gen3d_restore_snapshot_from_api, gen3d_resume_build_from_api,
     gen3d_set_active_workspace_from_api, gen3d_snapshot_from_api, gen3d_start_build_from_api,
+    gen3d_start_edit_run_from_current_draft_from_api,
     gen3d_start_edit_session_from_prefab_id_from_api,
     gen3d_start_fork_session_from_prefab_id_from_api,
 };
