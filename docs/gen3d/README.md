@@ -29,6 +29,21 @@ By default, each Gen3D run writes artifacts under:
   - `attempt_<n>/pass_<m>/...` (per-pass artifacts)
   - `info_store_v1/` (KV + events + blobs metadata)
 
+## Reference images
+
+When the player provides reference photos, the engine:
+
+- Caches the originals under `attempt_*/inputs/images/` (best-effort copy).
+- Produces downsampled “component reference images” under `attempt_*/inputs/component_reference_images/`.
+
+These downsampled images are the ones sent to Gen3D’s LLM-backed steps (when images are available),
+including:
+
+- `prompt_intent` (attack requirement classification)
+- `llm_generate_plan_v1`
+- `llm_generate_plan_ops_v1`
+- `llm_generate_component_v1` / `llm_generate_components_v1`
+
 DraftOps-specific artifacts:
 
 - `attempt_*/pass_*/draft_ops_suggested_last.json` — latest `llm_generate_draft_ops_v1` suggestion

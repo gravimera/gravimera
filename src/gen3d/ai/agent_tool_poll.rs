@@ -1544,7 +1544,7 @@ pub(super) fn poll_agent_tool(
                                     pass_dir,
                                     system,
                                     user_text,
-                                    Vec::new(),
+                                    job.user_images_component.clone(),
                                     &err,
                                     &text,
                                     &format!("tool_plan_ops_{}", call.call_id),

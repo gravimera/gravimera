@@ -6233,7 +6233,7 @@ pub(super) fn execute_tool_call(
                 reasoning_effort,
                 system,
                 user_text,
-                Vec::new(),
+                job.user_images_component.clone(),
                 pass_dir,
                 sanitize_prefix(&format!("tool_plan_ops_{}", &call.call_id)),
             );
