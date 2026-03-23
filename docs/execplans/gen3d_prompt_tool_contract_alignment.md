@@ -32,6 +32,7 @@ How to see it working (observable outcomes):
 ## Progress
 
 - [x] (2026-03-24) Drafted this ExecPlan (`docs/execplans/gen3d_prompt_tool_contract_alignment.md`).
+- [x] (2026-03-24) Expanded this ExecPlan with concrete target contracts and edit locations for the known mismatches.
 - [ ] Audit all Gen3D tools for prompt/impl mismatches (args + returns), beyond the known cases listed below.
 - [ ] Decide the canonical contract per tool (canonical keys, accepted aliases, requiredness, types), and document those decisions in `Decision Log`.
 - [ ] Implement contract fixes (update tool registry text and/or tool arg parsing gates) in small, reviewable commits.
@@ -60,6 +61,10 @@ How to see it working (observable outcomes):
 
 - Decision: Prefer deterministic, generic parsing improvements (for example, accept numeric indices where the contract says `string|number`) over introducing any intent-based inference or naming heuristics.
   Rationale: Gen3D should remain generic (no object-specific heuristics), and tool arg parsing must be deterministic and predictable.
+  Date/Author: 2026-03-24 / assistant
+
+- Decision: When a mismatch can be fixed either by narrowing the prompt contract or widening the tool implementation, prefer widening the implementation if and only if it is unambiguous and does not weaken existing safety gates.
+  Rationale: The prompt contract is already “what the model believes”. If widening the implementation is deterministic (for example, accepting `number` where `string|number` is advertised), it reduces failures without changing user intent or agent policy.
   Date/Author: 2026-03-24 / assistant
 
 
@@ -104,6 +109,107 @@ How tool signatures are currently used in error feedback:
 
 - When a tool call fails, `src/gen3d/ai/agent_prompt.rs` tries to extract “required keys” from the tool’s first-line args signature. This is done by `required_keys_from_args_sig(...)`, which only understands a simple `{ key: type, key?: type }` shape.
 - This mechanism cannot express “one-of” requirements (for example, “component OR component_index”) without changes either to the signature format or to the parser.
+
+Where to change the contract:
+
+- Prompt-facing tool contracts are authored in `src/gen3d/agent/tools.rs` (as `Gen3dToolDescriptorV1` entries). The agent prompt prints only the first line of `args_schema`, so requiredness/type info must fit on that first line if it needs to be “seen” by the model.
+- Tool-side parsing gates are implemented in `src/gen3d/ai/agent_tool_dispatch.rs::execute_tool_call(...)` (sometimes by manual key checks, sometimes by `serde(deny_unknown_fields)` structs).
+
+
+## Target contracts (initial, for known mismatches)
+
+This section defines the intended “end state” for the tools we already know are mismatched. The audit step may add more tools here.
+
+The guiding rule is: if the prompt advertises `string|number` for a canonical key, the tool must accept either a string name or a numeric index in that same key.
+
+### `copy_component_v1`
+
+Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
+
+- Make it explicit that a target is required by making `targets` required in the brief args signature, and keep `source_component: string|number`.
+- Prefer enumerating canonical enum values for the most common switches (so the model stops inventing values). Canonical values are:
+  - `mode`: `detached|linked`
+  - `anchors`: `preserve_interfaces|preserve_target|copy_source`
+  - `alignment_frame`: `join|child_anchor`
+
+Tool-side parsing changes (edit `src/gen3d/ai/agent_tool_dispatch.rs` in the `TOOL_ID_COPY_COMPONENT` arm):
+
+- Accept `args.source_component` as either:
+  - string name (existing behavior), or
+  - number index (new behavior; treat as `source_component_index`).
+- Accept `args.targets[]` array items as string or number (already supported) and ensure the error message for invalid items mentions the canonical contract (indices or names).
+- Accept the singular `args.target_component` similarly (string or number), but keep `targets` as the prompt’s canonical way to pass targets.
+
+Unit tests (add to `src/gen3d/ai/agent_tool_dispatch.rs` tests module, or factor a helper and test it):
+
+- Verify that a call can resolve `source_component: 0` and `targets: [1]` into concrete indices without error.
+- Verify that omitting all target forms produces an error that points to `targets` / `target_component` (not internal alias names).
+
+### `mirror_component_v1`
+
+Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
+
+- Same as `copy_component_v1` for `source_component` and `targets`, but make it explicit that `alignment_frame` is effectively `join`-only for mirror (the engine rejects `child_anchor`).
+
+Tool-side parsing changes (edit `src/gen3d/ai/agent_tool_dispatch.rs` in the `TOOL_ID_MIRROR_COMPONENT` arm):
+
+- Same numeric acceptance rules as `copy_component_v1` for `source_component` and targets.
+- Ensure the existing rejection for `alignment_frame=child_anchor` remains in place and its error message matches what the prompt contract claims.
+
+### `copy_component_subtree_v1` / `mirror_component_subtree_v1`
+
+Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
+
+- Keep `source_root: string|number`.
+- Keep `targets: (string|number)[]` required (it is already required in the signature).
+- Mirror-only: document any `alignment_frame` restriction if the engine rejects `child_anchor` for mirror-subtree as well.
+
+Tool-side parsing changes (edit `src/gen3d/ai/agent_tool_dispatch.rs` in the subtree copy/mirror arm):
+
+- Accept `args.source_root` as either string name or numeric index (new behavior).
+- Ensure targets parsing supports both types (already supports both).
+
+### `detach_component_v1`
+
+Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
+
+- Keep `component: string|number` as the canonical key.
+
+Tool-side parsing changes (edit `src/gen3d/ai/agent_tool_dispatch.rs` in the `TOOL_ID_DETACH_COMPONENT` arm):
+
+- Accept `args.component` as either string name or numeric index (new behavior), in addition to the existing `component_index` alias.
+
+### `copy_from_workspace_v1`
+
+Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
+
+- Make `components` required (remove the `?`).
+- Make `mode` an explicit enum: `component|subtree` (instead of `string`).
+- Keep `include_attachment?: bool`.
+
+Tool-side changes:
+
+- No behavioral change is required if we only fix the prompt contract. The implementation already requires `components` and validates `mode`.
+
+Unit tests:
+
+- Add a prompt-contract test that asserts the tool list line for `copy_from_workspace_v1` contains `components:` (not `components?:`).
+
+### `query_component_parts_v1` (one-of requirement)
+
+This is a “one-of required” tool (`component` OR `component_index`). The brief args signature format currently cannot express that cleanly.
+
+Target outcome:
+
+- The prompt must communicate, in the tool list itself, that at least one of `component` or `component_index` must be provided.
+- The tool must continue to hard-error deterministically when neither is provided (no default guessing).
+
+Implementation approaches (choose one during execution and record it in `Decision Log`):
+
+1. Prompt-only clarity: add a second, short “requires:” hint line into the tool list output in `src/gen3d/ai/agent_prompt.rs::build_agent_user_text(...)` for just this tool id (and any other one-of tools found during audit).
+2. Signature-format extension: extend the “brief signature” format plus `required_keys_from_args_sig(...)` to support an explicit one-of marker, and update the descriptor accordingly.
+
+Approach (1) is preferred if it keeps the prompt compact and avoids inventing a signature mini-language.
 
 
 ## Plan of Work
@@ -214,3 +320,4 @@ Do not introduce any intent-dependent heuristics (for example, “guess the targ
 ## Plan change notes
 
 - (2026-03-24) Initial draft created from a first-pass mismatch review of Gen3D tool descriptors vs `agent_tool_dispatch` parsing. The audit step is intentionally first because more mismatches are likely.
+- (2026-03-24) Added a concrete “Target contracts” section that specifies intended end-state behavior for the known mismatched tools, including specific file edit locations and preferred deterministic parsing patterns.
