@@ -324,6 +324,91 @@ pub(super) fn poll_agent_tool(
         return;
     }
 
+    if matches!(
+        job.agent.pending_llm_tool,
+        Some(super::Gen3dAgentLlmToolKind::GenerateMotionsBatch)
+    ) {
+        if let Some(tool_result) =
+            super::agent_motion_batch::poll_agent_motion_batch(config, workshop, job, draft)
+        {
+            job.metrics.note_tool_result(&tool_result);
+            status_steps::log_tool_call_finished(workshop, job, &*draft, &tool_result);
+            append_agent_trace_event_v1(
+                job.run_dir.as_deref(),
+                &AgentTraceEventV1::ToolResult {
+                    call_id: tool_result.call_id.clone(),
+                    tool_id: tool_result.tool_id.clone(),
+                    ok: tool_result.ok,
+                    result: tool_result.result.clone(),
+                    error: tool_result.error.clone(),
+                },
+            );
+            append_gen3d_jsonl_artifact(
+                job.pass_dir.as_deref(),
+                "tool_results.jsonl",
+                &serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
+            );
+            append_gen3d_run_log(
+                job.pass_dir.as_deref(),
+                format!(
+                    "tool_call_result call_id={} tool_id={} ok={} {}",
+                    tool_result.call_id,
+                    tool_result.tool_id,
+                    tool_result.ok,
+                    if tool_result.ok {
+                        tool_result
+                            .result
+                            .as_ref()
+                            .map(|v| format!("result={}", truncate_json_for_log(v, 900)))
+                            .unwrap_or_else(|| "result=<none>".into())
+                    } else {
+                        format!("error={}", tool_result.error.as_deref().unwrap_or("<none>"))
+                    }
+                ),
+            );
+            if tool_result.ok {
+                debug!(
+                    "Gen3D tool call ok: call_id={} tool_id={}",
+                    tool_result.call_id, tool_result.tool_id
+                );
+            } else {
+                warn!(
+                    "Gen3D tool call failed: call_id={} tool_id={} error={}",
+                    tool_result.call_id,
+                    tool_result.tool_id,
+                    tool_result.error.as_deref().unwrap_or("<none>")
+                );
+            }
+            let message = if tool_result.ok {
+                format!("Tool call ok: {}", tool_result.tool_id)
+            } else {
+                let err = tool_result.error.as_deref().unwrap_or("").trim();
+                let first_line = err.split('\n').next().unwrap_or("");
+                if first_line.is_empty() {
+                    format!("Tool call error: {}", tool_result.tool_id)
+                } else {
+                    format!(
+                        "Tool call error: {}: {}",
+                        tool_result.tool_id,
+                        super::truncate_for_ui(first_line, 240)
+                    )
+                }
+            };
+            job.append_info_event_best_effort(
+                super::info_store::InfoEventKindV1::ToolCallResult,
+                Some(tool_result.tool_id.clone()),
+                Some(tool_result.call_id.clone()),
+                message,
+                serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
+            );
+            note_observable_tool_result(job, &tool_result);
+            job.agent.step_tool_results.push(tool_result);
+
+            job.phase = Gen3dAiPhase::AgentExecutingActions;
+        }
+        return;
+    }
+
     let Some(shared) = job.shared_result.as_ref() else {
         return;
     };
@@ -444,7 +529,8 @@ pub(super) fn poll_agent_tool(
             | super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1)
             }
-            super::Gen3dAgentLlmToolKind::GenerateMotionAuthoring => {
+            super::Gen3dAgentLlmToolKind::GenerateMotion
+            | super::Gen3dAgentLlmToolKind::GenerateMotionsBatch => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1)
             }
             super::Gen3dAgentLlmToolKind::ReviewDelta => {
@@ -2376,6 +2462,11 @@ pub(super) fn poll_agent_tool(
                     call.tool_id,
                     "Internal error: llm_generate_components_v1 batch tool should be handled by poll_agent_component_batch.".into(),
                 ),
+                super::Gen3dAgentLlmToolKind::GenerateMotionsBatch => Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Internal error: llm_generate_motions_v1 batch tool should be handled by poll_agent_motion_batch.".into(),
+                ),
                 super::Gen3dAgentLlmToolKind::GenerateComponent { component_idx } => {
                     let text = resp.text;
                     match parse::parse_ai_draft_from_text(&text) {
@@ -2549,17 +2640,30 @@ pub(super) fn poll_agent_tool(
                         },
                     }
                 }
-                super::Gen3dAgentLlmToolKind::GenerateMotionAuthoring => {
+                super::Gen3dAgentLlmToolKind::GenerateMotion => {
                     use crate::object::registry::{
                         PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
                         PartAnimationSlot, PartAnimationSpec,
+                    };
+
+                    let expected_channel = call
+                        .args
+                        .get("channel")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_ascii_lowercase();
+                    let channel_for_artifact = if expected_channel.is_empty() {
+                        "unknown"
+                    } else {
+                        expected_channel.as_str()
                     };
 
                     let text = resp.text;
                     if let Some(dir) = job.pass_dir.as_deref() {
                         write_gen3d_text_artifact(
                             Some(dir),
-                            "motion_authoring_raw.txt",
+                            format!("motion_{}_raw.txt", channel_for_artifact),
                             text.trim(),
                         );
                     }
@@ -2606,17 +2710,34 @@ pub(super) fn poll_agent_tool(
                                         }
                                     }
                                     super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips => {
-                                        if authored.replace_channels.is_empty() {
-                                            issues.push(
-                                                "replace_channels must be non-empty when decision=author_clips"
-                                                    .to_string(),
-                                            );
+                                        if expected_channel.is_empty() {
+                                            issues.push("Missing required arg: channel".into());
+                                        } else if authored.replace_channels.len() != 1
+                                            || authored.replace_channels[0].as_str()
+                                                != expected_channel.as_str()
+                                        {
+                                            issues.push(format!(
+                                                "replace_channels must be exactly [\"{expected_channel}\"] for single-channel motion authoring (got {:?})",
+                                                authored.replace_channels
+                                            ));
                                         }
                                         if authored.edges.is_empty() {
                                             issues.push(
                                                 "edges must be non-empty when decision=author_clips"
                                                     .to_string(),
                                             );
+                                        }
+                                        for edge in authored.edges.iter() {
+                                            let component = edge.component.trim();
+                                            for slot in edge.slots.iter() {
+                                                if slot.channel.as_str() != expected_channel.as_str()
+                                                {
+                                                    issues.push(format!(
+                                                        "slot.channel must be {expected_channel:?} for component `{component}` (got `{}`)",
+                                                        slot.channel.as_str()
+                                                    ));
+                                                }
+                                            }
                                         }
                                     }
                                     _ => {
@@ -2825,7 +2946,7 @@ pub(super) fn poll_agent_tool(
                                         .root_def()
                                         .and_then(|def| def.mobility.as_ref())
                                         .is_some();
-                                    if movable {
+                                    if movable && expected_channel.as_str() == "move" {
                                         let has_move = job.planned_components.iter().any(|c| {
                                             c.attach_to.as_ref().is_some_and(|att| {
                                                 att.animations
@@ -2835,6 +2956,18 @@ pub(super) fn poll_agent_tool(
                                         });
                                         if !has_move {
                                             issues.push("decision=author_clips must produce at least one `move` animation slot for movable drafts.".to_string());
+                                        }
+                                    }
+                                    if movable && expected_channel.as_str() == "action" {
+                                        let has_action = job.planned_components.iter().any(|c| {
+                                            c.attach_to.as_ref().is_some_and(|att| {
+                                                att.animations.iter().any(|slot| {
+                                                    slot.channel.as_ref() == "action"
+                                                })
+                                            })
+                                        });
+                                        if !has_action {
+                                            issues.push("decision=author_clips must produce at least one `action` animation slot for movable drafts.".to_string());
                                         }
                                     }
                                 }
@@ -2855,7 +2988,7 @@ pub(super) fn poll_agent_tool(
                                 if let Some(dir) = job.pass_dir.as_deref() {
                                     write_gen3d_json_artifact(
                                         Some(dir),
-                                        "motion_authoring.json",
+                                        format!("motion_{}.json", channel_for_artifact),
                                         &serde_json::to_value(&authored)
                                             .unwrap_or(serde_json::Value::Null),
                                     );
@@ -2889,6 +3022,7 @@ pub(super) fn poll_agent_tool(
                                     call.tool_id,
                                     serde_json::json!({
                                         "ok": true,
+                                        "channel": expected_channel.as_str(),
                                         "decision": match authored.decision {
                                             super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips => "author_clips",
                                             super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => "regen_geometry_required",
@@ -2924,12 +3058,13 @@ pub(super) fn poll_agent_tool(
 	                                    &job.user_prompt_raw,
 	                                    image_object_summary,
 	                                    &run_id,
-	                                    job.attempt,
-	                                    &job.plan_hash,
-	                                    job.assembly_rev,
-	                                    job.rig_move_cycle_m,
-	                                    has_idle_slot,
-	                                    has_move_slot,
+		                                    job.attempt,
+		                                    &job.plan_hash,
+		                                    job.assembly_rev,
+		                                    expected_channel.as_str(),
+		                                    job.rig_move_cycle_m,
+		                                    has_idle_slot,
+		                                    has_move_slot,
 	                                    &job.planned_components,
 	                                    draft,
 	                                );
@@ -2946,10 +3081,10 @@ pub(super) fn poll_agent_tool(
                                     Vec::new(),
                                     &err,
                                     &text,
-                                    &format!("tool_motion_authoring_{}", call.call_id),
-                                ) {
-                                    return;
-                                }
+	                                    &format!("tool_motion_{}_{}", channel_for_artifact, call.call_id),
+	                                ) {
+	                                    return;
+	                                }
                                 Gen3dToolResultJsonV1::err(
                                     call.call_id.clone(),
                                     call.tool_id.clone(),

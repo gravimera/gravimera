@@ -1815,7 +1815,7 @@ mod tests {
                 {
                     "kind": "upsert_animation_slot",
                     "child_component": "root",
-                    "channel": "ambient",
+                    "channel": "idle",
                     "slot": {
                         "driver": "always",
                         "speed_scale": 1.0,
@@ -1840,7 +1840,7 @@ mod tests {
             job.planned_components[0].root_animations[0]
                 .channel
                 .as_ref(),
-            "ambient"
+            "idle"
         );
 
         let root_def = draft
@@ -1857,8 +1857,8 @@ mod tests {
             root_ref
                 .animations
                 .iter()
-                .any(|s| s.channel.as_ref() == "ambient"),
-            "expected root object-ref animations to include ambient, got {:?}",
+                .any(|s| s.channel.as_ref() == "idle"),
+            "expected root object-ref animations to include idle, got {:?}",
             root_ref.animations
         );
     }

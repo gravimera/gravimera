@@ -1,6 +1,7 @@
-See implementation plan: `docs/execplans/todo_reasoning_effort_action_motion_and_plan_images.md`.
+See implementation plan: `docs/execplans/todo_gen3d_motion_authoring_split_channels_and_webp.md`.
 
-- [x] Make the default reasoning effort for all steps `high`.
-  - [x] Unite all reasoning-effort configs to a single key: `reasoning_effort`.
-- [x] Add another default generated motion for a unit: `action` (operating/handling something important).
-- [x] In Gen3D, when users provide images: also send the resolution-handled images to `prompt_intent` and `llm_generate_plan` (agent + pipeline) so planning is more accurate.
+- [x] Gen3D motion authoring
+  - [x] Split motion authoring per-channel (one tool call == one channel) and batch in parallel for multiple channels.
+  - [x] Remove the default `ambient` channel.
+  - [x] Allow unlimited motion channels; number keys `1`..`0` force the prefab’s ordered top-10 channels.
+- [x] Fix warning: `WARN bevy_image::image: feature "webp" is not enabled` (2026-03-23T11:09:39.834536Z)

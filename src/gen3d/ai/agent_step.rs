@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_MOTIONS,
     TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT,
     TOOL_ID_VALIDATE,
 };
@@ -1090,10 +1090,26 @@ pub(super) fn execute_agent_actions(
                                 .any(|slot| slot.channel.as_ref() == "move")
                         })
                     });
+                    let has_action = job.planned_components.iter().any(|c| {
+                        c.attach_to.as_ref().is_some_and(|att| {
+                            att.animations
+                                .iter()
+                                .any(|slot| slot.channel.as_ref() == "action")
+                        })
+                    });
 
-                    if !has_move {
+                    if !has_move || !has_action {
+                        let mut missing: Vec<&str> = Vec::new();
+                        if !has_move {
+                            missing.push("move");
+                        }
+                        if !has_action {
+                            missing.push("action");
+                        }
                         unfinished.push(format!(
-                            "Movable unit has no authored `move` slots (suggestion: `{TOOL_ID_LLM_GENERATE_MOTION_AUTHORING}` then `{TOOL_ID_SMOKE_CHECK}`)."
+                            "Movable unit missing authored channel(s): {} (suggestion: `{TOOL_ID_LLM_GENERATE_MOTIONS}` with channels={:?}, then `{TOOL_ID_SMOKE_CHECK}`).",
+                            missing.join(", "),
+                            missing,
                         ));
                     }
                 }

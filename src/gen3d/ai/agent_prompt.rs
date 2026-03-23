@@ -7,7 +7,7 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_INFO_EVENTS_SEARCH, TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY,
     TOOL_ID_INFO_KV_GET_PAGED, TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS,
     TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT,
-    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION, TOOL_ID_LLM_GENERATE_MOTIONS,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
@@ -59,17 +59,19 @@ Rules:\n\
   - If review_appearance=true and you did one more render+review after applying fixes and it still suggests no further actions (and required QA is ok), output a \"done\" action.\n\
   - If budgets prevent further improvement (regen budgets, review-delta rounds, time, tokens), output a \"done\" action with a best-effort reason.\n\
   - `done.reason` is treated as an unverified agent note; keep it brief and factual. Do NOT claim tool actions that did not occur.\n\
-  - `qa_v1` may report warnings (non-fatal). Treat warnings as informational: do NOT spend steps trying to eliminate warnings.\n\
+- `qa_v1` may report warnings (non-fatal). Treat warnings as informational: do NOT spend steps trying to eliminate warnings.\n\
     - If warnings>0, mention them explicitly in \"done.reason\" (do not claim \"no warnings\").\n\
 - Motion authoring (required for movable units):\n\
-  - If the draft is a movable unit (mobility is ground/air) and (`state_summary.motion_coverage.has_move` is false OR `state_summary.motion_coverage.has_action` is false), call `llm_generate_motion_authoring_v1` before finishing.\n\
-  - This tool authors explicit per-edge animation clips (idle/move/action/attack_primary) baked into the prefab; the engine does not provide runtime motion algorithms.\n\
-  - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_authoring_v1` even if move/action slots already exist.\n\
+  - If the draft is a movable unit (mobility is ground/air) and (`state_summary.motion_coverage.has_move` is false OR `state_summary.motion_coverage.has_action` is false), call `llm_generate_motions_v1` before finishing:\n\
+    - args.channels must include any missing required channels (usually: `move` and/or `action`; you MAY also include `idle`).\n\
+    - If the unit has an attack profile, you MAY include `attack_primary`.\n\
+  - `llm_generate_motion_v1` authors EXACTLY ONE channel per call (args.channel) and replaces ONLY that channel on targeted edges.\n\
+  - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_v1` for a custom channel name even if move/action slots already exist.\n\
   - If `qa_v1` reports `joint_rest_bias_large`, prefer calling `recenter_attachment_motion_v1` on the offending child components/channels first; it is deterministic and preserves motion exactly by re-parameterizing offset vs delta.\n\
-    - If it returns applied=false or the issue persists, then call `llm_generate_motion_authoring_v1` to re-author the offending clips/channels.\n\
+    - If it returns applied=false or the issue persists, then re-author the offending channel(s) via `llm_generate_motion_v1` (one-by-one) or `llm_generate_motions_v1` (batch).\n\
   - If `qa_v1` reports `hinge_limit_exceeded`, call `suggest_motion_repairs_v1` to get deterministic patch options (relax joint limits vs scale rotation), then explicitly apply ONE chosen patch via `apply_draft_ops_v1`.\n\
-    - Only fall back to `llm_generate_motion_authoring_v1` if the suggestions are unsuitable (ex: would relax limits too much, or would scale motion too aggressively).\n\
-  - If `qa_v1` reports motion_validation issues with severity=\"error\" that are primarily animation-delta problems (examples: `hinge_off_axis`, `time_offset_no_effect`), prefer calling `llm_generate_motion_authoring_v1` to re-author the offending clips/channels (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
+    - Only fall back to re-authoring via `llm_generate_motion_v1`/`llm_generate_motions_v1` if the suggestions are unsuitable (ex: would relax limits too much, or would scale motion too aggressively).\n\
+  - If `qa_v1` reports motion_validation issues with severity=\"error\" that are primarily animation-delta problems (examples: `hinge_off_axis`, `time_offset_no_effect`), prefer re-authoring the offending channel(s) via `llm_generate_motion_v1`/`llm_generate_motions_v1` (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
   - Do NOT chase warn-only motion_validation issues (example: `attack_self_intersection`). Treat them as informational and finish once required QA is ok.\n\
   - If `qa_v1` reports `contact_stance_missing`, prefer `llm_review_delta_v1` to add/fix `contacts[].stance` (motion authoring cannot create stance metadata).\n\
   - If `qa_v1` reports `hinge_axis_missing` or `hinge_axis_invalid`, fix the joint axis (replan OR `apply_draft_ops_v1` set_attachment_joint) before motion authoring.\n\
@@ -676,15 +678,34 @@ pub(super) fn build_agent_user_text(
                     }
                 }
             }
-            TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => {
+            TOOL_ID_LLM_GENERATE_MOTION => {
                 let decision = value.get("decision").and_then(|v| v.as_str());
+                let channel = value.get("channel").and_then(|v| v.as_str());
                 let edges = value.get("edges").and_then(|v| v.as_u64());
                 out.push_str("ok");
                 if let Some(decision) = decision {
                     out.push_str(&format!(" decision={decision}"));
                 }
+                if let Some(channel) = channel {
+                    out.push_str(&format!(" channel={channel}"));
+                }
                 if let Some(edges) = edges {
                     out.push_str(&format!(" edges={edges}"));
+                }
+            }
+            TOOL_ID_LLM_GENERATE_MOTIONS => {
+                let requested = value.get("requested").and_then(|v| v.as_u64());
+                let succeeded = value.get("succeeded").and_then(|v| v.as_array());
+                let failed = value.get("failed").and_then(|v| v.as_array());
+                out.push_str("ok");
+                if let Some(requested) = requested {
+                    out.push_str(&format!(" requested={requested}"));
+                }
+                if let Some(succeeded) = succeeded {
+                    out.push_str(&format!(" succeeded={}", succeeded.len()));
+                }
+                if let Some(failed) = failed {
+                    out.push_str(&format!(" failed={}", failed.len()));
                 }
             }
             TOOL_ID_LLM_REVIEW_DELTA => {
@@ -2978,7 +2999,6 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
         let mut has_action = false;
         let mut has_idle = false;
         let mut has_attack = false;
-        let mut has_ambient = false;
         let mut slots_by_channel: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
 
@@ -3007,7 +3027,6 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
                     }
                     "idle" => has_idle = true,
                     "attack_primary" => has_attack = true,
-                    "ambient" => has_ambient = true,
                     _ => {}
                 }
             }
@@ -3029,7 +3048,6 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
             "has_action": has_action,
             "has_idle": has_idle,
             "has_attack_primary": has_attack,
-            "has_ambient": has_ambient,
             "slots_by_channel": slots_by_channel,
         })
     };

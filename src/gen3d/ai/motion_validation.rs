@@ -2322,13 +2322,12 @@ fn compute_world_transforms_for_channels(
         moving: bool,
         idle: bool,
     ) -> Option<&'a PartAnimationSlot> {
-        for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
+        for channel in ["attack_primary", "action", "move", "idle"] {
             let active = match channel {
                 "attack_primary" => attacking_primary,
                 "action" => acting,
                 "move" => moving,
                 "idle" => idle,
-                "ambient" => true,
                 _ => false,
             };
             if !active {

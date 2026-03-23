@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_QA,
+    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTIONS, TOOL_ID_LLM_GENERATE_PLAN,
+    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW,
 };
 use crate::gen3d::agent::{
@@ -1286,6 +1286,30 @@ fn poll_pipeline_tick(
                         job.agent.last_motion_ok = None;
 
                         workshop.status = "Pipeline: authoring motion…".into();
+                        let mut missing_channels: Vec<&'static str> = Vec::new();
+                        let mut has_move = false;
+                        let mut has_action = false;
+                        for comp in job.planned_components.iter() {
+                            let Some(att) = comp.attach_to.as_ref() else {
+                                continue;
+                            };
+                            for slot in att.animations.iter() {
+                                match slot.channel.as_ref() {
+                                    "move" => has_move = true,
+                                    "action" => has_action = true,
+                                    _ => {}
+                                }
+                            }
+                            if has_move && has_action {
+                                break;
+                            }
+                        }
+                        if !has_move {
+                            missing_channels.push("move");
+                        }
+                        if !has_action {
+                            missing_channels.push("action");
+                        }
                         if let Some(result) = start_pipeline_tool_call(
                             config,
                             time,
@@ -1297,8 +1321,8 @@ fn poll_pipeline_tick(
                             draft,
                             preview,
                             preview_model,
-                            TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
-                            serde_json::json!({}),
+                            TOOL_ID_LLM_GENERATE_MOTIONS,
+                            serde_json::json!({ "channels": missing_channels }),
                         ) {
                             pipeline_record_tool_result(workshop, job, &*draft, &result);
                         }
@@ -1398,6 +1422,11 @@ fn poll_pipeline_tick(
                     job.pipeline.motion_authoring_attempts =
                         job.pipeline.motion_authoring_attempts.saturating_add(1);
                     workshop.status = "Pipeline: authoring motion…".into();
+                    let mut channels: Vec<&'static str> = vec!["move", "action"];
+                    let attack_present = draft.root_def().and_then(|r| r.attack.as_ref()).is_some();
+                    if attack_present {
+                        channels.push("attack_primary");
+                    }
                     if let Some(result) = start_pipeline_tool_call(
                         config,
                         time,
@@ -1409,8 +1438,8 @@ fn poll_pipeline_tick(
                         draft,
                         preview,
                         preview_model,
-                        TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
-                        serde_json::json!({}),
+                        TOOL_ID_LLM_GENERATE_MOTIONS,
+                        serde_json::json!({ "channels": channels }),
                     ) {
                         pipeline_record_tool_result(workshop, job, &*draft, &result);
                     }

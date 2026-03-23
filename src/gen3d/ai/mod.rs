@@ -2,6 +2,7 @@
 
 mod agent_component_batch;
 mod agent_loop;
+mod agent_motion_batch;
 mod agent_parsing;
 mod agent_prompt;
 mod agent_regen_budget;

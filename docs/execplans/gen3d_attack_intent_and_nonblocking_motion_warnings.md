@@ -11,7 +11,7 @@ Gen3D runs currently have two failure modes that show up together in “attackin
 
 1) The system’s “does the prompt require attack capability?” logic is a small English-only keyword heuristic. Non‑English prompts (including Chinese) do not trigger it, so the run can finish with attack motion clips but without the root “attack profile” that gameplay needs to actually attack.
 
-2) Warn-level motion validation findings (example: `attack_self_intersection`) are currently surfaced as `capability_gaps` in `qa_v1`, which makes agents/pipeline treat them like action items. This leads to repeated `llm_generate_motion_authoring_v1` ↔ `qa_v1` loops despite `qa_v1.ok=true` and `errors=0`.
+2) Warn-level motion validation findings (example: `attack_self_intersection`) are currently surfaced as `capability_gaps` in `qa_v1`, which makes agents/pipeline treat them like action items. This leads to repeated `llm_generate_motions_v1` ↔ `qa_v1` loops despite `qa_v1.ok=true` and `errors=0`.
 
 After this change:
 

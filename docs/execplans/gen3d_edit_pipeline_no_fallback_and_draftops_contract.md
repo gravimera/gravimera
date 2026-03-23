@@ -132,7 +132,7 @@ At minimum, document these buckets and their deterministic mechanisms:
 - Attachment/joint/anchor edits: `llm_generate_draft_ops_v1` → `apply_draft_ops_v1` (ops like `set_attachment_joint`, `set_anchor_transform`, `set_attachment_offset`).
 - Motion edits:
   - “Slot-level” edits: `upsert_animation_slot` / `remove_animation_slot` in DraftOps.
-  - “Rig-level clip authoring”: `llm_generate_motion_authoring_v1` (LLM+mutates).
+  - “Rig-level clip authoring”: `llm_generate_motions_v1` (batch) / `llm_generate_motion_v1` (one channel) (LLM+mutates).
 
 Important clarification for motion edits:
 

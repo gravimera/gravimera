@@ -47,7 +47,8 @@ pub(crate) const TOOL_ID_LLM_GENERATE_PLAN_OPS: &str = "llm_generate_plan_ops_v1
 pub(crate) const TOOL_ID_LLM_GENERATE_DRAFT_OPS: &str = "llm_generate_draft_ops_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENT: &str = "llm_generate_component_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENTS: &str = "llm_generate_components_v1";
-pub(crate) const TOOL_ID_LLM_GENERATE_MOTION_AUTHORING: &str = "llm_generate_motion_authoring_v1";
+pub(crate) const TOOL_ID_LLM_GENERATE_MOTION: &str = "llm_generate_motion_v1";
+pub(crate) const TOOL_ID_LLM_GENERATE_MOTIONS: &str = "llm_generate_motions_v1";
 pub(crate) const TOOL_ID_LLM_REVIEW_DELTA: &str = "llm_review_delta_v1";
 
 pub(crate) const TOOL_ID_RENDER_PREVIEW: &str = "render_preview_v1";
@@ -557,12 +558,20 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 args_example: serde_json::json!({ "missing_only": true }),
             },
             Gen3dToolDescriptorV1 {
-                tool_id: TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
-                title: "LLM: generate motion authoring",
+                tool_id: TOOL_ID_LLM_GENERATE_MOTION,
+                title: "LLM: generate motion (one channel)",
                 one_line_summary:
-                    "LLM+mutates: author animation clips (idle/move/action/attack_primary) on attachment edges.",
-                args_schema: "{ prompt?: string }",
-                args_example: serde_json::json!({}),
+                    "LLM+mutates: author animation clips for ONE channel (e.g. move/action/idle/attack_primary or custom) on attachment edges. Replaces only that channel on targeted edges.",
+                args_schema: "{ channel: string }",
+                args_example: serde_json::json!({ "channel": "move" }),
+            },
+            Gen3dToolDescriptorV1 {
+                tool_id: TOOL_ID_LLM_GENERATE_MOTIONS,
+                title: "LLM: generate motions (batch)",
+                one_line_summary:
+                    "LLM+mutates: batch-author multiple motion channels in parallel (each channel request is independent; replaces only requested channels).",
+                args_schema: "{ channels: string[] }",
+                args_example: serde_json::json!({ "channels": ["move", "action", "idle"] }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_LLM_REVIEW_DELTA,

@@ -2034,6 +2034,7 @@ pub(super) fn build_gen3d_motion_authoring_system_instructions() -> String {
     "You are the Gravimera Gen3D motion authoring assistant.\n\
 You will be given a generated component graph (components + attachments + anchors + current base offsets).\n\
 Your job is to author explicit per-edge animation clips.\n\
+This tool call authors EXACTLY ONE motion channel (the target channel is provided in the user text).\n\
 Return ONLY a single JSON object for gen3d_motion_authoring_v1 (no markdown, no prose).\n\n\
 Schema:\n\
 {\n\
@@ -2041,13 +2042,13 @@ Schema:\n\
   \"applies_to\": {\"run_id\":\"uuid\",\"attempt\":0,\"plan_hash\":\"sha256:...\",\"assembly_rev\":0},\n\
   \"decision\": \"author_clips\" | \"regen_geometry_required\",\n\
   \"reason\": \"short reason\",\n\
-  \"replace_channels\": [\"idle\",\"move\",\"action\",\"attack_primary\"],\n\
+  \"replace_channels\": [\"move\"],\n\
   \"edges\": [\n\
     {\n\
       \"component\": \"child_component_name\",\n\
       \"slots\": [\n\
         {\n\
-          \"channel\": \"idle|move|action|attack_primary|ambient\",\n\
+          \"channel\": \"move\",\n\
           \"driver\": \"always|move_phase|move_distance|attack_time|action_time\",\n\
           \"speed_scale\": 1.0,\n\
           \"time_offset_units\": 0.0,\n\
@@ -2068,6 +2069,12 @@ Rules:\n\
 - You MUST copy the provided applies_to values exactly.\n\
 - You MUST NOT invent component names. Target attachment edges by naming the CHILD component in `edges[].component`.\n\
   - Do NOT include the root component (it has no parent edge).\n\
+- Single-channel rule (IMPORTANT):\n\
+  - The user text provides a `target_channel`.\n\
+  - When decision=author_clips:\n\
+    - You MUST set replace_channels=[target_channel] (exactly one entry).\n\
+    - Every authored slot.channel MUST equal target_channel.\n\
+    - Do NOT author any other channels in this tool call.\n\
 - Minimize output size:\n\
   - Only include `edges[]` entries you intend to CHANGE. Omit edges you are not touching.\n\
   - Prefer replacing ONLY the channels you actually author (e.g. if you only author `move`, set replace_channels=[\"move\"]).\n\
@@ -2103,8 +2110,8 @@ Rules:\n\
 - `replace_channels`:\n\
   - If decision=author_clips, list the channels you want the engine to REPLACE on targeted edges before adding your slots.\n\
   - If decision=regen_geometry_required, set replace_channels=[] and edges=[] (do not author clips).\n\
-- For movable units, prefer authoring at least `idle` + `move` + `action` (and `attack_primary` if the unit has an attack).\n\
-  - `action` means the unit is operating/working (waving hands, turning handles, manipulating a console/lever). Prefer driver=`action_time`.\n\
+- Across all channels, a movable unit should have at least `idle` + `move` + `action` (and `attack_primary` if the unit has an attack).\n\
+  - You may be asked to author these in separate calls; always obey the target_channel.\n\
 - If the prompt implies motion that cannot be achieved with the existing articulation (for example: a snake with only one rigid body component), use decision=regen_geometry_required.\n\
   - In that case, do NOT author clips. Explain what articulation is missing in `reason`/`notes`.\n"
         .to_string()
@@ -2117,6 +2124,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     attempt: u32,
     plan_hash: &str,
     assembly_rev: u32,
+    target_channel: &str,
     rig_move_cycle_m: Option<f32>,
     has_idle_slot: bool,
     has_move_slot: bool,
@@ -2198,6 +2206,21 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
 
     let mut out = String::new();
     out.push_str("Goal: author explicit per-edge animation clips.\n");
+    let target_channel = target_channel.trim();
+    let target_channel = if target_channel.is_empty() {
+        "unknown"
+    } else {
+        target_channel
+    };
+    out.push_str(&format!("target_channel: {target_channel}\n"));
+    out.push_str("Single-channel requirement:\n");
+    out.push_str(&format!(
+        "- You MUST set replace_channels=[\"{target_channel}\"]\n"
+    ));
+    out.push_str(&format!(
+        "- Every authored slot.channel MUST be \"{target_channel}\"\n"
+    ));
+    out.push_str("- Do NOT author any other channels in this tool call.\n\n");
     if let Some(summary) = image_object_summary
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
@@ -2348,7 +2371,14 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             ));
         }
         out.push('\n');
-        out.push_str("Authoring guidance: prioritize authoring `move` clips on edges in the contact chains above. Use time_offset_units for phase staggering; keep keyframes minimal.\n\n");
+        if target_channel == "move" {
+            out.push_str("Authoring guidance: prioritize authoring `move` clips on edges in the contact chains above. Use time_offset_units for phase staggering; keep keyframes minimal.\n\n");
+        } else {
+            out.push_str(&format!(
+                "Authoring guidance: for channel `{}`, focus on a small number of meaningful edges; use time_offset_units for phase staggering; keep keyframes minimal.\n\n",
+                target_channel
+            ));
+        }
     }
 
     out.push_str("Attachment edges (child components with attach_to):\n");

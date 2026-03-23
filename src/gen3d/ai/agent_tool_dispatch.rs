@@ -16,7 +16,7 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED, TOOL_ID_INFO_KV_LIST_HISTORY,
     TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS,
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION, TOOL_ID_LLM_GENERATE_MOTIONS,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
     TOOL_ID_MOTION_METRICS, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS,
@@ -1411,7 +1411,7 @@ fn execute_qa_v1(
                 obj.insert(
                     "no_new_information_message".into(),
                     serde_json::Value::String(
-                        "No new information: QA basis unchanged. Mutate draft/plan before retrying `qa_v1` (ex: `apply_draft_ops_v1`, `apply_plan_ops_v1`, `llm_generate_plan_v1`, `llm_generate_motion_authoring_v1`). Use force=true to bypass caching."
+                        "No new information: QA basis unchanged. Mutate draft/plan before retrying `qa_v1` (ex: `apply_draft_ops_v1`, `apply_plan_ops_v1`, `llm_generate_plan_v1`, `llm_generate_motions_v1`). Use force=true to bypass caching."
                             .into(),
                     ),
                 );
@@ -7020,7 +7020,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
             workshop.status = "Generating components (batch)…".into();
             ToolCallOutcome::StartedAsync
         }
-        TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => {
+        TOOL_ID_LLM_GENERATE_MOTION => {
             if job.planned_components.is_empty() {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
@@ -7028,6 +7028,20 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     "No planned components yet. Generate a plan first.".into(),
                 ));
             }
+            let channel = call
+                .args
+                .get("channel")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_ascii_lowercase());
+            let Some(channel) = channel else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing required arg: channel".into(),
+                ));
+            };
             let Some(ai) = job.ai.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
@@ -7047,10 +7061,13 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
             let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
             job.shared_result = Some(shared.clone());
             let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
-                message: "Authoring motion…".into(),
+                message: format!("Authoring motion ({})…", channel.as_str()),
             }));
             job.shared_progress = Some(progress.clone());
-            set_progress(&progress, "Calling model for motion authoring…");
+            set_progress(
+                &progress,
+                format!("Calling model for motion authoring ({})…", channel.as_str()),
+            );
             job.agent.pending_llm_repair_attempt = 0;
 
             let (mut has_idle_slot, mut has_move_slot) = (false, false);
@@ -7079,6 +7096,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 job.attempt,
                 &job.plan_hash,
                 job.assembly_rev,
+                &channel,
                 job.rig_move_cycle_m,
                 has_idle_slot,
                 has_move_slot,
@@ -7099,13 +7117,91 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 user_text,
                 Vec::new(),
                 pass_dir,
-                sanitize_prefix(&format!("tool_motion_authoring_{}", &call.call_id)),
+                sanitize_prefix(&format!(
+                    "tool_motion_{}_{}",
+                    channel.as_str(),
+                    &call.call_id
+                )),
             );
             job.agent.pending_tool_call = Some(call);
-            job.agent.pending_llm_tool =
-                Some(super::Gen3dAgentLlmToolKind::GenerateMotionAuthoring);
+            job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::GenerateMotion);
             job.phase = Gen3dAiPhase::AgentWaitingTool;
-            workshop.status = "Authoring motion…".into();
+            workshop.status = format!("Authoring motion ({})…", channel.as_str());
+            ToolCallOutcome::StartedAsync
+        }
+        TOOL_ID_LLM_GENERATE_MOTIONS => {
+            if job.planned_components.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "No planned components yet. Generate a plan first.".into(),
+                ));
+            }
+            let Some(_ai) = job.ai.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing AI config".into(),
+                ));
+            };
+            let Some(_pass_dir) = job.pass_dir.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing pass dir".into(),
+                ));
+            };
+
+            let Some(arr) = call.args.get("channels").and_then(|v| v.as_array()) else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing required arg: channels".into(),
+                ));
+            };
+            let mut channels: Vec<String> = Vec::new();
+            let mut seen = std::collections::HashSet::<String>::new();
+            for v in arr {
+                let Some(raw) = v.as_str() else {
+                    continue;
+                };
+                let ch = raw.trim().to_ascii_lowercase();
+                if ch.is_empty() {
+                    continue;
+                }
+                if seen.insert(ch.clone()) {
+                    channels.push(ch);
+                }
+            }
+            if channels.is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "No valid channels provided. Example: {\"channels\":[\"move\",\"action\"]}"
+                        .into(),
+                ));
+            }
+
+            job.motion_queue = channels.clone();
+            job.motion_in_flight.clear();
+            job.motion_attempts.clear();
+
+            job.agent.pending_motion_batch = Some(super::Gen3dPendingMotionBatch {
+                requested_channels: channels,
+                completed_channels: std::collections::HashSet::new(),
+                failed: Vec::new(),
+            });
+
+            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+                message: "Authoring motion channels (batch)…".into(),
+            }));
+            job.shared_progress = Some(progress.clone());
+            set_progress(&progress, "Authoring motion channels (batch)…");
+
+            job.agent.pending_tool_call = Some(call);
+            job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::GenerateMotionsBatch);
+            job.phase = Gen3dAiPhase::AgentWaitingTool;
+            workshop.status = "Authoring motion channels (batch)…".into();
             ToolCallOutcome::StartedAsync
         }
         TOOL_ID_RENDER_PREVIEW => {

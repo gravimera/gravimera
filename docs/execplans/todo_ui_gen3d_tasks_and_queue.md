@@ -63,7 +63,7 @@ The work must be validated by:
 
 ## Decision Log
 
-- Decision: Treat “movable unit without any `move` slot coverage” as a hard non-finish condition in pipeline mode, and trigger `llm_generate_motion_authoring_v1` deterministically (bounded) before finishing.
+- Decision: Treat “movable unit without any `move` slot coverage” as a hard non-finish condition in pipeline mode, and trigger `llm_generate_motions_v1` deterministically (bounded) before finishing.
   Rationale: This matches the existing agent-step prompt contract (“if movable and has_move=false, author motion before finishing”) and prevents silent motionless units in pipeline mode.
   Date/Author: 2026-03-22 / codex
 
@@ -113,7 +113,7 @@ In `src/gen3d/ai/pipeline_orchestrator.rs`:
 
 - Add a deterministic “motion required” predicate:
   - If the draft root has mobility (ground/air) and the planned component attachment graph has no `move` channel slots, consider motion authoring required.
-- In the QA stage, when QA is otherwise ok but motion is required, call `llm_generate_motion_authoring_v1` (bounded by `motion_authoring_attempts`), invalidate previous smoke/validate flags, and re-run QA before finishing.
+- In the QA stage, when QA is otherwise ok but motion is required, call `llm_generate_motions_v1` (bounded by `motion_authoring_attempts`), invalidate previous smoke/validate flags, and re-run QA before finishing.
 - Update completion gating (`run_complete_enough_for_pipeline_finish`) to require move slot coverage for movable drafts.
 
 Acceptance: pipeline mode cannot finish a movable draft without at least one `move` slot, and does not prematurely finish immediately after motion authoring without rerunning QA.

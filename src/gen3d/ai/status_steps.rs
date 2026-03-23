@@ -1,7 +1,7 @@
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT, TOOL_ID_APPLY_LAST_DRAFT_OPS,
     TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
+    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION, TOOL_ID_LLM_GENERATE_MOTIONS,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
@@ -57,7 +57,19 @@ fn tool_step_label(tool_id: &str, call: Option<&Gen3dToolCallJsonV1>) -> String 
         TOOL_ID_VALIDATE => "Validate".into(),
         TOOL_ID_SMOKE_CHECK => "Smoke check".into(),
         TOOL_ID_QA => "QA".into(),
-        TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => "Motion authoring".into(),
+        TOOL_ID_LLM_GENERATE_MOTION => {
+            let channel = call
+                .and_then(|c| c.args.get("channel"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty());
+            if let Some(channel) = channel {
+                format!("Motion: {channel}")
+            } else {
+                "Motion".into()
+            }
+        }
+        TOOL_ID_LLM_GENERATE_MOTIONS => "Motion (batch)".into(),
         TOOL_ID_RENDER_PREVIEW => "Render preview".into(),
         TOOL_ID_LLM_REVIEW_DELTA => "Review delta".into(),
         other => short_tool_id(other).to_string(),
@@ -102,7 +114,8 @@ fn tool_step_why(tool_id: &str, call: Option<&Gen3dToolCallJsonV1>) -> String {
         TOOL_ID_VALIDATE => "Validate structural rules for the draft.".into(),
         TOOL_ID_SMOKE_CHECK => "Run bounded behavior/motion checks for the draft.".into(),
         TOOL_ID_QA => "Run validate + smoke checks; collect errors and warnings.".into(),
-        TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => "Generate motion channels to satisfy QA.".into(),
+        TOOL_ID_LLM_GENERATE_MOTION => "Generate one motion channel (animation clips).".into(),
+        TOOL_ID_LLM_GENERATE_MOTIONS => "Generate multiple motion channels in parallel.".into(),
         TOOL_ID_RENDER_PREVIEW => "Render images for appearance review.".into(),
         TOOL_ID_LLM_REVIEW_DELTA => "Review the draft and produce bounded fix actions.".into(),
         other => format!("Run tool `{}`.", short_tool_id(other)),
@@ -283,7 +296,7 @@ pub(super) fn log_tool_call_finished(
                     }
                 }
             }
-            TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => "OK".into(),
+            TOOL_ID_LLM_GENERATE_MOTION | TOOL_ID_LLM_GENERATE_MOTIONS => "OK".into(),
             TOOL_ID_GET_PLAN_TEMPLATE | TOOL_ID_LLM_GENERATE_PLAN_OPS => "OK".into(),
             other => {
                 let _ = other;

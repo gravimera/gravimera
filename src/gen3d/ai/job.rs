@@ -92,7 +92,8 @@ pub(super) enum Gen3dAgentLlmToolKind {
     GenerateDraftOps,
     GenerateComponent { component_idx: usize },
     GenerateComponentsBatch,
-    GenerateMotionAuthoring,
+    GenerateMotion,
+    GenerateMotionsBatch,
     ReviewDelta,
 }
 
@@ -111,6 +112,19 @@ pub(super) struct Gen3dPendingComponentBatch {
 pub(super) struct Gen3dComponentBatchFailure {
     pub(super) index: usize,
     pub(super) name: String,
+    pub(super) error: String,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct Gen3dPendingMotionBatch {
+    pub(super) requested_channels: Vec<String>,
+    pub(super) completed_channels: std::collections::HashSet<String>,
+    pub(super) failed: Vec<Gen3dMotionBatchFailure>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct Gen3dMotionBatchFailure {
+    pub(super) channel: String,
     pub(super) error: String,
 }
 
@@ -224,6 +238,7 @@ pub(super) struct Gen3dAgentState {
     pub(super) pending_review_delta_regen_allowed: Option<bool>,
     pub(super) pending_llm_repair_attempt: u8,
     pub(super) pending_component_batch: Option<Gen3dPendingComponentBatch>,
+    pub(super) pending_motion_batch: Option<Gen3dPendingMotionBatch>,
     pub(super) pending_render: Option<Gen3dReviewCaptureState>,
     pub(super) pending_render_include_motion_sheets: bool,
     pub(super) pending_pass_snapshot: Option<Gen3dReviewCaptureState>,
@@ -273,6 +288,7 @@ impl Default for Gen3dAgentState {
             pending_review_delta_regen_allowed: None,
             pending_llm_repair_attempt: 0,
             pending_component_batch: None,
+            pending_motion_batch: None,
             pending_render: None,
             pending_render_include_motion_sheets: true,
             pending_pass_snapshot: None,
@@ -626,6 +642,9 @@ pub(crate) struct Gen3dAiJob {
     pub(super) component_queue_pos: usize,
     pub(super) component_attempts: Vec<u8>,
     pub(super) component_in_flight: Vec<Gen3dInFlightComponent>,
+    pub(super) motion_queue: Vec<String>,
+    pub(super) motion_attempts: std::collections::BTreeMap<String, u8>,
+    pub(super) motion_in_flight: Vec<Gen3dInFlightMotion>,
     pub(super) generation_kind: Gen3dComponentGenerationKind,
     pub(super) review_capture: Option<Gen3dReviewCaptureState>,
     pub(super) review_static_paths: Vec<PathBuf>,
@@ -662,6 +681,14 @@ pub(super) struct Gen3dInFlightComponent {
     pub(super) idx: usize,
     pub(super) attempt: u8,
     pub(super) sent_images: bool,
+    pub(super) shared_result: SharedResult<Gen3dAiTextResponse, String>,
+    pub(super) _progress: Arc<Mutex<Gen3dAiProgress>>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct Gen3dInFlightMotion {
+    pub(super) channel: String,
+    pub(super) attempt: u8,
     pub(super) shared_result: SharedResult<Gen3dAiTextResponse, String>,
     pub(super) _progress: Arc<Mutex<Gen3dAiProgress>>,
 }
@@ -1068,10 +1095,10 @@ impl Gen3dAiJob {
                 TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DETACH_COMPONENT,
                 TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
                 TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_INSPECT_PLAN, TOOL_ID_LLM_GENERATE_COMPONENT,
-                TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION_AUTHORING,
-                TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_MIRROR_COMPONENT,
-                TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK,
-                TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
+                TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION,
+                TOOL_ID_LLM_GENERATE_MOTIONS, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
+                TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW,
+                TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
             };
 
             match tool_id {
@@ -1079,7 +1106,7 @@ impl Gen3dAiJob {
                 TOOL_ID_LLM_GENERATE_COMPONENT | TOOL_ID_LLM_GENERATE_COMPONENTS => {
                     "Generate".into()
                 }
-                TOOL_ID_LLM_GENERATE_MOTION_AUTHORING => "Motion".into(),
+                TOOL_ID_LLM_GENERATE_MOTION | TOOL_ID_LLM_GENERATE_MOTIONS => "Motion".into(),
                 TOOL_ID_LLM_REVIEW_DELTA => "Review".into(),
                 TOOL_ID_RENDER_PREVIEW => "Render".into(),
                 TOOL_ID_VALIDATE => "Validate".into(),

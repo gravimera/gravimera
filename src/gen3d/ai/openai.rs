@@ -1540,8 +1540,8 @@ fn mock_generate_text_via_openai(
             actions.push(serde_json::json!({
                 "kind": "tool_call",
                 "call_id": "call_11_motion_authoring",
-                "tool_id": "llm_generate_motion_authoring_v1",
-                "args": {}
+                "tool_id": "llm_generate_motions_v1",
+                "args": { "channels": ["move", "action"] }
             }));
             actions.push(serde_json::json!({
                 "kind": "done",
@@ -1549,7 +1549,7 @@ fn mock_generate_text_via_openai(
             }));
             serde_json::json!({
                 "version": 1,
-                "status_summary": format!("Mock: generate components ({:?}), author motion, and run QA.", kind),
+                "status_summary": format!("Mock: generate components ({:?}), author motions, and run QA.", kind),
                 "actions": actions
             })
             .to_string()
@@ -1682,11 +1682,31 @@ fn mock_generate_text_via_openai(
             ]
         })
         .to_string()
-    } else if artifact_prefix.starts_with("tool_motion_authoring_") {
+    } else if artifact_prefix.starts_with("tool_motion_") {
         let (run_id, attempt, plan_hash, assembly_rev) = parse_applies_to_from_user_text(user_text)
             .ok_or_else(|| {
                 "mock://gen3d failed to parse applies_to values from motion-authoring user_text"
                     .to_string()
+            })?;
+
+        fn parse_target_channel_from_motion_authoring_user_text(user_text: &str) -> Option<String> {
+            for line in user_text.lines() {
+                let line = line.trim();
+                let Some(rest) = line.strip_prefix("target_channel:") else {
+                    continue;
+                };
+                let ch = rest.trim();
+                if ch.is_empty() || ch == "unknown" {
+                    continue;
+                }
+                return Some(ch.to_string());
+            }
+            None
+        }
+
+        let target_channel = parse_target_channel_from_motion_authoring_user_text(user_text)
+            .ok_or_else(|| {
+                "mock://gen3d: motion authoring user_text missing target_channel".to_string()
             })?;
 
         let children = parse_child_components_from_motion_authoring_user_text(user_text);
@@ -1696,56 +1716,89 @@ fn mock_generate_text_via_openai(
             children.into_iter().take(8).collect()
         };
 
-        let mut edges: Vec<serde_json::Value> = Vec::new();
-        for (idx, child) in targets.iter().enumerate() {
-            let phase = idx as f32 * 0.08;
-            edges.push(serde_json::json!({
-                "component": child,
-                "slots": [
-                    {
-                        "channel": "move",
-                        "driver": "move_phase",
-                        "speed_scale": 1.0,
-                        "time_offset_units": phase,
-                        "clip": {
-                            "kind": "loop",
-                            "duration_units": 1.0,
-                            "keyframes": [
-                                {"t_units": 0.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}},
-                                {"t_units": 0.5, "delta": {"pos": [0.03, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}},
-                                {"t_units": 1.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}
-                            ]
-                        }
-                    },
-                    {
-                        "channel": "idle",
-                        "driver": "always",
-                        "speed_scale": 1.0,
-                        "time_offset_units": phase,
-                        "clip": {
-                            "kind": "loop",
-                            "duration_units": 1.6,
-                            "keyframes": [
-                                {"t_units": 0.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}},
-                                {"t_units": 0.8, "delta": {"pos": [0.0, 0.015, 0.0], "rot_quat_xyzw": null, "scale": null}},
-                                {"t_units": 1.6, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}
-                            ]
-                        }
-                    }
-                ]
-            }));
-        }
+        if targets.is_empty() {
+            serde_json::json!({
+              "version": 1,
+              "applies_to": { "run_id": run_id, "attempt": attempt, "plan_hash": plan_hash, "assembly_rev": assembly_rev },
+              "decision": "regen_geometry_required",
+              "reason": "Mock: no attachment edges available to animate.",
+              "replace_channels": [],
+              "edges": [],
+              "notes": null
+            })
+            .to_string()
+        } else {
+            let (driver, duration_units, keyframes) = match target_channel.as_str() {
+                "move" => (
+                    "move_phase",
+                    1.0,
+                    vec![
+                        serde_json::json!({"t_units": 0.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                        serde_json::json!({"t_units": 0.5, "delta": {"pos": [0.03, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                        serde_json::json!({"t_units": 1.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                    ],
+                ),
+                "action" => (
+                    "action_time",
+                    1.2,
+                    vec![
+                        serde_json::json!({"t_units": 0.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                        serde_json::json!({"t_units": 0.6, "delta": {"pos": [0.0, 0.01, 0.0], "rot_quat_xyzw": [0.0, 0.0, 0.08, 0.9968], "scale": null}}),
+                        serde_json::json!({"t_units": 1.2, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                    ],
+                ),
+                "attack_primary" => (
+                    "attack_time",
+                    0.35,
+                    vec![
+                        serde_json::json!({"t_units": 0.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                        serde_json::json!({"t_units": 0.18, "delta": {"pos": [0.0, 0.0, 0.02], "rot_quat_xyzw": [0.0, 0.08, 0.0, 0.9968], "scale": null}}),
+                        serde_json::json!({"t_units": 0.35, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                    ],
+                ),
+                _ => (
+                    "always",
+                    1.6,
+                    vec![
+                        serde_json::json!({"t_units": 0.0, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                        serde_json::json!({"t_units": 0.8, "delta": {"pos": [0.0, 0.015, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                        serde_json::json!({"t_units": 1.6, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
+                    ],
+                ),
+            };
 
-        serde_json::json!({
-          "version": 1,
-          "applies_to": { "run_id": run_id, "attempt": attempt, "plan_hash": plan_hash, "assembly_rev": assembly_rev },
-          "decision": "author_clips",
-          "reason": "Mock: bake simple per-edge move+idle loops.",
-          "replace_channels": ["move", "idle"],
-          "edges": edges,
-          "notes": null
-        })
-        .to_string()
+            let mut edges: Vec<serde_json::Value> = Vec::new();
+            for (idx, child) in targets.iter().enumerate() {
+                let phase = idx as f32 * 0.08;
+                edges.push(serde_json::json!({
+                    "component": child,
+                    "slots": [
+                        {
+                            "channel": target_channel.as_str(),
+                            "driver": driver,
+                            "speed_scale": 1.0,
+                            "time_offset_units": phase,
+                            "clip": {
+                                "kind": "loop",
+                                "duration_units": duration_units,
+                                "keyframes": keyframes.clone(),
+                            }
+                        }
+                    ]
+                }));
+            }
+
+            serde_json::json!({
+              "version": 1,
+              "applies_to": { "run_id": run_id, "attempt": attempt, "plan_hash": plan_hash, "assembly_rev": assembly_rev },
+              "decision": "author_clips",
+              "reason": format!("Mock: bake simple per-edge `{}` loops.", target_channel.as_str()),
+              "replace_channels": [target_channel.as_str()],
+              "edges": edges,
+              "notes": null
+            })
+            .to_string()
+        }
     } else if artifact_prefix == "descriptor_meta" {
         serde_json::json!({
             "version": 1,

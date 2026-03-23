@@ -3105,7 +3105,7 @@ mod tests {
                 offset: Transform::IDENTITY,
                 joint: None,
                 animations: vec![PartAnimationSlot {
-                    channel: "ambient".into(),
+                    channel: "idle".into(),
                     spec: PartAnimationSpec {
                         driver: PartAnimationDriver::Always,
                         speed_scale: 1.0,
