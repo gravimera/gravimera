@@ -293,6 +293,7 @@ pub(super) fn apply_motion_authoring_for_channel(
                     driver,
                     speed_scale,
                     time_offset_units,
+                    basis: Transform::IDENTITY,
                     clip,
                 },
             });
@@ -302,6 +303,7 @@ pub(super) fn apply_motion_authoring_for_channel(
             att.animations
                 .retain(|slot| !replace.contains(slot.channel.as_ref()));
             att.animations.extend(replacement_slots);
+            super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
         }
     }
 

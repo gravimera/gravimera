@@ -2441,6 +2441,10 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
         let slots: Vec<String> = att
             .animations
             .iter()
+            .filter(|slot| {
+                slot.channel.as_ref().trim()
+                    != crate::object::registry::PART_ANIMATION_INTERNAL_BASE_CHANNEL
+            })
             .map(|slot| {
                 let kind = match &slot.spec.clip {
                     crate::object::registry::PartAnimationDef::Loop { .. } => "loop",

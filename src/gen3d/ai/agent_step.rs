@@ -217,7 +217,7 @@ fn descriptor_meta_user_prompt(job: &Gen3dAiJob, workshop: &Gen3dWorkshop) -> St
 }
 
 fn descriptor_meta_animation_channels_ordered(draft: &Gen3dDraft) -> Vec<String> {
-    use crate::object::registry::ObjectPartKind;
+    use crate::object::registry::{ObjectPartKind, PART_ANIMATION_INTERNAL_BASE_CHANNEL};
     use std::collections::HashSet;
 
     let root_id = super::super::gen3d_draft_object_id();
@@ -239,7 +239,7 @@ fn descriptor_meta_animation_channels_ordered(draft: &Gen3dDraft) -> Vec<String>
         for part in def.parts.iter() {
             for slot in part.animations.iter() {
                 let ch = slot.channel.as_ref().trim();
-                if !ch.is_empty() {
+                if !ch.is_empty() && ch != PART_ANIMATION_INTERNAL_BASE_CHANNEL {
                     channels.insert(ch.to_string());
                 }
             }
@@ -274,7 +274,9 @@ fn descriptor_meta_animation_channels_ordered(draft: &Gen3dDraft) -> Vec<String>
 }
 
 fn descriptor_meta_motion_summary_json(draft: &Gen3dDraft) -> serde_json::Value {
-    use crate::object::registry::{ObjectPartKind, PartAnimationDef, PartAnimationDriver};
+    use crate::object::registry::{
+        ObjectPartKind, PartAnimationDef, PartAnimationDriver, PART_ANIMATION_INTERNAL_BASE_CHANNEL,
+    };
     use std::collections::{BTreeMap, BTreeSet, HashSet};
 
     #[derive(Default)]
@@ -320,7 +322,7 @@ fn descriptor_meta_motion_summary_json(draft: &Gen3dDraft) -> serde_json::Value 
             let mut channels_in_part: BTreeSet<String> = BTreeSet::new();
             for slot in part.animations.iter() {
                 let channel = slot.channel.as_ref().trim();
-                if channel.is_empty() {
+                if channel.is_empty() || channel == PART_ANIMATION_INTERNAL_BASE_CHANNEL {
                     continue;
                 }
                 channels_in_part.insert(channel.to_string());

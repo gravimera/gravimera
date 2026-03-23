@@ -11,6 +11,7 @@ use crate::object::registry::{
     AttachmentDef, MaterialKey, MeshKey, ObjectLibrary, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
     PartAnimationSpinAxisSpace, PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
+    PART_ANIMATION_INTERNAL_BASE_CHANNEL,
 };
 use crate::object::types::characters;
 use crate::types::{
@@ -891,7 +892,14 @@ pub(crate) fn update_part_animations(
         }
 
         if chosen.is_none() {
-            for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
+            for channel in [
+                "attack_primary",
+                "action",
+                "move",
+                "idle",
+                "ambient",
+                PART_ANIMATION_INTERNAL_BASE_CHANNEL,
+            ] {
                 let channel_active = match channel {
                     "attack_primary" => attack_active,
                     "action" => action_active,
@@ -899,6 +907,7 @@ pub(crate) fn update_part_animations(
                     "idle" => idle_active,
                     // Ambient is always active (fallback animation like fans/spinners).
                     "ambient" => true,
+                    PART_ANIMATION_INTERNAL_BASE_CHANNEL => true,
                     _ => false,
                 };
                 if !channel_active {
@@ -982,7 +991,7 @@ pub(crate) fn update_part_animations(
             base.rotation = aim_quat * base.rotation;
         }
 
-        let delta = if let Some(spec) = spec {
+        let (basis, delta) = if let Some(spec) = spec {
             let driver_time = match spec.driver {
                 PartAnimationDriver::Always => wall_time,
                 PartAnimationDriver::MovePhase => locomotion
@@ -1019,10 +1028,16 @@ pub(crate) fn update_part_animations(
             if spec.time_offset_units.is_finite() {
                 t += spec.time_offset_units;
             }
-            sample_part_animation(&spec.clip, t)
+            (spec.basis, sample_part_animation(&spec.clip, t))
         } else {
-            Transform::IDENTITY
+            (Transform::IDENTITY, Transform::IDENTITY)
         };
+        let mut basis = basis;
+        if !basis.translation.is_finite() || !basis.rotation.is_finite() || !basis.scale.is_finite()
+        {
+            basis = Transform::IDENTITY;
+        }
+        let base_with_basis = mul_transform(&base, &basis);
         let animated_base = match (spec, player.attachment.as_ref()) {
             (Some(spec), Some(attachment)) => match &spec.clip {
                 PartAnimationDef::Spin {
@@ -1034,11 +1049,15 @@ pub(crate) fn update_part_animations(
                         .and_then(|object_id| library.get(object_id))
                         .and_then(|def| anchor_transform(def, attachment.child_anchor.as_ref()))
                         .unwrap_or(Transform::IDENTITY);
-                    apply_child_local_delta_to_attachment_offset(base, child_anchor, delta)
+                    apply_child_local_delta_to_attachment_offset(
+                        base_with_basis,
+                        child_anchor,
+                        delta,
+                    )
                 }
-                _ => mul_transform(&base, &delta),
+                _ => mul_transform(&base_with_basis, &delta),
             },
-            _ => mul_transform(&base, &delta),
+            _ => mul_transform(&base_with_basis, &delta),
         };
 
         if let Some(attachment) = player.attachment.as_ref() {
@@ -1209,6 +1228,73 @@ fn mul_transform(a: &Transform, b: &Transform) -> Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn internal_base_channel_is_used_as_last_fallback() {
+        use crate::object::registry::{
+            PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot,
+            PartAnimationSpec, PART_ANIMATION_INTERNAL_BASE_CHANNEL,
+        };
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(ObjectLibrary::default());
+        app.add_systems(Update, update_part_animations);
+
+        let root = app
+            .world_mut()
+            .spawn(AnimationChannelsActive {
+                moving: true,
+                acting: false,
+                attacking_primary: false,
+            })
+            .id();
+
+        let slot = PartAnimationSlot {
+            channel: PART_ANIMATION_INTERNAL_BASE_CHANNEL.into(),
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::Always,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                basis: Transform::IDENTITY,
+                clip: PartAnimationDef::Loop {
+                    duration_secs: 1.0,
+                    keyframes: vec![PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+                    }],
+                },
+            },
+        };
+
+        let part = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                PartAnimationPlayer {
+                    root_entity: root,
+                    parent_object_id: 0,
+                    child_object_id: None,
+                    attachment: None,
+                    base_transform: Transform::IDENTITY,
+                    animations: vec![slot],
+                    apply_aim_yaw: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let transform = app
+            .world()
+            .get::<Transform>(part)
+            .copied()
+            .expect("part entity has Transform");
+        assert!(
+            (transform.translation - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-4,
+            "expected __base slot to be selected as fallback when moving"
+        );
+    }
 
     #[test]
     fn mirrored_winding_cache_inverts_triangle_indices() {
@@ -1391,6 +1477,7 @@ mod tests {
                 driver: PartAnimationDriver::Always,
                 speed_scale: 1.0,
                 time_offset_units: 0.0,
+                basis: Transform::IDENTITY,
                 clip: PartAnimationDef::Spin {
                     axis: Vec3::Y,
                     radians_per_unit: 1.0,
@@ -1532,6 +1619,7 @@ mod tests {
                 driver: PartAnimationDriver::Always,
                 speed_scale: 1.0,
                 time_offset_units: 0.0,
+                basis: Transform::IDENTITY,
                 clip: PartAnimationDef::Spin {
                     axis: Vec3::Y,
                     radians_per_unit: 1.0,
@@ -1810,6 +1898,7 @@ mod tests {
             driver: PartAnimationDriver::Always,
             speed_scale: 1.0,
             time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 2.0,
                 keyframes: vec![
@@ -1886,6 +1975,7 @@ mod tests {
             driver: PartAnimationDriver::Always,
             speed_scale: 1.0,
             time_offset_units: 1.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 2.0,
                 keyframes: vec![

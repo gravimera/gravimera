@@ -3110,6 +3110,7 @@ mod tests {
                         driver: PartAnimationDriver::Always,
                         speed_scale: 1.0,
                         time_offset_units: 0.0,
+                        basis: Transform::IDENTITY,
                         clip: PartAnimationDef::Spin {
                             axis: Vec3::Z,
                             radians_per_unit: 1.0,
@@ -3617,6 +3618,7 @@ mod tests {
                 driver: PartAnimationDriver::MoveDistance,
                 speed_scale: 1.0,
                 time_offset_units: 0.0,
+                basis: Transform::IDENTITY,
                 clip: PartAnimationDef::Spin {
                     axis: Vec3::Z,
                     radians_per_unit: 1.0,

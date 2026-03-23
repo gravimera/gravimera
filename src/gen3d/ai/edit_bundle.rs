@@ -124,6 +124,8 @@ pub(crate) struct PartAnimationSpecBundleV1 {
     #[serde(default)]
     pub(crate) time_offset_units: f32,
     #[serde(default)]
+    pub(crate) basis: TransformBundleV1,
+    #[serde(default)]
     pub(crate) clip: PartAnimationDefBundleV1,
 }
 
@@ -470,6 +472,7 @@ mod tests {
                 driver: PartAnimationDriver::MovePhase,
                 speed_scale: 1.0,
                 time_offset_units: 0.0,
+                basis: Transform::IDENTITY,
                 clip: PartAnimationDef::Spin {
                     axis: Vec3::Y,
                     radians_per_unit: 1.0,
@@ -673,6 +676,7 @@ impl PartAnimationSpecBundleV1 {
             driver: PartAnimationDriverBundleV1::from_driver(spec.driver),
             speed_scale: spec.speed_scale,
             time_offset_units: spec.time_offset_units,
+            basis: TransformBundleV1::from_transform(spec.basis),
             clip: PartAnimationDefBundleV1::from_clip(&spec.clip),
         }
     }
@@ -682,6 +686,7 @@ impl PartAnimationSpecBundleV1 {
             driver: self.driver.to_driver(),
             speed_scale: self.speed_scale,
             time_offset_units: self.time_offset_units,
+            basis: self.basis.to_transform(),
             clip: self.clip.to_clip()?,
         })
     }

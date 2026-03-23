@@ -24,6 +24,7 @@ mod edit_bundle;
 mod gemini;
 mod headless_prefab;
 mod info_store;
+mod internal_base_slot;
 mod job;
 mod mimo;
 mod motion_validation;

@@ -104,7 +104,7 @@ pub(crate) enum PartAnimationSpinAxisSpace {
 #[derive(Clone, Debug)]
 pub(crate) enum PartAnimationDef {
     /// A looping animation. `delta` transforms are applied in the part's local space as:
-    /// `animated = base * delta(t)`.
+    /// `animated = base * spec.basis * delta(t)`.
     Loop {
         duration_secs: f32,
         keyframes: Vec<PartAnimationKeyframeDef>,
@@ -158,6 +158,12 @@ pub(crate) struct PartAnimationSpec {
     /// This enables deterministic phase offsets (e.g. staggered legs) without duplicating
     /// keyframes.
     pub(crate) time_offset_units: f32,
+    /// Constant transform applied between the edge's base transform (e.g. attachment offset) and
+    /// the clip's time-varying `delta(t)`.
+    ///
+    /// This enables systems like Gen3D preserve-mode editing to change the base attachment offset
+    /// for an existing edge without changing how already-authored animation channels look.
+    pub(crate) basis: Transform,
     pub(crate) clip: PartAnimationDef,
 }
 
@@ -166,6 +172,10 @@ pub(crate) struct PartAnimationSlot {
     pub(crate) channel: Cow<'static, str>,
     pub(crate) spec: PartAnimationSpec,
 }
+
+/// Reserved internal channel used as a last-priority fallback to apply a constant basis transform
+/// when no other channel slot matches.
+pub(crate) const PART_ANIMATION_INTERNAL_BASE_CHANNEL: &str = "__base";
 
 #[derive(Clone, Debug)]
 pub(crate) struct ObjectPartDef {

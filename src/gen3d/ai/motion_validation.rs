@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::object::registry::{
     builtin_object_id, PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
-    PartAnimationSlot, PartAnimationSpinAxisSpace,
+    PartAnimationSlot, PartAnimationSpinAxisSpace, PART_ANIMATION_INTERNAL_BASE_CHANNEL,
 };
 
 use super::schema::{AiContactKindJson, AiJointKindJson};
@@ -1367,16 +1367,24 @@ fn compute_world_transforms_at_t(
                     PartAnimationDriver::MovePhase | PartAnimationDriver::MoveDistance
                 ) {
                     let delta = sample_move_delta(move_slot, t_m);
+                    let mut basis = move_slot.spec.basis;
+                    if !basis.translation.is_finite()
+                        || !basis.rotation.is_finite()
+                        || !basis.scale.is_finite()
+                    {
+                        basis = Transform::IDENTITY;
+                    }
+                    let base_with_basis = mul_transform(&animated_offset, &basis);
                     animated_offset = match &move_slot.spec.clip {
                         PartAnimationDef::Spin {
                             axis_space: PartAnimationSpinAxisSpace::ChildLocal,
                             ..
                         } => apply_child_local_delta_to_attachment_offset(
-                            animated_offset,
+                            base_with_basis,
                             child_anchor,
                             delta,
                         ),
-                        _ => mul_transform(&animated_offset, &delta),
+                        _ => mul_transform(&base_with_basis, &delta),
                     };
                 }
             }
@@ -1619,6 +1627,14 @@ fn validate_joints(
             };
 
             let child_anchor = anchor_transform_from_component(comp, att.child_anchor.as_str());
+            let mut basis = slot.spec.basis;
+            if !basis.translation.is_finite()
+                || !basis.rotation.is_finite()
+                || !basis.scale.is_finite()
+            {
+                basis = Transform::IDENTITY;
+            }
+            let base_with_basis = mul_transform(&att.offset, &basis);
             for (i, &sample_t_m) in samples_t_m.iter().enumerate() {
                 let sample_phase_01 = samples_phase_01.get(i).copied().unwrap_or(0.0);
                 let delta = sample_animation_slot_delta(slot, sample_t_m, sample_phase_01);
@@ -1627,14 +1643,14 @@ fn validate_joints(
                         axis_space: PartAnimationSpinAxisSpace::ChildLocal,
                         ..
                     } => apply_child_local_delta_to_attachment_offset(
-                        att.offset,
+                        base_with_basis,
                         child_anchor,
                         delta,
                     ),
-                    _ => mul_transform(&att.offset, &delta),
+                    _ => mul_transform(&base_with_basis, &delta),
                 };
                 let q_delta =
-                    (att.offset.rotation.inverse() * animated_offset.rotation).normalize();
+                    (base_with_basis.rotation.inverse() * animated_offset.rotation).normalize();
                 let angle_deg = quat_angle_deg(q_delta).abs();
                 let translation_m = delta.translation.length();
 
@@ -2298,12 +2314,21 @@ fn compute_world_transforms_for_channels(
         moving: bool,
         idle: bool,
     ) -> Option<&'a PartAnimationSlot> {
-        for channel in ["attack_primary", "action", "move", "idle"] {
+        for channel in [
+            "attack_primary",
+            "action",
+            "move",
+            "idle",
+            "ambient",
+            PART_ANIMATION_INTERNAL_BASE_CHANNEL,
+        ] {
             let active = match channel {
                 "attack_primary" => attacking_primary,
                 "action" => acting,
                 "move" => moving,
                 "idle" => idle,
+                "ambient" => true,
+                PART_ANIMATION_INTERNAL_BASE_CHANNEL => true,
                 _ => false,
             };
             if !active {
@@ -2387,16 +2412,24 @@ fn compute_world_transforms_for_channels(
                     attack_elapsed_secs,
                     action_elapsed_secs,
                 );
+                let mut basis = slot.spec.basis;
+                if !basis.translation.is_finite()
+                    || !basis.rotation.is_finite()
+                    || !basis.scale.is_finite()
+                {
+                    basis = Transform::IDENTITY;
+                }
+                let base_with_basis = mul_transform(&animated_offset, &basis);
                 animated_offset = match &slot.spec.clip {
                     PartAnimationDef::Spin {
                         axis_space: PartAnimationSpinAxisSpace::ChildLocal,
                         ..
                     } => apply_child_local_delta_to_attachment_offset(
-                        animated_offset,
+                        base_with_basis,
                         child_anchor,
                         delta,
                     ),
-                    _ => mul_transform(&animated_offset, &delta),
+                    _ => mul_transform(&base_with_basis, &delta),
                 };
             }
 
@@ -2607,6 +2640,7 @@ mod tests {
             driver: PartAnimationDriver::MovePhase,
             speed_scale: 1.0,
             time_offset_units: 0.7,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 1.4,
                 keyframes: vec![
@@ -2685,6 +2719,7 @@ mod tests {
             driver: PartAnimationDriver::MovePhase,
             speed_scale: 1.0,
             time_offset_units: 0.7,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 1.4,
                 keyframes: vec![
@@ -2758,6 +2793,7 @@ mod tests {
             driver: PartAnimationDriver::MovePhase,
             speed_scale: 1.0,
             time_offset_units: 0.7,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 1.4,
                 keyframes: vec![PartAnimationKeyframeDef {
@@ -2928,6 +2964,7 @@ mod tests {
             driver: PartAnimationDriver::MovePhase,
             speed_scale: 1.0,
             time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 1.0,
                 keyframes: vec![
@@ -2996,6 +3033,7 @@ mod tests {
             driver: PartAnimationDriver::Always,
             speed_scale: 1.0,
             time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 2.0,
                 keyframes: vec![
@@ -3063,6 +3101,7 @@ mod tests {
             driver: PartAnimationDriver::Always,
             speed_scale: 1.0,
             time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 2.0,
                 keyframes: vec![
@@ -3135,6 +3174,7 @@ mod tests {
             driver: PartAnimationDriver::Always,
             speed_scale: 1.0,
             time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 2.0,
                 keyframes: vec![
@@ -3212,6 +3252,7 @@ mod tests {
             driver: PartAnimationDriver::MovePhase,
             speed_scale: 1.0,
             time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 1.0,
                 keyframes: vec![PartAnimationKeyframeDef {
@@ -3275,6 +3316,7 @@ mod tests {
             driver: PartAnimationDriver::MoveDistance,
             speed_scale: 1.0,
             time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Spin {
                 axis: Vec3::X,
                 radians_per_unit: 4.0,
@@ -3357,6 +3399,7 @@ mod tests {
                     driver: PartAnimationDriver::MoveDistance,
                     speed_scale: 1.0,
                     time_offset_units: 0.0,
+                    basis: Transform::IDENTITY,
                     clip: PartAnimationDef::Spin {
                         axis: Vec3::Y,
                         radians_per_unit: 1.0,
@@ -3402,6 +3445,7 @@ mod tests {
             driver: PartAnimationDriver::AttackTime,
             speed_scale: 1.0,
             time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 1.0,
                 keyframes: vec![
@@ -3470,6 +3514,7 @@ mod tests {
             driver: PartAnimationDriver::AttackTime,
             speed_scale: 1.0,
             time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
             clip: PartAnimationDef::Loop {
                 duration_secs: 1.0,
                 keyframes: vec![

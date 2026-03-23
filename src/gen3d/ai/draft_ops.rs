@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::object::registry::{
     builtin_object_id, MeshKey, ObjectDef, ObjectPartDef, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
-    PrimitiveParams, PrimitiveVisualDef,
+    PrimitiveParams, PrimitiveVisualDef, PART_ANIMATION_INTERNAL_BASE_CHANNEL,
 };
 
 use super::super::state::Gen3dDraft;
@@ -541,6 +541,7 @@ fn animation_slot_from_spec(
             driver,
             speed_scale: slot.speed_scale,
             time_offset_units: slot.time_offset_units,
+            basis: Transform::IDENTITY,
             clip,
         },
     })
@@ -691,6 +692,7 @@ fn apply_one_op(
                 )));
             };
 
+            let old_offset = att.offset;
             let diff = apply_transform_delta(&mut att.offset, set, true, "set").map_err(reject)?;
             if !att.offset.translation.is_finite()
                 || !att.offset.rotation.is_finite()
@@ -698,6 +700,12 @@ fn apply_one_op(
             {
                 return Err(reject("attachment offset became non-finite".into()));
             }
+            super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
+            super::internal_base_slot::rebase_slot_bases_for_offset_change(
+                old_offset,
+                att.offset,
+                &mut att.animations,
+            );
 
             state.needs_resolve_transforms = true;
             state.needs_sync_attachments = true;
@@ -936,6 +944,12 @@ fn apply_one_op(
         } => {
             let child_name = child_component.trim();
             let channel = channel.trim().to_string();
+            if channel == PART_ANIMATION_INTERNAL_BASE_CHANNEL {
+                return Err(reject(format!(
+                    "Animation channel `{}` is reserved (managed internally).",
+                    PART_ANIMATION_INTERNAL_BASE_CHANNEL
+                )));
+            }
             let planned_child = find_planned_component_mut(planned, child_name).map_err(reject)?;
 
             let replacement = animation_slot_from_spec(&channel, slot).map_err(reject)?;
@@ -966,6 +980,7 @@ fn apply_one_op(
                         serde_json::Value::Number(affected.into()),
                     );
                 }
+                super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
                 mark_changed_component(state, att.parent.as_str());
             } else {
                 let indices: Vec<usize> = planned_child
@@ -1010,6 +1025,12 @@ fn apply_one_op(
             let channel = channel.trim();
             if channel.is_empty() {
                 return Err(reject("channel must be non-empty".into()));
+            }
+            if channel == PART_ANIMATION_INTERNAL_BASE_CHANNEL {
+                return Err(reject(format!(
+                    "Animation channel `{}` is reserved (managed internally).",
+                    PART_ANIMATION_INTERNAL_BASE_CHANNEL
+                )));
             }
             if !scale.is_finite() || *scale <= 0.0 || *scale > 10.0 {
                 return Err(reject("scale must be finite and in (0, 10].".into()));
@@ -1139,6 +1160,12 @@ fn apply_one_op(
             if channel.is_empty() {
                 return Err(reject("channel must be non-empty".into()));
             }
+            if channel == PART_ANIMATION_INTERNAL_BASE_CHANNEL {
+                return Err(reject(format!(
+                    "Animation channel `{}` is reserved (managed internally).",
+                    PART_ANIMATION_INTERNAL_BASE_CHANNEL
+                )));
+            }
             let planned_child = find_planned_component_mut(planned, child_name).map_err(reject)?;
             let removed = if let Some(att) = planned_child.attach_to.as_mut() {
                 let before = att.animations.len();
@@ -1150,6 +1177,7 @@ fn apply_one_op(
                         channel, child_name
                     )));
                 }
+                super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
                 mark_changed_component(state, att.parent.as_str());
                 removed
             } else {
@@ -1420,6 +1448,9 @@ pub(super) fn query_component_parts_v1(
                         serde_json::Value::Array(
                             part.animations
                                 .iter()
+                                .filter(|slot| {
+                                    slot.channel.as_ref() != PART_ANIMATION_INTERNAL_BASE_CHANNEL
+                                })
                                 .map(|slot| {
                                     serde_json::json!({
                                         "channel": slot.channel.as_ref(),
@@ -1948,6 +1979,7 @@ mod tests {
                 driver: PartAnimationDriver::MovePhase,
                 speed_scale: 1.0,
                 time_offset_units: 0.0,
+                basis: Transform::IDENTITY,
                 clip: PartAnimationDef::Loop {
                     duration_secs: 1.0,
                     keyframes: vec![

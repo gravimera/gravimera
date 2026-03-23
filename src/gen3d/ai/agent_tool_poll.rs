@@ -2950,6 +2950,7 @@ pub(super) fn poll_agent_tool(
                                                 driver,
                                                 speed_scale,
                                                 time_offset_units,
+                                                basis: Transform::IDENTITY,
                                                 clip,
                                             },
                                         });
@@ -2962,6 +2963,9 @@ pub(super) fn poll_agent_tool(
                                             !replace.contains(slot.channel.as_ref())
                                         });
                                         att.animations.extend(replacement_slots);
+                                        super::internal_base_slot::normalize_internal_base_slot(
+                                            &mut att.animations,
+                                        );
                                     }
                                 }
 

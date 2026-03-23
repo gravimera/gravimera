@@ -439,6 +439,8 @@ struct SceneDatPartAnimation {
     speed_scale: f32,
     #[prost(float, tag = "5")]
     time_offset_units: f32,
+    #[prost(message, optional, tag = "8")]
+    basis: Option<SceneDatTransform>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
@@ -1161,12 +1163,24 @@ fn part_animation_spec_to_dat(spec: &PartAnimationSpec) -> SceneDatPartAnimation
     } else {
         0.0
     };
+    let basis = if spec.basis.translation.is_finite()
+        && spec.basis.rotation.is_finite()
+        && spec.basis.scale.is_finite()
+        && (spec.basis.translation != Vec3::ZERO
+            || spec.basis.rotation != Quat::IDENTITY
+            || spec.basis.scale != Vec3::ONE)
+    {
+        Some(transform_to_dat(&spec.basis))
+    } else {
+        None
+    };
 
     SceneDatPartAnimation {
         kind: Some(kind),
         driver,
         speed_scale,
         time_offset_units,
+        basis,
     }
 }
 
@@ -1191,6 +1205,14 @@ fn part_animation_spec_from_dat(animation: &SceneDatPartAnimation) -> Option<Par
     } else {
         0.0
     };
+    let mut basis = animation
+        .basis
+        .as_ref()
+        .map(transform_from_dat)
+        .unwrap_or(Transform::IDENTITY);
+    if !basis.translation.is_finite() || !basis.rotation.is_finite() || !basis.scale.is_finite() {
+        basis = Transform::IDENTITY;
+    }
 
     let clip = match kind {
         scene_dat_part_animation::Kind::Loop(loop_)
@@ -1266,6 +1288,7 @@ fn part_animation_spec_from_dat(animation: &SceneDatPartAnimation) -> Option<Par
         driver,
         speed_scale,
         time_offset_units,
+        basis,
         clip,
     })
 }
@@ -2550,6 +2573,7 @@ mod tests {
                             driver: PartAnimationDriver::MovePhase,
                             speed_scale: 1.25,
                             time_offset_units: 0.4,
+                            basis: Transform::IDENTITY,
                             clip: PartAnimationDef::Loop {
                                 duration_secs: 2.0,
                                 keyframes: vec![
@@ -2572,6 +2596,7 @@ mod tests {
                             driver: PartAnimationDriver::Always,
                             speed_scale: 2.0,
                             time_offset_units: 0.0,
+                            basis: Transform::IDENTITY,
                             clip: PartAnimationDef::Spin {
                                 axis: Vec3::Z,
                                 radians_per_unit: 3.5,

@@ -741,24 +741,47 @@ struct PartAnimationSpecJson {
     driver: PartAnimationDriverJson,
     speed_scale: f32,
     time_offset_units: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    basis: Option<TransformJson>,
     clip: PartAnimationDefJson,
 }
 
 impl PartAnimationSpecJson {
     fn from_spec(spec: &PartAnimationSpec) -> Self {
+        let basis = if spec.basis.translation.is_finite()
+            && spec.basis.rotation.is_finite()
+            && spec.basis.scale.is_finite()
+            && (spec.basis.translation != Vec3::ZERO
+                || spec.basis.rotation != Quat::IDENTITY
+                || spec.basis.scale != Vec3::ONE)
+        {
+            Some(TransformJson::from_transform(spec.basis))
+        } else {
+            None
+        };
         Self {
             driver: PartAnimationDriverJson::from_driver(spec.driver),
             speed_scale: spec.speed_scale,
             time_offset_units: spec.time_offset_units,
+            basis,
             clip: PartAnimationDefJson::from_clip(&spec.clip),
         }
     }
 
     fn to_spec(&self) -> Result<PartAnimationSpec, String> {
+        let mut basis = self
+            .basis
+            .map(|t| t.to_transform())
+            .unwrap_or(Transform::IDENTITY);
+        if !basis.translation.is_finite() || !basis.rotation.is_finite() || !basis.scale.is_finite()
+        {
+            basis = Transform::IDENTITY;
+        }
         Ok(PartAnimationSpec {
             driver: self.driver.to_driver(),
             speed_scale: self.speed_scale,
             time_offset_units: self.time_offset_units,
+            basis,
             clip: self.clip.to_clip()?,
         })
     }

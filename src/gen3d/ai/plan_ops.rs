@@ -957,7 +957,19 @@ fn apply_plan_acceptance(
                 if same_interface {
                     new_att.animations = old_att.animations.clone();
                     new_att.joint = old_att.joint.clone();
+                    super::internal_base_slot::normalize_internal_base_slot(&mut new_att.animations);
+                    super::internal_base_slot::rebase_slot_bases_for_offset_change(
+                        old_att.offset,
+                        new_att.offset,
+                        &mut new_att.animations,
+                    );
                 }
+            }
+        }
+
+        for comp in planned_components.iter_mut() {
+            if let Some(att) = comp.attach_to.as_mut() {
+                super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
             }
         }
 
@@ -1032,6 +1044,21 @@ fn apply_plan_acceptance(
         );
     } else {
         draft_next.defs = defs;
+    }
+
+    if !can_preserve_geometry {
+        for comp in planned_components.iter_mut() {
+            if let Some(att) = comp.attach_to.as_mut() {
+                super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
+            }
+        }
+        convert::sync_attachment_tree_to_defs(&planned_components, &mut draft_next)
+            .map_err(|err| format!("Failed to sync attachments after base-slot normalization: {err}"))?;
+        convert::update_root_def_from_planned_components(
+            &planned_components,
+            &plan_collider,
+            &mut draft_next,
+        );
     }
 
     // Commit job + draft.

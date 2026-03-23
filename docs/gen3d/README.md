@@ -113,6 +113,54 @@ deterministic “apply-by-reference” tools:
 
 Both tools apply via `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev` gating.
 
+## Motion slots: per-slot basis + internal `__base`
+
+When a component is attached (`attach_to`), the child’s placement is controlled by:
+
+- `attach_to.offset` (the authored base transform in the join frame)
+- optional per-edge animation slots (`attach_to.animations[]`)
+
+At runtime, the selected slot composes transforms as:
+
+```
+animated_offset(t) = attach_to.offset * slot.spec.basis * delta(t)
+```
+
+Where:
+
+- `delta(t)` is sampled from the animation clip (`loop`/`once`/`ping_pong`/`spin`)
+- `slot.spec.basis` is a constant per-slot transform applied between the base offset and the delta
+
+### Why basis exists (stable edits)
+
+In preserve-mode edits, Gen3D can legally change `attach_to.offset` (when
+`constraints.preserve_edit_policy = "allow_offsets"`). Without a separate basis, changing the base
+offset changes the coordinate basis used to apply deltas, which makes already-authored channels
+(idle/move/action/attack) look “wrong”.
+
+To keep existing animations visually stable, when an attachment’s interface is unchanged and
+`attach_to.offset` changes from `old_offset` → `new_offset`, the engine rebases preserved slot bases:
+
+```
+basis_new = inverse(new_offset) * old_offset * basis_old
+```
+
+This keeps `new_offset * basis_new` equal to `old_offset * basis_old` (so the animation looks the
+same), without rewriting keyframes.
+
+### Internal `__base` fallback channel
+
+`__base` is a reserved internal channel used as the last-priority fallback slot (after `ambient`).
+It is automatically maintained on attachment edges:
+
+- If an attachment edge has at least one non-`__base` slot, ensure exactly one `__base` slot exists.
+- If an attachment edge has no non-`__base` slots, ensure there is no `__base` slot.
+
+This lets the system keep the “rest pose” stable even for channels where no slot exists (because
+the channel can fall back to `__base`, which carries a rebased `basis`).
+
+The AI/tools should not author or edit `__base` directly.
+
 ## Debugging
 
 Useful tools:
