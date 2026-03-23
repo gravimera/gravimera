@@ -1566,7 +1566,6 @@ fn validate_joints(
 
             let mut max_angle_deg: f32 = 0.0;
             let mut max_angle_phase: f32 = 0.0;
-            let mut max_angle_q_delta = Quat::IDENTITY;
             let mut min_angle_deg: f32 = f32::INFINITY;
             let mut min_angle_phase: f32 = 0.0;
 
@@ -1642,7 +1641,6 @@ fn validate_joints(
                 if angle_deg > max_angle_deg {
                     max_angle_deg = angle_deg;
                     max_angle_phase = sample_phase_01;
-                    max_angle_q_delta = q_delta;
                 }
                 if angle_deg < min_angle_deg {
                     min_angle_deg = angle_deg;
@@ -1752,28 +1750,6 @@ fn validate_joints(
                         max_angle_deg,
                         max_angle_phase,
                     );
-                }
-                AiJointKindJson::Fixed => {
-                    let warn_deg = 2.0;
-                    if max_angle_deg.is_finite() && max_angle_deg > warn_deg {
-                        let observed_axis = quat_axis(max_angle_q_delta);
-                        issues.push(MotionIssue {
-                            severity: MotionSeverity::Warn,
-                            kind: "fixed_joint_rotates",
-                            component_id: component_id.clone(),
-                            component_name: component_name.clone(),
-                            channel: channel.clone(),
-                            message: "Fixed joint rotates under animation (expected no rotation)."
-                                .into(),
-                            evidence: serde_json::json!({
-                                "max_angle_degrees": max_angle_deg,
-                                "at_phase_01": max_angle_phase,
-                                "observed_axis_join": observed_axis.map(|v| [v.x, v.y, v.z]),
-                                "tolerances": { "warn_degrees": warn_deg },
-                            }),
-                            score: max_angle_deg,
-                        });
-                    }
                 }
                 AiJointKindJson::Ball => {
                     // Generic rule: any joint channel should not stay far from neutral for the

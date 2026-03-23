@@ -14,7 +14,6 @@ pub(crate) const TOOL_ID_QUERY_COMPONENT_PARTS: &str = "query_component_parts_v1
 pub(crate) const TOOL_ID_VALIDATE: &str = "validate_v1";
 pub(crate) const TOOL_ID_SMOKE_CHECK: &str = "smoke_check_v1";
 pub(crate) const TOOL_ID_MOTION_METRICS: &str = "motion_metrics_v1";
-pub(crate) const TOOL_ID_SUGGEST_MOTION_REPAIRS: &str = "suggest_motion_repairs_v1";
 pub(crate) const TOOL_ID_QA: &str = "qa_v1";
 
 pub(crate) const TOOL_ID_INFO_KV_LIST_KEYS: &str = "info_kv_list_keys_v1";
@@ -31,7 +30,6 @@ pub(crate) const TOOL_ID_APPLY_DRAFT_OPS: &str = "apply_draft_ops_v1";
 pub(crate) const TOOL_ID_APPLY_LAST_DRAFT_OPS: &str = "apply_last_draft_ops_v1";
 pub(crate) const TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT: &str = "apply_draft_ops_from_event_v1";
 pub(crate) const TOOL_ID_APPLY_PLAN_OPS: &str = "apply_plan_ops_v1";
-pub(crate) const TOOL_ID_RECENTER_ATTACHMENT_MOTION: &str = "recenter_attachment_motion_v1";
 pub(crate) const TOOL_ID_SNAPSHOT: &str = "snapshot_v1";
 pub(crate) const TOOL_ID_LIST_SNAPSHOTS: &str = "list_snapshots_v1";
 pub(crate) const TOOL_ID_DIFF_SNAPSHOTS: &str = "diff_snapshots_v1";
@@ -207,7 +205,7 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 tool_id: TOOL_ID_SMOKE_CHECK,
                 title: "Smoke check",
                 one_line_summary:
-                    "Checks behavior/motion (bounded); may apply deterministic motion contact auto-repair.",
+                    "Read-only: checks behavior/motion (bounded); returns issues + motion_validation report.",
                 args_schema: "{}",
                 args_example: serde_json::json!({}),
             },
@@ -220,17 +218,10 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 args_example: serde_json::json!({ "version": 1, "sample_count": 32 }),
             },
             Gen3dToolDescriptorV1 {
-                tool_id: TOOL_ID_SUGGEST_MOTION_REPAIRS,
-                title: "Suggest motion repairs",
-                one_line_summary: "Read-only: suggests deterministic patches for motion_validation errors (no mutation; explicit apply required).",
-                args_schema: "{ version?: 1, max_suggestions?: number, safety_margin_degrees?: number }",
-                args_example: serde_json::json!({ "version": 1, "max_suggestions": 8, "safety_margin_degrees": 0.2 }),
-            },
-            Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_QA,
                 title: "QA",
                 one_line_summary:
-                    "Runs validate_v1 + smoke_check_v1; may auto-repair motion contact; caches by state_hash to prevent repeating inspection loops (use force=true to bypass).",
+                    "Runs validate_v1 + smoke_check_v1; caches by state_hash to prevent repeating inspection loops (use force=true to bypass).",
                 args_schema: "{ force?: bool }",
                 args_example: serde_json::json!({}),
             },
@@ -418,14 +409,6 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                     "Mutates draft: apply DraftOps from a prior Info Store `tool_call_result` event_id for `llm_generate_draft_ops_v1` (atomic + `if_assembly_rev` gated).",
                 args_schema: "{ event_id: number }",
                 args_example: serde_json::json!({ "event_id": 123 }),
-            },
-            Gen3dToolDescriptorV1 {
-                tool_id: TOOL_ID_RECENTER_ATTACHMENT_MOTION,
-                title: "Recenter attachment motion",
-                one_line_summary: "Mutates draft: deterministically recenter attachment delta rotations around neutral (fixes joint_rest_bias_large without changing motion).",
-                args_schema:
-                    "{ version?: 1, child_components: (string|number)[], channels?: string[], target?: \"warn\"|\"error\", dry_run?: bool }",
-                args_example: serde_json::json!({ "child_components": ["leg_l_shin", "leg_r_shin"], "channels": ["idle","move"], "target": "warn" }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_SNAPSHOT,

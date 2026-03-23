@@ -64,7 +64,10 @@ pub(crate) fn gen3d_generate_button(
     mut workshop: ResMut<Gen3dWorkshop>,
     mut job: ResMut<Gen3dAiJob>,
     mut draft: ResMut<Gen3dDraft>,
-    mut buttons: Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<Gen3dGenerateButton>>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        With<Gen3dGenerateButton>,
+    >,
     mut last_interaction: Local<Option<Interaction>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
@@ -4823,7 +4826,6 @@ pub(super) fn compute_gen3d_plan_hash(
                 let joint = att.joint.as_ref().map(|j| {
                     serde_json::json!({
                         "kind": match j.kind {
-                            AiJointKindJson::Fixed => "fixed",
                             AiJointKindJson::Hinge => "hinge",
                             AiJointKindJson::Ball => "ball",
                             AiJointKindJson::Free => "free",
@@ -5016,7 +5018,6 @@ pub(super) fn build_gen3d_scene_graph_summary(
                     json.insert(
                         "kind".into(),
                         serde_json::Value::String(match joint.kind {
-                            AiJointKindJson::Fixed => "fixed",
                             AiJointKindJson::Hinge => "hinge",
                             AiJointKindJson::Ball => "ball",
                             AiJointKindJson::Free => "free",
@@ -5228,7 +5229,6 @@ pub(super) fn build_gen3d_scene_graph_summary(
             let att = c.attach_to.as_ref()?;
             let pos = att.offset.translation;
             let joint_kind = att.joint.as_ref().map(|joint| match joint.kind {
-                AiJointKindJson::Fixed => "fixed",
                 AiJointKindJson::Hinge => "hinge",
                 AiJointKindJson::Ball => "ball",
                 AiJointKindJson::Free => "free",

@@ -477,7 +477,7 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
                 child_anchor: "base".into(),
                 offset: Transform::IDENTITY,
                 joint: Some(super::AiJointJson {
-                    kind: super::AiJointKindJson::Fixed,
+                    kind: super::AiJointKindJson::Free,
                     axis_join: None,
                     limits_degrees: None,
                     swing_limits_degrees: None,
@@ -540,7 +540,7 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
         .and_then(|j| j.get("kind"))
         .and_then(|v| v.as_str())
         .expect("joint kind");
-    assert_eq!(kind, "fixed");
+    assert_eq!(kind, "free");
 }
 
 #[test]

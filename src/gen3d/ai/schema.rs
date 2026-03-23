@@ -325,9 +325,11 @@ pub(crate) struct AiPlanComponentJson {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AiJointKindJson {
-    Fixed,
     Hinge,
     Ball,
+    // Legacy alias: older plans/prefabs used "fixed". Treat it as "free" to maximize DoF and
+    // avoid surprising constraint semantics in motion authoring/validation.
+    #[serde(alias = "fixed")]
     Free,
     #[serde(other)]
     Unknown,

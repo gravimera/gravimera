@@ -26,8 +26,6 @@ mod headless_prefab;
 mod info_store;
 mod job;
 mod mimo;
-mod motion_recenter;
-mod motion_repairs;
 mod motion_validation;
 mod openai;
 mod orchestration;

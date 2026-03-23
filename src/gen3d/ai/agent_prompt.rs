@@ -10,9 +10,8 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION, TOOL_ID_LLM_GENERATE_MOTIONS,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
-    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT,
-    TOOL_ID_SUGGEST_MOTION_REPAIRS, TOOL_ID_VALIDATE,
+    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use uuid::Uuid;
@@ -67,15 +66,13 @@ Rules:\n\
     - If the unit has an attack profile, you MAY include `attack_primary`.\n\
   - `llm_generate_motion_v1` authors EXACTLY ONE channel per call (args.channel) and replaces ONLY that channel on targeted edges.\n\
   - If the prompt implies stylized/custom motion (slither/coil/tentacle/undulate/tremble/majestic/etc), you MAY call `llm_generate_motion_v1` for a custom channel name even if move/action slots already exist.\n\
-  - If `qa_v1` reports `joint_rest_bias_large`, prefer calling `recenter_attachment_motion_v1` on the offending child components/channels first; it is deterministic and preserves motion exactly by re-parameterizing offset vs delta.\n\
-    - If it returns applied=false or the issue persists, then re-author the offending channel(s) via `llm_generate_motion_v1` (one-by-one) or `llm_generate_motions_v1` (batch).\n\
-  - If `qa_v1` reports `hinge_limit_exceeded`, call `suggest_motion_repairs_v1` to get deterministic patch options (relax joint limits vs scale rotation), then explicitly apply ONE chosen patch via `apply_draft_ops_v1`.\n\
-    - Only fall back to re-authoring via `llm_generate_motion_v1`/`llm_generate_motions_v1` if the suggestions are unsuitable (ex: would relax limits too much, or would scale motion too aggressively).\n\
+  - If `qa_v1` reports `joint_rest_bias_large`, re-author the offending channel(s) via `llm_generate_motion_v1` (one-by-one) or `llm_generate_motions_v1` (batch).\n\
+  - If `qa_v1` reports `hinge_limit_exceeded`, either re-author with smaller rotation deltas OR explicitly update that edge's hinge limits via `apply_draft_ops_v1` set_attachment_joint.\n\
   - If `qa_v1` reports motion_validation issues with severity=\"error\" that are primarily animation-delta problems (examples: `hinge_off_axis`, `time_offset_no_effect`), prefer re-authoring the offending channel(s) via `llm_generate_motion_v1`/`llm_generate_motions_v1` (do NOT loop `llm_review_delta_v1` repeatedly for these).\n\
   - Do NOT chase warn-only motion_validation issues (example: `attack_self_intersection`). Treat them as informational and finish once required QA is ok.\n\
   - If `qa_v1` reports `contact_stance_missing`, prefer `llm_review_delta_v1` to add/fix `contacts[].stance` (motion authoring cannot create stance metadata).\n\
   - If `qa_v1` reports `hinge_axis_missing` or `hinge_axis_invalid`, fix the joint axis (replan OR `apply_draft_ops_v1` set_attachment_joint) before motion authoring.\n\
-  - If `qa_v1` reports `fixed_joint_rotates` on a joint you INTEND to rotate, update that edge's joint metadata (usually to `hinge` with a valid `axis_join`) so QA reflects the intended degrees-of-freedom.\n\
+  - If `qa_v1` reports `hinge_off_axis` on a hinge joint and you prefer more animation freedom, change that edge's joint kind to `ball` or `free` (then re-author the motion).\n\
   - If the user complains about stride/step size (\"stride too small\", \"bigger steps\", \"feet barely move\"), call `motion_metrics_v1` to measure stride + planted-contact slip/lift BEFORE re-authoring motion; then use those numeric metrics explicitly (goal + measurement) in your fix.\n\
   - `render_preview_v1` is local-only rendering; it does NOT send images to the LLM. Use `render_preview_v1` with `include_motion_sheets=true` to generate motion sprite sheets for quick inspection.\n\
 - Visual QA / appearance review:\n\
@@ -770,27 +767,6 @@ pub(super) fn build_agent_user_text(
                     }
                 }
             }
-            TOOL_ID_RECENTER_ATTACHMENT_MOTION => {
-                let applied_any = value.get("applied_any").and_then(|v| v.as_bool());
-                let children = value.get("children").and_then(|v| v.as_array());
-                let applied_children = children.map(|arr| {
-                    arr.iter()
-                        .filter(|child| {
-                            child.get("applied").and_then(|v| v.as_bool()) == Some(true)
-                        })
-                        .count()
-                });
-                out.push_str("ok");
-                if let Some(applied_any) = applied_any {
-                    out.push_str(&format!(" applied_any={applied_any}"));
-                }
-                if let Some(applied_children) = applied_children {
-                    out.push_str(&format!(" applied_children={applied_children}"));
-                }
-                if let Some(children) = children {
-                    out.push_str(&format!(" children={}", children.len()));
-                }
-            }
             TOOL_ID_RENDER_PREVIEW => {
                 fn join_exact_ids(ids: &[&str], max_chars: usize) -> String {
                     let mut out = String::new();
@@ -1041,160 +1017,6 @@ pub(super) fn build_agent_user_text(
                         stance_slip_max.max(0.0)
                     ));
                 }
-            }
-            TOOL_ID_SUGGEST_MOTION_REPAIRS => {
-                const MAX_LINE_CHARS: usize = 3000;
-                const MAX_APPLY_ARGS_CHARS: usize = 800;
-                const MAX_SUGGESTIONS: usize = 8;
-
-                fn impact_snip(impact: &serde_json::Value) -> Option<String> {
-                    let obj = impact.as_object()?;
-                    if let Some(scale) = obj.get("scale_factor").and_then(|v| v.as_f64()) {
-                        if scale.is_finite() {
-                            return Some(format!("scale_factor={scale:.4}"));
-                        }
-                    }
-                    if let Some(relax) = obj.get("relax_degrees").and_then(|v| v.as_f64()) {
-                        if relax.is_finite() {
-                            return Some(format!("relax_degrees={relax:.3}"));
-                        }
-                    }
-                    if let Some(limits) = obj.get("new_limits_degrees").and_then(|v| v.as_array()) {
-                        if limits.len() == 2 {
-                            let a = limits.first().and_then(|v| v.as_f64());
-                            let b = limits.get(1).and_then(|v| v.as_f64());
-                            if let (Some(a), Some(b)) = (a, b) {
-                                if a.is_finite() && b.is_finite() {
-                                    return Some(format!("new_limits_degrees=[{a:.3},{b:.3}]"));
-                                }
-                            }
-                        }
-                    }
-                    let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
-                    keys.sort();
-                    (!keys.is_empty())
-                        .then(|| truncate_for_prompt(&format!("impact_keys={keys:?}"), 120))
-                }
-
-                let suggestions_arr = value.get("suggestions").and_then(|v| v.as_array());
-                let suggestions_total = suggestions_arr.map(|a| a.len()).unwrap_or(0);
-                let truncated = value
-                    .get("truncated")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-
-                let budget = MAX_LINE_CHARS.saturating_sub(char_count(&out));
-
-                let mut summary =
-                    format!("ok suggestions={suggestions_total} truncated={truncated}");
-
-                let Some(suggestions_arr) = suggestions_arr else {
-                    out.push_str(&truncate_for_prompt(&summary, budget));
-                    return out;
-                };
-
-                let mut items_text = String::new();
-                let mut included = 0usize;
-                for suggestion in suggestions_arr.iter().take(MAX_SUGGESTIONS) {
-                    let id = suggestion.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                    let kind = suggestion
-                        .get("kind")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let component_name = suggestion
-                        .get("component_name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let channel = suggestion
-                        .get("channel")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let impact = suggestion
-                        .get("impact")
-                        .and_then(|v| (!v.is_null()).then_some(v))
-                        .and_then(impact_snip);
-
-                    let apply_args_field = match suggestion.get("apply_draft_ops_args") {
-                        Some(apply_args) if !apply_args.is_null() => {
-                            let json = apply_args.to_string();
-                            if char_count(&json) <= MAX_APPLY_ARGS_CHARS {
-                                format!("apply_draft_ops_args={json}")
-                            } else {
-                                format!(
-                                    "apply_draft_ops_args=<omitted chars={}>",
-                                    char_count(&json)
-                                )
-                            }
-                        }
-                        _ => "apply_draft_ops_args=<missing>".to_string(),
-                    };
-
-                    let mut item = String::new();
-                    item.push('{');
-                    if !id.trim().is_empty() {
-                        item.push_str("id=");
-                        item.push_str(&truncate_for_prompt(id.trim(), 96));
-                        item.push_str(", ");
-                    }
-                    if !kind.trim().is_empty() {
-                        item.push_str("kind=");
-                        item.push_str(&truncate_for_prompt(kind.trim(), 64));
-                        item.push_str(", ");
-                    }
-                    if !component_name.trim().is_empty() {
-                        item.push_str("component=");
-                        item.push_str(&truncate_for_prompt(component_name.trim(), 64));
-                        item.push_str(", ");
-                    }
-                    if !channel.trim().is_empty() {
-                        item.push_str("channel=");
-                        item.push_str(&truncate_for_prompt(channel.trim(), 64));
-                        item.push_str(", ");
-                    }
-                    if let Some(impact) = impact.as_deref() {
-                        if !impact.trim().is_empty() {
-                            item.push_str("impact=");
-                            item.push_str(&truncate_for_prompt(impact.trim(), 120));
-                            item.push_str(", ");
-                        }
-                    }
-                    item.push_str(&apply_args_field);
-                    item.push('}');
-
-                    let sep = if included == 0 { "" } else { ", " };
-                    let omitted_after = suggestions_total.saturating_sub(included + 1);
-                    let omitted_seg = if omitted_after > 0 {
-                        format!(" omitted_suggestions={omitted_after}")
-                    } else {
-                        String::new()
-                    };
-                    let candidate_len = char_count(&summary)
-                        + char_count(" items=[")
-                        + char_count(&items_text)
-                        + char_count(sep)
-                        + char_count(&item)
-                        + char_count("]")
-                        + char_count(&omitted_seg);
-                    if candidate_len > budget {
-                        break;
-                    }
-
-                    items_text.push_str(sep);
-                    items_text.push_str(&item);
-                    included += 1;
-                }
-
-                if included > 0 {
-                    summary.push_str(" items=[");
-                    summary.push_str(&items_text);
-                    summary.push(']');
-                }
-                let omitted = suggestions_total.saturating_sub(included);
-                if omitted > 0 {
-                    summary.push_str(&format!(" omitted_suggestions={omitted}"));
-                }
-
-                out.push_str(&truncate_for_prompt(&summary, budget));
             }
             TOOL_ID_GET_PLAN_TEMPLATE => {
                 let plan_template_kv = value.get("plan_template_kv");
@@ -3329,71 +3151,6 @@ mod tests {
     }
 
     #[test]
-    fn summarize_suggest_motion_repairs_includes_inline_apply_args_when_small() {
-        let config = AppConfig::default();
-        let job = Gen3dAiJob::default();
-        let workshop = Gen3dWorkshop::default();
-        let registry = Gen3dToolRegistryV1::default();
-
-        let patch = serde_json::json!({
-            "version": 1,
-            "atomic": true,
-            "if_assembly_rev": 7,
-            "ops": [
-                {
-                    "kind": "set_attachment_joint",
-                    "child_component": "arm",
-                    "set_joint": { "kind": "hinge", "axis_join": [1.0, 0.0, 0.0], "limits_degrees": [-30.0, 90.0] },
-                }
-            ]
-        });
-        let expected_json = patch.to_string();
-
-        let recent_tool_results = vec![Gen3dToolResultJsonV1::ok(
-            "call_1".to_string(),
-            TOOL_ID_SUGGEST_MOTION_REPAIRS.to_string(),
-            serde_json::json!({
-                "ok": true,
-                "version": 1,
-                "suggestions": [
-                    {
-                        "id": "hinge_limit_exceeded/arm/move/relax_joint_limits",
-                        "kind": "relax_joint_limits",
-                        "component_name": "arm",
-                        "channel": "move",
-                        "impact": { "relax_degrees": 3.2 },
-                        "apply_draft_ops_args": patch,
-                    }
-                ],
-                "truncated": false,
-            }),
-        )];
-
-        let text = build_agent_user_text(
-            &config,
-            &job,
-            &workshop,
-            serde_json::json!({}),
-            &recent_tool_results,
-            &registry,
-        );
-
-        let line = text
-            .lines()
-            .find(|line| line.contains("suggest_motion_repairs_v1 (call_1):"))
-            .unwrap_or("");
-        assert!(
-            line.contains(&format!("apply_draft_ops_args={expected_json}")),
-            "expected inline apply args JSON in summary line: {line}"
-        );
-        assert!(
-            line.chars().count() <= 3000,
-            "suggest_motion_repairs_v1 summary too long: {} chars",
-            line.chars().count()
-        );
-    }
-
-    #[test]
     fn summarize_info_events_list_includes_event_id_and_exact_cursor_and_omits_data_preview() {
         let config = AppConfig::default();
         let job = Gen3dAiJob::default();
@@ -3578,7 +3335,7 @@ mod tests {
                 "parent_anchor": "origin",
                 "child_anchor": "origin",
                 "offset_pos": [0.0, 0.0, 0.0],
-                "joint_kind": "fixed",
+                "joint_kind": "free",
             }));
         }
         edges.push(serde_json::json!({
@@ -3587,7 +3344,7 @@ mod tests {
             "parent_anchor": "grass_bundle_attach",
             "child_anchor": "origin",
             "offset_pos": [0.0, 1.0, 0.0],
-            "joint_kind": "fixed",
+            "joint_kind": "free",
         }));
 
         let recent_tool_results = vec![Gen3dToolResultJsonV1::ok(

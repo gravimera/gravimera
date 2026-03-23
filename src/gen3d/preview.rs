@@ -516,14 +516,14 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     existing_ui: Query<Entity, With<Gen3dPreviewUiModelRoot>>,
     existing_capture: Query<Entity, With<Gen3dPreviewModelRoot>>,
 ) {
-    fn remap_capture_id(
-        map: &std::collections::HashMap<u128, u128>,
-        object_id: u128,
-    ) -> u128 {
+    fn remap_capture_id(map: &std::collections::HashMap<u128, u128>, object_id: u128) -> u128 {
         map.get(&object_id).copied().unwrap_or(object_id)
     }
 
-    fn remap_defs_for_capture(draft: &Gen3dDraft, session_id: uuid::Uuid) -> (Vec<ObjectDef>, u128) {
+    fn remap_defs_for_capture(
+        draft: &Gen3dDraft,
+        session_id: uuid::Uuid,
+    ) -> (Vec<ObjectDef>, u128) {
         let salt = session_id.as_u128();
         let mut map = std::collections::HashMap::new();
         for def in &draft.defs {
@@ -641,12 +641,10 @@ pub(crate) fn gen3d_apply_draft_to_preview(
                 let model_id = model_entity.id();
                 commands.entity(preview_root).add_child(model_id);
 
-                let mut ordered = library.animation_channels_ordered(super::gen3d_draft_object_id());
-                let mut channels: Vec<String> = vec![
-                    "idle".to_string(),
-                    "move".to_string(),
-                    "action".to_string(),
-                ];
+                let mut ordered =
+                    library.animation_channels_ordered(super::gen3d_draft_object_id());
+                let mut channels: Vec<String> =
+                    vec!["idle".to_string(), "move".to_string(), "action".to_string()];
                 for ch in ordered.drain(..) {
                     let trimmed = ch.trim();
                     if trimmed.is_empty() {
@@ -660,7 +658,9 @@ pub(crate) fn gen3d_apply_draft_to_preview(
                 preview.animation_channels = channels;
 
                 let selected = preview.animation_channel.trim();
-                if selected.is_empty() || !preview.animation_channels.iter().any(|ch| ch == selected) {
+                if selected.is_empty()
+                    || !preview.animation_channels.iter().any(|ch| ch == selected)
+                {
                     preview.animation_channel = "idle".to_string();
                 }
 

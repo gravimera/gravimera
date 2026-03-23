@@ -271,7 +271,7 @@ fn schema_attachment_offset() -> serde_json::Value {
 
 fn schema_joint() -> serde_json::Value {
     schema_object(vec![
-        ("kind", schema_enum(&["fixed", "hinge", "ball", "free"])),
+        ("kind", schema_enum(&["hinge", "ball", "free"])),
         ("axis_join", schema_nullable(schema_vec3())),
         ("limits_degrees", schema_nullable(schema_vec2())),
         ("swing_limits_degrees", schema_nullable(schema_vec2())),

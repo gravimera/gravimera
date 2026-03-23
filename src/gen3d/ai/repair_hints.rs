@@ -37,7 +37,10 @@ fn extract_draft_op_unknown_key(err: &str) -> Option<(String, String)> {
         .or_else(|| rest2.find('\n'))
         .unwrap_or(rest2.len());
     let key_raw = rest2[..end_idx].trim();
-    Some((trim_wrapping_quotes(kind_raw), trim_wrapping_quotes(key_raw)))
+    Some((
+        trim_wrapping_quotes(kind_raw),
+        trim_wrapping_quotes(key_raw),
+    ))
 }
 
 fn push_once(out: &mut Vec<String>, msg: impl Into<String>) {
@@ -116,7 +119,10 @@ pub(super) fn build_schema_repair_hints(
                             push_once(&mut out, "Use `slot.clip.kind` (not `clip_kind`).");
                         }
                         "driver" => {
-                            push_once(&mut out, "Use `slot.driver` (driver is nested under `slot`).");
+                            push_once(
+                                &mut out,
+                                "Use `slot.driver` (driver is nested under `slot`).",
+                            );
                         }
                         _ => {}
                     }
@@ -164,7 +170,10 @@ pub(super) fn build_schema_repair_hints(
             if err.contains("AI draft JSON missing required `version`")
                 || err.contains("Unsupported AI draft version")
             {
-                push_once(&mut out, "Set top-level `version` to 2 for a component draft.");
+                push_once(
+                    &mut out,
+                    "Set top-level `version` to 2 for a component draft.",
+                );
             }
             if err.contains("AI draft has no parts") {
                 push_once(&mut out, "Include at least 1 entry in `parts`.");
@@ -186,11 +195,16 @@ pub(super) fn build_schema_repair_hints(
                 );
             }
         }
-        Some(Gen3dAiJsonSchemaKind::ReviewDeltaV1 | Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1) => {
+        Some(
+            Gen3dAiJsonSchemaKind::ReviewDeltaV1 | Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1,
+        ) => {
             if err.contains("AI review-delta JSON missing required `version`")
                 || err.contains("Unsupported AI review-delta version")
             {
-                push_once(&mut out, "Set top-level `version` to 1 for review-delta output.");
+                push_once(
+                    &mut out,
+                    "Set top-level `version` to 1 for review-delta output.",
+                );
             }
         }
         _ => {}
@@ -241,7 +255,9 @@ mod tests {
         let err = "AI draft missing required `color` on 1/3 parts.";
         let hints = build_schema_repair_hints(Some(Gen3dAiJsonSchemaKind::ComponentDraftV1), err);
         assert!(
-            hints.iter().any(|h| h.contains("Every part") && h.contains("color")),
+            hints
+                .iter()
+                .any(|h| h.contains("Every part") && h.contains("color")),
             "expected a color hint, got: {hints:?}"
         );
     }

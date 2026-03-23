@@ -779,7 +779,11 @@ fn model_library_collect_edit_states(
             | crate::gen3d::Gen3dTaskState::Canceled
             | crate::gen3d::Gen3dTaskState::Idle => None,
         }
-        .or_else(|| queued_sessions.contains(&meta.id).then_some(ModelLibraryEditState::Queued));
+        .or_else(|| {
+            queued_sessions
+                .contains(&meta.id)
+                .then_some(ModelLibraryEditState::Queued)
+        });
 
         let Some(state) = state else {
             continue;
@@ -790,7 +794,10 @@ fn model_library_collect_edit_states(
             .and_modify(|prev| {
                 if matches!(
                     (*prev, state),
-                    (ModelLibraryEditState::Queued, ModelLibraryEditState::Editing)
+                    (
+                        ModelLibraryEditState::Queued,
+                        ModelLibraryEditState::Editing
+                    )
                 ) {
                     *prev = ModelLibraryEditState::Editing;
                 }
@@ -803,12 +810,13 @@ fn model_library_collect_edit_states(
 
 fn model_library_label_prefix(state: Option<ModelLibraryEditState>) -> (&'static str, Color) {
     match state {
-        Some(ModelLibraryEditState::Editing) => ("Editing…: ", Color::srgba(0.30, 0.97, 0.45, 0.95)),
+        Some(ModelLibraryEditState::Editing) => {
+            ("Editing…: ", Color::srgba(0.30, 0.97, 0.45, 0.95))
+        }
         Some(ModelLibraryEditState::Queued) => ("Queued…: ", Color::srgba(0.95, 0.85, 0.25, 0.95)),
         None => ("", Color::srgb(0.92, 0.92, 0.96)),
     }
 }
-
 
 pub(crate) fn model_library_rebuild_list_ui(
     mut commands: Commands,
@@ -982,11 +990,11 @@ pub(crate) fn model_library_rebuild_list_ui(
                     .unwrap_or(0)
             });
 
-            let summary = desc
-                .and_then(|d| d.text.as_ref())
-                .and_then(|t| t.short.as_deref())
-                .map(|v| v.trim())
-                .filter(|v| !v.is_empty());
+        let summary = desc
+            .and_then(|d| d.text.as_ref())
+            .and_then(|t| t.short.as_deref())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty());
         let tags: Vec<String> = desc.map(|d| d.tags.clone()).unwrap_or_default();
 
         let score = relevance_score(query.as_str(), &display_name, &tags, summary, &uuid);
@@ -1133,69 +1141,71 @@ pub(crate) fn model_library_rebuild_list_ui(
                         ));
                     }
 
-                    thumb.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            right: Val::Px(3.0),
-                            top: Val::Px(3.0),
-                            width: Val::Px(14.0),
-                            height: Val::Px(14.0),
-                            border: UiRect::all(Val::Px(2.0)),
-                            border_radius: BorderRadius::all(Val::Px(999.0)),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-                        BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
-                        UiTransform::default(),
-                        Visibility::Hidden,
-                        ModelLibraryGen3dThumbnailIndicator {
-                            prefab_id: row.prefab_id,
-                            kind: ModelLibraryGen3dIndicatorKind::Working,
-                        },
-                    ))
-                    .with_children(|spinner| {
-                        spinner.spawn((
-                            Text::new("↻"),
-                            TextFont {
-                                font_size: 12.0,
+                    thumb
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                right: Val::Px(3.0),
+                                top: Val::Px(3.0),
+                                width: Val::Px(14.0),
+                                height: Val::Px(14.0),
+                                border: UiRect::all(Val::Px(2.0)),
+                                border_radius: BorderRadius::all(Val::Px(999.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
                                 ..default()
                             },
-                            TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                            BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                            UiTransform::default(),
+                            Visibility::Hidden,
+                            ModelLibraryGen3dThumbnailIndicator {
+                                prefab_id: row.prefab_id,
+                                kind: ModelLibraryGen3dIndicatorKind::Working,
+                            },
+                        ))
+                        .with_children(|spinner| {
+                            spinner.spawn((
+                                Text::new("↻"),
+                                TextFont {
+                                    font_size: 12.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
                             ));
                         });
 
-                    thumb.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            right: Val::Px(3.0),
-                            top: Val::Px(3.0),
-                            width: Val::Px(14.0),
-                            height: Val::Px(14.0),
-                            border: UiRect::all(Val::Px(2.0)),
-                            border_radius: BorderRadius::all(Val::Px(999.0)),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-                        BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
-                        UiTransform::default(),
-                        Visibility::Hidden,
-                        ModelLibraryGen3dThumbnailIndicator {
-                            prefab_id: row.prefab_id,
-                            kind: ModelLibraryGen3dIndicatorKind::Waiting,
-                        },
-                    ))
-                    .with_children(|spinner| {
-                        spinner.spawn((
-                            Text::new("↻"),
-                            TextFont {
-                                font_size: 12.0,
+                    thumb
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                right: Val::Px(3.0),
+                                top: Val::Px(3.0),
+                                width: Val::Px(14.0),
+                                height: Val::Px(14.0),
+                                border: UiRect::all(Val::Px(2.0)),
+                                border_radius: BorderRadius::all(Val::Px(999.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
                                 ..default()
                             },
-                            TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                            BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                            UiTransform::default(),
+                            Visibility::Hidden,
+                            ModelLibraryGen3dThumbnailIndicator {
+                                prefab_id: row.prefab_id,
+                                kind: ModelLibraryGen3dIndicatorKind::Waiting,
+                            },
+                        ))
+                        .with_children(|spinner| {
+                            spinner.spawn((
+                                Text::new("↻"),
+                                TextFont {
+                                    font_size: 12.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
                             ));
                         });
                 });
@@ -1406,36 +1416,37 @@ pub(crate) fn model_library_sync_gen3d_placeholders(
                             ));
                         });
 
-                    thumb.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            right: Val::Px(3.0),
-                            top: Val::Px(3.0),
-                            width: Val::Px(14.0),
-                            height: Val::Px(14.0),
-                            border: UiRect::all(Val::Px(2.0)),
-                            border_radius: BorderRadius::all(Val::Px(999.0)),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-                        BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
-                        UiTransform::default(),
-                        Visibility::Hidden,
-                        ModelLibraryGen3dPlaceholderIndicator {
-                            session_id,
-                            kind: ModelLibraryGen3dIndicatorKind::Waiting,
-                        },
-                    ))
-                    .with_children(|spinner| {
-                        spinner.spawn((
-                            Text::new("↻"),
-                            TextFont {
-                                font_size: 12.0,
+                    thumb
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                right: Val::Px(3.0),
+                                top: Val::Px(3.0),
+                                width: Val::Px(14.0),
+                                height: Val::Px(14.0),
+                                border: UiRect::all(Val::Px(2.0)),
+                                border_radius: BorderRadius::all(Val::Px(999.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
                                 ..default()
                             },
-                            TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                            BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                            UiTransform::default(),
+                            Visibility::Hidden,
+                            ModelLibraryGen3dPlaceholderIndicator {
+                                session_id,
+                                kind: ModelLibraryGen3dIndicatorKind::Waiting,
+                            },
+                        ))
+                        .with_children(|spinner| {
+                            spinner.spawn((
+                                Text::new("↻"),
+                                TextFont {
+                                    font_size: 12.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
                             ));
                         });
                 });

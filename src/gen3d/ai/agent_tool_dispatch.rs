@@ -19,11 +19,9 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION, TOOL_ID_LLM_GENERATE_MOTIONS,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
     TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
-    TOOL_ID_MOTION_METRICS, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS,
-    TOOL_ID_RECENTER_ATTACHMENT_MOTION, TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
-    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK,
-    TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_SUGGEST_MOTION_REPAIRS,
-    TOOL_ID_VALIDATE,
+    TOOL_ID_MOTION_METRICS, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META,
+    TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -1056,7 +1054,6 @@ fn build_capability_gaps_from_smoke_v1(
     use crate::object::registry::ColliderProfile;
 
     const MAX_GAPS: usize = 16;
-    const MAX_FIXITS: usize = 3;
 
     let mut gaps: Vec<serde_json::Value> = Vec::new();
 
@@ -1207,7 +1204,6 @@ Set plan.mobility to a movable mode (ground/air) with a reasonable max_speed so 
         }));
     }
 
-    let mut motion_repairs_suggestions: Option<Vec<serde_json::Value>> = None;
     if let Some(motion_issues) = smoke
         .get("motion_validation")
         .and_then(|v| v.get("issues"))
@@ -1260,87 +1256,7 @@ Set plan.mobility to a movable mode (ground/air) with a reasonable max_speed so 
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
 
-            let mut fixits: Vec<serde_json::Value> = Vec::new();
-
-            if issue_kind == "joint_rest_bias_large" && !component_name.is_empty() {
-                let mut args = serde_json::Map::new();
-                args.insert(
-                    "child_components".into(),
-                    serde_json::Value::Array(vec![serde_json::Value::String(
-                        component_name.into(),
-                    )]),
-                );
-                if !channel.is_empty() {
-                    args.insert(
-                        "channels".into(),
-                        serde_json::Value::Array(vec![serde_json::Value::String(channel.into())]),
-                    );
-                }
-                let target = if severity == "error" { "error" } else { "warn" };
-                args.insert(
-                    "target".into(),
-                    serde_json::Value::String(target.to_string()),
-                );
-                fixits.push(serde_json::json!({
-                    "tool_id": TOOL_ID_RECENTER_ATTACHMENT_MOTION,
-                    "args": serde_json::Value::Object(args),
-                }));
-            }
-
-            if issue_kind == "hinge_limit_exceeded" && fixits.len() < MAX_FIXITS {
-                if motion_repairs_suggestions.is_none() {
-                    let report = super::motion_repairs::suggest_motion_repairs_report_v1(
-                        job.rig_move_cycle_m,
-                        &job.planned_components,
-                        job.assembly_rev(),
-                        8,
-                        0.2,
-                    );
-                    motion_repairs_suggestions = report
-                        .get("suggestions")
-                        .and_then(|v| v.as_array())
-                        .cloned();
-                }
-
-                if let Some(suggestions) = motion_repairs_suggestions.as_ref() {
-                    for suggestion in suggestions.iter() {
-                        if fixits.len() >= MAX_FIXITS {
-                            break;
-                        }
-                        let sug_comp = suggestion
-                            .get("component_name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .trim();
-                        let sug_channel = suggestion
-                            .get("channel")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .trim();
-                        if !component_name.is_empty() && sug_comp != component_name {
-                            continue;
-                        }
-                        if !channel.is_empty() && sug_channel != channel {
-                            continue;
-                        }
-                        let Some(apply_args) = suggestion.get("apply_draft_ops_args").cloned()
-                        else {
-                            continue;
-                        };
-                        let note = suggestion
-                            .get("message")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .trim()
-                            .to_string();
-                        fixits.push(serde_json::json!({
-                            "tool_id": TOOL_ID_APPLY_DRAFT_OPS,
-                            "args": apply_args,
-                            "note": note,
-                        }));
-                    }
-                }
-            }
+            let fixits: Vec<serde_json::Value> = Vec::new();
 
             gaps.push(serde_json::json!({
                 "kind": "motion_validation_error",
@@ -3114,54 +3030,6 @@ pub(super) fn execute_tool_call(
             );
             if let Some(dir) = job.pass_dir.as_deref() {
                 write_gen3d_json_artifact(Some(dir), "motion_metrics.json", &json);
-            }
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
-        }
-        TOOL_ID_SUGGEST_MOTION_REPAIRS => {
-            #[derive(Debug, Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct SuggestMotionRepairsArgsV1 {
-                #[serde(default)]
-                version: u32,
-                #[serde(default)]
-                max_suggestions: Option<usize>,
-                #[serde(default)]
-                safety_margin_degrees: Option<f32>,
-            }
-
-            let args: SuggestMotionRepairsArgsV1 = match serde_json::from_value(call.args) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        format!("Invalid args for `{TOOL_ID_SUGGEST_MOTION_REPAIRS}`: {err}"),
-                    ));
-                }
-            };
-
-            if args.version != 0 && args.version != 1 {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    format!(
-                        "Unsupported `{TOOL_ID_SUGGEST_MOTION_REPAIRS}` version {}.",
-                        args.version
-                    ),
-                ));
-            }
-
-            let max_suggestions = args.max_suggestions.unwrap_or(8).clamp(1, 32);
-            let safety_margin_degrees = args.safety_margin_degrees.unwrap_or(0.2).clamp(0.0, 5.0);
-            let json = super::motion_repairs::suggest_motion_repairs_report_v1(
-                job.rig_move_cycle_m,
-                &job.planned_components,
-                job.assembly_rev(),
-                max_suggestions,
-                safety_margin_degrees,
-            );
-            if let Some(dir) = job.pass_dir.as_deref() {
-                write_gen3d_json_artifact(Some(dir), "suggest_motion_repairs.json", &json);
             }
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
@@ -4987,24 +4855,6 @@ pub(super) fn execute_tool_call(
                     info_kv_ref_json(INFO_KV_NAMESPACE_GEN3D, key.as_str(), record.kv_rev),
                 );
             }
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
-        }
-        TOOL_ID_RECENTER_ATTACHMENT_MOTION => {
-            let call_id = call.call_id.clone();
-            let tool_id = call.tool_id.clone();
-            let json = match super::motion_recenter::recenter_attachment_motion_v1(
-                job,
-                draft,
-                Some(call_id.as_str()),
-                call.args,
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call_id, tool_id, err,
-                    ));
-                }
-            };
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
         }
         TOOL_ID_SNAPSHOT => {
@@ -8694,18 +8544,14 @@ mod tests {
             })
             .expect("missing hinge_limit_exceeded capability gap");
 
-        let has_apply_fixit = hinge_gap
+        let fixits = hinge_gap
             .get("fixits")
             .and_then(|v| v.as_array())
-            .is_some_and(|fixits| {
-                fixits.iter().any(|fixit| {
-                    fixit.get("tool_id").and_then(|v| v.as_str()) == Some("apply_draft_ops_v1")
-                        && fixit.get("args").is_some()
-                })
-            });
+            .cloned()
+            .unwrap_or_default();
         assert!(
-            has_apply_fixit,
-            "expected apply_draft_ops_v1 fixit in {hinge_gap:?}"
+            fixits.is_empty(),
+            "expected no deterministic fixits for hinge_limit_exceeded, got {fixits:?}"
         );
     }
 

@@ -1500,8 +1500,7 @@ pub(crate) fn gen3d_save_button(
                     ) {
                         warn!("Gen3D: thumbnail capture skipped: {err}");
                     }
-                    workshop.status =
-                        "Saved snapshot. Open Prefabs to view/spawn it.".to_string();
+                    workshop.status = "Saved snapshot. Open Prefabs to view/spawn it.".to_string();
                 }
                 Err(err) => {
                     workshop.error = Some(err);

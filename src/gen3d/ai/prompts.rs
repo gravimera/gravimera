@@ -394,7 +394,6 @@ Hard requirements:\n\
                 ));
                 if let Some(joint) = att.joint.as_ref() {
                     let kind = match joint.kind {
-                        AiJointKindJson::Fixed => "fixed",
                         AiJointKindJson::Hinge => "hinge",
                         AiJointKindJson::Ball => "ball",
                         AiJointKindJson::Free => "free",
@@ -976,7 +975,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
           - Then `offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n\
           - For flush joins, use a small NEGATIVE `offset.pos[2]` (slight inset/overlap). For surface overlays, use a small POSITIVE `offset.pos[2]` (slight outset) so thin details are not buried.\n\
           Motion metadata (optional; recommended for movable objects):\n\
-          - Use `attach_to.joint` to declare articulation (`fixed`/`hinge`/`ball`/`free`).\n\
+          - Use `attach_to.joint` to declare articulation (`hinge`/`ball`/`free`).\n\
+            - Prefer `ball` or `free` for maximum animation freedom.\n\
+            - Use `hinge` only when you truly need a 1-DoF constraint (simple mechanical joints).\n\
             - Joint axes/limits are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
           - IMPORTANT: `joint` is ONLY allowed inside `attach_to` as `attach_to.joint`.\n\
             - Do NOT output a component-level field named \"joint\".\n\
@@ -1049,7 +1050,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
                         \"rot_quat_xyzw\": [x,y,z,w] (optional),\n\
                         \"scale\": [x,y,z] (optional)\n\
                       }} (optional),\n\
-                  \"joint\": {{ \"kind\": \"hinge\" | \"fixed\" | \"ball\" | \"free\", \"axis_join\": [x,y,z] (optional), \"limits_degrees\": [min,max] (optional) }} (optional)\n\
+                  \"joint\": {{ \"kind\": \"hinge\" | \"ball\" | \"free\", \"axis_join\": [x,y,z] (optional), \"limits_degrees\": [min,max] (optional) }} (optional)\n\
                }} (omit ONLY for the root component)\n\
              }}\n\
            ]\n\
@@ -1318,7 +1319,6 @@ Hard requirements:\n\
                 ));
                 if let Some(joint) = att.joint.as_ref() {
                     let kind = match joint.kind {
-                        AiJointKindJson::Fixed => "fixed",
                         AiJointKindJson::Hinge => "hinge",
                         AiJointKindJson::Ball => "ball",
                         AiJointKindJson::Free => "free",
@@ -2104,9 +2104,6 @@ Rules:\n\
   - If an edge's attachment joint is `kind=hinge`, `axis_join` is expressed in the JOIN frame.\n\
   - Any authored rotation MUST be a pure twist about `axis_join` (no off-axis swing), or motion validation will fail with `hinge_off_axis`.\n\
   - For hinge edges, prefer `clip.kind=spin` with `axis_space=\"join\"` and `axis` aligned (or anti-aligned) with `axis_join`.\n\
-- Fixed joints (diagnostic):\n\
-  - If an edge's attachment joint is `kind=fixed`, any authored rotation will trigger a motion validation warning `fixed_joint_rotates`.\n\
-    - Only rotate fixed joints if it is intentional, or if the articulation metadata must be updated elsewhere.\n\
 - `replace_channels`:\n\
   - If decision=author_clips, list the channels you want the engine to REPLACE on targeted edges before adding your slots.\n\
   - If decision=regen_geometry_required, set replace_channels=[] and edges=[] (do not author clips).\n\
@@ -2403,7 +2400,6 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             .as_ref()
             .map(|j| {
                 let kind = match j.kind {
-                    AiJointKindJson::Fixed => "fixed",
                     AiJointKindJson::Hinge => "hinge",
                     AiJointKindJson::Ball => "ball",
                     AiJointKindJson::Free => "free",
