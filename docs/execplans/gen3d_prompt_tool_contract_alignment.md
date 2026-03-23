@@ -25,7 +25,7 @@ After completing this plan, the Gen3D agent prompt and the tool implementations 
 How to see it working (observable outcomes):
 
 1. Run any Gen3D job (or just build the prompt text) and confirm the tool list shows accurate required args (for example, `copy_component_v1` clearly requires a target).
-2. Execute tool calls that previously failed purely due to type/requiredness mismatches (for example, `copy_component_v1` with `source_component: 0`) and confirm they now succeed (or fail for legitimate semantic reasons, not arg-shape reasons).
+2. Execute tool calls that previously failed purely due to type/requiredness mismatches (for example, `copy_component_v1` with `source_component_index: 0`) and confirm they now succeed (or fail for legitimate semantic reasons, not arg-shape reasons).
 3. Run `cargo test` and the rendered smoke test and confirm the game starts without crashing.
 
 
@@ -33,6 +33,10 @@ How to see it working (observable outcomes):
 
 - [x] (2026-03-24) Drafted this ExecPlan (`docs/execplans/gen3d_prompt_tool_contract_alignment.md`).
 - [x] (2026-03-24) Expanded this ExecPlan with concrete target contracts and edit locations for the known mismatches.
+- [x] (2026-03-24) Added anti-regression coverage for tool args signatures (first-line ≤ 240 chars; parseable).
+- [x] (2026-03-24) Removed fuzzy “best match” component-name resolution (exact match OR unique normalized match only).
+- [x] (2026-03-24) Shortened long tool args signatures using type aliases (Info Store + plan tools) to avoid prompt truncation.
+- [x] (2026-03-24) Updated copy/mirror/subtree/detach descriptors to advertise explicit `*_index` keys + required `targets` and to include one-of requirement hints in summaries.
 - [ ] Audit all Gen3D tools for prompt/impl mismatches (args + returns), beyond the known cases listed below.
 - [ ] Decide the canonical contract per tool (canonical keys, accepted aliases, requiredness, types), and document those decisions in `Decision Log`.
 - [ ] Implement contract fixes (update tool registry text and/or tool arg parsing gates) in small, reviewable commits.
@@ -49,8 +53,16 @@ How to see it working (observable outcomes):
 - Observation: The agent prompt’s “args signature” is derived from only the first line of `Gen3dToolDescriptorV1.args_schema` and is treated as the “truth” by the model.
   Evidence: `src/gen3d/ai/agent_prompt.rs::build_agent_user_text` uses `first_line(tool.args_schema)` and prints `args={...}` per tool.
 
+- Observation: The prompt truncates the printed args signature to 240 characters, and `get_tool_detail_v1` results are also truncated in the prompt summary.
+  Impact: if the first line is too long, the model will not “see” required keys/enums; and `get_tool_detail_v1` will not reliably expose full schemas unless the `args_schema` is written to be compact and front-loaded.
+  Evidence: `src/gen3d/ai/agent_prompt.rs` uses `truncate_for_prompt(..., 240)` for both the tool list args signature and the `get_tool_detail_v1` summary.
+
 - Observation: Several tools accept additional alias keys (for robustness) that are not represented in the prompt signature, and some prompt signatures claim broader types than the implementation currently accepts.
   Evidence: `src/gen3d/ai/agent_tool_dispatch.rs` manually checks multiple alternative keys (for example, `source_component_name`, `source_idx`, etc.).
+
+- Observation: The current “name hint” resolver uses fuzzy scoring to pick a best match, which can silently target the wrong component.
+  Impact: for mutating tools, this is a safety regression risk (wrong component edited without a deterministic error).
+  Evidence: `src/gen3d/ai/agent_parsing.rs::resolve_component_index_by_name_hint` computes token intersections + bonuses and picks the best-scoring candidate.
 
 
 ## Decision Log
@@ -67,10 +79,21 @@ How to see it working (observable outcomes):
   Rationale: The prompt contract is already “what the model believes”. If widening the implementation is deterministic (for example, accepting `number` where `string|number` is advertised), it reduces failures without changing user intent or agent policy.
   Date/Author: 2026-03-24 / assistant
 
+- Decision: Keep every tool’s first-line args signature compact (≤ 240 chars) and parseable by the required-keys extractor; move bulky nested shapes into type aliases on later lines.
+  Rationale: the model only sees the first line in the tool list, and truncation hides requiredness/enums; keeping the first line small prevents “invisible contract” regressions.
+  Date/Author: 2026-03-24 / assistant
+
+- Decision: Component name resolution for mutating tools is strict: exact match OR unique normalized match; never fuzzy “best match”.
+  Rationale: fuzzy selection can silently edit the wrong component; strict matching fails fast and forces the agent to resolve ambiguity explicitly (usually via indices).
+  Date/Author: 2026-03-24 / assistant
+
 
 ## Outcomes & Retrospective
 
-- (Not started) This plan is drafted but not yet executed.
+- (2026-03-24) Safety-first execution started:
+  - Tool args signatures are now kept compact/parseable to avoid truncation hiding the contract.
+  - Fuzzy component name “best match” resolution is removed (exact match OR unique normalized match only).
+  - Several high-impact tool descriptors were updated to match the dispatcher (explicit `*_index` keys; required `targets`; one-of requirements hinted in summaries).
 
 
 ## Context and Orientation
@@ -82,23 +105,23 @@ Key concepts (plain language):
 - The “agent prompt tool list” is constructed in `src/gen3d/ai/agent_prompt.rs::build_agent_user_text(...)`. It prints each tool’s `one_line_summary`, the first line of `args_schema`, and an `args_example`.
 - “Tool dispatch” is the engine-side implementation that matches a tool id and parses its `args` JSON. In this repo it lives in `src/gen3d/ai/agent_tool_dispatch.rs::execute_tool_call(...)`.
 
-Known mismatches found during initial review (this list must be expanded during the audit step):
+Known mismatches found during initial review (keep expanding during audit; mark fixed items with dates):
 
 - `copy_component_v1` / `mirror_component_v1`
-  - Prompt signature claims `source_component: string|number`, but the dispatcher reads `source_component` only as a string name; numeric indices must be supplied via separate, undocumented keys (like `source_component_index`).
-  - Prompt signature marks `targets?` optional, but the dispatcher requires at least one target (either `targets` or `target_component`/`target_component_index`) and errors if none are provided.
+  - (Fixed 2026-03-24) Prompt now advertises explicit `source_component_index` and requires `targets` (and includes one-of requirement hints in summary).
+  - (Fixed 2026-03-24) Component name resolution no longer uses fuzzy “best match”.
   - Relevant code: `src/gen3d/agent/tools.rs` (descriptor), `src/gen3d/ai/agent_tool_dispatch.rs` (parsing in the `TOOL_ID_COPY_COMPONENT` / `TOOL_ID_MIRROR_COMPONENT` match arm).
 
 - `copy_component_subtree_v1` / `mirror_component_subtree_v1`
-  - Prompt signature claims `source_root: string|number`, but the dispatcher reads `source_root` only as a string name; numeric indices must be supplied via separate keys.
+  - (Fixed 2026-03-24) Prompt now advertises explicit `source_root_index` (and includes one-of requirement hints in summary).
   - Relevant code: `src/gen3d/agent/tools.rs`, `src/gen3d/ai/agent_tool_dispatch.rs` (the subtree copy/mirror match arm).
 
 - `detach_component_v1`
-  - Prompt signature claims `component: string|number`, but the dispatcher reads `component` only as a string name; numeric indices must be supplied via separate keys.
+  - (Fixed 2026-03-24) Prompt now advertises explicit `component_index` (and includes one-of requirement hints in summary).
   - Relevant code: `src/gen3d/agent/tools.rs`, `src/gen3d/ai/agent_tool_dispatch.rs` (the detach match arm).
 
 - `copy_from_workspace_v1`
-  - Prompt signature marks `components?` optional, but the implementation requires a non-empty `components` array.
+  - (Fixed 2026-03-24) Prompt signature now requires `components` and enumerates `mode` values.
   - Relevant code: `src/gen3d/agent/tools.rs` (descriptor) vs `src/gen3d/ai/workspaces.rs::copy_from_workspace_v1(...)` (validation).
 
 - `query_component_parts_v1`
@@ -120,13 +143,20 @@ Where to change the contract:
 
 This section defines the intended “end state” for the tools we already know are mismatched. The audit step may add more tools here.
 
-The guiding rule is: if the prompt advertises `string|number` for a canonical key, the tool must accept either a string name or a numeric index in that same key.
+Guiding rules:
+
+1. Do not advertise `string|number` for a canonical key unless the tool actually accepts both shapes for that same key.
+   - Prefer explicit `*_index` numeric keys when the engine already supports them.
+2. Mutating tools must resolve component names deterministically: exact match OR unique normalized match; if ambiguous or unknown, hard-error (no guessing).
+3. Keep the first line of every `args_schema` ≤ 240 chars and parseable; use type aliases on later lines for detailed nested shapes/enums.
 
 ### `copy_component_v1`
 
 Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
 
-- Make it explicit that a target is required by making `targets` required in the brief args signature, and keep `source_component: string|number`.
+- Make it explicit that a target is required by making `targets` required in the brief args signature.
+- Do NOT claim `source_component: string|number` unless the dispatcher accepts numeric in `source_component`.
+  - If the implementation continues to require index via a separate key, advertise the index key explicitly (for example `source_component_index?: number`) and add a one-of hint in `one_line_summary` (requires name OR index).
 - Prefer enumerating canonical enum values for the most common switches (so the model stops inventing values). Canonical values are:
   - `mode`: `detached|linked`
   - `anchors`: `preserve_interfaces|preserve_target|copy_source`
@@ -134,15 +164,12 @@ Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
 
 Tool-side parsing changes (edit `src/gen3d/ai/agent_tool_dispatch.rs` in the `TOOL_ID_COPY_COMPONENT` arm):
 
-- Accept `args.source_component` as either:
-  - string name (existing behavior), or
-  - number index (new behavior; treat as `source_component_index`).
-- Accept `args.targets[]` array items as string or number (already supported) and ensure the error message for invalid items mentions the canonical contract (indices or names).
-- Accept the singular `args.target_component` similarly (string or number), but keep `targets` as the prompt’s canonical way to pass targets.
+- Ensure component-name resolution is strict (exact OR unique normalized); never fuzzy-match a “best” component.
+- Ensure error messages mention the canonical keys the prompt advertises (avoid internal alias-only keys).
 
 Unit tests (add to `src/gen3d/ai/agent_tool_dispatch.rs` tests module, or factor a helper and test it):
 
-- Verify that a call can resolve `source_component: 0` and `targets: [1]` into concrete indices without error.
+- Verify that a call can resolve `source_component_index: 0` and `targets: [1]` into concrete indices without error.
 - Verify that omitting all target forms produces an error that points to `targets` / `target_component` (not internal alias names).
 
 ### `mirror_component_v1`
@@ -153,8 +180,7 @@ Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
 
 Tool-side parsing changes (edit `src/gen3d/ai/agent_tool_dispatch.rs` in the `TOOL_ID_MIRROR_COMPONENT` arm):
 
-- Same numeric acceptance rules as `copy_component_v1` for `source_component` and targets.
-- Ensure the existing rejection for `alignment_frame=child_anchor` remains in place and its error message matches what the prompt contract claims.
+- Ensure strict name resolution (exact OR unique normalized) and preserve the existing rejection for `alignment_frame=child_anchor` (error message should match what the prompt contract claims).
 
 ### `copy_component_subtree_v1` / `mirror_component_subtree_v1`
 
@@ -166,8 +192,7 @@ Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
 
 Tool-side parsing changes (edit `src/gen3d/ai/agent_tool_dispatch.rs` in the subtree copy/mirror arm):
 
-- Accept `args.source_root` as either string name or numeric index (new behavior).
-- Ensure targets parsing supports both types (already supports both).
+- Ensure strict name resolution (exact OR unique normalized) for `source_root` and targets. Do not fuzzy-match.
 
 ### `detach_component_v1`
 
@@ -177,7 +202,7 @@ Prompt-facing contract changes (edit `src/gen3d/agent/tools.rs`):
 
 Tool-side parsing changes (edit `src/gen3d/ai/agent_tool_dispatch.rs` in the `TOOL_ID_DETACH_COMPONENT` arm):
 
-- Accept `args.component` as either string name or numeric index (new behavior), in addition to the existing `component_index` alias.
+- Ensure strict name resolution (exact OR unique normalized) for the `component` name path. Do not fuzzy-match.
 
 ### `copy_from_workspace_v1`
 
@@ -239,17 +264,13 @@ All commands below are run from the repo root (`/Users/flow/workspace/github/gra
    - Enumerate implementations: read `src/gen3d/ai/agent_tool_dispatch.rs::execute_tool_call` match arms, plus any helpers in `src/gen3d/ai/*` that parse tool args via `serde(deny_unknown_fields)` structs.
    - For each tool, record: required keys, optional keys, accepted types (string vs number), and any alias keys.
 
-2. Fix the “string|number but only string is accepted” family of mismatches.
+2. Fix component reference contract + safety (no guessing).
 
-   - Implement a single, shared, deterministic parser for “component reference” arguments that can accept either:
-     - a string component name, or
-     - a numeric component index,
-     for canonical keys where the tool descriptor says `string|number`.
-   - Apply it to:
-     - `copy_component_v1` / `mirror_component_v1` (source + targets / target),
-     - `copy_component_subtree_v1` / `mirror_component_subtree_v1` (source_root + targets),
-     - `detach_component_v1` (component).
-   - Update tool descriptor `args_schema` lines to reflect any additional requiredness constraints discovered during audit (for example, make it explicit that a target is required for copy/mirror).
+   - Remove fuzzy “best match” component-name selection for tool args; use exact match OR unique normalized match only. If unknown/ambiguous, hard-error and force explicit disambiguation (usually via indices).
+   - If a tool implementation expects numeric indices via explicit keys (for example `*_index`), do NOT advertise `string|number` on the name key. Instead:
+     - advertise the explicit `*_index` key in the args signature, and
+     - add a short one-of requirement hint in the tool’s `one_line_summary` (example: “Requires: source_component OR source_component_index.”).
+   - Make requiredness visible in the first-line signature (for example, make `targets` required for copy/mirror).
 
 3. Fix “optional in prompt but required in implementation” mismatches.
 
@@ -268,6 +289,7 @@ All commands below are run from the repo root (`/Users/flow/workspace/github/gra
    - For each mismatch fix, add a unit test that fails on the old behavior and passes on the new behavior.
    - Prefer tests that exercise the tool-dispatch parsing path, not just helper functions, so the contract is locked end-to-end.
    - If adding fixtures or example data files is necessary, place them under `test/` (for example, `test/gen3d_contract/`).
+   - Add an anti-regression test that enforces: every tool’s first-line args signature is ≤ 240 chars and parseable (so requiredness/enums are not hidden by truncation).
 
 6. Validate.
 
@@ -291,9 +313,9 @@ Acceptance is met when:
 
 - The agent prompt tool list (`src/gen3d/ai/agent_prompt.rs::build_agent_user_text`) advertises tool arg signatures that match actual tool parsing behavior for all audited tools.
 - Tool calls that previously failed due to mismatch now succeed deterministically. At minimum, the following shapes must work:
-  - `copy_component_v1` with `{"source_component": 0, "targets": [1], "mode": "linked"}` (or an equivalent target form).
-  - `detach_component_v1` with `{"component": 1}`.
-  - `copy_component_subtree_v1` with `{"source_root": 0, "targets": [2]}`.
+  - `copy_component_v1` with `{"source_component_index": 0, "targets": [1], "mode": "linked"}` (or an equivalent target form).
+  - `detach_component_v1` with `{"component_index": 1}`.
+  - `copy_component_subtree_v1` with `{"source_root_index": 0, "targets": [2]}`.
   - `copy_from_workspace_v1` rejects missing `components` and the prompt contract reflects that requiredness.
 - `cargo test` passes.
 - The rendered smoke test runs without crashing.

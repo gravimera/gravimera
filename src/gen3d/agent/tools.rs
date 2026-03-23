@@ -189,7 +189,7 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_QUERY_COMPONENT_PARTS,
                 title: "Query component parts",
-                one_line_summary: "Read-only: list component parts (primitive mesh/color + mesh_apply + part_id_uuid + transforms) and includes bounded `recipes` (copy/pasteable apply_draft_ops_v1 payloads); writes into Info Store KV as `ws.<id>.component_parts.<component>` and returns `info_kv` ref.",
+                one_line_summary: "Read-only: list component parts (primitive mesh/color + mesh_apply + part_id_uuid + transforms) and includes bounded `recipes` (copy/pasteable apply_draft_ops_v1 payloads); writes into Info Store KV as `ws.<id>.component_parts.<component>` and returns `info_kv` ref. Requires: component OR component_index.",
                 args_schema:
                     "{ version?: 1, component?: string, component_index?: number, include_non_primitives?: bool, max_parts?: number }",
                 args_example: serde_json::json!({ "component": "torso", "max_parts": 128 }),
@@ -259,7 +259,7 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 one_line_summary:
                     "Read-only: fetch a KV value by key + selector (latest/kv_rev/as-of); bounded by max_bytes. Repeats within a pass may return cached=true/no_new_information=true. Oversize errors include a deterministic shape_preview + fixits.",
                 args_schema:
-                    "{ namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }, json_pointer?: string, max_bytes?: number }",
+                    "{ namespace: string, key: string, selector?: InfoKvSelector, json_pointer?: string, max_bytes?: number }\nInfoKvSelector = { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }",
                 args_example: serde_json::json!({
                     "namespace": "gen3d",
                     "key": "ws.main.scene_graph_summary",
@@ -273,7 +273,7 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 one_line_summary:
                     "Read-only: page through a KV JSON array with bounded per-item previews (cursor is bound to a frozen kv_rev; use json_pointer to select an array).",
                 args_schema:
-                    "{ namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }, json_pointer?: string, page?: { limit?: number, cursor?: string }, max_item_bytes?: number }",
+                    "{ namespace: string, key: string, selector?: InfoKvSelector, json_pointer?: string, page?: Page, max_item_bytes?: number }\nInfoKvSelector = { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }\nPage = { limit?: number, cursor?: string }",
                 args_example: serde_json::json!({
                     "namespace": "gen3d",
                     "key": "ws.main.qa",
@@ -289,7 +289,7 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 one_line_summary:
                     "Read-only: fetch multiple KV values with ONE shared top-level selector (do NOT put selector inside items[]); returns per-key errors; bounded. Repeats within a pass may return cached=true/no_new_information=true.",
                 args_schema:
-                    "{ items: { namespace: string, key: string, json_pointer?: string, max_bytes?: number }[], selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }, max_items?: number }",
+                    "{ items: InfoKvItem[], selector?: InfoKvSelector, max_items?: number }\nInfoKvItem = { namespace: string, key: string, json_pointer?: string, max_bytes?: number }\nInfoKvSelector = { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }",
                 args_example: serde_json::json!({
                     "selector": { "kind": "latest" },
                     "items": [
@@ -304,7 +304,7 @@ ReuseGroup = { kind?: string, source:string, targets:string[], alignment:string,
                 one_line_summary:
                     "Read-only: list recent Info Store events with filters (paged; bounded; returns data_preview).",
                 args_schema:
-                    "{ filters?: { kind?: \"tool_call_start\"|\"tool_call_result\"|\"engine_log\"|\"budget_stop\"|\"warning\"|\"error\", tool_id?: string, call_id?: string, min_ts_ms?: number, max_ts_ms?: number, attempt?: number, pass?: number }, sort?: \"ts_desc\"|\"ts_asc\", page?: { limit?: number, cursor?: string } }",
+                    "{ filters?: InfoEventFilters, sort?: \"ts_desc\"|\"ts_asc\", page?: Page }\nInfoEventFilters = { kind?: InfoEventKind, tool_id?: string, call_id?: string, min_ts_ms?: number, max_ts_ms?: number, attempt?: number, pass?: number }\nInfoEventKind = \"tool_call_start\"|\"tool_call_result\"|\"engine_log\"|\"budget_stop\"|\"warning\"|\"error\"\nPage = { limit?: number, cursor?: string }",
                 args_example: serde_json::json!({
                     "filters": { "kind": "tool_call_result" },
                     "sort": "ts_desc",
@@ -441,41 +441,45 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT,
                 title: "Copy component",
-                one_line_summary: "Mutates draft: copy one component into targets (linked/detached; no regen).",
+                one_line_summary:
+                    "Mutates draft: copy one component into targets (linked/detached; no regen). Requires: source_component OR source_component_index.",
                 args_schema:
-                    "{ source_component: string|number, targets?: (string|number)[], mode?: \"detached\"|\"linked\", anchors?: string, alignment_frame?: \"join\"|\"child_anchor\", transform?: TransformDelta }",
+                    "{ source_component?: string, source_component_index?: number, targets: (string|number)[], mode?: \"detached\"|\"linked\", anchors?: string, alignment_frame?: \"join\"|\"child_anchor\", transform?: TransformDelta }",
                 args_example: serde_json::json!({ "source_component": "arm_l_upper", "targets": ["arm_r_upper"], "mode": "linked" }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_MIRROR_COMPONENT,
                 title: "Mirror component",
-                one_line_summary: "Mutates draft: mirror one component into targets (L/R; no regen).",
+                one_line_summary:
+                    "Mutates draft: mirror one component into targets (L/R; no regen). Requires: source_component OR source_component_index. Note: alignment_frame is join-only.",
                 args_schema:
-                    "{ source_component: string|number, targets?: (string|number)[], mode?: \"detached\"|\"linked\", anchors?: string, transform?: TransformDelta }",
+                    "{ source_component?: string, source_component_index?: number, targets: (string|number)[], mode?: \"detached\"|\"linked\", anchors?: string, alignment_frame?: \"join\", transform?: TransformDelta }",
                 args_example: serde_json::json!({ "source_component": "arm_l_upper", "targets": ["arm_r_upper"], "mode": "detached" }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_COPY_COMPONENT_SUBTREE,
                 title: "Copy component subtree",
-                one_line_summary: "Mutates draft: copy a component + descendants into target roots (no regen).",
+                one_line_summary:
+                    "Mutates draft: copy a component + descendants into target roots (no regen). Requires: source_root OR source_root_index.",
                 args_schema:
-                    "{ source_root: string|number, targets: (string|number)[], mode?: \"detached\", anchors?: string, alignment_frame?: \"join\"|\"child_anchor\", transform?: TransformDelta }",
+                    "{ source_root?: string, source_root_index?: number, targets: (string|number)[], mode?: \"detached\", anchors?: string, alignment_frame?: \"join\"|\"child_anchor\", transform?: TransformDelta }",
                 args_example: serde_json::json!({ "source_root": "leg_l_thigh", "targets": ["leg_r_thigh"] }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_MIRROR_COMPONENT_SUBTREE,
                 title: "Mirror component subtree",
-                one_line_summary: "Mutates draft: mirror a component subtree into target roots (L/R; no regen).",
+                one_line_summary:
+                    "Mutates draft: mirror a component subtree into target roots (L/R; no regen). Requires: source_root OR source_root_index. Note: alignment_frame is join-only.",
                 args_schema:
-                    "{ source_root: string|number, targets: (string|number)[], mode?: \"detached\", anchors?: string, transform?: TransformDelta }",
+                    "{ source_root?: string, source_root_index?: number, targets: (string|number)[], mode?: \"detached\", anchors?: string, alignment_frame?: \"join\", transform?: TransformDelta }",
                 args_example: serde_json::json!({ "source_root": "leg_l_thigh", "targets": ["leg_r_thigh"] }),
             },
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_DETACH_COMPONENT,
                 title: "Detach component copy",
                 one_line_summary:
-                    "Mutates draft: materialize a linked component copy into real geometry (so it can diverge).",
-                args_schema: "{ component: string|number }",
+                    "Mutates draft: materialize a linked component copy into real geometry (so it can diverge). Requires: component OR component_index.",
+                args_schema: "{ component?: string, component_index?: number }",
                 args_example: serde_json::json!({ "component": "arm_r_upper" }),
             },
             Gen3dToolDescriptorV1 {
@@ -484,7 +488,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 one_line_summary:
                     "LLM+mutates: generate/replace the component plan; preserve-mode diffs are policy-validated (constraints.preserve_edit_policy). Preserve-mode replans with an existing plan require plan_template_kv (call get_plan_template_v1 first).",
                 args_schema:
-                    "{ prompt?: string, style?: string, plan_template_kv?: { namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number } }, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, components?: string[] }",
+                    "{ prompt?: string, style?: string, plan_template_kv?: PlanTemplateKvRef, constraints?: PlanConstraints, components?: string[] }\nPlanTemplateKvRef = { namespace: string, key: string, selector?: InfoKvSelector }\nInfoKvSelector = { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }\nPlanConstraints = { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }",
                 args_example: serde_json::json!({
                     "prompt": "Plan a simple 3-component object.",
                     "constraints": {
@@ -498,7 +502,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 one_line_summary:
                     "LLM+mutates: generate a bounded PlanOps patch and deterministically apply it to the current accepted plan (preserve-mode diff-first replanning). Requires constraints.preserve_existing_components=true, an existing plan, and plan_template_kv (call get_plan_template_v1 first). Optional scope_components rejects ops that touch out-of-scope existing components. Deterministically normalizes common alias add_component.component→name (reports repaired=true + repair_diff; writes plan_ops_generated_normalized.json). Writes plan_ops_generated.json + plan_ops_apply_last.json artifacts under pass/.",
                 args_schema:
-                    "{ prompt?: string, plan_template_kv?: { namespace: string, key: string, selector?: { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number } }, constraints?: { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }, scope_components?: string[], max_ops?: number }",
+                    "{ prompt?: string, plan_template_kv?: PlanTemplateKvRef, constraints?: PlanConstraints, scope_components?: string[], max_ops?: number }\nPlanTemplateKvRef = { namespace: string, key: string, selector?: InfoKvSelector }\nInfoKvSelector = { kind: \"latest\"|\"kv_rev\"|\"as_of_assembly_rev\"|\"as_of_pass\", kv_rev?: number, assembly_rev?: number, pass?: number }\nPlanConstraints = { preserve_existing_components?: bool, preserve_edit_policy?: \"additive\"|\"allow_offsets\"|\"allow_rewire\", rewire_components?: string[] }",
                 args_example: serde_json::json!({
                     "constraints": {
                         "preserve_existing_components": true,
@@ -608,7 +612,7 @@ TransformDelta = { pos?:[number,number,number], rot_quat_xyzw?:[number,number,nu
                 one_line_summary:
                     "Mutates draft: cherry-pick components/subtrees from another workspace into the active one.",
                 args_schema:
-                    "{ version?: 1, from: string, components?: string[], mode?: string, include_attachment?: bool }",
+                    "{ version?: 1, from: string, components: string[], mode?: \"component\"|\"subtree\", include_attachment?: bool }",
                 args_example: serde_json::json!({ "from": "ws_fixlegs", "components": ["leg_l_thigh", "leg_r_thigh"] }),
             },
             Gen3dToolDescriptorV1 {

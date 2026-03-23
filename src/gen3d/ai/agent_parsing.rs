@@ -33,65 +33,32 @@ pub(super) fn resolve_component_index_by_name_hint(
     components: &[Gen3dPlannedComponent],
     hint: &str,
 ) -> Option<usize> {
+    let hint = hint.trim();
+    if hint.is_empty() {
+        return None;
+    }
+
+    // Safety: only exact match OR unique normalized match. No fuzzy scoring.
+    if let Some(idx) = components.iter().position(|c| c.name == hint) {
+        return Some(idx);
+    }
+
     let hint_norm = normalize_identifier_for_match(hint);
     if hint_norm.is_empty() {
         return None;
     }
 
+    let mut found: Option<usize> = None;
     for (idx, c) in components.iter().enumerate() {
         if normalize_identifier_for_match(c.name.as_str()) == hint_norm {
-            return Some(idx);
-        }
-    }
-
-    let hint_tokens: Vec<&str> = hint_norm.split('_').filter(|s| !s.is_empty()).collect();
-    if hint_tokens.is_empty() {
-        return None;
-    }
-
-    let mut best: Option<(usize, f32, usize)> = None;
-    for (idx, c) in components.iter().enumerate() {
-        let cand_norm = normalize_identifier_for_match(c.name.as_str());
-        if cand_norm.is_empty() {
-            continue;
-        }
-        let cand_tokens: Vec<&str> = cand_norm.split('_').filter(|s| !s.is_empty()).collect();
-        if cand_tokens.is_empty() {
-            continue;
-        }
-
-        let mut intersection = 0usize;
-        for t in &hint_tokens {
-            if cand_tokens.contains(t) {
-                intersection += 1;
+            if found.is_some() {
+                // Ambiguous normalized match: refuse to guess.
+                return None;
             }
-        }
-        let union = hint_tokens.len() + cand_tokens.len() - intersection;
-        let mut score = if union == 0 {
-            0.0
-        } else {
-            intersection as f32 / union as f32
-        };
-
-        if hint_norm.contains(&cand_norm) || cand_norm.contains(&hint_norm) {
-            score += 0.25;
-        }
-        if hint_tokens.first() == cand_tokens.first() {
-            score += 0.12;
-        }
-
-        let len_bonus = cand_norm.len().min(hint_norm.len());
-        if best
-            .as_ref()
-            .map(|(_, s, l)| score > *s || (score == *s && len_bonus > *l))
-            .unwrap_or(true)
-        {
-            best = Some((idx, score, len_bonus));
+            found = Some(idx);
         }
     }
-
-    let (idx, score, _) = best?;
-    (score >= 0.34).then_some(idx)
+    found
 }
 
 pub(super) fn parse_vec3(value: &serde_json::Value) -> Option<Vec3> {

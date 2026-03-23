@@ -19,6 +19,111 @@ use uuid::Uuid;
 use super::super::state::Gen3dWorkshop;
 use super::Gen3dAiJob;
 
+fn first_line(text: &str) -> &str {
+    text.split('\n').next().unwrap_or("")
+}
+
+fn parse_args_sig_items(args_sig: &str) -> Result<Vec<String>, String> {
+    let sig = args_sig.trim();
+    if sig == "{}" {
+        return Ok(Vec::new());
+    }
+    let Some(inner) = sig.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+        return Err("args signature must be wrapped in `{ ... }`".into());
+    };
+
+    let mut items: Vec<String> = Vec::new();
+    let mut item_buf = String::new();
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for ch in inner.chars() {
+        if in_string {
+            item_buf.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => {
+                in_string = true;
+                item_buf.push(ch);
+            }
+            '{' | '[' | '(' => {
+                depth += 1;
+                item_buf.push(ch);
+            }
+            '}' | ']' | ')' => {
+                depth -= 1;
+                item_buf.push(ch);
+            }
+            ',' if depth == 0 => {
+                let item = item_buf.trim();
+                if !item.is_empty() {
+                    items.push(item.to_string());
+                }
+                item_buf.clear();
+            }
+            _ => item_buf.push(ch),
+        }
+    }
+    if in_string {
+        return Err("args signature has an unterminated string".into());
+    }
+    if depth != 0 {
+        return Err("args signature has unbalanced brackets".into());
+    }
+    let item = item_buf.trim();
+    if !item.is_empty() {
+        items.push(item.to_string());
+    }
+
+    for item in &items {
+        let Some((key, _)) = item.split_once(':') else {
+            return Err(format!("args signature item missing `:`: {item:?}"));
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(format!("args signature item has an empty key: {item:?}"));
+        }
+    }
+
+    Ok(items)
+}
+
+fn required_keys_from_args_sig(args_sig: &str) -> Vec<String> {
+    let Ok(items) = parse_args_sig_items(args_sig) else {
+        return Vec::new();
+    };
+
+    let mut keys = Vec::new();
+    for item in items {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let Some((key, _)) = item.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() || key.ends_with('?') {
+            continue;
+        }
+        keys.push(key.to_string());
+    }
+
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
 pub(super) fn build_agent_system_instructions() -> String {
     // Keep this short; the user text provides tool lists and current state.
     // The agent must output strict JSON only.
@@ -177,84 +282,9 @@ pub(super) fn build_agent_user_text(
         out
     }
 
-    fn first_line(text: &str) -> &str {
-        text.split('\n').next().unwrap_or("")
-    }
-
     fn one_line_snip(text: &str, max_chars: usize) -> String {
         let sanitized = text.replace('\r', " ").replace('\n', " ");
         truncate_for_prompt(sanitized.trim(), max_chars)
-    }
-
-    fn required_keys_from_args_sig(args_sig: &str) -> Vec<String> {
-        let sig = args_sig.trim();
-        if sig == "{}" {
-            return Vec::new();
-        }
-
-        let Some(inner) = sig.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
-            return Vec::new();
-        };
-
-        fn push_required_key_from_item(keys: &mut Vec<String>, item: &str) {
-            let item = item.trim();
-            if item.is_empty() {
-                return;
-            }
-            let Some((key, _)) = item.split_once(':') else {
-                return;
-            };
-            let key = key.trim();
-            if key.is_empty() || key.ends_with('?') {
-                return;
-            }
-            keys.push(key.to_string());
-        }
-
-        let mut keys = Vec::new();
-        let mut item_buf = String::new();
-        let mut depth: i32 = 0;
-        let mut in_string = false;
-        let mut escaped = false;
-
-        for ch in inner.chars() {
-            if in_string {
-                item_buf.push(ch);
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == '"' {
-                    in_string = false;
-                }
-                continue;
-            }
-
-            match ch {
-                '"' => {
-                    in_string = true;
-                    item_buf.push(ch);
-                }
-                '{' | '[' | '(' => {
-                    depth += 1;
-                    item_buf.push(ch);
-                }
-                '}' | ']' | ')' => {
-                    depth -= 1;
-                    item_buf.push(ch);
-                }
-                ',' if depth == 0 => {
-                    push_required_key_from_item(&mut keys, &item_buf);
-                    item_buf.clear();
-                }
-                _ => item_buf.push(ch),
-            }
-        }
-        push_required_key_from_item(&mut keys, &item_buf);
-
-        keys.sort();
-        keys.dedup();
-        keys
     }
 
     fn find_tool<'a>(
@@ -3118,6 +3148,28 @@ mod tests {
         assert!(text.lines().any(|line| {
             line.contains("- info_events_search_v1:") && line.contains("args={ query: string")
         }));
+    }
+
+    #[test]
+    fn tool_args_signatures_are_compact_and_parseable() {
+        let registry = Gen3dToolRegistryV1::default();
+        for tool in registry.list() {
+            let args_sig = first_line(tool.args_schema).trim();
+            let args_sig = if args_sig.is_empty() { "{}" } else { args_sig };
+            assert!(
+                args_sig.chars().count() <= 240,
+                "tool {} args signature too long ({} chars): {}",
+                tool.tool_id,
+                args_sig.chars().count(),
+                args_sig
+            );
+            assert!(
+                parse_args_sig_items(args_sig).is_ok(),
+                "tool {} args signature not parseable: {}",
+                tool.tool_id,
+                args_sig
+            );
+        }
     }
 
     #[test]

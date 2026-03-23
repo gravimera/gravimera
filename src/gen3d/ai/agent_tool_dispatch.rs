@@ -4940,7 +4940,8 @@ pub(super) fn execute_tool_call(
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing args.source_component (name or index)".into(),
+                    "Missing args.source_component (name) or args.source_component_index (index)."
+                        .into(),
                 ));
             };
             if source_idx >= job.planned_components.len() {
@@ -5239,7 +5240,7 @@ pub(super) fn execute_tool_call(
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing args.source_root (name or index)".into(),
+                    "Missing args.source_root (name) or args.source_root_index (index).".into(),
                 ));
             };
             if source_idx >= job.planned_components.len() {
@@ -5506,7 +5507,7 @@ pub(super) fn execute_tool_call(
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing component (name or index)".into(),
+                    "Missing args.component (name) or args.component_index (index).".into(),
                 ));
             };
             if target_idx >= job.planned_components.len() {

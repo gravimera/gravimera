@@ -1292,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn gen3d_component_name_hint_resolves_common_aliases() {
+    fn gen3d_component_name_hint_resolves_exact_or_normalized_only() {
         let components = vec![
             super::super::Gen3dPlannedComponent {
                 display_name: "Turret Base".into(),
@@ -1324,12 +1324,10 @@ mod tests {
             },
         ];
 
+        assert_eq!(resolve_component_index_by_name_hint(&components, "turret_base"), Some(0));
+        assert_eq!(resolve_component_index_by_name_hint(&components, "Turret Base"), Some(0));
         assert_eq!(
-            resolve_component_index_by_name_hint(&components, "roof_turret_base"),
-            Some(0)
-        );
-        assert_eq!(
-            resolve_component_index_by_name_hint(&components, "cannon_weapon"),
+            resolve_component_index_by_name_hint(&components, "cannon barrel"),
             Some(1)
         );
     }
