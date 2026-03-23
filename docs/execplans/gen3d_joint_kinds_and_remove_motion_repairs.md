@@ -26,7 +26,7 @@ You can verify it works by running a Gen3D build and observing:
 - [x] (2026-03-24) Remove deterministic motion repair tools from the tool registry and tool dispatch (`recenter_attachment_motion_v1`, `suggest_motion_repairs_v1`).
 - [x] (2026-03-24) Remove any prompt guidance and QA fixits that recommend the removed tools; keep guidance focused on re-authoring motion or explicit ops.
 - [x] (2026-03-24) Update tests/regressions affected by the new joint kind set and tool removal.
-- [ ] (2026-03-24) Run `cargo test` + rendered smoke (done); commit (remaining).
+- [x] (2026-03-24) Run `cargo test` + rendered smoke; commit.
 
 ## Surprises & Discoveries
 
@@ -42,6 +42,8 @@ You can verify it works by running a Gen3D build and observing:
 ## Outcomes & Retrospective
 
 This change removes a source of Gen3D QA friction (`fixed` joints and deterministic motion repairs), pushing the system toward higher-DoF joints (`ball`/`free`) and LLM re-authoring instead of programmatic fixes. Tests and a rendered smoke run validate that the game still starts and the refactor is coherent.
+
+Implemented in commit `9d01d8d`.
 
 ## Context and Orientation
 
