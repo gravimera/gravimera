@@ -1388,7 +1388,13 @@ pub(crate) fn gen3d_save_button(
     preview: Res<Gen3dPreview>,
     mut last_interaction: Local<Option<Interaction>>,
     mut buttons: Query<
-        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            &mut Visibility,
+            &mut Node,
+        ),
         With<Gen3dSaveButton>,
     >,
 ) {
@@ -1396,12 +1402,26 @@ pub(crate) fn gen3d_save_button(
         return;
     }
 
-    let enabled = draft.root_def().is_some() && draft.total_non_projectile_primitive_parts() > 0;
+    let running = runtime.job.is_running();
 
-    let Ok((interaction, mut bg, mut border)) = buttons.single_mut() else {
+    let Ok((interaction, mut bg, mut border, mut vis, mut node)) = buttons.single_mut() else {
         *last_interaction = None;
         return;
     };
+
+    if !running {
+        node.display = Display::None;
+        *vis = Visibility::Hidden;
+        *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.11, 0.55));
+        *border = BorderColor::all(Color::srgba(0.30, 0.30, 0.34, 0.70));
+        *last_interaction = None;
+        return;
+    }
+
+    node.display = Display::Flex;
+    *vis = Visibility::Inherited;
+
+    let enabled = draft.root_def().is_some() && draft.total_non_projectile_primitive_parts() > 0;
 
     if !enabled {
         *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.11, 0.55));
@@ -1433,7 +1453,13 @@ pub(crate) fn gen3d_save_button(
                 mut job,
             } = runtime;
 
-            match gen3d_save_current_draft_seed_aware_from_api(
+            let prev_overwrite = job.save_overwrite_prefab_id();
+            let prev_last_saved = job.last_saved_prefab_id();
+            if prev_overwrite.is_some() {
+                job.set_save_overwrite_prefab_id(None);
+            }
+
+            let result = gen3d_save_current_draft_seed_aware_from_api(
                 &env.active.realm_id,
                 &env.active.scene_id,
                 &mut library,
@@ -1442,7 +1468,14 @@ pub(crate) fn gen3d_save_button(
                 &mut job,
                 &draft,
                 preview.show_collision,
-            ) {
+            );
+
+            if prev_overwrite.is_some() {
+                job.set_save_overwrite_prefab_id(prev_overwrite);
+            }
+            job.set_last_saved_prefab_id(prev_last_saved);
+
+            match result {
                 Ok(saved) => {
                     model_library.mark_models_dirty();
 
@@ -1467,10 +1500,12 @@ pub(crate) fn gen3d_save_button(
                     ) {
                         warn!("Gen3D: thumbnail capture skipped: {err}");
                     }
+                    workshop.status =
+                        "Saved snapshot. Open Prefabs to view/spawn it.".to_string();
                 }
                 Err(err) => {
                     workshop.error = Some(err);
-                    workshop.status = "Save failed.".into();
+                    workshop.status = "Save snapshot failed.".into();
                 }
             }
         }

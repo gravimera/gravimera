@@ -217,6 +217,8 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::model_library_ui::model_library_rebuild_list_ui),
                 crate::model_library_ui::model_library_update_gen3d_thumbnail_indicators
                     .after(crate::model_library_ui::model_library_rebuild_list_ui),
+                crate::model_library_ui::model_library_update_prefab_label_text
+                    .after(crate::model_library_ui::model_library_rebuild_list_ui),
                 crate::model_library_ui::model_library_update_gen3d_placeholder_indicators
                     .after(crate::model_library_ui::model_library_sync_gen3d_placeholders),
             ),
@@ -413,6 +415,10 @@ impl Plugin for RenderedGen3dPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_generate_button
                     .after(crate::gen3d::gen3d_prompt_box_focus)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_cancel_queue_button
+                    .after(crate::gen3d::gen3d_generate_button)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_save_button

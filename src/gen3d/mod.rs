@@ -168,8 +168,9 @@ pub(crate) use tool_feedback_ui::{
     gen3d_update_prefab_scrollbar_ui, gen3d_update_side_tab_ui,
 };
 pub(crate) use ui::{
-    enter_gen3d_mode, exit_gen3d_mode, gen3d_cleanup_preview_scene_when_idle, gen3d_exit_button,
-    gen3d_exit_on_escape, gen3d_preview_animation_dropdown_button,
+    enter_gen3d_mode, exit_gen3d_mode, gen3d_cancel_queue_button,
+    gen3d_cleanup_preview_scene_when_idle, gen3d_exit_button, gen3d_exit_on_escape,
+    gen3d_preview_animation_dropdown_button,
     gen3d_preview_animation_dropdown_scroll_wheel, gen3d_preview_animation_option_buttons,
     gen3d_prompt_box_focus, gen3d_prompt_scroll_wheel, gen3d_prompt_scrollbar_drag,
     gen3d_prompt_text_input, gen3d_rebuild_preview_animation_dropdown_options_ui,

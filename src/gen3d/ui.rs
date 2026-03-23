@@ -10,7 +10,7 @@ use crate::types::{BuildScene, EmojiAtlas, UiFonts};
 use super::ai::Gen3dAiJob;
 use super::preview;
 use super::state::*;
-use super::task_queue::Gen3dTaskQueue;
+use super::task_queue::{Gen3dTaskQueue, Gen3dTaskState};
 
 fn aspect_fit_size(content_w_px: f32, content_h_px: f32, aspect: f32) -> (f32, f32) {
     let content_w_px = content_w_px.max(1.0);
@@ -25,6 +25,25 @@ fn aspect_fit_size(content_w_px: f32, content_h_px: f32, aspect: f32) -> (f32, f
         let h = content_h_px;
         ((h * aspect).max(1.0), h)
     }
+}
+
+fn active_session_is_queued(task_queue: &Gen3dTaskQueue) -> bool {
+    task_queue
+        .metas
+        .get(&task_queue.active_session_id)
+        .is_some_and(|meta| meta.task_state == Gen3dTaskState::Waiting)
+}
+
+fn active_session_queue_position(task_queue: &Gen3dTaskQueue) -> Option<(usize, usize)> {
+    if !active_session_is_queued(task_queue) {
+        return None;
+    }
+    let total = task_queue.queue.len();
+    let pos = task_queue
+        .queue
+        .iter()
+        .position(|id| *id == task_queue.active_session_id)?;
+    Some((pos + 1, total))
 }
 
 pub(crate) fn spawn_gen3d_preview_panel<F>(
@@ -1055,17 +1074,46 @@ pub(crate) fn enter_gen3d_mode(
                                 },
                                 BackgroundColor(Color::srgba(0.06, 0.10, 0.16, 0.80)),
                                 BorderColor::all(Color::srgb(0.30, 0.55, 0.95)),
+                                Visibility::Hidden,
                                 Gen3dSaveButton,
                             ))
                             .with_children(|button| {
                                 button.spawn((
-                                    Text::new("Save"),
+                                    Text::new("Save Snapshot"),
                                     TextFont {
                                         font_size: 16.0,
                                         ..default()
                                     },
                                     TextColor(Color::srgb(0.82, 0.90, 1.0)),
                                     Gen3dSaveButtonText,
+                                ));
+                            });
+
+                        column
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(34.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.16, 0.07, 0.06, 0.80)),
+                                BorderColor::all(Color::srgb(0.85, 0.38, 0.30)),
+                                Visibility::Hidden,
+                                Gen3dCancelQueueButton,
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("Cancel queue"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(1.0, 0.86, 0.82)),
+                                    Gen3dCancelQueueButtonText,
                                 ));
                             });
                     });
@@ -1263,6 +1311,70 @@ pub(crate) fn gen3d_exit_button(
                 *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
             }
         }
+    }
+}
+
+pub(crate) fn gen3d_cancel_queue_button(
+    build_scene: Res<State<BuildScene>>,
+    mut task_queue: ResMut<Gen3dTaskQueue>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut buttons: Query<
+        (
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            &mut Visibility,
+            &mut Node,
+        ),
+        With<Gen3dCancelQueueButton>,
+    >,
+    mut last_interaction: Local<Option<Interaction>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+
+    let queued = active_session_is_queued(&task_queue);
+    let active_id = task_queue.active_session_id;
+
+    for (interaction, mut bg, mut border, mut vis, mut node) in &mut buttons {
+        if !queued {
+            node.display = Display::None;
+            *vis = Visibility::Hidden;
+            *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.11, 0.55));
+            *border = BorderColor::all(Color::srgba(0.30, 0.30, 0.34, 0.70));
+            *last_interaction = None;
+            continue;
+        }
+
+        node.display = Display::Flex;
+        *vis = Visibility::Inherited;
+
+        match *interaction {
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.24, 0.11, 0.10, 0.96));
+                *border = BorderColor::all(Color::srgb(1.0, 0.52, 0.40));
+
+                if matches!(*last_interaction, Some(Interaction::Pressed)) {
+                    continue;
+                }
+
+                task_queue.queue.retain(|id| *id != active_id);
+                task_queue.set_task_state(active_id, Gen3dTaskState::Idle);
+                workshop.error = None;
+                workshop.status = "Queue canceled; click Build to run.".to_string();
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.20, 0.09, 0.08, 0.88));
+                *border = BorderColor::all(Color::srgb(0.95, 0.45, 0.35));
+            }
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.16, 0.07, 0.06, 0.80));
+                *border = BorderColor::all(Color::srgb(0.85, 0.38, 0.30));
+            }
+        }
+
+        *last_interaction = Some(*interaction);
     }
 }
 
@@ -2160,6 +2272,7 @@ pub(crate) struct Gen3dUpdateUiTextDeps<'w, 's> {
     preview_state: Res<'w, Gen3dPreview>,
     draft: Res<'w, Gen3dDraft>,
     job: Res<'w, Gen3dAiJob>,
+    task_queue: Res<'w, Gen3dTaskQueue>,
     ui_fonts: Res<'w, UiFonts>,
     emoji_atlas: Res<'w, EmojiAtlas>,
     asset_server: Res<'w, AssetServer>,
@@ -2210,6 +2323,7 @@ pub(crate) fn gen3d_update_ui_text(
         preview_state,
         draft,
         job,
+        task_queue,
         ui_fonts,
         emoji_atlas,
         asset_server,
@@ -2295,16 +2409,32 @@ pub(crate) fn gen3d_update_ui_text(
     let parts = draft.total_primitive_parts();
     let motions = preview_state.animation_channels.len();
 
-    let state = if workshop.error.is_some() {
-        "Error"
-    } else if job.is_running() {
-        "Building"
-    } else if job.is_build_complete() {
-        "Done"
-    } else if job.can_resume() {
-        "Stopped"
+    let queued = active_session_is_queued(&task_queue);
+    let queued_state = if queued {
+        active_session_queue_position(&task_queue)
+            .map(|(pos, total)| {
+                if total > 0 {
+                    format!("Queued (position {pos} of {total})")
+                } else {
+                    "Queued".to_string()
+                }
+            })
+            .unwrap_or_else(|| "Queued".to_string())
     } else {
-        "Idle"
+        String::new()
+    };
+    let state = if workshop.error.is_some() {
+        "Error".to_string()
+    } else if queued {
+        queued_state
+    } else if job.is_running() {
+        "Building".to_string()
+    } else if job.is_build_complete() {
+        "Done".to_string()
+    } else if job.can_resume() {
+        "Stopped".to_string()
+    } else {
+        "Idle".to_string()
     };
 
     let run_time = job
@@ -2434,7 +2564,9 @@ Step: {step_status}",
         *status_log_follow_tail = max_scroll <= 1.0 || (max_scroll - scroll.y) <= 24.0;
     }
 
-    let label = if job.is_running() {
+    let label = if queued {
+        "Queued"
+    } else if job.is_running() {
         "Stop"
     } else if job.edit_base_prefab_id().is_some() {
         "Edit"

@@ -97,7 +97,13 @@ Manual QA:
    - Placeholder shows working/waiting indicator.
 3. While a task is running, click another prefab item that has a queued edit:
    - It should show its associated Gen3D panel/session.
-4. Confirm the header button reads `Generate` (not `Gen3D`).
+   - Prefabs list name shows `Editing…:` (green) while running and `Queued…:` (yellow) while queued.
+4. Open a queued session in the Gen3D panel:
+   - Status summary shows `State: Queued (position N of M)`.
+   - Primary button label reads `Queued` and is visually disabled.
+   - Prefabs list shows a yellow `↻` queue indicator (same glyph as generating, different color, no rotation).
+   - `Cancel queue` button is visible; clicking it removes the session from the queue.
+5. Confirm the header button reads `Generate` (not `Gen3D`).
 
 ### 6) Gen3D panel UX: clear + merged Build/Edit button; HTTP task APIs
 
@@ -117,4 +123,7 @@ Manual QA:
    - Fresh session: `Build`
    - Seeded session: `Edit`
    - While running: `Stop`
-
+6. Confirm `Save Snapshot` button visibility:
+   - Visible only while generating.
+   - Hidden while queued or completed (auto-save already handled).
+   - In an Edit run, clicking `Save Snapshot` creates a new prefab item (forked snapshot).

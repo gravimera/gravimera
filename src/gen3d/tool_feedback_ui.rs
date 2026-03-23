@@ -116,7 +116,9 @@ pub(crate) fn gen3d_update_prefab_details_text(
         let mut out = String::new();
         out.push_str("Current Prefab\n\n");
         out.push_str("No prefab selected yet.\n\n");
-        out.push_str("Tip: Click Build, then Save to create a prefab descriptor.\n");
+        out.push_str(
+            "Tip: Click Build; successful runs auto-save a prefab descriptor. Save Snapshot appears while generating.\n",
+        );
 
         for mut text in &mut texts {
             **text = out.clone().into();

@@ -310,6 +310,12 @@ pub(crate) struct Gen3dSaveButton;
 pub(crate) struct Gen3dSaveButtonText;
 
 #[derive(Component)]
+pub(crate) struct Gen3dCancelQueueButton;
+
+#[derive(Component)]
+pub(crate) struct Gen3dCancelQueueButtonText;
+
+#[derive(Component)]
 pub(crate) struct Gen3dStatusText;
 
 #[derive(Component)]

@@ -108,7 +108,7 @@ impl Gen3dToolRegistryV1 {
             Gen3dToolDescriptorV1 {
                 tool_id: TOOL_ID_SET_DESCRIPTOR_META,
                 title: "Set descriptor meta",
-                one_line_summary: "Mutates session: sets prefab descriptor short name (`name`, <=3 words) + `short` + `tags` for the next Save (seeded edits preserve existing meta unless overridden).",
+                one_line_summary: "Mutates session: sets prefab descriptor short name (`name`, <=3 words) + `short` + `tags` for the next auto-save or Save Snapshot (seeded edits preserve existing meta unless overridden).",
                 args_schema: "{ version?: 1, name?: string, short?: string, tags?: string[] }",
                 args_example: serde_json::json!({ "name": "Wooden watchtower", "short": "A wooden watchtower with a narrow staircase.", "tags": ["tower", "wood", "defensive"] }),
             },

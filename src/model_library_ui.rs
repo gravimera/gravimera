@@ -7,7 +7,7 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
@@ -241,6 +241,11 @@ pub(crate) struct ModelLibraryPrefabList;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryListItem;
+
+#[derive(Component, Debug, Clone)]
+pub(crate) struct ModelLibraryPrefabLabelText {
+    prefab_id: u128,
+}
 
 #[derive(Component)]
 pub(crate) struct ModelLibrarySelectionMark {
@@ -746,11 +751,70 @@ pub(crate) fn model_library_update_search_field_ui(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelLibraryEditState {
+    Editing,
+    Queued,
+}
+
+fn model_library_collect_edit_states(
+    task_queue: &crate::gen3d::Gen3dTaskQueue,
+) -> HashMap<u128, ModelLibraryEditState> {
+    let queued_sessions: HashSet<crate::gen3d::Gen3dSessionId> =
+        task_queue.queue.iter().copied().collect();
+    let mut edit_states: HashMap<u128, ModelLibraryEditState> = HashMap::new();
+    for meta in task_queue.metas.values() {
+        let prefab_id = match meta.kind {
+            crate::gen3d::Gen3dSessionKind::EditOverwrite { prefab_id }
+            | crate::gen3d::Gen3dSessionKind::Fork { prefab_id } => prefab_id,
+            crate::gen3d::Gen3dSessionKind::NewBuild => continue,
+        };
+
+        let state = match meta.task_state {
+            crate::gen3d::Gen3dTaskState::Running => Some(ModelLibraryEditState::Editing),
+            crate::gen3d::Gen3dTaskState::Waiting => Some(ModelLibraryEditState::Queued),
+            crate::gen3d::Gen3dTaskState::Done
+            | crate::gen3d::Gen3dTaskState::Failed
+            | crate::gen3d::Gen3dTaskState::Canceled
+            | crate::gen3d::Gen3dTaskState::Idle => None,
+        }
+        .or_else(|| queued_sessions.contains(&meta.id).then_some(ModelLibraryEditState::Queued));
+
+        let Some(state) = state else {
+            continue;
+        };
+
+        edit_states
+            .entry(prefab_id)
+            .and_modify(|prev| {
+                if matches!(
+                    (*prev, state),
+                    (ModelLibraryEditState::Queued, ModelLibraryEditState::Editing)
+                ) {
+                    *prev = ModelLibraryEditState::Editing;
+                }
+            })
+            .or_insert(state);
+    }
+
+    edit_states
+}
+
+fn model_library_label_prefix(state: Option<ModelLibraryEditState>) -> (&'static str, Color) {
+    match state {
+        Some(ModelLibraryEditState::Editing) => ("Editing…: ", Color::srgba(0.30, 0.97, 0.45, 0.95)),
+        Some(ModelLibraryEditState::Queued) => ("Queued…: ", Color::srgba(0.95, 0.85, 0.25, 0.95)),
+        None => ("", Color::srgb(0.92, 0.92, 0.96)),
+    }
+}
+
+
 pub(crate) fn model_library_rebuild_list_ui(
     mut commands: Commands,
     active: Res<crate::realm::ActiveRealmScene>,
     mut images: ResMut<Assets<Image>>,
     mut descriptors: ResMut<PrefabDescriptorLibrary>,
+    task_queue: Res<crate::gen3d::Gen3dTaskQueue>,
     mut state: ResMut<ModelLibraryUiState>,
     lists: Query<Entity, With<ModelLibraryPrefabList>>,
     existing_items: Query<Entity, With<ModelLibraryListItem>>,
@@ -803,6 +867,8 @@ pub(crate) fn model_library_rebuild_list_ui(
         state.models_dirty = false;
         return;
     }
+
+    let edit_states = model_library_collect_edit_states(&task_queue);
 
     fn system_time_ms(time: std::time::SystemTime) -> u128 {
         time.duration_since(std::time::UNIX_EPOCH)
@@ -915,11 +981,11 @@ pub(crate) fn model_library_rebuild_list_ui(
                     .unwrap_or(0)
             });
 
-        let summary = desc
-            .and_then(|d| d.text.as_ref())
-            .and_then(|t| t.short.as_deref())
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty());
+            let summary = desc
+                .and_then(|d| d.text.as_ref())
+                .and_then(|t| t.short.as_deref())
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty());
         let tags: Vec<String> = desc.map(|d| d.tags.clone()).unwrap_or_default();
 
         let score = relevance_score(query.as_str(), &display_name, &tags, summary, &uuid);
@@ -1006,6 +1072,9 @@ pub(crate) fn model_library_rebuild_list_ui(
 
     commands.entity(list_entity).with_children(|list| {
         for row in rows {
+            let (prefix_text, prefix_color) =
+                model_library_label_prefix(edit_states.get(&row.prefab_id).copied());
+
             list.spawn((
                 Button,
                 Node {
@@ -1077,7 +1146,7 @@ pub(crate) fn model_library_rebuild_list_ui(
                             ..default()
                         },
                         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-                        BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                        BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
                         UiTransform::default(),
                         Visibility::Hidden,
                         ModelLibraryGen3dThumbnailIndicator {
@@ -1092,7 +1161,7 @@ pub(crate) fn model_library_rebuild_list_ui(
                                 font_size: 12.0,
                                 ..default()
                             },
-                            TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                            TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
                         ));
                     });
 
@@ -1109,8 +1178,8 @@ pub(crate) fn model_library_rebuild_list_ui(
                             align_items: AlignItems::Center,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
-                        BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.70)),
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                        BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
                         UiTransform::default(),
                         Visibility::Hidden,
                         ModelLibraryGen3dThumbnailIndicator {
@@ -1125,19 +1194,32 @@ pub(crate) fn model_library_rebuild_list_ui(
                                 font_size: 12.0,
                                 ..default()
                             },
-                            TextColor(Color::srgba(0.95, 0.85, 0.25, 0.70)),
+                            TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
                         ));
                     });
                 });
 
                 b.spawn((
-                    Text::new(row.display_name),
+                    Text::new(prefix_text),
                     TextFont {
                         font_size: 14.0,
                         ..default()
                     },
-                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                ));
+                    TextColor(prefix_color),
+                    ModelLibraryPrefabLabelText {
+                        prefab_id: row.prefab_id,
+                    },
+                ))
+                .with_children(|label| {
+                    label.spawn((
+                        TextSpan::new(row.display_name),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    ));
+                });
             });
         }
     });
@@ -1227,20 +1309,24 @@ pub(crate) fn model_library_sync_gen3d_placeholders(
                     .map(|state| state.workshop.prompt.trim())
                     .unwrap_or("")
             };
-            let label = match task_state {
-                crate::gen3d::Gen3dTaskState::Running => "Generating…",
-                crate::gen3d::Gen3dTaskState::Waiting => "Queued…",
-                _ => "Generating…",
+            let (prefix_text, prefix_color) = match task_state {
+                crate::gen3d::Gen3dTaskState::Running => {
+                    ("Generating…: ", Color::srgba(0.30, 0.97, 0.45, 0.95))
+                }
+                crate::gen3d::Gen3dTaskState::Waiting => {
+                    ("Queued…: ", Color::srgba(0.95, 0.85, 0.25, 0.95))
+                }
+                _ => ("Generating…: ", Color::srgba(0.30, 0.97, 0.45, 0.95)),
             };
             let short = short_id(session_id);
-            let title = if prompt.is_empty() {
-                format!("{label} (new prefab) [{short}]")
+            let rest = if prompt.is_empty() {
+                format!("(new prefab) [{short}]")
             } else {
                 let snippet: String = prompt.chars().take(42).collect();
                 if prompt.chars().count() > 42 {
-                    format!("{label}: {snippet}… [{short}]")
+                    format!("{snippet}… [{short}]")
                 } else {
-                    format!("{label}: {snippet} [{short}]")
+                    format!("{snippet} [{short}]")
                 }
             };
 
@@ -1328,8 +1414,8 @@ pub(crate) fn model_library_sync_gen3d_placeholders(
                             align_items: AlignItems::Center,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
-                        BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.70)),
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                        BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
                         UiTransform::default(),
                         Visibility::Hidden,
                         ModelLibraryGen3dPlaceholderIndicator {
@@ -1344,19 +1430,29 @@ pub(crate) fn model_library_sync_gen3d_placeholders(
                                 font_size: 12.0,
                                 ..default()
                             },
-                            TextColor(Color::srgba(0.30, 0.97, 0.45, 0.70)),
+                            TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
                         ));
                     });
                 });
 
                 b.spawn((
-                    Text::new(title),
+                    Text::new(prefix_text),
                     TextFont {
                         font_size: 14.0,
                         ..default()
                     },
-                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                ));
+                    TextColor(prefix_color),
+                ))
+                .with_children(|label| {
+                    label.spawn((
+                        TextSpan::new(rest),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    ));
+                });
             });
         }
     });
@@ -1426,6 +1522,8 @@ pub(crate) fn model_library_update_gen3d_thumbnail_indicators(
     }
 
     let mut prefab_states: HashMap<u128, PrefabState> = HashMap::new();
+    let queued_sessions: HashSet<crate::gen3d::Gen3dSessionId> =
+        task_queue.queue.iter().copied().collect();
     for meta in task_queue.metas.values() {
         let prefab_id = match meta.kind {
             crate::gen3d::Gen3dSessionKind::EditOverwrite { prefab_id }
@@ -1433,13 +1531,20 @@ pub(crate) fn model_library_update_gen3d_thumbnail_indicators(
             crate::gen3d::Gen3dSessionKind::NewBuild => continue,
         };
 
-        let state = match meta.task_state {
-            crate::gen3d::Gen3dTaskState::Waiting => PrefabState::Waiting,
-            crate::gen3d::Gen3dTaskState::Running => PrefabState::Working,
+        let mut state = match meta.task_state {
+            crate::gen3d::Gen3dTaskState::Running => Some(PrefabState::Working),
+            crate::gen3d::Gen3dTaskState::Waiting => Some(PrefabState::Waiting),
             crate::gen3d::Gen3dTaskState::Done
             | crate::gen3d::Gen3dTaskState::Failed
-            | crate::gen3d::Gen3dTaskState::Canceled => continue,
-            crate::gen3d::Gen3dTaskState::Idle => continue,
+            | crate::gen3d::Gen3dTaskState::Canceled
+            | crate::gen3d::Gen3dTaskState::Idle => None,
+        };
+        if state.is_none() && queued_sessions.contains(&meta.id) {
+            state = Some(PrefabState::Waiting);
+        }
+
+        let Some(state) = state else {
+            continue;
         };
 
         prefab_states
@@ -1470,11 +1575,10 @@ pub(crate) fn model_library_update_gen3d_thumbnail_indicators(
         }
 
         let offset = ((indicator.prefab_id % 97) as f32) * 0.23;
-        let speed = match indicator.kind {
-            ModelLibraryGen3dIndicatorKind::Working => 7.0,
-            ModelLibraryGen3dIndicatorKind::Waiting => 3.0,
+        ui_transform.rotation = match indicator.kind {
+            ModelLibraryGen3dIndicatorKind::Working => Rot2::radians(t * 7.0 + offset),
+            ModelLibraryGen3dIndicatorKind::Waiting => Rot2::radians(0.0),
         };
-        ui_transform.rotation = Rot2::radians(t * speed + offset);
     }
 }
 
@@ -1512,11 +1616,31 @@ pub(crate) fn model_library_update_gen3d_placeholder_indicators(
         }
 
         let offset = ((indicator.session_id.as_u128() % 97) as f32) * 0.23;
-        let speed = match indicator.kind {
-            ModelLibraryGen3dIndicatorKind::Working => 7.0,
-            ModelLibraryGen3dIndicatorKind::Waiting => 3.0,
+        ui_transform.rotation = match indicator.kind {
+            ModelLibraryGen3dIndicatorKind::Working => Rot2::radians(t * 7.0 + offset),
+            ModelLibraryGen3dIndicatorKind::Waiting => Rot2::radians(0.0),
         };
-        ui_transform.rotation = Rot2::radians(t * speed + offset);
+    }
+}
+
+pub(crate) fn model_library_update_prefab_label_text(
+    task_queue: Res<crate::gen3d::Gen3dTaskQueue>,
+    mut labels: Query<(&ModelLibraryPrefabLabelText, &mut Text, &mut TextColor)>,
+) {
+    if labels.is_empty() {
+        return;
+    }
+
+    let edit_states = model_library_collect_edit_states(&task_queue);
+    for (label, mut text, mut color) in &mut labels {
+        let state = edit_states.get(&label.prefab_id).copied();
+        let (prefix, prefix_color) = model_library_label_prefix(state);
+        if text.0 != prefix {
+            text.0 = prefix.to_string();
+        }
+        if color.0 != prefix_color {
+            color.0 = prefix_color;
+        }
     }
 }
 

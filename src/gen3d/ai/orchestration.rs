@@ -46,7 +46,7 @@ use super::super::state::{
     Gen3dPreviewModelRoot, Gen3dReviewCaptureCamera, Gen3dSeedFromPrefabMode, Gen3dSpeedMode,
     Gen3dWorkshop,
 };
-use super::super::task_queue::Gen3dTaskQueue;
+use super::super::task_queue::{Gen3dTaskQueue, Gen3dTaskState};
 use super::super::tool_feedback::{
     append_gen3d_tool_feedback_entry, gen3d_tool_feedback_history_path, Gen3dToolFeedbackEntry,
     Gen3dToolFeedbackHistory,
@@ -65,10 +65,8 @@ pub(crate) fn gen3d_generate_button(
     mut workshop: ResMut<Gen3dWorkshop>,
     mut job: ResMut<Gen3dAiJob>,
     mut draft: ResMut<Gen3dDraft>,
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<Gen3dGenerateButton>),
-    >,
+    mut buttons: Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<Gen3dGenerateButton>>,
+    mut last_interaction: Local<Option<Interaction>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
@@ -76,19 +74,39 @@ pub(crate) fn gen3d_generate_button(
 
     let log_sinks = log_sinks.map(|sinks| sinks.into_inner().clone());
     let active_session_id = task_queue.active_session_id;
+    let queued = task_queue
+        .metas
+        .get(&active_session_id)
+        .is_some_and(|meta| meta.task_state == Gen3dTaskState::Waiting);
 
-    for (interaction, mut bg) in &mut buttons {
+    for (interaction, mut bg, mut border) in &mut buttons {
+        if queued {
+            *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.08, 0.70));
+            *border = BorderColor::all(Color::srgba(0.30, 0.30, 0.34, 0.75));
+            *last_interaction = Some(*interaction);
+            continue;
+        }
+
         match *interaction {
             Interaction::None => {
                 *bg = BackgroundColor(Color::srgba(0.08, 0.14, 0.10, 0.85));
+                *border = BorderColor::all(Color::srgb(0.25, 0.80, 0.45));
             }
             Interaction::Hovered => {
                 *bg = BackgroundColor(Color::srgba(0.10, 0.18, 0.13, 0.92));
+                *border = BorderColor::all(Color::srgb(0.30, 0.88, 0.50));
             }
             Interaction::Pressed => {
                 *bg = BackgroundColor(Color::srgba(0.12, 0.20, 0.15, 0.98));
+                *border = BorderColor::all(Color::srgb(0.35, 0.95, 0.55));
+
+                if matches!(*last_interaction, Some(Interaction::Pressed)) {
+                    continue;
+                }
+
                 if job.running {
                     gen3d_cancel_build_from_api(&mut workshop, &mut job);
+                    *last_interaction = Some(*interaction);
                     continue;
                 }
 
@@ -124,6 +142,7 @@ pub(crate) fn gen3d_generate_button(
                     } else {
                         format!("Queued Gen3D run (position {queued_idx}).")
                     };
+                    *last_interaction = Some(*interaction);
                     continue;
                 }
 
@@ -183,6 +202,8 @@ pub(crate) fn gen3d_generate_button(
                 }
             }
         }
+
+        *last_interaction = Some(*interaction);
     }
 }
 
@@ -1010,10 +1031,10 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     workshop.error = None;
     workshop.status = match mode {
         Gen3dSeededSessionMode::EditOverwrite => {
-            "Edit session loaded. Click Edit to run; Save overwrites the same prefab id.".into()
+            "Edit session loaded. Click Edit to run; auto-save overwrites the same prefab id. Save Snapshot appears while generating.".into()
         }
         Gen3dSeededSessionMode::Fork => {
-            "Fork session loaded. Click Edit to run; Save writes a new prefab id.".into()
+            "Fork session loaded. Click Edit to run; auto-save writes a new prefab id. Save Snapshot appears while generating.".into()
         }
     };
 
@@ -3698,7 +3719,7 @@ pub(super) fn finish_job_best_effort(
 
     workshop.error = None;
     workshop.status = format!(
-        "Build finished (best effort).\nReason: {}\nYou can Save this draft or click Build to start a new run.",
+        "Build finished (best effort).\nReason: {}\nAuto-save runs on completion (when allowed). Click Build to start a new run.",
         truncate_for_ui(&reason, 600)
     );
 
