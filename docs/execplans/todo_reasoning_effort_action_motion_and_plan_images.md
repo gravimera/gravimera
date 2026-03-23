@@ -29,7 +29,7 @@ After this change:
 - [x] (2026-03-23) Update docs (`config.example.toml`, `docs/object_system.md`, and tool/prompt strings) to match code.
 - [x] (2026-03-23) Run `cargo test` and the rendered smoke test (`cargo run -- --rendered-seconds 2` with a temp GRAVIMERA_HOME).
 - [x] (2026-03-23) Mark `docs/todo.md` items complete.
-- [ ] Commit changes.
+- [x] (2026-03-23) Commit changes.
 
 
 ## Surprises & Discoveries
@@ -50,7 +50,10 @@ After this change:
 
 ## Outcomes & Retrospective
 
-- (fill at completion)
+- Unified all OpenAI-backed “reasoning effort” config to `[openai].reasoning_effort` (default `high`) and removed Gen3D per-step caps so every step can run at the configured effort.
+- Added a new runtime animation channel `action` with driver `action_time` backed by `ActionClock`, wired through serialization, Gen3D schemas/prompts, motion validation, and motion-sheet capture (`action_sheet.png`).
+- Gen3D prompt-intent and plan generation now receive the engine’s resolution-handled reference images (`user_images_component`) when user photos are provided.
+- Validation: `cargo test` passed and the rendered smoke test ran without crashing.
 
 
 ## Context and Orientation
