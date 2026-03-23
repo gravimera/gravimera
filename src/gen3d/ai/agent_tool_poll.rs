@@ -471,6 +471,53 @@ pub(super) fn poll_agent_tool(
 	Do not include markdown or extra commentary.\n",
         );
         user_text.push_str(&format!("Error: {}\n", err.trim()));
+
+        let expected_schema = match kind {
+            super::Gen3dAgentLlmToolKind::GeneratePlan => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1)
+            }
+            super::Gen3dAgentLlmToolKind::GeneratePlanOps => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanOpsV1)
+            }
+            super::Gen3dAgentLlmToolKind::GenerateDraftOps => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::DraftOpsV1)
+            }
+            super::Gen3dAgentLlmToolKind::GenerateComponent { .. }
+            | super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1)
+            }
+            super::Gen3dAgentLlmToolKind::GenerateMotion
+            | super::Gen3dAgentLlmToolKind::GenerateMotionsBatch => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1)
+            }
+            super::Gen3dAgentLlmToolKind::ReviewDelta => {
+                let regen_allowed =
+                    job.agent
+                        .pending_review_delta_regen_allowed
+                        .unwrap_or_else(|| {
+                            !job.preserve_existing_components_mode
+                                || job.agent.last_validate_ok == Some(false)
+                                || job.agent.last_smoke_ok == Some(false)
+                        });
+                job.agent.pending_review_delta_regen_allowed = Some(regen_allowed);
+                Some(if regen_allowed {
+                    super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1
+                } else {
+                    super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
+                })
+            }
+        };
+
+        let hints = super::repair_hints::build_schema_repair_hints(expected_schema, err);
+        if !hints.is_empty() {
+            user_text.push_str("FIX HINTS:\n");
+            for hint in hints {
+                user_text.push_str("- ");
+                user_text.push_str(hint.trim());
+                user_text.push('\n');
+            }
+        }
+
         user_text.push_str(
             "IMPORTANT: Your previous output may contain INVALID field names.\n\
              Do NOT copy/paste keys from it. Use ONLY the schema-defined keys.\n\
@@ -515,41 +562,6 @@ pub(super) fn poll_agent_tool(
 
         let reasoning_effort =
             super::openai::cap_reasoning_effort(ai.model_reasoning_effort(), reasoning_effort_cap);
-        let expected_schema = match kind {
-            super::Gen3dAgentLlmToolKind::GeneratePlan => {
-                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1)
-            }
-            super::Gen3dAgentLlmToolKind::GeneratePlanOps => {
-                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanOpsV1)
-            }
-            super::Gen3dAgentLlmToolKind::GenerateDraftOps => {
-                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::DraftOpsV1)
-            }
-            super::Gen3dAgentLlmToolKind::GenerateComponent { .. }
-            | super::Gen3dAgentLlmToolKind::GenerateComponentsBatch => {
-                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1)
-            }
-            super::Gen3dAgentLlmToolKind::GenerateMotion
-            | super::Gen3dAgentLlmToolKind::GenerateMotionsBatch => {
-                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1)
-            }
-            super::Gen3dAgentLlmToolKind::ReviewDelta => {
-                let regen_allowed =
-                    job.agent
-                        .pending_review_delta_regen_allowed
-                        .unwrap_or_else(|| {
-                            !job.preserve_existing_components_mode
-                                || job.agent.last_validate_ok == Some(false)
-                                || job.agent.last_smoke_ok == Some(false)
-                        });
-                job.agent.pending_review_delta_regen_allowed = Some(regen_allowed);
-                Some(if regen_allowed {
-                    super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1
-                } else {
-                    super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
-                })
-            }
-        };
         spawn_gen3d_ai_text_thread(
             shared,
             progress,

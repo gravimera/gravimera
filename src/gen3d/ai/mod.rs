@@ -37,6 +37,7 @@ mod plan_ops;
 mod plan_tools;
 mod preserve_plan_policy;
 mod prompts;
+mod repair_hints;
 mod reuse_groups;
 mod schema;
 mod snapshots;
