@@ -3,7 +3,7 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 
 use crate::assets::SceneAssets;
-use crate::object::registry::{ColliderProfile, ObjectLibrary, ObjectPartKind};
+use crate::object::registry::{ColliderProfile, ObjectDef, ObjectLibrary, ObjectPartKind};
 use crate::object::visuals::{MaterialCache, VisualSpawnSettings};
 use crate::types::{
     AnimationChannelsActive, AttackClock, BuildScene, ForcedAnimationChannel, LocomotionClock,
@@ -15,55 +15,19 @@ use super::state::{
     Gen3dDraft, Gen3dPreview, Gen3dPreviewAnimationDropdownButton,
     Gen3dPreviewAnimationDropdownList, Gen3dPreviewCamera, Gen3dPreviewCollisionRoot,
     Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel, Gen3dPreviewSceneRoot,
-    Gen3dReviewOverlayRoot, Gen3dSidePanelRoot, Gen3dSidePanelToggleButton,
+    Gen3dPreviewUiModelRoot, Gen3dReviewOverlayRoot, Gen3dSidePanelRoot,
+    Gen3dSidePanelToggleButton,
 };
-use super::task_queue::{Gen3dSessionKind, Gen3dTaskQueue};
+use super::task_queue::Gen3dTaskQueue;
 
 pub(crate) fn gen3d_update_preview_camera_render_layers(
     build_scene: Res<State<BuildScene>>,
-    task_queue: Res<Gen3dTaskQueue>,
-    job: Res<Gen3dAiJob>,
-    draft: Res<Gen3dDraft>,
     mut cameras: Query<&mut bevy::camera::visibility::RenderLayers, With<Gen3dPreviewCamera>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
-
-    let active_id = task_queue.active_session_id;
-    let running_id = if job.is_running() {
-        Some(active_id)
-    } else {
-        task_queue.running_session_id.and_then(|id| {
-            if id == active_id {
-                None
-            } else if task_queue
-                .inactive_states
-                .get(&id)
-                .is_some_and(|state| state.job.is_running())
-            {
-                Some(id)
-            } else {
-                None
-            }
-        })
-    };
-
-    let active_is_new_build = task_queue
-        .active_meta()
-        .is_some_and(|meta| matches!(meta.kind, Gen3dSessionKind::NewBuild));
-    let active_is_fresh = active_is_new_build && draft.defs.is_empty();
-
-    // If another session is running in the background, keep the preview scene rendering it for AI
-    // capture, but don't show it in the user-facing Gen3D preview when the active session is a
-    // fresh (empty) build opened from the UI.
-    let should_hide_running_preview = active_is_fresh && running_id.is_some_and(|id| id != active_id);
-
-    let desired = if should_hide_running_preview {
-        bevy::camera::visibility::RenderLayers::none()
-    } else {
-        bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_LAYER)
-    };
+    let desired = bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_UI_LAYER);
 
     for mut layers in &mut cameras {
         if *layers != desired {
@@ -119,13 +83,18 @@ pub(super) fn setup_preview_scene(
             },
             RenderTarget::Image(target.clone().into()),
             Tonemapping::TonyMcMapface,
-            bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_LAYER),
+            bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_UI_LAYER),
             camera_transform,
             Gen3dPreviewCamera,
         ))
         .id();
 
     // Preview "studio" scene: simple three-point light rig (no floor plane).
+
+    let preview_layers = bevy::camera::visibility::RenderLayers::from_layers(&[
+        super::GEN3D_PREVIEW_UI_LAYER,
+        super::GEN3D_PREVIEW_LAYER,
+    ]);
 
     // Key light (casts shadows).
     commands.spawn((
@@ -136,7 +105,7 @@ pub(super) fn setup_preview_scene(
             ..default()
         },
         Transform::from_xyz(10.0, 18.0, -8.0).looking_at(Vec3::ZERO, Vec3::Y),
-        bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_LAYER),
+        preview_layers.clone(),
         Gen3dPreviewLight,
     ));
     // Fill light (soft, no shadows).
@@ -148,7 +117,7 @@ pub(super) fn setup_preview_scene(
             ..default()
         },
         Transform::from_xyz(-10.0, 10.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
-        bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_LAYER),
+        preview_layers.clone(),
         Gen3dPreviewLight,
     ));
     // Rim light (adds edge highlights).
@@ -160,7 +129,7 @@ pub(super) fn setup_preview_scene(
             ..default()
         },
         Transform::from_xyz(0.0, 12.0, -12.0).looking_at(Vec3::ZERO, Vec3::Y),
-        bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_LAYER),
+        preview_layers.clone(),
         Gen3dPreviewLight,
     ));
     // Under light (brightens underside for bottom views; no shadows).
@@ -172,7 +141,7 @@ pub(super) fn setup_preview_scene(
             ..default()
         },
         Transform::from_xyz(0.0, -14.0, 0.0).looking_at(Vec3::ZERO, Vec3::Z),
-        bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_LAYER),
+        preview_layers,
         Gen3dPreviewLight,
     ));
 
@@ -284,11 +253,14 @@ pub(super) fn setup_preview_scene(
     preview.target = Some(target.clone());
     preview.camera = Some(camera_entity);
     preview.root = Some(root_entity);
+    preview.capture_root = None;
     preview.last_cursor = None;
     preview.show_collision = false;
     preview.collision_dirty = true;
-    preview.applied_session_id = None;
-    preview.applied_assembly_rev = None;
+    preview.ui_applied_session_id = None;
+    preview.ui_applied_assembly_rev = None;
+    preview.capture_applied_session_id = None;
+    preview.capture_applied_assembly_rev = None;
 
     target
 }
@@ -308,7 +280,7 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
             &mut AttackClock,
             &mut ForcedAnimationChannel,
         ),
-        With<Gen3dPreviewModelRoot>,
+        With<Gen3dPreviewUiModelRoot>,
     >,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
@@ -521,8 +493,50 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     mut library: ResMut<ObjectLibrary>,
     draft: Res<Gen3dDraft>,
     mut preview: ResMut<Gen3dPreview>,
-    existing: Query<Entity, With<Gen3dPreviewModelRoot>>,
+    existing_ui: Query<Entity, With<Gen3dPreviewUiModelRoot>>,
+    existing_capture: Query<Entity, With<Gen3dPreviewModelRoot>>,
 ) {
+    fn remap_capture_id(
+        map: &std::collections::HashMap<u128, u128>,
+        object_id: u128,
+    ) -> u128 {
+        map.get(&object_id).copied().unwrap_or(object_id)
+    }
+
+    fn remap_defs_for_capture(draft: &Gen3dDraft, session_id: uuid::Uuid) -> (Vec<ObjectDef>, u128) {
+        let salt = session_id.as_u128();
+        let mut map = std::collections::HashMap::new();
+        for def in &draft.defs {
+            map.insert(def.object_id, def.object_id ^ salt);
+        }
+
+        let mut defs = draft.defs.clone();
+        for def in &mut defs {
+            def.object_id = remap_capture_id(&map, def.object_id);
+            for part in &mut def.parts {
+                if let ObjectPartKind::ObjectRef { object_id } = &mut part.kind {
+                    *object_id = remap_capture_id(&map, *object_id);
+                }
+            }
+            if let Some(aim) = def.aim.as_mut() {
+                for object_id in &mut aim.components {
+                    *object_id = remap_capture_id(&map, *object_id);
+                }
+            }
+            if let Some(attack) = def.attack.as_mut() {
+                if let Some(ranged) = attack.ranged.as_mut() {
+                    ranged.projectile_prefab = remap_capture_id(&map, ranged.projectile_prefab);
+                    ranged.muzzle.object_id = remap_capture_id(&map, ranged.muzzle.object_id);
+                }
+            }
+        }
+
+        let root_id = remap_capture_id(&map, super::gen3d_draft_object_id());
+        (defs, root_id)
+    }
+
+    let in_preview = matches!(build_scene.get(), BuildScene::Preview);
+
     let mut running_session = None;
     if job.is_running() {
         running_session = Some(task_queue.active_session_id);
@@ -536,110 +550,181 @@ pub(crate) fn gen3d_apply_draft_to_preview(
         }
     }
 
-    if !matches!(build_scene.get(), BuildScene::Preview) && running_session.is_none() {
+    if !in_preview && running_session.is_none() {
         return;
     }
     let Some(preview_root) = preview.root else {
         return;
     };
 
-    let (job_ref, draft_ref, session_id) = match running_session {
-        Some(id) if id != task_queue.active_session_id => {
-            let Some(state) = task_queue.inactive_states.get(&id) else {
-                return;
+    if in_preview {
+        let session_id = task_queue.active_session_id;
+        let needs_rebuild = existing_ui.is_empty()
+            || preview.ui_applied_session_id != Some(session_id)
+            || preview.ui_applied_assembly_rev != Some(job.assembly_rev());
+        if needs_rebuild {
+            for entity in &existing_ui {
+                commands.entity(entity).try_despawn();
+            }
+
+            preview.ui_applied_session_id = Some(session_id);
+            preview.ui_applied_assembly_rev = Some(job.assembly_rev());
+
+            if draft.defs.is_empty() {
+                preview.collision_dirty = true;
+            } else {
+                preview.focus = compute_draft_focus(&draft);
+
+                for mut def in draft.defs.clone() {
+                    if def.object_id == super::gen3d_draft_object_id() {
+                        def.object_id = super::gen3d_draft_object_id();
+                        def.label = "gen3d_draft".into();
+                    }
+                    library.upsert(def);
+                }
+
+                let mut model_entity = commands.spawn((
+                    Transform::IDENTITY,
+                    Visibility::Inherited,
+                    Gen3dPreviewUiModelRoot,
+                    ObjectPrefabId(super::gen3d_draft_object_id()),
+                    ForcedAnimationChannel {
+                        channel: preview.animation_channel.clone(),
+                    },
+                    AnimationChannelsActive::default(),
+                    LocomotionClock {
+                        t: 0.0,
+                        distance_m: 0.0,
+                        signed_distance_m: 0.0,
+                        speed_mps: 0.0,
+                        last_translation: Vec3::ZERO,
+                    },
+                    AttackClock::default(),
+                ));
+                crate::object::visuals::spawn_object_visuals_with_settings(
+                    &mut model_entity,
+                    &library,
+                    &asset_server,
+                    &assets,
+                    &mut meshes,
+                    &mut materials,
+                    &mut cache,
+                    &mut mesh_cache,
+                    super::gen3d_draft_object_id(),
+                    None,
+                    VisualSpawnSettings {
+                        mark_parts: false,
+                        render_layer: Some(super::GEN3D_PREVIEW_UI_LAYER),
+                    },
+                );
+                let model_id = model_entity.id();
+                commands.entity(preview_root).add_child(model_id);
+
+                let mut ordered = library.animation_channels_ordered(super::gen3d_draft_object_id());
+                let mut channels: Vec<String> = vec!["idle".to_string(), "move".to_string()];
+                for ch in ordered.drain(..) {
+                    let trimmed = ch.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if channels.iter().any(|existing| existing == trimmed) {
+                        continue;
+                    }
+                    channels.push(trimmed.to_string());
+                }
+                preview.animation_channels = channels;
+
+                let selected = preview.animation_channel.trim();
+                if selected.is_empty() || !preview.animation_channels.iter().any(|ch| ch == selected) {
+                    preview.animation_channel = "idle".to_string();
+                }
+
+                preview.collision_dirty = true;
+            }
+        }
+    }
+
+    match running_session {
+        None => {
+            for entity in &existing_capture {
+                commands.entity(entity).try_despawn();
+            }
+            preview.capture_root = None;
+            preview.capture_applied_session_id = None;
+            preview.capture_applied_assembly_rev = None;
+        }
+        Some(id) => {
+            let (job_ref, draft_ref) = if id == task_queue.active_session_id {
+                (&*job, &*draft)
+            } else {
+                let Some(state) = task_queue.inactive_states.get(&id) else {
+                    return;
+                };
+                (&state.job, &state.draft)
             };
-            (&state.job, &state.draft, id)
+
+            let needs_rebuild = existing_capture.is_empty()
+                || preview.capture_applied_session_id != Some(id)
+                || preview.capture_applied_assembly_rev != Some(job_ref.assembly_rev());
+            if !needs_rebuild {
+                return;
+            }
+
+            for entity in &existing_capture {
+                commands.entity(entity).try_despawn();
+            }
+            preview.capture_root = None;
+            preview.capture_applied_session_id = Some(id);
+            preview.capture_applied_assembly_rev = Some(job_ref.assembly_rev());
+
+            if draft_ref.defs.is_empty() {
+                return;
+            }
+
+            let (capture_defs, capture_root_id) = remap_defs_for_capture(draft_ref, id);
+            for def in capture_defs {
+                library.upsert(def);
+            }
+
+            let mut model_entity = commands.spawn((
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                Gen3dPreviewModelRoot,
+                ObjectPrefabId(capture_root_id),
+                ForcedAnimationChannel {
+                    channel: preview.animation_channel.clone(),
+                },
+                AnimationChannelsActive::default(),
+                LocomotionClock {
+                    t: 0.0,
+                    distance_m: 0.0,
+                    signed_distance_m: 0.0,
+                    speed_mps: 0.0,
+                    last_translation: Vec3::ZERO,
+                },
+                AttackClock::default(),
+            ));
+            crate::object::visuals::spawn_object_visuals_with_settings(
+                &mut model_entity,
+                &library,
+                &asset_server,
+                &assets,
+                &mut meshes,
+                &mut materials,
+                &mut cache,
+                &mut mesh_cache,
+                capture_root_id,
+                None,
+                VisualSpawnSettings {
+                    mark_parts: false,
+                    render_layer: Some(super::GEN3D_PREVIEW_LAYER),
+                },
+            );
+            let model_id = model_entity.id();
+            commands.entity(preview_root).add_child(model_id);
+            preview.capture_root = Some(model_id);
         }
-        Some(id) => (&*job, &*draft, id),
-        None => (&*job, &*draft, task_queue.active_session_id),
-    };
-
-    let needs_rebuild = existing.is_empty()
-        || preview.applied_session_id != Some(session_id)
-        || preview.applied_assembly_rev != Some(job_ref.assembly_rev());
-    if !needs_rebuild {
-        return;
     }
-
-    for entity in &existing {
-        commands.entity(entity).try_despawn();
-    }
-
-    preview.applied_session_id = Some(session_id);
-    preview.applied_assembly_rev = Some(job_ref.assembly_rev());
-
-    if draft_ref.defs.is_empty() {
-        preview.collision_dirty = true;
-        return;
-    }
-
-    preview.focus = compute_draft_focus(draft_ref);
-
-    for mut def in draft_ref.defs.clone() {
-        if def.object_id == super::gen3d_draft_object_id() {
-            def.object_id = super::gen3d_draft_object_id();
-            def.label = "gen3d_draft".into();
-        }
-        library.upsert(def);
-    }
-
-    let mut model_entity = commands.spawn((
-        Transform::IDENTITY,
-        Visibility::Inherited,
-        Gen3dPreviewModelRoot,
-        ObjectPrefabId(super::gen3d_draft_object_id()),
-        ForcedAnimationChannel {
-            channel: preview.animation_channel.clone(),
-        },
-        AnimationChannelsActive::default(),
-        LocomotionClock {
-            t: 0.0,
-            distance_m: 0.0,
-            signed_distance_m: 0.0,
-            speed_mps: 0.0,
-            last_translation: Vec3::ZERO,
-        },
-        AttackClock::default(),
-    ));
-    crate::object::visuals::spawn_object_visuals_with_settings(
-        &mut model_entity,
-        &library,
-        &asset_server,
-        &assets,
-        &mut meshes,
-        &mut materials,
-        &mut cache,
-        &mut mesh_cache,
-        super::gen3d_draft_object_id(),
-        None,
-        VisualSpawnSettings {
-            mark_parts: false,
-            render_layer: Some(super::GEN3D_PREVIEW_LAYER),
-        },
-    );
-    let model_id = model_entity.id();
-    commands.entity(preview_root).add_child(model_id);
-
-    let mut ordered = library.animation_channels_ordered(super::gen3d_draft_object_id());
-    let mut channels: Vec<String> = vec!["idle".to_string(), "move".to_string()];
-    for ch in ordered.drain(..) {
-        let trimmed = ch.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if channels.iter().any(|existing| existing == trimmed) {
-            continue;
-        }
-        channels.push(trimmed.to_string());
-    }
-    preview.animation_channels = channels;
-
-    let selected = preview.animation_channel.trim();
-    if selected.is_empty() || !preview.animation_channels.iter().any(|ch| ch == selected) {
-        preview.animation_channel = "idle".to_string();
-    }
-
-    preview.collision_dirty = true;
 }
 
 pub(crate) fn gen3d_update_collision_overlay(
@@ -703,7 +788,7 @@ pub(crate) fn gen3d_update_collision_overlay(
             MeshMaterial3d(material),
             Transform::from_translation(Vec3::new(0.0, 0.01, 0.0)).with_scale(scale),
             Visibility::Inherited,
-            bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_LAYER),
+            bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_UI_LAYER),
             Gen3dPreviewCollisionRoot,
         ))
         .id();

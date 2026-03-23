@@ -164,10 +164,13 @@ pub(crate) struct Gen3dPreview {
     pub(crate) target: Option<Handle<Image>>,
     pub(crate) camera: Option<Entity>,
     pub(crate) root: Option<Entity>,
+    pub(crate) capture_root: Option<Entity>,
     pub(crate) show_collision: bool,
     pub(crate) collision_dirty: bool,
-    pub(crate) applied_session_id: Option<uuid::Uuid>,
-    pub(crate) applied_assembly_rev: Option<u32>,
+    pub(crate) ui_applied_session_id: Option<uuid::Uuid>,
+    pub(crate) ui_applied_assembly_rev: Option<u32>,
+    pub(crate) capture_applied_session_id: Option<uuid::Uuid>,
+    pub(crate) capture_applied_assembly_rev: Option<u32>,
     pub(crate) focus: Vec3,
     pub(crate) yaw: f32,
     pub(crate) pitch: f32,
@@ -437,6 +440,9 @@ pub(crate) struct Gen3dPreviewLight;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewModelRoot;
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewUiModelRoot;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewCollisionRoot;
