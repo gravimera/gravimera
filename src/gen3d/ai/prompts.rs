@@ -1099,9 +1099,15 @@ Animation slot rules (IMPORTANT):\n\
 - The animation clip MUST be nested under `slot.clip` (NOT `clip` at the DraftOp top level).\n\
 - The clip kind MUST be `slot.clip.kind` (NOT `clip_kind`).\n\
 - Root is allowed: `child_component` may refer to the root component (the engine will treat it as the implicit root edge).\n\
+- `slot.driver` must be one of: always, move_phase, move_distance, attack_time, action_time.\n\
+\n\
+Channel rules (IMPORTANT):\n\
+- `channel` is a free-form identifier string; it is OK to create NEW channels.\n\
+- If the user requests multiple distinct motions (ex: \"sing, dance, rap\"), prefer creating one channel per motion name instead of collapsing everything into `action`.\n\
+- Prefer short lower_snake_case ASCII channel ids; if the user uses non-ASCII motion names, translate/transliterate to a compact ASCII id when obvious.\n\
 \n\
 Minimal example (copy/paste shape):\n\
-{\"version\":1,\"ops\":[{\"kind\":\"upsert_animation_slot\",\"child_component\":\"arm_lower_l\",\"channel\":\"dance\",\"slot\":{\"driver\":\"always\",\"speed_scale\":1.0,\"time_offset_units\":0.0,\"clip\":{\"kind\":\"loop\",\"duration_units\":1.0,\"keyframes\":[{\"t_units\":0.0,\"delta\":{\"pos\":null,\"rot_quat_xyzw\":null,\"scale\":null}},{\"t_units\":1.0,\"delta\":{\"pos\":null,\"rot_quat_xyzw\":null,\"scale\":null}}]}}}]} \n\
+{\"version\":1,\"ops\":[{\"kind\":\"upsert_animation_slot\",\"child_component\":\"arm_lower_l\",\"channel\":\"dance\",\"slot\":{\"driver\":\"action_time\",\"speed_scale\":1.0,\"time_offset_units\":0.0,\"clip\":{\"kind\":\"once\",\"duration_units\":1.0,\"keyframes\":[{\"t_units\":0.0,\"delta\":{\"pos\":null,\"rot_quat_xyzw\":null,\"scale\":null}},{\"t_units\":1.0,\"delta\":{\"pos\":null,\"rot_quat_xyzw\":null,\"scale\":null}}]}}}]} \n\
 \n\
 Allowed DraftOp kinds:\n\
 - set_anchor_transform\n\

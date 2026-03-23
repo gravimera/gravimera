@@ -40,6 +40,21 @@ struct ReviewDeltaRegenBuckets {
     blocked_due_to_qa_gate: Vec<usize>,
 }
 
+const GEN3D_DRAFT_OPS_SLOT_DRIVERS_ALLOWED: [&str; 5] = [
+    "always",
+    "move_phase",
+    "move_distance",
+    "attack_time",
+    "action_time",
+];
+
+const GEN3D_DRAFT_OPS_SLOT_DRIVERS_ALLOWED_MSG: &str =
+    "always, move_phase, move_distance, attack_time, action_time";
+
+fn gen3d_draft_ops_slot_driver_is_allowed(driver: &str) -> bool {
+    GEN3D_DRAFT_OPS_SLOT_DRIVERS_ALLOWED.contains(&driver)
+}
+
 fn bucket_review_delta_regen_requests(
     config: &AppConfig,
     job: &mut Gen3dAiJob,
@@ -2132,12 +2147,9 @@ pub(super) fn poll_agent_tool(
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
                                             .trim();
-                                        if !matches!(
-                                            driver,
-                                            "always" | "move_phase" | "move_distance" | "attack_time"
-                                        ) {
+                                        if !gen3d_draft_ops_slot_driver_is_allowed(driver) {
                                             return Err(format!(
-                                                "ops[{idx}] slot.driver must be one of: always, move_phase, move_distance, attack_time"
+                                                "ops[{idx}] slot.driver must be one of: {GEN3D_DRAFT_OPS_SLOT_DRIVERS_ALLOWED_MSG}"
                                             ));
                                         }
                                         if slot_obj
@@ -3844,6 +3856,17 @@ mod tests {
             )
             .collect();
         job
+    }
+
+    #[test]
+    fn gen3d_draft_ops_slot_driver_allows_action_time() {
+        assert!(gen3d_draft_ops_slot_driver_is_allowed("always"));
+        assert!(gen3d_draft_ops_slot_driver_is_allowed("move_phase"));
+        assert!(gen3d_draft_ops_slot_driver_is_allowed("move_distance"));
+        assert!(gen3d_draft_ops_slot_driver_is_allowed("attack_time"));
+        assert!(gen3d_draft_ops_slot_driver_is_allowed("action_time"));
+        assert!(!gen3d_draft_ops_slot_driver_is_allowed("bogus"));
+        assert!(!gen3d_draft_ops_slot_driver_is_allowed(""));
     }
 
     #[test]
