@@ -1333,23 +1333,6 @@ fn mock_generate_text_via_openai(
         Some((run_id?, attempt?, plan_hash?, assembly_rev?))
     }
 
-    fn extract_agent_user_prompt(user_text: &str) -> String {
-        let mut lines = user_text.lines();
-        while let Some(line) = lines.next() {
-            if line.trim() == "User prompt:" {
-                break;
-            }
-        }
-        let mut prompt_lines: Vec<String> = Vec::new();
-        for line in lines {
-            if line.trim_start().starts_with("Input images:") {
-                break;
-            }
-            prompt_lines.push(line.to_string());
-        }
-        prompt_lines.join("\n").trim().to_string()
-    }
-
     fn parse_child_components_from_motion_authoring_user_text(user_text: &str) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for line in user_text.lines().map(|l| l.trim()) {
@@ -1443,118 +1426,7 @@ fn mock_generate_text_via_openai(
         text
     }
 
-    let text = if artifact_prefix == "agent_step" {
-        fn attempt_dir_for_pass_dir(pass_dir: &Path) -> Option<&Path> {
-            // Expected layout: <run_dir>/attempt_0/pass_N
-            pass_dir.parent()
-        }
-
-        fn attempt_has_plan(attempt_dir: &Path) -> bool {
-            let Ok(entries) = std::fs::read_dir(attempt_dir) else {
-                return false;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-                    continue;
-                };
-                if !name.starts_with("pass_") {
-                    continue;
-                }
-                if path.join("plan_extracted.json").exists() {
-                    return true;
-                }
-            }
-            false
-        }
-
-        let has_plan = run_dir
-            .and_then(|dir| attempt_dir_for_pass_dir(dir))
-            .is_some_and(attempt_has_plan);
-
-        let prompt = extract_agent_user_prompt(user_text);
-        let kind = mock_kind_from_text(&prompt);
-        let component_names = components_for_kind(kind);
-
-        // Intentionally uses some common “wrong” arg spellings (name/component_id/base) to
-        // regression-test tool-call tolerance.
-        if !has_plan {
-            // Planning must be its own step (the engine enforces this).
-            serde_json::json!({
-                "version": 1,
-                "status_summary": format!("Mock: plan components ({:?}).", kind),
-                "actions": [
-                    {
-                        "kind": "tool_call",
-                        "call_id": "call_1_create_ws",
-                        "tool_id": "create_workspace_v1",
-                        "args": { "name": "warcar_preview", "base": "main" }
-                    },
-                    {
-                        "kind": "tool_call",
-                        "call_id": "call_2_set_ws",
-                        "tool_id": "set_active_workspace_v1",
-                        "args": { "name": "warcar_preview" }
-                    },
-                    {
-                        "kind": "tool_call",
-                        "call_id": "call_3_plan",
-                        "tool_id": "llm_generate_plan_v1",
-                        "args": {
-                            "prompt": prompt,
-                            "style": "Voxel/Pixel Art",
-                            "components": component_names
-                        }
-                    }
-                ]
-            })
-            .to_string()
-        } else {
-            let mut actions: Vec<serde_json::Value> = Vec::new();
-            actions.push(serde_json::json!({
-                "kind": "tool_call",
-                "call_id": "call_1_create_ws",
-                "tool_id": "create_workspace_v1",
-                "args": { "name": "warcar_preview", "base": "main" }
-            }));
-            actions.push(serde_json::json!({
-                "kind": "tool_call",
-                "call_id": "call_2_set_ws",
-                "tool_id": "set_active_workspace_v1",
-                "args": { "name": "warcar_preview" }
-            }));
-            actions.push(serde_json::json!({
-                "kind": "tool_call",
-                "call_id": "call_4_components",
-                "tool_id": "llm_generate_components_v1",
-                "args": {
-                    "component_names": component_names
-                }
-            }));
-            actions.push(serde_json::json!({
-                "kind": "tool_call",
-                "call_id": "call_9_qa",
-                "tool_id": "qa_v1",
-                "args": {}
-            }));
-            actions.push(serde_json::json!({
-                "kind": "tool_call",
-                "call_id": "call_11_motion_authoring",
-                "tool_id": "llm_generate_motions_v1",
-                "args": { "channels": ["move", "action"] }
-            }));
-            actions.push(serde_json::json!({
-                "kind": "done",
-                "reason": "Mock Gen3D build completed."
-            }));
-            serde_json::json!({
-                "version": 1,
-                "status_summary": format!("Mock: generate components ({:?}), author motions, and run QA.", kind),
-                "actions": actions
-            })
-            .to_string()
-        }
-    } else if artifact_prefix == "prompt_intent" {
+    let text = if artifact_prefix == "prompt_intent" {
         let kind = mock_kind_from_text(user_text);
         let requires_attack = !matches!(kind, MockKind::Snake);
         serde_json::json!({

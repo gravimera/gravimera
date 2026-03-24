@@ -765,10 +765,10 @@ data: {"candidates":[{"content":{"parts":[{"text":" world"}]}}],"usageMetadata":
     #[test]
     fn structured_outputs_request_includes_response_json_schema() {
         let req = build_gemini_stream_generate_content_request_json(
-            Some(Gen3dAiJsonSchemaKind::AgentStepV1),
+            Some(Gen3dAiJsonSchemaKind::PlanV1),
             true,
             "You are a test system prompt",
-            "Return an agent step JSON",
+            "Return a plan JSON",
             &[],
             &[],
         );
@@ -783,10 +783,10 @@ data: {"candidates":[{"content":{"parts":[{"text":" world"}]}}],"usageMetadata":
     #[test]
     fn structured_outputs_retry_can_omit_response_json_schema() {
         let req = build_gemini_stream_generate_content_request_json(
-            Some(Gen3dAiJsonSchemaKind::AgentStepV1),
+            Some(Gen3dAiJsonSchemaKind::PlanV1),
             false,
             "",
-            "Return an agent step JSON",
+            "Return a plan JSON",
             &[],
             &[],
         );

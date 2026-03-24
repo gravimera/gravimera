@@ -1,10 +1,8 @@
 // Gen3D AI orchestration and helpers.
 
 mod agent_component_batch;
-mod agent_loop;
 mod agent_motion_batch;
 mod agent_parsing;
-mod agent_prompt;
 mod agent_regen_budget;
 mod agent_render_capture;
 mod agent_review_delta;
@@ -16,6 +14,7 @@ mod agent_utils;
 mod ai_service;
 mod artifacts;
 mod basis_from_up_forward;
+mod bootstrap_requests;
 mod claude;
 mod convert;
 mod copy_component;
@@ -57,9 +56,9 @@ use schema::{AiContactJson, AiContactStanceJson, AiJointJson, AiJointKindJson};
 
 use orchestration::{
     build_gen3d_scene_graph_summary, build_gen3d_smoke_results, build_gen3d_validate_results,
-    compute_gen3d_plan_hash, fail_job, finish_job_best_effort, gen3d_advance_pass,
-    max_components_for_speed, poll_gen3d_motion_capture, record_gen3d_tooling_feedback,
-    set_progress, spawn_gen3d_ai_text_thread, start_gen3d_review_capture, truncate_for_ui,
+    compute_gen3d_plan_hash, fail_job, finish_job_best_effort, max_components_for_speed,
+    poll_gen3d_motion_capture, record_gen3d_tooling_feedback, set_progress,
+    spawn_gen3d_ai_text_thread, start_gen3d_review_capture, truncate_for_ui,
 };
 
 pub(crate) use draft_ops::gen3d_apply_draft_ops_from_api;

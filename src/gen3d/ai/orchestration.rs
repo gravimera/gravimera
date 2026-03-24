@@ -19,7 +19,6 @@ use crate::threaded_result::{
 };
 use crate::types::{AnimationChannelsActive, AttackClock, BuildScene, LocomotionClock};
 
-use super::agent_loop;
 use super::ai_service::{generate_text_via_ai_service, Gen3dAiServiceConfig};
 use super::artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
@@ -307,15 +306,12 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
 
-    // Clear in-flight agent execution state, but keep workspaces + tool history.
-    job.agent.step_actions.clear();
-    job.agent.step_action_idx = 0;
-    job.agent.step_repair_attempt = 0;
-    job.agent.step_request_retry_attempt = 0;
+    // Clear in-flight tool runtime state, but keep workspaces + tool history.
     job.agent.pending_tool_call = None;
     job.agent.pending_llm_tool = None;
     job.agent.pending_llm_repair_attempt = 0;
     job.agent.pending_component_batch = None;
+    job.agent.pending_motion_batch = None;
     job.agent.pending_render = None;
     job.agent.pending_pass_snapshot = None;
     job.agent.pending_after_pass_snapshot = None;
@@ -370,33 +366,15 @@ pub(crate) fn gen3d_resume_build_from_api(
     job.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
     job.running = true;
     job.build_complete = false;
-    job.mode = match config.gen3d_orchestrator {
-        crate::config::Gen3dOrchestrator::Agent => Gen3dAiMode::Agent,
-        crate::config::Gen3dOrchestrator::Pipeline => Gen3dAiMode::Pipeline,
-    };
     let needs_user_image_summary =
         !job.user_images.is_empty() && job.user_image_object_summary.is_none();
     let needs_prompt_intent = job.prompt_intent.is_none() && !needs_user_image_summary;
-    job.phase = match job.mode {
-        Gen3dAiMode::Agent => {
-            if needs_user_image_summary {
-                Gen3dAiPhase::AgentWaitingUserImageSummary
-            } else if needs_prompt_intent {
-                Gen3dAiPhase::AgentWaitingPromptIntent
-            } else {
-                Gen3dAiPhase::AgentWaitingStep
-            }
-        }
-        Gen3dAiMode::Pipeline => {
-            if needs_user_image_summary {
-                Gen3dAiPhase::AgentWaitingUserImageSummary
-            } else if needs_prompt_intent {
-                Gen3dAiPhase::AgentWaitingPromptIntent
-            } else {
-                Gen3dAiPhase::AgentExecutingActions
-            }
-        }
-        Gen3dAiMode::LegacyPhaseMachine => Gen3dAiPhase::WaitingPlan,
+    job.phase = if needs_user_image_summary {
+        Gen3dAiPhase::AgentWaitingUserImageSummary
+    } else if needs_prompt_intent {
+        Gen3dAiPhase::AgentWaitingPromptIntent
+    } else {
+        Gen3dAiPhase::AgentExecutingActions
     };
     job.shared_progress = None;
     job.shared_result = None;
@@ -420,28 +398,6 @@ pub(crate) fn gen3d_resume_build_from_api(
         job.ai.as_ref().map(|c| c.model()).unwrap_or(""),
         job.user_images.len()
     );
-
-    if matches!(job.mode, Gen3dAiMode::Agent) {
-        let spawn_result = if matches!(job.phase, Gen3dAiPhase::AgentWaitingUserImageSummary) {
-            agent_loop::spawn_agent_user_image_summary_request(
-                config,
-                workshop,
-                job,
-                pass_dir.clone(),
-            )
-        } else if matches!(job.phase, Gen3dAiPhase::AgentWaitingPromptIntent) {
-            agent_loop::spawn_agent_prompt_intent_request(config, workshop, job, pass_dir.clone())
-        } else {
-            agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir.clone())
-        };
-        if let Err(err) = spawn_result {
-            job.finish_run_metrics();
-            job.running = false;
-            job.build_complete = false;
-            job.phase = Gen3dAiPhase::Idle;
-            return Err(err);
-        }
-    }
 
     Ok(())
 }
@@ -605,26 +561,10 @@ pub(crate) fn gen3d_start_edit_run_from_current_draft_from_api(
     job.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
     job.running = true;
     job.build_complete = false;
-    job.mode = match config.gen3d_orchestrator {
-        crate::config::Gen3dOrchestrator::Agent => Gen3dAiMode::Agent,
-        crate::config::Gen3dOrchestrator::Pipeline => Gen3dAiMode::Pipeline,
-    };
-    job.phase = match job.mode {
-        Gen3dAiMode::Agent => {
-            if cached_image_paths.is_empty() {
-                Gen3dAiPhase::AgentWaitingPromptIntent
-            } else {
-                Gen3dAiPhase::AgentWaitingUserImageSummary
-            }
-        }
-        Gen3dAiMode::Pipeline => {
-            if cached_image_paths.is_empty() {
-                Gen3dAiPhase::AgentWaitingPromptIntent
-            } else {
-                Gen3dAiPhase::AgentWaitingUserImageSummary
-            }
-        }
-        Gen3dAiMode::LegacyPhaseMachine => Gen3dAiPhase::WaitingPlan,
+    job.phase = if cached_image_paths.is_empty() {
+        Gen3dAiPhase::AgentWaitingPromptIntent
+    } else {
+        Gen3dAiPhase::AgentWaitingUserImageSummary
     };
     job.capture_previews_only = false;
     job.plan_attempt = 0;
@@ -673,28 +613,6 @@ pub(crate) fn gen3d_start_edit_run_from_current_draft_from_api(
     job.pipeline = super::Gen3dPipelineState::default();
     job.save_seq = 0;
     job.last_saved_prefab_id = None;
-
-    if matches!(job.mode, Gen3dAiMode::Agent) {
-        let spawn_result = if matches!(job.phase, Gen3dAiPhase::AgentWaitingUserImageSummary) {
-            agent_loop::spawn_agent_user_image_summary_request(
-                config,
-                workshop,
-                job,
-                pass_dir.clone(),
-            )
-        } else if matches!(job.phase, Gen3dAiPhase::AgentWaitingPromptIntent) {
-            agent_loop::spawn_agent_prompt_intent_request(config, workshop, job, pass_dir.clone())
-        } else {
-            agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir.clone())
-        };
-        if let Err(err) = spawn_result {
-            job.finish_run_metrics();
-            job.running = false;
-            job.build_complete = false;
-            job.phase = Gen3dAiPhase::Idle;
-            return Err(err);
-        }
-    }
 
     Ok(())
 }
@@ -912,10 +830,6 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.running = false;
     job.cancel_flag = None;
     job.build_complete = false;
-    job.mode = match config.gen3d_orchestrator {
-        crate::config::Gen3dOrchestrator::Agent => Gen3dAiMode::Agent,
-        crate::config::Gen3dOrchestrator::Pipeline => Gen3dAiMode::Pipeline,
-    };
     job.phase = Gen3dAiPhase::Idle;
     job.shared_progress = None;
     job.shared_result = None;
@@ -1398,26 +1312,10 @@ pub(crate) fn gen3d_start_build_from_api(
     job.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
     job.running = true;
     job.build_complete = false;
-    job.mode = match config.gen3d_orchestrator {
-        crate::config::Gen3dOrchestrator::Agent => Gen3dAiMode::Agent,
-        crate::config::Gen3dOrchestrator::Pipeline => Gen3dAiMode::Pipeline,
-    };
-    job.phase = match job.mode {
-        Gen3dAiMode::Agent => {
-            if cached_image_paths.is_empty() {
-                Gen3dAiPhase::AgentWaitingPromptIntent
-            } else {
-                Gen3dAiPhase::AgentWaitingUserImageSummary
-            }
-        }
-        Gen3dAiMode::Pipeline => {
-            if cached_image_paths.is_empty() {
-                Gen3dAiPhase::AgentWaitingPromptIntent
-            } else {
-                Gen3dAiPhase::AgentWaitingUserImageSummary
-            }
-        }
-        Gen3dAiMode::LegacyPhaseMachine => Gen3dAiPhase::WaitingPlan,
+    job.phase = if cached_image_paths.is_empty() {
+        Gen3dAiPhase::AgentWaitingPromptIntent
+    } else {
+        Gen3dAiPhase::AgentWaitingUserImageSummary
     };
     job.capture_previews_only = false;
     job.plan_attempt = 0;
@@ -1493,28 +1391,6 @@ pub(crate) fn gen3d_start_build_from_api(
     } else {
         format!("Building…\nService: {service}\nModel: {model}\nImages: {images_count}")
     };
-
-    if matches!(job.mode, Gen3dAiMode::Agent) {
-        let spawn_result = if matches!(job.phase, Gen3dAiPhase::AgentWaitingUserImageSummary) {
-            agent_loop::spawn_agent_user_image_summary_request(
-                config,
-                workshop,
-                job,
-                pass_dir.clone(),
-            )
-        } else if matches!(job.phase, Gen3dAiPhase::AgentWaitingPromptIntent) {
-            agent_loop::spawn_agent_prompt_intent_request(config, workshop, job, pass_dir.clone())
-        } else {
-            agent_loop::spawn_agent_step_request(config, workshop, job, pass_dir.clone())
-        };
-        if let Err(err) = spawn_result {
-            job.finish_run_metrics();
-            job.running = false;
-            job.build_complete = false;
-            job.phase = Gen3dAiPhase::Idle;
-            return Err(err);
-        }
-    }
 
     Ok(())
 }
@@ -1726,75 +1602,56 @@ pub(crate) fn gen3d_poll_ai_job(
         return;
     }
 
-    match job.mode {
-        Gen3dAiMode::Agent => {
-            agent_loop::poll_gen3d_agent(
-                &config,
-                &time,
-                &mut commands,
-                &mut images,
-                &review_cameras,
-                &mut workshop,
-                &mut feedback_history,
-                &mut job,
-                &mut draft,
-                &mut preview,
-                &mut preview_model,
-            );
-            return;
-        }
-        Gen3dAiMode::Pipeline => {
-            pipeline_orchestrator::poll_gen3d_pipeline(
-                &config,
-                &time,
-                &mut commands,
-                &mut images,
-                &review_cameras,
-                &mut workshop,
-                &mut feedback_history,
-                &mut job,
-                &mut draft,
-                &mut preview,
-                &mut preview_model,
-            );
-            return;
-        }
-        Gen3dAiMode::LegacyPhaseMachine => {}
-    }
+    pipeline_orchestrator::poll_gen3d_pipeline(
+        &config,
+        &time,
+        &mut commands,
+        &mut images,
+        &review_cameras,
+        &mut workshop,
+        &mut feedback_history,
+        &mut job,
+        &mut draft,
+        &mut preview,
+        &mut preview_model,
+    );
+    return;
 
-    let speed_mode = workshop.speed_mode;
-
-    // Apply speed changes to the current run when possible.
-    let desired_total_passes = refine_passes_for_speed(&config, workshop.speed_mode);
-    let current_total_passes = job.auto_refine_passes_done + job.auto_refine_passes_remaining;
-    if desired_total_passes == 0
-        && matches!(
-            job.phase,
-            Gen3dAiPhase::CapturingReview | Gen3dAiPhase::WaitingReview
-        )
-        && matches!(job.review_kind, Gen3dAutoReviewKind::EndOfRun)
-        && !job.capture_previews_only
+    #[cfg(any())]
     {
-        debug!("Gen3D: auto-refine disabled mid-run; skipping review phase.");
-        for entity in &review_cameras {
-            commands.entity(entity).try_despawn();
+        let speed_mode = workshop.speed_mode;
+
+        // Apply speed changes to the current run when possible.
+        let desired_total_passes = refine_passes_for_speed(&config, workshop.speed_mode);
+        let current_total_passes = job.auto_refine_passes_done + job.auto_refine_passes_remaining;
+        if desired_total_passes == 0
+            && matches!(
+                job.phase,
+                Gen3dAiPhase::CapturingReview | Gen3dAiPhase::WaitingReview
+            )
+            && matches!(job.review_kind, Gen3dAutoReviewKind::EndOfRun)
+            && !job.capture_previews_only
+        {
+            debug!("Gen3D: auto-refine disabled mid-run; skipping review phase.");
+            for entity in &review_cameras {
+                commands.entity(entity).try_despawn();
+            }
+            job.review_capture = None;
+            job.shared_result = None;
+            job.shared_progress = None;
+            job.finish_run_metrics();
+            job.running = false;
+            job.build_complete = true;
+            job.phase = Gen3dAiPhase::Idle;
+            workshop.status =
+                "Build finished. (Auto-review skipped due to speed mode change.) Orbit/zoom the preview. Click Build/Edit to start a new run."
+                    .into();
+            return;
         }
-        job.review_capture = None;
-        job.shared_result = None;
-        job.shared_progress = None;
-        job.finish_run_metrics();
-        job.running = false;
-        job.build_complete = true;
-        job.phase = Gen3dAiPhase::Idle;
-        workshop.status =
-            "Build finished. (Auto-review skipped due to speed mode change.) Orbit/zoom the preview. Click Build/Edit to start a new run."
-                .into();
-        return;
-    }
-    if desired_total_passes != current_total_passes {
-        job.auto_refine_passes_remaining =
-            desired_total_passes.saturating_sub(job.auto_refine_passes_done);
-    }
+        if desired_total_passes != current_total_passes {
+            job.auto_refine_passes_remaining =
+                desired_total_passes.saturating_sub(job.auto_refine_passes_done);
+        }
 
     let per_component_enabled = component_refine_cycles_for_speed(&config, workshop.speed_mode) > 0;
     if !per_component_enabled
@@ -3093,6 +2950,7 @@ pub(crate) fn gen3d_poll_ai_job(
 
             fail_job(&mut workshop, &mut job, err);
         }
+    }
     }
 }
 

@@ -9,7 +9,7 @@ use bevy::log::warn;
 use crate::config::{ClaudeConfig, GeminiConfig, MimoConfig, OpenAiConfig};
 
 use super::structured_outputs::Gen3dAiJsonSchemaKind;
-use super::{agent_parsing, artifacts, parse};
+use super::{artifacts, parse};
 use super::{Gen3dAiProgress, Gen3dAiSessionState, Gen3dAiTextResponse};
 
 #[derive(Clone, Debug)]
@@ -67,7 +67,6 @@ impl Gen3dAiServiceConfig {
 
 fn expected_version_for_schema(kind: Gen3dAiJsonSchemaKind) -> u64 {
     match kind {
-        Gen3dAiJsonSchemaKind::AgentStepV1 => 1,
         Gen3dAiJsonSchemaKind::PromptIntentV1 => 1,
         Gen3dAiJsonSchemaKind::PlanV1 => 8,
         Gen3dAiJsonSchemaKind::PlanOpsV1 => 1,
@@ -84,14 +83,6 @@ fn coerce_single_json_object_best_effort(
     kind: Gen3dAiJsonSchemaKind,
     text: &str,
 ) -> Option<String> {
-    if matches!(kind, Gen3dAiJsonSchemaKind::AgentStepV1) {
-        if let Ok(step) = agent_parsing::parse_agent_step(text) {
-            if let Ok(out) = serde_json::to_string(&step) {
-                return Some(out);
-            }
-        }
-    }
-
     fn parse_value_lenient(text: &str) -> Option<serde_json::Value> {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
             return Some(value);
@@ -502,24 +493,6 @@ pub(super) fn generate_text_via_ai_service(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gen3d::agent::Gen3dAgentActionJsonV1;
-
-    #[test]
-    fn coerce_agent_step_prefers_non_done_candidate() {
-        let text = r#"{"version":1,"status_summary":"first","actions":[{"kind":"tool_call","call_id":"call_1","tool_id":"get_tool_detail_v1","args":{"tool_id":"qa_v1"}}]}{"version":1,"status_summary":"second","actions":[{"kind":"done","reason":"stop"}]}"#;
-        let coerced =
-            coerce_single_json_object_best_effort(Gen3dAiJsonSchemaKind::AgentStepV1, text)
-                .expect("coerce");
-        let step: crate::gen3d::agent::Gen3dAgentStepJsonV1 =
-            serde_json::from_str(&coerced).expect("parse coerced JSON");
-        assert_eq!(step.version, 1);
-        assert_eq!(step.status_summary, "first");
-        assert_eq!(step.actions.len(), 1);
-        assert!(matches!(
-            step.actions[0],
-            Gen3dAgentActionJsonV1::ToolCall { .. }
-        ));
-    }
 
     #[test]
     fn coerce_prefers_last_version_match_for_non_agent_schema() {
@@ -576,7 +549,7 @@ mod tests {
             &progress,
             Gen3dAiSessionState::default(),
             None,
-            Some(Gen3dAiJsonSchemaKind::AgentStepV1),
+            Some(Gen3dAiJsonSchemaKind::PlanV1),
             true,
             &ai,
             "high",
@@ -584,7 +557,7 @@ mod tests {
             user_text,
             &[],
             None,
-            "agent_step",
+            "tool_plan_structured_outputs_retry",
         )
         .expect("should recover via retry");
 

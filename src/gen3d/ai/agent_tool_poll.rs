@@ -17,7 +17,7 @@ use super::agent_review_images::{
     motion_sheets_needed_from_smoke_results, parse_review_preview_blob_ids_from_args,
     select_review_preview_blob_ids, validate_review_images_for_llm,
 };
-use super::agent_utils::{note_observable_tool_result, sanitize_prefix, truncate_json_for_log};
+use super::agent_utils::{sanitize_prefix, truncate_json_for_log};
 use super::artifacts::{
     append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
     write_gen3d_json_artifact, write_gen3d_text_artifact,
@@ -331,7 +331,6 @@ pub(super) fn poll_agent_tool(
                 message,
                 serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
             );
-            note_observable_tool_result(job, &tool_result);
             job.agent.step_tool_results.push(tool_result);
 
             job.phase = Gen3dAiPhase::AgentExecutingActions;
@@ -416,7 +415,6 @@ pub(super) fn poll_agent_tool(
                 message,
                 serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
             );
-            note_observable_tool_result(job, &tool_result);
             job.agent.step_tool_results.push(tool_result);
 
             job.phase = Gen3dAiPhase::AgentExecutingActions;
@@ -3762,7 +3760,6 @@ pub(super) fn poll_agent_tool(
     if tool_ok_for_guard && tool_id_for_guard == TOOL_ID_LLM_GENERATE_PLAN {
         maybe_spawn_descriptor_meta_after_plan(workshop, job, draft);
     }
-    note_observable_tool_result(job, &tool_result);
     job.agent.step_tool_results.push(tool_result);
 
     if let Some(reason) = stop_best_effort_after_tool.take() {
@@ -3801,13 +3798,6 @@ pub(super) fn poll_agent_tool(
             },
         );
         return;
-    }
-
-    if !tool_ok_for_guard || tool_id_for_guard == TOOL_ID_LLM_GENERATE_PLAN {
-        // End the step early on async tool failures (avoid cascades), and also enforce
-        // a hard phase split after planning so the next step can observe the plan state
-        // (including any reuse_groups) before deciding what to generate.
-        job.agent.step_action_idx = job.agent.step_actions.len();
     }
 
     job.phase = Gen3dAiPhase::AgentExecutingActions;

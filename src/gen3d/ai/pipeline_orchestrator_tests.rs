@@ -9,7 +9,7 @@ use crate::gen3d::state::{Gen3dDraft, Gen3dPreview, Gen3dSpeedMode, Gen3dWorksho
 use crate::gen3d::tool_feedback::Gen3dToolFeedbackHistory;
 
 use super::ai_service::Gen3dAiServiceConfig;
-use super::{Gen3dAgentState, Gen3dAiJob, Gen3dAiMode, Gen3dAiPhase, Gen3dPipelineState};
+use super::{Gen3dAgentState, Gen3dAiJob, Gen3dAiPhase, Gen3dPipelineState};
 
 fn make_temp_gen3d_run_dir(prefix: &str, run_id: Uuid) -> PathBuf {
     let base_dir = std::env::temp_dir().join(format!("{prefix}_{run_id}"));
@@ -86,7 +86,6 @@ fn gen3d_mock_pipeline_builds_warcar_prompt_end_to_end() {
     let mut job = Gen3dAiJob::default();
     job.running = true;
     job.build_complete = false;
-    job.mode = Gen3dAiMode::Pipeline;
     job.phase = Gen3dAiPhase::AgentExecutingActions;
     job.ai = Some(Gen3dAiServiceConfig::OpenAi(openai));
     job.run_id = Some(run_id);
@@ -117,13 +116,6 @@ fn gen3d_mock_pipeline_builds_warcar_prompt_end_to_end() {
     assert!(
         draft.total_non_projectile_primitive_parts() > 0,
         "expected generated primitive parts"
-    );
-
-    let job = app.world().resource::<Gen3dAiJob>();
-    assert!(
-        matches!(job.mode, Gen3dAiMode::Pipeline),
-        "expected pipeline to complete without fallback (mode={:?})",
-        job.mode
     );
 
     let trace_path = run_dir.join("agent_trace.jsonl");
@@ -166,7 +158,6 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
     let mut job = Gen3dAiJob::default();
     job.running = true;
     job.build_complete = false;
-    job.mode = Gen3dAiMode::Pipeline;
     job.phase = Gen3dAiPhase::AgentExecutingActions;
     job.ai = Some(Gen3dAiServiceConfig::OpenAi(openai));
     job.run_id = Some(run_id);
@@ -209,7 +200,6 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
         let mut job = app.world_mut().resource_mut::<Gen3dAiJob>();
         job.running = true;
         job.build_complete = false;
-        job.mode = Gen3dAiMode::Pipeline;
         job.phase = Gen3dAiPhase::AgentExecutingActions;
         job.user_prompt_raw = edit_prompt.to_string();
         job.edit_base_prefab_id = Some(Uuid::new_v4().as_u128());
@@ -226,11 +216,6 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
     app = run_app_until_build_stops(app, Duration::from_secs(8));
 
     let job = app.world().resource::<Gen3dAiJob>();
-    assert!(
-        matches!(job.mode, Gen3dAiMode::Pipeline),
-        "expected edit pipeline to complete without fallback (mode={:?})",
-        job.mode
-    );
     assert!(
         job.assembly_rev > before_edit_rev,
         "expected DraftOps to increment assembly_rev (before={before_edit_rev} after={})",
@@ -290,7 +275,6 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
     let mut job = Gen3dAiJob::default();
     job.running = true;
     job.build_complete = false;
-    job.mode = Gen3dAiMode::Pipeline;
     job.phase = Gen3dAiPhase::AgentExecutingActions;
     job.ai = Some(Gen3dAiServiceConfig::OpenAi(openai));
     job.run_id = Some(run_id);
@@ -317,7 +301,7 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
 
     app = run_app_until_build_stops(app, Duration::from_secs(5));
 
-    // Start seeded edit run that forces DraftOps tool failures until pipeline falls back.
+    // Start seeded edit run that forces DraftOps tool failures until the pipeline stops.
     let pass1 = run_dir.join("attempt_0").join("pass_1");
     std::fs::create_dir_all(&pass1).expect("create temp gen3d pass_1 dir");
     {
@@ -327,7 +311,6 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
         let mut job = app.world_mut().resource_mut::<Gen3dAiJob>();
         job.running = true;
         job.build_complete = false;
-        job.mode = Gen3dAiMode::Pipeline;
         job.phase = Gen3dAiPhase::AgentExecutingActions;
         job.user_prompt_raw = edit_prompt.to_string();
         job.edit_base_prefab_id = Some(Uuid::new_v4().as_u128());
@@ -344,11 +327,6 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
     app = run_app_until_build_stops(app, Duration::from_secs(8));
 
     let job = app.world().resource::<Gen3dAiJob>();
-    assert!(
-        matches!(job.mode, Gen3dAiMode::Pipeline),
-        "expected pipeline mode to stop without fallback (mode={:?})",
-        job.mode
-    );
     assert!(
         job.build_complete && !job.running,
         "expected best-effort stop to finish the run (build_complete={} running={})",

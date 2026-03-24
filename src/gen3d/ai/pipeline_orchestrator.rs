@@ -1,6 +1,5 @@
 use bevy::log::debug;
 use bevy::prelude::*;
-use std::sync::{Arc, Mutex};
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
@@ -26,12 +25,12 @@ use super::agent_step::{
 use super::agent_tool_dispatch::execute_tool_call;
 use super::agent_tool_poll::poll_agent_tool;
 use super::agent_utils::{
-    compute_agent_state_hash, note_observable_tool_result, truncate_json_for_log,
+    compute_agent_state_hash, truncate_json_for_log,
 };
 use super::artifacts::{append_gen3d_jsonl_artifact, append_gen3d_run_log};
 use super::status_steps;
 use super::{
-    fail_job, finish_job_best_effort, Gen3dAiJob, Gen3dAiMode, Gen3dAiPhase, Gen3dAiProgress,
+    fail_job, finish_job_best_effort, Gen3dAiJob, Gen3dAiPhase,
     Gen3dPendingFinishRun, Gen3dPipelineStage,
 };
 
@@ -85,10 +84,6 @@ pub(super) fn poll_gen3d_pipeline(
         With<Gen3dPreviewModelRoot>,
     >,
 ) {
-    if !matches!(job.mode, Gen3dAiMode::Pipeline) {
-        return;
-    }
-
     match job.phase {
         Gen3dAiPhase::AgentWaitingUserImageSummary => {
             poll_pipeline_user_image_summary(config, workshop, job);
@@ -177,8 +172,7 @@ fn poll_pipeline_user_image_summary(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
 ) {
-    // Pipeline mode uses the same one-time user-image summarization request as agent mode, but
-    // does not chain into `agent_step`.
+    // One-time user-image summarization request (pipeline bootstrap).
     if job.user_images.is_empty() || job.user_image_object_summary.is_some() {
         job.shared_result = None;
         job.shared_progress = None;
@@ -195,9 +189,11 @@ fn poll_pipeline_user_image_summary(
             fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
             return;
         };
-        if let Err(err) = super::agent_loop::spawn_agent_user_image_summary_request(
-            config, workshop, job, pass_dir,
-        ) {
+        if let Err(err) =
+            super::bootstrap_requests::spawn_gen3d_user_image_summary_request(
+                config, workshop, job, pass_dir,
+            )
+        {
             fail_job(workshop, job, err);
         }
         return;
@@ -293,48 +289,17 @@ fn poll_pipeline_prompt_intent(
     }
 
     if job.shared_result.is_none() {
-        let Some(ai) = job.ai.clone() else {
-            fail_job(workshop, job, "Internal error: missing AI config.");
-            return;
-        };
         let Some(pass_dir) = job.pass_dir.clone() else {
             fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
             return;
         };
-
-        let shared = crate::threaded_result::new_shared_result();
-        job.shared_result = Some(shared.clone());
-        let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
-            message: "Analyzing prompt…".into(),
-        }));
-        job.shared_progress = Some(progress.clone());
-
-        super::set_progress(&progress, "Determining prompt intent…");
-
-        let system = super::prompts::build_gen3d_prompt_intent_system_instructions();
-        let user_text = super::prompts::build_gen3d_prompt_intent_user_text(
-            &job.user_prompt_raw,
-            job.user_image_object_summary
-                .as_ref()
-                .map(|s| s.text.as_str()),
-        );
-        let reasoning_effort = ai.model_reasoning_effort().to_string();
-
-        super::spawn_gen3d_ai_text_thread(
-            shared,
-            progress,
-            job.cancel_flag.clone(),
-            job.session.clone(),
-            Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PromptIntentV1),
-            config.gen3d_require_structured_outputs,
-            ai,
-            reasoning_effort,
-            system,
-            user_text,
-            job.user_images_component.clone(),
-            pass_dir,
-            "prompt_intent".into(),
-        );
+        if let Err(err) =
+            super::bootstrap_requests::spawn_gen3d_prompt_intent_request(
+                config, workshop, job, pass_dir,
+            )
+        {
+            fail_job(workshop, job, err);
+        }
         return;
     }
 
@@ -599,7 +564,6 @@ fn pipeline_record_tool_result(
         serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
     );
 
-    note_observable_tool_result(job, result);
     job.agent.step_tool_results.push(result.clone());
     if job.agent.step_tool_results.len() > 32 {
         let drain = job.agent.step_tool_results.len() - 32;

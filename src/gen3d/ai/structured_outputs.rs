@@ -2,7 +2,6 @@ use serde_json::json;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dAiJsonSchemaKind {
-    AgentStepV1,
     PromptIntentV1,
     PlanV1,
     PlanOpsV1,
@@ -210,52 +209,6 @@ fn schema_aim() -> serde_json::Value {
         ("max_yaw_delta_degrees", schema_nullable(schema_number())),
         ("components", schema_array_of(schema_string())),
     ])
-}
-
-fn schema_agent_step_action_tool_call() -> serde_json::Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "kind": schema_enum(&["tool_call"]),
-            "call_id": schema_string(),
-            "tool_id": schema_string(),
-            "args": schema_any_object(),
-        },
-        "required": ["kind", "call_id", "tool_id", "args"],
-    })
-}
-
-fn schema_agent_step_action_done() -> serde_json::Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "kind": schema_enum(&["done"]),
-            "reason": schema_string(),
-        },
-        "required": ["kind", "reason"],
-    })
-}
-
-fn schema_agent_step_action() -> serde_json::Value {
-    schema_any_of(vec![
-        schema_agent_step_action_tool_call(),
-        schema_agent_step_action_done(),
-    ])
-}
-
-fn schema_agent_step() -> serde_json::Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "version": { "type": "integer", "enum": [1] },
-            "status_summary": schema_string(),
-            "actions": schema_array_of(schema_agent_step_action()),
-        },
-        "required": ["version", "status_summary", "actions"],
-    })
 }
 
 fn schema_attachment_offset() -> serde_json::Value {
@@ -1133,10 +1086,6 @@ fn schema_prompt_intent() -> serde_json::Value {
 
 pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchemaSpec {
     match kind {
-        Gen3dAiJsonSchemaKind::AgentStepV1 => Gen3dAiJsonSchemaSpec {
-            name: "gen3d_agent_step_v1",
-            schema: schema_agent_step(),
-        },
         Gen3dAiJsonSchemaKind::PromptIntentV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_prompt_intent_v1",
             schema: schema_prompt_intent(),

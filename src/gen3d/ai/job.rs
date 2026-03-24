@@ -14,17 +14,6 @@ use super::reuse_groups;
 use super::schema::*;
 
 pub(super) const GEN3D_LLM_TOOL_SCHEMA_REPAIR_MAX_ATTEMPTS: u8 = 1;
-pub(super) const GEN3D_AGENT_STEP_REQUEST_MAX_RETRIES: u8 = 6;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum Gen3dAiMode {
-    #[default]
-    Agent,
-    Pipeline,
-    /// Legacy non-agent phase machine (pre tool-driven agent loop).
-    #[allow(dead_code)]
-    LegacyPhaseMachine,
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Gen3dPipelineStage {
@@ -162,7 +151,6 @@ pub(super) struct Gen3dAgentSnapshot {
 
 #[derive(Clone, Debug)]
 pub(super) enum Gen3dAgentAfterPassSnapshot {
-    AdvancePassAndRequestStep,
     FinishRun {
         workshop_status: String,
         run_log: String,
@@ -210,15 +198,7 @@ pub(crate) enum Gen3dDescriptorMetaPolicy {
 
 #[derive(Clone, Debug)]
 pub(super) struct Gen3dAgentState {
-    pub(super) step_actions: Vec<crate::gen3d::agent::Gen3dAgentActionJsonV1>,
-    pub(super) step_action_idx: usize,
     pub(super) step_tool_results: Vec<crate::gen3d::agent::Gen3dToolResultJsonV1>,
-    pub(super) step_repair_attempt: u8,
-    pub(super) step_request_retry_attempt: u8,
-    pub(super) no_progress_tries: u32,
-    pub(super) no_progress_inspection_steps: u32,
-    pub(super) last_state_hash: Option<String>,
-    pub(super) step_had_observable_output: bool,
     pub(super) info_store_inspection_cache: std::collections::HashMap<String, serde_json::Value>,
     pub(super) tooling_feedback_submissions: u32,
     pub(super) rendered_since_last_review: bool,
@@ -251,7 +231,6 @@ pub(super) struct Gen3dAgentState {
     pub(super) last_qa_basis_workspace_id: Option<String>,
     pub(super) last_qa_basis_state_hash: Option<String>,
     pub(super) last_qa_result_json: Option<serde_json::Value>,
-    pub(super) done_ignored_due_to_qa_errors: u8,
     pub(super) pending_regen_component_indices: Vec<usize>,
     pub(super) pending_regen_component_indices_skipped_due_to_budget: Vec<usize>,
     pub(super) pending_regen_component_indices_blocked_due_to_qa_gate: Vec<usize>,
@@ -260,15 +239,7 @@ pub(super) struct Gen3dAgentState {
 impl Default for Gen3dAgentState {
     fn default() -> Self {
         Self {
-            step_actions: Vec::new(),
-            step_action_idx: 0,
             step_tool_results: Vec::new(),
-            step_repair_attempt: 0,
-            step_request_retry_attempt: 0,
-            no_progress_tries: 0,
-            no_progress_inspection_steps: 0,
-            last_state_hash: None,
-            step_had_observable_output: false,
             info_store_inspection_cache: std::collections::HashMap::new(),
             tooling_feedback_submissions: 0,
             rendered_since_last_review: false,
@@ -301,7 +272,6 @@ impl Default for Gen3dAgentState {
             last_qa_basis_workspace_id: None,
             last_qa_basis_state_hash: None,
             last_qa_result_json: None,
-            done_ignored_due_to_qa_errors: 0,
             pending_regen_component_indices: Vec::new(),
             pending_regen_component_indices_skipped_due_to_budget: Vec::new(),
             pending_regen_component_indices_blocked_due_to_qa_gate: Vec::new(),
@@ -590,7 +560,6 @@ pub(crate) struct Gen3dAiJob {
     pub(super) running: bool,
     pub(super) cancel_flag: Option<Arc<AtomicBool>>,
     pub(super) build_complete: bool,
-    pub(super) mode: Gen3dAiMode,
     pub(super) phase: Gen3dAiPhase,
     pub(super) pipeline: Gen3dPipelineState,
     pub(super) ai: Option<Gen3dAiServiceConfig>,
@@ -1515,5 +1484,35 @@ impl Gen3dMotionCaptureState {
             frame_capture: None,
             frame_paths: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overwrite_save_blocked_by_qa_errors_requires_overwrite_mode() {
+        let mut job = Gen3dAiJob::default();
+        job.agent.last_smoke_ok = Some(false);
+        assert!(!job.overwrite_save_blocked_by_qa_errors());
+
+        job.set_save_overwrite_prefab_id(Some(123));
+        assert!(job.overwrite_save_blocked_by_qa_errors());
+    }
+
+    #[test]
+    fn overwrite_save_blocked_by_qa_errors_triggers_only_on_explicit_errors() {
+        let mut job = Gen3dAiJob::default();
+        job.set_save_overwrite_prefab_id(Some(123));
+        assert!(!job.overwrite_save_blocked_by_qa_errors());
+
+        job.agent.last_validate_ok = Some(true);
+        job.agent.last_smoke_ok = Some(true);
+        job.agent.last_motion_ok = Some(true);
+        assert!(!job.overwrite_save_blocked_by_qa_errors());
+
+        job.agent.last_validate_ok = Some(false);
+        assert!(job.overwrite_save_blocked_by_qa_errors());
     }
 }

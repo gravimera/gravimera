@@ -15,7 +15,6 @@ pub(crate) struct AppConfig {
     pub(crate) log_level: bevy::log::Level,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
     pub(crate) gen3d_ai_service: Gen3dAiService,
-    pub(crate) gen3d_orchestrator: Gen3dOrchestrator,
     pub(crate) intelligence_service_enabled: bool,
     pub(crate) intelligence_service_mode: IntelligenceServiceMode,
     pub(crate) intelligence_service_addr: Option<String>,
@@ -72,7 +71,6 @@ impl Default for AppConfig {
             log_level: bevy::log::Level::INFO,
             gen3d_cache_dir: None,
             gen3d_ai_service: Gen3dAiService::OpenAi,
-            gen3d_orchestrator: Gen3dOrchestrator::Pipeline,
             intelligence_service_enabled: false,
             intelligence_service_mode: IntelligenceServiceMode::Embedded,
             intelligence_service_addr: None,
@@ -139,13 +137,6 @@ pub(crate) enum Gen3dAiService {
     Mimo,
     Gemini,
     Claude,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Gen3dOrchestrator {
-    #[default]
-    Agent,
-    Pipeline,
 }
 
 pub(crate) fn default_config_path() -> PathBuf {
@@ -228,7 +219,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_log_level_into_config(out, text);
     parse_gen3d_cache_dir_into_config(out, text);
     parse_gen3d_ai_service_into_config(out, text);
-    parse_gen3d_orchestrator_into_config(out, text);
+    validate_gen3d_orchestrator_removed_into_config(out, text);
     parse_intelligence_service_enabled_into_config(out, text);
     parse_intelligence_service_mode_into_config(out, text);
     parse_intelligence_service_addr_into_config(out, text);
@@ -425,9 +416,15 @@ fn parse_gen3d_ai_service_into_config(out: &mut AppConfig, text: &str) {
     }
 }
 
-fn parse_gen3d_orchestrator_into_config(out: &mut AppConfig, text: &str) {
-    match parse_gen3d_orchestrator(text) {
-        Ok(Some(value)) => out.gen3d_orchestrator = value,
+fn validate_gen3d_orchestrator_removed_into_config(out: &mut AppConfig, text: &str) {
+    match parse_gen3d_orchestrator_value(text) {
+        Ok(Some(value)) => {
+            if value != "pipeline" {
+                out.errors.push(format!(
+                    "config.toml: Gen3D `orchestrator` is no longer configurable (agent-step orchestrator removed). Remove `gen3d.orchestrator`; pipeline-only is supported. (got {value:?})"
+                ));
+            }
+        }
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -1009,9 +1006,9 @@ fn parse_gen3d_ai_service(text: &str) -> Result<Option<Gen3dAiService>, String> 
     Ok(out)
 }
 
-fn parse_gen3d_orchestrator(text: &str) -> Result<Option<Gen3dOrchestrator>, String> {
+fn parse_gen3d_orchestrator_value(text: &str) -> Result<Option<String>, String> {
     let mut section: Option<String> = None;
-    let mut out: Option<Gen3dOrchestrator> = None;
+    let mut out: Option<String> = None;
 
     for (line_no, raw_line) in text.lines().enumerate() {
         let line_no = line_no + 1;
@@ -1062,11 +1059,11 @@ fn parse_gen3d_orchestrator(text: &str) -> Result<Option<Gen3dOrchestrator>, Str
         }
 
         out = Some(match parsed.as_str() {
-            "agent" => Gen3dOrchestrator::Agent,
-            "pipeline" => Gen3dOrchestrator::Pipeline,
+            "pipeline" => "pipeline".into(),
+            "agent" => "agent".into(),
             other => {
                 return Err(format!(
-                    "config.toml:{line_no}: unsupported `gen3d.orchestrator` value {other:?} (expected \"agent\" or \"pipeline\")"
+                    "config.toml:{line_no}: unsupported `gen3d.orchestrator` value {other:?} (expected \"pipeline\")"
                 ));
             }
         });
@@ -2920,8 +2917,8 @@ mod tests {
     use super::parse_gen3d_review_appearance;
     use super::parse_gen3d_save_pass_screenshots;
     use super::{
-        parse_config_text_into, parse_gen3d_orchestrator, parse_intelligence_service_mode,
-        AppConfig, Gen3dAiService, Gen3dOrchestrator, IntelligenceServiceMode,
+        parse_config_text_into, parse_intelligence_service_mode, AppConfig, Gen3dAiService,
+        IntelligenceServiceMode,
     };
     use std::path::PathBuf;
 
@@ -3011,25 +3008,38 @@ mod tests {
     }
 
     #[test]
-    fn parses_gen3d_orchestrator_from_gen3d_section() {
+    fn accepts_gen3d_orchestrator_pipeline_value_for_compat_but_ignores_it() {
         let text = r#"
         [gen3d]
         orchestrator = "pipeline"
+
+        [openai]
+        base_url = "mock://gen3d"
+        model = "mock"
+        token = "mock"
         "#;
-        assert_eq!(
-            parse_gen3d_orchestrator(text).unwrap(),
-            Some(Gen3dOrchestrator::Pipeline)
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert!(
+            cfg.errors.is_empty(),
+            "unexpected config errors: {:?}",
+            cfg.errors
         );
     }
 
     #[test]
-    fn parses_gen3d_orchestrator_from_top_level() {
+    fn rejects_gen3d_orchestrator_agent_value() {
         let text = r#"
         gen3d_orchestrator = "agent"
         "#;
-        assert_eq!(
-            parse_gen3d_orchestrator(text).unwrap(),
-            Some(Gen3dOrchestrator::Agent)
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert!(
+            cfg.errors
+                .iter()
+                .any(|err| err.contains("agent-step orchestrator removed")),
+            "expected orchestrator removal error, got: {:?}",
+            cfg.errors
         );
     }
 

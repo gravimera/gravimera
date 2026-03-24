@@ -77,9 +77,9 @@
 # ai_service = "openai"
 
 # Gen3D orchestrator:
-# - "pipeline" (default): deterministic pipeline orchestrator (tool sequence is engine-driven; agent-step is fallback).
-# - "agent": Codex-style agent_step loop decides which tools to call next.
-# orchestrator = "pipeline"
+# - Pipeline-only (deterministic; tool sequence is engine-driven).
+#   (The legacy agent-step orchestrator was removed.)
+# orchestrator = "pipeline" # optional legacy key; ignored unless set to a non-pipeline value (then config errors)
 
 # Optional: override where Gen3D artifacts are cached.
 # Default: `<root_dir>/cache/gen3d/`.

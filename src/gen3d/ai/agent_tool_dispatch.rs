@@ -10,11 +10,11 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE,
     TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS,
     TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
-    TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_GET_TOOL_DETAIL, TOOL_ID_GET_USER_INPUTS,
-    TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST, TOOL_ID_INFO_EVENTS_GET,
-    TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH, TOOL_ID_INFO_KV_GET,
-    TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED, TOOL_ID_INFO_KV_LIST_HISTORY,
-    TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS,
+    TOOL_ID_GET_USER_INPUTS, TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST,
+    TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH,
+    TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED,
+    TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
+    TOOL_ID_LIST_SNAPSHOTS,
     TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION, TOOL_ID_LLM_GENERATE_MOTIONS,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
@@ -23,7 +23,7 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META,
     TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
-use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolRegistryV1, Gen3dToolResultJsonV1};
+use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
 use crate::types::{ActionClock, AnimationChannelsActive, AttackClock, LocomotionClock};
 
@@ -32,7 +32,6 @@ use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::agent_parsing::{
     normalize_identifier_for_match, parse_delta_transform, resolve_component_index_by_name_hint,
 };
-use super::agent_prompt::draft_summary;
 use super::agent_regen_budget::consume_regen_budget;
 use super::agent_review_delta::start_agent_llm_review_delta_call;
 use super::agent_review_images::{
@@ -2309,52 +2308,7 @@ pub(super) fn execute_tool_call(
         ));
     }
 
-    let registry = Gen3dToolRegistryV1::default();
     match call.tool_id.as_str() {
-        TOOL_ID_GET_TOOL_DETAIL => {
-            #[derive(Debug, Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct GetToolDetailArgsV1 {
-                tool_id: String,
-            }
-
-            let args: GetToolDetailArgsV1 = match serde_json::from_value(call.args) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        format!("Invalid args for `{TOOL_ID_GET_TOOL_DETAIL}`: {err}"),
-                    ));
-                }
-            };
-            let tool_id = args.tool_id.trim();
-            if tool_id.is_empty() {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    format!("`{TOOL_ID_GET_TOOL_DETAIL}` requires a non-empty `tool_id` string."),
-                ));
-            }
-
-            let all_tools = registry.list();
-            let Some(tool) = all_tools.iter().find(|t| t.tool_id == tool_id) else {
-                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                    call.call_id,
-                    call.tool_id,
-                    format!(
-                        "Unknown tool_id `{}` (see the Available tools list in the prompt).",
-                        tool_id
-                    ),
-                ));
-            };
-
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
-                call.call_id,
-                call.tool_id,
-                serde_json::json!({ "tool": tool }),
-            ))
-        }
         TOOL_ID_BASIS_FROM_UP_FORWARD => {
             #[derive(Debug, Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -2434,37 +2388,6 @@ pub(super) fn execute_tool_call(
                 "image_object_summary_truncated": job.user_image_object_summary.as_ref().map(|s| s.truncated),
             }),
         )),
-        TOOL_ID_GET_STATE_SUMMARY => {
-            let workspace_id = job.active_workspace_id().trim().to_string();
-            let key = format!("ws.{workspace_id}.state_summary");
-            let mut json = draft_summary(config, job);
-            let record = match info_kv_put_for_tool(
-                job,
-                workspace_id.as_str(),
-                call.tool_id.as_str(),
-                call.call_id.as_str(),
-                key.as_str(),
-                json.clone(),
-                "state summary".into(),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
-                        call.call_id,
-                        call.tool_id,
-                        err,
-                    ));
-                }
-            };
-
-            if let Some(obj) = json.as_object_mut() {
-                obj.insert(
-                    "info_kv".into(),
-                    info_kv_ref_json(INFO_KV_NAMESPACE_GEN3D, key.as_str(), record.kv_rev),
-                );
-            }
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
-        }
         TOOL_ID_SET_DESCRIPTOR_META => {
             #[derive(Debug, Deserialize)]
             #[serde(deny_unknown_fields)]

@@ -4,8 +4,8 @@ Gen3D is Gravimera’s in-game AI modeling workflow: it generates a component pl
 per-component primitive geometry, authors optional motion clips, and iterates with deterministic
 validation/QA.
 
-This doc focuses on the **workflow**, **orchestrators**, and the **tool contracts** the
-agent/pipeline uses.
+This doc focuses on the **workflow**, the **pipeline state machine**, and the **tool contracts**
+Gen3D uses.
 
 ## Setup
 
@@ -19,7 +19,7 @@ cp config.example.toml ~/.gravimera/config.toml
 2. Edit `~/.gravimera/config.toml`:
 
 - Set your AI provider in `[openai]` / `[mimo]` / `[gemini]` / `[claude]`
-- (Optional) Configure Gen3D behavior under `[gen3d]` (notably `orchestrator`)
+- (Optional) Configure Gen3D behavior under `[gen3d]`
 
 ## Run artifacts
 
@@ -51,30 +51,20 @@ DraftOps-specific artifacts:
 - `attempt_*/pass_*/apply_draft_ops_last.json` — latest `apply_draft_ops_v1` result (`diff_summary`,
   `rejected_ops`, etc).
 
-## Orchestrators
+## Orchestration
 
-Gen3D supports two orchestrators (config: `[gen3d].orchestrator`):
+Gen3D uses a deterministic pipeline state machine (pipeline-only).
 
-### 1) Deterministic pipeline (default)
+High-level flow:
 
-When `[gen3d].orchestrator = "pipeline"`, the engine runs a deterministic state machine:
-
-- Create sessions: plan → generate components → QA loop → (optional) renders/review-delta → finish
+- Create sessions: plan → generate components → QA loop → (optional) render/review-delta → finish
 - Seeded Edit/Fork sessions: preserve-mode plan ops → capture part snapshots → DraftOps suggest+apply
   → QA loop → finish
 
-If the pipeline cannot make progress (schema repair exhausted, repeated DraftOps rejections, etc.),
-it falls back to agent-step with an explicit reason.
+Config note:
 
-### 2) Agent-step
-
-The engine asks the model for a strict JSON `gen3d_agent_step_v1` object:
-
-- `status_summary` is shown to the player
-- `actions[]` contains tool calls (or `done`)
-
-The engine executes the tool calls and re-prompts the agent with a bounded tool list + recent tool
-results until the run ends.
+- Legacy `[gen3d].orchestrator = "pipeline"` is accepted but ignored.
+- `[gen3d].orchestrator = "agent"` is rejected (agent-step orchestrator removed).
 
 ## DraftOps-first primitive editing (seeded edits)
 
@@ -92,20 +82,17 @@ For edit requests like “make the wings larger” where regeneration is not req
 2. Ask the model for DraftOps suggestions: `llm_generate_draft_ops_v1`
 3. Apply atomically with revision gating:
    - Pipeline: `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev=<current>`
-   - Agent-step/manual: `apply_last_draft_ops_v1` (applies the latest
-     `draft_ops_suggested_last.json`) or `apply_draft_ops_from_event_v1` (applies a specific
-     suggestion `event_id`)
+   - Manual/debugging: `apply_last_draft_ops_v1` (applies the latest `draft_ops_suggested_last.json`)
+     or `apply_draft_ops_from_event_v1` (applies a specific suggestion `event_id`)
 
 Key safety rules:
 
 - Always apply DraftOps with `atomic=true` so invalid ops don’t partially accumulate.
 - Always apply with `if_assembly_rev` so stale suggestions cannot apply to a changed assembly.
 
-### DraftOps application helpers (agent-step/manual)
+### DraftOps application helpers (manual/debugging)
 
-Agent-step runs often use `llm_generate_draft_ops_v1` to *suggest* a bounded list of DraftOps.
-Because the main agent prompt only includes compact tool-result summaries, the engine provides
-deterministic “apply-by-reference” tools:
+The engine provides deterministic “apply-by-reference” tools:
 
 - `apply_last_draft_ops_v1`: applies the latest `attempt_*/pass_*/draft_ops_suggested_last.json`.
 - `apply_draft_ops_from_event_v1`: applies DraftOps from a specific Info Store `tool_call_result`

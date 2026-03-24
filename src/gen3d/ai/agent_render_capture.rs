@@ -10,7 +10,6 @@ use crate::types::{ActionClock, AnimationChannelsActive, AttackClock, Locomotion
 
 use super::super::state::{Gen3dDraft, Gen3dPreviewModelRoot, Gen3dWorkshop};
 use super::agent_review_delta::start_agent_llm_review_delta_call;
-use super::agent_utils::note_observable_tool_result;
 use super::artifacts::append_gen3d_jsonl_artifact;
 use super::{fail_job, set_progress, Gen3dAiJob, Gen3dAiPhase};
 
@@ -270,7 +269,6 @@ pub(super) fn poll_agent_render_capture(
                         message,
                         serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
                     );
-                    note_observable_tool_result(job, &result);
                     job.agent.step_tool_results.push(result);
                     job.phase = Gen3dAiPhase::AgentExecutingActions;
                     return;
@@ -329,7 +327,6 @@ pub(super) fn poll_agent_render_capture(
             message,
             serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
         );
-        note_observable_tool_result(job, &result);
         job.agent.step_tool_results.push(result);
         job.phase = Gen3dAiPhase::AgentExecutingActions;
         return;
@@ -429,7 +426,6 @@ pub(super) fn poll_agent_render_capture(
                     message,
                     serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
                 );
-                note_observable_tool_result(job, &result);
                 job.agent.step_tool_results.push(result);
                 job.phase = Gen3dAiPhase::AgentExecutingActions;
                 return;
@@ -488,7 +484,6 @@ pub(super) fn poll_agent_render_capture(
         message,
         serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
     );
-    note_observable_tool_result(job, &result);
     job.agent.step_tool_results.push(result);
     job.phase = Gen3dAiPhase::AgentExecutingActions;
 }
