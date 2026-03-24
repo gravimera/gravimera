@@ -1008,6 +1008,62 @@ Limitations:
 - Not available in headless mode.
 - `include_ui=false` is not supported yet.
 
+### `GET /v1/activity`
+
+Return a summary of all past Gen3D runs recorded in the cache directory.
+This lets external agents and scripts query build history without needing the full
+[Gen3D info-store tooling](../src/gen3d/ai/info_store.rs).
+
+```bash
+curl -s http://127.0.0.1:8791/v1/activity
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "total": 3,
+  "truncated": false,
+  "cache_dir": "/Users/alice/.gravimera/cache/gen3d",
+  "runs": [
+    {
+      "run_id": "11223344-...",
+      "created_at_ms": 1714000000000,
+      "kind": "new_build",
+      "prompt_preview": "a futuristic spaceship with laser cannons",
+      "ai_service": "openai",
+      "ai_model": "gpt-4o"
+    }
+  ]
+}
+```
+
+Fields per run entry:
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | string | UUID of the run (also the cache subdirectory name). |
+| `created_at_ms` | number | Unix timestamp (ms) when the run was started. |
+| `kind` | string | `"new_build"`, `"edit_overwrite"`, or `"fork"`. |
+| `prompt_preview` | string | First 200 characters of the user's text prompt (empty if unavailable). |
+| `ai_service` | string | AI service used, e.g. `"openai"`, `"claude"`. |
+| `ai_model` | string | Model name, e.g. `"gpt-4o"`. |
+
+Top-level fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `total` | number | Total number of valid run directories found. |
+| `truncated` | boolean | `true` when more than 500 runs exist (only the 500 newest are returned). |
+| `cache_dir` | string | Filesystem path that was scanned. |
+
+Notes:
+
+- Results are sorted **newest first** by `created_at_ms`.
+- Only directories that contain a `run.json` file are included; other files in the cache directory (e.g. `tool_feedback_history.jsonl`) are silently skipped.
+- The endpoint is available regardless of Gen3D being active or idle.
+
 ## Gen3D endpoints
 
 Gen3D requires rendered mode (no `--headless`).

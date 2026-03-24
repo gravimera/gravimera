@@ -3291,6 +3291,7 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/save"}),
                 serde_json::json!({"method":"GET","path":"/v1/scene_sources/signature"}),
                 serde_json::json!({"method":"POST","path":"/v1/scene_sources/patch_apply"}),
+                serde_json::json!({"method":"GET","path":"/v1/activity"}),
             ];
 
             let body = serde_json::json!({
@@ -4531,6 +4532,32 @@ fn handle_request_main_thread<
                 content_type: "application/json",
             })
         }
+        ("GET", "/v1/activity") => {
+            const MAX_RUNS: usize = 500;
+            let cache_dir = ctx
+                .config
+                .gen3d_cache_dir
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(crate::paths::default_gen3d_cache_dir);
+            let all_runs = read_gen3d_activity_runs(ctx.config);
+            let total = all_runs.len();
+            let truncated = total > MAX_RUNS;
+            let runs: Vec<_> = all_runs.into_iter().take(MAX_RUNS).collect();
+            let body = serde_json::json!({
+                "ok": true,
+                "total": total,
+                "truncated": truncated,
+                "runs": runs,
+                "cache_dir": cache_dir.display().to_string(),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
         _ => {
             let body = serde_json::json!({
                 "ok": false,
@@ -4544,6 +4571,102 @@ fn handle_request_main_thread<
             })
         }
     }
+}
+
+/// Scan the Gen3D cache directory and return a summary of every completed run.
+///
+/// Each entry is built from the `run.json` file written at the start of the run.
+/// The user prompt is read (best-effort) from the cached inputs file.
+/// Results are sorted newest-first.
+fn read_gen3d_activity_runs(config: &AppConfig) -> Vec<serde_json::Value> {
+    /// Relative path (inside a run directory) where the user prompt is cached.
+    const RUN_PROMPT_REL_PATH: &str = "attempt_0/inputs/user_prompt.txt";
+    /// Maximum number of Unicode characters included in `prompt_preview`.
+    const PROMPT_PREVIEW_MAX_CHARS: usize = 200;
+    let cache_dir = config
+        .gen3d_cache_dir
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(crate::paths::default_gen3d_cache_dir);
+    let mut runs: Vec<serde_json::Value> = Vec::new();
+
+    let dir_entries = match std::fs::read_dir(&cache_dir) {
+        Ok(e) => e,
+        Err(_) => return runs,
+    };
+
+    for entry in dir_entries.flatten() {
+        let run_dir = entry.path();
+        if !run_dir.is_dir() {
+            continue;
+        }
+
+        let run_json_bytes = match std::fs::read(run_dir.join("run.json")) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let run_json: serde_json::Value = match serde_json::from_slice(&run_json_bytes) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let run_id = run_json
+            .get("run_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let created_at_ms = run_json
+            .get("created_at_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let kind = run_json
+            .get("seed")
+            .and_then(|s| s.get("kind"))
+            .and_then(|k| k.as_str())
+            .unwrap_or("new_build")
+            .to_string();
+        let ai = run_json.get("ai");
+        let ai_service = ai
+            .and_then(|a| a.get("service"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let ai_model = ai
+            .and_then(|a| a.get("model"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Best-effort: read the user prompt stored at the start of the first attempt.
+        let prompt_raw =
+            std::fs::read_to_string(run_dir.join(RUN_PROMPT_REL_PATH)).unwrap_or_default();
+        // Return a short preview so the response stays compact.
+        let prompt_preview: String = prompt_raw.chars().take(PROMPT_PREVIEW_MAX_CHARS).collect();
+
+        runs.push(serde_json::json!({
+            "run_id": run_id,
+            "created_at_ms": created_at_ms,
+            "kind": kind,
+            "prompt_preview": prompt_preview,
+            "ai_service": ai_service,
+            "ai_model": ai_model,
+        }));
+    }
+
+    // Newest first.
+    runs.sort_by(|a, b| {
+        let a_ms = a
+            .get("created_at_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let b_ms = b
+            .get("created_at_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        b_ms.cmp(&a_ms)
+    });
+
+    runs
 }
 
 fn json_error(status: u16, message: impl Into<String>) -> AutomationReply {
@@ -4628,4 +4751,131 @@ fn automation_step_tick(config: Res<AppConfig>, mut runtime: ResMut<AutomationRu
     });
 
     runtime.active_step = runtime.step_queue.pop_front();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+
+    fn make_temp_dir(prefix: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("{prefix}_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn config_with_cache_dir(dir: std::path::PathBuf) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        cfg.gen3d_cache_dir = Some(dir);
+        cfg
+    }
+
+    #[test]
+    fn activity_empty_cache_dir_returns_empty_list() {
+        let cache_dir = make_temp_dir("gravimera_activity_empty_test");
+        let cfg = config_with_cache_dir(cache_dir.clone());
+        let runs = read_gen3d_activity_runs(&cfg);
+        assert!(runs.is_empty(), "expected no runs in empty cache dir");
+        let _ = std::fs::remove_dir_all(&cache_dir);
+    }
+
+    #[test]
+    fn activity_reads_run_json_and_prompt() {
+        let cache_dir = make_temp_dir("gravimera_activity_read_test");
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let run_dir = cache_dir.join(&run_id);
+        std::fs::create_dir_all(&run_dir).unwrap();
+
+        // Write run.json
+        let run_json = serde_json::json!({
+            "version": 1,
+            "run_id": run_id,
+            "created_at_ms": 1_700_000_000_000u64,
+            "ai": {
+                "service": "openai",
+                "model": "gpt-4o",
+                "reasoning_effort": "none",
+                "base_url": "https://api.openai.com/v1",
+            }
+        });
+        std::fs::write(run_dir.join("run.json"), run_json.to_string()).unwrap();
+
+        // Write user prompt
+        let prompt_dir = run_dir.join("attempt_0").join("inputs");
+        std::fs::create_dir_all(&prompt_dir).unwrap();
+        std::fs::write(prompt_dir.join("user_prompt.txt"), "a futuristic spaceship").unwrap();
+
+        let cfg = config_with_cache_dir(cache_dir.clone());
+        let runs = read_gen3d_activity_runs(&cfg);
+
+        assert_eq!(runs.len(), 1);
+        let entry = &runs[0];
+        assert_eq!(entry["run_id"].as_str().unwrap(), run_id);
+        assert_eq!(entry["created_at_ms"].as_u64().unwrap(), 1_700_000_000_000u64);
+        assert_eq!(entry["kind"].as_str().unwrap(), "new_build");
+        assert_eq!(entry["prompt_preview"].as_str().unwrap(), "a futuristic spaceship");
+        assert_eq!(entry["ai_service"].as_str().unwrap(), "openai");
+        assert_eq!(entry["ai_model"].as_str().unwrap(), "gpt-4o");
+
+        let _ = std::fs::remove_dir_all(&cache_dir);
+    }
+
+    #[test]
+    fn activity_sorted_newest_first() {
+        let cache_dir = make_temp_dir("gravimera_activity_sort_test");
+
+        for (i, ts) in [1_000u64, 3_000u64, 2_000u64].iter().enumerate() {
+            let run_dir = cache_dir.join(format!("run_{i}"));
+            std::fs::create_dir_all(&run_dir).unwrap();
+            let run_json = serde_json::json!({
+                "version": 1,
+                "run_id": format!("run_{i}"),
+                "created_at_ms": ts,
+                "ai": { "service": "openai", "model": "gpt-4o", "reasoning_effort": "none", "base_url": "" }
+            });
+            std::fs::write(run_dir.join("run.json"), run_json.to_string()).unwrap();
+        }
+
+        let cfg = config_with_cache_dir(cache_dir.clone());
+        let runs = read_gen3d_activity_runs(&cfg);
+
+        assert_eq!(runs.len(), 3);
+        // newest first: 3000, 2000, 1000
+        assert_eq!(runs[0]["created_at_ms"].as_u64().unwrap(), 3_000u64);
+        assert_eq!(runs[1]["created_at_ms"].as_u64().unwrap(), 2_000u64);
+        assert_eq!(runs[2]["created_at_ms"].as_u64().unwrap(), 1_000u64);
+
+        let _ = std::fs::remove_dir_all(&cache_dir);
+    }
+
+    #[test]
+    fn activity_skips_non_run_dirs_and_files() {
+        let cache_dir = make_temp_dir("gravimera_activity_skip_test");
+
+        // A regular file (not a dir) — should be skipped
+        std::fs::write(cache_dir.join("tool_feedback_history.jsonl"), "").unwrap();
+
+        // A dir without run.json — should be skipped
+        std::fs::create_dir_all(cache_dir.join("not_a_run")).unwrap();
+
+        // A valid run dir
+        let run_dir = cache_dir.join("valid_run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let run_json = serde_json::json!({
+            "version": 1,
+            "run_id": "valid_run",
+            "created_at_ms": 42u64,
+            "ai": { "service": "openai", "model": "gpt-4o", "reasoning_effort": "none", "base_url": "" }
+        });
+        std::fs::write(run_dir.join("run.json"), run_json.to_string()).unwrap();
+
+        let cfg = config_with_cache_dir(cache_dir.clone());
+        let runs = read_gen3d_activity_runs(&cfg);
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0]["run_id"].as_str().unwrap(), "valid_run");
+
+        let _ = std::fs::remove_dir_all(&cache_dir);
+    }
 }
