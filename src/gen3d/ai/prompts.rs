@@ -1352,7 +1352,8 @@ Hard requirements:\n\
 
 pub(super) fn build_gen3d_component_system_instructions() -> String {
     "You are a 3D modeling assistant.\n\
-Return ONLY one JSON object (no markdown) for a single component.\n\n\
+Return ONLY one JSON object (no markdown) for a single component.\n\
+Output MUST include top-level `version`: 2.\n\n\
 Rules:\n\
 - Use ONLY primitives: cuboid, cylinder, sphere, cone.\n\
 - You MUST output `anchors` with the exact names required by the plan.\n\
