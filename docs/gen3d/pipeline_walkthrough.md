@@ -63,15 +63,17 @@ The actual stage machine is in `src/gen3d/ai/pipeline_orchestrator.rs` (match on
 
 Pipeline stages (simplified):
 
-1. `EditPlanTemplate`
-   - Tool: `get_plan_template_v1`
-2. `EditPlanOps`
-   - Tool: `llm_generate_plan_ops_v1` (diff-first replanning in preserve mode)
+1. `EditSelectStrategy`
+   - Tool: `llm_select_edit_strategy_v1` (choose strategy + DraftOps snapshot scope)
+2. Optional plan patch
+   - Stages: `EditPlanTemplate` → `EditPlanOps`
+   - Tools: `get_plan_template_v1` → `llm_generate_plan_ops_v1`
+   - Skipped when strategy is `draft_ops_only`
 3. `EnsureComponents`
    - Tool: `llm_generate_components_v1` (missing-only)
 4. DraftOps-first in-place edits:
-   - `EditQueryComponentParts` (tool: `query_component_parts_v1` for each component)
-   - `EditSuggestDraftOps` (tool: `llm_generate_draft_ops_v1`)
+   - `EditQueryComponentParts` (tool: `query_component_parts_v1` for each scoped component)
+   - `EditSuggestDraftOps` (tool: `llm_generate_draft_ops_v1` with `scope_components`)
    - `EditApplyDraftOps` (tool: `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev=<current>`)
 5. `Qa` → optional render/review-delta → `Finish`
 
@@ -83,6 +85,8 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
   - `llm_generate_plan_v1`
     - Args (create): `{ "prompt": "<user prompt>" }`
     - Args (preserve replan): `{ "prompt": "...", "plan_template_kv": {...}, "constraints": { "preserve_existing_components": true, "preserve_edit_policy": "allow_offsets" } }`
+  - `llm_select_edit_strategy_v1`
+    - Args: `{ "prompt": "<edit prompt>" }`
   - `get_plan_template_v1`
     - Args: `{ "version": 2, "mode": "auto" }`
   - `llm_generate_plan_ops_v1`
@@ -97,7 +101,8 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
   - `query_component_parts_v1`
     - Args: `{ "component": "<component name>", "max_parts": 128 }`
   - `llm_generate_draft_ops_v1`
-    - Args: `{ "prompt": "<edit prompt>", "max_ops": 24, "strategy": "conservative" }`
+    - Args: `{ "prompt": "<edit prompt>", "scope_components": ["..."], "max_ops": 24, "strategy": "conservative" }`
+      - If `scope_components=[]` (or omitted), the tool defaults to “all components”, which is more expensive and may truncate snapshots.
   - `apply_draft_ops_v1`
     - Args (pipeline): `{ "version": 1, "atomic": true, "if_assembly_rev": <u32>, "ops": [...] }`
 
@@ -138,6 +143,9 @@ The tool implementations build prompts here:
 - DraftOps: `src/gen3d/ai/agent_tool_dispatch.rs` (`TOOL_ID_LLM_GENERATE_DRAFT_OPS`)
   - System: `build_gen3d_draft_ops_system_instructions()`
   - User: `build_gen3d_draft_ops_user_text(...)`
+- Edit strategy: `src/gen3d/ai/agent_tool_dispatch.rs` (`TOOL_ID_LLM_SELECT_EDIT_STRATEGY`)
+  - System: `build_gen3d_edit_strategy_system_instructions()`
+  - User: `build_gen3d_edit_strategy_user_text(...)`
 - Motions: `src/gen3d/ai/agent_tool_dispatch.rs` (`TOOL_ID_LLM_GENERATE_MOTIONS`)
   - System: `build_gen3d_motion_authoring_system_instructions()`
   - User: `build_gen3d_motion_authoring_user_text(...)`
@@ -164,6 +172,7 @@ The `artifact_prefix` is derived from the tool call id. Example prefixes:
 - Motion: `tool_motion_<channel>_<call_id>`
 - Review delta: `tool_review_<call_id>`
 - DraftOps: `tool_draft_ops_<call_id>`
+- Edit strategy: `tool_edit_strategy_<call_id>`
 
 Implementation reference:
 
@@ -190,4 +199,3 @@ Inside that run dir, open:
 - `attempt_0/pass_0/tool_calls.jsonl` to see the tool sequence + args
 - `attempt_0/pass_0/tool_plan_*_system_text.txt` / `tool_plan_*_user_text.txt` to see the exact plan prompt
 - `attempt_0/pass_0/tool_component*_system_text.txt` / `tool_component*_user_text.txt` to see per-component prompts
-

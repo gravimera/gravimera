@@ -486,6 +486,9 @@ pub(super) fn poll_agent_tool(
         user_text.push_str(&format!("Error: {}\n", err.trim()));
 
         let expected_schema = match kind {
+            super::Gen3dAgentLlmToolKind::SelectEditStrategy => {
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::EditStrategyV1)
+            }
             super::Gen3dAgentLlmToolKind::GeneratePlan => {
                 Some(super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1)
             }
@@ -609,6 +612,175 @@ pub(super) fn poll_agent_tool(
             }
 
             match kind {
+                super::Gen3dAgentLlmToolKind::SelectEditStrategy => {
+                    let text = resp.text;
+
+                    if let Some(dir) = job.pass_dir.as_deref() {
+                        write_gen3d_text_artifact(
+                            Some(dir),
+                            "edit_strategy_raw.txt",
+                            text.trim(),
+                        );
+                    }
+
+                    let schedule_repair = |job: &mut Gen3dAiJob,
+                                              workshop: &mut Gen3dWorkshop,
+                                              err: &str,
+                                              previous_output: &str|
+                     -> bool {
+                        match (job.ai.clone(), job.pass_dir.clone()) {
+                            (Some(ai), Some(pass_dir)) => {
+                                let system = super::prompts::build_gen3d_edit_strategy_system_instructions();
+                                let prompt_override =
+                                    call.args.get("prompt").and_then(|v| v.as_str());
+                                let prompt_text = prompt_override
+                                    .map(|s| s.trim())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or(job.user_prompt_raw.as_str());
+                                let image_object_summary = job
+                                    .user_image_object_summary
+                                    .as_ref()
+                                    .map(|s| s.text.clone());
+                                let user_text = super::prompts::build_gen3d_edit_strategy_user_text(
+                                    prompt_text,
+                                    image_object_summary.as_deref(),
+                                    job.preserve_existing_components_mode,
+                                    &job.planned_components,
+                                );
+                                schedule_llm_tool_schema_repair(
+                                    job,
+                                    workshop,
+                                    &call,
+                                    kind,
+                                    ai,
+                                    "high",
+                                    pass_dir,
+                                    system,
+                                    user_text,
+                                    Vec::new(),
+                                    err,
+                                    previous_output,
+                                    &format!("tool_edit_strategy_{}", call.call_id),
+                                )
+                            }
+                            _ => false,
+                        }
+                    };
+
+                    match serde_json::from_str::<super::schema::AiEditStrategyJsonV1>(text.trim()) {
+                        Ok(mut parsed) => {
+                            if parsed.version == 0 {
+                                parsed.version = 1;
+                            }
+
+                            if parsed.version != 1 {
+                                let err = format!(
+                                    "Unsupported edit-strategy version {} (expected 1)",
+                                    parsed.version
+                                );
+                                if schedule_repair(job, workshop, &err, text.as_str()) {
+                                    return;
+                                }
+                                Gen3dToolResultJsonV1::err(
+                                    call.call_id.clone(),
+                                    call.tool_id.clone(),
+                                    err,
+                                )
+                            } else if matches!(
+                                parsed.strategy,
+                                super::schema::AiEditStrategyKindJsonV1::Unknown
+                            ) {
+                                let err = "Invalid strategy (unknown). Expected one of: draft_ops_only, plan_ops_then_draft_ops, plan_ops_only, rebuild.".to_string();
+                                if schedule_repair(job, workshop, &err, text.as_str()) {
+                                    return;
+                                }
+                                Gen3dToolResultJsonV1::err(
+                                    call.call_id.clone(),
+                                    call.tool_id.clone(),
+                                    err,
+                                )
+                            } else {
+                                let existing: std::collections::HashSet<String> = job
+                                    .planned_components
+                                    .iter()
+                                    .map(|c| c.name.clone())
+                                    .collect();
+                                let mut normalized: Vec<String> = Vec::new();
+                                let mut unknown: Vec<String> = Vec::new();
+                                let mut seen = std::collections::HashSet::<String>::new();
+
+                                for raw in parsed.snapshot_components.drain(..) {
+                                    let name = raw.trim().to_string();
+                                    if name.is_empty() {
+                                        continue;
+                                    }
+                                    if !existing.contains(&name) {
+                                        unknown.push(name);
+                                        continue;
+                                    }
+                                    if seen.insert(name.clone()) {
+                                        normalized.push(name);
+                                    }
+                                }
+
+                                if normalized.len() > 16 {
+                                    let err = format!(
+                                        "Too many snapshot_components ({} > 16). Keep scope small and only include components you need to edit.",
+                                        normalized.len()
+                                    );
+                                    if schedule_repair(job, workshop, &err, text.as_str()) {
+                                        return;
+                                    }
+                                    Gen3dToolResultJsonV1::err(
+                                        call.call_id.clone(),
+                                        call.tool_id.clone(),
+                                        err,
+                                    )
+                                } else if !unknown.is_empty() {
+                                    unknown.sort();
+                                    unknown.dedup();
+                                    let err = format!(
+                                        "Invalid snapshot_components entries: {unknown:?}. Must be a subset of existing component names."
+                                    );
+                                    if schedule_repair(job, workshop, &err, text.as_str()) {
+                                        return;
+                                    }
+                                    Gen3dToolResultJsonV1::err(
+                                        call.call_id.clone(),
+                                        call.tool_id.clone(),
+                                        err,
+                                    )
+                                } else {
+                                    match parsed.strategy {
+                                        super::schema::AiEditStrategyKindJsonV1::PlanOpsOnly
+                                        | super::schema::AiEditStrategyKindJsonV1::Rebuild => {
+                                            normalized.clear();
+                                        }
+                                        _ => {}
+                                    }
+
+                                    parsed.snapshot_components = normalized;
+                                    Gen3dToolResultJsonV1::ok(
+                                        call.call_id.clone(),
+                                        call.tool_id.clone(),
+                                        serde_json::to_value(parsed)
+                                            .unwrap_or(serde_json::Value::Null),
+                                    )
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let err = format!(
+                                "Failed to parse `{}` output as JSON: {}",
+                                call.tool_id, err
+                            );
+                            if schedule_repair(job, workshop, &err, text.as_str()) {
+                                return;
+                            }
+                            Gen3dToolResultJsonV1::err(call.call_id.clone(), call.tool_id.clone(), err)
+                        }
+                    }
+                }
                 super::Gen3dAgentLlmToolKind::GeneratePlan => {
                     let text = resp.text;
                     let preserve_existing_components = call
@@ -3838,17 +4010,17 @@ mod tests {
                     attach_to: if idx == 0 {
                         None
                     } else {
-	                        Some(super::super::job::Gen3dPlannedAttachment {
-	                            parent: "c0".to_string(),
-	                            parent_anchor: "mount".to_string(),
-	                            child_anchor: "mount".to_string(),
-	                            offset: Transform::IDENTITY,
-	                            fallback_basis: Transform::IDENTITY,
-	                            joint: None,
-	                            animations: Vec::new(),
-	                        })
-	                    },
-	                },
+                        Some(super::super::job::Gen3dPlannedAttachment {
+                            parent: "c0".to_string(),
+                            parent_anchor: "mount".to_string(),
+                            child_anchor: "mount".to_string(),
+                            offset: Transform::IDENTITY,
+                            fallback_basis: Transform::IDENTITY,
+                            joint: None,
+                            animations: Vec::new(),
+                        })
+                    },
+                },
             )
             .collect();
         job

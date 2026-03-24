@@ -14,14 +14,14 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH,
     TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED,
     TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
-    TOOL_ID_LIST_SNAPSHOTS,
-    TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
+    TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION, TOOL_ID_LLM_GENERATE_MOTIONS,
     TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE,
-    TOOL_ID_MOTION_METRICS, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW,
-    TOOL_ID_RESTORE_SNAPSHOT, TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META,
-    TOOL_ID_SMOKE_CHECK, TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
+    TOOL_ID_LLM_SELECT_EDIT_STRATEGY, TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT,
+    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
+    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
+    TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK,
+    TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::{Gen3dToolCallJsonV1, Gen3dToolResultJsonV1};
 use crate::threaded_result::{new_shared_result, SharedResult};
@@ -5484,6 +5484,82 @@ pub(super) fn execute_tool_call(
                 }),
             ))
         }
+        TOOL_ID_LLM_SELECT_EDIT_STRATEGY => {
+            let Some(ai) = job.ai.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing AI config".into(),
+                ));
+            };
+            let Some(pass_dir) = job.pass_dir.clone() else {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    "Missing pass dir".into(),
+                ));
+            };
+
+            if job.planned_components.is_empty() || job.plan_hash.trim().is_empty() {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "{TOOL_ID_LLM_SELECT_EDIT_STRATEGY} requires an existing accepted plan (planned_components + plan_hash)."
+                    ),
+                ));
+            }
+
+            let prompt_override = call.args.get("prompt").and_then(|v| v.as_str());
+            let prompt_text = prompt_override
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(job.user_prompt_raw.as_str());
+
+            let system = super::prompts::build_gen3d_edit_strategy_system_instructions();
+            let image_object_summary = job
+                .user_image_object_summary
+                .as_ref()
+                .map(|s| s.text.as_str());
+            let user_text = super::prompts::build_gen3d_edit_strategy_user_text(
+                prompt_text,
+                image_object_summary,
+                job.preserve_existing_components_mode,
+                &job.planned_components,
+            );
+
+            let reasoning_effort = ai.model_reasoning_effort().to_string();
+
+            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+            job.shared_result = Some(shared.clone());
+            let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
+                message: "Selecting edit strategy…".into(),
+            }));
+            job.shared_progress = Some(progress.clone());
+            set_progress(&progress, "Calling model for edit strategy…");
+            job.agent.pending_llm_repair_attempt = 0;
+
+            spawn_gen3d_ai_text_thread(
+                shared,
+                progress,
+                job.cancel_flag.clone(),
+                job.session.clone(),
+                Some(super::structured_outputs::Gen3dAiJsonSchemaKind::EditStrategyV1),
+                config.gen3d_require_structured_outputs,
+                ai,
+                reasoning_effort,
+                system,
+                user_text,
+                Vec::new(),
+                pass_dir,
+                sanitize_prefix(&format!("tool_edit_strategy_{}", &call.call_id)),
+            );
+            job.agent.pending_tool_call = Some(call);
+            job.agent.pending_llm_tool = Some(super::Gen3dAgentLlmToolKind::SelectEditStrategy);
+            job.phase = Gen3dAiPhase::AgentWaitingTool;
+            workshop.status = "Selecting edit strategy…".into();
+            ToolCallOutcome::StartedAsync
+        }
         TOOL_ID_LLM_GENERATE_PLAN => {
             let Some(ai) = job.ai.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
@@ -8382,16 +8458,16 @@ mod tests {
                 }],
                 contacts: Vec::new(),
                 root_animations: Vec::new(),
-	                attach_to: Some(super::super::job::Gen3dPlannedAttachment {
-	                    parent: "root".into(),
-	                    parent_anchor: "origin".into(),
-	                    child_anchor: "origin".into(),
-	                    offset: Transform::IDENTITY,
-	                    fallback_basis: Transform::IDENTITY,
-	                    joint: Some(AiJointJson {
-	                        kind: AiJointKindJson::Hinge,
-	                        axis_join: Some([1.0, 0.0, 0.0]),
-	                        limits_degrees: Some([-30.0, 30.0]),
+                attach_to: Some(super::super::job::Gen3dPlannedAttachment {
+                    parent: "root".into(),
+                    parent_anchor: "origin".into(),
+                    child_anchor: "origin".into(),
+                    offset: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
+                    joint: Some(AiJointJson {
+                        kind: AiJointKindJson::Hinge,
+                        axis_join: Some([1.0, 0.0, 0.0]),
+                        limits_degrees: Some([-30.0, 30.0]),
                         swing_limits_degrees: None,
                         twist_limits_degrees: None,
                     }),

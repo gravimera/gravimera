@@ -58,8 +58,8 @@ Gen3D uses a deterministic pipeline state machine (pipeline-only).
 High-level flow:
 
 - Create sessions: plan → generate components → QA loop → (optional) render/review-delta → finish
-- Seeded Edit/Fork sessions: preserve-mode plan ops → capture part snapshots → DraftOps suggest+apply
-  → QA loop → finish
+- Seeded Edit/Fork sessions: edit strategy → (optional) preserve-mode plan ops → capture scoped part
+  snapshots → DraftOps suggest+apply → QA loop → finish
 
 For a step-by-step walkthrough (including the exact tool ids/args and where prompt text is persisted),
 see:
@@ -84,7 +84,8 @@ For edit requests like “make the wings larger” where regeneration is not req
 **in-place primitive edits**:
 
 1. Capture editable part snapshots (per-component): `query_component_parts_v1`
-2. Ask the model for DraftOps suggestions: `llm_generate_draft_ops_v1`
+   - The pipeline prefers a small scope (selected via `llm_select_edit_strategy_v1`).
+2. Ask the model for DraftOps suggestions: `llm_generate_draft_ops_v1` (`scope_components=[...]`)
 3. Apply atomically with revision gating:
    - Pipeline: `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev=<current>`
    - Manual/debugging: `apply_last_draft_ops_v1` (applies the latest `draft_ops_suggested_last.json`)

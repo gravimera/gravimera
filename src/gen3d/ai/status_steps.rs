@@ -2,8 +2,9 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT, TOOL_ID_APPLY_LAST_DRAFT_OPS,
     TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION, TOOL_ID_LLM_GENERATE_MOTIONS,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_QA,
-    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_LLM_SELECT_EDIT_STRATEGY, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS,
+    TOOL_ID_RENDER_PREVIEW, TOOL_ID_SMOKE_CHECK, TOOL_ID_VALIDATE,
 };
 use crate::gen3d::agent::Gen3dToolCallJsonV1;
 use crate::gen3d::agent::Gen3dToolResultJsonV1;
@@ -22,6 +23,7 @@ fn key_first_line(text: &str) -> Option<&str> {
 
 fn tool_step_label(tool_id: &str, call: Option<&Gen3dToolCallJsonV1>) -> String {
     match tool_id {
+        TOOL_ID_LLM_SELECT_EDIT_STRATEGY => "Edit strategy".into(),
         TOOL_ID_LLM_GENERATE_PLAN => "Plan".into(),
         TOOL_ID_GET_PLAN_TEMPLATE => "Plan template".into(),
         TOOL_ID_LLM_GENERATE_PLAN_OPS => "Plan ops".into(),
@@ -78,6 +80,9 @@ fn tool_step_label(tool_id: &str, call: Option<&Gen3dToolCallJsonV1>) -> String 
 
 fn tool_step_why(tool_id: &str, call: Option<&Gen3dToolCallJsonV1>) -> String {
     match tool_id {
+        TOOL_ID_LLM_SELECT_EDIT_STRATEGY => {
+            "Select seeded-edit strategy and DraftOps snapshot scope.".into()
+        }
         TOOL_ID_LLM_GENERATE_PLAN => "Generate a component plan from the prompt.".into(),
         TOOL_ID_GET_PLAN_TEMPLATE => "Fetch a plan template for preserve-mode replanning.".into(),
         TOOL_ID_LLM_GENERATE_PLAN_OPS => "Propose a small diff to the existing plan.".into(),
@@ -148,6 +153,28 @@ pub(super) fn log_tool_call_finished(
         summarize_tool_error(result.error.as_deref())
     } else {
         match result.tool_id.as_str() {
+            TOOL_ID_LLM_SELECT_EDIT_STRATEGY => {
+                let strategy = result
+                    .result
+                    .as_ref()
+                    .and_then(|v| v.get("strategy"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let scoped = result
+                    .result
+                    .as_ref()
+                    .and_then(|v| v.get("snapshot_components"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.len())
+                    .unwrap_or(0);
+                if strategy.trim().is_empty() {
+                    "OK".into()
+                } else if scoped > 0 {
+                    format!("OK ({strategy}, scope: {scoped})")
+                } else {
+                    format!("OK ({strategy})")
+                }
+            }
             TOOL_ID_LLM_GENERATE_PLAN => {
                 let total = job.planned_components.len();
                 if total > 0 {

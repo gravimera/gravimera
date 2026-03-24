@@ -1412,6 +1412,92 @@ fn mock_generate_text_via_openai(
             "requires_attack": requires_attack,
         })
         .to_string()
+    } else if artifact_prefix.starts_with("tool_edit_strategy_") {
+        fn parse_edit_prompt(user_text: &str) -> String {
+            for line in user_text.lines() {
+                let line = line.trim();
+                let Some(rest) = line.strip_prefix("- edit_prompt:") else {
+                    continue;
+                };
+                return rest.trim().to_string();
+            }
+            String::new()
+        }
+
+        fn parse_component_names(user_text: &str) -> Vec<String> {
+            let marker = "Existing component names (stable identifiers):";
+            let after = match user_text.split(marker).nth(1) {
+                Some(v) => v,
+                None => return Vec::new(),
+            };
+            let mut out: Vec<String> = Vec::new();
+            let after = after.trim_start();
+            for line in after.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    if out.is_empty() {
+                        continue;
+                    }
+                    break;
+                }
+                let Some(rest) = line.strip_prefix("- ") else {
+                    continue;
+                };
+                let name = rest
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !name.is_empty() && name != "(none)" {
+                    out.push(name);
+                }
+            }
+            out.sort();
+            out.dedup();
+            out
+        }
+
+        let prompt = parse_edit_prompt(user_text).to_ascii_lowercase();
+        let components = parse_component_names(user_text);
+
+        let strategy = if prompt.contains("rebuild")
+            || prompt.contains("from scratch")
+            || prompt.contains("from-scratch")
+        {
+            "rebuild"
+        } else if prompt.contains("add component")
+            || prompt.contains("new component")
+            || prompt.contains("add a component")
+            || prompt.contains("attach")
+            || prompt.contains("replan")
+        {
+            "plan_ops_then_draft_ops"
+        } else {
+            "draft_ops_only"
+        };
+
+        let mut snapshot_components: Vec<String> = Vec::new();
+        if strategy == "draft_ops_only" || strategy == "plan_ops_then_draft_ops" {
+            for name in components.iter() {
+                if prompt.contains(name) {
+                    snapshot_components.push(name.clone());
+                }
+            }
+            if snapshot_components.is_empty() {
+                if let Some(first) = components.first() {
+                    snapshot_components.push(first.clone());
+                }
+            }
+        }
+
+        serde_json::json!({
+            "version": 1,
+            "strategy": strategy,
+            "snapshot_components": snapshot_components,
+            "reason": "Mock: selected strategy and a minimal snapshot scope."
+        })
+        .to_string()
     } else if artifact_prefix.starts_with("tool_plan_ops_") {
         // A "no-op" plan-ops patch. This exercises the PlanOps parsing/apply path offline.
         serde_json::json!({ "version": 1, "ops": [] }).to_string()

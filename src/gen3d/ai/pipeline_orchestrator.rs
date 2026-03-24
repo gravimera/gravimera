@@ -5,8 +5,8 @@ use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_LLM_GENERATE_COMPONENTS,
     TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTIONS, TOOL_ID_LLM_GENERATE_PLAN,
-    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_QA,
-    TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_LLM_SELECT_EDIT_STRATEGY,
+    TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW,
 };
 use crate::gen3d::agent::{
     append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolCallJsonV1, Gen3dToolResultJsonV1,
@@ -24,14 +24,12 @@ use super::agent_step::{
 };
 use super::agent_tool_dispatch::execute_tool_call;
 use super::agent_tool_poll::poll_agent_tool;
-use super::agent_utils::{
-    compute_agent_state_hash, truncate_json_for_log,
-};
+use super::agent_utils::{compute_agent_state_hash, truncate_json_for_log};
 use super::artifacts::{append_gen3d_jsonl_artifact, append_gen3d_run_log};
 use super::status_steps;
 use super::{
-    fail_job, finish_job_best_effort, Gen3dAiJob, Gen3dAiPhase,
-    Gen3dPendingFinishRun, Gen3dPipelineStage,
+    fail_job, finish_job_best_effort, Gen3dAiJob, Gen3dAiPhase, Gen3dPendingFinishRun,
+    Gen3dPipelineStage,
 };
 
 fn truncate_text_to_max_words_preserving_whitespace(
@@ -179,11 +177,9 @@ fn poll_pipeline_user_image_summary(
             fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
             return;
         };
-        if let Err(err) =
-            super::bootstrap_requests::spawn_gen3d_user_image_summary_request(
-                config, workshop, job, pass_dir,
-            )
-        {
+        if let Err(err) = super::bootstrap_requests::spawn_gen3d_user_image_summary_request(
+            config, workshop, job, pass_dir,
+        ) {
             fail_job(workshop, job, err);
         }
         return;
@@ -283,11 +279,9 @@ fn poll_pipeline_prompt_intent(
             fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
             return;
         };
-        if let Err(err) =
-            super::bootstrap_requests::spawn_gen3d_prompt_intent_request(
-                config, workshop, job, pass_dir,
-            )
-        {
+        if let Err(err) = super::bootstrap_requests::spawn_gen3d_prompt_intent_request(
+            config, workshop, job, pass_dir,
+        ) {
             fail_job(workshop, job, err);
         }
         return;
@@ -632,7 +626,7 @@ fn poll_pipeline_tick(
     // Stage bootstrap.
     if matches!(job.pipeline.stage, Gen3dPipelineStage::Start) {
         if is_edit_session(job) && job.preserve_existing_components_mode {
-            job.pipeline.stage = Gen3dPipelineStage::EditPlanTemplate;
+            job.pipeline.stage = Gen3dPipelineStage::EditSelectStrategy;
         } else {
             if job.edit_base_prefab_id.is_some() {
                 // Seeded session with preserve mode disabled: treat as a full rebuild by default.
@@ -666,6 +660,7 @@ fn poll_pipeline_tick(
                         | TOOL_ID_GET_PLAN_TEMPLATE
                         | TOOL_ID_QUERY_COMPONENT_PARTS
                         | TOOL_ID_RENDER_PREVIEW
+                        | TOOL_ID_LLM_SELECT_EDIT_STRATEGY
                         | TOOL_ID_LLM_GENERATE_DRAFT_OPS
                 );
                 if !is_inspection_tool {
@@ -724,6 +719,20 @@ fn poll_pipeline_tick(
                     .cloned()
                 {
                     job.pipeline.plan_template_kv = Some(kv);
+                }
+            }
+            if last.tool_id == TOOL_ID_LLM_SELECT_EDIT_STRATEGY {
+                if let Some(value) = last.result.clone() {
+                    match serde_json::from_value::<super::schema::AiEditStrategyJsonV1>(value) {
+                        Ok(strategy) => {
+                            job.pipeline.edit_scope_components =
+                                strategy.snapshot_components.clone();
+                            job.pipeline.edit_strategy = Some(strategy);
+                        }
+                        Err(err) => {
+                            debug!("Gen3D pipeline: invalid edit strategy tool result: {err}");
+                        }
+                    }
                 }
             }
             if last.tool_id == TOOL_ID_LLM_GENERATE_PLAN
@@ -842,6 +851,84 @@ fn poll_pipeline_tick(
                 return;
             }
             job.pipeline.stage = Gen3dPipelineStage::EnsureComponents;
+        }
+        Gen3dPipelineStage::EditSelectStrategy => {
+            // Ensure we have an accepted plan to edit.
+            if job.planned_components.is_empty() || job.plan_hash.trim().is_empty() {
+                let _ = config;
+                stop_pipeline_best_effort(
+                    commands,
+                    review_cameras,
+                    workshop,
+                    job,
+                    "Pipeline stopped: missing accepted plan for seeded edit strategy selection (expected existing plan_hash + planned_components). Retry Build.".into(),
+                );
+                return;
+            }
+
+            if job.pipeline.edit_strategy.is_none() {
+                workshop.status = "Pipeline: selecting edit strategy…".into();
+                if let Some(result) = start_pipeline_tool_call(
+                    config,
+                    time,
+                    commands,
+                    images,
+                    workshop,
+                    feedback_history,
+                    job,
+                    draft,
+                    preview,
+                    preview_model,
+                    TOOL_ID_LLM_SELECT_EDIT_STRATEGY,
+                    serde_json::json!({ "prompt": job.user_prompt_raw }),
+                ) {
+                    pipeline_record_tool_result(workshop, job, &*draft, &result);
+                }
+                return;
+            }
+
+            let strategy = job
+                .pipeline
+                .edit_strategy
+                .as_ref()
+                .map(|s| s.strategy)
+                .unwrap_or(super::schema::AiEditStrategyKindJsonV1::Unknown);
+            // Keep scope synced even if tool-result caching is disabled in some call sites.
+            job.pipeline.edit_scope_components = job
+                .pipeline
+                .edit_strategy
+                .as_ref()
+                .map(|s| s.snapshot_components.clone())
+                .unwrap_or_default();
+
+            match strategy {
+                super::schema::AiEditStrategyKindJsonV1::DraftOpsOnly => {
+                    job.pipeline.edit_draft_ops_done = false;
+                    job.pipeline.stage = Gen3dPipelineStage::EnsureComponents;
+                }
+                super::schema::AiEditStrategyKindJsonV1::PlanOpsThenDraftOps => {
+                    job.pipeline.edit_draft_ops_done = false;
+                    job.pipeline.stage = Gen3dPipelineStage::EditPlanTemplate;
+                }
+                super::schema::AiEditStrategyKindJsonV1::PlanOpsOnly => {
+                    job.pipeline.edit_draft_ops_done = true;
+                    job.pipeline.edit_scope_components.clear();
+                    job.pipeline.stage = Gen3dPipelineStage::EditPlanTemplate;
+                }
+                super::schema::AiEditStrategyKindJsonV1::Rebuild => {
+                    job.preserve_existing_components_mode = false;
+                    job.pipeline.edit_draft_ops_done = true;
+                    job.pipeline.edit_scope_components.clear();
+                    job.pipeline.force_replan = true;
+                    job.pipeline.stage = Gen3dPipelineStage::CreatePlan;
+                }
+                super::schema::AiEditStrategyKindJsonV1::Unknown => {
+                    // Safe default: preserve-mode plan ops + DraftOps.
+                    job.pipeline.edit_draft_ops_done = false;
+                    job.pipeline.stage = Gen3dPipelineStage::EditPlanTemplate;
+                }
+            }
+            return;
         }
         Gen3dPipelineStage::PreserveReplanTemplate | Gen3dPipelineStage::EditPlanTemplate => {
             // Ensure we have an accepted plan to template.
@@ -1039,16 +1126,44 @@ fn poll_pipeline_tick(
                 );
                 return;
             }
-            if job.pipeline.query_parts_next_idx >= job.planned_components.len() {
+            let mut scope_components: Vec<String> = if job.pipeline.edit_scope_components.is_empty()
+            {
+                job.planned_components
+                    .iter()
+                    .map(|c| c.name.clone())
+                    .collect()
+            } else {
+                job.pipeline.edit_scope_components.clone()
+            };
+            // Filter unknown names (plan could have changed after replans).
+            let existing: std::collections::HashSet<&str> = job
+                .planned_components
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect();
+            scope_components.retain(|name| existing.contains(name.as_str()));
+            // De-dup while preserving order.
+            let mut seen = std::collections::HashSet::<String>::new();
+            scope_components.retain(|name| seen.insert(name.clone()));
+
+            if scope_components.is_empty() {
+                scope_components = job
+                    .planned_components
+                    .iter()
+                    .map(|c| c.name.clone())
+                    .collect();
+            }
+
+            if job.pipeline.query_parts_next_idx >= scope_components.len() {
                 job.pipeline.stage = Gen3dPipelineStage::EditSuggestDraftOps;
                 return;
             }
             let idx = job.pipeline.query_parts_next_idx;
-            let name = job.planned_components[idx].name.clone();
+            let name = scope_components[idx].clone();
             workshop.status = format!(
                 "Pipeline: capturing part snapshots… ({}/{})",
                 idx + 1,
-                job.planned_components.len()
+                scope_components.len()
             );
             if let Some(result) = start_pipeline_tool_call(
                 config,
@@ -1118,6 +1233,7 @@ fn poll_pipeline_tick(
                 TOOL_ID_LLM_GENERATE_DRAFT_OPS,
                 serde_json::json!({
                     "prompt": prompt,
+                    "scope_components": job.pipeline.edit_scope_components.clone(),
                     "max_ops": 24,
                     "strategy": "conservative"
                 }),

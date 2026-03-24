@@ -26,19 +26,20 @@ How to see it working:
 
 ## Progress
 
-- [ ] (2026-03-25) Write the ExecPlan and identify the touched modules.
-- [ ] Add the `llm_select_edit_strategy_v1` tool id + structured-output schema (`gen3d_edit_strategy_v1`).
-- [ ] Implement prompts for the new tool (short, contract-first, no heuristics).
-- [ ] Implement tool dispatch + tool polling parse/validation + mock backend response.
-- [ ] Integrate the new pipeline stage and snapshot scoping (seeded edit path only).
-- [ ] Update Gen3D docs to include the new stage and the meaning of `scope_components`.
-- [ ] Validate with `cargo test`, rendered smoke test, and Automation HTTP API runs (mock and real when credentials exist).
+- [x] (2026-03-25) Write the ExecPlan and identify the touched modules.
+- [x] Add the `llm_select_edit_strategy_v1` tool id + structured-output schema (`gen3d_edit_strategy_v1`).
+- [x] Implement prompts for the new tool (short, contract-first, no heuristics).
+- [x] Implement tool dispatch + tool polling parse/validation + mock backend response.
+- [x] Integrate the new pipeline stage and snapshot scoping (seeded edit path only).
+- [x] Update Gen3D docs to include the new stage and the meaning of `scope_components`.
+- [x] (2026-03-25) Validate with `cargo test`, rendered smoke test, and Automation HTTP API runs (mock and real when credentials exist).
 
 
 ## Surprises & Discoveries
 
 - Observation: DraftOps prompt truncates component snapshots to 16 entries.
   Evidence: `src/gen3d/ai/prompts.rs::build_gen3d_draft_ops_user_text` iterates `component_parts_snapshots.iter().take(16)` and emits a truncation note when more exist.
+- Note: The mock `llm_select_edit_strategy_v1` parser initially failed to detect the component-name list due to a leading newline after the marker; fixed by `trim_start()` before scanning.
 
 
 ## Decision Log
@@ -54,7 +55,15 @@ How to see it working:
 
 ## Outcomes & Retrospective
 
-(To be written after implementation + test runs.)
+- Seeded edit sessions now begin with `llm_select_edit_strategy_v1` and can scope part snapshots + DraftOps to only the needed components.
+- Deterministic pipeline remains the only orchestrator; the router tool only returns a small JSON decision.
+- Validation (2026-03-25):
+  - Unit tests: `cargo test -q`
+  - Rendered smoke test: `tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2`
+  - Automation HTTP API (rendered, mock://gen3d):
+    - `python3 test/run_1/gen3d_tasks_queue_api/run.py`
+    - `python3 test/run_1/gen3d_tasks_queue_seeded_api/run.py`
+    - `python3 test/run_1/gen3d_edit_rerun_api/run.py`
 
 
 ## Context and Orientation

@@ -3,6 +3,7 @@ use serde_json::json;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dAiJsonSchemaKind {
     PromptIntentV1,
+    EditStrategyV1,
     PlanV1,
     PlanOpsV1,
     DraftOpsV1,
@@ -1084,11 +1085,29 @@ fn schema_prompt_intent() -> serde_json::Value {
     })
 }
 
+fn schema_edit_strategy() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "version": { "type": "integer", "enum": [1] },
+            "strategy": schema_enum(&["draft_ops_only", "plan_ops_then_draft_ops", "plan_ops_only", "rebuild"]),
+            "snapshot_components": schema_array_of(schema_string()),
+            "reason": schema_string(),
+        },
+        "required": ["version", "strategy", "snapshot_components", "reason"],
+    })
+}
+
 pub(super) fn json_schema_spec(kind: Gen3dAiJsonSchemaKind) -> Gen3dAiJsonSchemaSpec {
     match kind {
         Gen3dAiJsonSchemaKind::PromptIntentV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_prompt_intent_v1",
             schema: schema_prompt_intent(),
+        },
+        Gen3dAiJsonSchemaKind::EditStrategyV1 => Gen3dAiJsonSchemaSpec {
+            name: "gen3d_edit_strategy_v1",
+            schema: schema_edit_strategy(),
         },
         Gen3dAiJsonSchemaKind::PlanV1 => Gen3dAiJsonSchemaSpec {
             name: "gen3d_plan_v1",

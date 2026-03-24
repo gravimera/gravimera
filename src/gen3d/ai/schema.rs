@@ -611,6 +611,29 @@ pub(crate) struct AiPromptIntentJsonV1 {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub(crate) enum AiEditStrategyKindJsonV1 {
+    DraftOpsOnly,
+    PlanOpsThenDraftOps,
+    PlanOpsOnly,
+    Rebuild,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiEditStrategyJsonV1 {
+    #[serde(default)]
+    pub(crate) version: u32,
+    pub(crate) strategy: AiEditStrategyKindJsonV1,
+    #[serde(default)]
+    pub(crate) snapshot_components: Vec<String>,
+    #[serde(default)]
+    pub(crate) reason: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum AiMotionAuthoringDecisionJsonV1 {
     AuthorClips,
     RegenGeometryRequired,

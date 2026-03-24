@@ -66,6 +66,34 @@ pub(super) fn build_schema_repair_hints(
     let mut out: Vec<String> = Vec::new();
 
     match expected_schema {
+        Some(Gen3dAiJsonSchemaKind::EditStrategyV1) => {
+            if let Some(field) = extract_serde_unknown_field(err) {
+                push_once(
+                    &mut out,
+                    format!(
+                        "Edit strategy JSON only allows keys: version, strategy, snapshot_components, reason (unknown field `{field}`)."
+                    ),
+                );
+            }
+            if let Some(field) = extract_serde_missing_field(err) {
+                push_once(
+                    &mut out,
+                    format!(
+                        "Edit strategy JSON must include required field `{field}` (keys: version, strategy, snapshot_components, reason)."
+                    ),
+                );
+            }
+            if err.contains("Invalid strategy") || err.contains("strategy") {
+                push_once(
+                    &mut out,
+                    "Valid `strategy` values: draft_ops_only, plan_ops_then_draft_ops, plan_ops_only, rebuild.",
+                );
+            }
+            push_once(
+                &mut out,
+                "`snapshot_components` must be a JSON array of existing component name strings (or [] when not using DraftOps).",
+            );
+        }
         Some(Gen3dAiJsonSchemaKind::PlanOpsV1) => {
             if let Some(field) = extract_serde_unknown_field(err) {
                 match field.as_str() {

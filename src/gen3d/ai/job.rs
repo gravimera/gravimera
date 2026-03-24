@@ -25,6 +25,7 @@ pub(super) enum Gen3dPipelineStage {
     PreserveReplanTemplate,
     PreserveReplanPlan,
     /// Seeded Edit/Fork: preserve-mode PlanOps pass (diff-first replanning).
+    EditSelectStrategy,
     EditPlanTemplate,
     EditPlanOps,
     /// Ensure all components exist (missing-only or regen requested by review-delta).
@@ -60,6 +61,11 @@ pub(super) struct Gen3dPipelineState {
     pub(super) draft_ops_last_rejected: Option<serde_json::Value>,
     pub(super) edit_plan_ops_done: bool,
     pub(super) edit_draft_ops_done: bool,
+    /// For edit sessions: cached edit-strategy decision (optional; set by `llm_select_edit_strategy_v1`).
+    pub(super) edit_strategy: Option<AiEditStrategyJsonV1>,
+    /// For edit sessions: the component allow-list used for `query_component_parts_v1` + `llm_generate_draft_ops_v1.scope_components`.
+    /// Empty means "all components".
+    pub(super) edit_scope_components: Vec<String>,
     pub(super) draft_ops_attempts: u32,
     pub(super) components_attempts: u32,
     pub(super) qa_attempts: u32,
@@ -76,6 +82,7 @@ pub(super) struct Gen3dPipelineState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dAgentLlmToolKind {
+    SelectEditStrategy,
     GeneratePlan,
     GeneratePlanOps,
     GenerateDraftOps,

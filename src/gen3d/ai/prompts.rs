@@ -929,6 +929,69 @@ Output format:\n\
     .to_string()
 }
 
+pub(super) fn build_gen3d_edit_strategy_system_instructions() -> String {
+    "You are a Gen3D seeded-edit router.\n\
+Return STRICT JSON matching schema `gen3d_edit_strategy_v1`.\n\
+Do NOT output markdown.\n\n\
+Rules:\n\
+- Pick the cheapest strategy that can satisfy the user request under the current constraints.\n\
+- `snapshot_components` MUST be a subset of the existing component names.\n\
+- Keep `snapshot_components` small (<= 8). Include ONLY components you need to edit in-place via DraftOps.\n\
+- If `strategy` is `plan_ops_only` or `rebuild`, set `snapshot_components` to [].\n\
+- Choose `rebuild` ONLY if the user explicitly asks for a rebuild / from-scratch.\n"
+        .to_string()
+}
+
+pub(super) fn build_gen3d_edit_strategy_user_text(
+    edit_prompt: &str,
+    image_object_summary: Option<&str>,
+    preserve_existing_components: bool,
+    existing_components: &[Gen3dPlannedComponent],
+) -> String {
+    let mut out = String::new();
+    out.push_str("Seeded edit strategy selection.\n\n");
+
+    out.push_str("Request:\n- edit_prompt: ");
+    out.push_str(edit_prompt.trim());
+    out.push('\n');
+
+    out.push_str("\nConstraints:\n");
+    out.push_str(&format!(
+        "- preserve_existing_components: {}\n",
+        preserve_existing_components
+    ));
+
+    out.push_str("\nExisting component names (stable identifiers):\n");
+    if existing_components.is_empty() {
+        out.push_str("- (none)\n");
+    } else {
+        for comp in existing_components.iter().take(64) {
+            out.push_str("- ");
+            out.push_str(comp.name.trim());
+            if comp.attach_to.is_none() {
+                out.push_str(" (root)");
+            }
+            out.push('\n');
+        }
+        if existing_components.len() > 64 {
+            out.push_str("(truncated)\n");
+        }
+    }
+
+    out.push_str("\nReference photo summary (optional):\n");
+    if let Some(summary) = image_object_summary
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        out.push_str(summary);
+        out.push('\n');
+    } else {
+        out.push_str("(none)\n");
+    }
+
+    out
+}
+
 pub(super) fn build_gen3d_draft_ops_system_instructions() -> String {
     "You are a 3D modeling assistant.\n\
 Return STRICT JSON for a DraftOps suggestion list.\n\n\

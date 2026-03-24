@@ -230,12 +230,30 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
     let tool_calls =
         std::fs::read_to_string(pass1.join("tool_calls.jsonl")).expect("read tool_calls.jsonl");
     assert!(
+        tool_calls.contains("llm_select_edit_strategy_v1"),
+        "expected llm_select_edit_strategy_v1 tool call in edit run"
+    );
+    assert!(
         tool_calls.contains("llm_generate_draft_ops_v1"),
         "expected llm_generate_draft_ops_v1 tool call in edit run"
     );
     assert!(
+        tool_calls.contains("\"scope_components\":[\"cannon\"]")
+            || tool_calls.contains("\"scope_components\":[\"cannon\","),
+        "expected llm_generate_draft_ops_v1 to be scoped to cannon (tool_calls={})",
+        pass1.join("tool_calls.jsonl").display()
+    );
+    assert!(
         tool_calls.contains("apply_draft_ops_v1"),
         "expected apply_draft_ops_v1 tool call in edit run"
+    );
+    assert!(
+        tool_calls.contains("query_component_parts_v1"),
+        "expected query_component_parts_v1 tool call in edit run"
+    );
+    assert!(
+        tool_calls.contains("\"component\":\"cannon\""),
+        "expected parts snapshots to be captured for cannon (scoped edit)"
     );
     assert!(
         !tool_calls.contains("llm_generate_components_v1"),

@@ -41,6 +41,7 @@ pub(crate) const TOOL_ID_DETACH_COMPONENT: &str = "detach_component_v1";
 
 pub(crate) const TOOL_ID_LLM_GENERATE_PLAN: &str = "llm_generate_plan_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_PLAN_OPS: &str = "llm_generate_plan_ops_v1";
+pub(crate) const TOOL_ID_LLM_SELECT_EDIT_STRATEGY: &str = "llm_select_edit_strategy_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_DRAFT_OPS: &str = "llm_generate_draft_ops_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENT: &str = "llm_generate_component_v1";
 pub(crate) const TOOL_ID_LLM_GENERATE_COMPONENTS: &str = "llm_generate_components_v1";
