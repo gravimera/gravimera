@@ -36,6 +36,7 @@ mod physics;
 mod platform;
 mod player;
 mod prefab_descriptors;
+mod prefab_zip;
 mod realm;
 mod realm_prefab_packages;
 mod realm_prefabs;

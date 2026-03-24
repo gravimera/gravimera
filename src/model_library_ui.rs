@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
+use std::sync::{mpsc, Mutex};
 
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
@@ -22,7 +23,7 @@ use crate::scene_store::SceneSaveRequest;
 use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::types::{
     AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, EmojiAtlas, GameMode,
-    ObjectId, ObjectPrefabId, UiFonts,
+    ObjectId, ObjectPrefabId, UiFonts, UiToastCommand, UiToastKind,
 };
 
 const PANEL_Z_INDEX: i32 = 930;
@@ -137,12 +138,69 @@ pub(crate) struct ModelLibraryUiState {
     preview_scrollbar_drag: Option<ModelLibraryScrollbarDrag>,
     thumbnail_cache: HashMap<u128, ModelLibraryThumbnailCacheEntry>,
     listed_prefabs: Vec<u128>,
+    multi_select_mode: bool,
+    multi_selected_prefabs: HashSet<u128>,
+    export_dialog_pending_ids: Vec<u128>,
+    export_dialog_pending_realm: Option<String>,
+    import_dialog_pending_realm: Option<String>,
     selected_prefab_id: Option<u128>,
     pending_preview: Option<u128>,
     preview: Option<ModelLibraryPrefabPreview>,
     delete_modal_prefab_id: Option<u128>,
     delete_modal_root: Option<Entity>,
     last_rebuilt_scene: Option<(String, String)>,
+}
+
+#[derive(Resource)]
+pub(crate) struct ModelLibraryExportJob {
+    receiver: Mutex<Option<mpsc::Receiver<Result<usize, String>>>>,
+}
+
+impl Default for ModelLibraryExportJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct ModelLibraryImportJob {
+    receiver: Mutex<Option<mpsc::Receiver<Result<crate::prefab_zip::PrefabZipImportReport, String>>>>,
+}
+
+impl Default for ModelLibraryImportJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct ModelLibraryExportDialogJob {
+    receiver: Mutex<Option<mpsc::Receiver<Option<std::path::PathBuf>>>>,
+}
+
+impl Default for ModelLibraryExportDialogJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct ModelLibraryImportDialogJob {
+    receiver: Mutex<Option<mpsc::Receiver<Option<std::path::PathBuf>>>>,
+}
+
+impl Default for ModelLibraryImportDialogJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
 }
 
 impl Default for ModelLibraryUiState {
@@ -158,6 +216,11 @@ impl Default for ModelLibraryUiState {
             preview_scrollbar_drag: None,
             thumbnail_cache: HashMap::new(),
             listed_prefabs: Vec::new(),
+            multi_select_mode: false,
+            multi_selected_prefabs: HashSet::new(),
+            export_dialog_pending_ids: Vec::new(),
+            export_dialog_pending_realm: None,
+            import_dialog_pending_realm: None,
             selected_prefab_id: None,
             pending_preview: None,
             preview: None,
@@ -188,6 +251,11 @@ impl ModelLibraryUiState {
             self.preview_scrollbar_drag = None;
             self.search_focused = false;
             self.pending_preview = None;
+            self.multi_select_mode = false;
+            self.multi_selected_prefabs.clear();
+            self.export_dialog_pending_ids.clear();
+            self.export_dialog_pending_realm = None;
+            self.import_dialog_pending_realm = None;
         }
     }
 
@@ -299,6 +367,18 @@ pub(crate) struct ModelLibraryGen3dButton;
 pub(crate) struct ModelLibraryGen3dButtonText;
 
 #[derive(Component)]
+pub(crate) struct ModelLibraryImportButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryImportButtonText;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryExportButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryExportButtonText;
+
+#[derive(Component)]
 pub(crate) struct ModelLibrarySearchField;
 
 #[derive(Component)]
@@ -396,26 +476,87 @@ pub(crate) fn setup_model_library_ui(
                 ));
 
                 row.spawn((
-                    Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                        border: UiRect::all(Val::Px(1.0)),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
-                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                    ModelLibraryGen3dButton,
+                    BackgroundColor(Color::NONE),
                 ))
-                .with_children(|b| {
-                    b.spawn((
-                        Text::new("Generate"),
-                        TextFont {
-                            font_size: 14.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                        ModelLibraryGen3dButtonText,
-                    ));
+                .with_children(|buttons| {
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryImportButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Import"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ModelLibraryImportButtonText,
+                            ));
+                        });
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                display: Display::None,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryExportButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Export"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ModelLibraryExportButtonText,
+                            ));
+                        });
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryGen3dButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Generate"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ModelLibraryGen3dButtonText,
+                            ));
+                        });
                 });
             });
 
@@ -571,7 +712,83 @@ pub(crate) fn model_library_update_visibility(
         state.search_focused = false;
         state.scrollbar_drag = None;
         state.preview_scrollbar_drag = None;
+        state.multi_select_mode = false;
+        state.multi_selected_prefabs.clear();
         close_model_library_preview(&mut commands, &mut state);
+    }
+}
+
+pub(crate) fn model_library_toggle_multi_select(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut state: ResMut<ModelLibraryUiState>,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
+    if !visible || state.search_focused {
+        return;
+    }
+
+    let shift_pressed =
+        keys.just_pressed(KeyCode::ShiftLeft) || keys.just_pressed(KeyCode::ShiftRight);
+    if !shift_pressed {
+        return;
+    }
+
+    state.multi_select_mode = !state.multi_select_mode;
+    state.drag = None;
+    state.pending_preview = None;
+    if state.multi_select_mode {
+        state.multi_selected_prefabs.clear();
+        if let Some(selected) = state.selected_prefab_id {
+            state.multi_selected_prefabs.insert(selected);
+        }
+        if state.preview.is_some() {
+            close_model_library_preview(&mut commands, &mut state);
+        }
+    } else {
+        state.multi_selected_prefabs.clear();
+    }
+}
+
+pub(crate) fn model_library_update_import_export_button_display(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    state: Res<ModelLibraryUiState>,
+    mut buttons: Query<(
+        &mut Node,
+        Option<&ModelLibraryImportButton>,
+        Option<&ModelLibraryExportButton>,
+    )>,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
+
+    let (show_import, show_export) = if visible {
+        (!state.multi_select_mode, state.multi_select_mode)
+    } else {
+        (false, false)
+    };
+
+    for (mut node, is_import, is_export) in &mut buttons {
+        if is_import.is_some() {
+            node.display = if show_import {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+        if is_export.is_some() {
+            node.display = if show_export {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
     }
 }
 
@@ -937,6 +1154,7 @@ pub(crate) fn model_library_rebuild_list_ui(
             ));
         });
         state.listed_prefabs.clear();
+        state.multi_selected_prefabs.clear();
         state.models_dirty = false;
         return;
     }
@@ -1142,6 +1360,12 @@ pub(crate) fn model_library_rebuild_list_ui(
     });
 
     state.listed_prefabs = rows.iter().map(|row| row.prefab_id).collect();
+    if state.multi_select_mode && !state.multi_selected_prefabs.is_empty() {
+        let listed: HashSet<u128> = state.listed_prefabs.iter().copied().collect();
+        state
+            .multi_selected_prefabs
+            .retain(|prefab_id| listed.contains(prefab_id));
+    }
 
     commands.entity(list_entity).with_children(|list| {
         for row in rows {
@@ -2808,6 +3032,9 @@ pub(crate) fn model_library_preview_keyboard_navigation(
     if state.delete_modal_prefab_id.is_some() {
         return;
     }
+    if state.multi_select_mode {
+        return;
+    }
     let active = state.is_open()
         && matches!(mode.get(), GameMode::Build)
         && matches!(build_scene.get(), crate::types::BuildScene::Realm)
@@ -3436,6 +3663,409 @@ pub(crate) fn model_library_gen3d_button_interactions(
     }
 }
 
+pub(crate) fn model_library_import_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    env: ModelLibraryEnv,
+    mut state: ResMut<ModelLibraryUiState>,
+    import_job: Res<ModelLibraryImportJob>,
+    import_dialog: Res<ModelLibraryImportDialogJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ModelLibraryImportButton>),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if let Ok(guard) = import_job.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Import already running.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+                if let Ok(guard) = import_dialog.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Import dialog already open.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+
+                let (tx, rx) = mpsc::channel();
+                if let Ok(mut guard) = import_dialog.receiver.lock() {
+                    *guard = Some(rx);
+                }
+                state.import_dialog_pending_realm = Some(env.active.realm_id.clone());
+                std::thread::spawn(move || {
+                    let path = rfd::FileDialog::new()
+                        .add_filter("Prefab Zip", &["zip"])
+                        .pick_file();
+                    let _ = tx.send(path);
+                });
+            }
+        }
+    }
+}
+
+pub(crate) fn model_library_export_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    env: ModelLibraryEnv,
+    mut state: ResMut<ModelLibraryUiState>,
+    export_job: Res<ModelLibraryExportJob>,
+    export_dialog: Res<ModelLibraryExportDialogJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ModelLibraryExportButton>),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        && state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    fn ensure_zip_extension(path: std::path::PathBuf) -> std::path::PathBuf {
+        match path.extension().and_then(|v| v.to_str()) {
+            Some(ext) if ext.eq_ignore_ascii_case("zip") => path,
+            _ => path.with_extension("zip"),
+        }
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if let Ok(guard) = export_job.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Export already running.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+                if let Ok(guard) = export_dialog.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Export dialog already open.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+
+                if state.multi_selected_prefabs.is_empty() {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Select prefabs to export first.".to_string(),
+                        kind: UiToastKind::Warn,
+                        ttl_secs: 4.0,
+                    });
+                    continue;
+                }
+
+                let mut ids: Vec<u128> = state.multi_selected_prefabs.iter().copied().collect();
+                ids.sort();
+                ids.dedup();
+                state.export_dialog_pending_ids = ids;
+                state.export_dialog_pending_realm = Some(env.active.realm_id.clone());
+
+                let (tx, rx) = mpsc::channel();
+                if let Ok(mut guard) = export_dialog.receiver.lock() {
+                    *guard = Some(rx);
+                }
+                toasts.write(UiToastCommand::Show {
+                    text: "Select export location…".to_string(),
+                    kind: UiToastKind::Info,
+                    ttl_secs: 3.0,
+                });
+                std::thread::spawn(move || {
+                    let path = rfd::FileDialog::new()
+                        .add_filter("Prefab Zip", &["zip"])
+                        .set_file_name("prefabs.zip")
+                        .save_file()
+                        .map(ensure_zip_extension);
+                    let _ = tx.send(path);
+                });
+            }
+        }
+    }
+}
+
+pub(crate) fn model_library_export_job_poll(
+    export_job: Res<ModelLibraryExportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = export_job.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    match receiver.try_recv() {
+        Ok(result) => {
+            *guard = None;
+            match result {
+                Ok(count) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: format!("Exported {} prefab(s).", count),
+                        kind: UiToastKind::Info,
+                        ttl_secs: 4.0,
+                    });
+                }
+                Err(err) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: err,
+                        kind: UiToastKind::Error,
+                        ttl_secs: 5.0,
+                    });
+                }
+            }
+        }
+        Err(mpsc::TryRecvError::Empty) => {}
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Export failed: worker disconnected.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 5.0,
+            });
+        }
+    }
+}
+
+pub(crate) fn model_library_export_dialog_poll(
+    mut state: ResMut<ModelLibraryUiState>,
+    export_dialog: Res<ModelLibraryExportDialogJob>,
+    export_job: Res<ModelLibraryExportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = export_dialog.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    let path = match receiver.try_recv() {
+        Ok(path) => {
+            *guard = None;
+            path
+        }
+        Err(mpsc::TryRecvError::Empty) => return,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            state.export_dialog_pending_ids.clear();
+            state.export_dialog_pending_realm = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Export canceled: dialog failed.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 4.0,
+            });
+            return;
+        }
+    };
+
+    let Some(path) = path else {
+        state.export_dialog_pending_ids.clear();
+        state.export_dialog_pending_realm = None;
+        return;
+    };
+    let Some(realm_id) = state.export_dialog_pending_realm.take() else {
+        return;
+    };
+    if state.export_dialog_pending_ids.is_empty() {
+        return;
+    }
+
+    let (tx, rx) = mpsc::channel();
+    if let Ok(mut job_guard) = export_job.receiver.lock() {
+        if job_guard.is_some() {
+            toasts.write(UiToastCommand::Show {
+                text: "Export already running.".to_string(),
+                kind: UiToastKind::Warn,
+                ttl_secs: 3.0,
+            });
+            return;
+        }
+        *job_guard = Some(rx);
+    }
+
+    let mut ids = state.export_dialog_pending_ids.clone();
+    state.export_dialog_pending_ids.clear();
+    ids.sort();
+    ids.dedup();
+    toasts.write(UiToastCommand::Show {
+        text: "Exporting prefabs…".to_string(),
+        kind: UiToastKind::Info,
+        ttl_secs: 3.0,
+    });
+    std::thread::spawn(move || {
+        let result = crate::prefab_zip::export_prefab_packages_to_zip(&realm_id, &ids, &path);
+        let _ = tx.send(result);
+    });
+}
+
+pub(crate) fn model_library_import_dialog_poll(
+    mut state: ResMut<ModelLibraryUiState>,
+    import_dialog: Res<ModelLibraryImportDialogJob>,
+    import_job: Res<ModelLibraryImportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = import_dialog.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    let path = match receiver.try_recv() {
+        Ok(path) => {
+            *guard = None;
+            path
+        }
+        Err(mpsc::TryRecvError::Empty) => return,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            state.import_dialog_pending_realm = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Import canceled: dialog failed.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 4.0,
+            });
+            return;
+        }
+    };
+
+    let Some(path) = path else {
+        state.import_dialog_pending_realm = None;
+        return;
+    };
+    let Some(realm_id) = state.import_dialog_pending_realm.take() else {
+        return;
+    };
+
+    let (tx, rx) = mpsc::channel();
+    if let Ok(mut job_guard) = import_job.receiver.lock() {
+        if job_guard.is_some() {
+            toasts.write(UiToastCommand::Show {
+                text: "Import already running.".to_string(),
+                kind: UiToastKind::Warn,
+                ttl_secs: 3.0,
+            });
+            return;
+        }
+        *job_guard = Some(rx);
+    }
+
+    toasts.write(UiToastCommand::Show {
+        text: "Importing prefabs…".to_string(),
+        kind: UiToastKind::Info,
+        ttl_secs: 3.0,
+    });
+    std::thread::spawn(move || {
+        let result = crate::prefab_zip::import_prefab_packages_from_zip(&realm_id, &path);
+        let _ = tx.send(result);
+    });
+}
+
+pub(crate) fn model_library_import_job_poll(
+    mut state: ResMut<ModelLibraryUiState>,
+    import_job: Res<ModelLibraryImportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = import_job.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    match receiver.try_recv() {
+        Ok(result) => {
+            *guard = None;
+            match result {
+                Ok(report) => {
+                    state.mark_models_dirty();
+                    let summary = format!(
+                        "Imported {}, skipped {}, invalid {}.",
+                        report.imported, report.skipped, report.invalid
+                    );
+                    let kind = if report.invalid > 0 {
+                        UiToastKind::Warn
+                    } else {
+                        UiToastKind::Info
+                    };
+                    toasts.write(UiToastCommand::Show {
+                        text: summary,
+                        kind,
+                        ttl_secs: 4.0,
+                    });
+                }
+                Err(err) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: err,
+                        kind: UiToastKind::Error,
+                        ttl_secs: 5.0,
+                    });
+                }
+            }
+        }
+        Err(mpsc::TryRecvError::Empty) => {}
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Import failed: worker disconnected.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 5.0,
+            });
+        }
+    }
+}
+
 pub(crate) fn model_library_item_button_interactions(
     mut state: ResMut<ModelLibraryUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -3447,6 +4077,16 @@ pub(crate) fn model_library_item_button_interactions(
         .and_then(|window| window.cursor_position());
     for (interaction, button) in &mut buttons {
         if !matches!(*interaction, Interaction::Pressed) {
+            continue;
+        }
+
+        if state.multi_select_mode {
+            if state.multi_selected_prefabs.contains(&button.model_id) {
+                state.multi_selected_prefabs.remove(&button.model_id);
+            } else {
+                state.multi_selected_prefabs.insert(button.model_id);
+            }
+            state.selected_prefab_id = Some(button.model_id);
             continue;
         }
 
@@ -3468,6 +4108,8 @@ pub(crate) fn model_library_item_button_interactions(
 pub(crate) fn model_library_update_list_item_styles(
     state: Res<ModelLibraryUiState>,
     mut last_selected: Local<Option<u128>>,
+    mut last_multi_mode: Local<bool>,
+    mut last_multi: Local<Vec<u128>>,
     mut buttons: Query<
         (
             Ref<Interaction>,
@@ -3480,17 +4122,43 @@ pub(crate) fn model_library_update_list_item_styles(
     mut marks: Query<(Ref<ModelLibrarySelectionMark>, &mut Visibility)>,
 ) {
     let selected_id = state.selected_prefab_id();
-    let selection_changed = *last_selected != selected_id;
-    if selection_changed {
-        *last_selected = selected_id;
+    let mut multi_ids: Vec<u128> = if state.multi_select_mode {
+        state.multi_selected_prefabs.iter().copied().collect()
+    } else {
+        Vec::new()
+    };
+    multi_ids.sort();
+
+    let multi_mode_changed = *last_multi_mode != state.multi_select_mode;
+    if multi_mode_changed {
+        *last_multi_mode = state.multi_select_mode;
     }
+
+    let multi_changed = *last_multi != multi_ids;
+    if multi_changed {
+        *last_multi = multi_ids;
+    }
+
+    let selection_changed = if state.multi_select_mode {
+        multi_mode_changed || multi_changed
+    } else {
+        let changed = *last_selected != selected_id;
+        if changed {
+            *last_selected = selected_id;
+        }
+        changed || multi_mode_changed
+    };
 
     for (interaction, button, mut bg, mut border) in &mut buttons {
         if !selection_changed && !interaction.is_changed() && !interaction.is_added() {
             continue;
         }
 
-        let is_selected = selected_id == Some(button.model_id);
+        let is_selected = if state.multi_select_mode {
+            state.multi_selected_prefabs.contains(&button.model_id)
+        } else {
+            selected_id == Some(button.model_id)
+        };
 
         let (bg_color, border_color) = match *interaction {
             Interaction::Pressed => (
@@ -3535,7 +4203,12 @@ pub(crate) fn model_library_update_list_item_styles(
         if !selection_changed && !mark.is_added() {
             continue;
         }
-        *vis = if selected_id == Some(mark.model_id) {
+        let is_selected = if state.multi_select_mode {
+            state.multi_selected_prefabs.contains(&mark.model_id)
+        } else {
+            selected_id == Some(mark.model_id)
+        };
+        *vis = if is_selected {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -3667,6 +4340,10 @@ pub(crate) fn model_library_drag_update(
     mut state: ResMut<ModelLibraryUiState>,
 ) {
     if !state.is_open() || !matches!(env.build_scene.get(), crate::types::BuildScene::Realm) {
+        state.drag = None;
+        return;
+    }
+    if state.multi_select_mode {
         state.drag = None;
         return;
     }

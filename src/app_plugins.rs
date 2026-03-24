@@ -211,6 +211,13 @@ impl Plugin for RenderedUiPlugin {
             (
                 crate::model_library_ui::model_library_update_visibility
                     .after(crate::workspace_ui::workspace_toolbar_sync_model_library_open),
+                crate::model_library_ui::model_library_toggle_multi_select
+                    .after(crate::model_library_ui::model_library_update_visibility)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(console::console_closed)
+                    .run_if(crate::scene_authoring_ui::scene_ui_closed),
+                crate::model_library_ui::model_library_update_import_export_button_display
+                    .after(crate::model_library_ui::model_library_toggle_multi_select),
                 crate::model_library_ui::model_library_rebuild_list_ui
                     .after(crate::model_library_ui::model_library_update_visibility),
                 crate::model_library_ui::model_library_sync_gen3d_placeholders
@@ -229,6 +236,21 @@ impl Plugin for RenderedUiPlugin {
                 crate::model_library_ui::model_library_gen3d_button_interactions
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::model_library_ui::model_library_import_button_interactions
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::model_library_ui::model_library_export_button_interactions
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::model_library_ui::model_library_export_dialog_poll
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_export_job_poll
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_import_dialog_poll
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_import_job_poll
+                    .after(crate::model_library_ui::model_library_import_dialog_poll)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_search_field_focus
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_search_text_input
@@ -238,6 +260,7 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::model_library_ui::model_library_search_text_input)
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_item_button_interactions
+                    .after(crate::model_library_ui::model_library_toggle_multi_select)
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_update_list_item_styles
                     .after(crate::model_library_ui::model_library_rebuild_list_ui)

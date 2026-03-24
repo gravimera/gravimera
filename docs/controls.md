@@ -13,6 +13,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Camera position/zoom are also isolated per workspace.
 - Gen3D workshop: in **Object Preview**, click **Gen3D** (top-left)
 - Models panel (hidden by default): in **Object Preview**, click **Show Models** / **Hide Models** (top-left)
+- Prefabs panel multi-select: press `Shift` to toggle multi-select when the Prefabs panel is topmost (e.g. BuildScene = Realm). **Export** appears in multi-select mode; **Import** is always available.
 - Scene Builder panel: in **Scene Build**, click **Scene Build** (top-left)
 - Console: `Enter` (commands: `/easy`, `/hard`, `/hell`; cheat: `who's your daddy` (+ optional amount) boosts all commandable units)
 - HUD stats (top-right): object count, primitive count, FPS
