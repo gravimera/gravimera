@@ -1087,10 +1087,23 @@ struct ObjectPartDefJson {
     attachment: Option<AttachmentDefJson>,
     animations: Vec<PartAnimationSlotJson>,
     transform: TransformJson,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fallback_basis: Option<TransformJson>,
 }
 
 impl ObjectPartDefJson {
     fn from_part(part: &ObjectPartDef) -> Self {
+        let fallback_basis = if part.fallback_basis.translation.is_finite()
+            && part.fallback_basis.rotation.is_finite()
+            && part.fallback_basis.scale.is_finite()
+            && (part.fallback_basis.translation != Vec3::ZERO
+                || part.fallback_basis.rotation != Quat::IDENTITY
+                || part.fallback_basis.scale != Vec3::ONE)
+        {
+            Some(TransformJson::from_transform(part.fallback_basis))
+        } else {
+            None
+        };
         Self {
             part_id: part.part_id.map(|id| uuid::Uuid::from_u128(id).to_string()),
             render_priority: part.render_priority,
@@ -1105,6 +1118,7 @@ impl ObjectPartDefJson {
                 .map(PartAnimationSlotJson::from_slot)
                 .collect(),
             transform: TransformJson::from_transform(part.transform),
+            fallback_basis,
         }
     }
 
@@ -1123,6 +1137,56 @@ impl ObjectPartDefJson {
             ),
         };
 
+        let mut fallback_basis = self
+            .fallback_basis
+            .map(|t| t.to_transform())
+            .unwrap_or(Transform::IDENTITY);
+        if !fallback_basis.translation.is_finite()
+            || !fallback_basis.rotation.is_finite()
+            || !fallback_basis.scale.is_finite()
+        {
+            fallback_basis = Transform::IDENTITY;
+        }
+
+        let mut animations = self
+            .animations
+            .iter()
+            .map(PartAnimationSlotJson::to_slot)
+            .collect::<Result<Vec<_>, _>>()?;
+        // Legacy migration: older saves/prefabs may carry the attachment fallback basis as a
+        // synthetic `__base` slot. Convert it into `fallback_basis` and drop the slot.
+        let mut legacy_base_basis: Option<Transform> = None;
+        animations.retain(|slot| {
+            let channel = slot.channel.as_ref().trim();
+            if channel == "__base" {
+                if legacy_base_basis.is_none() {
+                    legacy_base_basis = Some(slot.spec.basis);
+                }
+                false
+            } else {
+                true
+            }
+        });
+        let has_non_empty_channel = animations
+            .iter()
+            .any(|slot| !slot.channel.as_ref().trim().is_empty());
+        if !has_non_empty_channel {
+            fallback_basis = Transform::IDENTITY;
+        } else if fallback_basis.translation == Vec3::ZERO
+            && fallback_basis.rotation == Quat::IDENTITY
+            && fallback_basis.scale == Vec3::ONE
+        {
+            if let Some(mut legacy) = legacy_base_basis {
+                if !legacy.translation.is_finite()
+                    || !legacy.rotation.is_finite()
+                    || !legacy.scale.is_finite()
+                {
+                    legacy = Transform::IDENTITY;
+                }
+                fallback_basis = legacy;
+            }
+        }
+
         Ok(ObjectPartDef {
             part_id,
             render_priority: self.render_priority,
@@ -1132,12 +1196,9 @@ impl ObjectPartDefJson {
                 .as_ref()
                 .map(AttachmentDefJson::to_attachment)
                 .transpose()?,
-            animations: self
-                .animations
-                .iter()
-                .map(PartAnimationSlotJson::to_slot)
-                .collect::<Result<Vec<_>, _>>()?,
+            animations,
             transform: self.transform.to_transform(),
+            fallback_basis,
         })
     }
 }

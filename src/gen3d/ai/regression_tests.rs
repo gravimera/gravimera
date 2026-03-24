@@ -471,15 +471,16 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
             }],
             contacts: vec![],
             root_animations: vec![],
-            attach_to: Some(super::Gen3dPlannedAttachment {
-                parent: "root".into(),
-                parent_anchor: "child_mount".into(),
-                child_anchor: "base".into(),
-                offset: Transform::IDENTITY,
-                joint: Some(super::AiJointJson {
-                    kind: super::AiJointKindJson::Free,
-                    axis_join: None,
-                    limits_degrees: None,
+	            attach_to: Some(super::Gen3dPlannedAttachment {
+	                parent: "root".into(),
+	                parent_anchor: "child_mount".into(),
+	                child_anchor: "base".into(),
+	                offset: Transform::IDENTITY,
+	                fallback_basis: Transform::IDENTITY,
+	                joint: Some(super::AiJointJson {
+	                    kind: super::AiJointKindJson::Free,
+	                    axis_join: None,
+	                    limits_degrees: None,
                     swing_limits_degrees: None,
                     twist_limits_degrees: None,
                 }),

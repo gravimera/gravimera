@@ -1,5 +1,9 @@
 # Gen3D: Per-slot animation basis + internal `__base` fallback channel
 
+> Status (2026-03-24): Superseded by `docs/execplans/gen3d_remove_internal_base_channel.md`.
+> The reserved `__base` channel described here has been removed and replaced by a per-edge
+> `fallback_basis` transform (applied only when no channel slot matches).
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 This plan must be maintained in accordance with `PLANS.md` at the repository root.

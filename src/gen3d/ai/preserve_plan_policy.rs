@@ -248,16 +248,17 @@ mod tests {
         parent_anchor: &str,
         child_anchor: &str,
         offset_z: f32,
-    ) -> Gen3dPlannedAttachment {
-        Gen3dPlannedAttachment {
-            parent: parent.into(),
-            parent_anchor: parent_anchor.into(),
-            child_anchor: child_anchor.into(),
-            offset: Transform::from_translation(Vec3::new(0.0, 0.0, offset_z)),
-            joint: None,
-            animations: Vec::new(),
-        }
-    }
+	    ) -> Gen3dPlannedAttachment {
+	        Gen3dPlannedAttachment {
+	            parent: parent.into(),
+	            parent_anchor: parent_anchor.into(),
+	            child_anchor: child_anchor.into(),
+	            offset: Transform::from_translation(Vec3::new(0.0, 0.0, offset_z)),
+	            fallback_basis: Transform::IDENTITY,
+	            joint: None,
+	            animations: Vec::new(),
+	        }
+	    }
 
     #[test]
     fn additive_rejects_rewire_and_offset_changes() {

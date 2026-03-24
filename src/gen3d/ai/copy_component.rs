@@ -1473,6 +1473,7 @@ mod tests {
             parent_anchor: "leg_mount_a".into(),
             child_anchor: "hip".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -1481,6 +1482,7 @@ mod tests {
             parent_anchor: "ankle".into(),
             child_anchor: "hip".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -1489,6 +1491,7 @@ mod tests {
             parent_anchor: "leg_mount_b".into(),
             child_anchor: "hip".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -1497,6 +1500,7 @@ mod tests {
             parent_anchor: "ankle".into(),
             child_anchor: "hip".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -1609,6 +1613,7 @@ mod tests {
             parent_anchor: "arm_mount_front".into(),
             child_anchor: "body_mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -1617,6 +1622,7 @@ mod tests {
             parent_anchor: "arm_mount_back".into(),
             child_anchor: "body_mount".into(),
             offset: Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -1692,6 +1698,7 @@ mod tests {
                 parent_anchor: "win_front".into(),
                 child_anchor: "mount".into(),
                 offset: Transform::IDENTITY,
+                fallback_basis: Transform::IDENTITY,
                 joint: None,
                 animations: Vec::new(),
             });
@@ -1702,6 +1709,7 @@ mod tests {
                 offset: Transform::from_rotation(Quat::from_rotation_y(
                     std::f32::consts::FRAC_PI_2,
                 )),
+                fallback_basis: Transform::IDENTITY,
                 joint: None,
                 animations: Vec::new(),
             });
@@ -1851,6 +1859,7 @@ mod tests {
             parent_anchor: "mount".into(),
             child_anchor: "socket".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -1859,6 +1868,7 @@ mod tests {
             parent_anchor: "mount".into(),
             child_anchor: "socket".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -1867,6 +1877,7 @@ mod tests {
             parent_anchor: "grip".into(),
             child_anchor: "grip_socket".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2024,6 +2035,7 @@ mod tests {
                 parent_anchor: "grip".into(),
                 child_anchor: "mount".into(),
                 offset: Transform::IDENTITY,
+                fallback_basis: Transform::IDENTITY,
                 joint: None,
                 animations: Vec::new(),
             });
@@ -2032,6 +2044,7 @@ mod tests {
                 parent_anchor: "mount".into(),
                 child_anchor: "mount".into(),
                 offset: Transform::IDENTITY,
+                fallback_basis: Transform::IDENTITY,
                 joint: None,
                 animations: Vec::new(),
             });
@@ -2162,6 +2175,7 @@ mod tests {
             parent_anchor: "origin".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2170,6 +2184,7 @@ mod tests {
             parent_anchor: "origin".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2268,6 +2283,7 @@ mod tests {
             parent_anchor: "origin".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2276,6 +2292,7 @@ mod tests {
             parent_anchor: "origin".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2401,6 +2418,7 @@ mod tests {
             parent_anchor: "origin".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2409,6 +2427,7 @@ mod tests {
             parent_anchor: "origin".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2565,6 +2584,7 @@ mod tests {
             parent_anchor: "leg_0_mount".into(),
             child_anchor: "to_body".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2573,6 +2593,7 @@ mod tests {
             parent_anchor: "to_upper".into(),
             child_anchor: "to_root".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2581,6 +2602,7 @@ mod tests {
             parent_anchor: "to_lower".into(),
             child_anchor: "to_upper".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2589,6 +2611,7 @@ mod tests {
             parent_anchor: "to_foot".into(),
             child_anchor: "to_lower".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2597,6 +2620,7 @@ mod tests {
             parent_anchor: "leg_1_mount".into(),
             child_anchor: "to_body".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2736,6 +2760,7 @@ mod tests {
             parent_anchor: "mount_a".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2744,6 +2769,7 @@ mod tests {
             parent_anchor: "next".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2752,6 +2778,7 @@ mod tests {
             parent_anchor: "mount_b".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2860,6 +2887,7 @@ mod tests {
             parent_anchor: "mount_a".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2868,6 +2896,7 @@ mod tests {
             parent_anchor: "next".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2876,6 +2905,7 @@ mod tests {
             parent_anchor: "mount_b".into(),
             child_anchor: "mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2971,6 +3001,7 @@ mod tests {
             parent_anchor: "wing_mount_L".into(),
             child_anchor: "shoulder".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2979,6 +3010,7 @@ mod tests {
             parent_anchor: "wing_mount_R".into(),
             child_anchor: "shoulder".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2989,6 +3021,7 @@ mod tests {
             parent_anchor: "tip_mount".into(),
             child_anchor: "root".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -2997,6 +3030,7 @@ mod tests {
             parent_anchor: "tip_mount".into(),
             child_anchor: "root".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -3124,6 +3158,7 @@ mod tests {
             parent_anchor: "wing_mount_L".into(),
             child_anchor: "torso_mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -3132,6 +3167,7 @@ mod tests {
             parent_anchor: "wing_mount_R".into(),
             child_anchor: "torso_mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -3218,6 +3254,7 @@ mod tests {
             parent_anchor: "wing_mount_left".into(),
             child_anchor: "body_mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -3226,6 +3263,7 @@ mod tests {
             parent_anchor: "wing_mount_right".into(),
             child_anchor: "body_mount".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -3340,6 +3378,7 @@ mod tests {
             parent_anchor: "leg_0_mount".into(),
             child_anchor: "to_body".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -3348,6 +3387,7 @@ mod tests {
             parent_anchor: "to_upper".into(),
             child_anchor: "to_root".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -3356,6 +3396,7 @@ mod tests {
             parent_anchor: "to_foot".into(),
             child_anchor: "to_upper".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -3364,6 +3405,7 @@ mod tests {
             parent_anchor: "leg_1_mount".into(),
             child_anchor: "to_body".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });
@@ -3372,6 +3414,7 @@ mod tests {
             parent_anchor: "to_upper".into(),
             child_anchor: "to_root".into(),
             offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
             joint: None,
             animations: Vec::new(),
         });

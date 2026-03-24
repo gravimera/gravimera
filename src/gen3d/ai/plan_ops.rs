@@ -954,24 +954,32 @@ fn apply_plan_acceptance(
                 let same_interface = new_att.parent.trim() == old_att.parent.trim()
                     && new_att.parent_anchor.trim() == old_att.parent_anchor.trim()
                     && new_att.child_anchor.trim() == old_att.child_anchor.trim();
-                if same_interface {
-                    new_att.animations = old_att.animations.clone();
-                    new_att.joint = old_att.joint.clone();
-                    super::internal_base_slot::normalize_internal_base_slot(&mut new_att.animations);
-                    super::internal_base_slot::rebase_slot_bases_for_offset_change(
-                        old_att.offset,
-                        new_att.offset,
-                        &mut new_att.animations,
-                    );
-                }
-            }
-        }
+	                if same_interface {
+	                    new_att.animations = old_att.animations.clone();
+	                    new_att.joint = old_att.joint.clone();
+	                    new_att.fallback_basis = old_att.fallback_basis;
+	                    super::attachment_motion_basis::normalize_attachment_motion(
+	                        &mut new_att.fallback_basis,
+	                        &mut new_att.animations,
+	                    );
+	                    super::attachment_motion_basis::rebase_bases_for_offset_change(
+	                        old_att.offset,
+	                        new_att.offset,
+	                        &mut new_att.fallback_basis,
+	                        &mut new_att.animations,
+	                    );
+	                }
+	            }
+	        }
 
-        for comp in planned_components.iter_mut() {
-            if let Some(att) = comp.attach_to.as_mut() {
-                super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
-            }
-        }
+	        for comp in planned_components.iter_mut() {
+	            if let Some(att) = comp.attach_to.as_mut() {
+	                super::attachment_motion_basis::normalize_attachment_motion(
+	                    &mut att.fallback_basis,
+	                    &mut att.animations,
+	                );
+	            }
+	        }
 
         // Preserve existing geometry: merge plan defs into the draft without overwriting
         // primitive/model parts.
@@ -1049,7 +1057,10 @@ fn apply_plan_acceptance(
     if !can_preserve_geometry {
         for comp in planned_components.iter_mut() {
             if let Some(att) = comp.attach_to.as_mut() {
-                super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
+                super::attachment_motion_basis::normalize_attachment_motion(
+                    &mut att.fallback_basis,
+                    &mut att.animations,
+                );
             }
         }
         convert::sync_attachment_tree_to_defs(&planned_components, &mut draft_next)

@@ -2956,18 +2956,19 @@ pub(super) fn poll_agent_tool(
                                         });
                                     }
 
-                                    if let Some(att) =
-                                        job.planned_components[component_idx].attach_to.as_mut()
-                                    {
-                                        att.animations.retain(|slot| {
-                                            !replace.contains(slot.channel.as_ref())
-                                        });
-                                        att.animations.extend(replacement_slots);
-                                        super::internal_base_slot::normalize_internal_base_slot(
-                                            &mut att.animations,
-                                        );
-                                    }
-                                }
+	                                    if let Some(att) =
+	                                        job.planned_components[component_idx].attach_to.as_mut()
+	                                    {
+	                                        att.animations.retain(|slot| {
+	                                            !replace.contains(slot.channel.as_ref())
+	                                        });
+	                                        att.animations.extend(replacement_slots);
+	                                        super::attachment_motion_basis::normalize_attachment_motion(
+	                                            &mut att.fallback_basis,
+	                                            &mut att.animations,
+	                                        );
+	                                    }
+	                                }
 
                                 if issues.is_empty() {
                                     let movable = draft
@@ -3847,16 +3848,17 @@ mod tests {
                     attach_to: if idx == 0 {
                         None
                     } else {
-                        Some(super::super::job::Gen3dPlannedAttachment {
-                            parent: "c0".to_string(),
-                            parent_anchor: "mount".to_string(),
-                            child_anchor: "mount".to_string(),
-                            offset: Transform::IDENTITY,
-                            joint: None,
-                            animations: Vec::new(),
-                        })
-                    },
-                },
+	                        Some(super::super::job::Gen3dPlannedAttachment {
+	                            parent: "c0".to_string(),
+	                            parent_anchor: "mount".to_string(),
+	                            child_anchor: "mount".to_string(),
+	                            offset: Transform::IDENTITY,
+	                            fallback_basis: Transform::IDENTITY,
+	                            joint: None,
+	                            animations: Vec::new(),
+	                        })
+	                    },
+	                },
             )
             .collect();
         job

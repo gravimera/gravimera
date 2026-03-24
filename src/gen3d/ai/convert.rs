@@ -926,16 +926,17 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                             comp.name
                         )
                     })?;
-                Some(Gen3dPlannedAttachment {
-                    parent: parent.to_string(),
-                    parent_anchor: parent_anchor.to_string(),
-                    child_anchor: child_anchor.to_string(),
-                    offset,
-                    joint: att.joint.clone(),
-                    animations: Vec::new(),
-                })
-            }
-        };
+	                Some(Gen3dPlannedAttachment {
+	                    parent: parent.to_string(),
+	                    parent_anchor: parent_anchor.to_string(),
+	                    child_anchor: child_anchor.to_string(),
+	                    offset,
+	                    fallback_basis: Transform::IDENTITY,
+	                    joint: att.joint.clone(),
+	                    animations: Vec::new(),
+	                })
+	            }
+	        };
 
         planned.push(Gen3dPlannedComponent {
             display_name: format!("{}. {}", idx + 1, comp.name),
@@ -1658,6 +1659,14 @@ pub(super) fn sync_attachment_tree_to_defs(
             child_anchor: att.child_anchor.clone().into(),
         };
         let mut part = ObjectPartDef::object_ref(child_id, att.offset).with_attachment(attachment);
+        part.fallback_basis = if att.fallback_basis.translation.is_finite()
+            && att.fallback_basis.rotation.is_finite()
+            && att.fallback_basis.scale.is_finite()
+        {
+            att.fallback_basis
+        } else {
+            Transform::IDENTITY
+        };
         part.animations.extend(att.animations.clone());
         parent_def.parts.push(part);
     }
@@ -2231,30 +2240,36 @@ pub(super) fn apply_ai_review_delta_actions(
                             component_id, components[idx].name
                         )
                     })?;
-                let animations = components[idx]
-                    .attach_to
-                    .as_ref()
-                    .map(|att| att.animations.clone())
-                    .unwrap_or_default();
-                let joint = components[idx].attach_to.as_ref().and_then(|att| {
-                    if att.parent == components[parent_idx].name
-                        && att.parent_anchor == parent_anchor
-                        && att.child_anchor == child_anchor
-                    {
-                        att.joint.clone()
-                    } else {
-                        None
-                    }
-                });
+	                let animations = components[idx]
+	                    .attach_to
+	                    .as_ref()
+	                    .map(|att| att.animations.clone())
+	                    .unwrap_or_default();
+	                let fallback_basis = components[idx]
+	                    .attach_to
+	                    .as_ref()
+	                    .map(|att| att.fallback_basis)
+	                    .unwrap_or(Transform::IDENTITY);
+	                let joint = components[idx].attach_to.as_ref().and_then(|att| {
+	                    if att.parent == components[parent_idx].name
+	                        && att.parent_anchor == parent_anchor
+	                        && att.child_anchor == child_anchor
+	                    {
+	                        att.joint.clone()
+	                    } else {
+	                        None
+	                    }
+	                });
 
-                components[idx].attach_to = Some(Gen3dPlannedAttachment {
-                    parent: components[parent_idx].name.clone(),
-                    parent_anchor: set.parent_anchor.trim().to_string(),
-                    child_anchor: child_anchor.to_string(),
-                    offset,
-                    joint,
-                    animations,
-                });
+	                components[idx].attach_to = Some(Gen3dPlannedAttachment {
+	                    parent: components[parent_idx].name.clone(),
+	                    parent_anchor: set.parent_anchor.trim().to_string(),
+	                    child_anchor: child_anchor.to_string(),
+	                    offset,
+	                    fallback_basis,
+	                    joint,
+	                    animations,
+	                });
 
                 if !reason.trim().is_empty() {
                     debug!(
@@ -3098,15 +3113,16 @@ mod tests {
             }],
             contacts: Vec::new(),
             root_animations: Vec::new(),
-            attach_to: Some(Gen3dPlannedAttachment {
-                parent: "tail_boom".into(),
-                parent_anchor: "tail_rotor_mount".into(),
-                child_anchor: "root_attach".into(),
-                offset: Transform::IDENTITY,
-                joint: None,
-                animations: vec![PartAnimationSlot {
-                    channel: "idle".into(),
-                    spec: PartAnimationSpec {
+	            attach_to: Some(Gen3dPlannedAttachment {
+	                parent: "tail_boom".into(),
+	                parent_anchor: "tail_rotor_mount".into(),
+	                child_anchor: "root_attach".into(),
+	                offset: Transform::IDENTITY,
+	                fallback_basis: Transform::IDENTITY,
+	                joint: None,
+	                animations: vec![PartAnimationSlot {
+	                    channel: "idle".into(),
+	                    spec: PartAnimationSpec {
                         driver: PartAnimationDriver::Always,
                         speed_scale: 1.0,
                         time_offset_units: 0.0,

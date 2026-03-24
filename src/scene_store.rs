@@ -410,6 +410,8 @@ struct SceneDatPartDef {
     attachment: Option<SceneDatAttachment>,
     #[prost(message, repeated, tag = "7")]
     animations: Vec<SceneDatPartAnimationSlot>,
+    #[prost(message, optional, tag = "8")]
+    fallback_basis: Option<SceneDatTransform>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1339,6 +1341,13 @@ fn part_to_dat(part: &ObjectPartDef) -> SceneDatPartDef {
             .iter()
             .map(part_animation_slot_to_dat)
             .collect(),
+        fallback_basis: (part.fallback_basis.translation.is_finite()
+            && part.fallback_basis.rotation.is_finite()
+            && part.fallback_basis.scale.is_finite()
+            && (part.fallback_basis.translation != Vec3::ZERO
+                || part.fallback_basis.rotation != Quat::IDENTITY
+                || part.fallback_basis.scale != Vec3::ONE))
+            .then_some(transform_to_dat(&part.fallback_basis)),
     }
 }
 
@@ -1351,6 +1360,17 @@ fn part_from_dat(part: &SceneDatPartDef) -> Result<ObjectPartDef, String> {
         .as_ref()
         .map(transform_from_dat)
         .unwrap_or(Transform::IDENTITY);
+    let mut fallback_basis = part
+        .fallback_basis
+        .as_ref()
+        .map(transform_from_dat)
+        .unwrap_or(Transform::IDENTITY);
+    if !fallback_basis.translation.is_finite()
+        || !fallback_basis.rotation.is_finite()
+        || !fallback_basis.scale.is_finite()
+    {
+        fallback_basis = Transform::IDENTITY;
+    }
 
     let kind = match kind {
         scene_dat_part_def::Kind::ObjectRef(id) => ObjectPartKind::ObjectRef {
@@ -1363,6 +1383,40 @@ fn part_from_dat(part: &SceneDatPartDef) -> Result<ObjectPartDef, String> {
             scene: scene.clone().into(),
         },
     };
+
+    let mut animations: Vec<PartAnimationSlot> = part
+        .animations
+        .iter()
+        .filter_map(part_animation_slot_from_dat)
+        .collect();
+    // Legacy migration: older scene data may carry the attachment fallback basis as a synthetic
+    // `__base` slot. Convert it into `fallback_basis` and drop the slot.
+    let mut legacy_base_basis: Option<Transform> = None;
+    animations.retain(|slot| {
+        let channel = slot.channel.as_ref().trim();
+        if channel == "__base" {
+            if legacy_base_basis.is_none() {
+                legacy_base_basis = Some(slot.spec.basis);
+            }
+            false
+        } else {
+            true
+        }
+    });
+    if animations.is_empty() {
+        fallback_basis = Transform::IDENTITY;
+    } else if fallback_basis.translation == Vec3::ZERO
+        && fallback_basis.rotation == Quat::IDENTITY
+        && fallback_basis.scale == Vec3::ONE
+    {
+        if let Some(mut legacy) = legacy_base_basis {
+            if !legacy.translation.is_finite() || !legacy.rotation.is_finite() || !legacy.scale.is_finite()
+            {
+                legacy = Transform::IDENTITY;
+            }
+            fallback_basis = legacy;
+        }
+    }
 
     Ok(ObjectPartDef {
         part_id: part.part_id.as_ref().map(uuid_to_u128),
@@ -1379,12 +1433,9 @@ fn part_from_dat(part: &SceneDatPartDef) -> Result<ObjectPartDef, String> {
                 child_anchor: child_anchor.to_string().into(),
             })
         }),
-        animations: part
-            .animations
-            .iter()
-            .filter_map(part_animation_slot_from_dat)
-            .collect(),
+        animations,
         transform,
+        fallback_basis,
     })
 }
 
@@ -2556,60 +2607,61 @@ mod tests {
                     .with_rotation(Quat::from_rotation_y(0.5))
                     .with_scale(Vec3::ONE),
             }],
-            parts: vec![ObjectPartDef {
-                part_id: Some(0xABCD_u128),
-                render_priority: None,
-                kind: ObjectPartKind::ObjectRef {
-                    object_id: child_id,
-                },
-                attachment: Some(AttachmentDef {
-                    parent_anchor: "mount".to_string().into(),
-                    child_anchor: "origin".to_string().into(),
-                }),
-                animations: vec![
-                    PartAnimationSlot {
-                        channel: "move".to_string().into(),
-                        spec: PartAnimationSpec {
-                            driver: PartAnimationDriver::MovePhase,
-                            speed_scale: 1.25,
-                            time_offset_units: 0.4,
-                            basis: Transform::IDENTITY,
-                            clip: PartAnimationDef::Loop {
-                                duration_secs: 2.0,
-                                keyframes: vec![
-                                    PartAnimationKeyframeDef {
-                                        time_secs: 0.0,
-                                        delta: Transform::IDENTITY,
-                                    },
-                                    PartAnimationKeyframeDef {
-                                        time_secs: 1.0,
-                                        delta: Transform::IDENTITY
-                                            .with_rotation(Quat::from_rotation_y(0.5)),
-                                    },
-                                ],
-                            },
-                        },
-                    },
-                    PartAnimationSlot {
-                        channel: "ambient".to_string().into(),
-                        spec: PartAnimationSpec {
-                            driver: PartAnimationDriver::Always,
-                            speed_scale: 2.0,
-                            time_offset_units: 0.0,
-                            basis: Transform::IDENTITY,
-                            clip: PartAnimationDef::Spin {
-                                axis: Vec3::Z,
-                                radians_per_unit: 3.5,
-                                axis_space:
-                                    crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal,
-                            },
-                        },
-                    },
-                ],
-                transform: Transform::from_translation(Vec3::new(0.1, 0.2, 0.3))
-                    .with_rotation(Quat::from_rotation_x(0.25))
-                    .with_scale(Vec3::new(1.0, 2.0, 3.0)),
-            }],
+	            parts: vec![ObjectPartDef {
+	                part_id: Some(0xABCD_u128),
+	                render_priority: None,
+	                kind: ObjectPartKind::ObjectRef {
+	                    object_id: child_id,
+	                },
+	                attachment: Some(AttachmentDef {
+	                    parent_anchor: "mount".to_string().into(),
+	                    child_anchor: "origin".to_string().into(),
+	                }),
+	                animations: vec![
+	                    PartAnimationSlot {
+	                        channel: "move".to_string().into(),
+	                        spec: PartAnimationSpec {
+	                            driver: PartAnimationDriver::MovePhase,
+	                            speed_scale: 1.25,
+	                            time_offset_units: 0.4,
+	                            basis: Transform::IDENTITY,
+	                            clip: PartAnimationDef::Loop {
+	                                duration_secs: 2.0,
+	                                keyframes: vec![
+	                                    PartAnimationKeyframeDef {
+	                                        time_secs: 0.0,
+	                                        delta: Transform::IDENTITY,
+	                                    },
+	                                    PartAnimationKeyframeDef {
+	                                        time_secs: 1.0,
+	                                        delta: Transform::IDENTITY
+	                                            .with_rotation(Quat::from_rotation_y(0.5)),
+	                                    },
+	                                ],
+	                            },
+	                        },
+	                    },
+	                    PartAnimationSlot {
+	                        channel: "ambient".to_string().into(),
+	                        spec: PartAnimationSpec {
+	                            driver: PartAnimationDriver::Always,
+	                            speed_scale: 2.0,
+	                            time_offset_units: 0.0,
+	                            basis: Transform::IDENTITY,
+	                            clip: PartAnimationDef::Spin {
+	                                axis: Vec3::Z,
+	                                radians_per_unit: 3.5,
+	                                axis_space:
+	                                    crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal,
+	                            },
+	                        },
+	                    },
+	                ],
+	                transform: Transform::from_translation(Vec3::new(0.1, 0.2, 0.3))
+	                    .with_rotation(Quat::from_rotation_x(0.25))
+	                    .with_scale(Vec3::new(1.0, 2.0, 3.0)),
+	                fallback_basis: Transform::from_translation(Vec3::new(0.05, 0.0, -0.02)),
+	            }],
             minimap_color: Some(Color::srgb(0.2, 0.3, 0.4)),
             health_bar_offset_y: Some(1.5),
             enemy: None,
@@ -2681,14 +2733,26 @@ mod tests {
             .expect("attachment should roundtrip");
         assert_eq!(attachment.parent_anchor.as_ref(), "mount");
         assert_eq!(attachment.child_anchor.as_ref(), "origin");
-        assert!((part.transform.translation - Vec3::new(0.1, 0.2, 0.3)).length_squared() < 1e-6);
-        assert!(
-            part.transform
-                .rotation
-                .angle_between(Quat::from_rotation_x(0.25))
-                < 1e-4
-        );
-        assert!((part.transform.scale - Vec3::new(1.0, 2.0, 3.0)).length_squared() < 1e-6);
+	        assert!((part.transform.translation - Vec3::new(0.1, 0.2, 0.3)).length_squared() < 1e-6);
+	        assert!(
+	            part.transform
+	                .rotation
+	                .angle_between(Quat::from_rotation_x(0.25))
+	                < 1e-4
+	        );
+	        assert!((part.transform.scale - Vec3::new(1.0, 2.0, 3.0)).length_squared() < 1e-6);
+	        assert!(
+	            (part.fallback_basis.translation - Vec3::new(0.05, 0.0, -0.02)).length_squared()
+	                < 1e-6
+	        );
+	        assert!(
+	            part.fallback_basis.rotation.angle_between(Quat::IDENTITY) < 1e-6,
+	            "expected fallback_basis rotation to remain identity"
+	        );
+	        assert!(
+	            (part.fallback_basis.scale - Vec3::ONE).length_squared() < 1e-6,
+	            "expected fallback_basis scale to remain identity"
+	        );
 
         assert_eq!(part.animations.len(), 2);
         let slot = part

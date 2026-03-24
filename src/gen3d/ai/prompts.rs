@@ -844,16 +844,17 @@ mod tests {
                 actual_size: Some(Vec3::new(1.0, 1.2, 1.4)),
                 anchors: vec![],
                 contacts: vec![],
-                root_animations: vec![],
-                attach_to: Some(super::super::Gen3dPlannedAttachment {
-                    parent: "torso".into(),
-                    parent_anchor: "head_socket".into(),
-                    child_anchor: "torso_socket".into(),
-                    offset: Transform::IDENTITY,
-                    joint: None,
-                    animations: vec![],
-                }),
-            },
+	                root_animations: vec![],
+	                attach_to: Some(super::super::Gen3dPlannedAttachment {
+	                    parent: "torso".into(),
+	                    parent_anchor: "head_socket".into(),
+	                    child_anchor: "torso_socket".into(),
+	                    offset: Transform::IDENTITY,
+	                    fallback_basis: Transform::IDENTITY,
+	                    joint: None,
+	                    animations: vec![],
+	                }),
+	            },
         ];
 
         let prompt = build_gen3d_plan_user_text_preserve_existing_components(
@@ -2441,10 +2442,6 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
         let slots: Vec<String> = att
             .animations
             .iter()
-            .filter(|slot| {
-                slot.channel.as_ref().trim()
-                    != crate::object::registry::PART_ANIMATION_INTERNAL_BASE_CHANNEL
-            })
             .map(|slot| {
                 let kind = match &slot.spec.clip {
                     crate::object::registry::PartAnimationDef::Loop { .. } => "loop",

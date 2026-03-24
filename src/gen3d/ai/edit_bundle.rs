@@ -80,6 +80,8 @@ pub(crate) struct Gen3dPlannedAttachmentBundleV1 {
     #[serde(default)]
     pub(crate) offset: TransformBundleV1,
     #[serde(default)]
+    pub(crate) fallback_basis: TransformBundleV1,
+    #[serde(default)]
     pub(crate) joint: Option<AiJointJson>,
     #[serde(default)]
     pub(crate) animations: Vec<PartAnimationSlotBundleV1>,
@@ -336,7 +338,14 @@ fn hydrate_planned_attachment_animations_from_defs(
         let Some(att) = comp.attach_to.as_mut() else {
             continue;
         };
-        if !att.animations.is_empty() {
+        let fallback_basis_is_identity = !att.fallback_basis.translation.is_finite()
+            || !att.fallback_basis.rotation.is_finite()
+            || !att.fallback_basis.scale.is_finite()
+            || (att.fallback_basis.translation == Vec3::ZERO
+                && att.fallback_basis.rotation == Quat::IDENTITY
+                && att.fallback_basis.scale == Vec3::ONE);
+        let needs_hydrate = att.animations.is_empty() || fallback_basis_is_identity;
+        if !needs_hydrate {
             continue;
         }
 
@@ -363,10 +372,12 @@ fn hydrate_planned_attachment_animations_from_defs(
             if object_id != child_object_id {
                 continue;
             }
-            if part.animations.is_empty() {
-                continue;
+            if att.animations.is_empty() && !part.animations.is_empty() {
+                att.animations = part.animations.clone();
             }
-            att.animations = part.animations.clone();
+            if fallback_basis_is_identity {
+                att.fallback_basis = part.fallback_basis;
+            }
             break;
         }
     }
@@ -536,6 +547,7 @@ mod tests {
                 parent_anchor: "rotor_mount".into(),
                 child_anchor: "arm_mount".into(),
                 offset: Transform::IDENTITY,
+                fallback_basis: Transform::IDENTITY,
                 joint: None,
                 animations: Vec::new(),
             }),
@@ -615,6 +627,7 @@ impl Gen3dPlannedAttachmentBundleV1 {
             parent_anchor: a.parent_anchor.clone(),
             child_anchor: a.child_anchor.clone(),
             offset: TransformBundleV1::from_transform(a.offset),
+            fallback_basis: TransformBundleV1::from_transform(a.fallback_basis),
             joint: a.joint.clone(),
             animations: a
                 .animations
@@ -640,6 +653,7 @@ impl Gen3dPlannedAttachmentBundleV1 {
             parent_anchor: parent_anchor.to_string(),
             child_anchor: child_anchor.to_string(),
             offset: self.offset.to_transform(),
+            fallback_basis: self.fallback_basis.to_transform(),
             joint: self.joint.clone(),
             animations: self
                 .animations

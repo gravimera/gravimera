@@ -8459,15 +8459,16 @@ mod tests {
                 }],
                 contacts: Vec::new(),
                 root_animations: Vec::new(),
-                attach_to: Some(super::super::job::Gen3dPlannedAttachment {
-                    parent: "root".into(),
-                    parent_anchor: "origin".into(),
-                    child_anchor: "origin".into(),
-                    offset: Transform::IDENTITY,
-                    joint: Some(AiJointJson {
-                        kind: AiJointKindJson::Hinge,
-                        axis_join: Some([1.0, 0.0, 0.0]),
-                        limits_degrees: Some([-30.0, 30.0]),
+	                attach_to: Some(super::super::job::Gen3dPlannedAttachment {
+	                    parent: "root".into(),
+	                    parent_anchor: "origin".into(),
+	                    child_anchor: "origin".into(),
+	                    offset: Transform::IDENTITY,
+	                    fallback_basis: Transform::IDENTITY,
+	                    joint: Some(AiJointJson {
+	                        kind: AiJointKindJson::Hinge,
+	                        axis_join: Some([1.0, 0.0, 0.0]),
+	                        limits_degrees: Some([-30.0, 30.0]),
                         swing_limits_degrees: None,
                         twist_limits_degrees: None,
                     }),

@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::object::registry::{
     builtin_object_id, MeshKey, ObjectDef, ObjectPartDef, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
-    PrimitiveParams, PrimitiveVisualDef, PART_ANIMATION_INTERNAL_BASE_CHANNEL,
+    PrimitiveParams, PrimitiveVisualDef,
 };
 
 use super::super::state::Gen3dDraft;
@@ -18,6 +18,8 @@ use super::schema::{
     AiJointKindJson,
 };
 use super::{Gen3dAiJob, Gen3dPlannedComponent};
+
+const LEGACY_INTERNAL_BASE_CHANNEL: &str = "__base";
 
 fn default_true() -> bool {
     true
@@ -700,10 +702,14 @@ fn apply_one_op(
             {
                 return Err(reject("attachment offset became non-finite".into()));
             }
-            super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
-            super::internal_base_slot::rebase_slot_bases_for_offset_change(
+            super::attachment_motion_basis::normalize_attachment_motion(
+                &mut att.fallback_basis,
+                &mut att.animations,
+            );
+            super::attachment_motion_basis::rebase_bases_for_offset_change(
                 old_offset,
                 att.offset,
+                &mut att.fallback_basis,
                 &mut att.animations,
             );
 
@@ -944,10 +950,10 @@ fn apply_one_op(
         } => {
             let child_name = child_component.trim();
             let channel = channel.trim().to_string();
-            if channel == PART_ANIMATION_INTERNAL_BASE_CHANNEL {
+            if channel == LEGACY_INTERNAL_BASE_CHANNEL {
                 return Err(reject(format!(
-                    "Animation channel `{}` is reserved (managed internally).",
-                    PART_ANIMATION_INTERNAL_BASE_CHANNEL
+                    "Animation channel `{}` is reserved.",
+                    LEGACY_INTERNAL_BASE_CHANNEL
                 )));
             }
             let planned_child = find_planned_component_mut(planned, child_name).map_err(reject)?;
@@ -980,7 +986,10 @@ fn apply_one_op(
                         serde_json::Value::Number(affected.into()),
                     );
                 }
-                super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
+                super::attachment_motion_basis::normalize_attachment_motion(
+                    &mut att.fallback_basis,
+                    &mut att.animations,
+                );
                 mark_changed_component(state, att.parent.as_str());
             } else {
                 let indices: Vec<usize> = planned_child
@@ -1026,10 +1035,10 @@ fn apply_one_op(
             if channel.is_empty() {
                 return Err(reject("channel must be non-empty".into()));
             }
-            if channel == PART_ANIMATION_INTERNAL_BASE_CHANNEL {
+            if channel == LEGACY_INTERNAL_BASE_CHANNEL {
                 return Err(reject(format!(
-                    "Animation channel `{}` is reserved (managed internally).",
-                    PART_ANIMATION_INTERNAL_BASE_CHANNEL
+                    "Animation channel `{}` is reserved.",
+                    LEGACY_INTERNAL_BASE_CHANNEL
                 )));
             }
             if !scale.is_finite() || *scale <= 0.0 || *scale > 10.0 {
@@ -1160,10 +1169,10 @@ fn apply_one_op(
             if channel.is_empty() {
                 return Err(reject("channel must be non-empty".into()));
             }
-            if channel == PART_ANIMATION_INTERNAL_BASE_CHANNEL {
+            if channel == LEGACY_INTERNAL_BASE_CHANNEL {
                 return Err(reject(format!(
-                    "Animation channel `{}` is reserved (managed internally).",
-                    PART_ANIMATION_INTERNAL_BASE_CHANNEL
+                    "Animation channel `{}` is reserved.",
+                    LEGACY_INTERNAL_BASE_CHANNEL
                 )));
             }
             let planned_child = find_planned_component_mut(planned, child_name).map_err(reject)?;
@@ -1177,7 +1186,10 @@ fn apply_one_op(
                         channel, child_name
                     )));
                 }
-                super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
+                super::attachment_motion_basis::normalize_attachment_motion(
+                    &mut att.fallback_basis,
+                    &mut att.animations,
+                );
                 mark_changed_component(state, att.parent.as_str());
                 removed
             } else {
@@ -1448,9 +1460,6 @@ pub(super) fn query_component_parts_v1(
                         serde_json::Value::Array(
                             part.animations
                                 .iter()
-                                .filter(|slot| {
-                                    slot.channel.as_ref() != PART_ANIMATION_INTERNAL_BASE_CHANNEL
-                                })
                                 .map(|slot| {
                                     serde_json::json!({
                                         "channel": slot.channel.as_ref(),
@@ -1785,6 +1794,7 @@ mod tests {
                         parent_anchor: "origin".to_string(),
                         child_anchor: "origin".to_string(),
                         offset: Transform::IDENTITY,
+                        fallback_basis: Transform::IDENTITY,
                         joint: None,
                         animations: Vec::new(),
                     })

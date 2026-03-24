@@ -2866,9 +2866,6 @@ pub(super) fn draft_summary(config: &AppConfig, job: &Gen3dAiJob) -> serde_json:
             let mut edge_has_action = false;
             for slot in att.animations.iter() {
                 let channel = slot.channel.as_ref();
-                if channel == crate::object::registry::PART_ANIMATION_INTERNAL_BASE_CHANNEL {
-                    continue;
-                }
                 slots_total += 1;
                 *slots_by_channel.entry(channel.to_string()).or_insert(0) += 1;
                 match channel {

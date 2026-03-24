@@ -299,13 +299,16 @@ pub(super) fn apply_motion_authoring_for_channel(
             });
         }
 
-        if let Some(att) = job.planned_components[component_idx].attach_to.as_mut() {
-            att.animations
-                .retain(|slot| !replace.contains(slot.channel.as_ref()));
-            att.animations.extend(replacement_slots);
-            super::internal_base_slot::normalize_internal_base_slot(&mut att.animations);
-        }
-    }
+	        if let Some(att) = job.planned_components[component_idx].attach_to.as_mut() {
+	            att.animations
+	                .retain(|slot| !replace.contains(slot.channel.as_ref()));
+	            att.animations.extend(replacement_slots);
+	            super::attachment_motion_basis::normalize_attachment_motion(
+	                &mut att.fallback_basis,
+	                &mut att.animations,
+	            );
+	        }
+	    }
 
     if !issues.is_empty() {
         issues.sort();

@@ -4822,7 +4822,6 @@ pub(super) fn compute_gen3d_plan_hash(
                     .animations
                     .iter()
                     .map(|slot| slot.channel.as_ref())
-                    .filter(|ch| *ch != crate::object::registry::PART_ANIMATION_INTERNAL_BASE_CHANNEL)
                     .collect();
                 let joint = att.joint.as_ref().map(|j| {
                     serde_json::json!({

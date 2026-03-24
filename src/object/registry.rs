@@ -173,10 +173,6 @@ pub(crate) struct PartAnimationSlot {
     pub(crate) spec: PartAnimationSpec,
 }
 
-/// Reserved internal channel used as a last-priority fallback to apply a constant basis transform
-/// when no other channel slot matches.
-pub(crate) const PART_ANIMATION_INTERNAL_BASE_CHANNEL: &str = "__base";
-
 #[derive(Clone, Debug)]
 pub(crate) struct ObjectPartDef {
     pub(crate) part_id: Option<u128>,
@@ -185,6 +181,11 @@ pub(crate) struct ObjectPartDef {
     pub(crate) attachment: Option<AttachmentDef>,
     pub(crate) animations: Vec<PartAnimationSlot>,
     pub(crate) transform: Transform,
+    /// Constant basis transform applied when no animation slot matches the active channel.
+    ///
+    /// This exists to preserve an attachment edge's "rest pose" under offset rebasing in Gen3D
+    /// preserve-mode, without encoding that behavior as a synthetic animation channel.
+    pub(crate) fallback_basis: Transform,
 }
 
 impl ObjectPartDef {
@@ -196,6 +197,7 @@ impl ObjectPartDef {
             attachment: None,
             animations: Vec::new(),
             transform,
+            fallback_basis: Transform::IDENTITY,
         }
     }
 
@@ -207,6 +209,7 @@ impl ObjectPartDef {
             attachment: None,
             animations: Vec::new(),
             transform,
+            fallback_basis: Transform::IDENTITY,
         }
     }
 
@@ -221,6 +224,7 @@ impl ObjectPartDef {
             attachment: None,
             animations: Vec::new(),
             transform,
+            fallback_basis: Transform::IDENTITY,
         }
     }
 

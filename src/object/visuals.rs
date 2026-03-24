@@ -11,7 +11,6 @@ use crate::object::registry::{
     AttachmentDef, MaterialKey, MeshKey, ObjectLibrary, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
     PartAnimationSpinAxisSpace, PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
-    PART_ANIMATION_INTERNAL_BASE_CHANNEL,
 };
 use crate::object::types::characters;
 use crate::types::{
@@ -265,6 +264,7 @@ pub(crate) struct PartAnimationPlayer {
     pub(crate) child_object_id: Option<u128>,
     pub(crate) attachment: Option<AttachmentDef>,
     pub(crate) base_transform: Transform,
+    pub(crate) fallback_basis: Transform,
     pub(crate) animations: Vec<PartAnimationSlot>,
     pub(crate) apply_aim_yaw: bool,
 }
@@ -504,6 +504,7 @@ fn spawn_object_visuals_inner(
                     child_object_id,
                     attachment: part.attachment.clone(),
                     base_transform: part.transform,
+                    fallback_basis: part.fallback_basis,
                     animations: part.animations.clone(),
                     apply_aim_yaw,
                 });
@@ -898,7 +899,6 @@ pub(crate) fn update_part_animations(
                 "move",
                 "idle",
                 "ambient",
-                PART_ANIMATION_INTERNAL_BASE_CHANNEL,
             ] {
                 let channel_active = match channel {
                     "attack_primary" => attack_active,
@@ -907,7 +907,6 @@ pub(crate) fn update_part_animations(
                     "idle" => idle_active,
                     // Ambient is always active (fallback animation like fans/spinners).
                     "ambient" => true,
-                    PART_ANIMATION_INTERNAL_BASE_CHANNEL => true,
                     _ => false,
                 };
                 if !channel_active {
@@ -1030,7 +1029,7 @@ pub(crate) fn update_part_animations(
             }
             (spec.basis, sample_part_animation(&spec.clip, t))
         } else {
-            (Transform::IDENTITY, Transform::IDENTITY)
+            (player.fallback_basis, Transform::IDENTITY)
         };
         let mut basis = basis;
         if !basis.translation.is_finite() || !basis.rotation.is_finite() || !basis.scale.is_finite()
@@ -1230,12 +1229,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn internal_base_channel_is_used_as_last_fallback() {
-        use crate::object::registry::{
-            PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot,
-            PartAnimationSpec, PART_ANIMATION_INTERNAL_BASE_CHANNEL,
-        };
-
+    fn fallback_basis_is_used_as_last_fallback() {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
         app.insert_resource(ObjectLibrary::default());
@@ -1250,23 +1244,6 @@ mod tests {
             })
             .id();
 
-        let slot = PartAnimationSlot {
-            channel: PART_ANIMATION_INTERNAL_BASE_CHANNEL.into(),
-            spec: PartAnimationSpec {
-                driver: PartAnimationDriver::Always,
-                speed_scale: 1.0,
-                time_offset_units: 0.0,
-                basis: Transform::IDENTITY,
-                clip: PartAnimationDef::Loop {
-                    duration_secs: 1.0,
-                    keyframes: vec![PartAnimationKeyframeDef {
-                        time_secs: 0.0,
-                        delta: Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
-                    }],
-                },
-            },
-        };
-
         let part = app
             .world_mut()
             .spawn((
@@ -1277,7 +1254,8 @@ mod tests {
                     child_object_id: None,
                     attachment: None,
                     base_transform: Transform::IDENTITY,
-                    animations: vec![slot],
+                    fallback_basis: Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+                    animations: Vec::new(),
                     apply_aim_yaw: false,
                 },
             ))
@@ -1292,7 +1270,7 @@ mod tests {
             .expect("part entity has Transform");
         assert!(
             (transform.translation - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-4,
-            "expected __base slot to be selected as fallback when moving"
+            "expected fallback_basis to be applied when no channel slot matches"
         );
     }
 
@@ -1498,6 +1476,7 @@ mod tests {
                         child_anchor: "arm_mount".into(),
                     }),
                     base_transform: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
                     animations: vec![slot],
                     apply_aim_yaw: false,
                 },
@@ -1640,6 +1619,7 @@ mod tests {
                         child_anchor: "arm_mount".into(),
                     }),
                     base_transform: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
                     animations: vec![slot],
                     apply_aim_yaw: false,
                 },
@@ -1738,6 +1718,7 @@ mod tests {
                         child_anchor: "origin".into(),
                     }),
                     base_transform: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
                     animations: Vec::new(),
                     apply_aim_yaw: true,
                 },
@@ -1832,6 +1813,7 @@ mod tests {
                     child_object_id: None,
                     attachment: None,
                     base_transform: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
                     animations: Vec::new(),
                     apply_aim_yaw: true,
                 },
@@ -1924,6 +1906,7 @@ mod tests {
                     child_object_id: None,
                     attachment: None,
                     base_transform: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
                     animations: vec![PartAnimationSlot {
                         channel: "idle".into(),
                         spec,
@@ -2001,6 +1984,7 @@ mod tests {
                     child_object_id: None,
                     attachment: None,
                     base_transform: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
                     animations: vec![PartAnimationSlot {
                         channel: "move".into(),
                         spec,

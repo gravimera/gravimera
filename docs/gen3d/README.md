@@ -113,12 +113,13 @@ deterministic “apply-by-reference” tools:
 
 Both tools apply via `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev` gating.
 
-## Motion slots: per-slot basis + internal `__base`
+## Motion slots: per-slot basis + per-edge fallback basis
 
 When a component is attached (`attach_to`), the child’s placement is controlled by:
 
 - `attach_to.offset` (the authored base transform in the join frame)
 - optional per-edge animation slots (`attach_to.animations[]`)
+- `attach_to.fallback_basis` (a constant transform applied when no channel slot matches)
 
 At runtime, the selected slot composes transforms as:
 
@@ -130,6 +131,12 @@ Where:
 
 - `delta(t)` is sampled from the animation clip (`loop`/`once`/`ping_pong`/`spin`)
 - `slot.spec.basis` is a constant per-slot transform applied between the base offset and the delta
+
+When **no** channel slot matches, the edge falls back to:
+
+```
+animated_offset = attach_to.offset * attach_to.fallback_basis
+```
 
 ### Why basis exists (stable edits)
 
@@ -148,18 +155,10 @@ basis_new = inverse(new_offset) * old_offset * basis_old
 This keeps `new_offset * basis_new` equal to `old_offset * basis_old` (so the animation looks the
 same), without rewriting keyframes.
 
-### Internal `__base` fallback channel
+The same rebasing rule is applied to both:
 
-`__base` is a reserved internal channel used as the last-priority fallback slot (after `ambient`).
-It is automatically maintained on attachment edges:
-
-- If an attachment edge has at least one non-`__base` slot, ensure exactly one `__base` slot exists.
-- If an attachment edge has no non-`__base` slots, ensure there is no `__base` slot.
-
-This lets the system keep the “rest pose” stable even for channels where no slot exists (because
-the channel can fall back to `__base`, which carries a rebased `basis`).
-
-The AI/tools should not author or edit `__base` directly.
+- every slot’s `slot.spec.basis`
+- the edge’s `attach_to.fallback_basis` (used only when no slot matches)
 
 ## Debugging
 

@@ -1416,6 +1416,7 @@ pub(super) struct Gen3dPlannedAttachment {
     pub(super) parent_anchor: String,
     pub(super) child_anchor: String,
     pub(super) offset: Transform,
+    pub(super) fallback_basis: Transform,
     pub(super) joint: Option<AiJointJson>,
     pub(super) animations: Vec<PartAnimationSlot>,
 }
