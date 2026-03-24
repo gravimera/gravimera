@@ -1915,6 +1915,9 @@ pub(crate) fn gen3d_auto_save_when_done(
     }
 
     let mut save_note = "skipped".to_string();
+    let session_id_for_meta = task_queue
+        .running_session_id
+        .unwrap_or(task_queue.active_session_id);
 
     let wants_auto_save = draft.root_def().is_some()
         && draft.total_non_projectile_primitive_parts() > 0
@@ -1968,6 +1971,21 @@ pub(crate) fn gen3d_auto_save_when_done(
                         thumbnail_path,
                     ) {
                         warn!("Gen3D: thumbnail capture skipped: {err}");
+                    }
+
+                    if job.edit_base_prefab_id().is_none() {
+                        job.promote_to_edit_overwrite_from_descriptor(
+                            saved.prefab_id,
+                            prefab_descriptors.get(saved.prefab_id),
+                        );
+                        if let Some(meta) = task_queue.metas.get_mut(&session_id_for_meta) {
+                            if matches!(meta.kind, super::task_queue::Gen3dSessionKind::NewBuild) {
+                                meta.kind = super::task_queue::Gen3dSessionKind::EditOverwrite {
+                                    prefab_id: saved.prefab_id,
+                                };
+                            }
+                        }
+                        workshop.status = "Build finished. Prefab saved. Click Edit to start a new run; auto-save overwrites the same prefab id.".into();
                     }
 
                     let short = short_uuid(saved.prefab_id);

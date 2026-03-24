@@ -78,6 +78,13 @@ results until the run ends.
 
 ## DraftOps-first primitive editing (seeded edits)
 
+## Post-build edit flow
+
+When a Build run finishes and auto-save succeeds, the session is promoted to an Edit session. The
+Build button becomes Edit, and subsequent runs overwrite the same prefab id (the same behavior as
+clicking Edit from a prefab preview). If auto-save is skipped or fails, the session remains a Build
+session.
+
 For edit requests like “make the wings larger” where regeneration is not required, Gen3D prefers
 **in-place primitive edits**:
 

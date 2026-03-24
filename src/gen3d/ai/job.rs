@@ -757,6 +757,31 @@ impl Gen3dAiJob {
         self.save_overwrite_prefab_id = id;
     }
 
+    pub(crate) fn promote_to_edit_overwrite_from_descriptor(
+        &mut self,
+        prefab_id: u128,
+        descriptor: Option<&crate::prefab_descriptors::PrefabDescriptorFileV1>,
+    ) {
+        self.edit_base_prefab_id = Some(prefab_id);
+        self.save_overwrite_prefab_id = Some(prefab_id);
+        self.preserve_existing_components_mode = true;
+        self.seed_descriptor_meta = descriptor.map(|desc| AiDescriptorMetaJsonV1 {
+            version: 1,
+            name: desc
+                .label
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default(),
+            short: desc
+                .text
+                .as_ref()
+                .and_then(|t| t.short.as_ref())
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default(),
+            tags: desc.tags.clone(),
+        });
+    }
+
     pub(crate) fn last_saved_prefab_id(&self) -> Option<u128> {
         self.last_saved_prefab_id
     }
