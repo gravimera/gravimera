@@ -1350,14 +1350,20 @@ Hard requirements:\n\
     out
 }
 
-pub(super) fn build_gen3d_component_system_instructions() -> String {
-    "You are a 3D modeling assistant.\n\
-Return ONLY one JSON object (no markdown) for a single component.\n\
-Output MUST include top-level `version`: 2.\n\n\
-Rules:\n\
-- Use ONLY primitives: cuboid, cylinder, sphere, cone.\n\
-- You MUST output `anchors` with the exact names required by the plan.\n\
-- Every part MUST include `color` as [r,g,b,a] in 0..1.\n\
+ pub(super) fn build_gen3d_component_system_instructions() -> String {
+     "You are a 3D modeling assistant.\n\
+	Return ONLY one JSON object (no markdown) for a single component.\n\
+	Output MUST include top-level `version`: 2.\n\
+	Do NOT output any other top-level keys (no `name`).\n\
+\n\
+	Schema (field names are strict):\n\
+	- `anchors`: JSON ARRAY of {name,pos,forward,up} (use [] if none).\n\
+	- `parts`: JSON ARRAY of parts.\n\
+	- Each part MUST include: `primitive` (NOT `type`), `pos`, `scale`, `color`.\n\n\
+	Rules:\n\
+	- Use ONLY primitives: cuboid, cylinder, sphere, cone.\n\
+	- You MUST output `anchors` with the exact names required by the plan.\n\
+	- Every part MUST include `color` as [r,g,b,a] in 0..1.\n\
 - Units ~ meters; keep the component centered near the origin.\n\
 - Match the plan's `target_size` per axis in component-local +X/+Y/+Z (do NOT permute axes).\n\
 - For `cylinder`/`cone`, the shape axis is local +Y (use `up` to aim; use `scale.y` for length/height).\n"
