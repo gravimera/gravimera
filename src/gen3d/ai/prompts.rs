@@ -825,6 +825,10 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            - Do NOT inflate it to cover long tails, wings, antennas, swords, barrels, or other protrusions.\n\
            - If the unit is long/segmented (snake, tentacles), pick a reasonable central body footprint.\n\
          - For static objects (`mobility.kind` = `static`), `collider` is optional; if omitted, the engine falls back to a size-based AABB.\n\n\
+         Collider schema (STRICT):\n\
+         - `collider.kind` MUST be one of: `none`, `circle_xz`, `aabb_xz` (do NOT use `sphere`/`capsule`/etc).\n\
+         - `circle_xz`: {{\"kind\":\"circle_xz\",\"radius\": <number>}}.\n\
+         - `aabb_xz`: {{\"kind\":\"aabb_xz\",\"half_extents\":[<x>,<z>]}} (or `min`+`max`).\n\n\
          Combat decision (optional):\n\
          - Decide whether the object should be able to attack.\n\
          - Most buildings/props are NOT attack-capable.\n\
