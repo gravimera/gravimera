@@ -59,6 +59,42 @@ fn normalize_ai_plan_component_joint_fields(json_value: &mut serde_json::Value) 
     }
 }
 
+fn normalize_ai_plan_top_level_fields(json_value: &mut serde_json::Value) {
+    let Some(obj) = json_value.as_object_mut() else {
+        return;
+    };
+
+    // Models sometimes include extra top-level metadata fields (ex: `name`, `purpose`) even when
+    // instructed to return a strict plan object. Drop unknown top-level fields so we don't trigger
+    // an expensive LLM schema-repair step on otherwise-valid plans.
+    const ALLOWED: [&str; 10] = [
+        "version",
+        "rig",
+        "mobility",
+        "attack",
+        "aim",
+        "collider",
+        "assembly_notes",
+        "root_component",
+        "reuse_groups",
+        "components",
+    ];
+
+    let mut dropped: Vec<String> = Vec::new();
+    let keys: Vec<String> = obj.keys().cloned().collect();
+    for key in keys {
+        if !ALLOWED.contains(&key.as_str()) {
+            obj.remove(&key);
+            dropped.push(key);
+        }
+    }
+
+    if !dropped.is_empty() {
+        dropped.sort();
+        debug!("Gen3D: dropped unknown top-level plan fields: {dropped:?}");
+    }
+}
+
 fn normalize_snake_case_token(raw: &str) -> String {
     let mut normalized = raw.trim().to_ascii_lowercase();
     normalized = normalized.replace(' ', "_");
@@ -178,6 +214,7 @@ pub(super) fn parse_ai_plan_from_text(text: &str) -> Result<AiPlanJsonV1, String
     }
 
     normalize_ai_plan_component_joint_fields(&mut json_value);
+    normalize_ai_plan_top_level_fields(&mut json_value);
 
     let plan: AiPlanJsonV1 =
         serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
@@ -654,6 +691,45 @@ mod tests {
                 .is_some(),
             "root component joint should not be dropped (strict schema parsing should surface it)"
         );
+    }
+
+    #[test]
+    fn parse_ai_plan_drops_unknown_top_level_fields() {
+        let text = r#"
+        {
+          "version": 8,
+          "name": "warcar",
+          "purpose": "fast vehicle",
+          "mobility": { "kind": "ground", "max_speed": 6.0 },
+          "attack": null,
+          "aim": null,
+          "collider": { "kind": "aabb_xz", "half_extents": [1.0, 2.0] },
+          "assembly_notes": "",
+          "root_component": "root",
+          "reuse_groups": [],
+          "components": [
+            {
+              "name": "root",
+              "purpose": "",
+              "modeling_notes": "",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": [
+                { "name": "a", "pos": [0.0,0.0,0.0], "forward": [0.0,0.0,1.0], "up": [0.0,1.0,0.0] }
+              ],
+              "contacts": [],
+              "attach_to": null
+            }
+          ]
+        }
+        "#;
+
+        let plan = parse_ai_plan_from_text(text).expect("plan should parse");
+        assert_eq!(plan.version, 8);
+        assert!(matches!(
+            plan.mobility,
+            super::super::schema::AiMobilityJson::Ground { .. }
+        ));
+        assert_eq!(plan.components.len(), 1);
     }
 
     #[test]
