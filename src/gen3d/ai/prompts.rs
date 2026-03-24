@@ -792,6 +792,12 @@ mod tests {
     }
 
     #[test]
+    fn gen3d_plan_system_instructions_disallow_top_level_name_field() {
+        let text = build_gen3d_plan_system_instructions();
+        assert!(text.contains("common mistake: `name`"));
+    }
+
+    #[test]
     fn gen3d_plan_ops_system_instructions_disallow_full_plan_json() {
         let text = build_gen3d_plan_ops_system_instructions();
         assert!(text.contains("Do NOT output a full plan JSON"));
@@ -804,6 +810,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
     format!(
         "You are a 3D modeling assistant.\n\
          Return STRICT JSON for a component assembly plan.\n\n\
+         - Do NOT output any top-level fields not in the schema (common mistake: `name`).\n\n\
          Coordinate system:\n\
          - +Y is up, +X is right, +Z is forward.\n\
          - Orientations are given as direction vectors (no Euler angles).\n\
