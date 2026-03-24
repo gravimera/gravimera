@@ -61,6 +61,11 @@ High-level flow:
 - Seeded Edit/Fork sessions: preserve-mode plan ops → capture part snapshots → DraftOps suggest+apply
   → QA loop → finish
 
+For a step-by-step walkthrough (including the exact tool ids/args and where prompt text is persisted),
+see:
+
+- `docs/gen3d/pipeline_walkthrough.md`
+
 Config note:
 
 - Legacy `[gen3d].orchestrator = "pipeline"` is accepted but ignored.

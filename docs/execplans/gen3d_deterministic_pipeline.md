@@ -1,4 +1,8 @@
-# Gen3D deterministic pipeline orchestrator (DraftOps-first) with agent-step fallback
+# Gen3D deterministic pipeline orchestrator (DraftOps-first)
+
+> Status update (2026-03-25): Gen3D is **pipeline-only** now. The legacy “agent-step” orchestrator
+> was removed (commit `e31540f`). References to “fallback to agent_step” in older sections of this
+> ExecPlan are historical and no longer apply.
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -7,13 +11,27 @@ This repository includes `PLANS.md` at the repo root. This document must be main
 
 ## Purpose / Big Picture
 
-Gen3D “Build” is currently orchestrated by a Codex-style `agent_step` loop: the model decides which tool to call next (plan, component generation, QA, review, etc.). That makes sequencing slow (extra LLM turns), fragile (wrong next step / malformed tool args), and hard to test.
+Gen3D “Build” used to be orchestrated by a Codex-style `agent_step` loop: the model decided which
+tool to call next (plan, component generation, QA, review, etc.). That made sequencing slow (extra
+LLM turns), fragile (wrong next step / malformed tool args), and hard to test. The agent-step loop
+has since been removed.
 
-After this change, Gen3D will have a deterministic **pipeline orchestrator** that manages the fixed workflow as a state machine. The model will still be used for the inherently open-ended parts (plan generation, component drafts, plan ops, review delta, and DraftOps suggestions), but the *process management* (what happens next, retries, gating, budgets, stopping conditions) will be deterministic and testable.
+Gen3D now has a deterministic **pipeline orchestrator** that manages the fixed workflow as a state
+machine. The model is still used for the inherently open-ended parts (plan generation, component
+drafts, plan ops, review delta, and DraftOps suggestions), but the *process management* (what
+happens next, retries, gating, budgets, stopping conditions) is deterministic and testable.
 
-In this plan, “deterministic” means: given the same in-memory job state + the same tool results, the engine makes the same decision about what to do next. It does **not** mean the LLM always emits identical text. LLM-backed tools are treated as suggestion producers that must conform to strict schemas, and their effects are applied by deterministic code paths (`plan_ops`, `draft_ops`, `convert::apply_ai_review_delta_actions`, validation/QA). Pipeline decisions must be based on explicit state/tool outputs (counters, hashes, `qa_v1` fields), not object-type heuristics (“chairs vs snakes”).
+In this plan, “deterministic” means: given the same in-memory job state + the same tool results, the
+engine makes the same decision about what to do next. It does **not** mean the LLM always emits
+identical text. LLM-backed tools are treated as suggestion producers that must conform to strict
+schemas, and their effects are applied by deterministic code paths (`plan_ops`, `draft_ops`,
+`convert::apply_ai_review_delta_actions`, validation/QA). Pipeline decisions must be based on
+explicit state/tool outputs (counters, hashes, `qa_v1` fields), not object-type heuristics (“chairs vs
+snakes”).
 
-We will keep the existing `agent_step` loop as a **fallback**. When the pipeline cannot make progress (tool schema failures beyond repair budget, repeated atomic DraftOps rejections, etc.), it will switch to agent-step and continue the run using the current implementation.
+When the pipeline cannot make progress (tool schema failures beyond repair budget, repeated atomic
+DraftOps rejections, etc.), it stops **best-effort** with an explicit reason and preserves the best
+draft it could build.
 
 The most important product requirement is **DraftOps-first editing**: in seeded Edit/Fork sessions, user requests like “make the cannon longer” should prefer in-place primitive edits (`apply_draft_ops_v1`) rather than regenerating whole components. This requires a new LLM-backed tool that *suggests* DraftOps deterministically (strict schema), then the engine applies them via `apply_draft_ops_v1` (atomic + revision-gated).
 
@@ -22,7 +40,7 @@ How to see it working (after implementation):
 1. Start the game and enter Gen3D Workshop (Build Preview scene).
 2. Build a new object from a text prompt. Observe status text like “Pipeline: planning → generating components → QA → review”.
 3. Seed an Edit/Fork session from a Gen3D-saved prefab, enter an edit prompt like “make the barrel longer and darken it”, click Build, and observe that the run performs DraftOps edits (with diffs in artifacts) instead of component regeneration.
-4. Intentionally trigger a failure (e.g., mock backend returning invalid JSON) and observe that the run switches to agent-step fallback (status includes a clear reason).
+4. Intentionally trigger a failure (e.g., mock backend returning invalid JSON) and observe that the run stops best-effort (status includes a clear reason + artifacts).
 
 
 ## Progress
@@ -33,9 +51,9 @@ How to see it working (after implementation):
 - [x] (2026-03-19 01:35 CST) Added new LLM tool: `llm_generate_draft_ops_v1` (suggestions only; no mutation) + strict structured-output schema + engine-side validation.
 - [x] (2026-03-19 01:35 CST) Implemented create-session pipeline flow (new Build): plan → components → QA → (render/review) loops → finish.
 - [x] (2026-03-19 01:35 CST) Implemented edit-session pipeline flow (seeded Edit/Fork): plan-ops → DraftOps suggest+apply (atomic) → QA → (render/review) loops → finish.
-- [x] (2026-03-19 01:35 CST) Implemented deterministic fallback to agent-step (bounded retries; explicit status + Info Store event).
 - [x] (2026-03-19 01:35 CST) Added mock backend responses + offline tests so the pipeline is regression-tested without network.
-- [x] (2026-03-19 01:35 CST) Updated docs (`docs/gen3d/README.md`) to describe pipeline mode + fallback and the new DraftOps tool.
+- [x] (2026-03-19 01:35 CST) Updated docs (`docs/gen3d/README.md`) to describe pipeline mode and the new DraftOps tool.
+- [x] (2026-03-24 23:47 CST) Removed agent-step orchestrator (pipeline-only).
 - [x] (2026-03-19 01:36 CST) Ran `cargo test`.
 - [x] (2026-03-19 01:48 CST) Ran the rendered smoke test (`cargo run -- --rendered-seconds 2`).
 
@@ -64,8 +82,8 @@ How to see it working (after implementation):
 
 ## Decision Log
 
-- Decision: The default orchestrator will be a deterministic pipeline state machine; `agent_step` remains available as a fallback path.
-  Rationale: Deterministic sequencing reduces LLM turns and prevents many classes of agent mistakes, while fallback preserves maximum capability for edge cases.
+- Decision: The default orchestrator is a deterministic pipeline state machine (pipeline-only).
+  Rationale: Deterministic sequencing reduces LLM turns and prevents many classes of agent mistakes.
   Date/Author: 2026-03-18 / assistant + user
 
 - Decision: Editing will be DraftOps-first and will require adding `llm_generate_draft_ops_v1` (suggestions-only) rather than expanding `llm_review_delta_v1`.
@@ -73,14 +91,14 @@ How to see it working (after implementation):
   Date/Author: 2026-03-18 / assistant + user
 
 - Decision: No “AskUserClarification” state will exist in the pipeline.
-  Rationale: Explicit user requirement. Ambiguity will be handled by bounded best-effort attempts, LLMRepair, and then agent-step fallback or best-effort stop.
+  Rationale: Explicit user requirement. Ambiguity is handled by bounded best-effort attempts, LLMRepair, and then best-effort stop.
   Date/Author: 2026-03-18 / assistant + user
 
 - Decision: Avoid object-type heuristics in pipeline logic; transitions must be based on explicit tool outputs/state flags, not special-casing “chairs vs snakes”.
   Rationale: Gen3D must be generic (“generate any object”); process management must not encode per-object heuristics.
   Date/Author: 2026-03-18 / assistant
 
-- Decision: Make QA failure handling explicit and deterministic in the pipeline: apply deterministic QA fixits first (when provided), then attempt motion authoring if motion is the blocker, then use review-delta for replan/regen, and only then fall back to agent-step.
+- Decision: Make QA failure handling explicit and deterministic in the pipeline: apply deterministic QA fixits first (when provided), then attempt motion authoring if motion is the blocker, then use review-delta for replan/regen.
   Rationale: Without a defined QA remediation loop, the pipeline will either stall or fall back immediately, defeating the purpose. Using `qa_v1` outputs (including capability-gaps fixits) keeps the logic generic and testable.
   Date/Author: 2026-03-18 / assistant
 
@@ -91,9 +109,9 @@ How to see it working (after implementation):
 
 ## Outcomes & Retrospective
 
-- Outcome: Gen3D can now run in a deterministic pipeline mode (engine-driven state machine) with bounded retries and explicit fallback to agent-step.
+- Outcome: Gen3D runs as a deterministic pipeline mode (engine-driven state machine) with bounded retries and best-effort stop conditions.
 - Outcome: Seeded Edit/Fork runs are DraftOps-first via a new schema-constrained tool `llm_generate_draft_ops_v1` (suggestions-only) + deterministic application via `apply_draft_ops_v1` (atomic + `if_assembly_rev`).
-- Outcome: Offline regression coverage exists for create + seeded edit flows, plus a forced-failure case that triggers pipeline fallback to agent-step on persistent DraftOps schema failures (mock backend marker).
+- Outcome: Offline regression coverage exists for create + seeded edit flows, plus a forced-failure case that triggers a best-effort stop on persistent DraftOps schema failures (mock backend marker).
 - Outcome: Rendered smoke run starts and exits cleanly (`--rendered-seconds 2`).
 
 
@@ -102,8 +120,7 @@ How to see it working (after implementation):
 Gen3D lives under `src/gen3d/*`. The relevant parts for orchestration are:
 
 - `src/gen3d/ai/orchestration.rs`: top-level Gen3D “Build” start/resume, budgets, and the legacy (non-agent) pipeline phases.
-- `src/gen3d/ai/agent_loop/mod.rs`: current tool-driven `agent_step` polling loop.
-- `src/gen3d/ai/agent_step.rs`: parses `gen3d_agent_step_v1`, executes actions, and auto-requests the next agent step.
+- `src/gen3d/ai/pipeline_orchestrator.rs`: deterministic pipeline state machine (`Gen3dPipelineStage`).
 - `src/gen3d/ai/agent_tool_dispatch.rs`: executes one tool call (deterministic tools + LLM-backed tools). This is where `llm_generate_plan_v1`, `llm_generate_components_v1`, etc. are spawned.
 - `src/gen3d/ai/agent_tool_poll.rs`: polls in-flight tool calls, parses structured outputs, runs LLMRepair on schema errors, and applies mutations for LLM-backed tools (plan/component/review/motion).
 - `src/gen3d/ai/draft_ops.rs`: deterministic “patch language” for primitive edits (`apply_draft_ops_v1`) and component inspection (`query_component_parts_v1`).
@@ -113,7 +130,6 @@ Gen3D lives under `src/gen3d/*`. The relevant parts for orchestration are:
 
 Definitions used in this plan:
 
-- “Agent-step”: the LLM call that returns a `gen3d_agent_step_v1` JSON object deciding which tools to call next (`src/gen3d/agent/protocol.rs`).
 - “Pipeline orchestrator”: an engine-driven state machine that decides the next tool call deterministically.
 - “LLM-backed tool”: a tool whose execution spawns an LLM request with a strict JSON schema (examples: `llm_generate_plan_v1`, `llm_generate_components_v1`, `llm_generate_plan_ops_v1`, `llm_review_delta_v1`).
 - “DraftOps”: the deterministic patch format consumed by `apply_draft_ops_v1` (primitive edits, anchor/attachment edits, animation-slot edits).
