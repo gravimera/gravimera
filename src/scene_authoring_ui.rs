@@ -14,6 +14,7 @@ use crate::scene_sources_runtime::{
 };
 use crate::scene_store::SceneSaveRequest;
 use crate::scene_validation::{HardGateSpecV1, ScorecardSpecV1};
+use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::types::{
     BuildObject, Commandable, EmojiAtlas, ObjectId, ObjectPrefabId, ObjectTint, Player,
     SceneLayerOwner, UiFonts,
@@ -879,6 +880,48 @@ pub(crate) fn scene_ui_text_field_focus(
             }
         }
     }
+}
+
+pub(crate) fn scene_ui_update_ime_position(
+    state: Res<SceneAuthoringUiState>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    fields: Query<(&SceneUiTextField, &ComputedNode, &UiGlobalTransform)>,
+    text_roots: Query<(Entity, &SceneUiTextFieldText)>,
+    children: Query<&Children>,
+    nodes: Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        Option<&Text>,
+        Option<&TextSpan>,
+        Option<&ImageNode>,
+        Option<&Visibility>,
+    )>,
+) {
+    if !state.open || state.focused_field == SceneUiField::None {
+        return;
+    }
+    let Some((_, node, transform)) = fields
+        .iter()
+        .find(|(field, _node, _transform)| field.field == state.focused_field)
+    else {
+        return;
+    };
+    let rich_root = text_roots
+        .iter()
+        .find(|(_, text_field)| text_field.field == state.focused_field)
+        .map(|(entity, _)| entity);
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    set_ime_position_for_rich_text(
+        &mut window,
+        node,
+        *transform,
+        rich_root,
+        ImeAnchorXPolicy::LineEnd,
+        &children,
+        &nodes,
+    );
 }
 
 pub(crate) fn scene_ui_text_input(

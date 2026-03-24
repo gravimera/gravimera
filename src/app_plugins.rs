@@ -292,6 +292,14 @@ impl Plugin for RenderedUiPlugin {
         );
         app.add_systems(
             Update,
+            crate::model_library_ui::model_library_search_ime_position
+                .after(crate::model_library_ui::model_library_search_text_input)
+                .run_if(crate::automation::local_input_enabled)
+                .run_if(console::console_closed)
+                .run_if(crate::scene_authoring_ui::scene_ui_closed),
+        );
+        app.add_systems(
+            Update,
             crate::model_library_ui::model_library_gen3d_placeholder_item_interactions
                 .after(crate::model_library_ui::model_library_sync_gen3d_placeholders)
                 .run_if(crate::automation::local_input_enabled)
@@ -317,8 +325,12 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::workspace_scenes_ui::scenes_panel_update_ime_position
+                    .after(crate::workspace_scenes_ui::scenes_panel_name_field_focus)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::workspace_scenes_ui::scenes_panel_scroll_wheel
                     .after(crate::workspace_scenes_ui::scenes_panel_name_field_focus)
+                    .after(crate::workspace_scenes_ui::scenes_panel_update_ime_position)
                     .run_if(crate::automation::local_input_enabled),
             )
                 .run_if(console::console_closed)
@@ -364,8 +376,11 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::scene_authoring_ui::scene_ui_scene_tab_buttons),
                 crate::scene_authoring_ui::scene_ui_text_field_focus
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::scene_authoring_ui::scene_ui_update_ime_position
+                    .after(crate::scene_authoring_ui::scene_ui_text_field_focus),
                 crate::scene_authoring_ui::scene_ui_action_buttons
                     .after(crate::scene_authoring_ui::scene_ui_text_field_focus)
+                    .after(crate::scene_authoring_ui::scene_ui_update_ime_position)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::scene_build_ai::scene_build_ai_poll
                     .after(crate::scene_authoring_ui::scene_ui_action_buttons),
@@ -521,6 +536,9 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_prompt_box_focus)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_prompt_ime_position
+                    .after(crate::gen3d::gen3d_prompt_text_input)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_image_viewer_click_to_close
                     .after(crate::gen3d::gen3d_thumbnail_button_open_viewer)
                     .run_if(crate::automation::local_input_enabled),
@@ -733,8 +751,12 @@ impl Plugin for RenderedGameplayPlugin {
                     .after(crate::motion_ui::motion_algorithm_ui_update)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::motion_ui::meta_speak_ui_update_ime_position
+                    .after(crate::motion_ui::meta_speak_ui_content_field_focus)
+                    .run_if(crate::automation::local_input_enabled),
                 crate::motion_ui::meta_speak_ui_button_clicks
                     .after(crate::motion_ui::meta_speak_ui_content_field_focus)
+                    .after(crate::motion_ui::meta_speak_ui_update_ime_position)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::motion_ui::motion_algorithm_ui_close_button_styles

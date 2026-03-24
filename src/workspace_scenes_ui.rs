@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use crate::realm::ActiveRealmScene;
 use crate::rich_text::set_rich_text_line;
 use crate::scene_store::SceneSaveRequest;
+use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 use crate::workspace_ui::{TopPanelTab, TopPanelUiState};
 
@@ -366,6 +367,48 @@ pub(crate) fn scenes_panel_name_field_focus(
             }
         }
     }
+}
+
+pub(crate) fn scenes_panel_update_ime_position(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    state: Res<ScenesPanelUiState>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    fields: Query<(&ComputedNode, &UiGlobalTransform), With<AddSceneNameField>>,
+    text_root: Query<Entity, With<AddSceneNameFieldText>>,
+    children: Query<&Children>,
+    nodes: Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        Option<&Text>,
+        Option<&TextSpan>,
+        Option<&ImageNode>,
+        Option<&Visibility>,
+    )>,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open {
+        return;
+    }
+    if state.focused_field != ScenesUiField::AddSceneName {
+        return;
+    }
+    let Ok((node, transform)) = fields.single() else {
+        return;
+    };
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    let rich_root = text_root.iter().next();
+    set_ime_position_for_rich_text(
+        &mut window,
+        node,
+        *transform,
+        rich_root,
+        ImeAnchorXPolicy::LineEnd,
+        &children,
+        &nodes,
+    );
 }
 
 pub(crate) fn scenes_panel_text_input(

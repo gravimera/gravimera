@@ -301,6 +301,9 @@ pub(crate) struct Gen3dPromptScrollbarThumb;
 pub(crate) struct Gen3dPromptRichText;
 
 #[derive(Component)]
+pub(crate) struct Gen3dPromptHintText;
+
+#[derive(Component)]
 pub(crate) struct Gen3dGenerateButton;
 
 #[derive(Component)]

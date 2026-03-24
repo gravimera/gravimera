@@ -67,6 +67,7 @@ Voice presets are mapped to `soundtest` effects:
 ## Input Behavior
 
 - `content` field supports direct typing, `Backspace`, `Esc`, paste (`Ctrl/Cmd+V`), IME-based Chinese input, and emoji. The hint text only appears when the field is empty.
+- IME candidate/keyboard anchor follows the focused input field.
 - While `content` is focused, gameplay keyboard state is suppressed so typing does not trigger movement/shortcuts.
 
 ## Text + Emoji Rendering

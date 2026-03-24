@@ -33,6 +33,187 @@ const OBJECT_STATUS_BAR_LAYOUT_STABLE_EPSILON_PX: f32 = 0.5;
 const OBJECT_STATUS_BAR_LAYOUT_STABLE_FRAMES: u8 = 2;
 const UI_TOAST_MAX_COUNT: usize = 6;
 const UI_TOAST_FADE_OUT_SECS: f32 = 0.35;
+const IME_ANCHOR_X_PADDING_PX: f32 = 2.0;
+const IME_ANCHOR_FALLBACK_Y_OFFSET_PX: f32 = 14.0;
+const IME_ANCHOR_LINE_Y_OFFSET_PX: f32 = 0.0;
+const IME_LINE_Y_EPS_PX: f32 = 2.0;
+
+#[derive(Clone, Copy, Debug)]
+struct UiBounds {
+    min: Vec2,
+    max: Vec2,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ImeAnchorXPolicy {
+    LineEnd,
+    ContentLeft,
+}
+
+fn ui_node_bounds(node: &ComputedNode, transform: UiGlobalTransform) -> Option<UiBounds> {
+    if !node.size.is_finite() || node.size.x <= 0.0 || node.size.y <= 0.0 {
+        return None;
+    }
+    let half = node.size * 0.5;
+    let corners = [
+        Vec2::new(-half.x, -half.y),
+        Vec2::new(half.x, -half.y),
+        Vec2::new(half.x, half.y),
+        Vec2::new(-half.x, half.y),
+    ];
+    let mut min = Vec2::splat(f32::INFINITY);
+    let mut max = Vec2::splat(f32::NEG_INFINITY);
+    for corner in corners {
+        let point = transform.transform_point2(corner);
+        min = min.min(point);
+        max = max.max(point);
+    }
+    if !min.is_finite() || !max.is_finite() {
+        return None;
+    }
+    Some(UiBounds { min, max })
+}
+
+fn ui_content_bounds(node: &ComputedNode, transform: UiGlobalTransform) -> Option<UiBounds> {
+    let left = -node.size.x * 0.5 + node.border.min_inset.x + node.padding.min_inset.x;
+    let right = node.size.x * 0.5 - node.border.max_inset.x - node.padding.max_inset.x;
+    let top = -node.size.y * 0.5 + node.border.min_inset.y + node.padding.min_inset.y;
+    let bottom = node.size.y * 0.5 - node.border.max_inset.y - node.padding.max_inset.y;
+    if !left.is_finite()
+        || !right.is_finite()
+        || !top.is_finite()
+        || !bottom.is_finite()
+        || right <= left
+        || bottom <= top
+    {
+        return None;
+    }
+    let corners = [
+        Vec2::new(left, top),
+        Vec2::new(right, top),
+        Vec2::new(right, bottom),
+        Vec2::new(left, bottom),
+    ];
+    let mut min = Vec2::splat(f32::INFINITY);
+    let mut max = Vec2::splat(f32::NEG_INFINITY);
+    for corner in corners {
+        let point = transform.transform_point2(corner);
+        min = min.min(point);
+        max = max.max(point);
+    }
+    if !min.is_finite() || !max.is_finite() {
+        return None;
+    }
+    Some(UiBounds { min, max })
+}
+
+fn collect_rich_text_bounds(
+    root: Entity,
+    children_q: &Query<&Children>,
+    node_q: &Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        Option<&Text>,
+        Option<&TextSpan>,
+        Option<&ImageNode>,
+        Option<&Visibility>,
+    )>,
+) -> Vec<UiBounds> {
+    let mut stack = vec![root];
+    let mut bounds = Vec::new();
+    while let Some(entity) = stack.pop() {
+        if let Ok(children) = children_q.get(entity) {
+            for child in children.iter() {
+                stack.push(child);
+            }
+        }
+        let Ok((node, transform, text, span, image, visibility)) = node_q.get(entity) else {
+            continue;
+        };
+        if matches!(visibility, Some(Visibility::Hidden)) {
+            continue;
+        }
+        if text.is_some() || span.is_some() || image.is_some() {
+            if let Some(rect) = ui_node_bounds(node, *transform) {
+                bounds.push(rect);
+            }
+        }
+    }
+    bounds
+}
+
+fn last_line_bounds(bounds: &[UiBounds]) -> Option<UiBounds> {
+    let mut max_bottom = f32::NEG_INFINITY;
+    for rect in bounds {
+        max_bottom = max_bottom.max(rect.max.y);
+    }
+    if !max_bottom.is_finite() {
+        return None;
+    }
+    let mut line: Option<UiBounds> = None;
+    for rect in bounds {
+        if (max_bottom - rect.max.y).abs() <= IME_LINE_Y_EPS_PX {
+            line = Some(match line {
+                None => *rect,
+                Some(acc) => UiBounds {
+                    min: acc.min.min(rect.min),
+                    max: acc.max.max(rect.max),
+                },
+            });
+        }
+    }
+    line
+}
+
+pub(crate) fn set_ime_position_for_rich_text(
+    window: &mut Window,
+    field_node: &ComputedNode,
+    field_transform: UiGlobalTransform,
+    rich_text_root: Option<Entity>,
+    anchor_x: ImeAnchorXPolicy,
+    children_q: &Query<&Children>,
+    node_q: &Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        Option<&Text>,
+        Option<&TextSpan>,
+        Option<&ImageNode>,
+        Option<&Visibility>,
+    )>,
+) {
+    let Some(content_bounds) = ui_content_bounds(field_node, field_transform) else {
+        return;
+    };
+    let mut anchor = Vec2::new(
+        content_bounds.min.x + IME_ANCHOR_X_PADDING_PX,
+        content_bounds.min.y + IME_ANCHOR_FALLBACK_Y_OFFSET_PX,
+    );
+    if let Some(root) = rich_text_root {
+        let bounds = collect_rich_text_bounds(root, children_q, node_q);
+        if let Some(line) = last_line_bounds(&bounds) {
+            anchor.x = match anchor_x {
+                ImeAnchorXPolicy::LineEnd => line.max.x,
+                ImeAnchorXPolicy::ContentLeft => content_bounds.min.x + IME_ANCHOR_X_PADDING_PX,
+            };
+            anchor.y = line.max.y + IME_ANCHOR_LINE_Y_OFFSET_PX;
+        }
+    }
+    let min_x = content_bounds.min.x + IME_ANCHOR_X_PADDING_PX;
+    let max_x = content_bounds.max.x - IME_ANCHOR_X_PADDING_PX;
+    if max_x > min_x && anchor.x.is_finite() {
+        anchor.x = anchor.x.clamp(min_x, max_x);
+    } else {
+        anchor.x = min_x;
+    }
+    let scale = window.scale_factor() as f32;
+    if !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    let logical = anchor / scale;
+    if logical.is_finite() {
+        window.ime_position = logical;
+    }
+}
 
 #[derive(Component)]
 pub(crate) struct HealthChangePopup {

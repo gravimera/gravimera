@@ -6,6 +6,7 @@ use bevy::window::{Ime, PrimaryWindow};
 use crate::assets::SceneAssets;
 use crate::rich_text::set_rich_text_line;
 use crate::types::{BuildScene, EmojiAtlas, UiFonts};
+use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 
 use super::ai::Gen3dAiJob;
 use super::preview;
@@ -902,6 +903,20 @@ pub(crate) fn enter_gen3d_mode(
                                                                             row_gap: Val::Px(2.0),
                                                                             ..default()
                                                                         },
+                                                                        Gen3dPromptHintText,
+                                                                    ))
+                                                                    .with_children(|_| {});
+                                                                text_column
+                                                                    .spawn((
+                                                                        Node {
+                                                                            width: Val::Percent(100.0),
+                                                                            flex_wrap: FlexWrap::Wrap,
+                                                                            justify_content: JustifyContent::FlexStart,
+                                                                            align_items: AlignItems::FlexStart,
+                                                                            column_gap: Val::Px(1.0),
+                                                                            row_gap: Val::Px(2.0),
+                                                                            ..default()
+                                                                        },
                                                                         Gen3dPromptRichText,
                                                                     ))
                                                                     .with_children(|_| {});
@@ -1291,6 +1306,57 @@ pub(crate) fn gen3d_prompt_box_focus(
             }
         }
     }
+}
+
+pub(crate) fn gen3d_prompt_ime_position(
+    build_scene: Res<State<BuildScene>>,
+    workshop: Res<Gen3dWorkshop>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    panels: Query<(&ComputedNode, &UiGlobalTransform), With<Gen3dPromptScrollPanel>>,
+    rich_text: Query<Entity, With<Gen3dPromptRichText>>,
+    hint_text: Query<Entity, With<Gen3dPromptHintText>>,
+    children: Query<&Children>,
+    nodes: Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        Option<&Text>,
+        Option<&TextSpan>,
+        Option<&ImageNode>,
+        Option<&Visibility>,
+    )>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+    if !workshop.prompt_focused {
+        return;
+    }
+    let Ok((node, transform)) = panels.single() else {
+        return;
+    };
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    let prompt_empty = workshop.prompt.trim().is_empty();
+    let rich_root = if prompt_empty {
+        hint_text.iter().next()
+    } else {
+        rich_text.iter().next()
+    };
+    let anchor_x = if prompt_empty {
+        ImeAnchorXPolicy::ContentLeft
+    } else {
+        ImeAnchorXPolicy::LineEnd
+    };
+    set_ime_position_for_rich_text(
+        &mut window,
+        node,
+        *transform,
+        rich_root,
+        anchor_x,
+        &children,
+        &nodes,
+    );
 }
 
 pub(crate) fn gen3d_exit_button(
@@ -2311,6 +2377,19 @@ pub(crate) struct Gen3dUpdateUiTextDeps<'w, 's> {
         ),
     >,
     rich_text: Query<'w, 's, Entity, With<Gen3dPromptRichText>>,
+    hint_text: Query<'w, 's, Entity, With<Gen3dPromptHintText>>,
+    prompt_nodes: Query<
+        'w,
+        's,
+        &'static mut Node,
+        (With<Gen3dPromptRichText>, Without<Gen3dPromptHintText>),
+    >,
+    hint_nodes: Query<
+        'w,
+        's,
+        &'static mut Node,
+        (With<Gen3dPromptHintText>, Without<Gen3dPromptRichText>),
+    >,
 }
 
 pub(crate) fn gen3d_update_ui_text(
@@ -2318,6 +2397,8 @@ pub(crate) fn gen3d_update_ui_text(
     deps: Gen3dUpdateUiTextDeps,
     mut last_prompt: Local<Option<String>>,
     mut last_prompt_entity: Local<Option<Entity>>,
+    mut last_hint: Local<Option<String>>,
+    mut last_hint_entity: Local<Option<Entity>>,
     mut autoscroll_frames: Local<u8>,
     mut last_status_log_rev: Local<Option<(usize, Option<u32>)>>,
     mut status_log_autoscroll_frames: Local<u8>,
@@ -2336,21 +2417,22 @@ pub(crate) fn gen3d_update_ui_text(
         mut scroll_panels,
         mut texts,
         rich_text,
+        hint_text,
+        mut prompt_nodes,
+        mut hint_nodes,
     } = deps;
 
     if !matches!(build_scene.get(), BuildScene::Preview) {
         return;
     }
 
-    let prompt_text = if workshop.prompt.trim().is_empty() {
-        if job.edit_base_prefab_id().is_some() {
-            "Want to improve it? Tell me!".to_string()
-        } else {
-            "Anything you want to create? Tell me!".to_string()
-        }
+    let prompt_empty = workshop.prompt.trim().is_empty();
+    let hint_text_value = if job.edit_base_prefab_id().is_some() {
+        "Want to improve it? Tell me!".to_string()
     } else {
-        workshop.prompt.clone()
+        "Anything you want to create? Tell me!".to_string()
     };
+    let prompt_text = workshop.prompt.clone();
 
     let prompt_entity = rich_text.single().ok();
     if prompt_entity != *last_prompt_entity {
@@ -2359,28 +2441,61 @@ pub(crate) fn gen3d_update_ui_text(
         // Force a re-render so the rich text starts with the correct current prompt.
         *last_prompt = None;
     }
-
-    let prompt_changed = last_prompt.as_ref() != Some(&prompt_text);
-    if prompt_changed {
-        if let Some(entity) = prompt_entity {
-            set_rich_text_line(
-                &mut commands,
-                entity,
-                &prompt_text,
-                &ui_fonts,
-                &emoji_atlas,
-                &asset_server,
-                16.0,
-                Color::srgb(0.92, 0.92, 0.96),
-                None,
-            );
-            *last_prompt = Some(prompt_text.clone());
-        }
+    let hint_entity = hint_text.single().ok();
+    if hint_entity != *last_hint_entity {
+        *last_hint_entity = hint_entity;
+        *last_hint = None;
     }
-    if prompt_changed && workshop.prompt_focused {
-        *autoscroll_frames = 3;
-    } else if !workshop.prompt_focused {
+
+    if let Ok(mut node) = prompt_nodes.single_mut() {
+        node.display = if prompt_empty { Display::None } else { Display::Flex };
+    }
+    if let Ok(mut node) = hint_nodes.single_mut() {
+        node.display = if prompt_empty { Display::Flex } else { Display::None };
+    }
+
+    if prompt_empty {
+        if let Some(entity) = hint_entity {
+            let hint_changed = last_hint.as_ref() != Some(&hint_text_value);
+            if hint_changed {
+                set_rich_text_line(
+                    &mut commands,
+                    entity,
+                    &hint_text_value,
+                    &ui_fonts,
+                    &emoji_atlas,
+                    &asset_server,
+                    16.0,
+                    Color::srgb(0.70, 0.70, 0.74),
+                    None,
+                );
+                *last_hint = Some(hint_text_value);
+            }
+        }
         *autoscroll_frames = 0;
+    } else {
+        let prompt_changed = last_prompt.as_ref() != Some(&prompt_text);
+        if prompt_changed {
+            if let Some(entity) = prompt_entity {
+                set_rich_text_line(
+                    &mut commands,
+                    entity,
+                    &prompt_text,
+                    &ui_fonts,
+                    &emoji_atlas,
+                    &asset_server,
+                    16.0,
+                    Color::srgb(0.92, 0.92, 0.96),
+                    None,
+                );
+                *last_prompt = Some(prompt_text.clone());
+            }
+        }
+        if prompt_changed && workshop.prompt_focused {
+            *autoscroll_frames = 3;
+        } else if !workshop.prompt_focused {
+            *autoscroll_frames = 0;
+        }
     }
 
     if *autoscroll_frames > 0 && workshop.prompt_scrollbar_drag.is_none() {

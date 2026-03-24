@@ -17,6 +17,7 @@ use crate::scene_store::SceneSaveRequest;
 use crate::threaded_result::{
     new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
 };
+use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::types::{
     CameraFocus, Commandable, EmojiAtlas, Health, LaserDamageAccum, ModelSpeechBubbleCommand,
     ModelSpeechSource, MoveOrder, ObjectPrefabId, Player, PlayerAnimator, SelectionState, UiFonts,
@@ -176,6 +177,9 @@ pub(crate) struct MetaSpeakUiVoiceButton {
 
 #[derive(Component)]
 pub(crate) struct MetaSpeakUiContentField;
+
+#[derive(Component)]
+pub(crate) struct MetaSpeakUiContentTextRoot;
 
 #[derive(Component)]
 pub(crate) struct MetaSpeakUiSpeakButton;
@@ -852,15 +856,18 @@ pub(crate) fn motion_algorithm_ui_update(
                 &asset_server,
                 13.0,
                 text_color,
-                Node {
-                    width: Val::Percent(100.0),
-                    flex_wrap: FlexWrap::Wrap,
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(1.0),
-                    row_gap: Val::Px(2.0),
-                    ..default()
-                },
+                (
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(1.0),
+                        row_gap: Val::Px(2.0),
+                        ..default()
+                    },
+                    MetaSpeakUiContentTextRoot,
+                ),
                 None,
             );
         });
@@ -1151,6 +1158,42 @@ pub(crate) fn meta_speak_ui_content_field_focus(
             }
         }
     }
+}
+
+pub(crate) fn meta_speak_ui_update_ime_position(
+    state: Res<MotionAlgorithmUiState>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    fields: Query<(&ComputedNode, &UiGlobalTransform), With<MetaSpeakUiContentField>>,
+    text_root: Query<Entity, With<MetaSpeakUiContentTextRoot>>,
+    children: Query<&Children>,
+    nodes: Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        Option<&Text>,
+        Option<&TextSpan>,
+        Option<&ImageNode>,
+        Option<&Visibility>,
+    )>,
+) {
+    if !state.open || !state.speak_content_focused {
+        return;
+    }
+    let Ok((node, transform)) = fields.single() else {
+        return;
+    };
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    let rich_root = text_root.iter().next();
+    set_ime_position_for_rich_text(
+        &mut window,
+        node,
+        *transform,
+        rich_root,
+        ImeAnchorXPolicy::LineEnd,
+        &children,
+        &nodes,
+    );
 }
 
 pub(crate) fn meta_speak_ui_text_input(

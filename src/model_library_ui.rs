@@ -19,6 +19,7 @@ use crate::object::visuals;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
 use crate::scene_store::SceneSaveRequest;
+use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::types::{
     AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, EmojiAtlas, GameMode,
     ObjectId, ObjectPrefabId, UiFonts,
@@ -574,6 +575,52 @@ pub(crate) fn model_library_search_field_focus(
             }
         }
     }
+}
+
+pub(crate) fn model_library_search_ime_position(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    state: Res<ModelLibraryUiState>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    fields: Query<(&ComputedNode, &UiGlobalTransform), With<ModelLibrarySearchField>>,
+    text_root: Query<Entity, With<ModelLibrarySearchFieldText>>,
+    children: Query<&Children>,
+    nodes: Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        Option<&Text>,
+        Option<&TextSpan>,
+        Option<&ImageNode>,
+        Option<&Visibility>,
+    )>,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
+    if !visible || !state.search_focused {
+        return;
+    }
+    let Ok((node, transform)) = fields.single() else {
+        return;
+    };
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    let rich_root = text_root.iter().next();
+    let anchor_x = if state.search_query.trim().is_empty() {
+        ImeAnchorXPolicy::ContentLeft
+    } else {
+        ImeAnchorXPolicy::LineEnd
+    };
+    set_ime_position_for_rich_text(
+        &mut window,
+        node,
+        *transform,
+        rich_root,
+        anchor_x,
+        &children,
+        &nodes,
+    );
 }
 
 pub(crate) fn model_library_search_text_input(
