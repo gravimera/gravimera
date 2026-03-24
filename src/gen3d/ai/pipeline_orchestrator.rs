@@ -128,7 +128,7 @@ pub(super) fn poll_gen3d_pipeline(
         Gen3dAiPhase::AgentWaitingDescriptorMeta => {
             poll_agent_descriptor_meta(config, commands, images, workshop, job, draft);
         }
-        Gen3dAiPhase::AgentExecutingActions | Gen3dAiPhase::AgentWaitingStep => {
+        Gen3dAiPhase::AgentExecutingActions => {
             poll_pipeline_tick(
                 config,
                 time,
@@ -144,16 +144,6 @@ pub(super) fn poll_gen3d_pipeline(
             );
         }
         Gen3dAiPhase::Idle => {}
-        other => {
-            let _ = config;
-            finish_job_best_effort(
-                commands,
-                review_cameras,
-                workshop,
-                job,
-                format!("Pipeline internal error: unexpected phase {other:?}."),
-            );
-        }
     }
 }
 

@@ -1072,28 +1072,6 @@ fn mock_generate_text_via_openai(
         MockKind::Warcar
     }
 
-    fn components_for_kind(kind: MockKind) -> Vec<&'static str> {
-        match kind {
-            MockKind::Warcar => vec!["chassis", "wheels", "turret", "cannon", "details"],
-            MockKind::Snake => vec!["body", "seg_0", "seg_1", "seg_2", "seg_3", "seg_4", "seg_5"],
-            MockKind::Octopus => vec![
-                "body",
-                "tentacle_0",
-                "tentacle_1",
-                "tentacle_2",
-                "tentacle_3",
-                "tentacle_4",
-                "tentacle_5",
-                "tentacle_6",
-                "tentacle_7",
-            ],
-            MockKind::Mantis => vec![
-                "body", "head", "arm_l", "arm_r", "leg_fl", "leg_fr", "leg_ml", "leg_mr", "leg_bl",
-                "leg_br",
-            ],
-        }
-    }
-
     fn plan_json_for_kind(kind: MockKind) -> serde_json::Value {
         match kind {
             MockKind::Warcar => serde_json::json!({

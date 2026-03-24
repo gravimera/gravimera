@@ -2,11 +2,9 @@
 //
 // Note: the legacy agent-step orchestrator and its prompt-facing tool registry were removed.
 
-pub(crate) const TOOL_ID_GET_TOOL_DETAIL: &str = "get_tool_detail_v1";
 pub(crate) const TOOL_ID_BASIS_FROM_UP_FORWARD: &str = "basis_from_up_forward_v1";
 
 pub(crate) const TOOL_ID_GET_USER_INPUTS: &str = "get_user_inputs_v2";
-pub(crate) const TOOL_ID_GET_STATE_SUMMARY: &str = "get_state_summary_v1";
 pub(crate) const TOOL_ID_GET_SCENE_GRAPH_SUMMARY: &str = "get_scene_graph_summary_v1";
 pub(crate) const TOOL_ID_INSPECT_PLAN: &str = "inspect_plan_v1";
 pub(crate) const TOOL_ID_GET_PLAN_TEMPLATE: &str = "get_plan_template_v1";
@@ -58,4 +56,3 @@ pub(crate) const TOOL_ID_DIFF_WORKSPACES: &str = "diff_workspaces_v1";
 pub(crate) const TOOL_ID_COPY_FROM_WORKSPACE: &str = "copy_from_workspace_v1";
 pub(crate) const TOOL_ID_MERGE_WORKSPACE: &str = "merge_workspace_v1";
 pub(crate) const TOOL_ID_SUBMIT_TOOLING_FEEDBACK: &str = "submit_tooling_feedback_v1";
-

@@ -291,18 +291,9 @@ pub(super) struct Gen3dPassMetrics {
     pub(super) pass: u32,
     pub(super) started_at: std::time::Instant,
     pub(super) ended_at: Option<std::time::Instant>,
-    pub(super) agent_step_llm_ms_total: u128,
-    pub(super) agent_step_llm_requests: u32,
     pub(super) tool_ms_total: u128,
     pub(super) tool_calls: u32,
     pub(super) tool_ms_by_id: std::collections::HashMap<String, u128>,
-}
-
-impl Gen3dPassMetrics {
-    fn elapsed(&self, now: std::time::Instant) -> std::time::Duration {
-        let end = self.ended_at.unwrap_or(now);
-        end.duration_since(self.started_at)
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -443,7 +434,6 @@ impl Gen3dCopyMetrics {
 pub(super) struct Gen3dRunMetrics {
     pub(super) passes: Vec<Gen3dPassMetrics>,
     pub(super) current_pass_idx: Option<usize>,
-    pub(super) agent_step_request_started_at: Option<std::time::Instant>,
     pub(super) tool_call_in_flight: Option<Gen3dToolCallInFlight>,
     pub(super) copy: Gen3dCopyMetrics,
 }
@@ -454,10 +444,6 @@ impl Gen3dRunMetrics {
             .and_then(|idx| self.passes.get_mut(idx))
     }
 
-    fn current_pass(&self) -> Option<&Gen3dPassMetrics> {
-        self.current_pass_idx.and_then(|idx| self.passes.get(idx))
-    }
-
     pub(super) fn note_pass_started(&mut self, pass: u32) {
         let now = std::time::Instant::now();
         self.finish_current_pass_at(now);
@@ -466,14 +452,11 @@ impl Gen3dRunMetrics {
             pass,
             started_at: now,
             ended_at: None,
-            agent_step_llm_ms_total: 0,
-            agent_step_llm_requests: 0,
             tool_ms_total: 0,
             tool_calls: 0,
             tool_ms_by_id: std::collections::HashMap::new(),
         });
         self.current_pass_idx = Some(self.passes.len().saturating_sub(1));
-        self.agent_step_request_started_at = None;
         self.tool_call_in_flight = None;
     }
 
@@ -488,23 +471,6 @@ impl Gen3dRunMetrics {
         if pass.ended_at.is_none() {
             pass.ended_at = Some(now);
         }
-    }
-
-    pub(super) fn note_agent_step_request_started(&mut self) {
-        self.agent_step_request_started_at = Some(std::time::Instant::now());
-    }
-
-    pub(super) fn note_agent_step_response_received(&mut self) {
-        let Some(start) = self.agent_step_request_started_at.take() else {
-            return;
-        };
-        let now = std::time::Instant::now();
-        let ms = now.duration_since(start).as_millis() as u128;
-        let Some(pass) = self.current_pass_mut() else {
-            return;
-        };
-        pass.agent_step_llm_ms_total = pass.agent_step_llm_ms_total.saturating_add(ms);
-        pass.agent_step_llm_requests = pass.agent_step_llm_requests.saturating_add(1);
     }
 
     pub(super) fn note_tool_call_started(&mut self, call_id: &str, tool_id: &str) {
@@ -531,28 +497,6 @@ impl Gen3dRunMetrics {
 
         self.copy.note_tool_result(result);
     }
-
-    fn agent_step_llm_ms_with_in_flight(&self, now: std::time::Instant) -> u128 {
-        let Some(pass) = self.current_pass() else {
-            return 0;
-        };
-        let mut ms = pass.agent_step_llm_ms_total;
-        if let Some(start) = self.agent_step_request_started_at {
-            ms = ms.saturating_add(now.duration_since(start).as_millis() as u128);
-        }
-        ms
-    }
-
-    fn tool_ms_with_in_flight(&self, now: std::time::Instant) -> u128 {
-        let Some(pass) = self.current_pass() else {
-            return 0;
-        };
-        let mut ms = pass.tool_ms_total;
-        if let Some(in_flight) = self.tool_call_in_flight.as_ref() {
-            ms = ms.saturating_add(now.duration_since(in_flight.started_at).as_millis() as u128);
-        }
-        ms
-    }
 }
 
 #[derive(Resource, Default)]
@@ -572,14 +516,9 @@ pub(crate) struct Gen3dAiJob {
     pub(super) assembly_rev: u32,
     pub(super) plan_attempt: u8,
     pub(super) max_parallel_components: usize,
-    pub(super) review_kind: Gen3dAutoReviewKind,
     pub(super) review_appearance: bool,
-    pub(super) review_component_idx: Option<usize>,
     pub(super) auto_refine_passes_remaining: u32,
     pub(super) auto_refine_passes_done: u32,
-    pub(super) per_component_refine_passes_remaining: u32,
-    pub(super) per_component_refine_passes_done: u32,
-    pub(super) per_component_resume: Option<Gen3dComponentBatchResume>,
     pub(super) replan_attempts: u32,
     pub(super) review_delta_rounds_used: u32,
     pub(super) regen_total: u32,
@@ -614,7 +553,6 @@ pub(crate) struct Gen3dAiJob {
     pub(super) motion_queue: Vec<String>,
     pub(super) motion_attempts: std::collections::BTreeMap<String, u8>,
     pub(super) motion_in_flight: Vec<Gen3dInFlightMotion>,
-    pub(super) generation_kind: Gen3dComponentGenerationKind,
     pub(super) review_capture: Option<Gen3dReviewCaptureState>,
     pub(super) review_static_paths: Vec<PathBuf>,
     pub(super) motion_capture: Option<Gen3dMotionCaptureState>,
@@ -1078,188 +1016,6 @@ impl Gen3dAiJob {
         let guard = shared.lock().ok()?;
         Some(guard.message.clone())
     }
-
-    pub(crate) fn status_metrics_text(&self) -> Option<String> {
-        if self.metrics.passes.is_empty() {
-            return None;
-        }
-
-        fn summarize_tool_for_step(tool_id: &str) -> String {
-            use crate::gen3d::agent::tools::{
-                TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_DETACH_COMPONENT,
-                TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
-                TOOL_ID_GET_STATE_SUMMARY, TOOL_ID_INSPECT_PLAN, TOOL_ID_LLM_GENERATE_COMPONENT,
-                TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_MOTION,
-                TOOL_ID_LLM_GENERATE_MOTIONS, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_REVIEW_DELTA,
-                TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_RENDER_PREVIEW,
-                TOOL_ID_SMOKE_CHECK, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
-            };
-
-            match tool_id {
-                TOOL_ID_LLM_GENERATE_PLAN => "Plan".into(),
-                TOOL_ID_LLM_GENERATE_COMPONENT | TOOL_ID_LLM_GENERATE_COMPONENTS => {
-                    "Generate".into()
-                }
-                TOOL_ID_LLM_GENERATE_MOTION | TOOL_ID_LLM_GENERATE_MOTIONS => "Motion".into(),
-                TOOL_ID_LLM_REVIEW_DELTA => "Review".into(),
-                TOOL_ID_RENDER_PREVIEW => "Render".into(),
-                TOOL_ID_VALIDATE => "Validate".into(),
-                TOOL_ID_SMOKE_CHECK => "Smoke".into(),
-                TOOL_ID_COPY_COMPONENT
-                | TOOL_ID_MIRROR_COMPONENT
-                | TOOL_ID_COPY_COMPONENT_SUBTREE
-                | TOOL_ID_MIRROR_COMPONENT_SUBTREE
-                | TOOL_ID_DETACH_COMPONENT => "Copy".into(),
-                TOOL_ID_GET_STATE_SUMMARY
-                | TOOL_ID_GET_SCENE_GRAPH_SUMMARY
-                | TOOL_ID_INSPECT_PLAN
-                | TOOL_ID_GET_PLAN_TEMPLATE => "Inspect".into(),
-                TOOL_ID_SUBMIT_TOOLING_FEEDBACK => "Feedback".into(),
-                other => short_tool_id(other).to_string(),
-            }
-        }
-
-        fn duration_from_ms(ms: u128) -> std::time::Duration {
-            std::time::Duration::from_millis(ms.min(u64::MAX as u128) as u64)
-        }
-
-        fn format_duration(d: std::time::Duration) -> String {
-            let secs = d.as_secs();
-            if secs < 60 {
-                format!("{:.1}s", d.as_secs_f32())
-            } else if secs < 60 * 60 {
-                format!("{}m {}s", secs / 60, secs % 60)
-            } else {
-                let hours = secs / 3600;
-                let mins = (secs % 3600) / 60;
-                format!("{hours}h {mins}m")
-            }
-        }
-
-        fn short_tool_id(tool_id: &str) -> &str {
-            tool_id.strip_suffix("_v1").unwrap_or(tool_id)
-        }
-
-        let now = std::time::Instant::now();
-        let mut out = String::new();
-        out.push_str("\n\nMetrics:");
-
-        // Step times (per pass). Display the most recent N to keep the panel readable.
-        out.push_str("\nStep time: ");
-        const MAX_PASSES: usize = 10;
-        let passes = &self.metrics.passes;
-        let start_idx = passes.len().saturating_sub(MAX_PASSES);
-        if start_idx > 0 {
-            out.push_str("… | ");
-        }
-        for (i, pass) in passes.iter().enumerate().skip(start_idx) {
-            let is_current = self.metrics.current_pass_idx == Some(i) && pass.ended_at.is_none();
-            let mut main_tool_id: Option<&str> = None;
-            if is_current {
-                if let Some(in_flight) = self.metrics.tool_call_in_flight.as_ref() {
-                    main_tool_id = Some(in_flight.tool_id.as_str());
-                }
-            }
-            if main_tool_id.is_none() && !pass.tool_ms_by_id.is_empty() {
-                main_tool_id = pass
-                    .tool_ms_by_id
-                    .iter()
-                    .max_by(|a, b| a.1.cmp(b.1))
-                    .map(|(k, _)| k.as_str());
-            }
-
-            let label = main_tool_id
-                .map(summarize_tool_for_step)
-                .unwrap_or_else(|| "Think".into());
-
-            out.push_str(&format!(
-                "p{} {} {}",
-                pass.pass,
-                label,
-                format_duration(pass.elapsed(now))
-            ));
-            if pass.ended_at.is_none() && self.running {
-                out.push('*');
-            }
-            if i + 1 < passes.len() {
-                out.push_str(" | ");
-            }
-        }
-
-        // Current step breakdown.
-        if let Some(pass) = self.metrics.current_pass() {
-            let agent_ms = self.metrics.agent_step_llm_ms_with_in_flight(now);
-            let tool_ms = self.metrics.tool_ms_with_in_flight(now);
-            let agent_reqs = pass.agent_step_llm_requests
-                + if self.metrics.agent_step_request_started_at.is_some() {
-                    1
-                } else {
-                    0
-                };
-            let tool_calls = pass.tool_calls
-                + if self.metrics.tool_call_in_flight.is_some() {
-                    1
-                } else {
-                    0
-                };
-            let total = pass.elapsed(now);
-            let main = self
-                .metrics
-                .tool_call_in_flight
-                .as_ref()
-                .map(|t| summarize_tool_for_step(t.tool_id.as_str()))
-                .or_else(|| {
-                    pass.tool_ms_by_id
-                        .iter()
-                        .max_by(|a, b| a.1.cmp(b.1))
-                        .map(|(k, _)| summarize_tool_for_step(k.as_str()))
-                })
-                .unwrap_or_else(|| "Think".into());
-            out.push_str(&format!(
-                "\nThis step ({main}): agent {} ({agent_reqs} req) | tools {} ({tool_calls} call{}) | total {}",
-                format_duration(duration_from_ms(agent_ms)),
-                format_duration(duration_from_ms(tool_ms)),
-                if tool_calls == 1 { "" } else { "s" },
-                format_duration(total),
-            ));
-
-            if !pass.tool_ms_by_id.is_empty() {
-                let mut tools: Vec<(&str, u128)> = pass
-                    .tool_ms_by_id
-                    .iter()
-                    .map(|(k, v)| (k.as_str(), *v))
-                    .collect();
-                tools.sort_by(|a, b| b.1.cmp(&a.1));
-                out.push_str("\nTop tools: ");
-                for (idx, (tool_id, ms)) in tools.into_iter().take(3).enumerate() {
-                    if idx > 0 {
-                        out.push_str(" | ");
-                    }
-                    out.push_str(&format!(
-                        "{} {}",
-                        short_tool_id(tool_id),
-                        format_duration(duration_from_ms(ms))
-                    ));
-                }
-            }
-        }
-
-        // Copy metrics (this run): summarize without copy chains.
-        let copy = &self.metrics.copy;
-        let copyable_components =
-            reuse_groups::copyable_target_count(&self.planned_components, &self.reuse_groups);
-        let total_copied_components = copy
-            .auto_component_copies
-            .saturating_add(copy.manual_component_copies)
-            .saturating_add(copy.manual_subtree_copies);
-        if copyable_components > 0 || total_copied_components > 0 {
-            out.push_str(&format!(
-                "\nCopy comps: copyable {copyable_components} | total {total_copied_components}"
-            ));
-        }
-
-        Some(out)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1268,37 +1024,6 @@ pub(super) enum Gen3dAiApi {
     ChatCompletions,
     GeminiStreamGenerateContent,
     ClaudeMessages,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Gen3dComponentGenerationKind {
-    Initial,
-    Regenerate,
-}
-
-impl Default for Gen3dComponentGenerationKind {
-    fn default() -> Self {
-        Self::Initial
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Gen3dAutoReviewKind {
-    EndOfRun,
-    PerComponent,
-}
-
-impl Default for Gen3dAutoReviewKind {
-    fn default() -> Self {
-        Self::EndOfRun
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct Gen3dComponentBatchResume {
-    pub(super) generation_kind: Gen3dComponentGenerationKind,
-    pub(super) component_queue: Vec<usize>,
-    pub(super) component_queue_pos: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -1333,19 +1058,14 @@ pub(super) struct Gen3dChatHistoryMessage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Gen3dAiPhase {
     Idle,
-    // Codex-style tool-driven agent loop.
+    // Pipeline bootstrap + tool runtime phases.
     AgentWaitingUserImageSummary,
     AgentWaitingPromptIntent,
-    AgentWaitingStep,
     AgentExecutingActions,
     AgentWaitingTool,
     AgentCapturingRender,
     AgentCapturingPassSnapshot,
     AgentWaitingDescriptorMeta,
-    WaitingPlan,
-    WaitingComponent,
-    CapturingReview,
-    WaitingReview,
 }
 
 impl Default for Gen3dAiPhase {

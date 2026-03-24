@@ -11,33 +11,25 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::object::registry::{
-    builtin_object_id, ObjectDef, ObjectLibrary, ObjectPartDef, ObjectPartKind, PartAnimationDef,
+    builtin_object_id, ObjectDef, ObjectLibrary, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, UnitAttackKind,
 };
 use crate::threaded_result::{
-    new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
+    spawn_worker_thread, take_shared_result, SharedResult,
 };
 use crate::types::{AnimationChannelsActive, AttackClock, BuildScene, LocomotionClock};
 
 use super::ai_service::{generate_text_via_ai_service, Gen3dAiServiceConfig};
 use super::artifacts::{
-    append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_assembly_snapshot,
-    write_gen3d_json_artifact,
+    append_gen3d_jsonl_artifact, append_gen3d_run_log, write_gen3d_json_artifact,
 };
 use super::job::*;
 use super::pipeline_orchestrator;
-use super::prompts::{
-    build_gen3d_component_system_instructions, build_gen3d_component_user_text,
-    build_gen3d_plan_system_instructions, build_gen3d_plan_user_text,
-    build_gen3d_review_delta_system_instructions, build_gen3d_review_delta_user_text,
-};
 use super::schema::*;
 use super::structured_outputs::Gen3dAiJsonSchemaKind;
 
-use super::convert;
 use super::motion_validation;
 use super::parse;
-use super::reuse_groups;
 
 use super::super::state::{
     Gen3dDraft, Gen3dGenerateButton, Gen3dPendingSeedFromPrefab, Gen3dPreview,
@@ -50,8 +42,8 @@ use super::super::tool_feedback::{
     Gen3dToolFeedbackHistory,
 };
 use super::super::{
-    gen3d_draft_object_id, GEN3D_MAX_REQUEST_IMAGES, GEN3D_PREVIEW_DEFAULT_PITCH,
-    GEN3D_PREVIEW_DEFAULT_YAW, GEN3D_PREVIEW_LAYER, GEN3D_REVIEW_CAPTURE_HEIGHT_PX,
+    gen3d_draft_object_id, GEN3D_PREVIEW_DEFAULT_PITCH, GEN3D_PREVIEW_LAYER,
+    GEN3D_REVIEW_CAPTURE_HEIGHT_PX,
     GEN3D_REVIEW_CAPTURE_WIDTH_PX, GEN3D_REVIEW_LAYER,
 };
 
@@ -329,7 +321,7 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
 
 pub(crate) fn gen3d_resume_build_from_api(
     _build_scene: &State<BuildScene>,
-    config: &AppConfig,
+    _config: &AppConfig,
     log_sinks: Option<crate::app::Gen3dLogSinks>,
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
@@ -386,7 +378,7 @@ pub(crate) fn gen3d_resume_build_from_api(
 
     // Resume always starts a fresh pass to keep artifacts append-only.
     gen3d_advance_pass(job)?;
-    let pass_dir = job
+    let _pass_dir = job
         .pass_dir
         .clone()
         .ok_or_else(|| "Internal error: missing Gen3D pass dir.".to_string())?;
@@ -581,14 +573,9 @@ pub(crate) fn gen3d_start_edit_run_from_current_draft_from_api(
     job.user_image_object_summary = None;
     job.prompt_intent = None;
     job.require_structured_outputs = config.gen3d_require_structured_outputs;
-    job.review_kind = Gen3dAutoReviewKind::EndOfRun;
     job.review_appearance = config.gen3d_review_appearance;
-    job.review_component_idx = None;
     job.auto_refine_passes_done = 0;
     job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
-    job.per_component_refine_passes_remaining = 0;
-    job.per_component_refine_passes_done = 0;
-    job.per_component_resume = None;
     job.replan_attempts = 0;
     job.review_delta_rounds_used = 0;
     job.regen_total = 0;
@@ -844,15 +831,10 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.component_queue_pos = 0;
     job.component_attempts.clear();
     job.component_in_flight.clear();
-    job.review_kind = Gen3dAutoReviewKind::EndOfRun;
     job.review_appearance = config.gen3d_review_appearance;
     job.require_structured_outputs = config.gen3d_require_structured_outputs;
-    job.review_component_idx = None;
     job.auto_refine_passes_done = 0;
     job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
-    job.per_component_refine_passes_remaining = 0;
-    job.per_component_refine_passes_done = 0;
-    job.per_component_resume = None;
     job.replan_attempts = 0;
     job.review_delta_rounds_used = 0;
     job.last_review_inputs.clear();
@@ -1334,15 +1316,10 @@ pub(crate) fn gen3d_start_build_from_api(
     job.prompt_intent = None;
     job.run_dir = Some(run_dir.clone());
     job.pass_dir = Some(pass_dir.clone());
-    job.review_kind = Gen3dAutoReviewKind::EndOfRun;
     job.review_appearance = config.gen3d_review_appearance;
     job.require_structured_outputs = config.gen3d_require_structured_outputs;
-    job.review_component_idx = None;
     job.auto_refine_passes_done = 0;
     job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
-    job.per_component_refine_passes_remaining = 0;
-    job.per_component_refine_passes_done = 0;
-    job.per_component_resume = None;
     job.replan_attempts = 0;
     job.review_delta_rounds_used = 0;
     job.regen_total = 0;
@@ -1397,10 +1374,6 @@ pub(crate) fn gen3d_start_build_from_api(
 
 fn refine_passes_for_speed(config: &AppConfig, _speed: Gen3dSpeedMode) -> u32 {
     config.refine_iterations
-}
-
-fn component_refine_cycles_for_speed(_config: &AppConfig, _speed: Gen3dSpeedMode) -> u32 {
-    0
 }
 
 pub(super) fn max_components_for_speed(speed: Gen3dSpeedMode) -> usize {
@@ -2954,10 +2927,14 @@ pub(crate) fn gen3d_poll_ai_job(
     }
 }
 
+#[cfg(any())]
 const GEN3D_MAX_PLAN_RETRIES: u8 = 1;
+#[cfg(any())]
 const GEN3D_MAX_COMPONENT_RETRIES: u8 = 1;
+#[cfg(any())]
 const GEN3D_MAX_REVIEW_DELTA_REPAIRS: u8 = 1;
 
+#[cfg(any())]
 fn retry_gen3d_review_delta(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
@@ -3054,6 +3031,7 @@ fn retry_gen3d_review_delta(
     true
 }
 
+#[cfg(any())]
 fn retry_gen3d_plan(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
@@ -3140,6 +3118,7 @@ fn retry_gen3d_plan(
     true
 }
 
+#[cfg(any())]
 fn poll_gen3d_parallel_components(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
@@ -3484,8 +3463,6 @@ pub(super) fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: 
     job.build_complete = false;
     job.phase = Gen3dAiPhase::Idle;
     job.plan_attempt = 0;
-    job.review_kind = Gen3dAutoReviewKind::EndOfRun;
-    job.review_component_idx = None;
     job.shared_progress = None;
     job.shared_result = None;
     job.review_capture = None;
@@ -3494,9 +3471,6 @@ pub(super) fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: 
     job.component_queue_pos = 0;
     job.component_attempts.clear();
     job.component_in_flight.clear();
-    job.per_component_refine_passes_remaining = 0;
-    job.per_component_refine_passes_done = 0;
-    job.per_component_resume = None;
     job.replan_attempts = 0;
     job.regen_total = 0;
     job.regen_per_component.clear();
@@ -3606,229 +3580,6 @@ pub(super) fn finish_job_best_effort(
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
-}
-
-fn resume_after_per_component_review(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob) {
-    let Some(resume) = job.per_component_resume.take() else {
-        return;
-    };
-
-    job.component_queue = resume.component_queue;
-    job.component_queue_pos = resume.component_queue_pos;
-    job.generation_kind = resume.generation_kind;
-    job.review_kind = Gen3dAutoReviewKind::EndOfRun;
-    job.review_component_idx = None;
-    job.per_component_refine_passes_remaining = 0;
-    job.per_component_refine_passes_done = 0;
-
-    let next_pos = job.component_queue_pos;
-    if next_pos >= job.component_queue.len() {
-        job.finish_run_metrics();
-        job.running = false;
-        job.build_complete = true;
-        job.phase = Gen3dAiPhase::Idle;
-        job.shared_progress = None;
-        workshop.status =
-            "Build finished. Orbit/zoom the preview. Click Build/Edit to start a new run.".into();
-        return;
-    }
-
-    let Some(ai) = job.ai.clone() else {
-        fail_job(workshop, job, "Internal error: missing AI config.");
-        return;
-    };
-    let Some(run_dir) = job.pass_dir.clone() else {
-        fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
-        return;
-    };
-
-    let next_idx = job.component_queue[next_pos];
-    job.phase = Gen3dAiPhase::WaitingComponent;
-    let comp = &job.planned_components[next_idx];
-    let forward = comp.rot * Vec3::Z;
-    let up = comp.rot * Vec3::Y;
-    workshop.status = format!(
-        "Building components… ({}/{})\nComponent: {}\nPlacement: pos=[{:.2},{:.2},{:.2}], forward=[{:.2},{:.2},{:.2}], up=[{:.2},{:.2},{:.2}]",
-        next_pos + 1,
-        job.component_queue.len(),
-        comp.display_name,
-        comp.pos.x,
-        comp.pos.y,
-        comp.pos.z,
-        forward.x,
-        forward.y,
-        forward.z,
-        up.x,
-        up.y,
-        up.z,
-    );
-
-    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
-    job.shared_result = Some(shared.clone());
-    let progress = job
-        .shared_progress
-        .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
-        .clone();
-
-    let system = build_gen3d_component_system_instructions();
-    let image_object_summary = job
-        .user_image_object_summary
-        .as_ref()
-        .map(|s| s.text.as_str());
-    let user_text = build_gen3d_component_user_text(
-        &job.user_prompt_raw,
-        image_object_summary,
-        workshop.speed_mode,
-        &job.assembly_notes,
-        &job.planned_components,
-        next_idx,
-    );
-    let prefix = format!(
-        "component{:02}_{}",
-        next_idx + 1,
-        job.planned_components[next_idx].name
-    );
-    let reasoning_effort = ai.model_reasoning_effort().to_string();
-    spawn_gen3d_ai_text_thread(
-        shared,
-        progress,
-        job.cancel_flag.clone(),
-        job.session.clone(),
-        Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-        job.require_structured_outputs,
-        ai,
-        reasoning_effort,
-        system,
-        user_text,
-        job.user_images_component.clone(),
-        run_dir,
-        prefix,
-    );
-}
-
-fn try_start_gen3d_replan(
-    config: &AppConfig,
-    workshop: &mut Gen3dWorkshop,
-    job: &mut Gen3dAiJob,
-    draft: &mut Gen3dDraft,
-    reason: String,
-) -> bool {
-    let max_replans = config.gen3d_max_replans;
-    if job.replan_attempts >= max_replans {
-        debug!("Gen3D: replan requested, but max attempts reached; ignoring.");
-        return false;
-    }
-    job.replan_attempts += 1;
-
-    let Some(ai) = job.ai.clone() else {
-        fail_job(workshop, job, "Internal error: missing AI config.");
-        return true;
-    };
-    let Some(run_dir) = job.run_dir.clone() else {
-        fail_job(workshop, job, "Internal error: missing Gen3D cache dir.");
-        return true;
-    };
-
-    debug!(
-        "Gen3D: starting replan attempt {}: {}",
-        job.replan_attempts, reason
-    );
-
-    let next_attempt = job.replan_attempts;
-    if let Err(err) = gen3d_set_current_attempt_pass(job, &run_dir, next_attempt, 0) {
-        fail_job(workshop, job, err);
-        return true;
-    }
-    let attempt_dir = gen3d_attempt_dir(&run_dir, next_attempt);
-    let cached_inputs = cache_gen3d_inputs(&attempt_dir, &job.user_prompt_raw, &job.user_images);
-    job.user_images = cached_inputs.cached_image_paths;
-    job.user_images_component = cached_inputs.component_reference_image_paths;
-
-    // Reset build state but keep the same run/session/tokens.
-    job.review_kind = Gen3dAutoReviewKind::EndOfRun;
-    job.review_component_idx = None;
-    job.auto_refine_passes_done = 0;
-    job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
-    job.per_component_refine_passes_remaining = 0;
-    job.per_component_refine_passes_done = 0;
-    job.per_component_resume = None;
-    job.planned_components.clear();
-    job.assembly_notes.clear();
-    job.plan_collider = None;
-    job.rig_move_cycle_m = None;
-    job.motion_authoring = None;
-    job.reuse_groups.clear();
-    job.reuse_group_warnings.clear();
-    job.pending_plan_attempt = None;
-    job.component_queue.clear();
-    job.component_queue_pos = 0;
-    job.generation_kind = Gen3dComponentGenerationKind::Initial;
-    job.review_capture = None;
-    job.review_static_paths.clear();
-    job.motion_capture = None;
-    job.plan_hash.clear();
-    job.preserve_existing_components_mode = false;
-    job.assembly_rev = 0;
-    job.last_review_inputs.clear();
-    job.last_review_user_text.clear();
-    job.review_delta_repair_attempt = 0;
-    job.regen_per_component.clear();
-    draft.defs.clear();
-
-    workshop.error = None;
-    workshop.status = format!(
-        "Re-planning components…\nReason: {}\nService: {}\nModel: {}\nImages: {}",
-        reason,
-        ai.service_label(),
-        ai.model(),
-        job.user_images.len()
-    );
-
-    job.phase = Gen3dAiPhase::WaitingPlan;
-    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
-    job.shared_result = Some(shared.clone());
-    let progress = job
-        .shared_progress
-        .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
-        .clone();
-    set_progress(&progress, "Starting re-plan…");
-
-    let system = build_gen3d_plan_system_instructions();
-    let image_object_summary = job
-        .user_image_object_summary
-        .as_ref()
-        .map(|s| s.text.as_str());
-    let mut user_text = build_gen3d_plan_user_text(
-        &job.user_prompt_raw,
-        image_object_summary,
-        workshop.speed_mode,
-    );
-    user_text.push_str("\n\nReplan requested by reviewer.\nReason:\n");
-    user_text.push_str(reason.trim());
-    user_text.push('\n');
-    let prefix = format!("attempt{:02}_plan", job.attempt);
-    let Some(pass_dir) = job.pass_dir.clone() else {
-        fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
-        return true;
-    };
-    let reasoning_effort = ai.model_reasoning_effort().to_string();
-    spawn_gen3d_ai_text_thread(
-        shared,
-        progress,
-        job.cancel_flag.clone(),
-        job.session.clone(),
-        Some(Gen3dAiJsonSchemaKind::PlanV1),
-        job.require_structured_outputs,
-        ai,
-        reasoning_effort,
-        system,
-        user_text,
-        Vec::new(),
-        pass_dir,
-        prefix,
-    );
-
-    true
 }
 
 fn default_gen3d_cache_dir() -> PathBuf {
