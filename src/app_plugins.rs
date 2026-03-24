@@ -255,6 +255,13 @@ impl Plugin for RenderedUiPlugin {
                 crate::model_library_ui::model_library_preview_info_scrollbar_drag
                     .after(crate::model_library_ui::model_library_preview_info_scroll_wheel)
                     .run_if(crate::automation::local_input_enabled),
+            )
+                .run_if(console::console_closed)
+                .run_if(crate::scene_authoring_ui::scene_ui_closed),
+        );
+        app.add_systems(
+            Update,
+            (
                 crate::model_library_ui::model_library_drag_update
                     .after(crate::model_library_ui::model_library_item_button_interactions)
                     .run_if(crate::automation::local_input_enabled),
@@ -270,19 +277,29 @@ impl Plugin for RenderedUiPlugin {
                 crate::model_library_ui::model_library_preview_orbit_controls
                     .after(crate::model_library_ui::model_library_open_preview_panel)
                     .run_if(crate::automation::local_input_enabled),
-                crate::model_library_ui::model_library_preview_modify_button_interactions
+                crate::model_library_ui::model_library_preview_delete_button_interactions
                     .after(crate::model_library_ui::model_library_open_preview_panel)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::model_library_ui::model_library_preview_delete_modal_interactions
+                    .after(crate::model_library_ui::model_library_preview_delete_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_preview_modify_button_interactions
+                    .after(crate::model_library_ui::model_library_preview_delete_modal_interactions)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::model_library_ui::model_library_preview_duplicate_button_interactions
-                    .after(crate::model_library_ui::model_library_open_preview_panel)
+                    .after(crate::model_library_ui::model_library_preview_delete_modal_interactions)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::model_library_ui::model_library_preview_close_button_interactions
-                    .after(crate::model_library_ui::model_library_open_preview_panel)
+                    .after(crate::model_library_ui::model_library_preview_delete_modal_interactions)
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_preview_close_on_escape
                     .after(crate::model_library_ui::model_library_preview_close_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_preview_delete_modal_close_on_escape
+                    .after(crate::model_library_ui::model_library_preview_close_on_escape)
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_draw_drag_preview_gizmos
                     .after(crate::model_library_ui::model_library_drag_update),

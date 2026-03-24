@@ -29,6 +29,7 @@ const PANEL_Z_INDEX: i32 = 930;
 const PANEL_WIDTH_PX: f32 = 260.0;
 const DRAG_START_THRESHOLD_PX: f32 = 6.0;
 const PREFAB_PREVIEW_Z_INDEX: i32 = 1200;
+const PREFAB_PREVIEW_MODAL_Z_INDEX: i32 = PREFAB_PREVIEW_Z_INDEX + 20;
 const PREFAB_PREVIEW_LAYER: usize = 28;
 const PREFAB_PREVIEW_WIDTH_PX: u32 = 640;
 const PREFAB_PREVIEW_HEIGHT_PX: u32 = 360;
@@ -139,6 +140,8 @@ pub(crate) struct ModelLibraryUiState {
     selected_prefab_id: Option<u128>,
     pending_preview: Option<u128>,
     preview: Option<ModelLibraryPrefabPreview>,
+    delete_modal_prefab_id: Option<u128>,
+    delete_modal_root: Option<Entity>,
     last_rebuilt_scene: Option<(String, String)>,
 }
 
@@ -158,6 +161,8 @@ impl Default for ModelLibraryUiState {
             selected_prefab_id: None,
             pending_preview: None,
             preview: None,
+            delete_modal_prefab_id: None,
+            delete_modal_root: None,
             last_rebuilt_scene: None,
         }
     }
@@ -303,6 +308,9 @@ pub(crate) struct ModelLibrarySearchFieldText;
 pub(crate) struct ModelLibraryPreviewOverlayRoot;
 
 #[derive(Component)]
+pub(crate) struct ModelLibraryPreviewDeleteButton;
+
+#[derive(Component)]
 pub(crate) struct ModelLibraryPreviewCloseButton;
 
 #[derive(Component)]
@@ -310,6 +318,15 @@ pub(crate) struct ModelLibraryPreviewModifyButton;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryPreviewDuplicateButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewDeleteModalRoot;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewDeleteConfirmButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryPreviewDeleteCancelButton;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryPreviewInfoScrollPanel;
@@ -1709,7 +1726,141 @@ pub(crate) fn model_library_update_prefab_label_text(
     }
 }
 
+fn close_model_library_delete_modal(commands: &mut Commands, state: &mut ModelLibraryUiState) {
+    if let Some(root) = state.delete_modal_root.take() {
+        commands.entity(root).try_despawn();
+    }
+    state.delete_modal_prefab_id = None;
+}
+
+fn open_model_library_delete_modal(
+    commands: &mut Commands,
+    state: &mut ModelLibraryUiState,
+    prefab_id: u128,
+) {
+    if state.delete_modal_prefab_id.is_some() {
+        return;
+    }
+
+    let root = commands
+        .spawn((
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            ZIndex(PREFAB_PREVIEW_MODAL_Z_INDEX),
+            ModelLibraryPreviewDeleteModalRoot,
+            ModelLibraryPreviewOverlayRoot,
+        ))
+        .with_children(|overlay| {
+            overlay
+                .spawn((
+                    Node {
+                        width: Val::Px(420.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        padding: UiRect::all(Val::Px(14.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.96)),
+                    BorderColor::all(Color::srgba(0.35, 0.35, 0.40, 0.85)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("Delete prefab?"),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.95, 0.95, 0.97)),
+                    ));
+
+                    panel.spawn((
+                        Text::new(
+                            "This deletes prefab files from disk. Existing scene instances remain.",
+                        ),
+                        TextFont {
+                            font_size: 13.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.86, 0.86, 0.90)),
+                    ));
+
+                    panel
+                        .spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::FlexEnd,
+                                column_gap: Val::Px(8.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                        ))
+                        .with_children(|row| {
+                            row.spawn((
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.25, 0.05, 0.05, 0.92)),
+                                BorderColor::all(Color::srgba(0.80, 0.25, 0.25, 0.90)),
+                                ModelLibraryPreviewDeleteConfirmButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Confirm Delete"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.98, 0.90, 0.90)),
+                                ));
+                            });
+
+                            row.spawn((
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.85)),
+                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75)),
+                                ModelLibraryPreviewDeleteCancelButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Cancel"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ));
+                            });
+                        });
+                });
+        })
+        .id();
+
+    state.delete_modal_prefab_id = Some(prefab_id);
+    state.delete_modal_root = Some(root);
+}
+
 fn close_model_library_preview(commands: &mut Commands, state: &mut ModelLibraryUiState) {
+    close_model_library_delete_modal(commands, state);
     let Some(preview) = state.preview.take() else {
         return;
     };
@@ -2205,11 +2356,34 @@ pub(crate) fn model_library_open_preview_panel(
                             },
                             BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
                             BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryPreviewDeleteButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Delete"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.94, 0.94, 0.96)),
+                            ));
+                        });
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
                             ModelLibraryPreviewModifyButton,
                         ))
                         .with_children(|b| {
                             b.spawn((
-                                Text::new("Modify"),
+                                Text::new("Edit"),
                                 TextFont {
                                     font_size: 14.0,
                                     ..default()
@@ -2379,11 +2553,108 @@ pub(crate) fn model_library_open_preview_panel(
     });
 }
 
+pub(crate) fn model_library_preview_delete_button_interactions(
+    mut commands: Commands,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<ModelLibraryPreviewDeleteButton>)>,
+) {
+    if state.delete_modal_prefab_id.is_some() {
+        return;
+    }
+    let Some(prefab_id) = state.preview.as_ref().map(|p| p.prefab_id) else {
+        return;
+    };
+    for interaction in &mut buttons {
+        if *interaction == Interaction::Pressed {
+            open_model_library_delete_modal(&mut commands, &mut state, prefab_id);
+            break;
+        }
+    }
+}
+
+pub(crate) fn model_library_preview_delete_modal_interactions(
+    mut commands: Commands,
+    env: ModelLibraryEnv,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut confirm: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<ModelLibraryPreviewDeleteConfirmButton>,
+        ),
+    >,
+    mut cancel: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<ModelLibraryPreviewDeleteCancelButton>,
+        ),
+    >,
+) {
+    if state.delete_modal_prefab_id.is_none() {
+        return;
+    }
+
+    for interaction in &mut cancel {
+        if *interaction == Interaction::Pressed {
+            close_model_library_delete_modal(&mut commands, &mut state);
+            return;
+        }
+    }
+
+    let Some(prefab_id) = state.delete_modal_prefab_id else {
+        return;
+    };
+    for interaction in &mut confirm {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        if env.config.automation_enabled && env.config.automation_monitor_mode {
+            close_model_library_delete_modal(&mut commands, &mut state);
+            break;
+        }
+
+        match crate::realm_prefab_packages::delete_realm_prefab_package(
+            &env.active.realm_id,
+            prefab_id,
+        ) {
+            Ok(_) => {
+                state.mark_models_dirty();
+                state.selected_prefab_id = None;
+                state.pending_preview = None;
+                close_model_library_preview(&mut commands, &mut state);
+            }
+            Err(err) => {
+                warn!("{err}");
+                close_model_library_delete_modal(&mut commands, &mut state);
+            }
+        }
+        break;
+    }
+}
+
+pub(crate) fn model_library_preview_delete_modal_close_on_escape(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut state: ResMut<ModelLibraryUiState>,
+) {
+    if state.delete_modal_prefab_id.is_none() {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        close_model_library_delete_modal(&mut commands, &mut state);
+    }
+}
+
 pub(crate) fn model_library_preview_close_button_interactions(
     mut commands: Commands,
     mut state: ResMut<ModelLibraryUiState>,
     mut buttons: Query<&Interaction, (Changed<Interaction>, With<ModelLibraryPreviewCloseButton>)>,
 ) {
+    if state.delete_modal_prefab_id.is_some() {
+        return;
+    }
     if state.preview.is_none() {
         return;
     }
@@ -2408,6 +2679,9 @@ pub(crate) fn model_library_preview_modify_button_interactions(
     mut state: ResMut<ModelLibraryUiState>,
     mut buttons: Query<&Interaction, (Changed<Interaction>, With<ModelLibraryPreviewModifyButton>)>,
 ) {
+    if state.delete_modal_prefab_id.is_some() {
+        return;
+    }
     let Some(prefab_id) = state.preview.as_ref().map(|p| p.prefab_id) else {
         return;
     };
@@ -2477,6 +2751,9 @@ pub(crate) fn model_library_preview_duplicate_button_interactions(
         ),
     >,
 ) {
+    if state.delete_modal_prefab_id.is_some() {
+        return;
+    }
     let Some(prefab_id) = state.preview.as_ref().map(|p| p.prefab_id) else {
         return;
     };
@@ -2511,6 +2788,9 @@ pub(crate) fn model_library_preview_close_on_escape(
     mut commands: Commands,
     mut state: ResMut<ModelLibraryUiState>,
 ) {
+    if state.delete_modal_prefab_id.is_some() {
+        return;
+    }
     if state.preview.is_none() {
         return;
     }
@@ -2525,6 +2805,9 @@ pub(crate) fn model_library_preview_keyboard_navigation(
     keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<ModelLibraryUiState>,
 ) {
+    if state.delete_modal_prefab_id.is_some() {
+        return;
+    }
     let active = state.is_open()
         && matches!(mode.get(), GameMode::Build)
         && matches!(build_scene.get(), crate::types::BuildScene::Realm)
@@ -2572,6 +2855,13 @@ pub(crate) fn model_library_preview_orbit_controls(
     mut state: ResMut<ModelLibraryUiState>,
     mut cameras: Query<&mut Transform, With<ModelLibraryPreviewCamera>>,
 ) {
+    if state.delete_modal_prefab_id.is_some() {
+        if let Some(preview) = state.preview.as_mut() {
+            preview.last_cursor = None;
+        }
+        for _ in mouse_wheel.read() {}
+        return;
+    }
     let active = state.is_open()
         && state.preview.is_some()
         && matches!(mode.get(), GameMode::Build)
@@ -2821,6 +3111,10 @@ pub(crate) fn model_library_preview_info_scroll_wheel(
         With<ModelLibraryPreviewInfoScrollPanel>,
     >,
 ) {
+    if state.delete_modal_prefab_id.is_some() {
+        for _ in mouse_wheel.read() {}
+        return;
+    }
     let active = state.is_open()
         && matches!(mode.get(), GameMode::Build)
         && matches!(build_scene.get(), crate::types::BuildScene::Realm)
@@ -2992,6 +3286,10 @@ pub(crate) fn model_library_preview_info_scrollbar_drag(
         With<ModelLibraryPreviewInfoScrollbarThumb>,
     >,
 ) {
+    if state.delete_modal_prefab_id.is_some() {
+        state.preview_scrollbar_drag = None;
+        return;
+    }
     let active = state.is_open()
         && state.preview.is_some()
         && matches!(mode.get(), GameMode::Build)

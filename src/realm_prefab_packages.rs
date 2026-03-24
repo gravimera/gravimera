@@ -110,6 +110,23 @@ pub(crate) fn load_realm_prefab_package_defs_into_library(
     crate::realm_prefabs::load_prefabs_into_library_from_dir(&prefabs_dir, library)
 }
 
+pub(crate) fn delete_realm_prefab_package(
+    realm_id: &str,
+    root_prefab_id: u128,
+) -> Result<bool, String> {
+    let root = realm_prefab_package_dir(realm_id, root_prefab_id);
+    if !root.exists() {
+        return Ok(false);
+    }
+    std::fs::remove_dir_all(&root).map_err(|err| {
+        format!(
+            "Failed to delete prefab package {}: {err}",
+            root.display()
+        )
+    })?;
+    Ok(true)
+}
+
 fn prune_stale_prefab_def_json_files(dir: &Path, defs: &[ObjectDef]) -> Result<(), String> {
     if !dir.exists() {
         return Ok(());

@@ -29,7 +29,7 @@ Manual QA:
 
 1. Generate a movable unit via Prefabs → `Generate`.
 2. Confirm it animates movement after generation (not a static “slide”).
-3. Use Preview → `Modify` and confirm the edited unit still has move animation.
+3. Use Preview → `Edit` and confirm the edited unit still has move animation.
 
 ### 2) Meta panel: remove Gen3D Copy/Edit/Fork buttons; add Close button
 
@@ -58,11 +58,11 @@ Manual QA:
    - Prefabs panel opens (Models tab selected), correct prefab highlighted.
    - Preview overlay opens for that prefab.
 
-### 4) Preview overlay: `Modify` + `Duplicate`; taller info section
+### 4) Preview overlay: `Edit` + `Duplicate`; taller info section
 
 Automated:
 
-- Modify behavior (seeded edit-overwrite semantics):
+- Edit behavior (seeded edit-overwrite semantics):
   - `test/run_1/gen3d_tasks_queue_seeded_api/run.py` (`kind=edit_from_prefab`)
 - Duplicate behavior (new prefab id + full package copy + no missing-def warnings):
   - `test/run_1/prefab_duplicate_api/run.py` (`POST /v1/prefabs/duplicate`)
@@ -70,14 +70,21 @@ Automated:
 Manual QA:
 
 1. Open a prefab Preview overlay from Prefabs panel.
-2. Confirm `Modify` and `Duplicate` buttons exist.
+2. Confirm `Edit` and `Duplicate` buttons exist.
 3. Confirm the info section shows more text than before (taller scroll area).
-4. Click `Modify`:
+4. Click `Edit`:
    - Gen3D workshop opens in Build Preview.
    - It is seeded from that prefab (button label should be `Edit` when seeded).
 5. Click `Duplicate`:
    - A new prefab appears in the list (new UUID).
    - No warning like `Missing prefab def ... referenced by .../prefabs/<id>/prefabs` is emitted.
+6. Click `Delete`:
+   - A confirmation modal appears.
+7. Click `Cancel`:
+   - The modal closes; the prefab remains in the list.
+8. Click `Delete` again and choose `Confirm Delete`:
+   - The preview closes; the prefab is removed from the list.
+   - Existing scene instances of that prefab remain.
 
 ### 5) Prefabs panel: multi-session UI + single-runner task queue + indicators + placeholder + `Generate` rename
 

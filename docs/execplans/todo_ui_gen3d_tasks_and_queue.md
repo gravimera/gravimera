@@ -12,7 +12,7 @@ Gravimera currently has the core UI panels needed for prefab browsing (Prefabs p
 - Gen3D pipeline orchestrator can finish without authoring motion channels/clips for movable units.
 - Meta panel still exposes Gen3D Copy/Edit/Fork actions that don’t match the intended “Prefabs-first” workflow.
 - Double-clicking an instance only opens Meta (units), instead of also surfacing the underlying prefab in Prefabs + Preview.
-- Prefabs/Preview panels don’t offer “Modify” (Gen3D edit) and “Duplicate” (new prefab id) affordances.
+- Prefabs/Preview panels don’t offer “Edit” (Gen3D edit) and “Duplicate” (new prefab id) affordances.
 - Gen3D panel UX has redundant/fragmented “clear” behavior and confusing Build vs Continue semantics.
 - Automation HTTP API can drive Gen3D, but today it is coupled to the “Build Preview” scene and lacks a clear “task list/status” abstraction for queued Gen3D requests.
 
@@ -20,7 +20,7 @@ After this change, a player (and an external test rig) can:
 
 1. Generate/edit prefabs with a consistent Prefabs → Preview → Gen3D flow:
    - Double-click an instance: Meta opens (if unit) and Prefabs opens with that prefab selected; Preview overlay pops.
-   - Preview overlay offers `Modify` (Gen3D edit) and `Duplicate` (copy new prefab id) actions.
+   - Preview overlay offers `Edit` (Gen3D edit) and `Duplicate` (copy new prefab id) actions.
 2. See Gen3D activity directly in Prefabs:
    - A new-build “placeholder” entry appears immediately after starting a build.
    - Prefabs being edited show a working/waiting indicator on their thumbnails.
@@ -43,7 +43,7 @@ The work must be validated by:
 - [x] (2026-03-22 12:55 CST) Fix: pipeline mode must author motion when required (movable drafts must have `move` coverage).
 - [x] (2026-03-22 13:07 CST) UI: Meta panel remove Copy/Edit/Fork; add Close button.
 - [x] (2026-03-22 13:25 CST) UI: Double-click instance also opens Prefabs + selects item + pops Preview overlay (when `ObjectPrefabId` exists).
-- [x] (2026-03-22 13:59 CST) UI: Preview overlay adds `Modify` and `Duplicate`; info area taller.
+- [x] (2026-03-22 13:59 CST) UI: Preview overlay adds `Edit` and `Duplicate`; info area taller.
 - [x] (2026-03-22 16:05 CST) UI: Prefabs panel shows Gen3D working/waiting indicators and new-build placeholder; rename `Gen3D` → `Generate`.
 - [x] (2026-03-22 12:55 CST) UI: Gen3D panel remove “Clear Prompt”; unify “Clear” to clear both text+images; merge Build/Continue into one button labeled `Build|Edit|Stop`.
 - [x] (2026-03-22 19:52 CST) Automation: Add Gen3D task queue endpoints (list + status) and allow running Gen3D tasks without switching to Build Preview.
@@ -143,11 +143,11 @@ In `src/model_library_ui.rs`:
 
 Acceptance: double-clicking a placed prefab instance reliably opens Prefabs and pops Preview overlay (and Meta for units).
 
-### 4) Preview overlay: Modify + Duplicate; taller info
+### 4) Preview overlay: Edit + Duplicate; taller info
 
 In `src/model_library_ui.rs` Preview overlay builder:
 
-- Add `Modify` button:
+- Add `Edit` button:
   - Seeds a Gen3D edit-overwrite session for the prefab id and switches to Gen3D workshop (BuildScene Preview) (or queues when busy, per task-queue design).
 - Add `Duplicate` button:
   - Creates a new prefab id copy. Prefer preserving Gen3D provenance when possible (copy gen3d_source/edit bundle when present), else copy defs with an id remap.
@@ -295,7 +295,7 @@ Commands (from repo root):
 - (2026-03-22 12:55 CST) Marked pipeline-motion fix and Gen3D panel UX work as complete in `Progress`, and recorded the `Build` vs `Edit` button-label decision. This keeps the ExecPlan aligned with current implementation.
 - (2026-03-22 13:07 CST) Marked the Meta-panel close-button change as complete in `Progress`. This keeps the plan’s UI checklist aligned with the implemented behavior.
 - (2026-03-22 13:25 CST) Marked the double-click Prefabs+Preview workflow as complete in `Progress`. This keeps the plan aligned with the updated selection behavior.
-- (2026-03-22 13:59 CST) Marked the Preview overlay `Modify`/`Duplicate` actions as complete in `Progress`. This keeps the plan aligned with the new prefab workflow affordances.
+- (2026-03-22 13:59 CST) Marked the Preview overlay `Edit`/`Duplicate` actions as complete in `Progress`. This keeps the plan aligned with the new prefab workflow affordances.
 
     - Start Gravimera with `--automation`.
     - Enqueue two Gen3D tasks via HTTP.
@@ -309,7 +309,7 @@ Acceptance criteria mapped to `docs/todo.md`:
 - Pipeline mode generates motion when required and cannot finish a movable unit without `move` coverage.
 - Meta panel: Copy/Edit/Fork removed; Close button works.
 - Double-clicking an object opens Prefabs + selects prefab + opens Preview overlay (and Meta if unit).
-- Preview overlay: Modify + Duplicate exist; info area taller.
+- Preview overlay: Edit + Duplicate exist; info area taller.
 - Prefabs panel: shows working/waiting indicators; Generate button exists; placeholder behavior works.
 - Gen3D panel: Clear Prompt removed; Clear clears both images+text; one Build/Edit/Stop button works.
 - HTTP: can run Gen3D tasks without opening the Gen3D UI; tasks list + status APIs exist.
