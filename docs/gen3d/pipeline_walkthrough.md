@@ -163,10 +163,10 @@ Structured outputs:
 
 ## Where to find the exact prompts used in a run (artifacts)
 
-For OpenAI-compatible backends (OpenAI/MiMo), the engine writes the final system + user prompt texts under the pass dir:
+For OpenAI-compatible backends (OpenAI/MiMo), the engine writes the final system + user prompt texts under the tool call’s **step artifact dir**:
 
-- `<pass_dir>/<artifact_prefix>_system_text.txt`
-- `<pass_dir>/<artifact_prefix>_user_text.txt`
+- `<run_id>/attempt_N/steps/step_####/<artifact_prefix>_system_text.txt`
+- `<run_id>/attempt_N/steps/step_####/<artifact_prefix>_user_text.txt`
 
 The `artifact_prefix` is derived from the tool call id. Example prefixes:
 
@@ -180,7 +180,7 @@ The `artifact_prefix` is derived from the tool call id. Example prefixes:
 Implementation reference:
 
 - Prompt persistence: `src/gen3d/ai/openai.rs` (writes `*_system_text.txt` + `*_user_text.txt`)
-- Tool call args persistence: `src/gen3d/ai/pipeline_orchestrator.rs` (writes `tool_calls.jsonl` / `tool_results.jsonl`)
+- Tool call args persistence: `src/gen3d/ai/pipeline_orchestrator.rs` (writes `tool_calls.jsonl` / `tool_results.jsonl` into each step dir)
 
 ## Concrete example you can run locally (mock backend)
 
@@ -199,6 +199,7 @@ It writes a temporary run dir under your OS temp folder (see `src/gen3d/ai/pipel
 
 Inside that run dir, open:
 
-- `attempt_0/pass_0/tool_calls.jsonl` to see the tool sequence + args
-- `attempt_0/pass_0/tool_plan_*_system_text.txt` / `tool_plan_*_user_text.txt` to see the exact plan prompt
-- `attempt_0/pass_0/tool_component*_system_text.txt` / `tool_component*_user_text.txt` to see per-component prompts
+- `agent_trace.jsonl` to see the tool sequence (call id + tool id + args/results)
+- `attempt_0/steps/step_*/tool_calls.jsonl` to see per-step tool calls (one entry per step dir)
+- For the plan prompt, find the step dir whose `tool_calls.jsonl` contains `"tool_id":"llm_generate_plan_v1"`, then open `tool_plan_*_system_text.txt` / `tool_plan_*_user_text.txt`
+- For per-component prompts, open the step dirs whose `tool_calls.jsonl` contain `"tool_id":"llm_generate_component_v1"` / `"tool_id":"llm_generate_components_v1"` and inspect `tool_component*_system_text.txt` / `tool_component*_user_text.txt`

@@ -142,7 +142,7 @@ fn maybe_spawn_descriptor_meta_after_plan(
     let Some(run_id) = job.run_id else {
         return;
     };
-    let Some(pass_dir) = job.pass_dir.clone() else {
+    let Some(pass_dir) = job.step_dir.clone() else {
         return;
     };
     let Some(root_def) = draft.root_def() else {
@@ -194,7 +194,7 @@ fn maybe_spawn_descriptor_meta_after_plan(
     anchors.sort();
     anchors.dedup();
 
-    let plan_extracted_text = job.pass_dir_path().and_then(|dir| {
+    let plan_extracted_text = job.attempt_dir().and_then(|dir| {
         std::fs::read(dir.join("plan_extracted.json"))
             .ok()
             .and_then(|bytes| String::from_utf8(bytes).ok())
@@ -274,12 +274,12 @@ pub(super) fn poll_agent_tool(
                 },
             );
             append_gen3d_jsonl_artifact(
-                job.pass_dir.as_deref(),
+                job.step_dir.as_deref(),
                 "tool_results.jsonl",
                 &serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
             );
             append_gen3d_run_log(
-                job.pass_dir.as_deref(),
+                job.step_dir.as_deref(),
                 format!(
                     "tool_call_result call_id={} tool_id={} ok={} {}",
                     tool_result.call_id,
@@ -358,12 +358,12 @@ pub(super) fn poll_agent_tool(
                 },
             );
             append_gen3d_jsonl_artifact(
-                job.pass_dir.as_deref(),
+                job.step_dir.as_deref(),
                 "tool_results.jsonl",
                 &serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
             );
             append_gen3d_run_log(
-                job.pass_dir.as_deref(),
+                job.step_dir.as_deref(),
                 format!(
                     "tool_call_result call_id={} tool_id={} ok={} {}",
                     tool_result.call_id,
@@ -441,7 +441,7 @@ pub(super) fn poll_agent_tool(
     };
 
     append_gen3d_run_log(
-        job.pass_dir.as_deref(),
+        job.step_dir.as_deref(),
         format!(
             "shared_result_taken tool_id={} call_id={} kind={kind:?}",
             call.tool_id, call.call_id
@@ -615,7 +615,7 @@ pub(super) fn poll_agent_tool(
                 super::Gen3dAgentLlmToolKind::SelectEditStrategy => {
                     let text = resp.text;
 
-                    if let Some(dir) = job.pass_dir.as_deref() {
+                    if let Some(dir) = job.step_dir.as_deref() {
                         write_gen3d_text_artifact(
                             Some(dir),
                             "edit_strategy_raw.txt",
@@ -628,7 +628,7 @@ pub(super) fn poll_agent_tool(
                                               err: &str,
                                               previous_output: &str|
                      -> bool {
-                        match (job.ai.clone(), job.pass_dir.clone()) {
+                        match (job.ai.clone(), job.step_dir.clone()) {
                             (Some(ai), Some(pass_dir)) => {
                                 let system = super::prompts::build_gen3d_edit_strategy_system_instructions();
                                 let prompt_override =
@@ -1131,7 +1131,7 @@ pub(super) fn poll_agent_tool(
                                                 draft,
                                             );
                                             write_gen3d_assembly_snapshot(
-                                                job.pass_dir.as_deref(),
+                                                job.step_dir.as_deref(),
                                                 &job.planned_components,
                                             );
                                             job.assembly_rev = job.assembly_rev.saturating_add(1);
@@ -1178,8 +1178,8 @@ pub(super) fn poll_agent_tool(
                                         preview.last_cursor = None;
                                     }
 
-                                    if let Some(dir) = job.pass_dir.as_deref() {
-                                        let components: Vec<serde_json::Value> = job
+                                    let attempt_dir = job.attempt_dir();
+                                    let components: Vec<serde_json::Value> = job
                                         .planned_components
                                         .iter()
                                         .map(|c| {
@@ -1196,11 +1196,29 @@ pub(super) fn poll_agent_tool(
                                             })
                                         })
                                         .collect();
-                                        let extracted = serde_json::json!({
-                                            "version": 2,
-                                            "assembly_notes": job.assembly_notes.as_str(),
-                                            "components": components,
-                                        });
+                                    let extracted = serde_json::json!({
+                                        "version": 2,
+                                        "assembly_notes": job.assembly_notes.as_str(),
+                                        "components": components,
+                                    });
+
+                                    if let Some(dir) = job.step_dir.as_deref() {
+                                        write_gen3d_json_artifact(
+                                            Some(dir),
+                                            "plan_extracted.json",
+                                            &extracted,
+                                        );
+                                        write_gen3d_assembly_snapshot(
+                                            Some(dir),
+                                            &job.planned_components,
+                                        );
+                                        write_gen3d_text_artifact(
+                                            Some(dir),
+                                            "plan_raw.txt",
+                                            text.trim(),
+                                        );
+                                    }
+                                    if let Some(dir) = attempt_dir.as_deref() {
                                         write_gen3d_json_artifact(
                                             Some(dir),
                                             "plan_extracted.json",
@@ -1276,7 +1294,7 @@ pub(super) fn poll_agent_tool(
                         }
 	                        Err(err) => {
 	                            job.pending_plan_attempt = None;
-	                            match (job.ai.clone(), job.pass_dir.clone()) {
+		                            match (job.ai.clone(), job.step_dir.clone()) {
 	                            (Some(ai), Some(pass_dir)) => {
 	                                let system = super::prompts::build_gen3d_plan_system_instructions();
 	                                let prompt_override =
@@ -1503,7 +1521,7 @@ pub(super) fn poll_agent_tool(
                 super::Gen3dAgentLlmToolKind::GeneratePlanOps => {
                     let text = resp.text;
 
-                    if let Some(dir) = job.pass_dir.as_deref() {
+                    if let Some(dir) = job.step_dir.as_deref() {
                         write_gen3d_text_artifact(Some(dir), "plan_ops_raw.txt", text.trim());
                     }
 
@@ -1566,7 +1584,7 @@ pub(super) fn poll_agent_tool(
                             call.tool_id.clone(),
                             json,
                         ),
-                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                        Err(err) => match (job.ai.clone(), job.step_dir.clone()) {
                             (Some(ai), Some(pass_dir)) => {
                                 let system =
                                     super::prompts::build_gen3d_plan_ops_system_instructions();
@@ -1765,7 +1783,7 @@ pub(super) fn poll_agent_tool(
                 super::Gen3dAgentLlmToolKind::GenerateDraftOps => {
                     let text = resp.text;
 
-                    if let Some(dir) = job.pass_dir.as_deref() {
+                    if let Some(dir) = job.step_dir.as_deref() {
                         write_gen3d_text_artifact(Some(dir), "draft_ops_raw.txt", text.trim());
                     }
 
@@ -2506,7 +2524,7 @@ pub(super) fn poll_agent_tool(
                                     obj.insert("repaired".into(), serde_json::Value::Bool(true));
                                     obj.insert("repair_diff".into(), diff);
                                 }
-                                if let Some(dir) = job.pass_dir.as_deref() {
+                                if let Some(dir) = job.step_dir.as_deref() {
                                     write_gen3d_json_artifact(
                                         Some(dir),
                                         "draft_ops_generated_normalized.json",
@@ -2514,12 +2532,12 @@ pub(super) fn poll_agent_tool(
                                     );
                                 }
                             }
-                            if let Some(dir) = job.pass_dir.as_deref() {
+                            if let Some(dir) = job.step_dir.as_deref() {
                                 write_gen3d_json_artifact(Some(dir), "draft_ops_suggested_last.json", &json);
                             }
                             Gen3dToolResultJsonV1::ok(call.call_id.clone(), call.tool_id.clone(), json)
                         }
-                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                        Err(err) => match (job.ai.clone(), job.step_dir.clone()) {
                             (Some(ai), Some(pass_dir)) => {
                                 let system =
                                     super::prompts::build_gen3d_draft_ops_system_instructions();
@@ -2566,7 +2584,7 @@ pub(super) fn poll_agent_tool(
                                 let scene_graph_summary = super::build_gen3d_scene_graph_summary(
                                     &run_id,
                                     job.attempt,
-                                    job.pass,
+                                    job.step,
                                     &job.plan_hash,
                                     job.assembly_rev,
                                     &job.planned_components,
@@ -2609,7 +2627,7 @@ pub(super) fn poll_agent_tool(
                                     image_object_summary.as_deref(),
                                     &run_id,
                                     job.attempt,
-                                    job.pass,
+                                    job.step,
                                     &job.plan_hash,
                                     job.assembly_rev,
                                     strategy.as_str(),
@@ -2667,7 +2685,7 @@ pub(super) fn poll_agent_tool(
                         Ok(ai) => match super::convert::ai_to_component_def(
                             &job.planned_components[component_idx],
                             ai,
-                            job.pass_dir.as_deref(),
+                            job.step_dir.as_deref(),
                         ) {
                             Ok(def) => {
                                 let object_id = def.object_id;
@@ -2718,7 +2736,7 @@ pub(super) fn poll_agent_tool(
                                     draft,
                                 );
                                 write_gen3d_assembly_snapshot(
-                                    job.pass_dir.as_deref(),
+                                    job.step_dir.as_deref(),
                                     &job.planned_components,
                                 );
                                 job.assembly_rev = job.assembly_rev.saturating_add(1);
@@ -2733,7 +2751,7 @@ pub(super) fn poll_agent_tool(
                                     }),
                                 )
                             }
-                            Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                            Err(err) => match (job.ai.clone(), job.step_dir.clone()) {
                                 (Some(ai), Some(pass_dir)) => {
                                     let system =
                                         super::prompts::build_gen3d_component_system_instructions();
@@ -2783,7 +2801,7 @@ pub(super) fn poll_agent_tool(
                                 ),
                             },
                         },
-                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                        Err(err) => match (job.ai.clone(), job.step_dir.clone()) {
                             (Some(ai), Some(pass_dir)) => {
                                 let system =
                                     super::prompts::build_gen3d_component_system_instructions();
@@ -2854,7 +2872,7 @@ pub(super) fn poll_agent_tool(
                     };
 
                     let text = resp.text;
-                    if let Some(dir) = job.pass_dir.as_deref() {
+                    if let Some(dir) = job.step_dir.as_deref() {
                         write_gen3d_text_artifact(
                             Some(dir),
                             format!("motion_{}_raw.txt", channel_for_artifact),
@@ -3184,7 +3202,7 @@ pub(super) fn poll_agent_tool(
                                     ),
                                 )
                             } else {
-                                if let Some(dir) = job.pass_dir.as_deref() {
+                                if let Some(dir) = job.step_dir.as_deref() {
                                     write_gen3d_json_artifact(
                                         Some(dir),
                                         format!("motion_{}.json", channel_for_artifact),
@@ -3208,7 +3226,7 @@ pub(super) fn poll_agent_tool(
                                         );
                                     }
                                     write_gen3d_assembly_snapshot(
-                                        job.pass_dir.as_deref(),
+                                        job.step_dir.as_deref(),
                                         &job.planned_components,
                                     );
                                 }
@@ -3232,11 +3250,11 @@ pub(super) fn poll_agent_tool(
                                 )
                             }
                         }
-                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
-	                            (Some(ai), Some(pass_dir)) => {
-	                                let system = super::prompts::build_gen3d_motion_authoring_system_instructions();
-	                                let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
-	                                let (mut has_idle_slot, mut has_move_slot) = (false, false);
+                        Err(err) => match (job.ai.clone(), job.step_dir.clone()) {
+		                            (Some(ai), Some(pass_dir)) => {
+		                                let system = super::prompts::build_gen3d_motion_authoring_system_instructions();
+		                                let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
+		                                let (mut has_idle_slot, mut has_move_slot) = (false, false);
 	                                for comp in job.planned_components.iter() {
 	                                    let Some(att) = comp.attach_to.as_ref() else {
 	                                        continue;
@@ -3300,7 +3318,7 @@ pub(super) fn poll_agent_tool(
                 }
                 super::Gen3dAgentLlmToolKind::ReviewDelta => {
                     let text = resp.text;
-                    if let Some(dir) = job.pass_dir.as_deref() {
+                    if let Some(dir) = job.step_dir.as_deref() {
                         write_gen3d_text_artifact(Some(dir), "review_delta_raw.txt", text.trim());
                     }
 
@@ -3343,7 +3361,7 @@ pub(super) fn poll_agent_tool(
                                 &mut job.planned_components,
                                 &plan_collider,
                                 draft,
-                                job.pass_dir.as_deref(),
+                                job.step_dir.as_deref(),
                             ) {
                                 Ok(apply) => {
                                     if !apply.tooling_feedback.is_empty() {
@@ -3364,7 +3382,7 @@ pub(super) fn poll_agent_tool(
                                     );
                                     if !regen_buckets.skipped_due_to_budget.is_empty() {
                                         append_gen3d_run_log(
-                                            job.pass_dir.as_deref(),
+                                            job.step_dir.as_deref(),
                                             format!(
                                                 "regen_budget_skip_review skipped={} max_total={} max_per_component={}",
                                                 regen_buckets.skipped_due_to_budget.len(),
@@ -3445,7 +3463,7 @@ pub(super) fn poll_agent_tool(
                                             job.assembly_rev =
                                                 job.assembly_rev.saturating_add(1);
                                             write_gen3d_assembly_snapshot(
-                                                job.pass_dir.as_deref(),
+                                                job.step_dir.as_deref(),
                                                 &job.planned_components,
                                             );
                                         }
@@ -3513,7 +3531,7 @@ pub(super) fn poll_agent_tool(
                                             &extracted_feedback,
                                         );
                                     }
-                                    match (job.ai.clone(), job.pass_dir.clone()) {
+                                    match (job.ai.clone(), job.step_dir.clone()) {
                                         (Some(ai), Some(pass_dir)) => {
                                             let run_id = job
                                                 .run_id
@@ -3523,7 +3541,7 @@ pub(super) fn poll_agent_tool(
                                                 super::build_gen3d_scene_graph_summary(
                                                     &run_id,
                                                     job.attempt,
-                                                    job.pass,
+                                                    job.step,
                                                     &job.plan_hash,
                                                     job.assembly_rev,
                                                     &job.planned_components,
@@ -3692,14 +3710,14 @@ pub(super) fn poll_agent_tool(
                                 }
                             }
                         }
-                        Err(err) => match (job.ai.clone(), job.pass_dir.clone()) {
+                        Err(err) => match (job.ai.clone(), job.step_dir.clone()) {
                             (Some(ai), Some(pass_dir)) => {
                                 let run_id =
                                     job.run_id.map(|id| id.to_string()).unwrap_or_default();
                                 let scene_graph_summary = super::build_gen3d_scene_graph_summary(
                                     &run_id,
                                     job.attempt,
-                                    job.pass,
+                                    job.step,
                                     &job.plan_hash,
                                     job.assembly_rev,
                                     &job.planned_components,
@@ -3870,12 +3888,12 @@ pub(super) fn poll_agent_tool(
         },
     );
     append_gen3d_jsonl_artifact(
-        job.pass_dir.as_deref(),
+        job.step_dir.as_deref(),
         "tool_results.jsonl",
         &serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
     );
     append_gen3d_run_log(
-        job.pass_dir.as_deref(),
+        job.step_dir.as_deref(),
         format!(
             "tool_call_result call_id={} tool_id={} ok={} {}",
             tool_result.call_id,

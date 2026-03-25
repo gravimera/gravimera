@@ -77,7 +77,37 @@ pub(crate) fn append_agent_trace_event_v1(run_dir: Option<&Path>, event: &AgentT
     let _ = file.write_all(line.as_bytes());
 }
 
+pub(crate) fn run_root_dir_from_artifact_dir(artifact_dir: &Path) -> Option<&Path> {
+    // Step dir: <run_id>/attempt_N/steps/step_####[_...]
+    if artifact_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.starts_with("step_"))
+    {
+        return artifact_dir.parent()?.parent()?.parent();
+    }
+
+    // Legacy pass dir: <run_id>/attempt_N/pass_M
+    if artifact_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.starts_with("pass_"))
+    {
+        return artifact_dir.parent()?.parent();
+    }
+
+    // Attempt dir: <run_id>/attempt_N
+    if artifact_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.starts_with("attempt_"))
+    {
+        return artifact_dir.parent();
+    }
+
+    Some(artifact_dir)
+}
+
 pub(crate) fn run_root_dir_from_pass_dir(pass_dir: &Path) -> Option<&Path> {
-    // pass_dir = <run_id>/attempt_N/pass_M
-    pass_dir.parent()?.parent()
+    run_root_dir_from_artifact_dir(pass_dir)
 }

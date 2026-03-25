@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::gen3d::agent::{
-    append_agent_trace_event_v1, run_root_dir_from_pass_dir, AgentTraceEventV1,
+    append_agent_trace_event_v1, run_root_dir_from_artifact_dir, AgentTraceEventV1,
 };
 use crate::openai_shared::{
     curl_auth_header_file, extract_openai_chat_completions_sse_last_json,
@@ -657,7 +657,7 @@ pub(super) fn generate_text_via_openai(
         }
     }
 
-    let run_root_dir = run_dir.and_then(|dir| run_root_dir_from_pass_dir(dir));
+    let run_root_dir = run_dir.and_then(|dir| run_root_dir_from_artifact_dir(dir));
     append_agent_trace_event_v1(
         run_root_dir,
         &AgentTraceEventV1::LlmRequest {

@@ -814,6 +814,15 @@ mod tests {
         assert!(text.contains("\"version\":1"));
         assert!(text.contains("\"ops\""));
     }
+
+    #[test]
+    fn gen3d_motion_authoring_system_instructions_include_schema_key_contract() {
+        let text = build_gen3d_motion_authoring_system_instructions();
+        assert!(text.contains("Schema key contract (do not invent extra keys):"));
+        assert!(text.contains("clip(kind=spin)"), "{text}");
+        assert!(text.contains("radians_per_unit"), "{text}");
+        assert!(text.contains("axis_space"), "{text}");
+    }
 }
 
 fn schema_unwrap_object(schema: &serde_json::Value) -> Option<&serde_json::Value> {
@@ -912,6 +921,124 @@ fn build_gen3d_plan_schema_key_contract_text() -> String {
     out
 }
 
+fn build_gen3d_motion_authoring_schema_key_contract_text() -> String {
+    let spec = super::structured_outputs::json_schema_spec(
+        super::structured_outputs::Gen3dAiJsonSchemaKind::MotionAuthoringV1,
+    );
+    let schema = spec.schema;
+
+    let top_level = schema_object_property_keys(&schema);
+
+    let applies_to_schema = schema.get("properties").and_then(|v| v.get("applies_to"));
+    let applies_to_keys = applies_to_schema.map(schema_object_property_keys).unwrap_or_default();
+
+    let edges_schema = schema
+        .get("properties")
+        .and_then(|v| v.get("edges"))
+        .and_then(schema_array_items);
+    let edge_keys = edges_schema.map(schema_object_property_keys).unwrap_or_default();
+
+    let slots_schema = edges_schema
+        .and_then(|v| v.get("properties"))
+        .and_then(|v| v.get("slots"))
+        .and_then(schema_array_items);
+    let slot_keys = slots_schema.map(schema_object_property_keys).unwrap_or_default();
+
+    let clip_schema = slots_schema
+        .and_then(|v| v.get("properties"))
+        .and_then(|v| v.get("clip"));
+    let clip_variants: Vec<&serde_json::Value> = clip_schema
+        .and_then(|v| v.get("anyOf"))
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().collect())
+        .unwrap_or_default();
+
+    let mut clip_lines: Vec<String> = Vec::new();
+    for candidate in clip_variants.iter() {
+        let kind = candidate
+            .get("properties")
+            .and_then(|v| v.get("kind"))
+            .and_then(|v| v.get("enum"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let keys = schema_object_property_keys(candidate);
+        if kind.trim().is_empty() || keys.is_empty() {
+            continue;
+        }
+        clip_lines.push(format!("- clip(kind={kind}): {}", keys.join(", ")));
+    }
+    clip_lines.sort();
+    clip_lines.dedup();
+
+    let keyframe_schema = clip_variants
+        .iter()
+        .find_map(|candidate| {
+            candidate
+                .get("properties")
+                .and_then(|v| v.get("keyframes"))
+                .and_then(schema_array_items)
+        })
+        .or_else(|| {
+            slots_schema
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("clip"))
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("keyframes"))
+                .and_then(schema_array_items)
+        });
+    let keyframe_keys = keyframe_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
+
+    let delta_schema = keyframe_schema
+        .and_then(|v| v.get("properties"))
+        .and_then(|v| v.get("delta"));
+    let delta_keys = delta_schema.map(schema_object_property_keys).unwrap_or_default();
+
+    let mut out = String::new();
+    out.push_str("Schema key contract (do not invent extra keys):\n");
+    if !top_level.is_empty() {
+        out.push_str("- top-level: ");
+        out.push_str(&top_level.join(", "));
+        out.push('\n');
+    }
+    if !applies_to_keys.is_empty() {
+        out.push_str("- applies_to: ");
+        out.push_str(&applies_to_keys.join(", "));
+        out.push('\n');
+    }
+    if !edge_keys.is_empty() {
+        out.push_str("- edges[] item: ");
+        out.push_str(&edge_keys.join(", "));
+        out.push('\n');
+    }
+    if !slot_keys.is_empty() {
+        out.push_str("- slots[] item: ");
+        out.push_str(&slot_keys.join(", "));
+        out.push('\n');
+    }
+    if !clip_lines.is_empty() {
+        out.push_str("Clip variants:\n");
+        for line in clip_lines {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    if !keyframe_keys.is_empty() {
+        out.push_str("- keyframes[] item: ");
+        out.push_str(&keyframe_keys.join(", "));
+        out.push('\n');
+    }
+    if !delta_keys.is_empty() {
+        out.push_str("- delta: ");
+        out.push_str(&delta_keys.join(", "));
+        out.push('\n');
+    }
+    out
+}
+
 pub(super) fn build_gen3d_plan_system_instructions() -> String {
     let schema_keys_contract = build_gen3d_plan_schema_key_contract_text();
     format!(
@@ -997,6 +1124,13 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
             - Set `child_anchor.forward` (+Z) and `child_anchor.up` (+Y) in the CHILD component's local axes so the child can rotate into the parent's join frame.\n\
               They do NOT need to numerically equal the parent's vectors.\n\
               Example: if a chain link is modeled along the child's local +Z axis, use `forward=[0,0,1]` and `up=[0,1,0]` for its joint anchors.\n\
+            - Chain axis rule (CRITICAL for motion quality in multi-link limbs):\n\
+              - For an intermediate component with BOTH a parent joint and a child joint (a \"chain link\"):\n\
+                - Let `proximal` be the anchor used as `attach_to.child_anchor` (connects to its parent).\n\
+                - Let `distal` be the anchor used as `attach_to.parent_anchor` by the main child that continues the chain.\n\
+                - In the COMPONENT's local space, set `proximal.forward` (+Z) and `distal.forward` (+Z) to point from `proximal.pos` toward `distal.pos`.\n\
+                - Choose `up` so all links share a consistent roll (avoid flipping 90° between links).\n\
+              - Do NOT blindly copy the parent's anchor forward/up vectors into the child component; each anchor basis is defined in its OWN component-local space.\n\
             - Engine constraint (strict): for EVERY attachment, the join anchor axes must be in the same hemisphere.\n\
               - Require: dot(parent_anchor.forward, child_anchor.forward) > 0 AND dot(parent_anchor.up, child_anchor.up) > 0.\n\
                 (This dot check is applied as an engine guardrail in component-local coordinates.)\n\
@@ -1020,7 +1154,14 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - Use `reuse_groups` when multiple components share identical or mirrored geometry (wheels, legs, L/R symmetry).\n\
          - If you model L/R or numbered sets (ex: `left_arm`/`right_arm`, `leg_0..leg_7`), prefer `reuse_groups`.\n\
          - It does NOT create components; every source/target must exist in `components[]`.\n\
-         - You MUST set `alignment`: `rotation` or `mirror_mount_x`.\n\n\
+         - Each reuse group MUST specify:\n\
+           - `kind`: `copy_component` or `copy_component_subtree`.\n\
+             - Prefer `copy_component_subtree` for whole limbs (arm/leg chains) so geometry + details stay consistent.\n\
+           - `source` + `targets`: component names (no indices).\n\
+           - `alignment`: `rotation` (same orientation) or `mirror_mount_x` (L/R mirror).\n\
+           - Optional: `mode`: `detached` (default) or `linked` (only safe for leaf components).\n\
+           - Optional: `anchors`: `preserve_interfaces` (default, safest), `preserve_target`, or `copy_source`.\n\
+           - Optional: `alignment_frame`: `join` (default) or `child_anchor` (only for non-mirror rotation reuse).\n\n\
           Schema:\n\
           - Follow the provided JSON schema exactly (version=8).\n\n\
          Constraints:\n\
@@ -2053,40 +2194,18 @@ Rules:\n\
 }
 
 pub(super) fn build_gen3d_motion_authoring_system_instructions() -> String {
-    "You are the Gravimera Gen3D motion authoring assistant.\n\
+    let schema_keys_contract = build_gen3d_motion_authoring_schema_key_contract_text();
+    format!(
+        "You are the Gravimera Gen3D motion authoring assistant.\n\
 You will be given a generated component graph (components + attachments + anchors + current base offsets).\n\
 Your job is to author explicit per-edge animation clips.\n\
 This tool call authors EXACTLY ONE motion channel (the target channel is provided in the user text).\n\
 Return ONLY a single JSON object for gen3d_motion_authoring_v1 (no markdown, no prose).\n\n\
-Schema:\n\
-{\n\
-  \"version\": 1,\n\
-  \"applies_to\": {\"run_id\":\"uuid\",\"attempt\":0,\"plan_hash\":\"sha256:...\",\"assembly_rev\":0},\n\
-  \"decision\": \"author_clips\" | \"regen_geometry_required\",\n\
-  \"reason\": \"short reason\",\n\
-  \"replace_channels\": [\"move\"],\n\
-  \"edges\": [\n\
-    {\n\
-      \"component\": \"child_component_name\",\n\
-      \"slots\": [\n\
-        {\n\
-          \"channel\": \"move\",\n\
-          \"driver\": \"always|move_phase|move_distance|attack_time|action_time\",\n\
-          \"speed_scale\": 1.0,\n\
-          \"time_offset_units\": 0.0,\n\
-          \"clip\": {\n\
-            \"kind\": \"loop|once|ping_pong|spin\",\n\
-            \"duration_units\": 1.0,\n\
-            \"keyframes\": [\n\
-              {\"t_units\": 0.0, \"delta\": {\"pos\": [0,0,0] | null, \"rot_quat_xyzw\": [0,0,0,1] | null, \"scale\": [1,1,1] | null}}\n\
-            ]\n\
-          }\n\
-        }\n\
-      ]\n\
-    }\n\
-  ],\n\
-  \"notes\": \"...\" | null\n\
-}\n\n\
+{schema_keys_contract}\n\
+Clip schema (IMPORTANT):\n\
+- `clip.kind` must be one of: `loop`, `once`, `ping_pong`, `spin`.\n\
+- For `loop|once|ping_pong`: you MUST provide `duration_units` + `keyframes`.\n\
+- For `spin`: you MUST provide `axis` + `radians_per_unit` + `axis_space`.\n\n\
 Rules:\n\
 - You MUST copy the provided applies_to values exactly.\n\
 - You MUST NOT invent component names. Target attachment edges by naming the CHILD component in `edges[].component`.\n\
@@ -2117,11 +2236,12 @@ Rules:\n\
     - The engine applies: animated_offset = base_offset * delta(t).\n\
     - `rot_quat_xyzw=[x,y,z,w]` is in the JOIN frame; the rotation axis is proportional to `[x,y,z]` (normalized).\n\
     - This does NOT restrict you to axis-aligned rotations; any axis vector in join frame is allowed.\n\
-  - For `clip.kind=spin`:\n\
+- For `clip.kind=spin`:\n\
     - You MUST include `axis_space`: \"join\" | \"child_local\".\n\
     - Plain words: \"join\" means \"spin around the joint axes\"; \"child_local\" means \"spin around the model's own axes\".\n\
     - If `axis_space=\"join\"`, `axis` is expressed in the JOIN frame.\n\
     - If `axis_space=\"child_local\"`, `axis` is expressed in the CHILD component's local frame, and the engine rebases it through the child anchor.\n\
+    - You MUST include `radians_per_unit`.\n\
 - Hinge joints (IMPORTANT):\n\
   - If an edge's attachment joint is `kind=hinge`, `axis_join` is expressed in the JOIN frame.\n\
   - Any authored rotation MUST be a pure twist about `axis_join` (no off-axis swing), or motion validation will fail with `hinge_off_axis`.\n\
@@ -2133,7 +2253,7 @@ Rules:\n\
   - You may be asked to author these in separate calls; always obey the target_channel.\n\
 - If the prompt implies motion that cannot be achieved with the existing articulation (for example: a snake with only one rigid body component), use decision=regen_geometry_required.\n\
   - In that case, do NOT author clips. Explain what articulation is missing in `reason`/`notes`.\n"
-        .to_string()
+    )
 }
 
 pub(super) fn build_gen3d_motion_authoring_user_text(

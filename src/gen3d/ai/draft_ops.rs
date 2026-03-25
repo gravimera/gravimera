@@ -1545,7 +1545,7 @@ pub(super) fn query_component_parts_v1(
         "recipes": recipes,
     });
 
-    if let Some(dir) = job.pass_dir_path() {
+    if let Some(dir) = job.step_dir_path() {
         let prefix = sanitize_prefix(&format!("component_parts_{}", component));
         write_gen3d_json_artifact(Some(dir), format!("{prefix}.json"), &result);
     }
@@ -1623,7 +1623,7 @@ pub(super) fn apply_draft_ops_v1(
             draft,
         );
 
-        if let Some(dir) = job.pass_dir_path() {
+        if let Some(dir) = job.step_dir_path() {
             super::artifacts::write_gen3d_assembly_snapshot(Some(dir), &job.planned_components);
         }
 
@@ -1667,7 +1667,7 @@ pub(super) fn apply_draft_ops_v1(
         "changed_component_ids": changed_component_ids,
     });
 
-    if let Some(dir) = job.pass_dir_path() {
+    if let Some(dir) = job.step_dir_path() {
         let log_ref = "draft_ops.jsonl";
         let ts_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -1364,7 +1364,7 @@ fn handle_gen3d_routes<
                 "draft_ready": draft_ready,
                 "run_id": job.run_id().map(|id| id.to_string()),
                 "attempt": job.attempt(),
-                "pass": job.pass(),
+                "step": job.step(),
                 "status": workshop.status.clone(),
                 "error": workshop.error.clone(),
                 "run_dir": job.run_dir_path().map(|p| p.display().to_string()),
@@ -1960,7 +1960,7 @@ fn handle_gen3d_routes<
             let body = serde_json::json!({
                 "ok": true,
                 "run_id": job.run_id().map(|id| id.to_string()),
-                "pass": job.pass(),
+                "step": job.step(),
             })
             .to_string();
             Some(AutomationReply {

@@ -1117,7 +1117,7 @@ fn apply_plan_acceptance(
 
     *draft = draft_next;
 
-    if let Some(dir) = job.pass_dir_path() {
+    if let Some(dir) = job.step_dir_path() {
         write_gen3d_assembly_snapshot(Some(dir), &job.planned_components);
     }
 
@@ -1397,7 +1397,7 @@ pub(super) fn apply_plan_ops_v1(
         "new_errors": if accepted { serde_json::Value::Null } else { serde_json::Value::Array(new_errors) },
     });
 
-    if let Some(dir) = job.pass_dir_path() {
+    if let Some(dir) = job.step_dir_path() {
         let log_ref = "plan_ops.jsonl";
         let ts_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1660,7 +1660,7 @@ pub(super) fn apply_llm_generate_plan_ops_v1(
     }
     let ops_total = payload.ops.len();
 
-    if let Some(dir) = job.pass_dir_path() {
+    if let Some(dir) = job.step_dir_path() {
         let filename = format!(
             "plan_ops_generated_{}.json",
             sanitize_prefix(call_id.unwrap_or(""))
@@ -1777,7 +1777,7 @@ Hint: include these names in scope_components, or omit scope_components, or use 
             }],
         });
 
-        if let Some(dir) = job.pass_dir_path() {
+        if let Some(dir) = job.step_dir_path() {
             let filename = format!(
                 "plan_ops_apply_last_{}.json",
                 sanitize_prefix(call_id.unwrap_or(""))
@@ -1959,7 +1959,7 @@ Hint: include these names in scope_components, or omit scope_components, or use 
         "new_errors": if accepted { serde_json::Value::Null } else { serde_json::Value::Array(new_errors) },
     });
 
-    if let Some(dir) = job.pass_dir_path() {
+    if let Some(dir) = job.step_dir_path() {
         let filename = format!(
             "plan_ops_apply_last_{}.json",
             sanitize_prefix(call_id.unwrap_or(""))

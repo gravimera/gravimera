@@ -327,7 +327,7 @@ pub(super) fn apply_motion_authoring_for_channel(
         );
         return Err(format!("Failed to apply motion-authoring: {err}"));
     }
-    write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
+    write_gen3d_assembly_snapshot(job.step_dir.as_deref(), &job.planned_components);
 
     let movable = draft
         .root_def()
@@ -448,7 +448,7 @@ pub(super) fn poll_agent_motion_batch(
                 }
                 job.session = resp.session;
 
-                if let Some(dir) = job.pass_dir.as_deref() {
+                if let Some(dir) = job.step_dir.as_deref() {
                     write_gen3d_text_artifact(
                         Some(dir),
                         format!("motion_{}_raw.txt", channel.as_str()),
@@ -512,7 +512,7 @@ pub(super) fn poll_agent_motion_batch(
                     }
                 };
 
-                if let Some(dir) = job.pass_dir.as_deref() {
+                if let Some(dir) = job.step_dir.as_deref() {
                     write_gen3d_json_artifact(
                         Some(dir),
                         format!("motion_{}.json", channel.as_str()),
@@ -572,8 +572,8 @@ pub(super) fn poll_agent_motion_batch(
             fail_job(workshop, job, "Internal error: missing AI config.");
             return None;
         };
-        let Some(pass_dir) = job.pass_dir.clone() else {
-            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+        let Some(step_dir) = job.step_dir.clone() else {
+            fail_job(workshop, job, "Internal error: missing Gen3D step dir.");
             return None;
         };
         let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
@@ -641,7 +641,7 @@ pub(super) fn poll_agent_motion_batch(
         };
 
         append_gen3d_run_log(
-            job.pass_dir.as_deref(),
+            job.step_dir.as_deref(),
             format!(
                 "motion_batch_start channel={} attempt={} parallel={} total={}",
                 channel.as_str(),
@@ -664,7 +664,7 @@ pub(super) fn poll_agent_motion_batch(
             system,
             user_text,
             Vec::new(),
-            pass_dir,
+            step_dir,
             sanitize_prefix(&prefix),
         );
 
@@ -720,7 +720,7 @@ pub(super) fn poll_agent_motion_batch(
         job.motion_in_flight.clear();
         job.motion_attempts.clear();
 
-        if let Some(dir) = job.pass_dir.as_deref() {
+        if let Some(dir) = job.step_dir.as_deref() {
             write_gen3d_json_artifact(
                 Some(dir),
                 "motion_batch_result.json",

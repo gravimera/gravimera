@@ -61,8 +61,11 @@ fn gen3d_mock_pipeline_builds_warcar_prompt_end_to_end() {
 
     let run_id = Uuid::new_v4();
     let run_dir = make_temp_gen3d_run_dir("gravimera_gen3d_pipeline_test", run_id);
-    let pass_dir = run_dir.join("attempt_0").join("pass_0");
-    std::fs::create_dir_all(&pass_dir).expect("create temp gen3d pass dir");
+    let step0 = run_dir
+        .join("attempt_0")
+        .join("steps")
+        .join("step_0000");
+    std::fs::create_dir_all(&step0).expect("create temp gen3d step dir");
 
     let openai = OpenAiConfig {
         base_url: "mock://gen3d".into(),
@@ -90,14 +93,14 @@ fn gen3d_mock_pipeline_builds_warcar_prompt_end_to_end() {
     job.ai = Some(Gen3dAiServiceConfig::OpenAi(openai));
     job.run_id = Some(run_id);
     job.attempt = 0;
-    job.pass = 0;
+    job.step = 0;
     job.plan_hash.clear();
     job.assembly_rev = 0;
     job.max_parallel_components = 1;
     job.user_prompt_raw = prompt.to_string();
     job.user_images.clear();
     job.run_dir = Some(run_dir.clone());
-    job.pass_dir = Some(pass_dir.clone());
+    job.step_dir = Some(step0.clone());
     job.agent = Gen3dAgentState::default();
     job.pipeline = Gen3dPipelineState::default();
 
@@ -133,8 +136,11 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
 
     let run_id = Uuid::new_v4();
     let run_dir = make_temp_gen3d_run_dir("gravimera_gen3d_pipeline_edit_test", run_id);
-    let pass0 = run_dir.join("attempt_0").join("pass_0");
-    std::fs::create_dir_all(&pass0).expect("create temp gen3d pass_0 dir");
+    let step0 = run_dir
+        .join("attempt_0")
+        .join("steps")
+        .join("step_0000");
+    std::fs::create_dir_all(&step0).expect("create temp gen3d step_0000 dir");
 
     let openai = OpenAiConfig {
         base_url: "mock://gen3d".into(),
@@ -162,14 +168,14 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
     job.ai = Some(Gen3dAiServiceConfig::OpenAi(openai));
     job.run_id = Some(run_id);
     job.attempt = 0;
-    job.pass = 0;
+    job.step = 0;
     job.plan_hash.clear();
     job.assembly_rev = 0;
     job.max_parallel_components = 1;
     job.user_prompt_raw = create_prompt.to_string();
     job.user_images.clear();
     job.run_dir = Some(run_dir.clone());
-    job.pass_dir = Some(pass0.clone());
+    job.step_dir = Some(step0.clone());
     job.agent = Gen3dAgentState::default();
     job.pipeline = Gen3dPipelineState::default();
 
@@ -191,8 +197,9 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
     );
 
     // Start a seeded edit run using the existing in-memory draft + plan.
-    let pass1 = run_dir.join("attempt_0").join("pass_1");
-    std::fs::create_dir_all(&pass1).expect("create temp gen3d pass_1 dir");
+    let steps_dir = run_dir.join("attempt_1").join("steps");
+    let step0 = steps_dir.join("step_0000");
+    std::fs::create_dir_all(&step0).expect("create temp gen3d attempt_1 step_0000 dir");
     {
         let mut workshop = app.world_mut().resource_mut::<Gen3dWorkshop>();
         workshop.prompt = edit_prompt.to_string();
@@ -209,8 +216,9 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
         job.pending_finish_run = None;
         job.agent = Gen3dAgentState::default();
         job.pipeline = Gen3dPipelineState::default();
-        job.pass = 1;
-        job.pass_dir = Some(pass1.clone());
+        job.attempt = 1;
+        job.step = 0;
+        job.step_dir = Some(step0.clone());
     }
 
     app = run_app_until_build_stops(app, Duration::from_secs(8));
@@ -222,13 +230,33 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
         job.assembly_rev
     );
 
+    let mut saw_apply_draft_ops_last = false;
+    for entry in steps_dir
+        .read_dir()
+        .expect("read attempt_1 steps dir")
+        .filter_map(|e| e.ok())
+    {
+        if entry.path().join("apply_draft_ops_last.json").exists() {
+            saw_apply_draft_ops_last = true;
+            break;
+        }
+    }
     assert!(
-        pass1.join("apply_draft_ops_last.json").exists(),
-        "expected apply_draft_ops_last.json artifact in edit pass"
+        saw_apply_draft_ops_last,
+        "expected apply_draft_ops_last.json artifact in an edit step dir"
     );
 
-    let tool_calls =
-        std::fs::read_to_string(pass1.join("tool_calls.jsonl")).expect("read tool_calls.jsonl");
+    let mut tool_calls = String::new();
+    for entry in steps_dir
+        .read_dir()
+        .expect("read attempt_1 steps dir")
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path().join("tool_calls.jsonl");
+        if let Ok(text) = std::fs::read_to_string(path) {
+            tool_calls.push_str(&text);
+        }
+    }
     assert!(
         tool_calls.contains("llm_select_edit_strategy_v1"),
         "expected llm_select_edit_strategy_v1 tool call in edit run"
@@ -241,7 +269,7 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
         tool_calls.contains("\"scope_components\":[\"cannon\"]")
             || tool_calls.contains("\"scope_components\":[\"cannon\","),
         "expected llm_generate_draft_ops_v1 to be scoped to cannon (tool_calls={})",
-        pass1.join("tool_calls.jsonl").display()
+        steps_dir.display()
     );
     assert!(
         tool_calls.contains("apply_draft_ops_v1"),
@@ -268,8 +296,11 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
 
     let run_id = Uuid::new_v4();
     let run_dir = make_temp_gen3d_run_dir("gravimera_gen3d_pipeline_fallback_test", run_id);
-    let pass0 = run_dir.join("attempt_0").join("pass_0");
-    std::fs::create_dir_all(&pass0).expect("create temp gen3d pass_0 dir");
+    let step0 = run_dir
+        .join("attempt_0")
+        .join("steps")
+        .join("step_0000");
+    std::fs::create_dir_all(&step0).expect("create temp gen3d attempt_0 step_0000 dir");
 
     let openai = OpenAiConfig {
         base_url: "mock://gen3d".into(),
@@ -297,14 +328,14 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
     job.ai = Some(Gen3dAiServiceConfig::OpenAi(openai));
     job.run_id = Some(run_id);
     job.attempt = 0;
-    job.pass = 0;
+    job.step = 0;
     job.plan_hash.clear();
     job.assembly_rev = 0;
     job.max_parallel_components = 1;
     job.user_prompt_raw = create_prompt.to_string();
     job.user_images.clear();
     job.run_dir = Some(run_dir.clone());
-    job.pass_dir = Some(pass0.clone());
+    job.step_dir = Some(step0.clone());
     job.agent = Gen3dAgentState::default();
     job.pipeline = Gen3dPipelineState::default();
 
@@ -320,8 +351,11 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
     app = run_app_until_build_stops(app, Duration::from_secs(5));
 
     // Start seeded edit run that forces DraftOps tool failures until the pipeline stops.
-    let pass1 = run_dir.join("attempt_0").join("pass_1");
-    std::fs::create_dir_all(&pass1).expect("create temp gen3d pass_1 dir");
+    let step0 = run_dir
+        .join("attempt_1")
+        .join("steps")
+        .join("step_0000");
+    std::fs::create_dir_all(&step0).expect("create temp gen3d attempt_1 step_0000 dir");
     {
         let mut workshop = app.world_mut().resource_mut::<Gen3dWorkshop>();
         workshop.prompt = edit_prompt.to_string();
@@ -338,8 +372,9 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
         job.pending_finish_run = None;
         job.agent = Gen3dAgentState::default();
         job.pipeline = Gen3dPipelineState::default();
-        job.pass = 1;
-        job.pass_dir = Some(pass1.clone());
+        job.attempt = 1;
+        job.step = 0;
+        job.step_dir = Some(step0.clone());
     }
 
     app = run_app_until_build_stops(app, Duration::from_secs(8));

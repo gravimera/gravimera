@@ -2596,15 +2596,15 @@ pub(crate) fn gen3d_update_ui_text(
         "—"
     };
 
-    let status_summary = format!(
-        "State: {state} | Prefab: {prefab_status}\n\
-Draft: comps {components} | parts {parts} | motion {motions}\n\
-Run: attempt {} | pass {} | time {run_time}\n\
-Tokens: run {run_tokens} | total {total_tokens}\n\
-Step: {step_status}",
-        job.attempt() + 1,
-        job.pass() + 1,
-    );
+	    let status_summary = format!(
+	        "State: {state} | Prefab: {prefab_status}\n\
+	Draft: comps {components} | parts {parts} | motion {motions}\n\
+	Run: attempt {} | step {} | time {run_time}\n\
+	Tokens: run {run_tokens} | total {total_tokens}\n\
+	Step: {step_status}",
+	        job.attempt() + 1,
+	        job.step() + 1,
+	    );
     {
         let mut status = texts.p0();
         for mut text in &mut status {

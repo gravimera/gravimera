@@ -27,8 +27,8 @@ pub(super) fn start_agent_llm_review_delta_call(
     let Some(ai) = job.ai.clone() else {
         return Err("Missing AI config".into());
     };
-    let Some(pass_dir) = job.pass_dir.clone() else {
-        return Err("Missing pass dir".into());
+    let Some(step_dir) = job.step_dir.clone() else {
+        return Err("Missing step dir".into());
     };
 
     let rounds_max = config.gen3d_review_delta_rounds_max;
@@ -49,7 +49,7 @@ pub(super) fn start_agent_llm_review_delta_call(
         "main_issue_only"
     };
     append_gen3d_run_log(
-        Some(pass_dir.as_path()),
+        Some(step_dir.as_path()),
         format!("review_delta_start round={next_round_index}/{rounds_max} focus={focus_mode}"),
     );
 
@@ -67,7 +67,7 @@ pub(super) fn start_agent_llm_review_delta_call(
     let scene_graph_summary = super::build_gen3d_scene_graph_summary(
         &run_id,
         job.attempt,
-        job.pass,
+        job.step,
         &job.plan_hash,
         job.assembly_rev,
         &job.planned_components,
@@ -122,10 +122,12 @@ pub(super) fn start_agent_llm_review_delta_call(
         }
     }
 
-    if let Some(dir) = job.pass_dir.as_deref() {
-        write_gen3d_json_artifact(Some(dir), "scene_graph_summary.json", &scene_graph_summary);
-        write_gen3d_json_artifact(Some(dir), "smoke_results.json", &smoke_results);
-    }
+    write_gen3d_json_artifact(
+        Some(step_dir.as_path()),
+        "scene_graph_summary.json",
+        &scene_graph_summary,
+    );
+    write_gen3d_json_artifact(Some(step_dir.as_path()), "smoke_results.json", &smoke_results);
 
     let edit_session = job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
     let regen_allowed = !job.preserve_existing_components_mode
@@ -183,7 +185,7 @@ pub(super) fn start_agent_llm_review_delta_call(
         system,
         user_text,
         images_to_send,
-        pass_dir,
+        step_dir,
         sanitize_prefix(&format!("tool_review_{}", &call.call_id)),
     );
     job.agent.pending_tool_call = Some(call);

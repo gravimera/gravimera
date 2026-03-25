@@ -6,9 +6,10 @@ use std::sync::{Arc, Mutex};
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_DRAFT_OPS_FROM_EVENT, TOOL_ID_APPLY_LAST_DRAFT_OPS,
-    TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_BASIS_FROM_UP_FORWARD, TOOL_ID_COPY_COMPONENT,
-    TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE, TOOL_ID_CREATE_WORKSPACE,
-    TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT, TOOL_ID_DIFF_SNAPSHOTS,
+    TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_APPLY_REUSE_GROUPS, TOOL_ID_BASIS_FROM_UP_FORWARD,
+    TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE,
+    TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT,
+    TOOL_ID_DIFF_SNAPSHOTS,
     TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
     TOOL_ID_GET_USER_INPUTS, TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST,
     TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH,
@@ -114,9 +115,9 @@ fn normalize_tool_call_args(call: &mut Gen3dToolCallJsonV1) -> Result<(), String
 }
 
 #[derive(Clone, Debug)]
-struct Gen3dPassArtifactRef {
+struct Gen3dStepArtifactRef {
     attempt: u32,
-    pass: u32,
+    step: u32,
     path: PathBuf,
 }
 
@@ -124,11 +125,11 @@ fn parse_prefixed_u32(name: &str, prefix: &str) -> Option<u32> {
     name.strip_prefix(prefix)?.trim().parse::<u32>().ok()
 }
 
-fn find_latest_gen3d_pass_artifact(
+fn find_latest_gen3d_step_artifact(
     run_dir: &Path,
     filename: &str,
-) -> Result<Gen3dPassArtifactRef, String> {
-    let mut best: Option<Gen3dPassArtifactRef> = None;
+) -> Result<Gen3dStepArtifactRef, String> {
+    let mut best: Option<Gen3dStepArtifactRef> = None;
     let attempts = std::fs::read_dir(run_dir).map_err(|err| {
         format!(
             "Failed to read Gen3D run_dir `{}`: {err}",
@@ -151,39 +152,75 @@ fn find_latest_gen3d_pass_artifact(
             continue;
         };
         let attempt_dir = attempt_entry.path();
-        let passes = match std::fs::read_dir(&attempt_dir) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        for pass_entry in passes {
-            let Ok(pass_entry) = pass_entry else {
-                continue;
-            };
-            let Ok(file_type) = pass_entry.file_type() else {
-                continue;
-            };
-            if !file_type.is_dir() {
-                continue;
+
+        // New layout: <attempt_dir>/steps/step_####/<filename>
+        let steps_dir = attempt_dir.join("steps");
+        if let Ok(steps) = std::fs::read_dir(&steps_dir) {
+            for step_entry in steps {
+                let Ok(step_entry) = step_entry else {
+                    continue;
+                };
+                let Ok(file_type) = step_entry.file_type() else {
+                    continue;
+                };
+                if !file_type.is_dir() {
+                    continue;
+                }
+                let name = step_entry.file_name();
+                let name = name.to_string_lossy();
+                let Some(step) = parse_prefixed_u32(name.as_ref(), "step_") else {
+                    continue;
+                };
+                let path = step_entry.path().join(filename);
+                if !path.is_file() {
+                    continue;
+                }
+                let is_better = match best.as_ref() {
+                    None => true,
+                    Some(b) => attempt > b.attempt || (attempt == b.attempt && step > b.step),
+                };
+                if is_better {
+                    best = Some(Gen3dStepArtifactRef {
+                        attempt,
+                        step,
+                        path,
+                    });
+                }
             }
-            let name = pass_entry.file_name();
-            let name = name.to_string_lossy();
-            let Some(pass) = parse_prefixed_u32(name.as_ref(), "pass_") else {
-                continue;
-            };
-            let path = pass_entry.path().join(filename);
-            if !path.is_file() {
-                continue;
-            }
-            let is_better = match best.as_ref() {
-                None => true,
-                Some(b) => attempt > b.attempt || (attempt == b.attempt && pass > b.pass),
-            };
-            if is_better {
-                best = Some(Gen3dPassArtifactRef {
-                    attempt,
-                    pass,
-                    path,
-                });
+        }
+
+        // Legacy layout: <attempt_dir>/pass_####/<filename>
+        if let Ok(passes) = std::fs::read_dir(&attempt_dir) {
+            for pass_entry in passes {
+                let Ok(pass_entry) = pass_entry else {
+                    continue;
+                };
+                let Ok(file_type) = pass_entry.file_type() else {
+                    continue;
+                };
+                if !file_type.is_dir() {
+                    continue;
+                }
+                let name = pass_entry.file_name();
+                let name = name.to_string_lossy();
+                let Some(step) = parse_prefixed_u32(name.as_ref(), "pass_") else {
+                    continue;
+                };
+                let path = pass_entry.path().join(filename);
+                if !path.is_file() {
+                    continue;
+                }
+                let is_better = match best.as_ref() {
+                    None => true,
+                    Some(b) => attempt > b.attempt || (attempt == b.attempt && step > b.step),
+                };
+                if is_better {
+                    best = Some(Gen3dStepArtifactRef {
+                        attempt,
+                        step,
+                        path,
+                    });
+                }
             }
         }
     }
@@ -992,12 +1029,12 @@ fn info_kv_put_for_tool(
     summary: String,
 ) -> Result<super::info_store::InfoKvRecord, String> {
     let attempt = job.attempt;
-    let pass = job.pass;
+    let step = job.step;
     let assembly_rev = job.assembly_rev;
     let store = job.ensure_info_store()?;
     store.kv_put(
         attempt,
-        pass,
+        step,
         assembly_rev,
         workspace_id,
         INFO_KV_NAMESPACE_GEN3D,
@@ -1013,7 +1050,7 @@ fn info_kv_put_for_tool(
 
 fn run_validate_v1(job: &mut Gen3dAiJob, draft: &Gen3dDraft) -> serde_json::Value {
     let json = super::build_gen3d_validate_results(&job.planned_components, draft);
-    if let Some(dir) = job.pass_dir.as_deref() {
+    if let Some(dir) = job.step_dir.as_deref() {
         write_gen3d_json_artifact(Some(dir), "validate.json", &json);
     }
     job.agent.last_validate_ok = json.get("ok").and_then(|v| v.as_bool());
@@ -1038,7 +1075,7 @@ fn run_smoke_check_v1(
         .get("motion_validation")
         .and_then(|v| v.get("ok"))
         .and_then(|v| v.as_bool());
-    if let Some(dir) = job.pass_dir.as_deref() {
+    if let Some(dir) = job.step_dir.as_deref() {
         write_gen3d_json_artifact(Some(dir), "smoke_results.json", &json);
     }
     job.agent.ever_smoke_checked = true;
@@ -1593,7 +1630,7 @@ fn execute_qa_v1(
         "capability_gaps": capability_gaps,
     });
 
-    if let Some(dir) = job.pass_dir.as_deref() {
+    if let Some(dir) = job.step_dir.as_deref() {
         write_gen3d_json_artifact(Some(dir), "qa.json", &json);
     }
 
@@ -2608,7 +2645,7 @@ pub(super) fn execute_tool_call(
 
             job.descriptor_meta_override = Some(meta.clone());
 
-            if let Some(dir) = job.pass_dir.as_deref() {
+            if let Some(dir) = job.step_dir.as_deref() {
                 let name = meta.name.clone();
                 let short = meta.short.clone();
                 let tags = meta.tags.clone();
@@ -2624,7 +2661,7 @@ pub(super) fn execute_tool_call(
                 );
             }
             append_gen3d_run_log(
-                job.pass_dir.as_deref(),
+                job.step_dir.as_deref(),
                 format!(
                     "descriptor_meta_override_set name_chars={} short_chars={} tags={}",
                     meta.name.chars().count(),
@@ -2649,13 +2686,13 @@ pub(super) fn execute_tool_call(
             let mut json = super::build_gen3d_scene_graph_summary(
                 &run_id,
                 job.attempt,
-                job.pass,
+                job.step,
                 &job.plan_hash,
                 job.assembly_rev,
                 &job.planned_components,
                 draft,
             );
-            if let Some(dir) = job.pass_dir.as_deref() {
+            if let Some(dir) = job.step_dir.as_deref() {
                 write_gen3d_json_artifact(Some(dir), "scene_graph_summary.json", &json);
             }
 
@@ -2726,7 +2763,7 @@ pub(super) fn execute_tool_call(
                 &job.planned_components,
                 job.preserve_existing_components_mode,
             );
-            if let Some(dir) = job.pass_dir.as_deref() {
+            if let Some(dir) = job.step_dir.as_deref() {
                 write_gen3d_json_artifact(Some(dir), "plan_inspect.json", &json);
             }
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
@@ -2782,11 +2819,11 @@ pub(super) fn execute_tool_call(
                 .unwrap_or(MAX_PLAN_TEMPLATE_BYTES as u32)
                 .clamp(1024, MAX_PLAN_TEMPLATE_BYTES as u32) as usize;
 
-            let Some(pass_dir) = job.pass_dir.as_deref() else {
+            let Some(step_dir) = job.step_dir.as_deref() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir.".into(),
+                    "Missing step dir.".into(),
                 ));
             };
 
@@ -2840,10 +2877,10 @@ pub(super) fn execute_tool_call(
             let omitted_fields = fit.omitted_fields;
 
             let filename = format!("plan_template_{}.json", sanitize_prefix(&call.call_id));
-            write_gen3d_json_artifact(Some(pass_dir), &filename, &plan);
+            write_gen3d_json_artifact(Some(step_dir), &filename, &plan);
 
             let attempt = job.attempt;
-            let pass = job.pass;
+            let step = job.step;
             let assembly_rev = job.assembly_rev;
             let workspace_id = job.active_workspace_id().trim().to_string();
 
@@ -2858,7 +2895,7 @@ pub(super) fn execute_tool_call(
             let record = match job.ensure_info_store() {
                 Ok(store) => store.kv_put(
                     attempt,
-                    pass,
+                    step,
                     assembly_rev,
                     workspace_id.as_str(),
                     namespace,
@@ -3093,7 +3130,7 @@ pub(super) fn execute_tool_call(
                 &job.planned_components,
                 sample_count,
             );
-            if let Some(dir) = job.pass_dir.as_deref() {
+            if let Some(dir) = job.step_dir.as_deref() {
                 write_gen3d_json_artifact(Some(dir), "motion_metrics.json", &json);
             }
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
@@ -4435,7 +4472,7 @@ pub(super) fn execute_tool_call(
                 }
             };
 
-            let artifact = match find_latest_gen3d_pass_artifact(
+            let artifact = match find_latest_gen3d_step_artifact(
                 run_dir.as_path(),
                 "draft_ops_suggested_last.json",
             ) {
@@ -4560,7 +4597,7 @@ pub(super) fn execute_tool_call(
                         "kind": "draft_ops_suggested_last_artifact",
                         "relative_path": relative_path,
                         "attempt": artifact.attempt,
-                        "pass": artifact.pass,
+                        "step": artifact.step,
                         "tool_id": TOOL_ID_LLM_GENERATE_DRAFT_OPS,
                         "if_assembly_rev": suggested_if_assembly_rev,
                     }),
@@ -4922,6 +4959,153 @@ pub(super) fn execute_tool_call(
             }
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call_id, tool_id, json))
         }
+        TOOL_ID_APPLY_REUSE_GROUPS => {
+            #[derive(Debug, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct ApplyReuseGroupsArgsV1 {
+                #[serde(default)]
+                version: u32,
+            }
+
+            let mut args: ApplyReuseGroupsArgsV1 = match serde_json::from_value(call.args) {
+                Ok(v) => v,
+                Err(err) => {
+                    return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                        call.call_id,
+                        call.tool_id,
+                        format!("Invalid args for `{TOOL_ID_APPLY_REUSE_GROUPS}`: {err}"),
+                    ));
+                }
+            };
+            if args.version == 0 {
+                args.version = 1;
+            }
+            if args.version != 1 {
+                return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
+                    call.call_id,
+                    call.tool_id,
+                    format!(
+                        "Unsupported `{TOOL_ID_APPLY_REUSE_GROUPS}` version {}.",
+                        args.version
+                    ),
+                ));
+            }
+
+            let reuse_groups_total = job.reuse_groups.len();
+
+            let mut report = super::reuse_groups::apply_auto_copy(
+                &mut job.planned_components,
+                draft,
+                &job.reuse_groups,
+            );
+
+            if report.component_copies_applied > 0 {
+                if let Some(root_idx) = job
+                    .planned_components
+                    .iter()
+                    .position(|c| c.attach_to.is_none())
+                {
+                    if let Err(err) = super::convert::resolve_planned_component_transforms(
+                        &mut job.planned_components,
+                        root_idx,
+                    ) {
+                        report
+                            .errors
+                            .push(format!("apply_reuse_groups: resolve transforms failed: {err}"));
+                    }
+                }
+                super::convert::update_root_def_from_planned_components(
+                    &job.planned_components,
+                    &job.plan_collider,
+                    draft,
+                );
+                write_gen3d_assembly_snapshot(job.step_dir.as_deref(), &job.planned_components);
+                job.assembly_rev = job.assembly_rev.saturating_add(1);
+            }
+
+            let fallback_component_indices: Vec<usize> = report
+                .fallback_component_indices
+                .iter()
+                .copied()
+                .filter(|idx| *idx < job.planned_components.len())
+                .filter(|idx| {
+                    job.planned_components
+                        .get(*idx)
+                        .is_some_and(|c| c.actual_size.is_none())
+                })
+                .collect();
+            if !fallback_component_indices.is_empty() {
+                let mut pending_set: std::collections::HashSet<usize> = job
+                    .agent
+                    .pending_regen_component_indices
+                    .iter()
+                    .copied()
+                    .collect();
+                for idx in fallback_component_indices.iter().copied() {
+                    pending_set.insert(idx);
+                }
+                let mut pending: Vec<usize> = pending_set.into_iter().collect();
+                pending.sort_unstable();
+                job.agent.pending_regen_component_indices = pending;
+                job.agent
+                    .pending_regen_component_indices_skipped_due_to_budget
+                    .clear();
+            }
+
+            let fallback_components_json: Vec<serde_json::Value> = fallback_component_indices
+                .iter()
+                .copied()
+                .filter(|idx| *idx < job.planned_components.len())
+                .map(|idx| {
+                    serde_json::json!({
+                        "index": idx,
+                        "name": job.planned_components[idx].name.as_str(),
+                    })
+                })
+                .collect();
+
+            let mut outcomes_json: Vec<serde_json::Value> = Vec::new();
+            const MAX_OUTCOMES: usize = 24;
+            for outcome in report.outcomes.iter().take(MAX_OUTCOMES) {
+                let mode = match outcome.mode_used {
+                    super::copy_component::Gen3dCopyMode::Detached => "detached",
+                    super::copy_component::Gen3dCopyMode::Linked => "linked",
+                };
+                outcomes_json.push(serde_json::json!({
+                    "source": outcome.source_component_name.as_str(),
+                    "target": outcome.target_component_name.as_str(),
+                    "mode": mode,
+                }));
+            }
+            let outcomes_omitted = report.outcomes.len().saturating_sub(MAX_OUTCOMES);
+
+            let json = serde_json::json!({
+                "ok": true,
+                "version": 1,
+                "enabled": report.enabled,
+                "reuse_groups_total": reuse_groups_total,
+                "component_copies_applied": report.component_copies_applied,
+                "subtree_copies_applied": report.subtree_copies_applied,
+                "targets_skipped_already_generated": report.targets_skipped_already_generated,
+                "subtrees_skipped_partially_generated": report.subtrees_skipped_partially_generated,
+                "preflight_mismatches": report.preflight_mismatches,
+                "fallback_component_indices": fallback_component_indices,
+                "fallback_components": fallback_components_json,
+                "errors": report.errors,
+                "outcomes": outcomes_json,
+                "outcomes_omitted": outcomes_omitted,
+            });
+
+            if let Some(step_dir) = job.step_dir.as_deref() {
+                write_gen3d_json_artifact(Some(step_dir), "apply_reuse_groups_last.json", &json);
+            }
+
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
+                call.call_id,
+                call.tool_id,
+                json,
+            ))
+        }
         TOOL_ID_SNAPSHOT => {
             let call_id = call.call_id.clone();
             let tool_id = call.tool_id.clone();
@@ -5261,7 +5445,7 @@ pub(super) fn execute_tool_call(
                 &job.plan_collider,
                 draft,
             );
-            write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
+            write_gen3d_assembly_snapshot(job.step_dir.as_deref(), &job.planned_components);
             job.assembly_rev = job.assembly_rev.saturating_add(1);
 
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
@@ -5529,7 +5713,7 @@ pub(super) fn execute_tool_call(
                 &job.plan_collider,
                 draft,
             );
-            write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
+            write_gen3d_assembly_snapshot(job.step_dir.as_deref(), &job.planned_components);
             job.assembly_rev = job.assembly_rev.saturating_add(1);
 
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
@@ -5613,7 +5797,7 @@ pub(super) fn execute_tool_call(
                 &job.plan_collider,
                 draft,
             );
-            write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
+            write_gen3d_assembly_snapshot(job.step_dir.as_deref(), &job.planned_components);
             job.assembly_rev = job.assembly_rev.saturating_add(1);
 
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
@@ -5634,11 +5818,11 @@ pub(super) fn execute_tool_call(
                     "Missing AI config".into(),
                 ));
             };
-            let Some(pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
 
@@ -5693,7 +5877,7 @@ pub(super) fn execute_tool_call(
                 system,
                 user_text,
                 Vec::new(),
-                pass_dir,
+                step_dir,
                 sanitize_prefix(&format!("tool_edit_strategy_{}", &call.call_id)),
             );
             job.agent.pending_tool_call = Some(call);
@@ -5710,11 +5894,11 @@ pub(super) fn execute_tool_call(
                     "Missing AI config".into(),
                 ));
             };
-            let Some(pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
 
@@ -5958,7 +6142,7 @@ pub(super) fn execute_tool_call(
                 system,
                 user_text,
                 job.user_images_component.clone(),
-                pass_dir,
+                step_dir,
                 sanitize_prefix(&format!("tool_plan_{}", &call.call_id)),
             );
             job.agent.pending_tool_call = Some(call);
@@ -5974,11 +6158,11 @@ pub(super) fn execute_tool_call(
                     "Missing AI config".into(),
                 ));
             };
-            let Some(pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
 
@@ -6238,7 +6422,7 @@ pub(super) fn execute_tool_call(
                 system,
                 user_text,
                 job.user_images_component.clone(),
-                pass_dir,
+                step_dir,
                 sanitize_prefix(&format!("tool_plan_ops_{}", &call.call_id)),
             );
             job.agent.pending_tool_call = Some(call);
@@ -6254,11 +6438,11 @@ pub(super) fn execute_tool_call(
                     "Missing AI config".into(),
                 ));
             };
-            let Some(pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
             if job.planned_components.is_empty() {
@@ -6422,13 +6606,13 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
             let scene_graph_summary = super::build_gen3d_scene_graph_summary(
                 &run_id,
                 job.attempt,
-                job.pass,
+                job.step,
                 &job.plan_hash,
                 job.assembly_rev,
                 &job.planned_components,
                 draft,
             );
-            if let Some(dir) = job.pass_dir.as_deref() {
+            if let Some(dir) = job.step_dir.as_deref() {
                 write_gen3d_json_artifact(
                     Some(dir),
                     "scene_graph_summary.json",
@@ -6446,7 +6630,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 image_object_summary,
                 &run_id,
                 job.attempt,
-                job.pass,
+                job.step,
                 &job.plan_hash,
                 job.assembly_rev,
                 strategy.as_str(),
@@ -6479,7 +6663,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 system,
                 user_text,
                 Vec::new(),
-                pass_dir,
+                step_dir,
                 sanitize_prefix(&format!("tool_draft_ops_{}", &call.call_id)),
             );
             job.agent.pending_tool_call = Some(call);
@@ -6602,7 +6786,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     .map(|c| c.name.as_str())
                     .unwrap_or("<unknown>");
                 append_gen3d_run_log(
-                    job.pass_dir.as_deref(),
+                    job.step_dir.as_deref(),
                     format!(
                         "regen_budget_skip idx={} name={} max_total={} max_per_component={}",
                         idx,
@@ -6634,11 +6818,11 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     "Missing AI config".into(),
                 ));
             };
-            let Some(pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
 
@@ -6676,7 +6860,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 system,
                 user_text,
                 job.user_images_component.clone(),
-                pass_dir,
+                step_dir,
                 sanitize_prefix(&format!("tool_component{}_{}", idx + 1, &call.call_id)),
             );
             job.agent.pending_tool_call = Some(call);
@@ -6693,11 +6877,11 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     "Missing AI config".into(),
                 ));
             };
-            let Some(_pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
 
@@ -6949,7 +7133,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
             }
             if !skipped_due_to_regen_budget.is_empty() {
                 append_gen3d_run_log(
-                    job.pass_dir.as_deref(),
+                    job.step_dir.as_deref(),
                     format!(
                         "regen_budget_skip_batch skipped={} max_total={} max_per_component={}",
                         skipped_due_to_regen_budget.len(),
@@ -7053,11 +7237,11 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     "Missing AI config".into(),
                 ));
             };
-            let Some(pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
             let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
@@ -7132,7 +7316,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 system,
                 user_text,
                 Vec::new(),
-                pass_dir,
+                step_dir,
                 sanitize_prefix(&format!(
                     "tool_motion_{}_{}",
                     channel.as_str(),
@@ -7160,11 +7344,11 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     "Missing AI config".into(),
                 ));
             };
-            let Some(_pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
 
@@ -7229,11 +7413,11 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                         .to_string(),
                 ));
             }
-            let Some(pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
             let views = call
@@ -7365,7 +7549,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
             match super::start_gen3d_review_capture(
                 commands,
                 images,
-                &pass_dir,
+                &step_dir,
                 draft,
                 include_overlay,
                 &prefix,
@@ -7395,11 +7579,11 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     "Missing AI config".into(),
                 ));
             };
-            let Some(pass_dir) = job.pass_dir.clone() else {
+            let Some(step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
-                    "Missing pass dir".into(),
+                    "Missing step dir".into(),
                 ));
             };
 
@@ -7499,7 +7683,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 ];
                 let (width_px, height_px) = review_capture_dimensions_for_max_dim(960);
                 match super::start_gen3d_review_capture(
-                    commands, images, &pass_dir, draft, false, &prefix, &views, width_px, height_px,
+                    commands, images, &step_dir, draft, false, &prefix, &views, width_px, height_px,
                 ) {
                     Ok(state) => {
                         job.agent.pending_render_include_motion_sheets = include_motion_sheets;
@@ -9424,7 +9608,7 @@ mod tests {
 
     #[test]
     fn llm_review_delta_budget_gate_returns_actionable_error() {
-        let pass_dir = make_temp_dir("gravimera_review_delta_budget_gate_test");
+        let step_dir = make_temp_dir("gravimera_review_delta_budget_gate_test");
 
         let openai = crate::config::OpenAiConfig {
             base_url: "mock://gen3d".into(),
@@ -9443,7 +9627,7 @@ mod tests {
         job.ai = Some(super::super::ai_service::Gen3dAiServiceConfig::OpenAi(
             openai,
         ));
-        job.pass_dir = Some(pass_dir);
+        job.step_dir = Some(step_dir);
         job.review_delta_rounds_used = 2;
 
         let mut app = App::new();

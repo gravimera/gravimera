@@ -8,9 +8,7 @@ use crate::threaded_result::{new_shared_result, take_shared_result, SharedResult
 
 use super::super::state::{Gen3dDraft, Gen3dWorkshop};
 use super::agent_utils::sanitize_prefix;
-use super::artifacts::{
-    append_gen3d_run_log, write_gen3d_assembly_snapshot, write_gen3d_json_artifact,
-};
+use super::artifacts::write_gen3d_assembly_snapshot;
 use super::parse;
 use super::{
     fail_job, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiProgress,
@@ -162,7 +160,7 @@ pub(super) fn poll_agent_component_batch(
                         format!("Internal error: missing planned component for idx={idx}")
                     })
                     .and_then(|planned| {
-                        super::convert::ai_to_component_def(planned, ai, job.pass_dir.as_deref())
+                        super::convert::ai_to_component_def(planned, ai, job.step_dir.as_deref())
                     }) {
                     Ok(def) => def,
                     Err(err) => {
@@ -237,7 +235,7 @@ pub(super) fn poll_agent_component_batch(
                     &job.plan_collider,
                     draft,
                 );
-                write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
+                write_gen3d_assembly_snapshot(job.step_dir.as_deref(), &job.planned_components);
                 job.assembly_rev = job.assembly_rev.saturating_add(1);
 
                 batch.completed_indices.insert(idx);
@@ -292,8 +290,8 @@ pub(super) fn poll_agent_component_batch(
             fail_job(workshop, job, "Internal error: missing AI config.");
             return None;
         };
-        let Some(pass_dir) = job.pass_dir.clone() else {
-            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+        let Some(step_dir) = job.step_dir.clone() else {
+            fail_job(workshop, job, "Internal error: missing Gen3D step dir.");
             return None;
         };
 
@@ -351,7 +349,7 @@ pub(super) fn poll_agent_component_batch(
             system,
             user_text,
             image_paths,
-            pass_dir,
+            step_dir,
             sanitize_prefix(&prefix),
         );
 
@@ -391,143 +389,6 @@ pub(super) fn poll_agent_component_batch(
             })
             .collect();
 
-        let mut auto_copy = super::reuse_groups::apply_auto_copy(
-            &mut job.planned_components,
-            draft,
-            &job.reuse_groups,
-        );
-        if auto_copy.component_copies_applied > 0 {
-            if let Some(root_idx) = job
-                .planned_components
-                .iter()
-                .position(|c| c.attach_to.is_none())
-            {
-                if let Err(err) = super::convert::resolve_planned_component_transforms(
-                    &mut job.planned_components,
-                    root_idx,
-                ) {
-                    auto_copy.errors.push(format!(
-                        "auto_copy: failed to resolve transforms after copy: {err}"
-                    ));
-                }
-            }
-            super::convert::update_root_def_from_planned_components(
-                &job.planned_components,
-                &job.plan_collider,
-                draft,
-            );
-            write_gen3d_assembly_snapshot(job.pass_dir.as_deref(), &job.planned_components);
-            job.assembly_rev = job.assembly_rev.saturating_add(1);
-        }
-
-        let mut fallback_component_indices: Vec<usize> = auto_copy
-            .fallback_component_indices
-            .iter()
-            .copied()
-            .filter(|idx| *idx < job.planned_components.len())
-            .filter(|idx| {
-                job.planned_components
-                    .get(*idx)
-                    .is_some_and(|c| c.actual_size.is_none())
-            })
-            .collect();
-        fallback_component_indices.sort_unstable();
-        fallback_component_indices.dedup();
-
-        if !fallback_component_indices.is_empty() {
-            let mut pending_set: std::collections::HashSet<usize> = job
-                .agent
-                .pending_regen_component_indices
-                .iter()
-                .copied()
-                .collect();
-            for idx in fallback_component_indices.iter().copied() {
-                pending_set.insert(idx);
-            }
-            let mut pending: Vec<usize> = pending_set.into_iter().collect();
-            pending.sort_unstable();
-            job.agent.pending_regen_component_indices = pending;
-            job.agent
-                .pending_regen_component_indices_skipped_due_to_budget
-                .clear();
-
-            append_gen3d_run_log(
-                job.pass_dir.as_deref(),
-                format!(
-                    "auto_copy_preflight_fallback components={:?}",
-                    fallback_component_indices
-                ),
-            );
-        }
-
-        let fallback_components_json: Vec<serde_json::Value> = fallback_component_indices
-            .iter()
-            .copied()
-            .filter(|idx| *idx < job.planned_components.len())
-            .map(|idx| {
-                serde_json::json!({
-                    "index": idx,
-                    "name": job.planned_components[idx].name.as_str(),
-                })
-            })
-            .collect();
-
-        if let Some(pass_dir) = job.pass_dir.as_deref() {
-            if auto_copy.component_copies_applied > 0
-                || !auto_copy.errors.is_empty()
-                || !auto_copy.preflight_mismatches.is_empty()
-                || !fallback_components_json.is_empty()
-            {
-                let mut outcomes_json: Vec<serde_json::Value> = Vec::new();
-                const MAX_OUTCOMES: usize = 16;
-                for outcome in auto_copy.outcomes.iter().take(MAX_OUTCOMES) {
-                    let mode = match outcome.mode_used {
-                        super::copy_component::Gen3dCopyMode::Detached => "detached",
-                        super::copy_component::Gen3dCopyMode::Linked => "linked",
-                    };
-                    outcomes_json.push(serde_json::json!({
-                        "source": outcome.source_component_name.as_str(),
-                        "target": outcome.target_component_name.as_str(),
-                        "mode": mode,
-                    }));
-                }
-                let outcomes_omitted = auto_copy.outcomes.len().saturating_sub(MAX_OUTCOMES);
-                write_gen3d_json_artifact(
-                    Some(pass_dir),
-                    "auto_copy.json",
-                    &serde_json::json!({
-                        "version": 1,
-                        "enabled": auto_copy.enabled,
-                        "component_copies_applied": auto_copy.component_copies_applied,
-                        "subtree_copies_applied": auto_copy.subtree_copies_applied,
-                        "targets_skipped_already_generated": auto_copy.targets_skipped_already_generated,
-                        "subtrees_skipped_partially_generated": auto_copy.subtrees_skipped_partially_generated,
-                        "preflight_mismatches": &auto_copy.preflight_mismatches,
-                        "fallback_component_indices": &fallback_component_indices,
-                        "fallback_components": &fallback_components_json,
-                        "errors": &auto_copy.errors,
-                        "outcomes": outcomes_json,
-                        "outcomes_omitted": outcomes_omitted,
-                    }),
-                );
-            }
-        }
-
-        let mut outcomes_json: Vec<serde_json::Value> = Vec::new();
-        const MAX_OUTCOMES: usize = 16;
-        for outcome in auto_copy.outcomes.iter().take(MAX_OUTCOMES) {
-            let mode = match outcome.mode_used {
-                super::copy_component::Gen3dCopyMode::Detached => "detached",
-                super::copy_component::Gen3dCopyMode::Linked => "linked",
-            };
-            outcomes_json.push(serde_json::json!({
-                "source": outcome.source_component_name.as_str(),
-                "target": outcome.target_component_name.as_str(),
-                "mode": mode,
-            }));
-        }
-        let outcomes_omitted = auto_copy.outcomes.len().saturating_sub(MAX_OUTCOMES);
-
         let skipped_due_to_reuse_groups_json: Vec<serde_json::Value> = batch
             .skipped_due_to_reuse_groups
             .iter()
@@ -566,23 +427,11 @@ pub(super) fn poll_agent_component_batch(
                 "requested": total,
                 "succeeded": succeeded,
                 "failed": failed_json,
+                "reuse_groups_total": job.reuse_groups.len(),
                 "optimized_by_reuse_groups": batch.optimized_by_reuse_groups,
                 "skipped_due_to_reuse_groups": skipped_due_to_reuse_groups_json,
                 "skipped_due_to_preserve_existing_components": skipped_due_to_preserve_existing_components_json,
                 "skipped_due_to_regen_budget": batch.skipped_due_to_regen_budget,
-                "auto_copy": {
-                    "enabled": auto_copy.enabled,
-                    "component_copies_applied": auto_copy.component_copies_applied,
-                    "subtree_copies_applied": auto_copy.subtree_copies_applied,
-                    "targets_skipped_already_generated": auto_copy.targets_skipped_already_generated,
-                    "subtrees_skipped_partially_generated": auto_copy.subtrees_skipped_partially_generated,
-                    "preflight_mismatches": auto_copy.preflight_mismatches,
-                    "fallback_component_indices": fallback_component_indices,
-                    "fallback_components": fallback_components_json,
-                    "errors": auto_copy.errors,
-                    "outcomes": outcomes_json,
-                    "outcomes_omitted": outcomes_omitted,
-                },
             }),
         ));
     }

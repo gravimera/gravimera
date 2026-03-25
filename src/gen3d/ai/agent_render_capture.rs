@@ -85,7 +85,7 @@ pub(super) fn poll_agent_render_capture(
             return None;
         };
         let attempt = job.attempt;
-        let pass = job.pass;
+        let step = job.step;
         let assembly_rev = job.assembly_rev;
         let workspace_id = job.active_workspace_id().trim().to_string();
 
@@ -157,7 +157,7 @@ pub(super) fn poll_agent_render_capture(
 
                 let blob = match store.register_blob_file(
                     attempt,
-                    pass,
+                    step,
                     assembly_rev,
                     "image/png",
                     bytes,
@@ -243,7 +243,7 @@ pub(super) fn poll_agent_render_capture(
                         },
                     );
                     append_gen3d_jsonl_artifact(
-                        job.pass_dir.as_deref(),
+                        job.step_dir.as_deref(),
                         "tool_results.jsonl",
                         &serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
                     );
@@ -301,7 +301,7 @@ pub(super) fn poll_agent_render_capture(
             },
         );
         append_gen3d_jsonl_artifact(
-            job.pass_dir.as_deref(),
+            job.step_dir.as_deref(),
             "tool_results.jsonl",
             &serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
         );
@@ -400,7 +400,7 @@ pub(super) fn poll_agent_render_capture(
                     },
                 );
                 append_gen3d_jsonl_artifact(
-                    job.pass_dir.as_deref(),
+                    job.step_dir.as_deref(),
                     "tool_results.jsonl",
                     &serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
                 );
@@ -458,7 +458,7 @@ pub(super) fn poll_agent_render_capture(
         },
     );
     append_gen3d_jsonl_artifact(
-        job.pass_dir.as_deref(),
+        job.step_dir.as_deref(),
         "tool_results.jsonl",
         &serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
     );

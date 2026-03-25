@@ -332,7 +332,7 @@ pub(crate) fn gen3d_resume_build_from_api(
     if job.ai.is_none() {
         return Err("Cannot resume: missing AI config (start a new Build).".into());
     }
-    if job.run_id.is_none() || job.run_dir.is_none() || job.pass_dir.is_none() {
+    if job.run_id.is_none() || job.run_dir.is_none() || job.step_dir.is_none() {
         return Err("Cannot resume: no prior Gen3D session (start a new Build).".into());
     }
 
@@ -376,12 +376,12 @@ pub(crate) fn gen3d_resume_build_from_api(
     job.review_capture = None;
     job.capture_previews_only = false;
 
-    // Resume always starts a fresh pass to keep artifacts append-only.
-    gen3d_advance_pass(job)?;
-    let _pass_dir = job
-        .pass_dir
+    // Resume always starts a fresh step to keep artifacts append-only.
+    gen3d_advance_step(job)?;
+    let _step_dir = job
+        .step_dir
         .clone()
-        .ok_or_else(|| "Internal error: missing Gen3D pass dir.".to_string())?;
+        .ok_or_else(|| "Internal error: missing Gen3D step dir.".to_string())?;
 
     workshop.error = None;
     workshop.status = format!(
@@ -498,16 +498,16 @@ pub(crate) fn gen3d_start_edit_run_from_current_draft_from_api(
         }),
     );
 
-    gen3d_set_current_attempt_pass(job, &run_dir, 0, 0)?;
+    gen3d_set_current_attempt_step(job, &run_dir, 0, 0)?;
     let attempt_dir = gen3d_attempt_dir(&run_dir, 0);
-    let Some(pass_dir) = job.pass_dir.clone() else {
-        return Err("Internal error: missing Gen3D pass dir.".into());
+    let Some(step_dir) = job.step_dir.clone() else {
+        return Err("Internal error: missing Gen3D step dir.".into());
     };
 
     let cached_inputs = cache_gen3d_inputs(&attempt_dir, &next_prompt, &image_paths);
     let cached_image_paths = cached_inputs.cached_image_paths.clone();
     append_gen3d_run_log(
-        Some(&pass_dir),
+        Some(&step_dir),
         format!(
             "run_start kind={} base_prefab_id={} speed={} max_parallel={} service={} model={} reasoning_effort={} base_url={} review_appearance={} images={} prompt_chars={}",
             kind,
@@ -564,9 +564,9 @@ pub(crate) fn gen3d_start_edit_run_from_current_draft_from_api(
     job.ai = Some(ai.clone());
     job.run_id = Some(run_id);
     job.run_dir = Some(run_dir.clone());
-    job.pass_dir = Some(pass_dir.clone());
+    job.step_dir = Some(step_dir.clone());
     job.attempt = 0;
-    job.pass = 0;
+    job.step = 0;
     job.user_prompt_raw = next_prompt;
     job.user_images = cached_inputs.cached_image_paths;
     job.user_images_component = cached_inputs.component_reference_image_paths;
@@ -857,7 +857,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.run_dir = Some(run_dir.clone());
 
     job.attempt = 0;
-    job.pass = 0;
+    job.step = 0;
     job.plan_hash.clear();
     // Seeded Edit/Fork sessions start from an already-generated draft; default to preserve mode so
     // the agent doesn't accidentally regenerate existing components when making small edits.
@@ -886,12 +886,12 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     };
     job.seed_target_entity = None;
 
-    // Create pass_0 to record the seed action and to enable Continue.
-    gen3d_set_current_attempt_pass(job, &run_dir, 0, 0)?;
-    let pass_dir = job
-        .pass_dir
+    // Create step_0000 to record the seed action and to enable Continue.
+    gen3d_set_current_attempt_step(job, &run_dir, 0, 0)?;
+    let step_dir = job
+        .step_dir
         .clone()
-        .ok_or_else(|| "Internal error: missing Gen3D pass dir.".to_string())?;
+        .ok_or_else(|| "Internal error: missing Gen3D step dir.".to_string())?;
 
     write_gen3d_json_artifact(
         Some(&run_dir),
@@ -915,7 +915,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
         }),
     );
     append_gen3d_run_log(
-        Some(&pass_dir),
+        Some(&step_dir),
         format!(
             "seed_from_prefab kind={} prefab_id={}",
             match mode {
@@ -1241,16 +1241,16 @@ pub(crate) fn gen3d_start_build_from_api(
         }),
     );
 
-    gen3d_set_current_attempt_pass(job, &run_dir, 0, 0)?;
+    gen3d_set_current_attempt_step(job, &run_dir, 0, 0)?;
     let attempt_dir = gen3d_attempt_dir(&run_dir, 0);
-    let Some(pass_dir) = job.pass_dir.clone() else {
-        return Err("Internal error: missing Gen3D pass dir.".into());
+    let Some(step_dir) = job.step_dir.clone() else {
+        return Err("Internal error: missing Gen3D step dir.".into());
     };
 
     let cached_inputs = cache_gen3d_inputs(&attempt_dir, &workshop.prompt, &image_paths);
     let cached_image_paths = cached_inputs.cached_image_paths.clone();
     append_gen3d_run_log(
-        Some(&pass_dir),
+        Some(&step_dir),
         format!(
             "run_start speed={} max_parallel={} service={} model={} reasoning_effort={} base_url={} review_appearance={} images={} prompt_chars={}",
             workshop.speed_mode.short_label(),
@@ -1305,7 +1305,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.ai = Some(ai.clone());
     job.run_id = Some(run_id);
     job.attempt = 0;
-    job.pass = 0;
+    job.step = 0;
     job.plan_hash.clear();
     job.preserve_existing_components_mode = false;
     job.assembly_rev = 0;
@@ -1315,7 +1315,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.user_image_object_summary = None;
     job.prompt_intent = None;
     job.run_dir = Some(run_dir.clone());
-    job.pass_dir = Some(pass_dir.clone());
+    job.step_dir = Some(step_dir.clone());
     job.review_appearance = config.gen3d_review_appearance;
     job.require_structured_outputs = config.gen3d_require_structured_outputs;
     job.auto_refine_passes_done = 0;
@@ -1775,8 +1775,8 @@ pub(crate) fn gen3d_poll_ai_job(
                         .into();
                 return;
             };
-            let Some(run_dir) = job.pass_dir.clone() else {
-                workshop.error = Some("Internal error: missing Gen3D pass dir.".into());
+            let Some(run_dir) = job.step_dir.clone() else {
+                workshop.error = Some("Internal error: missing Gen3D step dir.".into());
                 if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
                     workshop.status = "Auto-review failed (continuing build).".into();
                     resume_after_per_component_review(&mut workshop, &mut job);
@@ -1865,7 +1865,7 @@ pub(crate) fn gen3d_poll_ai_job(
             let scene_graph_summary = build_gen3d_scene_graph_summary(
                 &run_id,
                 job.attempt,
-                job.pass,
+                job.step,
                 &plan_hash,
                 job.assembly_rev,
                 &job.planned_components,
@@ -1944,7 +1944,7 @@ pub(crate) fn gen3d_poll_ai_job(
         }
 
         // 4) Start a new static capture.
-        let Some(run_dir) = job.pass_dir.clone() else {
+        let Some(run_dir) = job.step_dir.clone() else {
             workshop.error = Some("Internal error: missing Gen3D cache dir.".into());
             if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
                 workshop.status = "Auto-review failed (continuing build).".into();
@@ -2415,11 +2415,11 @@ pub(crate) fn gen3d_poll_ai_job(
                         );
                         return;
                     };
-                    let Some(run_dir) = job.pass_dir.clone() else {
+                    let Some(run_dir) = job.step_dir.clone() else {
                         fail_job(
                             &mut workshop,
                             &mut job,
-                            "Internal error: missing Gen3D pass dir.",
+                            "Internal error: missing Gen3D step dir.",
                         );
                         return;
                     };
@@ -2600,7 +2600,7 @@ pub(crate) fn gen3d_poll_ai_job(
                     }
 
                     let plan_collider = job.plan_collider.clone();
-                    let artifact_dir = job.pass_dir.clone();
+                    let artifact_dir = job.step_dir.clone();
                     let apply = match convert::apply_ai_review_delta_actions(
                         delta,
                         &mut job.planned_components,
@@ -2709,7 +2709,7 @@ pub(crate) fn gen3d_poll_ai_job(
                         && apply.regen_indices.is_empty()
                     {
                         if job.auto_refine_passes_remaining > 0 {
-                            if let Err(err) = gen3d_advance_pass(&mut job) {
+                            if let Err(err) = gen3d_advance_step(&mut job) {
                                 fail_job(&mut workshop, &mut job, err);
                                 return;
                             }
@@ -2807,7 +2807,7 @@ pub(crate) fn gen3d_poll_ai_job(
                     }
 
                     if !regen_allowed.is_empty() {
-                        if let Err(err) = gen3d_advance_pass(&mut job) {
+                        if let Err(err) = gen3d_advance_step(&mut job) {
                             fail_job(&mut workshop, &mut job, err);
                             return;
                         }
@@ -2825,11 +2825,11 @@ pub(crate) fn gen3d_poll_ai_job(
                         );
                         return;
                     };
-                    let Some(run_dir) = job.pass_dir.clone() else {
+                    let Some(run_dir) = job.step_dir.clone() else {
                         fail_job(
                             &mut workshop,
                             &mut job,
-                            "Internal error: missing Gen3D pass dir.",
+                            "Internal error: missing Gen3D step dir.",
                         );
                         return;
                     };
@@ -3320,8 +3320,8 @@ fn poll_gen3d_parallel_components(
             fail_job(workshop, job, "Internal error: missing AI config.");
             return;
         };
-        let Some(run_dir) = job.pass_dir.clone() else {
-            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+        let Some(run_dir) = job.step_dir.clone() else {
+            fail_job(workshop, job, "Internal error: missing Gen3D step dir.");
             return;
         };
 
@@ -3417,7 +3417,7 @@ fn poll_gen3d_parallel_components(
                 set_progress(progress, "Preparing review capture…");
             }
             append_gen3d_run_log(job.artifact_dir(), "auto_review_start");
-        } else if job.pass_dir.is_some() {
+        } else if job.step_dir.is_some() {
             job.phase = Gen3dAiPhase::CapturingReview;
             job.review_capture = None;
             job.review_static_paths.clear();
@@ -3600,11 +3600,11 @@ fn gen3d_attempt_dir(run_dir: &Path, attempt: u32) -> PathBuf {
     run_dir.join(format!("attempt_{attempt}"))
 }
 
-fn gen3d_set_current_attempt_pass(
+fn gen3d_set_current_attempt_step(
     job: &mut Gen3dAiJob,
     run_dir: &Path,
     attempt: u32,
-    pass: u32,
+    step: u32,
 ) -> Result<(), String> {
     let attempt_dir = gen3d_attempt_dir(run_dir, attempt);
     std::fs::create_dir_all(&attempt_dir).map_err(|err| {
@@ -3613,32 +3613,39 @@ fn gen3d_set_current_attempt_pass(
             attempt_dir.display()
         )
     })?;
-    let pass_dir = attempt_dir.join(format!("pass_{pass}"));
-    std::fs::create_dir_all(&pass_dir).map_err(|err| {
+    let steps_dir = attempt_dir.join("steps");
+    std::fs::create_dir_all(&steps_dir).map_err(|err| {
         format!(
-            "Failed to create Gen3D pass dir {}: {err}",
-            pass_dir.display()
+            "Failed to create Gen3D steps dir {}: {err}",
+            steps_dir.display()
+        )
+    })?;
+    let step_dir = steps_dir.join(format!("step_{step:04}"));
+    std::fs::create_dir_all(&step_dir).map_err(|err| {
+        format!(
+            "Failed to create Gen3D step dir {}: {err}",
+            step_dir.display()
         )
     })?;
 
     job.attempt = attempt;
-    job.pass = pass;
-    job.pass_dir = Some(pass_dir.clone());
+    job.step = step;
+    job.step_dir = Some(step_dir.clone());
     job.agent.info_store_inspection_cache.clear();
 
     if let Some(sinks) = job.log_sinks.as_ref() {
-        if let Err(err) = sinks.start_gen3d_pass_log(pass_dir.join("gravimera.log")) {
+        if let Err(err) = sinks.start_gen3d_pass_log(step_dir.join("gravimera.log")) {
             warn!("Gen3D: failed to start per-pass log capture: {err}");
         }
     }
 
     write_gen3d_json_artifact(
-        Some(&pass_dir),
-        "pass.json",
+        Some(&step_dir),
+        "step.json",
         &serde_json::json!({
             "version": 1,
             "attempt": attempt,
-            "pass": pass,
+            "step": step,
             "created_at_ms": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
@@ -3646,18 +3653,18 @@ fn gen3d_set_current_attempt_pass(
         }),
     );
 
-    job.metrics.note_pass_started(pass);
+    job.metrics.note_step_started(step);
 
     Ok(())
 }
 
-pub(super) fn gen3d_advance_pass(job: &mut Gen3dAiJob) -> Result<(), String> {
+pub(super) fn gen3d_advance_step(job: &mut Gen3dAiJob) -> Result<(), String> {
     let run_dir = job
         .run_dir
         .clone()
         .ok_or_else(|| "Internal error: missing Gen3D run dir.".to_string())?;
-    let next = job.pass.saturating_add(1);
-    gen3d_set_current_attempt_pass(job, &run_dir, job.attempt, next)
+    let next = job.step.saturating_add(1);
+    gen3d_set_current_attempt_step(job, &run_dir, job.attempt, next)
 }
 
 #[derive(Clone, Debug)]
@@ -4099,8 +4106,8 @@ pub(super) fn poll_gen3d_motion_capture(
         With<Gen3dPreviewModelRoot>,
     >,
 ) {
-    let Some(pass_dir) = job.pass_dir.clone() else {
-        debug!("Gen3D: motion capture skipped (missing pass dir).");
+    let Some(step_dir) = job.step_dir.clone() else {
+        debug!("Gen3D: motion capture skipped (missing step dir).");
         job.motion_capture = None;
         return;
     };
@@ -4297,7 +4304,7 @@ pub(super) fn poll_gen3d_motion_capture(
         match start_gen3d_review_capture(
             commands,
             images,
-            &pass_dir,
+            &step_dir,
             draft,
             false,
             &prefix,
@@ -4350,7 +4357,7 @@ pub(super) fn poll_gen3d_motion_capture(
         return;
     }
 
-    let sheet_path = pass_dir.join(motion.kind.sheet_filename());
+    let sheet_path = step_dir.join(motion.kind.sheet_filename());
     if let Err(err) = write_gen3d_sprite_sheet_2x2(&sheet_path, &motion.frame_paths) {
         warn!("Gen3D: failed to compose {}: {err}", sheet_path.display());
     } else {
@@ -5385,7 +5392,7 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
     };
 
     let session = job.session.clone();
-    let pass_dir = job.pass_dir.clone();
+    let step_dir = job.step_dir.clone();
     let user_prompt = job.user_prompt_raw.clone();
     let require_structured_outputs = job.require_structured_outputs;
 
@@ -5420,7 +5427,7 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
             &system,
             &user_text,
             &[],
-            pass_dir.as_deref(),
+            step_dir.as_deref(),
             "descriptor_meta",
         );
 
@@ -5602,9 +5609,9 @@ pub(super) fn record_gen3d_tooling_feedback(
 
     let run_id = job.run_id.map(|id| id.to_string());
     let attempt = Some(job.attempt);
-    let pass = Some(job.pass);
+    let pass = Some(job.step);
     let run_dir = job.run_dir.as_deref();
-    let pass_dir = job.pass_dir.as_deref();
+    let pass_dir = job.step_dir.as_deref();
 
     for feedback in feedbacks {
         let priority = feedback.priority.trim();

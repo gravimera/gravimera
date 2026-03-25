@@ -37,6 +37,7 @@ pub(crate) const TOOL_ID_COPY_COMPONENT: &str = "copy_component_v1";
 pub(crate) const TOOL_ID_MIRROR_COMPONENT: &str = "mirror_component_v1";
 pub(crate) const TOOL_ID_COPY_COMPONENT_SUBTREE: &str = "copy_component_subtree_v1";
 pub(crate) const TOOL_ID_MIRROR_COMPONENT_SUBTREE: &str = "mirror_component_subtree_v1";
+pub(crate) const TOOL_ID_APPLY_REUSE_GROUPS: &str = "apply_reuse_groups_v1";
 pub(crate) const TOOL_ID_DETACH_COMPONENT: &str = "detach_component_v1";
 
 pub(crate) const TOOL_ID_LLM_GENERATE_PLAN: &str = "llm_generate_plan_v1";

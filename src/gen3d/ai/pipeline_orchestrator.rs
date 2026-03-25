@@ -3,10 +3,11 @@ use bevy::prelude::*;
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
-    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTIONS, TOOL_ID_LLM_GENERATE_PLAN,
-    TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_LLM_SELECT_EDIT_STRATEGY,
-    TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_REUSE_GROUPS, TOOL_ID_GET_PLAN_TEMPLATE,
+    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTIONS,
+    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
+    TOOL_ID_LLM_SELECT_EDIT_STRATEGY, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS,
+    TOOL_ID_RENDER_PREVIEW,
 };
 use crate::gen3d::agent::{
     append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolCallJsonV1, Gen3dToolResultJsonV1,
@@ -173,12 +174,12 @@ fn poll_pipeline_user_image_summary(
     }
 
     if job.shared_result.is_none() {
-        let Some(pass_dir) = job.pass_dir.clone() else {
-            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+        let Some(step_dir) = job.step_dir.clone() else {
+            fail_job(workshop, job, "Internal error: missing Gen3D step dir.");
             return;
         };
         if let Err(err) = super::bootstrap_requests::spawn_gen3d_user_image_summary_request(
-            config, workshop, job, pass_dir,
+            config, workshop, job, step_dir,
         ) {
             fail_job(workshop, job, err);
         }
@@ -275,12 +276,12 @@ fn poll_pipeline_prompt_intent(
     }
 
     if job.shared_result.is_none() {
-        let Some(pass_dir) = job.pass_dir.clone() else {
-            fail_job(workshop, job, "Internal error: missing Gen3D pass dir.");
+        let Some(step_dir) = job.step_dir.clone() else {
+            fail_job(workshop, job, "Internal error: missing Gen3D step dir.");
             return;
         };
         if let Err(err) = super::bootstrap_requests::spawn_gen3d_prompt_intent_request(
-            config, workshop, job, pass_dir,
+            config, workshop, job, step_dir,
         ) {
             fail_job(workshop, job, err);
         }
@@ -437,7 +438,7 @@ fn pipeline_make_call_id(job: &mut Gen3dAiJob, tool_id: &str) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    format!("pipe_{}_p{}_a{}", tool_seg, job.pass, seq)
+    format!("pipe_{}_s{}_a{}", tool_seg, job.step, seq)
 }
 
 fn pipeline_record_tool_call_start(
@@ -457,7 +458,7 @@ fn pipeline_record_tool_call_start(
         },
     );
     append_gen3d_jsonl_artifact(
-        job.pass_dir.as_deref(),
+        job.step_dir.as_deref(),
         "tool_calls.jsonl",
         &serde_json::json!({
             "call_id": call.call_id.clone(),
@@ -466,7 +467,7 @@ fn pipeline_record_tool_call_start(
         }),
     );
     append_gen3d_run_log(
-        job.pass_dir.as_deref(),
+        job.step_dir.as_deref(),
         format!(
             "pipeline_tool_call_start call_id={} tool_id={} args={}",
             call.call_id,
@@ -502,12 +503,12 @@ fn pipeline_record_tool_result(
         },
     );
     append_gen3d_jsonl_artifact(
-        job.pass_dir.as_deref(),
+        job.step_dir.as_deref(),
         "tool_results.jsonl",
         &serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
     );
     append_gen3d_run_log(
-        job.pass_dir.as_deref(),
+        job.step_dir.as_deref(),
         format!(
             "pipeline_tool_call_result call_id={} tool_id={} ok={} {}",
             result.call_id,
@@ -577,6 +578,16 @@ fn start_pipeline_tool_call(
     tool_id: &str,
     args: serde_json::Value,
 ) -> Option<Gen3dToolResultJsonV1> {
+    if let Err(err) = super::orchestration::gen3d_advance_step(job) {
+        let call_id = pipeline_make_call_id(job, tool_id);
+        fail_job(workshop, job, err.clone());
+        return Some(Gen3dToolResultJsonV1::err(
+            call_id,
+            tool_id.to_string(),
+            format!("Failed to create Gen3D step dir: {err}"),
+        ));
+    }
+
     let call = Gen3dToolCallJsonV1 {
         call_id: pipeline_make_call_id(job, tool_id),
         tool_id: tool_id.to_string(),
@@ -1085,6 +1096,53 @@ fn poll_pipeline_tick(
             }
 
             if missing_any {
+                let mut has_generated_reuse_source = false;
+                let mut has_missing_reuse_target = false;
+                for group in job.reuse_groups.iter() {
+                    if !has_generated_reuse_source {
+                        has_generated_reuse_source = job
+                            .planned_components
+                            .get(group.source_root_idx)
+                            .is_some_and(|c| c.actual_size.is_some());
+                    }
+                    if !has_missing_reuse_target {
+                        for &target_idx in group.target_root_indices.iter() {
+                            if job
+                                .planned_components
+                                .get(target_idx)
+                                .is_some_and(|c| c.actual_size.is_none())
+                            {
+                                has_missing_reuse_target = true;
+                                break;
+                            }
+                        }
+                    }
+                    if has_generated_reuse_source && has_missing_reuse_target {
+                        break;
+                    }
+                }
+
+                if has_generated_reuse_source && has_missing_reuse_target {
+                    workshop.status = "Pipeline: applying reuse groups…".into();
+                    if let Some(result) = start_pipeline_tool_call(
+                        config,
+                        time,
+                        commands,
+                        images,
+                        workshop,
+                        feedback_history,
+                        job,
+                        draft,
+                        preview,
+                        preview_model,
+                        TOOL_ID_APPLY_REUSE_GROUPS,
+                        serde_json::json!({ "version": 1 }),
+                    ) {
+                        pipeline_record_tool_result(workshop, job, &*draft, &result);
+                    }
+                    return;
+                }
+
                 job.pipeline.components_attempts =
                     job.pipeline.components_attempts.saturating_add(1);
                 if job.pipeline.components_attempts > 6 {
@@ -1374,7 +1432,6 @@ fn poll_pipeline_tick(
                         .map(|arr| arr.iter().collect())
                         .unwrap_or_default();
                     if !complaints.is_empty() {
-                        let mut plan_msgs: Vec<String> = Vec::new();
                         let mut motion_msgs: Vec<String> = Vec::new();
                         for c in complaints.iter() {
                             let fix_step = c.get("fix_step").and_then(|v| v.as_str()).unwrap_or("");
@@ -1384,6 +1441,9 @@ fn poll_pipeline_tick(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .trim();
+                            if fix_step != "motion" {
+                                continue;
+                            }
                             let mut line = String::new();
                             if !kind.is_empty() {
                                 line.push_str(kind);
@@ -1394,37 +1454,15 @@ fn poll_pipeline_tick(
                             if line.is_empty() {
                                 continue;
                             }
-                            match fix_step {
-                                "motion" => motion_msgs.push(line),
-                                _ => plan_msgs.push(line),
-                            }
-                        }
-
-                        let allow_plan_improvement =
-                            !(is_edit_session(job) && job.preserve_existing_components_mode);
-                        if allow_plan_improvement
-                            && !plan_msgs.is_empty()
-                            && job.pipeline.plan_authoring_attempts < 2
-                        {
-                            let mut feedback = String::new();
-                            feedback.push_str("QA complaints (attempt 2/2):\n");
-                            for item in plan_msgs.iter().take(12) {
-                                feedback.push_str("- ");
-                                feedback.push_str(item);
-                                feedback.push('\n');
-                            }
-                            feedback.push_str(
-                                "Fix these if applicable; if you believe they don't apply, keep the plan unchanged.\n",
-                            );
-                            job.pipeline.pending_plan_qa_feedback = Some(feedback);
-                            job.pipeline.force_replan = true;
-                            job.pipeline.stage = Gen3dPipelineStage::CreatePlan;
-                            return;
+                            motion_msgs.push(line);
                         }
 
                         if !motion_msgs.is_empty() && job.pipeline.motion_authoring_attempts < 2 {
-                            job.pipeline.motion_authoring_attempts =
-                                job.pipeline.motion_authoring_attempts.saturating_add(1);
+                            let next_attempt = job
+                                .pipeline
+                                .motion_authoring_attempts
+                                .saturating_add(1);
+                            job.pipeline.motion_authoring_attempts = next_attempt;
                             // Force a QA re-run after motion authoring (do not reuse stale ok flags).
                             job.agent.last_validate_ok = None;
                             job.agent.last_smoke_ok = None;
@@ -1439,7 +1477,7 @@ fn poll_pipeline_tick(
                             }
 
                             let mut feedback = String::new();
-                            feedback.push_str("QA complaints (attempt 2/2):\n");
+                            feedback.push_str(&format!("QA complaints (attempt {next_attempt}/2):\n"));
                             for item in motion_msgs.iter().take(12) {
                                 feedback.push_str("- ");
                                 feedback.push_str(item);
@@ -1613,14 +1651,78 @@ fn poll_pipeline_tick(
                     .unwrap_or(false);
 
                 if motion_failed && job.pipeline.motion_authoring_attempts < 2 {
-                    job.pipeline.motion_authoring_attempts =
-                        job.pipeline.motion_authoring_attempts.saturating_add(1);
+                    let next_attempt = job
+                        .pipeline
+                        .motion_authoring_attempts
+                        .saturating_add(1);
+                    job.pipeline.motion_authoring_attempts = next_attempt;
+                    // Force a QA re-run after motion authoring (do not reuse stale ok flags).
+                    job.agent.last_validate_ok = None;
+                    job.agent.last_smoke_ok = None;
+                    job.agent.last_motion_ok = None;
                     workshop.status = "Pipeline: authoring motion…".into();
                     let mut channels: Vec<&'static str> = vec!["move", "action"];
                     let attack_present = draft.root_def().and_then(|r| r.attack.as_ref()).is_some();
                     if attack_present {
                         channels.push("attack_primary");
                     }
+
+                    let mut feedback = String::new();
+                    feedback.push_str(&format!(
+                        "QA motion validation issues (attempt {next_attempt}/2):\n"
+                    ));
+                    if let Some(issues) = result
+                        .result
+                        .as_ref()
+                        .and_then(|v| v.get("smoke"))
+                        .and_then(|v| v.get("motion_validation"))
+                        .and_then(|v| v.get("issues"))
+                        .and_then(|v| v.as_array())
+                    {
+                        for issue in issues.iter().take(12) {
+                            let severity =
+                                issue.get("severity").and_then(|v| v.as_str()).unwrap_or("");
+                            let kind = issue.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                            let msg = issue.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                            let component = issue
+                                .get("component_name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let channel = issue.get("channel").and_then(|v| v.as_str()).unwrap_or("");
+
+                            let mut line = String::new();
+                            if !severity.trim().is_empty() {
+                                line.push_str(severity.trim());
+                                line.push_str(": ");
+                            }
+                            if !kind.trim().is_empty() {
+                                line.push_str(kind.trim());
+                                line.push_str(": ");
+                            }
+                            if !component.trim().is_empty() {
+                                line.push_str("component=");
+                                line.push_str(component.trim());
+                                line.push(' ');
+                            }
+                            if !channel.trim().is_empty() {
+                                line.push_str("channel=");
+                                line.push_str(channel.trim());
+                                line.push(' ');
+                            }
+                            if !msg.trim().is_empty() {
+                                line.push_str(msg.trim());
+                            }
+                            let line = line.trim().to_string();
+                            if !line.is_empty() {
+                                feedback.push_str("- ");
+                                feedback.push_str(&line);
+                                feedback.push('\n');
+                            }
+                        }
+                    }
+                    feedback.push_str(
+                        "Fix these if applicable; if you believe they don't apply, keep the current motion.\n",
+                    );
                     if let Some(result) = start_pipeline_tool_call(
                         config,
                         time,
@@ -1633,7 +1735,7 @@ fn poll_pipeline_tick(
                         preview,
                         preview_model,
                         TOOL_ID_LLM_GENERATE_MOTIONS,
-                        serde_json::json!({ "channels": channels }),
+                        serde_json::json!({ "channels": channels, "qa_feedback": feedback }),
                     ) {
                         pipeline_record_tool_result(workshop, job, &*draft, &result);
                     }

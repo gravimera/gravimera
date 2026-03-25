@@ -25,7 +25,7 @@ fn finalize_run_now(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, finish: 
     workshop
         .status_log
         .finish_step_if_active("Finished.".to_string());
-    append_gen3d_run_log(job.pass_dir.as_deref(), finish.run_log);
+    append_gen3d_run_log(job.step_dir.as_deref(), finish.run_log);
     info!("{}", finish.info_log);
     job.finish_run_metrics();
     job.running = false;
@@ -253,7 +253,7 @@ fn maybe_start_descriptor_meta_request(
     if job.ai.is_none() {
         return false;
     }
-    if job.pass_dir.is_none() {
+    if job.step_dir.is_none() {
         return false;
     }
     if draft.total_non_projectile_primitive_parts() == 0 {
@@ -278,7 +278,7 @@ fn maybe_start_descriptor_meta_request(
                 .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
                 .clone();
             set_progress(&progress, "Waiting for prefab metadata…");
-            append_gen3d_run_log(job.pass_dir.as_deref(), "descriptor_meta_adopt_in_flight");
+            append_gen3d_run_log(job.step_dir.as_deref(), "descriptor_meta_adopt_in_flight");
             job.pending_finish_run = Some(finish.clone());
             job.phase = Gen3dAiPhase::AgentWaitingDescriptorMeta;
             return true;
@@ -330,7 +330,7 @@ fn maybe_start_descriptor_meta_request(
     let motion_summary_json = descriptor_meta_motion_summary_json(draft);
 
     let plan_extracted_text = job
-        .pass_dir_path()
+        .attempt_dir()
         .and_then(|dir| std::fs::read(dir.join("plan_extracted.json")).ok())
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
         .and_then(|value| serde_json::to_string_pretty(&value).ok());
@@ -353,7 +353,7 @@ fn maybe_start_descriptor_meta_request(
     let Some(ai) = job.ai.clone() else {
         return false;
     };
-    let Some(pass_dir) = job.pass_dir.clone() else {
+    let Some(step_dir) = job.step_dir.clone() else {
         return false;
     };
 
@@ -366,7 +366,7 @@ fn maybe_start_descriptor_meta_request(
 
     workshop.status = finish.workshop_status.clone();
     set_progress(&progress, "Generating prefab metadata…");
-    append_gen3d_run_log(Some(&pass_dir), "descriptor_meta_start");
+    append_gen3d_run_log(Some(&step_dir), "descriptor_meta_start");
 
     let reasoning_effort = ai.model_reasoning_effort().to_string();
     spawn_gen3d_ai_text_thread(
@@ -381,7 +381,7 @@ fn maybe_start_descriptor_meta_request(
         system,
         user_text,
         Vec::new(),
-        pass_dir,
+        step_dir,
         "descriptor_meta".into(),
     );
 
@@ -408,7 +408,7 @@ fn maybe_start_pass_snapshot_capture(
     if job.agent.pending_pass_snapshot.is_some() {
         return false;
     }
-    let Some(pass_dir) = job.pass_dir.clone() else {
+    let Some(step_dir) = job.step_dir.clone() else {
         return false;
     };
 
@@ -422,7 +422,7 @@ fn maybe_start_pass_snapshot_capture(
     match super::start_gen3d_review_capture(
         commands,
         images,
-        &pass_dir,
+        &step_dir,
         draft,
         false,
         "pass",
@@ -442,7 +442,7 @@ fn maybe_start_pass_snapshot_capture(
         Err(err) => {
             warn!(
                 "Gen3D: failed to start pass snapshot capture in {}: {err}",
-                pass_dir.display()
+                step_dir.display()
             );
             workshop.error = Some(format!("Gen3D: pass screenshot capture failed: {err}"));
             false
@@ -630,4 +630,3 @@ pub(super) enum ToolCallOutcome {
     Immediate(Gen3dToolResultJsonV1),
     StartedAsync,
 }
-

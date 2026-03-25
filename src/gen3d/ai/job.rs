@@ -297,8 +297,8 @@ pub(super) struct Gen3dToolCallInFlight {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Gen3dPassMetrics {
-    pub(super) pass: u32,
+pub(super) struct Gen3dStepMetrics {
+    pub(super) step: u32,
     pub(super) started_at: std::time::Instant,
     pub(super) ended_at: Option<std::time::Instant>,
     pub(super) tool_ms_total: u128,
@@ -334,12 +334,53 @@ impl Gen3dCopyMetrics {
 
     fn note_tool_result(&mut self, result: &crate::gen3d::agent::Gen3dToolResultJsonV1) {
         use crate::gen3d::agent::tools::{
-            TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
+            TOOL_ID_APPLY_REUSE_GROUPS, TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE,
             TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_MIRROR_COMPONENT,
             TOOL_ID_MIRROR_COMPONENT_SUBTREE,
         };
 
         match result.tool_id.as_str() {
+            TOOL_ID_APPLY_REUSE_GROUPS => {
+                let Some(value) = result.result.as_ref() else {
+                    return;
+                };
+                let component_copies_applied = value
+                    .get("component_copies_applied")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let subtree_copies_applied = value
+                    .get("subtree_copies_applied")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                self.auto_component_copies = self
+                    .auto_component_copies
+                    .saturating_add(component_copies_applied.min(u32::MAX as u64) as u32);
+                self.auto_subtree_copies = self
+                    .auto_subtree_copies
+                    .saturating_add(subtree_copies_applied.min(u32::MAX as u64) as u32);
+
+                if let Some(errors) = value.get("errors").and_then(|v| v.as_array()) {
+                    self.auto_errors = self
+                        .auto_errors
+                        .saturating_add(errors.len().min(u32::MAX as usize) as u32);
+                    if let Some(last) = errors.last().and_then(|v| v.as_str()) {
+                        if !last.trim().is_empty() {
+                            self.last_error = Some(last.trim().to_string());
+                        }
+                    }
+                }
+
+                if let Some(outcomes) = value.get("outcomes").and_then(|v| v.as_array()) {
+                    for item in outcomes {
+                        let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                        let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
+                        let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+                        if !source.is_empty() && !target.is_empty() {
+                            self.push_outcome(format!("reuse {source} -> {target} ({mode})"));
+                        }
+                    }
+                }
+            }
             TOOL_ID_COPY_COMPONENT | TOOL_ID_MIRROR_COMPONENT => {
                 self.manual_component_calls = self.manual_component_calls.saturating_add(1);
                 if !result.ok {
@@ -442,44 +483,44 @@ impl Gen3dCopyMetrics {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Gen3dRunMetrics {
-    pub(super) passes: Vec<Gen3dPassMetrics>,
-    pub(super) current_pass_idx: Option<usize>,
+    pub(super) steps: Vec<Gen3dStepMetrics>,
+    pub(super) current_step_idx: Option<usize>,
     pub(super) tool_call_in_flight: Option<Gen3dToolCallInFlight>,
     pub(super) copy: Gen3dCopyMetrics,
 }
 
 impl Gen3dRunMetrics {
-    fn current_pass_mut(&mut self) -> Option<&mut Gen3dPassMetrics> {
-        self.current_pass_idx
-            .and_then(|idx| self.passes.get_mut(idx))
+    fn current_step_mut(&mut self) -> Option<&mut Gen3dStepMetrics> {
+        self.current_step_idx
+            .and_then(|idx| self.steps.get_mut(idx))
     }
 
-    pub(super) fn note_pass_started(&mut self, pass: u32) {
+    pub(super) fn note_step_started(&mut self, step: u32) {
         let now = std::time::Instant::now();
-        self.finish_current_pass_at(now);
+        self.finish_current_step_at(now);
 
-        self.passes.push(Gen3dPassMetrics {
-            pass,
+        self.steps.push(Gen3dStepMetrics {
+            step,
             started_at: now,
             ended_at: None,
             tool_ms_total: 0,
             tool_calls: 0,
             tool_ms_by_id: std::collections::HashMap::new(),
         });
-        self.current_pass_idx = Some(self.passes.len().saturating_sub(1));
+        self.current_step_idx = Some(self.steps.len().saturating_sub(1));
         self.tool_call_in_flight = None;
     }
 
-    fn finish_current_pass(&mut self) {
-        self.finish_current_pass_at(std::time::Instant::now());
+    fn finish_current_step(&mut self) {
+        self.finish_current_step_at(std::time::Instant::now());
     }
 
-    fn finish_current_pass_at(&mut self, now: std::time::Instant) {
-        let Some(pass) = self.current_pass_mut() else {
+    fn finish_current_step_at(&mut self, now: std::time::Instant) {
+        let Some(step) = self.current_step_mut() else {
             return;
         };
-        if pass.ended_at.is_none() {
-            pass.ended_at = Some(now);
+        if step.ended_at.is_none() {
+            step.ended_at = Some(now);
         }
     }
 
@@ -496,10 +537,10 @@ impl Gen3dRunMetrics {
         if let Some(in_flight) = self.tool_call_in_flight.take() {
             if in_flight.call_id == result.call_id {
                 let ms = now.duration_since(in_flight.started_at).as_millis() as u128;
-                if let Some(pass) = self.current_pass_mut() {
-                    pass.tool_ms_total = pass.tool_ms_total.saturating_add(ms);
-                    pass.tool_calls = pass.tool_calls.saturating_add(1);
-                    let entry = pass.tool_ms_by_id.entry(in_flight.tool_id).or_insert(0);
+                if let Some(step) = self.current_step_mut() {
+                    step.tool_ms_total = step.tool_ms_total.saturating_add(ms);
+                    step.tool_calls = step.tool_calls.saturating_add(1);
+                    let entry = step.tool_ms_by_id.entry(in_flight.tool_id).or_insert(0);
                     *entry = entry.saturating_add(ms);
                 }
             }
@@ -520,7 +561,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) require_structured_outputs: bool,
     pub(super) run_id: Option<Uuid>,
     pub(super) attempt: u32,
-    pub(super) pass: u32,
+    pub(super) step: u32,
     pub(super) plan_hash: String,
     pub(super) preserve_existing_components_mode: bool,
     pub(super) assembly_rev: u32,
@@ -539,7 +580,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) user_image_object_summary: Option<Gen3dUserImageObjectSummary>,
     pub(super) prompt_intent: Option<AiPromptIntentJsonV1>,
     pub(super) run_dir: Option<PathBuf>,
-    pub(super) pass_dir: Option<PathBuf>,
+    pub(super) step_dir: Option<PathBuf>,
     pub(super) info_store: Option<Gen3dInfoStore>,
     pub(super) log_sinks: Option<crate::app::Gen3dLogSinks>,
     pub(super) session: Gen3dAiSessionState,
@@ -651,7 +692,7 @@ impl Gen3dAiJob {
             && self.ai.is_some()
             && self.run_id.is_some()
             && self.run_dir.is_some()
-            && self.pass_dir.is_some()
+            && self.step_dir.is_some()
     }
 
     pub(crate) fn is_capturing_motion_sheets(&self) -> bool {
@@ -719,8 +760,13 @@ impl Gen3dAiJob {
         self.run_dir.as_deref()
     }
 
-    pub(crate) fn pass_dir_path(&self) -> Option<&Path> {
-        self.pass_dir.as_deref()
+    pub(super) fn attempt_dir(&self) -> Option<PathBuf> {
+        let run_dir = self.run_dir.as_ref()?;
+        Some(run_dir.join(format!("attempt_{}", self.attempt)))
+    }
+
+    pub(crate) fn step_dir_path(&self) -> Option<&Path> {
+        self.step_dir.as_deref()
     }
 
     pub(super) fn ensure_info_store(&mut self) -> Result<&mut Gen3dInfoStore, String> {
@@ -789,7 +835,7 @@ impl Gen3dAiJob {
         }
 
         let attempt = self.attempt;
-        let pass = self.pass;
+        let step = self.step;
         let assembly_rev = self.assembly_rev;
         let Ok(store) = self.ensure_info_store() else {
             return;
@@ -811,7 +857,7 @@ impl Gen3dAiJob {
 
         let _ = store.append_event(
             attempt,
-            pass,
+            step,
             assembly_rev,
             kind,
             tool_id,
@@ -833,8 +879,8 @@ impl Gen3dAiJob {
         self.attempt
     }
 
-    pub(crate) fn pass(&self) -> u32 {
-        self.pass
+    pub(crate) fn step(&self) -> u32 {
+        self.step
     }
 
     pub(crate) fn plan_hash(&self) -> &str {
@@ -948,7 +994,7 @@ impl Gen3dAiJob {
     }
 
     pub(super) fn artifact_dir(&self) -> Option<&Path> {
-        self.pass_dir.as_deref()
+        self.step_dir.as_deref()
     }
 
     pub(crate) fn reset_session(&mut self) {
@@ -995,7 +1041,7 @@ impl Gen3dAiJob {
             self.last_run_elapsed = Some(total);
         }
 
-        self.metrics.finish_current_pass();
+        self.metrics.finish_current_step();
         self.stop_gen3d_log_capture();
     }
 

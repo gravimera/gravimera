@@ -1878,7 +1878,7 @@ pub(crate) fn gen3d_auto_save_when_done(
     let parts = draft.total_primitive_parts();
     let motions = preview.animation_channels.len();
     let attempt = job.attempt() + 1;
-    let pass = job.pass() + 1;
+    let step = job.step() + 1;
 
     let run_time = job
         .run_elapsed()
@@ -2011,7 +2011,7 @@ pub(crate) fn gen3d_auto_save_when_done(
     }
 
     let summary = format!(
-        "Done | comps={components} parts={parts} motion={motions} | attempt={attempt} pass={pass} | time={run_time} | auto-save={save_note}"
+        "Done | comps={components} parts={parts} motion={motions} | attempt={attempt} step={step} | time={run_time} | auto-save={save_note}"
     );
     workshop.status_log.start_step(
         "Build summary".to_string(),
@@ -2079,7 +2079,7 @@ pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
             "kind": if overwrite_prefab_id.is_some() { "edit_overwrite" } else if base_prefab_id.is_some() { "fork" } else { "new" },
             "run_id": job.run_id().map(|id| id.to_string()),
             "attempt": job.attempt(),
-            "pass": job.pass(),
+            "step": job.step(),
             "plan_hash": job.plan_hash(),
             "assembly_rev": job.assembly_rev(),
             "workspace_id": job.active_workspace_id(),
@@ -2555,7 +2555,7 @@ fn save_generated_prefab_descriptor_best_effort(
 
     let mut gen3d_extra: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
     gen3d_extra.insert("attempt".to_string(), serde_json::json!(job.attempt()));
-    gen3d_extra.insert("pass".to_string(), serde_json::json!(job.pass()));
+    gen3d_extra.insert("step".to_string(), serde_json::json!(job.step()));
     gen3d_extra.insert("plan_hash".to_string(), serde_json::json!(job.plan_hash()));
     gen3d_extra.insert(
         "assembly_rev".to_string(),
@@ -2567,7 +2567,7 @@ fn save_generated_prefab_descriptor_best_effort(
     );
 
     let plan_extracted_value = job
-        .pass_dir_path()
+        .step_dir_path()
         .and_then(|dir| load_optional_json(&dir.join("plan_extracted.json")));
     if let Some(plan) = plan_extracted_value.as_ref() {
         gen3d_extra.insert("plan_extracted".to_string(), plan.clone());

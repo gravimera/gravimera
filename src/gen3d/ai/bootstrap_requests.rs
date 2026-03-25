@@ -15,7 +15,7 @@ pub(super) fn spawn_gen3d_user_image_summary_request(
     config: &AppConfig,
     workshop: &mut super::super::state::Gen3dWorkshop,
     job: &mut Gen3dAiJob,
-    pass_dir: PathBuf,
+    step_dir: PathBuf,
 ) -> Result<(), String> {
     if job.user_images.is_empty() {
         return Err("Internal error: requested user-image summary but no user images exist.".into());
@@ -55,11 +55,11 @@ pub(super) fn spawn_gen3d_user_image_summary_request(
         },
     );
     append_gen3d_run_log(
-        Some(&pass_dir),
+        Some(&step_dir),
         format!(
-            "user_image_summary_request attempt={} pass={} images={}",
+            "user_image_summary_request attempt={} step={} images={}",
             job.attempt,
-            job.pass,
+            job.step,
             job.user_images.len()
         ),
     );
@@ -82,7 +82,7 @@ pub(super) fn spawn_gen3d_user_image_summary_request(
         system,
         user_text,
         job.user_images.clone(),
-        pass_dir,
+        step_dir,
         "user_image_summary".into(),
     );
 
@@ -93,7 +93,7 @@ pub(super) fn spawn_gen3d_prompt_intent_request(
     config: &AppConfig,
     workshop: &mut super::super::state::Gen3dWorkshop,
     job: &mut Gen3dAiJob,
-    pass_dir: PathBuf,
+    step_dir: PathBuf,
 ) -> Result<(), String> {
     if job.prompt_intent.is_some() {
         return Err("Internal error: requested prompt-intent analysis but it already exists.".into());
@@ -124,10 +124,10 @@ pub(super) fn spawn_gen3d_prompt_intent_request(
         },
     );
     append_gen3d_run_log(
-        Some(&pass_dir),
+        Some(&step_dir),
         format!(
-            "prompt_intent_request attempt={} pass={}",
-            job.attempt, job.pass
+            "prompt_intent_request attempt={} step={}",
+            job.attempt, job.step
         ),
     );
 
@@ -153,7 +153,7 @@ pub(super) fn spawn_gen3d_prompt_intent_request(
         system,
         user_text,
         job.user_images_component.clone(),
-        pass_dir,
+        step_dir,
         "prompt_intent".into(),
     );
 

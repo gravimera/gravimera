@@ -778,7 +778,7 @@ pub(super) fn copy_from_workspace_v1(
             &job.plan_collider,
             draft,
         );
-        if let Some(dir) = job.pass_dir_path() {
+        if let Some(dir) = job.step_dir_path() {
             super::artifacts::write_gen3d_assembly_snapshot(Some(dir), &job.planned_components);
         }
         job.assembly_rev = job.assembly_rev.saturating_add(1);
