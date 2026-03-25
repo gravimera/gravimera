@@ -946,6 +946,9 @@ Return STRICT JSON matching schema `gen3d_edit_strategy_v1`.\n\
 Do NOT output markdown.\n\n\
 Rules:\n\
 - Pick the cheapest strategy that can satisfy the user request under the current constraints.\n\
+- Use `draft_ops_only` for in-place primitive edits inside existing components (transform/color/mesh params).\n\
+- Use `plan_ops_only` when the request changes the component graph or plan fields (add/remove component, attachments/anchors, mobility/collider/attack/aim/muzzle).\n\
+- Use `plan_ops_then_draft_ops` only when BOTH are required.\n\
 - `snapshot_components` MUST be a subset of the existing component names.\n\
 - Keep `snapshot_components` small (<= 8). Include ONLY components you need to edit in-place via DraftOps.\n\
 - If `strategy` is `plan_ops_only` or `rebuild`, set `snapshot_components` to [].\n\
@@ -1013,6 +1016,7 @@ Output format:\n\
 Hard rules:\n\
 - Use ONLY component names and part_id_uuid values present in the provided snapshots.\n\
 - Do NOT invent part_id_uuid for updates/removals.\n\
+- For `add_primitive_part`, you MUST generate a NEW `part_id_uuid` (UUID v4 string). You may reference it later in the same ops list.\n\
 - Only add new primitives when necessary; prefer updating existing primitives (transform/color/mesh params).\n\
 - Removals are allowed, but use `remove_primitive_part` ONLY when required to satisfy the user request.\n\
 \n\
@@ -1361,8 +1365,8 @@ Hard requirements:\n\
     out
 }
 
- pub(super) fn build_gen3d_component_system_instructions() -> String {
-     "You are a 3D modeling assistant.\n\
+pub(super) fn build_gen3d_component_system_instructions() -> String {
+    "You are a 3D modeling assistant.\n\
 	Return ONLY one JSON object (no markdown) for a single component.\n\
 	Output MUST include top-level `version`: 2.\n\
 	Do NOT output any other top-level keys (no `name`).\n\

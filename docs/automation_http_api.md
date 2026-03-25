@@ -1073,6 +1073,7 @@ Notes:
 
 - Tasks are serialized: only one task runs at a time; additional tasks wait (FIFO).
 - Step frames (via `/v1/step`) while polling `/v1/gen3d/tasks` to drive progress.
+- A real-provider regression runner is available at `tools/gen3d_task_queue_suite_real_test.py` (artifacts under `test/run_1/...`).
 
 ### `GET /v1/gen3d/tasks/{task_id}`
 

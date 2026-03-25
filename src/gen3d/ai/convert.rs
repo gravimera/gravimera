@@ -409,9 +409,36 @@ fn quat_from_forward_up_or_identity(
 
     match (forward_v, up_v) {
         (None, None) => Ok(Quat::IDENTITY),
-        (Some(_), None) | (None, Some(_)) => Err(format!(
-            "{context}: rotation basis must include BOTH `forward` and `up` (or omit both for identity). Expected component-local axes (+X right, +Y up, +Z forward)."
-        )),
+        (Some(f), None) => {
+            let f_n = f.normalize();
+            let mut u = Vec3::Y;
+            if f_n.dot(u).abs() > 0.999 {
+                u = Vec3::Z;
+            }
+            if f_n.dot(u).abs() > 0.999 {
+                u = Vec3::X;
+            }
+            plan_rotation_from_forward_up_strict(f, u).map_err(|err| {
+                format!(
+                    "{context}: invalid forward basis (inferred up): {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+                )
+            })
+        }
+        (None, Some(u)) => {
+            let u_n = u.normalize();
+            let mut f = Vec3::Z;
+            if u_n.dot(f).abs() > 0.999 {
+                f = Vec3::X;
+            }
+            if u_n.dot(f).abs() > 0.999 {
+                f = Vec3::Y;
+            }
+            plan_rotation_from_forward_up_strict(f, u).map_err(|err| {
+                format!(
+                    "{context}: invalid up basis (inferred forward): {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+                )
+            })
+        }
         (Some(f), Some(u)) => plan_rotation_from_forward_up_strict(f, u).map_err(|err| {
             format!(
                 "{context}: invalid forward/up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
@@ -926,17 +953,17 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                             comp.name
                         )
                     })?;
-	                Some(Gen3dPlannedAttachment {
-	                    parent: parent.to_string(),
-	                    parent_anchor: parent_anchor.to_string(),
-	                    child_anchor: child_anchor.to_string(),
-	                    offset,
-	                    fallback_basis: Transform::IDENTITY,
-	                    joint: att.joint.clone(),
-	                    animations: Vec::new(),
-	                })
-	            }
-	        };
+                Some(Gen3dPlannedAttachment {
+                    parent: parent.to_string(),
+                    parent_anchor: parent_anchor.to_string(),
+                    child_anchor: child_anchor.to_string(),
+                    offset,
+                    fallback_basis: Transform::IDENTITY,
+                    joint: att.joint.clone(),
+                    animations: Vec::new(),
+                })
+            }
+        };
 
         planned.push(Gen3dPlannedComponent {
             display_name: format!("{}. {}", idx + 1, comp.name),
@@ -2240,36 +2267,36 @@ pub(super) fn apply_ai_review_delta_actions(
                             component_id, components[idx].name
                         )
                     })?;
-	                let animations = components[idx]
-	                    .attach_to
-	                    .as_ref()
-	                    .map(|att| att.animations.clone())
-	                    .unwrap_or_default();
-	                let fallback_basis = components[idx]
-	                    .attach_to
-	                    .as_ref()
-	                    .map(|att| att.fallback_basis)
-	                    .unwrap_or(Transform::IDENTITY);
-	                let joint = components[idx].attach_to.as_ref().and_then(|att| {
-	                    if att.parent == components[parent_idx].name
-	                        && att.parent_anchor == parent_anchor
-	                        && att.child_anchor == child_anchor
-	                    {
-	                        att.joint.clone()
-	                    } else {
-	                        None
-	                    }
-	                });
+                let animations = components[idx]
+                    .attach_to
+                    .as_ref()
+                    .map(|att| att.animations.clone())
+                    .unwrap_or_default();
+                let fallback_basis = components[idx]
+                    .attach_to
+                    .as_ref()
+                    .map(|att| att.fallback_basis)
+                    .unwrap_or(Transform::IDENTITY);
+                let joint = components[idx].attach_to.as_ref().and_then(|att| {
+                    if att.parent == components[parent_idx].name
+                        && att.parent_anchor == parent_anchor
+                        && att.child_anchor == child_anchor
+                    {
+                        att.joint.clone()
+                    } else {
+                        None
+                    }
+                });
 
-	                components[idx].attach_to = Some(Gen3dPlannedAttachment {
-	                    parent: components[parent_idx].name.clone(),
-	                    parent_anchor: set.parent_anchor.trim().to_string(),
-	                    child_anchor: child_anchor.to_string(),
-	                    offset,
-	                    fallback_basis,
-	                    joint,
-	                    animations,
-	                });
+                components[idx].attach_to = Some(Gen3dPlannedAttachment {
+                    parent: components[parent_idx].name.clone(),
+                    parent_anchor: set.parent_anchor.trim().to_string(),
+                    child_anchor: child_anchor.to_string(),
+                    offset,
+                    fallback_basis,
+                    joint,
+                    animations,
+                });
 
                 if !reason.trim().is_empty() {
                     debug!(
@@ -3044,6 +3071,82 @@ mod tests {
     }
 
     #[test]
+    fn infers_missing_part_basis_vector() {
+        let planned = Gen3dPlannedComponent {
+            display_name: "1. test_component".into(),
+            name: "test_component".into(),
+            purpose: String::new(),
+            modeling_notes: String::new(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: None,
+            anchors: Vec::new(),
+            contacts: Vec::new(),
+            root_animations: Vec::new(),
+            attach_to: None,
+        };
+
+        // up-only: local +Y should map to +X (forward inferred as +Z)
+        let ai = AiDraftJsonV1 {
+            version: 2,
+            collider: None,
+            anchors: Vec::new(),
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cylinder,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 1.0]),
+                render_priority: None,
+                pos: [0.0, 0.0, 0.0],
+                forward: None,
+                up: Some([1.0, 0.0, 0.0]),
+                scale: [1.0, 1.0, 1.0],
+            }],
+        };
+        let def = ai_to_component_def(&planned, ai, None).expect("component def should build");
+        let part = def
+            .parts
+            .iter()
+            .find(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
+            .expect("primitive part");
+        let up_world = part.transform.rotation * Vec3::Y;
+        assert!(
+            (up_world - Vec3::X).length() < 1e-3,
+            "expected inferred-basis up_world≈+X, got {:?}",
+            up_world
+        );
+
+        // forward-only: local +Z should map to +X (up inferred as +Y)
+        let ai = AiDraftJsonV1 {
+            version: 2,
+            collider: None,
+            anchors: Vec::new(),
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cuboid,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 1.0]),
+                render_priority: None,
+                pos: [0.0, 0.0, 0.0],
+                forward: Some([1.0, 0.0, 0.0]),
+                up: None,
+                scale: [1.0, 1.0, 1.0],
+            }],
+        };
+        let def = ai_to_component_def(&planned, ai, None).expect("component def should build");
+        let part = def
+            .parts
+            .iter()
+            .find(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
+            .expect("primitive part");
+        let forward_world = part.transform.rotation * Vec3::Z;
+        assert!(
+            (forward_world - Vec3::X).length() < 1e-3,
+            "expected inferred-basis forward_world≈+X, got {:?}",
+            forward_world
+        );
+    }
+
+    #[test]
     fn rejects_axis_permutation_against_planned_size() {
         // The engine must not silently rotate geometry to match the plan. If a component comes
         // back with permuted AABB axes relative to `target_size`, reject it and trigger regen.
@@ -3113,16 +3216,16 @@ mod tests {
             }],
             contacts: Vec::new(),
             root_animations: Vec::new(),
-	            attach_to: Some(Gen3dPlannedAttachment {
-	                parent: "tail_boom".into(),
-	                parent_anchor: "tail_rotor_mount".into(),
-	                child_anchor: "root_attach".into(),
-	                offset: Transform::IDENTITY,
-	                fallback_basis: Transform::IDENTITY,
-	                joint: None,
-	                animations: vec![PartAnimationSlot {
-	                    channel: "idle".into(),
-	                    spec: PartAnimationSpec {
+            attach_to: Some(Gen3dPlannedAttachment {
+                parent: "tail_boom".into(),
+                parent_anchor: "tail_rotor_mount".into(),
+                child_anchor: "root_attach".into(),
+                offset: Transform::IDENTITY,
+                fallback_basis: Transform::IDENTITY,
+                joint: None,
+                animations: vec![PartAnimationSlot {
+                    channel: "idle".into(),
+                    spec: PartAnimationSpec {
                         driver: PartAnimationDriver::Always,
                         speed_scale: 1.0,
                         time_offset_units: 0.0,
