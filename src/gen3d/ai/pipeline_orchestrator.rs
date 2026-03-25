@@ -441,7 +441,6 @@ fn append_motion_authoring_retry_feedback(job: &Gen3dAiJob, feedback: &mut Strin
     feedback.push_str(
         "Schema reminder: top-level `version` MUST be the number 1 (not a string).\n",
     );
-    feedback.push_str("Do NOT set `version` to \"gen3d_motion_authoring_v1\".\n");
 
     let failures = pipeline_last_motion_tool_failure_lines(job);
     if failures.is_empty() {
