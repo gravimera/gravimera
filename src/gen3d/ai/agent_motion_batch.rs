@@ -397,6 +397,14 @@ pub(super) fn poll_agent_motion_batch(
         fail_job(workshop, job, "Internal error: missing pending tool call.");
         return None;
     };
+    let qa_feedback = job
+        .agent
+        .pending_tool_call
+        .as_ref()
+        .and_then(|c| c.args.get("qa_feedback"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     let total = batch.requested_channels.len();
     if total == 0 {
@@ -610,6 +618,12 @@ pub(super) fn poll_agent_motion_batch(
             &job.planned_components,
             draft,
         );
+        let mut user_text = user_text;
+        if let Some(feedback) = qa_feedback.as_deref() {
+            user_text.push_str("\nQA feedback:\n");
+            user_text.push_str(feedback);
+            user_text.push('\n');
+        }
 
         let prefix = if attempt == 0 {
             format!(

@@ -70,8 +70,11 @@ pub(super) struct Gen3dPipelineState {
     pub(super) components_attempts: u32,
     pub(super) qa_attempts: u32,
     pub(super) qa_fixits_applied: u32,
+    pub(super) plan_authoring_attempts: u32,
     pub(super) motion_authoring_attempts: u32,
     pub(super) review_delta_attempts: u32,
+    /// When set, the next plan call should include this QA feedback in its user prompt.
+    pub(super) pending_plan_qa_feedback: Option<String>,
     pub(super) no_progress_state_hash: Option<String>,
     pub(super) no_progress_tries: u32,
     /// Cached preview blob ids from `render_preview_v1` for the next `llm_review_delta_v1`.

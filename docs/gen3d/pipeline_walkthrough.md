@@ -51,6 +51,9 @@ Pipeline stages (simplified):
 3. `Qa`
    - Tool: `qa_v1`
    - If QA provides deterministic “fixits”, pipeline applies them using `apply_draft_ops_v1` and re-runs QA.
+   - If QA returns non-fatal `complaints[]` (quality hints), pipeline spends a *second chance* on improvement when possible:
+     - Plan complaints → re-run `llm_generate_plan_v1` once with `qa_feedback` attached, then continue the pipeline.
+     - Motion complaints → re-run `llm_generate_motions_v1` once with `qa_feedback` attached, then re-run QA.
    - If motion channels are missing for a movable unit, pipeline calls `llm_generate_motions_v1` and re-runs QA.
 4. Optional appearance review (if enabled)
    - Tools: `render_preview_v1` → `llm_review_delta_v1`
@@ -83,7 +86,7 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
 
 - Planning
   - `llm_generate_plan_v1`
-    - Args (create): `{ "prompt": "<user prompt>" }`
+    - Args (create): `{ "prompt": "<user prompt>", "qa_feedback": "<optional QA complaints text>" }`
     - Args (preserve replan): `{ "prompt": "...", "plan_template_kv": {...}, "constraints": { "preserve_existing_components": true, "preserve_edit_policy": "allow_offsets" } }`
   - `llm_select_edit_strategy_v1`
     - Args: `{ "prompt": "<edit prompt>" }`
@@ -110,7 +113,7 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
   - `qa_v1`
     - Args: `{}`
   - `llm_generate_motions_v1`
-    - Args: `{ "channels": ["move","action"] }` (and `attack_primary` when needed)
+    - Args: `{ "channels": ["move","action"], "qa_feedback": "<optional QA complaints text>" }` (and `attack_primary` when needed)
 
 - Appearance review
   - `render_preview_v1`

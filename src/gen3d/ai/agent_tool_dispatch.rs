@@ -1359,6 +1359,7 @@ fn execute_qa_v1(
 
     let mut errors: Vec<serde_json::Value> = Vec::new();
     let mut warnings: Vec<serde_json::Value> = Vec::new();
+    let mut complaints: Vec<serde_json::Value> = Vec::new();
 
     fn push_issue(
         out: &mut Vec<serde_json::Value>,
@@ -1382,6 +1383,7 @@ fn execute_qa_v1(
         issues: Option<&serde_json::Value>,
         errors: &mut Vec<serde_json::Value>,
         warnings: &mut Vec<serde_json::Value>,
+        complaints: &mut Vec<serde_json::Value>,
     ) {
         let Some(issues) = issues else {
             return;
@@ -1392,6 +1394,10 @@ fn execute_qa_v1(
         for item in items {
             match item.get("severity").and_then(|v| v.as_str()) {
                 Some("error") => push_issue(errors, source, item),
+                Some("complaint") => {
+                    push_issue(complaints, source, item);
+                    push_issue(warnings, source, item);
+                }
                 Some("warn" | "warning") => push_issue(warnings, source, item),
                 Some(_) | None => push_issue(warnings, source, item),
             }
@@ -1403,14 +1409,142 @@ fn execute_qa_v1(
         validate.get("issues"),
         &mut errors,
         &mut warnings,
+        &mut complaints,
     );
-    collect("smoke", smoke.get("issues"), &mut errors, &mut warnings);
+    collect(
+        "smoke",
+        smoke.get("issues"),
+        &mut errors,
+        &mut warnings,
+        &mut complaints,
+    );
     collect(
         "motion_validation",
         smoke.get("motion_validation").and_then(|v| v.get("issues")),
         &mut errors,
         &mut warnings,
+        &mut complaints,
     );
+
+    fn push_qa_complaint(
+        complaints: &mut Vec<serde_json::Value>,
+        warnings: &mut Vec<serde_json::Value>,
+        issue: serde_json::Value,
+    ) {
+        let mut issue = issue;
+        if let serde_json::Value::Object(map) = &mut issue {
+            map.insert(
+                "source".into(),
+                serde_json::Value::String("qa".to_string()),
+            );
+        }
+        complaints.push(issue.clone());
+        warnings.push(issue);
+    }
+
+    // Complaint: reuse-groups missing when component naming strongly suggests repetition/symmetry.
+    if job.reuse_groups.is_empty() && !job.planned_components.is_empty() {
+        let mut bases: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for comp in job.planned_components.iter() {
+            let name = comp.name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let mut base = name;
+            if let Some(rest) = base.strip_prefix("left_") {
+                base = rest;
+            } else if let Some(rest) = base.strip_prefix("right_") {
+                base = rest;
+            } else if let Some(rest) = base.strip_suffix("_left") {
+                base = rest;
+            } else if let Some(rest) = base.strip_suffix("_right") {
+                base = rest;
+            } else if let Some((prefix, suffix)) = base.rsplit_once('_') {
+                if !prefix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+                    base = prefix;
+                }
+            }
+
+            let base = base.trim();
+            if base.is_empty() || base == name {
+                continue;
+            }
+            *bases.entry(base.to_string()).or_insert(0) += 1;
+        }
+        let mut candidates: Vec<(String, usize)> = bases.into_iter().collect();
+        candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let candidate_bases: Vec<String> = candidates
+            .iter()
+            .filter(|(_, count)| *count >= 2)
+            .map(|(base, _)| base.clone())
+            .take(6)
+            .collect();
+        if !candidate_bases.is_empty() {
+            push_qa_complaint(
+                &mut complaints,
+                &mut warnings,
+                serde_json::json!({
+                    "severity":"complaint",
+                    "kind":"missing_reuse_groups",
+                    "fix_step":"plan",
+                    "message":"Plan has no `reuse_groups`, but component names suggest repetition/symmetry. Add `reuse_groups` when parts share identical/mirrored geometry (L/R limbs, repeated legs/wheels) to improve consistency and reduce weird asymmetry.",
+                    "evidence": {
+                        "candidate_bases": candidate_bases,
+                        "reuse_groups_total": 0,
+                        "components_total": job.planned_components.len(),
+                    },
+                }),
+            );
+        }
+    }
+
+    // Complaint: motion validation produced warnings after motion authoring; allow one retry to improve.
+    let mobility_present = smoke
+        .get("mobility_present")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_any_motion_slots = job.planned_components.iter().any(|c| {
+        c.attach_to
+            .as_ref()
+            .is_some_and(|a| !a.animations.is_empty())
+    });
+    if mobility_present && has_any_motion_slots {
+        let warn_issues: Vec<&serde_json::Value> = smoke
+            .get("motion_validation")
+            .and_then(|v| v.get("issues"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter(|issue| issue.get("severity").and_then(|v| v.as_str()) == Some("warn"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !warn_issues.is_empty() {
+            let mut kinds: Vec<String> = warn_issues
+                .iter()
+                .filter_map(|issue| issue.get("kind").and_then(|v| v.as_str()))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            kinds.sort();
+            kinds.dedup();
+            kinds.truncate(6);
+            push_qa_complaint(
+                &mut complaints,
+                &mut warnings,
+                serde_json::json!({
+                    "severity":"complaint",
+                    "kind":"motion_quality_warnings",
+                    "fix_step":"motion",
+                    "message":"Motion validation produced warnings. Try one more motion-authoring pass to improve motion quality (or keep the current motion if you believe it is acceptable).",
+                    "evidence": {
+                        "warning_kinds": kinds,
+                        "warnings_total": warn_issues.len(),
+                    },
+                }),
+            );
+        }
+    }
 
     job.agent.last_qa_warnings_count = Some(warnings.len().min(u32::MAX as usize) as u32);
     job.agent.last_qa_warning_example = warnings.first().and_then(|issue| {
@@ -1452,6 +1586,7 @@ fn execute_qa_v1(
         "smoke": smoke,
         "errors": errors,
         "warnings": warnings,
+        "complaints": complaints,
         "cached": false,
         "no_new_information": false,
         "basis": basis,
@@ -1531,6 +1666,11 @@ fn execute_qa_v1(
         .and_then(|v| v.as_array())
         .map(|v| v.len())
         .unwrap_or(0);
+    let complaint_count = json
+        .get("complaints")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
     let qa_record = match info_kv_put_for_tool(
         job,
         workspace_id.as_str(),
@@ -1538,7 +1678,9 @@ fn execute_qa_v1(
         call_id,
         qa_key.as_str(),
         json.clone(),
-        format!("qa (ok={ok} errors={error_count} warnings={warning_count})"),
+        format!(
+            "qa (ok={ok} errors={error_count} warnings={warning_count} complaints={complaint_count})"
+        ),
     ) {
         Ok(v) => v,
         Err(err) => {
@@ -5781,6 +5923,18 @@ pub(super) fn execute_tool_call(
                     &required_component_names,
                 )
             };
+            let mut user_text = user_text;
+            if let Some(feedback) = call
+                .args
+                .get("qa_feedback")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
+                user_text.push_str("\nQA feedback:\n");
+                user_text.push_str(feedback);
+                user_text.push('\n');
+            }
             let reasoning_effort = ai.model_reasoning_effort().to_string();
 
             let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
@@ -6953,6 +7107,18 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 &job.planned_components,
                 draft,
             );
+            let mut user_text = user_text;
+            if let Some(feedback) = call
+                .args
+                .get("qa_feedback")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
+                user_text.push_str("\nQA feedback:\n");
+                user_text.push_str(feedback);
+                user_text.push('\n');
+            }
             let reasoning_effort = ai.model_reasoning_effort().to_string();
             spawn_gen3d_ai_text_thread(
                 shared,
@@ -8412,6 +8578,83 @@ mod tests {
         assert!(
             has_missing_root_error,
             "expected missing root mobility/attack error when attack is required, got {smoke_attack_required:?}"
+        );
+    }
+
+    #[test]
+    fn gen3d_smoke_results_include_motion_quality_complaints_for_movable_ground() {
+        use crate::object::registry::AnchorDef;
+        use super::super::job::{Gen3dPlannedAttachment, Gen3dPlannedComponent};
+
+        let planned = vec![
+            Gen3dPlannedComponent {
+                display_name: "1. root".into(),
+                name: "root".into(),
+                purpose: "root".into(),
+                modeling_notes: String::new(),
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                planned_size: Vec3::ONE,
+                actual_size: Some(Vec3::ONE),
+                anchors: vec![AnchorDef {
+                    name: "mount".into(),
+                    transform: Transform::IDENTITY,
+                }],
+                contacts: Vec::new(),
+                root_animations: Vec::new(),
+                attach_to: None,
+            },
+            Gen3dPlannedComponent {
+                display_name: "2. child".into(),
+                name: "child".into(),
+                purpose: "child".into(),
+                modeling_notes: String::new(),
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                planned_size: Vec3::ONE,
+                actual_size: Some(Vec3::ONE),
+                anchors: vec![],
+                contacts: Vec::new(),
+                root_animations: Vec::new(),
+                attach_to: Some(Gen3dPlannedAttachment {
+                    parent: "root".into(),
+                    parent_anchor: "mount".into(),
+                    child_anchor: "origin".into(),
+                    offset: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
+                    joint: None,
+                    animations: Vec::new(),
+                }),
+            },
+        ];
+
+        let draft = crate::gen3d::state::Gen3dDraft {
+            defs: vec![make_test_root_def_movable(true)],
+        };
+
+        let smoke = super::super::build_gen3d_smoke_results(Some(false), false, None, &planned, &draft);
+        let kinds: Vec<&str> = smoke
+            .get("issues")
+            .and_then(|v| v.as_array())
+            .map(|issues| {
+                issues
+                    .iter()
+                    .filter_map(|i| {
+                        if i.get("severity").and_then(|v| v.as_str()) != Some("complaint") {
+                            return None;
+                        }
+                        i.get("kind").and_then(|v| v.as_str())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert!(
+            kinds.contains(&"missing_ground_contacts"),
+            "expected missing_ground_contacts complaint, got {kinds:?} smoke={smoke:?}"
+        );
+        assert!(
+            kinds.contains(&"missing_joint_metadata"),
+            "expected missing_joint_metadata complaint, got {kinds:?} smoke={smoke:?}"
         );
     }
 

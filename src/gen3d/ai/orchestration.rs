@@ -4992,6 +4992,70 @@ pub(super) fn build_gen3d_smoke_results(
         .unwrap_or(true);
     let ok = ok && motion_ok;
 
+    // Quality complaints (non-fatal): these do NOT fail smoke/QA, but they should trigger an
+    // "attempt 2" LLM improvement pass in the pipeline when possible.
+    let mobility_mode = root.and_then(|r| r.mobility.as_ref()).map(|m| m.mode);
+    let is_movable = mobility_mode.is_some();
+    let is_ground = matches!(mobility_mode, Some(crate::object::registry::MobilityMode::Ground));
+    let has_attachments = components.iter().any(|c| c.attach_to.is_some());
+
+    let joints_total = motion_report
+        .rig_summary
+        .get("joints_total")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let contacts_total = motion_report
+        .rig_summary
+        .get("contacts_total")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let contacts_with_stance = motion_report
+        .rig_summary
+        .get("contacts_with_stance")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    if is_movable {
+        if is_ground && contacts_total == 0 {
+            issues.push(serde_json::json!({
+                "severity":"complaint",
+                "kind":"missing_ground_contacts",
+                "fix_step":"plan",
+                "message":"Ground-movable unit has 0 ground contacts. This often causes weird/floaty locomotion. Add `contacts[]` (with `stance`) for planted contacts (feet/hooves/wheels) when applicable.",
+                "evidence": {
+                    "mobility":"ground",
+                    "contacts_total": contacts_total,
+                    "contacts_with_stance": contacts_with_stance,
+                },
+            }));
+        }
+        if is_ground && contacts_total > 0 && contacts_with_stance == 0 {
+            issues.push(serde_json::json!({
+                "severity":"complaint",
+                "kind":"contacts_missing_stance",
+                "fix_step":"plan",
+                "message":"Ground-movable unit has contacts but none include stance metadata. Provide `contacts[].stance` (phase_01 + duty_factor_01) for planted contacts so gait timing is well-defined.",
+                "evidence": {
+                    "mobility":"ground",
+                    "contacts_total": contacts_total,
+                    "contacts_with_stance": contacts_with_stance,
+                },
+            }));
+        }
+        if has_attachments && joints_total == 0 {
+            issues.push(serde_json::json!({
+                "severity":"complaint",
+                "kind":"missing_joint_metadata",
+                "fix_step":"plan",
+                "message":"Movable multi-component unit has 0 joints. Add `attach_to.joint` for articulating attachments (prefer ball/free unless a hinge is required) to avoid stiff or weird motion.",
+                "evidence": {
+                    "joints_total": joints_total,
+                    "has_attachments": has_attachments,
+                },
+            }));
+        }
+    }
+
     serde_json::json!({
         "version": 1,
         "has_images": has_images,

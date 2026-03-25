@@ -798,6 +798,16 @@ mod tests {
     }
 
     #[test]
+    fn gen3d_plan_system_instructions_include_schema_key_contract() {
+        let text = build_gen3d_plan_system_instructions();
+        assert!(text.contains("Schema key contract (do not invent extra keys):"));
+        assert!(text.contains("top-level: aim, assembly_notes, attack, collider, components"));
+        assert!(text.contains("components[] item: anchors, attach_to, contacts, modeling_notes"));
+        assert!(text.contains("attach_to.joint: axis_join, kind, limits_degrees"));
+        assert!(text.contains("reuse_groups[] item: alignment, alignment_frame, anchors, kind"));
+    }
+
+    #[test]
     fn gen3d_plan_ops_system_instructions_disallow_full_plan_json() {
         let text = build_gen3d_plan_ops_system_instructions();
         assert!(text.contains("Do NOT output a full plan JSON"));
@@ -806,11 +816,109 @@ mod tests {
     }
 }
 
+fn schema_unwrap_object(schema: &serde_json::Value) -> Option<&serde_json::Value> {
+    if schema.get("properties").is_some() {
+        return Some(schema);
+    }
+    let any_of = schema.get("anyOf").and_then(|v| v.as_array())?;
+    any_of
+        .iter()
+        .find(|candidate| candidate.get("properties").is_some())
+}
+
+fn schema_object_property_keys(schema: &serde_json::Value) -> Vec<String> {
+    let schema = schema_unwrap_object(schema).unwrap_or(schema);
+    let Some(props) = schema.get("properties").and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    let mut keys: Vec<String> = props.keys().cloned().collect();
+    keys.sort();
+    keys
+}
+
+fn schema_array_items(schema: &serde_json::Value) -> Option<&serde_json::Value> {
+    schema.get("items")
+}
+
+fn build_gen3d_plan_schema_key_contract_text() -> String {
+    let spec = super::structured_outputs::json_schema_spec(
+        super::structured_outputs::Gen3dAiJsonSchemaKind::PlanV1,
+    );
+    let schema = spec.schema;
+
+    let top_level = schema_object_property_keys(&schema);
+
+    let components_schema = schema
+        .get("properties")
+        .and_then(|v| v.get("components"))
+        .and_then(schema_array_items);
+    let component_keys = components_schema.map(schema_object_property_keys).unwrap_or_default();
+
+    let attach_to_schema = components_schema
+        .and_then(|v| v.get("properties"))
+        .and_then(|v| v.get("attach_to"));
+    let attach_to_keys = attach_to_schema.map(schema_object_property_keys).unwrap_or_default();
+
+    let attach_to_object = attach_to_schema.and_then(schema_unwrap_object);
+    let joint_schema = attach_to_object
+        .and_then(|v| v.get("properties"))
+        .and_then(|v| v.get("joint"));
+    let joint_keys = joint_schema.map(schema_object_property_keys).unwrap_or_default();
+
+    let contact_schema = components_schema
+        .and_then(|v| v.get("properties"))
+        .and_then(|v| v.get("contacts"))
+        .and_then(schema_array_items);
+    let contact_keys = contact_schema.map(schema_object_property_keys).unwrap_or_default();
+
+    let reuse_schema = schema
+        .get("properties")
+        .and_then(|v| v.get("reuse_groups"))
+        .and_then(schema_array_items);
+    let reuse_keys = reuse_schema.map(schema_object_property_keys).unwrap_or_default();
+
+    let mut out = String::new();
+    out.push_str("Schema key contract (do not invent extra keys):\n");
+    if !top_level.is_empty() {
+        out.push_str("- top-level: ");
+        out.push_str(&top_level.join(", "));
+        out.push('\n');
+    }
+    if !component_keys.is_empty() {
+        out.push_str("- components[] item: ");
+        out.push_str(&component_keys.join(", "));
+        out.push('\n');
+    }
+    if !attach_to_keys.is_empty() {
+        out.push_str("- attach_to: ");
+        out.push_str(&attach_to_keys.join(", "));
+        out.push('\n');
+    }
+    if !joint_keys.is_empty() {
+        out.push_str("- attach_to.joint: ");
+        out.push_str(&joint_keys.join(", "));
+        out.push('\n');
+    }
+    if !contact_keys.is_empty() {
+        out.push_str("- contacts[] item: ");
+        out.push_str(&contact_keys.join(", "));
+        out.push('\n');
+    }
+    if !reuse_keys.is_empty() {
+        out.push_str("- reuse_groups[] item: ");
+        out.push_str(&reuse_keys.join(", "));
+        out.push('\n');
+    }
+    out
+}
+
 pub(super) fn build_gen3d_plan_system_instructions() -> String {
+    let schema_keys_contract = build_gen3d_plan_schema_key_contract_text();
     format!(
         "You are a 3D modeling assistant.\n\
          Return STRICT JSON for a component assembly plan.\n\n\
          - Do NOT output any top-level fields not in the schema (common mistake: `name`).\n\n\
+         {schema_keys_contract}\n\
          Coordinate system:\n\
          - +Y is up, +X is right, +Z is forward.\n\
          - Orientations are given as direction vectors (no Euler angles).\n\
@@ -896,7 +1004,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
                 Do NOT rely on opposed anchors.\n\
           - Then `offset.pos[2]` becomes a reliable in/out control along the attachment direction.\n\
           - For flush joins, use a small NEGATIVE `offset.pos[2]` (slight inset/overlap). For surface overlays, use a small POSITIVE `offset.pos[2]` (slight outset) so thin details are not buried.\n\
-          Motion metadata (optional; recommended for movable objects):\n\
+          Motion metadata (IMPORTANT for motion quality; expected for movable objects):\n\
           - Use `attach_to.joint` to declare articulation (`hinge`/`ball`/`free`).\n\
             - Prefer `ball` or `free` for maximum animation freedom.\n\
             - Use `hinge` only when you truly need a 1-DoF constraint (simple mechanical joints).\n\
@@ -908,8 +1016,9 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
               - `phase_01`: start phase in [0,1).\n\
               - `duty_factor_01`: fraction of cycle in (0,1].\n\
           - Optional: top-level `rig.move_cycle_m` defines meters-per-cycle for locomotion.\n\n\
-         Reuse groups (optional; speed/consistency):\n\
+         Reuse groups (IMPORTANT for symmetry/repetition):\n\
          - Use `reuse_groups` when multiple components share identical or mirrored geometry (wheels, legs, L/R symmetry).\n\
+         - If you model L/R or numbered sets (ex: `left_arm`/`right_arm`, `leg_0..leg_7`), prefer `reuse_groups`.\n\
          - It does NOT create components; every source/target must exist in `components[]`.\n\
          - You MUST set `alignment`: `rotation` or `mirror_mount_x`.\n\n\
           Schema:\n\

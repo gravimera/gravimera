@@ -743,6 +743,8 @@ fn poll_pipeline_tick(
                 job.pipeline.draft_ops_suggested = None;
                 job.pipeline.draft_ops_last_rejected = None;
                 job.pipeline.query_parts_next_idx = 0;
+                // Any plan change invalidates motion authoring attempt budgeting for this run.
+                job.pipeline.motion_authoring_attempts = 0;
             }
             if last.tool_id == TOOL_ID_LLM_GENERATE_DRAFT_OPS {
                 if let Some(result) = last.result.clone() {
@@ -832,6 +834,15 @@ fn poll_pipeline_tick(
             {
                 job.pipeline.force_replan = false;
                 workshop.status = "Pipeline: planning…".into();
+                job.pipeline.plan_authoring_attempts =
+                    job.pipeline.plan_authoring_attempts.saturating_add(1);
+                let mut args = serde_json::json!({ "prompt": job.user_prompt_raw });
+                if let Some(feedback) = job.pipeline.pending_plan_qa_feedback.take() {
+                    args.as_object_mut().unwrap().insert(
+                        "qa_feedback".into(),
+                        serde_json::Value::String(feedback),
+                    );
+                }
                 if let Some(result) = start_pipeline_tool_call(
                     config,
                     time,
@@ -844,7 +855,7 @@ fn poll_pipeline_tick(
                     preview,
                     preview_model,
                     TOOL_ID_LLM_GENERATE_PLAN,
-                    serde_json::json!({ "prompt": job.user_prompt_raw }),
+                    args,
                 ) {
                     pipeline_record_tool_result(workshop, job, &*draft, &result);
                 }
@@ -978,6 +989,18 @@ fn poll_pipeline_tick(
                 return;
             };
             workshop.status = "Pipeline: replanning…".into();
+            job.pipeline.plan_authoring_attempts = job.pipeline.plan_authoring_attempts.saturating_add(1);
+            let mut args = serde_json::json!({
+                "prompt": job.user_prompt_raw,
+                "plan_template_kv": kv,
+                "constraints": { "preserve_existing_components": true, "preserve_edit_policy": "allow_offsets" }
+            });
+            if let Some(feedback) = job.pipeline.pending_plan_qa_feedback.take() {
+                args.as_object_mut().unwrap().insert(
+                    "qa_feedback".into(),
+                    serde_json::Value::String(feedback),
+                );
+            }
             if let Some(result) = start_pipeline_tool_call(
                 config,
                 time,
@@ -990,11 +1013,7 @@ fn poll_pipeline_tick(
                 preview,
                 preview_model,
                 TOOL_ID_LLM_GENERATE_PLAN,
-                serde_json::json!({
-                    "prompt": job.user_prompt_raw,
-                    "plan_template_kv": kv,
-                    "constraints": { "preserve_existing_components": true, "preserve_edit_policy": "allow_offsets" }
-                }),
+                args,
             ) {
                 pipeline_record_tool_result(workshop, job, &*draft, &result);
             }
@@ -1345,6 +1364,111 @@ fn poll_pipeline_tick(
                     .unwrap_or(false);
 
                 if ok {
+                    // "QA complaints" are non-fatal quality hints. When present, the pipeline should
+                    // spend the second chance on LLM improvement (plan first, then motion).
+                    let complaints: Vec<&serde_json::Value> = result
+                        .result
+                        .as_ref()
+                        .and_then(|v| v.get("complaints"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().collect())
+                        .unwrap_or_default();
+                    if !complaints.is_empty() {
+                        let mut plan_msgs: Vec<String> = Vec::new();
+                        let mut motion_msgs: Vec<String> = Vec::new();
+                        for c in complaints.iter() {
+                            let fix_step = c.get("fix_step").and_then(|v| v.as_str()).unwrap_or("");
+                            let kind = c.get("kind").and_then(|v| v.as_str()).unwrap_or("").trim();
+                            let msg = c
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .trim();
+                            let mut line = String::new();
+                            if !kind.is_empty() {
+                                line.push_str(kind);
+                                line.push_str(": ");
+                            }
+                            line.push_str(msg);
+                            let line = line.trim().to_string();
+                            if line.is_empty() {
+                                continue;
+                            }
+                            match fix_step {
+                                "motion" => motion_msgs.push(line),
+                                _ => plan_msgs.push(line),
+                            }
+                        }
+
+                        let allow_plan_improvement =
+                            !(is_edit_session(job) && job.preserve_existing_components_mode);
+                        if allow_plan_improvement
+                            && !plan_msgs.is_empty()
+                            && job.pipeline.plan_authoring_attempts < 2
+                        {
+                            let mut feedback = String::new();
+                            feedback.push_str("QA complaints (attempt 2/2):\n");
+                            for item in plan_msgs.iter().take(12) {
+                                feedback.push_str("- ");
+                                feedback.push_str(item);
+                                feedback.push('\n');
+                            }
+                            feedback.push_str(
+                                "Fix these if applicable; if you believe they don't apply, keep the plan unchanged.\n",
+                            );
+                            job.pipeline.pending_plan_qa_feedback = Some(feedback);
+                            job.pipeline.force_replan = true;
+                            job.pipeline.stage = Gen3dPipelineStage::CreatePlan;
+                            return;
+                        }
+
+                        if !motion_msgs.is_empty() && job.pipeline.motion_authoring_attempts < 2 {
+                            job.pipeline.motion_authoring_attempts =
+                                job.pipeline.motion_authoring_attempts.saturating_add(1);
+                            // Force a QA re-run after motion authoring (do not reuse stale ok flags).
+                            job.agent.last_validate_ok = None;
+                            job.agent.last_smoke_ok = None;
+                            job.agent.last_motion_ok = None;
+
+                            workshop.status = "Pipeline: improving motion…".into();
+                            let mut channels: Vec<&'static str> = vec!["move", "action"];
+                            let attack_present =
+                                draft.root_def().and_then(|r| r.attack.as_ref()).is_some();
+                            if attack_present {
+                                channels.push("attack_primary");
+                            }
+
+                            let mut feedback = String::new();
+                            feedback.push_str("QA complaints (attempt 2/2):\n");
+                            for item in motion_msgs.iter().take(12) {
+                                feedback.push_str("- ");
+                                feedback.push_str(item);
+                                feedback.push('\n');
+                            }
+                            feedback.push_str(
+                                "Fix these if applicable; if you believe they don't apply, keep the current motion.\n",
+                            );
+
+                            if let Some(result) = start_pipeline_tool_call(
+                                config,
+                                time,
+                                commands,
+                                images,
+                                workshop,
+                                feedback_history,
+                                job,
+                                draft,
+                                preview,
+                                preview_model,
+                                TOOL_ID_LLM_GENERATE_MOTIONS,
+                                serde_json::json!({ "channels": channels, "qa_feedback": feedback }),
+                            ) {
+                                pipeline_record_tool_result(workshop, job, &*draft, &result);
+                            }
+                            return;
+                        }
+                    }
+
                     if pipeline_missing_move_slot_coverage(job, draft)
                         && job.pipeline.motion_authoring_attempts < 2
                     {
