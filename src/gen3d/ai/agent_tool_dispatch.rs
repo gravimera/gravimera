@@ -1368,6 +1368,23 @@ fn execute_qa_v1(
                     ),
                 );
             }
+            if let Some(dir) = job.step_dir.as_deref() {
+                write_gen3d_json_artifact(Some(dir), "qa.json", &json);
+                let validate_json = json
+                    .get("validate")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                if validate_json != serde_json::Value::Null {
+                    write_gen3d_json_artifact(Some(dir), "validate.json", &validate_json);
+                }
+                let smoke_json = json
+                    .get("smoke")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                if smoke_json != serde_json::Value::Null {
+                    write_gen3d_json_artifact(Some(dir), "smoke_results.json", &smoke_json);
+                }
+            }
             return Gen3dToolResultJsonV1::ok(call_id.to_string(), tool_id.to_string(), json);
         }
     }
@@ -9371,6 +9388,68 @@ mod tests {
             .and_then(|v| v.as_u64())
             .expect("missing info_kv.selector.kv_rev");
         assert_eq!(kv_rev_2, kv_rev_1, "expected cached QA kv_rev unchanged");
+
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn qa_v1_cached_call_writes_step_artifacts() {
+        let run_dir = make_temp_dir("gravimera_qa_cache_artifacts_test");
+        let step_1 = run_dir.join("step_1");
+        let step_2 = run_dir.join("step_2");
+        std::fs::create_dir_all(&step_1).expect("create step_1");
+        std::fs::create_dir_all(&step_2).expect("create step_2");
+
+        let mut job = super::Gen3dAiJob::default();
+        job.run_dir = Some(run_dir.clone());
+        job.step_dir = Some(step_1.clone());
+
+        let mut draft = crate::gen3d::state::Gen3dDraft {
+            defs: vec![make_test_root_def_movable(false)],
+        };
+
+        let r1 = super::execute_qa_v1(
+            &mut job,
+            &mut draft,
+            super::TOOL_ID_QA,
+            "call_1",
+            serde_json::json!({}),
+        );
+        assert!(r1.ok, "expected tool call ok, got {r1:?}");
+        assert!(step_1.join("qa.json").exists(), "expected step_1 qa.json");
+        assert!(
+            step_1.join("validate.json").exists(),
+            "expected step_1 validate.json"
+        );
+        assert!(
+            step_1.join("smoke_results.json").exists(),
+            "expected step_1 smoke_results.json"
+        );
+
+        job.step_dir = Some(step_2.clone());
+        let r2 = super::execute_qa_v1(
+            &mut job,
+            &mut draft,
+            super::TOOL_ID_QA,
+            "call_2",
+            serde_json::json!({}),
+        );
+        assert!(r2.ok, "expected tool call ok, got {r2:?}");
+        let j2 = r2.result.clone().expect("missing qa result");
+        assert_eq!(
+            j2.get("cached").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected cached=true, got {j2:?}"
+        );
+        assert!(step_2.join("qa.json").exists(), "expected step_2 qa.json");
+        assert!(
+            step_2.join("validate.json").exists(),
+            "expected step_2 validate.json"
+        );
+        assert!(
+            step_2.join("smoke_results.json").exists(),
+            "expected step_2 smoke_results.json"
+        );
 
         let _ = std::fs::remove_dir_all(&run_dir);
     }

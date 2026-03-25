@@ -391,6 +391,74 @@ fn pipeline_missing_move_slot_coverage(job: &Gen3dAiJob, draft: &Gen3dDraft) -> 
     !has_move || !has_action
 }
 
+fn pipeline_last_motion_tool_failure_lines(job: &Gen3dAiJob) -> Vec<String> {
+    for result in job.agent.step_tool_results.iter().rev() {
+        if result.tool_id != TOOL_ID_LLM_GENERATE_MOTIONS {
+            continue;
+        }
+
+        if let Some(err) = result
+            .error
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            return vec![err.replace('\n', " ")];
+        }
+
+        let Some(json) = result.result.as_ref() else {
+            return Vec::new();
+        };
+        let Some(items) = json.get("failed").and_then(|v| v.as_array()) else {
+            return Vec::new();
+        };
+        let mut out: Vec<String> = Vec::new();
+        for item in items.iter().take(8) {
+            let channel = item.get("channel").and_then(|v| v.as_str()).unwrap_or("");
+            let error = item.get("error").and_then(|v| v.as_str()).unwrap_or("");
+            let channel = channel.trim();
+            let error = error.trim();
+            if error.is_empty() {
+                continue;
+            }
+            let mut line = String::new();
+            if !channel.is_empty() {
+                line.push_str(channel);
+                line.push_str(": ");
+            }
+            line.push_str(error);
+            out.push(line.replace('\n', " "));
+        }
+        return out;
+    }
+    Vec::new()
+}
+
+fn append_motion_authoring_retry_feedback(job: &Gen3dAiJob, feedback: &mut String) {
+    if !feedback.trim().is_empty() && !feedback.ends_with('\n') {
+        feedback.push('\n');
+    }
+    feedback.push_str(
+        "Schema reminder: top-level `version` MUST be the number 1 (not a string).\n",
+    );
+    feedback.push_str("Do NOT set `version` to \"gen3d_motion_authoring_v1\".\n");
+
+    let failures = pipeline_last_motion_tool_failure_lines(job);
+    if failures.is_empty() {
+        return;
+    }
+    feedback.push_str("Previous motion authoring failures:\n");
+    for line in failures {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        feedback.push_str("- ");
+        feedback.push_str(line);
+        feedback.push('\n');
+    }
+}
+
 fn run_complete_enough_for_pipeline_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> bool {
     if draft.total_non_projectile_primitive_parts() == 0 {
         return false;
@@ -1480,9 +1548,10 @@ fn poll_pipeline_tick(
                             feedback.push_str(&format!("QA complaints (attempt {next_attempt}/2):\n"));
                             for item in motion_msgs.iter().take(12) {
                                 feedback.push_str("- ");
-                                feedback.push_str(item);
-                                feedback.push('\n');
-                            }
+                            feedback.push_str(item);
+                            feedback.push('\n');
+                        }
+                            append_motion_authoring_retry_feedback(job, &mut feedback);
                             feedback.push_str(
                                 "Fix these if applicable; if you believe they don't apply, keep the current motion.\n",
                             );
@@ -1510,8 +1579,8 @@ fn poll_pipeline_tick(
                     if pipeline_missing_move_slot_coverage(job, draft)
                         && job.pipeline.motion_authoring_attempts < 2
                     {
-                        job.pipeline.motion_authoring_attempts =
-                            job.pipeline.motion_authoring_attempts.saturating_add(1);
+                        let next_attempt = job.pipeline.motion_authoring_attempts.saturating_add(1);
+                        job.pipeline.motion_authoring_attempts = next_attempt;
                         // Force a QA re-run after motion authoring (do not reuse stale ok flags).
                         job.agent.last_validate_ok = None;
                         job.agent.last_smoke_ok = None;
@@ -1542,6 +1611,12 @@ fn poll_pipeline_tick(
                         if !has_action {
                             missing_channels.push("action");
                         }
+                        let mut feedback = String::new();
+                        feedback.push_str(&format!(
+                            "Missing required motion channels (attempt {next_attempt}/2): {}\n",
+                            missing_channels.join(", ")
+                        ));
+                        append_motion_authoring_retry_feedback(job, &mut feedback);
                         if let Some(result) = start_pipeline_tool_call(
                             config,
                             time,
@@ -1554,7 +1629,7 @@ fn poll_pipeline_tick(
                             preview,
                             preview_model,
                             TOOL_ID_LLM_GENERATE_MOTIONS,
-                            serde_json::json!({ "channels": missing_channels }),
+                            serde_json::json!({ "channels": missing_channels, "qa_feedback": feedback }),
                         ) {
                             pipeline_record_tool_result(workshop, job, &*draft, &result);
                         }
@@ -1720,6 +1795,7 @@ fn poll_pipeline_tick(
                             }
                         }
                     }
+                    append_motion_authoring_retry_feedback(job, &mut feedback);
                     feedback.push_str(
                         "Fix these if applicable; if you believe they don't apply, keep the current motion.\n",
                     );

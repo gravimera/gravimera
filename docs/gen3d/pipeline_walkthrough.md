@@ -48,13 +48,14 @@ Pipeline stages (simplified):
    - Tool: `llm_generate_plan_v1`
 2. `EnsureComponents`
    - Tool: `llm_generate_components_v1` (missing-only) until every planned component has `actual_size`
+   - Tool: `apply_reuse_groups_v1` (deterministic) to copy/mirror component geometry per the plan’s `reuse_groups` once the reuse source exists
 3. `Qa`
    - Tool: `qa_v1`
    - If QA provides deterministic “fixits”, pipeline applies them using `apply_draft_ops_v1` and re-runs QA.
    - If QA returns non-fatal `complaints[]` (quality hints), pipeline spends a *second chance* on improvement when possible:
-     - Plan complaints → re-run `llm_generate_plan_v1` once with `qa_feedback` attached, then continue the pipeline.
      - Motion complaints → re-run `llm_generate_motions_v1` once with `qa_feedback` attached, then re-run QA.
-   - If motion channels are missing for a movable unit, pipeline calls `llm_generate_motions_v1` and re-runs QA.
+     - Plan complaints are surfaced as hints but do not currently trigger an automatic plan retry.
+   - If motion channels are missing for a movable unit, pipeline calls `llm_generate_motions_v1` (with a schema reminder + prior failures as `qa_feedback`) and re-runs QA.
 4. Optional appearance review (if enabled)
    - Tools: `render_preview_v1` → `llm_review_delta_v1`
    - Then loop back to `EnsureComponents` (review-delta can request regen/replan).
@@ -99,6 +100,8 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
   - `llm_generate_components_v1`
     - Args (missing-only): `{ "missing_only": true }`
     - Args (forced regen): `{ "component_indices": [0,2,3], "force": true }`
+  - `apply_reuse_groups_v1`
+    - Args (pipeline): `{ "version": 1 }`
 
 - Seeded edit: part snapshots + DraftOps
   - `query_component_parts_v1`

@@ -22,6 +22,8 @@ You can see it working by running a Gen3D build and then inspecting the run cach
 - [x] (2026-03-26) Remove plan retry; keep motion-only retry with QA feedback.
 - [x] (2026-03-26) Add deterministic `apply_reuse_groups_v1` tool and pipeline stage.
 - [x] (2026-03-26) Improve plan prompt for reuse + chain anchor orientation.
+- [x] (2026-03-26) Fix motion-authoring schema regression (`version` must be numeric) and include prior motion failures in retry feedback.
+- [x] (2026-03-26) Ensure cached `qa_v1` calls still write `qa.json` / `validate.json` / `smoke_results.json` into the step dir.
 - [x] (2026-03-26) Update docs and add/adjust tests for the new layout + reuse tool.
 - [x] (2026-03-26) Run `cargo test`, run rendered smoke start, and commit.
 
@@ -32,6 +34,12 @@ You can see it working by running a Gen3D build and then inspecting the run cach
 
 - Observation: “Weird arms” in the provided run correlate with `motion_validation` warnings like `chain_axis_mismatch`, which are driven by plan anchor orientation (not motion authoring).
   Evidence: `qa.json` in the run shows `chain_axis_mismatch` warnings on `left_upper_arm` / `right_upper_arm`.
+
+- Observation: Motion authoring can fail structured parsing when the model sets `"version":"gen3d_motion_authoring_v1"` (string) instead of `1` (number), resulting in missing motion channels even after retries.
+  Status: Resolved by tightening the motion-authoring system prompt to explicitly require `version=1` (numeric) and by propagating prior motion tool failures into the retry `qa_feedback`.
+
+- Observation: Cached `qa_v1` calls returned a cached JSON payload but did not emit `qa.json` / `validate.json` / `smoke_results.json` into the current step dir, making “cached QA” steps look empty in the run timeline.
+  Status: Resolved by writing the same artifacts on cache hits before returning the cached result.
 
 ## Decision Log
 
@@ -48,7 +56,8 @@ You can see it working by running a Gen3D build and then inspecting the run cach
 - Artifacts are now append-only per tool call under `attempt_N/steps/step_####/` (no more `pass_0` overwrites).
 - Pipeline spends its QA “second chance” only on motion authoring (no plan retry loop).
 - Reuse is explicit and debuggable via `apply_reuse_groups_v1` (no hidden component-batch side effects).
-- Prompts tightened for reuse + chain-axis anchor orientation; motion authoring prompt now embeds a schema-derived key contract to avoid drift.
+- Prompts tightened for reuse + chain-axis anchor orientation; motion authoring prompt now embeds a schema-derived key contract and explicitly requires `version=1` (numeric) to avoid schema mistakes.
+- Cached `qa_v1` calls now still write step artifacts (`qa.json`, `validate.json`, `smoke_results.json`) so the run timeline stays debuggable even when QA is cached.
 
 ## Context and Orientation
 

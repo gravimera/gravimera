@@ -823,6 +823,19 @@ mod tests {
         assert!(text.contains("radians_per_unit"), "{text}");
         assert!(text.contains("axis_space"), "{text}");
     }
+
+    #[test]
+    fn gen3d_motion_authoring_system_instructions_require_numeric_version_1() {
+        let text = build_gen3d_motion_authoring_system_instructions();
+        assert!(
+            text.contains("top-level `version` MUST be the number `1`"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Do NOT set `version` to a string like \"gen3d_motion_authoring_v1\""),
+            "{text}"
+        );
+    }
 }
 
 fn schema_unwrap_object(schema: &serde_json::Value) -> Option<&serde_json::Value> {
@@ -2200,7 +2213,10 @@ pub(super) fn build_gen3d_motion_authoring_system_instructions() -> String {
 You will be given a generated component graph (components + attachments + anchors + current base offsets).\n\
 Your job is to author explicit per-edge animation clips.\n\
 This tool call authors EXACTLY ONE motion channel (the target channel is provided in the user text).\n\
-Return ONLY a single JSON object for gen3d_motion_authoring_v1 (no markdown, no prose).\n\n\
+Return ONLY a single JSON object matching the `gen3d_motion_authoring_v1` schema (no markdown, no prose).\n\
+Schema sanity (VERY IMPORTANT):\n\
+- top-level `version` MUST be the number `1`.\n\
+- Do NOT set `version` to a string like \"gen3d_motion_authoring_v1\".\n\n\
 {schema_keys_contract}\n\
 Clip schema (IMPORTANT):\n\
 - `clip.kind` must be one of: `loop`, `once`, `ping_pong`, `spin`.\n\
