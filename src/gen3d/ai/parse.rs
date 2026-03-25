@@ -7,6 +7,41 @@ use super::schema::{
     AiPromptIntentJsonV1, AiReviewDeltaJsonV1,
 };
 
+fn normalize_ai_motion_authoring_notes_field(json_value: &mut serde_json::Value) {
+    let Some(obj) = json_value.as_object_mut() else {
+        return;
+    };
+
+    let Some(notes_value) = obj.get_mut("notes") else {
+        return;
+    };
+
+    let serde_json::Value::Array(arr) = notes_value else {
+        return;
+    };
+
+    let mut parts: Vec<String> = Vec::new();
+    for item in arr.iter() {
+        let Some(raw) = item.as_str() else {
+            continue;
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        parts.push(trimmed.to_string());
+    }
+
+    if parts.is_empty() {
+        *notes_value = serde_json::Value::Null;
+        debug!("Gen3D: normalized motion-authoring `notes` array to null (empty after trim)");
+        return;
+    }
+
+    *notes_value = serde_json::Value::String(parts.join("\n"));
+    debug!("Gen3D: normalized motion-authoring `notes` array into string");
+}
+
 fn normalize_ai_plan_component_joint_fields(json_value: &mut serde_json::Value) {
     let Some(components) = json_value
         .get_mut("components")
@@ -385,11 +420,13 @@ pub(super) fn parse_ai_motion_authoring_from_text(
     }
 
     let json_text = json_text.trim();
-    let json_value: serde_json::Value =
+    let mut json_value: serde_json::Value =
         serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
     if json_value.get("version").is_none() {
         return Err("AI motion-authoring JSON missing required `version` (expected 1).".into());
     }
+
+    normalize_ai_motion_authoring_notes_field(&mut json_value);
 
     let mut authored: AiMotionAuthoringJsonV1 =
         serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
@@ -829,6 +866,23 @@ mod tests {
             }
             other => panic!("unexpected clip: {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_motion_authoring_notes_array_as_string() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":2},
+          "decision": "author_clips",
+          "reason": "test",
+          "replace_channels": ["move"],
+          "edges": [],
+          "notes": ["  line 1  ", "", "line 2", 3]
+        }"#;
+
+        let authored =
+            parse_ai_motion_authoring_from_text(text).expect("motion authoring should parse");
+        assert_eq!(authored.notes, Some("line 1\nline 2".to_string()));
     }
 
     #[test]
