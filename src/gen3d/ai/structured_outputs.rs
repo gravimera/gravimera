@@ -58,6 +58,14 @@ fn schema_array_of(items: serde_json::Value) -> serde_json::Value {
     })
 }
 
+fn schema_nullable_string_or_string_array() -> serde_json::Value {
+    schema_any_of(vec![
+        schema_string(),
+        schema_array_of(schema_string()),
+        schema_null(),
+    ])
+}
+
 fn schema_any_object() -> serde_json::Value {
     json!({
         "type": "object",
@@ -713,8 +721,8 @@ fn schema_review_delta() -> serde_json::Value {
             ]),
         ),
         ("actions", schema_array_of(schema_review_delta_action())),
-        ("summary", schema_nullable(schema_string())),
-        ("notes", schema_nullable(schema_string())),
+        ("summary", schema_nullable_string_or_string_array()),
+        ("notes_text", schema_nullable_string_or_string_array()),
     ])
 }
 
@@ -799,7 +807,7 @@ fn schema_motion_authoring() -> serde_json::Value {
         ("reason", schema_string()),
         ("replace_channels", schema_array_of(schema_string())),
         ("edges", schema_array_of(edge)),
-        ("notes", schema_nullable(schema_string())),
+        ("notes_text", schema_nullable_string_or_string_array()),
     ])
 }
 
@@ -1068,8 +1076,8 @@ fn schema_review_delta_no_regen() -> serde_json::Value {
             "actions",
             schema_array_of(schema_review_delta_action_no_regen()),
         ),
-        ("summary", schema_nullable(schema_string())),
-        ("notes", schema_nullable(schema_string())),
+        ("summary", schema_nullable_string_or_string_array()),
+        ("notes_text", schema_nullable_string_or_string_array()),
     ])
 }
 

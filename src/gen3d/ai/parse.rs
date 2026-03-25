@@ -7,39 +7,83 @@ use super::schema::{
     AiPromptIntentJsonV1, AiReviewDeltaJsonV1,
 };
 
-fn normalize_ai_motion_authoring_notes_field(json_value: &mut serde_json::Value) {
+fn normalize_ai_nullable_string_field_allowing_array(
+    json_value: &mut serde_json::Value,
+    field_name: &str,
+    context: &str,
+) {
     let Some(obj) = json_value.as_object_mut() else {
         return;
     };
 
-    let Some(notes_value) = obj.get_mut("notes") else {
+    let Some(value) = obj.get_mut(field_name) else {
         return;
     };
 
-    let serde_json::Value::Array(arr) = notes_value else {
-        return;
-    };
+    let trimmed_context = context.trim();
+    let trimmed_field_name = field_name.trim();
 
-    let mut parts: Vec<String> = Vec::new();
-    for item in arr.iter() {
-        let Some(raw) = item.as_str() else {
-            continue;
-        };
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            continue;
+    match value {
+        serde_json::Value::Array(arr) => {
+            let mut parts: Vec<String> = Vec::new();
+            for item in arr.iter() {
+                let Some(raw) = item.as_str() else {
+                    continue;
+                };
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                parts.push(trimmed.to_string());
+            }
+
+            if parts.is_empty() {
+                *value = serde_json::Value::Null;
+                debug!(
+                    "Gen3D: normalized `{context}` `{field}` array to null (empty after trim)",
+                    context = trimmed_context,
+                    field = trimmed_field_name,
+                );
+                return;
+            }
+
+            *value = serde_json::Value::String(parts.join("\n"));
+            debug!(
+                "Gen3D: normalized `{context}` `{field}` array into string",
+                context = trimmed_context,
+                field = trimmed_field_name,
+            );
         }
-        parts.push(trimmed.to_string());
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim().to_string();
+            if trimmed.is_empty() {
+                *value = serde_json::Value::Null;
+                debug!(
+                    "Gen3D: normalized `{context}` `{field}` string to null (empty after trim)",
+                    context = trimmed_context,
+                    field = trimmed_field_name,
+                );
+                return;
+            }
+            if trimmed != *s {
+                *s = trimmed;
+                debug!(
+                    "Gen3D: trimmed `{context}` `{field}` string",
+                    context = trimmed_context,
+                    field = trimmed_field_name,
+                );
+            }
+        }
+        serde_json::Value::Null => {}
+        _ => {
+            *value = serde_json::Value::Null;
+            debug!(
+                "Gen3D: normalized `{context}` `{field}` to null (unexpected type)",
+                context = trimmed_context,
+                field = trimmed_field_name,
+            );
+        }
     }
-
-    if parts.is_empty() {
-        *notes_value = serde_json::Value::Null;
-        debug!("Gen3D: normalized motion-authoring `notes` array to null (empty after trim)");
-        return;
-    }
-
-    *notes_value = serde_json::Value::String(parts.join("\n"));
-    debug!("Gen3D: normalized motion-authoring `notes` array into string");
 }
 
 fn normalize_ai_plan_component_joint_fields(json_value: &mut serde_json::Value) {
@@ -280,11 +324,15 @@ pub(super) fn parse_ai_review_delta_from_text(text: &str) -> Result<AiReviewDelt
     }
 
     let json_text = json_text.trim();
-    let json_value: serde_json::Value =
+    let mut json_value: serde_json::Value =
         serde_json::from_str(json_text).map_err(|err| format!("Failed to parse JSON: {err}"))?;
     if json_value.get("version").is_none() {
         return Err("AI review-delta JSON missing required `version` (expected 1).".into());
     }
+
+    normalize_ai_nullable_string_field_allowing_array(&mut json_value, "summary", "review-delta");
+    normalize_ai_nullable_string_field_allowing_array(&mut json_value, "notes_text", "review-delta");
+    normalize_ai_nullable_string_field_allowing_array(&mut json_value, "notes", "review-delta");
 
     let mut delta: AiReviewDeltaJsonV1 =
         serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
@@ -301,6 +349,14 @@ pub(super) fn parse_ai_review_delta_from_text(text: &str) -> Result<AiReviewDelt
         );
         delta.actions.truncate(64);
     }
+
+    if let Some(summary) = delta.summary.as_ref().map(|v| v.trim().to_string()) {
+        delta.summary = (!summary.is_empty()).then_some(summary);
+    }
+    if let Some(notes) = delta.notes_text.as_ref().map(|v| v.trim().to_string()) {
+        delta.notes_text = (!notes.is_empty()).then_some(notes);
+    }
+
     Ok(delta)
 }
 
@@ -426,7 +482,8 @@ pub(super) fn parse_ai_motion_authoring_from_text(
         return Err("AI motion-authoring JSON missing required `version` (expected 1).".into());
     }
 
-    normalize_ai_motion_authoring_notes_field(&mut json_value);
+    normalize_ai_nullable_string_field_allowing_array(&mut json_value, "notes_text", "motion-authoring");
+    normalize_ai_nullable_string_field_allowing_array(&mut json_value, "notes", "motion-authoring");
 
     let mut authored: AiMotionAuthoringJsonV1 =
         serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
@@ -446,8 +503,8 @@ pub(super) fn parse_ai_motion_authoring_from_text(
 
     authored.reason = authored.reason.trim().to_string();
 
-    if let Some(notes) = authored.notes.as_ref().map(|v| v.trim().to_string()) {
-        authored.notes = (!notes.is_empty()).then_some(notes);
+    if let Some(notes) = authored.notes_text.as_ref().map(|v| v.trim().to_string()) {
+        authored.notes_text = (!notes.is_empty()).then_some(notes);
     }
 
     // Normalize replace_channels.
@@ -836,7 +893,7 @@ mod tests {
               ]
             }
           ],
-          "notes": "  "
+          "notes_text": "  "
         }"#;
 
         let authored =
@@ -847,7 +904,7 @@ mod tests {
             authored.replace_channels,
             vec!["idle".to_string(), "move".to_string()]
         );
-        assert!(authored.notes.is_none());
+        assert!(authored.notes_text.is_none());
         assert_eq!(authored.edges.len(), 1);
         assert_eq!(authored.edges[0].component.as_str(), "leg_l");
         assert_eq!(authored.edges[0].slots.len(), 1);
@@ -882,7 +939,24 @@ mod tests {
 
         let authored =
             parse_ai_motion_authoring_from_text(text).expect("motion authoring should parse");
-        assert_eq!(authored.notes, Some("line 1\nline 2".to_string()));
+        assert_eq!(authored.notes_text, Some("line 1\nline 2".to_string()));
+    }
+
+    #[test]
+    fn parses_review_delta_summary_and_notes_arrays_as_strings() {
+        let text = r#"{
+          "version": 1,
+          "applies_to": {"run_id":"run","attempt":0,"plan_hash":"sha256:deadbeef","assembly_rev":0},
+          "summary": ["  line 1  ", "", "line 2", 3],
+          "notes_text": ["  note 1  ", "", "note 2", null],
+          "actions": [
+            {"kind":"accept"}
+          ]
+        }"#;
+
+        let delta = parse_ai_review_delta_from_text(text).expect("review-delta should parse");
+        assert_eq!(delta.summary, Some("line 1\nline 2".to_string()));
+        assert_eq!(delta.notes_text, Some("note 1\nnote 2".to_string()));
     }
 
     #[test]

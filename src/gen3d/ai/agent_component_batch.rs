@@ -61,6 +61,7 @@ pub(super) fn poll_agent_component_batch(
         job.agent.pending_component_batch = None;
         job.component_queue.clear();
         job.component_in_flight.clear();
+        job.component_last_errors.clear();
         return Some(Gen3dToolResultJsonV1::ok(
             call.call_id,
             call.tool_id,
@@ -140,6 +141,11 @@ pub(super) fn poll_agent_component_batch(
                                     .resize(job.planned_components.len(), 0);
                             }
                             job.component_attempts[idx] = next;
+                            if idx >= job.component_last_errors.len() {
+                                job.component_last_errors
+                                    .resize(job.planned_components.len(), None);
+                            }
+                            job.component_last_errors[idx] = Some(err.clone());
                             job.component_queue.insert(0, idx);
                             continue;
                         }
@@ -179,6 +185,11 @@ pub(super) fn poll_agent_component_batch(
                                     .resize(job.planned_components.len(), 0);
                             }
                             job.component_attempts[idx] = next;
+                            if idx >= job.component_last_errors.len() {
+                                job.component_last_errors
+                                    .resize(job.planned_components.len(), None);
+                            }
+                            job.component_last_errors[idx] = Some(err.clone());
                             job.component_queue.insert(0, idx);
                             continue;
                         }
@@ -239,6 +250,9 @@ pub(super) fn poll_agent_component_batch(
                 job.assembly_rev = job.assembly_rev.saturating_add(1);
 
                 batch.completed_indices.insert(idx);
+                if idx < job.component_last_errors.len() {
+                    job.component_last_errors[idx] = None;
+                }
             }
             Err(err) => {
                 if task.attempt < MAX_COMPONENT_RETRIES {
@@ -257,6 +271,11 @@ pub(super) fn poll_agent_component_batch(
                             .resize(job.planned_components.len(), 0);
                     }
                     job.component_attempts[idx] = next;
+                    if idx >= job.component_last_errors.len() {
+                        job.component_last_errors
+                            .resize(job.planned_components.len(), None);
+                    }
+                    job.component_last_errors[idx] = Some(err.clone());
                     job.component_queue.insert(0, idx);
                     continue;
                 }
@@ -317,6 +336,20 @@ pub(super) fn poll_agent_component_batch(
             &job.planned_components,
             idx,
         );
+        let mut user_text = user_text;
+        if attempt > 0 {
+            if let Some(err) = job
+                .component_last_errors
+                .get(idx)
+                .and_then(|v| v.as_deref())
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            {
+                user_text.push_str("\nPrevious attempt error:\n");
+                user_text.push_str(&super::truncate_for_ui(err, 1200));
+                user_text.push('\n');
+            }
+        }
 
         let component_name = job.planned_components[idx].name.as_str();
         let prefix = if attempt == 0 {
@@ -419,6 +452,7 @@ pub(super) fn poll_agent_component_batch(
         job.agent.pending_component_batch = None;
         job.component_queue.clear();
         job.component_in_flight.clear();
+        job.component_last_errors.clear();
 
         return Some(Gen3dToolResultJsonV1::ok(
             call.call_id,

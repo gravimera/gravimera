@@ -293,7 +293,12 @@ pub(crate) fn gen3d_cancel_build_from_api(workshop: &mut Gen3dWorkshop, job: &mu
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.component_attempts.clear();
+    job.component_last_errors.clear();
     job.component_in_flight.clear();
+    job.motion_queue.clear();
+    job.motion_attempts.clear();
+    job.motion_last_errors.clear();
+    job.motion_in_flight.clear();
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
@@ -587,7 +592,12 @@ pub(crate) fn gen3d_start_edit_run_from_current_draft_from_api(
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.component_attempts.clear();
+    job.component_last_errors.clear();
     job.component_in_flight.clear();
+    job.motion_queue.clear();
+    job.motion_attempts.clear();
+    job.motion_last_errors.clear();
+    job.motion_in_flight.clear();
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
@@ -830,7 +840,12 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.component_attempts.clear();
+    job.component_last_errors.clear();
     job.component_in_flight.clear();
+    job.motion_queue.clear();
+    job.motion_attempts.clear();
+    job.motion_last_errors.clear();
+    job.motion_in_flight.clear();
     job.review_appearance = config.gen3d_review_appearance;
     job.require_structured_outputs = config.gen3d_require_structured_outputs;
     job.auto_refine_passes_done = 0;
@@ -1343,7 +1358,12 @@ pub(crate) fn gen3d_start_build_from_api(
     job.review_static_paths.clear();
     job.motion_capture = None;
     job.component_attempts.clear();
+    job.component_last_errors.clear();
     job.component_in_flight.clear();
+    job.motion_queue.clear();
+    job.motion_attempts.clear();
+    job.motion_last_errors.clear();
+    job.motion_in_flight.clear();
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;
@@ -2189,6 +2209,7 @@ pub(crate) fn gen3d_poll_ai_job(
 
                             job.phase = Gen3dAiPhase::WaitingComponent;
                             job.component_attempts = vec![0; job.planned_components.len()];
+                            job.component_last_errors = vec![None; job.planned_components.len()];
                             job.component_in_flight.clear();
                             job.shared_progress = None;
 
@@ -2555,7 +2576,7 @@ pub(crate) fn gen3d_poll_ai_job(
                             );
                         }
                     }
-                    if let Some(notes) = delta.notes.as_deref() {
+                    if let Some(notes) = delta.notes_text.as_deref() {
                         if !notes.trim().is_empty() {
                             debug!(
                                 "Gen3D: review-delta notes: {}",
@@ -3470,7 +3491,12 @@ pub(super) fn fail_job(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, err: 
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.component_attempts.clear();
+    job.component_last_errors.clear();
     job.component_in_flight.clear();
+    job.motion_queue.clear();
+    job.motion_attempts.clear();
+    job.motion_last_errors.clear();
+    job.motion_in_flight.clear();
     job.replan_attempts = 0;
     job.regen_total = 0;
     job.regen_per_component.clear();
@@ -3576,7 +3602,12 @@ pub(super) fn finish_job_best_effort(
     job.component_queue.clear();
     job.component_queue_pos = 0;
     job.component_attempts.clear();
+    job.component_last_errors.clear();
     job.component_in_flight.clear();
+    job.motion_queue.clear();
+    job.motion_attempts.clear();
+    job.motion_last_errors.clear();
+    job.motion_in_flight.clear();
     job.last_review_inputs.clear();
     job.last_review_user_text.clear();
     job.review_delta_repair_attempt = 0;

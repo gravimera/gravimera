@@ -162,4 +162,17 @@ Useful tools:
 - Draft diffs: inspect `apply_draft_ops_last.json` and `draft_ops_suggested_last.json` under the
   pass folders.
 
+### Structured-output robustness
+
+Some “human notes” fields in LLM JSON are normalized before parsing:
+
+- `review_delta_v1.summary`, `review_delta_v1.notes_text`
+- `gen3d_motion_authoring_v1.notes_text`
+
+They may be returned as `string | string[] | null`; arrays are joined with `\n`, and empty/whitespace-only
+strings become `null`.
+
+When an LLM call is retried within a component/motion batch, the previous parse/apply error is appended
+to the next prompt under `Previous attempt error:` so the model can self-correct.
+
 See also: `docs/execplans/gen3d_deterministic_pipeline.md`.

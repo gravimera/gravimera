@@ -414,6 +414,7 @@ pub(super) fn poll_agent_motion_batch(
         job.motion_queue.clear();
         job.motion_in_flight.clear();
         job.motion_attempts.clear();
+        job.motion_last_errors.clear();
         return Some(Gen3dToolResultJsonV1::ok(
             call.call_id,
             call.tool_id,
@@ -468,6 +469,7 @@ pub(super) fn poll_agent_motion_batch(
                                 MAX_MOTION_RETRIES + 1,
                                 super::truncate_for_ui(&err, 600),
                             );
+                            job.motion_last_errors.insert(channel.clone(), err.clone());
                             job.motion_attempts.insert(channel.clone(), next);
                             job.motion_queue.insert(0, channel);
                             continue;
@@ -499,6 +501,7 @@ pub(super) fn poll_agent_motion_batch(
                                 MAX_MOTION_RETRIES + 1,
                                 super::truncate_for_ui(&err, 600),
                             );
+                            job.motion_last_errors.insert(channel.clone(), err.clone());
                             job.motion_attempts.insert(channel.clone(), next);
                             job.motion_queue.insert(0, channel);
                             continue;
@@ -531,6 +534,7 @@ pub(super) fn poll_agent_motion_batch(
                 }
 
                 batch.completed_channels.insert(channel);
+                job.motion_last_errors.remove(&task.channel);
             }
             Err(err) => {
                 if task.attempt < MAX_MOTION_RETRIES {
@@ -542,6 +546,7 @@ pub(super) fn poll_agent_motion_batch(
                         MAX_MOTION_RETRIES + 1,
                         super::truncate_for_ui(&err, 600),
                     );
+                    job.motion_last_errors.insert(channel.clone(), err.clone());
                     job.motion_attempts.insert(channel.clone(), next);
                     job.motion_queue.insert(0, channel);
                     continue;
@@ -623,6 +628,18 @@ pub(super) fn poll_agent_motion_batch(
             user_text.push_str("\nQA feedback:\n");
             user_text.push_str(feedback);
             user_text.push('\n');
+        }
+        if attempt > 0 {
+            if let Some(err) = job
+                .motion_last_errors
+                .get(&channel)
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
+                user_text.push_str("\nPrevious attempt error:\n");
+                user_text.push_str(&super::truncate_for_ui(err, 1200));
+                user_text.push('\n');
+            }
         }
 
         let prefix = if attempt == 0 {
@@ -719,6 +736,7 @@ pub(super) fn poll_agent_motion_batch(
         job.motion_queue.clear();
         job.motion_in_flight.clear();
         job.motion_attempts.clear();
+        job.motion_last_errors.clear();
 
         if let Some(dir) = job.step_dir.as_deref() {
             write_gen3d_json_artifact(

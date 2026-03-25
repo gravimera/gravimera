@@ -1660,7 +1660,7 @@ fn mock_generate_text_via_openai(
               "reason": "Mock: no attachment edges available to animate.",
               "replace_channels": [],
               "edges": [],
-              "notes": null
+              "notes_text": null
             })
             .to_string()
         } else {
@@ -1731,7 +1731,7 @@ fn mock_generate_text_via_openai(
               "reason": format!("Mock: bake simple per-edge `{}` loops.", target_channel.as_str()),
               "replace_channels": [target_channel.as_str()],
               "edges": edges,
-              "notes": null
+              "notes_text": null
             })
             .to_string()
         }

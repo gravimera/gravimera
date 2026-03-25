@@ -3674,7 +3674,7 @@ mod tests {
                 reason: String::new(),
             }],
             summary: None,
-            notes: None,
+            notes_text: None,
         };
 
         let apply =
@@ -3765,7 +3765,7 @@ mod tests {
                 reason: String::new(),
             }],
             summary: None,
-            notes: None,
+            notes_text: None,
         };
 
         let apply =
@@ -3834,7 +3834,7 @@ mod tests {
                 reason: String::new(),
             }],
             summary: None,
-            notes: None,
+            notes_text: None,
         };
 
         let err =
@@ -3870,7 +3870,7 @@ mod tests {
                 reason: String::new(),
             }],
             summary: None,
-            notes: None,
+            notes_text: None,
         };
 
         let err =
@@ -4142,7 +4142,7 @@ mod tests {
                 reason: "set explicit resolved world rotation".into(),
             }],
             summary: None,
-            notes: None,
+            notes_text: None,
         };
 
         let apply =
@@ -4261,7 +4261,7 @@ mod tests {
                 reason: String::new(),
             }],
             summary: None,
-            notes: None,
+            notes_text: None,
         };
 
         let apply =
@@ -4331,7 +4331,7 @@ mod tests {
                 reason: String::new(),
             }],
             summary: None,
-            notes: None,
+            notes_text: None,
         };
 
         let apply =

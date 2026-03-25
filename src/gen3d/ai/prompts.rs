@@ -1795,6 +1795,7 @@ Review mode:\n",
        \"version\": 1,\n\
        \"applies_to\": {\"run_id\":\"<uuid>\",\"attempt\": N,\"plan_hash\":\"sha256:...\",\"assembly_rev\": N},\n\
        \"summary\": \"...\" (optional),\n\
+       \"notes_text\": \"...\" (optional),\n\
        \"actions\": [\n\
          {\"kind\":\"accept\"},\n\
          {\"kind\":\"tooling_feedback\",\"feedback\":{...}},\n\
@@ -2268,7 +2269,7 @@ Rules:\n\
 - Across all channels, a movable unit should have at least `idle` + `move` + `action` (and `attack_primary` if the unit has an attack).\n\
   - You may be asked to author these in separate calls; always obey the target_channel.\n\
 - If the prompt implies motion that cannot be achieved with the existing articulation (for example: a snake with only one rigid body component), use decision=regen_geometry_required.\n\
-  - In that case, do NOT author clips. Explain what articulation is missing in `reason`/`notes`.\n"
+  - In that case, do NOT author clips. Explain what articulation is missing in `reason`/`notes_text`.\n"
     )
 }
 

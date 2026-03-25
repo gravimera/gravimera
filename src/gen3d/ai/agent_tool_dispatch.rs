@@ -7196,9 +7196,16 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 job.component_attempts
                     .resize(job.planned_components.len(), 0);
             }
+            if job.component_last_errors.len() < job.planned_components.len() {
+                job.component_last_errors
+                    .resize(job.planned_components.len(), None);
+            }
             for idx in &requested_indices {
                 if *idx < job.component_attempts.len() {
                     job.component_attempts[*idx] = 0;
+                }
+                if *idx < job.component_last_errors.len() {
+                    job.component_last_errors[*idx] = None;
                 }
             }
 
@@ -7402,6 +7409,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
             job.motion_queue = channels.clone();
             job.motion_in_flight.clear();
             job.motion_attempts.clear();
+            job.motion_last_errors.clear();
 
             job.agent.pending_motion_batch = Some(super::Gen3dPendingMotionBatch {
                 requested_channels: channels,
@@ -8004,6 +8012,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
             let component_count = job.planned_components.len();
             job.regen_per_component.resize(component_count, 0);
             job.component_attempts.resize(component_count, 0);
+            job.component_last_errors.resize(component_count, None);
             job.agent.active_workspace_id = workspace_id;
 
             ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(

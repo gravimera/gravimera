@@ -445,6 +445,7 @@ pub(super) fn set_active_workspace_v1(
     let component_count = job.planned_components.len();
     job.regen_per_component.resize(component_count, 0);
     job.component_attempts.resize(component_count, 0);
+    job.component_last_errors.resize(component_count, None);
     job.agent.active_workspace_id = workspace_id;
 
     Ok(serde_json::json!({ "ok": true }))

@@ -499,8 +499,8 @@ pub(crate) struct AiReviewDeltaJsonV1 {
     pub(crate) actions: Vec<AiReviewDeltaActionJsonV1>,
     #[serde(default)]
     pub(crate) summary: Option<String>,
-    #[serde(default)]
-    pub(crate) notes: Option<String>,
+    #[serde(default, alias = "notes")]
+    pub(crate) notes_text: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -742,6 +742,6 @@ pub(crate) struct AiMotionAuthoringJsonV1 {
     pub(crate) replace_channels: Vec<String>,
     #[serde(default)]
     pub(crate) edges: Vec<AiAuthoredAnimationEdgeJsonV1>,
-    #[serde(default)]
-    pub(crate) notes: Option<String>,
+    #[serde(default, alias = "notes")]
+    pub(crate) notes_text: Option<String>,
 }

@@ -119,6 +119,7 @@ fn restore_snapshot_state(job: &mut Gen3dAiJob, draft: &mut Gen3dDraft, snap: &G
     let n = job.planned_components.len();
     job.regen_per_component.resize(n, 0);
     job.component_attempts.resize(n, 0);
+    job.component_last_errors.resize(n, None);
 }
 
 pub(super) fn snapshot_v1(
