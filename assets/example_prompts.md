@@ -3,7 +3,7 @@
 Auto-generated from local Gen3D cache runs.
 
 Regenerate:
-- `python3 tools/gen3d_export_example_prompts.py --cache-dir /Users/flow/.gravimera/cache/gen3d --out assest/example_prompts.md`
+- `python3 tools/gen3d_export_example_prompts.py --cache-dir ~/.gravimera/cache/gen3d --out assets/example_prompts.md`
 
 ```json
 {

@@ -496,8 +496,8 @@ def main() -> int:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("assest/example_prompts.md"),
-        help="Output Markdown path (default: assest/example_prompts.md).",
+        default=Path("assets/example_prompts.md"),
+        help="Output Markdown path (default: assets/example_prompts.md).",
     )
     args = parser.parse_args()
 
