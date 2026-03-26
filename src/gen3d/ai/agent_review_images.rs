@@ -130,7 +130,7 @@ pub(super) fn motion_sheets_needed_from_smoke_results(
         }
 
         match issue.get("channel").and_then(|v| v.as_str()).map(str::trim) {
-            Some("attack_primary") => include_attack_sheet = true,
+            Some("attack") => include_attack_sheet = true,
             Some("move") => include_move_sheet = true,
             Some("action") => include_action_sheet = true,
             Some(_) | None => include_move_sheet = true,

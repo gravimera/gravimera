@@ -9,7 +9,7 @@ This repository includes `PLANS.md` at the repo root. This document must be main
 
 Gen3D (and other AI-backed flows) currently have multiple “reasoning effort” knobs (a model-level setting plus Gen3D per-step caps), and some steps hard-cap reasoning to low/medium. This makes configuration confusing and prevents “high reasoning everywhere” runs without hunting multiple keys.
 
-Gen3D unit motion generation currently defaults to `idle` + `move` (and sometimes `attack_primary`). We want an additional default unit motion channel named `action` for “operating / doing work” animations (hands moving, levers being pulled, etc.).
+Gen3D unit motion generation currently defaults to `idle` + `move` (and sometimes `attack`). We want an additional default unit motion channel named `action` for “operating / doing work” animations (hands moving, levers being pulled, etc.).
 
 When users provide reference images for Gen3D, the engine already produces downsampled “component reference images” for later steps, but prompt-intent classification and plan generation currently don’t receive those images. We want those early planning steps to see the same resolution-handled images so the plan is more accurate.
 
@@ -104,7 +104,7 @@ Runtime animation + channel selection:
 
 ### 2) Add `action` motion channel (default for units)
 
-1. Update docs (`docs/object_system.md`) to include channel `action` and priority `attack_primary > action > move > idle > ambient`.
+1. Update docs (`docs/object_system.md`) to include channel `action` and priority `attack > action > move > idle > ambient`.
 2. Runtime:
    - Add `ActionClock` component and `AnimationChannelsActive.acting` flag in `src/types.rs`.
    - Extend `PartAnimationDriver` with `ActionTime` in `src/object/registry.rs`.

@@ -2082,7 +2082,7 @@ fn gen3d_ui_motion_label(channel: &str) -> String {
     if channel.is_empty() {
         return "Idle".to_string();
     }
-    if channel == "attack_primary" {
+    if channel == "attack" {
         return "Attack".to_string();
     }
 

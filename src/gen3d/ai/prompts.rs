@@ -1568,16 +1568,19 @@ Hard requirements:\n\
         "PlanOps patching:\n\
 - Return ONLY: {\"version\":1,\"ops\":[ ... ]}.\n\
 - Prefer minimal ops; avoid restating or replacing large plan structures.\n\
-- Allowed PlanOp.kind values:\n\
-  - add_component\n\
-  - remove_component\n\
-  - set_attach_to\n\
-  - set_anchor\n\
-  - set_aim_components\n\
-  - set_attack_muzzle\n\
-  - set_reuse_groups\n\
-",
-    );
+	- Allowed PlanOp.kind values:\n\
+	  - add_component\n\
+	  - remove_component\n\
+	  - set_attach_to\n\
+	  - set_anchor\n\
+	  - set_aim_components\n\
+	  - set_mobility\n\
+	  - set_attack\n\
+	  - set_collider\n\
+	  - set_attack_muzzle\n\
+	  - set_reuse_groups\n\
+	",
+	    );
     match preserve_edit_policy.trim() {
         "additive" => {
             out.push_str(
@@ -2266,7 +2269,7 @@ Rules:\n\
 - `replace_channels`:\n\
   - If decision=author_clips, list the channels you want the engine to REPLACE on targeted edges before adding your slots.\n\
   - If decision=regen_geometry_required, set replace_channels=[] and edges=[] (do not author clips).\n\
-- Across all channels, a movable unit should have at least `idle` + `move` + `action` (and `attack_primary` if the unit has an attack).\n\
+- Across all channels, a movable unit should have at least `idle` + `move` + `action` (and `attack` if the unit has an attack).\n\
   - You may be asked to author these in separate calls; always obey the target_channel.\n\
 - If the prompt implies motion that cannot be achieved with the existing articulation (for example: a snake with only one rigid body component), use decision=regen_geometry_required.\n\
   - In that case, do NOT author clips. Explain what articulation is missing in `reason`/`notes_text`.\n"

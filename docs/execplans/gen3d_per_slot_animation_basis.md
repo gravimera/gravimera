@@ -88,7 +88,7 @@ In `src/object/visuals.rs`:
 
   - Apply animations as `animated_base = base * spec.basis * delta(t)` (or equivalent with `mul_transform`).
   - Extend the channel selection order to include `__base` as the last fallback (after `ambient`).
-  - Keep existing channel priority for `attack_primary`, `action`, `move`, `idle`, `ambient`.
+  - Keep existing channel priority for `attack`, `action`, `move`, `idle`, `ambient`.
 
 ### 3) Normalize/ensure internal `__base` slot
 

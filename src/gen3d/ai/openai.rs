@@ -1683,7 +1683,7 @@ fn mock_generate_text_via_openai(
                         serde_json::json!({"t_units": 1.2, "delta": {"pos": [0.0, 0.0, 0.0], "rot_quat_xyzw": null, "scale": null}}),
                     ],
                 ),
-                "attack_primary" => (
+                "attack" => (
                     "attack_time",
                     0.35,
                     vec![

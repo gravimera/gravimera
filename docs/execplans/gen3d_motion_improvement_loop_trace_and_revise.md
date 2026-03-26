@@ -50,7 +50,7 @@ How a human can see it working after implementation:
 - Observation: The current LLM motion authoring contract requires `decision=author_clips` to emit a non-empty `edges` list; there is no “no-op/no-change” decision. This makes it impossible to run a bounded “revise if needed” loop without either (a) always rewriting the channel, or (b) adding a separate LLM “should revise?” tool.
   Evidence: `src/gen3d/ai/schema.rs::AiMotionAuthoringDecisionJsonV1` lacks `no_change`; `src/gen3d/ai/agent_tool_poll.rs` rejects empty `edges` for `author_clips`.
 
-- Observation: The runtime motion sampler used by motion validation chooses from a fixed priority set of channels (`attack_primary`, `action`, `move`, `idle`, `ambient`, `__base`). Custom channels are not first-class in that selection logic. A trace tool must therefore be “channel-targeted” (apply channel X when present, else fall back) rather than relying on the runtime’s fixed channel priority logic.
+- Observation: The runtime motion sampler used by motion validation chooses from a fixed priority set of channels (`attack`, `action`, `move`, `idle`, `ambient`, `__base`). Custom channels are not first-class in that selection logic. A trace tool must therefore be “channel-targeted” (apply channel X when present, else fall back) rather than relying on the runtime’s fixed channel priority logic.
   Evidence: `src/gen3d/ai/motion_validation.rs::compute_world_transforms_for_channels` hardcodes the channel order and does not accept an arbitrary channel name.
 
 
@@ -86,7 +86,7 @@ This section describes how motion is represented and where to implement the chan
 
 In Gen3D, an object is a set of planned components connected by attachment edges. Each attachment edge can have zero or more animation “slots”. A slot is:
 
-- A `channel` string (examples: `move`, `action`, `idle`, `attack_primary`, or any user-defined string).
+- A `channel` string (examples: `move`, `action`, `idle`, `attack`, or any user-defined string).
 - A `driver` that defines the time domain (“what advances time”):
   - `always`: wall-clock seconds,
   - `move_phase` / `move_distance`: movement-driven units,

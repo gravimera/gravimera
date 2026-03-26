@@ -4228,7 +4228,7 @@ pub(super) fn poll_gen3d_motion_capture(
                 continue;
             };
             for slot in att.animations.iter() {
-                if slot.channel.as_ref() != "attack_primary" {
+                if slot.channel.as_ref() != "attack" {
                     continue;
                 }
                 let (duration_secs, repeats) = match &slot.spec.clip {

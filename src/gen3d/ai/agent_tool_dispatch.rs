@@ -8707,7 +8707,7 @@ mod tests {
                     "kind": "attack_self_intersection",
                     "component_id": "comp_1",
                     "component_name": "head_left",
-                    "channel": "attack_primary",
+                    "channel": "attack",
                     "message": "Self-intersection detected.",
                     "evidence": {},
                 }]

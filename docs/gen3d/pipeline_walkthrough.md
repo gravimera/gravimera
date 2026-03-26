@@ -116,7 +116,7 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
   - `qa_v1`
     - Args: `{}`
   - `llm_generate_motions_v1`
-    - Args: `{ "channels": ["move","action"], "qa_feedback": "<optional QA complaints text>" }` (and `attack_primary` when needed)
+    - Args: `{ "channels": ["move","action"], "qa_feedback": "<optional QA complaints text>" }` (and `attack` when needed)
 
 - Appearance review
   - `render_preview_v1`

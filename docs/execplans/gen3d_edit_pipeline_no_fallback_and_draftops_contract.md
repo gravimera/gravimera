@@ -20,7 +20,7 @@ After this change:
 - Edit sessions can request *any* supported DraftOps modification (including animation slot edits like `upsert_animation_slot`) without common schema mismatch traps (e.g. mistakenly placing `clip` at the DraftOp top level).
 - DraftOps animation-slot edits are no longer blocked by over-strict “ambiguity” checks:
   - Root component animation slots are supported (the root has an implicit “root edge” from the draft root to the root component).
-  - When multiple slots exist for a channel (common for `attack_primary` variants), DraftOps operations apply deterministically instead of rejecting as ambiguous.
+  - When multiple slots exist for a channel (common for `attack` variants), DraftOps operations apply deterministically instead of rejecting as ambiguous.
 
 How to see it working (after implementation):
 
@@ -80,7 +80,7 @@ How to see it working (after implementation):
   Date/Author: 2026-03-23 / user + assistant
 
 - Decision: DraftOps animation-slot edits must be able to target the root component and must not reject “multiple slots per channel” as ambiguous.
-  Rationale: Root is a valid component in any object; users must be able to animate it (and common rigs have multiple `attack_primary` variants). Ambiguity rejection blocks valid edits; deterministic bulk semantics keep the tool generic and usable.
+  Rationale: Root is a valid component in any object; users must be able to animate it (and common rigs have multiple `attack` variants). Ambiguity rejection blocks valid edits; deterministic bulk semantics keep the tool generic and usable.
   Date/Author: 2026-03-23 / user + assistant
 
 ## Outcomes & Retrospective

@@ -84,8 +84,8 @@ This avoids ambiguous Euler rotations and makes assembly more deterministic (esp
 
 Parts can optionally have one or more animation **slots**, each in a named **channel**.
 
-- Channels: `ambient`, `idle`, `move`, `action`, `attack_primary`
-- Priority (highest wins): `attack_primary > action > move > idle > ambient`
+- Channels: `ambient`, `idle`, `move`, `action`, `attack`
+- Priority (highest wins): `attack > action > move > idle > ambient`
 
 - The runtime applies `animated = delta(t) * base_transform` in the part’s local space.
 - For an attached `ObjectRef`, this effectively animates the **attachment offset**, which gives component-level animation (e.g., a door hinge, an arm swing, a lever).
@@ -94,7 +94,7 @@ Animation slots are driven by generic gameplay signals and do not depend on hard
 
 - `move` is active while the owning entity is moving.
 - `action` is active while the owning entity is performing an “action” window (operating/handling something important).
-- `attack_primary` is active while the owning entity is attacking/firing.
+- `attack` is active while the owning entity is attacking/firing.
 - `idle` is active when not moving, acting, or attacking.
 - `ambient` is always active (fallback motions like fans/propellers).
 

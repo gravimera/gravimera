@@ -48,9 +48,9 @@ How to see it working (after implementation):
   Evidence: `src/gen3d/ai/agent_prompt.rs` prints `capability_gaps={capability_gaps}` for `qa_v1` results and also prints the first warning example.
 
 - Observation: `smoke.attack_present` means “root attack profile exists”, not “attack animation exists”.
-  Evidence: In smoke results, `attack_present` is computed from `draft.root_def().attack.is_some()` (see `src/gen3d/ai/orchestration.rs`). Motion channels (like `attack_primary`) are summarized separately in `state_summary.motion_coverage`.
+  Evidence: In smoke results, `attack_present` is computed from `draft.root_def().attack.is_some()` (see `src/gen3d/ai/orchestration.rs`). Motion channels (like `attack`) are summarized separately in `state_summary.motion_coverage`.
 
-- Observation: In the motivating run cache (`~/.gravimera/cache/gen3d/bee02033-4c02-494a-ac12-1458700996e5/attempt_0/pass_15/smoke_results.json`), `attack_required_by_prompt=false` and `attack_present=false` even though the user prompt asks for attacks and `attack_primary` motion is authored.
+- Observation: In the motivating run cache (`~/.gravimera/cache/gen3d/bee02033-4c02-494a-ac12-1458700996e5/attempt_0/pass_15/smoke_results.json`), `attack_required_by_prompt=false` and `attack_present=false` even though the user prompt asks for attacks and `attack` motion is authored.
   Evidence: That smoke file shows `mobility_present=true`, `attack_present=false`, `attack_required_by_prompt=false`, plus a warn-only `attack_self_intersection` issue.
 
 

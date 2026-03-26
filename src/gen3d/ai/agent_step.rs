@@ -87,11 +87,11 @@ fn descriptor_meta_animation_channels_ordered(draft: &Gen3dDraft) -> Vec<String>
         .and_then(|def| def.attack.as_ref())
         .is_some()
     {
-        channels.insert("attack_primary".to_string());
+        channels.insert("attack".to_string());
     }
 
     let mut out: Vec<String> = Vec::new();
-    for key in ["idle", "move", "attack_primary"] {
+    for key in ["idle", "move", "attack"] {
         if channels.remove(key) {
             out.push(key.to_string());
         }

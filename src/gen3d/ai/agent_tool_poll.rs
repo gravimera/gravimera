@@ -3062,11 +3062,11 @@ pub(super) fn poll_agent_tool(
                                         if channel.is_empty() {
                                             continue;
                                         }
-                                        if channel != "attack_primary"
+                                        if channel != "attack"
                                             && !channels_seen.insert(channel)
                                         {
                                             issues.push(format!(
-                                                "Duplicate channel `{channel}` for component `{name}` (only attack_primary may have multiple variants)"
+                                                "Duplicate channel `{channel}` for component `{name}` (only attack may have multiple variants)"
                                             ));
                                             continue;
                                         }

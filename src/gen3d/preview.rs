@@ -313,7 +313,7 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
         let wants_move =
             selected == "move" || library.channel_uses_move_driver(object_id, &selected);
         channels.moving = wants_move;
-        channels.attacking_primary = selected == "attack_primary";
+        channels.attacking_primary = selected == "attack";
         let wants_action = selected == "action"
             || library
                 .channel_action_duration_secs(object_id, &selected)

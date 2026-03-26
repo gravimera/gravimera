@@ -581,18 +581,18 @@ impl ObjectLibrary {
         let mut channels: HashSet<String> = HashSet::new();
         visit(self, object_id, &mut visited, &mut channels);
 
-        // Runtime motion algorithms can provide `attack_primary` even when no prefab-authored
+        // Runtime motion algorithms can provide `attack` even when no prefab-authored
         // animation slots exist. Surface it for debug forcing and tooling if the prefab can attack.
         if self
             .get(object_id)
             .and_then(|def| def.attack.as_ref())
             .is_some()
         {
-            channels.insert("attack_primary".to_string());
+            channels.insert("attack".to_string());
         }
 
         let mut out: Vec<String> = Vec::new();
-        for key in ["idle", "move", "action", "attack_primary"] {
+        for key in ["idle", "move", "action", "attack"] {
             if channels.remove(key) {
                 out.push(key.to_string());
             }
@@ -662,7 +662,7 @@ impl ObjectLibrary {
             return None;
         }
 
-        if channel == "attack_primary" {
+        if channel == "attack" {
             if let Some(v) = self
                 .get(object_id)
                 .and_then(|def| def.attack.as_ref())

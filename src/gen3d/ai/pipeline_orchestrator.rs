@@ -1540,7 +1540,7 @@ fn poll_pipeline_tick(
                             let attack_present =
                                 draft.root_def().and_then(|r| r.attack.as_ref()).is_some();
                             if attack_present {
-                                channels.push("attack_primary");
+                                channels.push("attack");
                             }
 
                             let mut feedback = String::new();
@@ -1738,7 +1738,7 @@ fn poll_pipeline_tick(
                     let mut channels: Vec<&'static str> = vec!["move", "action"];
                     let attack_present = draft.root_def().and_then(|r| r.attack.as_ref()).is_some();
                     if attack_present {
-                        channels.push("attack_primary");
+                        channels.push("attack");
                     }
 
                     let mut feedback = String::new();

@@ -110,7 +110,7 @@ Top-level fields (v1):
 
 - `version`: integer. Must be `1`.
 - `channels`: array of channel entries:
-  - `channel`: string (e.g. `"idle"`, `"move"`, `"attack_primary"`).
+  - `channel`: string (e.g. `"idle"`, `"move"`, `"attack"`).
   - `slots`: integer (total slot count for this channel).
   - `animated_parts`: integer (parts that contain at least one slot for this channel).
   - `drivers`: array of strings (e.g. `"always"`, `"move_phase"`, `"move_distance"`, `"attack_time"`).

@@ -191,7 +191,7 @@ fn attack_anim_window_secs_from_planned_components(
             continue;
         };
         for slot in att.animations.iter() {
-            if slot.channel.as_ref() != "attack_primary" {
+            if slot.channel.as_ref() != "attack" {
                 continue;
             }
             let duration_secs = match slot.spec.clip {

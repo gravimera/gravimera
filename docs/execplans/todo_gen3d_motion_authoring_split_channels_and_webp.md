@@ -9,12 +9,12 @@ This repository includes `PLANS.md` at the repo root. This document must be main
 After this change:
 
 1) Gen3D motion authoring becomes “motion-per-call” instead of “all channels in one call”.
-   - A single LLM motion tool call authors **exactly one** animation channel (a “motion”) such as `move`, `action`, `idle`, `attack_primary`, or any user-defined channel name.
+   - A single LLM motion tool call authors **exactly one** animation channel (a “motion”) such as `move`, `action`, `idle`, `attack`, or any user-defined channel name.
    - When multiple channels are needed, the batch tool runs multiple per-channel LLM calls **in parallel** (bounded by the existing Gen3D parallelism limit).
 
 2) The default `ambient` animation channel is removed from Gen3D prompts and validation.
    - Generated prefabs no longer carry an `ambient` channel by default.
-   - If always-on motion is desired, it must be authored into standard channels (`idle`, `move`, `action`, `attack_primary`) or into user-defined channels.
+   - If always-on motion is desired, it must be authored into standard channels (`idle`, `move`, `action`, `attack`) or into user-defined channels.
 
 3) Gen3D reference images can be dropped as `webp` without Bevy logging:
 
@@ -156,13 +156,13 @@ Update the orchestrators / prompts that call motion authoring:
 
 - In `src/gen3d/ai/agent_prompt.rs`:
   - Replace references to `llm_generate_motion_authoring_v1` with:
-    - If movable and missing channels, call `llm_generate_motions_v1` with the missing set (`move`, `action`, and optionally `idle`; add `attack_primary` if the unit has an attack profile).
+    - If movable and missing channels, call `llm_generate_motions_v1` with the missing set (`move`, `action`, and optionally `idle`; add `attack` if the unit has an attack profile).
     - For custom user-requested motions, call `llm_generate_motion_v1` with a user-defined channel name.
 
 - In `src/gen3d/ai/pipeline_orchestrator.rs`:
   - Replace the single call to the old motion tool with `llm_generate_motions_v1`:
     - When missing move/action coverage: request exactly the missing channels.
-    - When motion_validation fails: request `["move","action"]` (and `attack_primary` if the unit attacks), since the failure is likely in authored deltas.
+    - When motion_validation fails: request `["move","action"]` (and `attack` if the unit attacks), since the failure is likely in authored deltas.
 
 - In `src/gen3d/ai/openai.rs` mock:
   - Update the artifact_prefix handling to match new prefixes, and ensure the mock returns only the requested channel.
