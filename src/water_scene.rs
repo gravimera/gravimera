@@ -57,10 +57,27 @@ fn ensure_main_camera_atmosphere(
 
     let medium = scattering_mediums.add(ScatteringMedium::default());
     for entity in cameras.iter() {
+        let settings = AtmosphereSettings {
+            transmittance_lut_size: UVec2::new(128, 64),
+            multiscattering_lut_size: UVec2::new(16, 16),
+            sky_view_lut_size: UVec2::new(200, 100),
+            aerial_view_lut_size: UVec3::new(16, 16, 16),
+            transmittance_lut_samples: 20,
+            multiscattering_lut_dirs: 16,
+            multiscattering_lut_samples: 10,
+            sky_view_lut_samples: 8,
+            aerial_view_lut_samples: 6,
+            sky_max_samples: 8,
+            ..default()
+        };
+
         commands.entity(entity).insert((
             Atmosphere::earthlike(medium.clone()),
-            AtmosphereSettings::default(),
-            AtmosphereEnvironmentMapLight::default(),
+            settings,
+            AtmosphereEnvironmentMapLight {
+                size: UVec2::new(128, 128),
+                ..default()
+            },
         ));
     }
 }
