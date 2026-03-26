@@ -40,7 +40,7 @@ How to see it working (after implementation):
 - [x] (2026-03-21) Commit changes.
 - [x] (2026-03-21) Add `monitor_mode` (local read-only) so users can browse camera/UI without mutating the world.
 - [x] (2026-03-21) Extend `POST /v1/move` to also reposition build objects (props/buildings) via API.
-- [x] (2026-03-21) Stop persisting/spawning the hero in `scene.dat` (hero is no longer part of authored scenes).
+- [x] (2026-03-21) Stop persisting/spawning the hero in `scene.grav` (hero is no longer part of authored scenes).
 - [x] (2026-03-21) Default UI no longer auto-opens the Prefabs/Models panel on startup.
 
 
@@ -71,7 +71,7 @@ How to see it working (after implementation):
   Rationale: `disable_local_input` blocks camera browsing. Monitor mode keeps camera/UI browsing enabled while blocking local world mutations (agent drives via HTTP).
   Date/Author: 2026-03-21 / assistant + user
 
-- Decision: Remove the hero from `scene.dat` persistence and stop auto-spawning a protagonist on scene load.
+- Decision: Remove the hero from `scene.grav` persistence and stop auto-spawning a protagonist on scene load.
   Rationale: Monitor scenes are authored for reviewable world content; the hero is noise and not needed.
   Date/Author: 2026-03-21 / assistant + user
 
@@ -120,7 +120,7 @@ Important repo rule:
    - `GET /v1/realm_scene/list`: list realms and scenes on disk.
    - `POST /v1/realm_scene/create`: create a new scene scaffold (optionally set label/description; optionally switch to it).
    - `POST /v1/realm_scene/switch`: schedule a realm/scene switch (deferred; applied after a few stepped frames).
-   - `POST /v1/scene/save`: force a scene.dat save via `SceneSaveRequest`.
+   - `POST /v1/scene/save`: force a scene.grav save via `SceneSaveRequest`.
    - `POST /v1/despawn`: despawn an instance by `instance_id_uuid` (for cleanup of props/units).
 
 2) Add a generic **UI toast** popup system:

@@ -16,7 +16,7 @@ There is **no separate “object type”** (`TypeId`) layer. Composition is expr
 ## ObjectId
 
 - `ObjectId` is a stable unique id (`u128`, UUID).
-- Prefab ids are stable and persisted in `scene.dat`.
+- Prefab ids are stable and persisted in `scene.grav`.
 - Instance ids are also stable and persisted (so selections/edits can be tracked across saves).
 
 At runtime we rely on **Bevy `Entity`** for fast references, and keep `ObjectId` mainly for persistence/debug/networking.
@@ -117,18 +117,18 @@ For **combined objects**, collision can later be derived from their parts:
 
 Implementation note: for MVP, collision is defined on the root prefab (fast and predictable).
 
-## Persistence: `scene.dat`
+## Persistence: `scene.grav`
 
 Goal: efficient load/encode and future extensibility. Use protobuf.
 
-- File: `scene.dat` next to the running binary.
+- File: `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/scene.grav` (Object Preview) and `scene.build.grav` (Scene Build).
 - Save timing: when switching **Build → Play**.
 - Load timing: on game start, try load if present.
 - Errors: log an error and continue the game (do not abort).
 - Persisted objects: **build objects only** for now (hero/enemies are runtime-spawned; future task may persist them).
 - Stored fields per instance: `instance_id` (UUID u128), `base_object_id` (UUID u128), quantized `position`, `rotation`, `scale`, and `overrides` (currently: whole-object `tint`).
 - Stored fields for embedded prefabs: `ObjectDef` records (id, parts, anchors/attachments/animation, collider, interaction, optional behavior profiles).
-- `scene.dat` only embeds the **transitive closure** of prefab defs referenced by build instances (so the file stays small).
+- `scene.grav` only embeds the **transitive closure** of prefab defs referenced by build instances (so the file stays small).
 
 ## Implementation Notes
 

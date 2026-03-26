@@ -52,7 +52,7 @@ You can see it working by reproducing an edit run that changes an existing edge�
 
 - Existing animation channels stay visually stable across preserve-mode offset edits (and DraftOps `set_attachment_offset`) by rebasing per-slot `basis` instead of rewriting keyframes.
 - Channels with no authored slot fall back to an internal `__base` slot, keeping the rest pose stable under the same rebasing logic.
-- `basis` is persisted through prefab JSON, `scene.dat`, and edit bundles (missing basis defaults to identity).
+- `basis` is persisted through prefab JSON, `scene.grav`, and edit bundles (missing basis defaults to identity).
 
 ## Context and Orientation
 
@@ -69,7 +69,7 @@ Relevant files:
 - `src/gen3d/ai/plan_ops.rs`: Preserve-mode plan acceptance merge (`apply_plan_acceptance`), currently preserves old slots but does not compensate for offset changes.
 - `src/gen3d/ai/agent_motion_batch.rs`: Motion authoring applies channel replacements.
 - `src/gen3d/ai/motion_validation.rs`: QA validation that simulates runtime animation application.
-- `src/realm_prefabs.rs` and `src/scene_store.rs`: Serialization of animation specs to JSON and `scene.dat`.
+- `src/realm_prefabs.rs` and `src/scene_store.rs`: Serialization of animation specs to JSON and `scene.grav`.
 - `docs/gen3d/README.md`: Gen3D documentation; needs to describe new semantics and reserved channel.
 
 ## Plan of Work
@@ -172,8 +172,8 @@ Acceptance is satisfied when:
 
 ## Idempotence and Recovery
 
-- The schema changes (JSON + scene.dat) are backward compatible by defaulting `basis` to identity when absent. Re-running serialization should not corrupt data.
-- If the `scene.dat` tag change causes decode issues, temporarily gate writes of `basis` behind “non-identity only” and keep decode tolerant.
+- The schema changes (JSON + scene.grav) are backward compatible by defaulting `basis` to identity when absent. Re-running serialization should not corrupt data.
+- If the `scene.grav` tag change causes decode issues, temporarily gate writes of `basis` behind “non-identity only” and keep decode tolerant.
 
 ## Artifacts and Notes
 

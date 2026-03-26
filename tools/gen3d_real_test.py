@@ -1052,12 +1052,12 @@ def main() -> int:
     ap.add_argument(
         "--reset-scene",
         action="store_true",
-        help="Delete the default scene.dat under <root_dir>/realm/default/scenes/default/build/scene.dat before running (test isolation).",
+        help="Delete the default scene.grav under <root_dir>/realm/default/scenes/default/build/scene.grav before running (test isolation).",
     )
     ap.add_argument(
         "--reset-scene-each-prompt",
         action="store_true",
-        help="In non-single-session mode, delete scene.dat before EACH prompt (strong isolation; does not accumulate units across prompts).",
+        help="In non-single-session mode, delete scene.grav before EACH prompt (strong isolation; does not accumulate units across prompts).",
     )
     ap.add_argument(
         "--single-session",
@@ -1096,8 +1096,8 @@ def main() -> int:
         else:
             root_dir = Path("~/.gravimera").expanduser()
 
-    scene_dat_path = (
-        root_dir / "realm" / "default" / "scenes" / "default" / "build" / "scene.dat"
+    scene_grav_path = (
+        root_dir / "realm" / "default" / "scenes" / "default" / "build" / "scene.grav"
     )
 
     prompts = list(args.prompt)
@@ -1121,10 +1121,10 @@ def main() -> int:
         if not args.reset_scene:
             return
         try:
-            scene_dat_path.unlink(missing_ok=True)
-            print(f"reset: deleted scene file: {scene_dat_path}")
+            scene_grav_path.unlink(missing_ok=True)
+            print(f"reset: deleted scene file: {scene_grav_path}")
         except Exception as err:
-            print(f"warn: failed to delete scene file {scene_dat_path}: {err}")
+            print(f"warn: failed to delete scene file {scene_grav_path}: {err}")
 
     def wait_health(game: GameProcess) -> None:
         t0 = time.monotonic()

@@ -65,7 +65,7 @@ Current `__base` call sites to remove/replace:
 Persistence to update:
 
 - Prefab JSON serialization/deserialization: `src/realm_prefabs.rs` (`ObjectPartDefJson`).
-- Scene `.dat` serialization: `src/scene_store.rs` (`SceneDatPartDef` and conversions).
+- Scene `.grav` serialization: `src/scene_store.rs` (`SceneDatPartDef` and conversions).
 - Gen3D edit bundle format: `src/gen3d/ai/edit_bundle.rs` (`Gen3dPlannedAttachmentBundleV1`).
 
 ## Plan of Work
@@ -146,4 +146,4 @@ At the end of the change, these interfaces must exist:
 - `crate::object::registry::ObjectPartDef` includes `fallback_basis: Transform`.
 - `crate::object::visuals::PartAnimationPlayer` includes `fallback_basis: Transform`.
 - Gen3D attachment representation (`Gen3dPlannedAttachment`) includes `fallback_basis: Transform`.
-- Prefab JSON (`src/realm_prefabs.rs`) and scene.dat (`src/scene_store.rs`) round-trip `fallback_basis` (optional when identity).
+- Prefab JSON (`src/realm_prefabs.rs`) and scene.grav (`src/scene_store.rs`) round-trip `fallback_basis` (optional when identity).

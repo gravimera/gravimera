@@ -155,7 +155,7 @@ pub(crate) fn scene_build_dir(realm_id: &str, scene_id: &str) -> PathBuf {
 }
 
 pub(crate) fn scene_dat_path(realm_id: &str, scene_id: &str) -> PathBuf {
-    scene_build_dir(realm_id, scene_id).join("scene.dat")
+    scene_build_dir(realm_id, scene_id).join("scene.grav")
 }
 
 pub(crate) fn scene_floor_selection_path(realm_id: &str, scene_id: &str) -> PathBuf {

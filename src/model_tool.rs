@@ -19,6 +19,6 @@ Usage:\n\
   cargo run -- model-tool help\n\n\
 Notes:\n\
   - The previous `type.dat` tooling has been removed as part of the prefab-based object system.\n\
-  - A new scene/object import/export tool will be added after the new `scene.dat` format lands.\n"
+  - A new scene/object import/export tool will be added after the new `scene.grav` format lands.\n"
     );
 }

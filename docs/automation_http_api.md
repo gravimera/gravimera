@@ -442,7 +442,7 @@ Notes:
 
 ### `POST /v1/scene/save`
 
-Force a `scene.dat` save (async; performed by the scene store systems).
+Force a `scene.grav` save (async; performed by the scene store systems).
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/scene/save -H 'Content-Type: application/json' -d '{}'

@@ -201,7 +201,7 @@ Use the returned `prefab_id_uuid` to spawn the avatar back in your monitor scene
 
 ## 6) Persist the scene so it’s reviewable later
 
-Force-save `scene.dat`:
+Force-save `scene.grav`:
 
 ```bash
 curl -s -X POST "$BASE_URL/v1/scene/save" -H 'Content-Type: application/json' -d '{}'

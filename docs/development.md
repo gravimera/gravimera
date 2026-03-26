@@ -48,4 +48,4 @@ Note: PAC/WPAD auto-config proxies are not evaluated; in those setups, set the p
 - `src/gen3d/*`: Gen3D workshop UI + rendered preview world
 - `src/gen3d/ai/*`: Gen3D AI orchestration (OpenAI calls, schemas, cache artifacts)
 - `src/object/*`: object system (prefabs + composition + visuals)
-- `src/scene_store.rs`: load/save persisted scenes (`scene.dat` for Object Preview, `scene.build.dat` for Scene Build). `scene.dat` v9 stores per-instance forms plus a Player Character flag.
+- `src/scene_store.rs`: load/save persisted scenes (`scene.grav` for Object Preview, `scene.build.grav` for Scene Build). `scene.grav` v9 stores per-instance forms plus a Player Character flag.

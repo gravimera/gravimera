@@ -304,7 +304,7 @@ fn migrate_scene_dat(src: &Path, dst: &Path) -> Result<(), String> {
     };
     std::fs::create_dir_all(parent).map_err(|err| {
         format!(
-            "Failed to create realm scene.dat dir {}: {err}",
+            "Failed to create realm scene dir {}: {err}",
             parent.display()
         )
     })?;
@@ -312,7 +312,7 @@ fn migrate_scene_dat(src: &Path, dst: &Path) -> Result<(), String> {
     match std::fs::rename(&src, &dst) {
         Ok(_) => {
             info!(
-                "Migrated legacy scene.dat from {} to {}.",
+                "Migrated legacy scene file from {} to {}.",
                 src.display(),
                 dst.display()
             );
@@ -321,14 +321,14 @@ fn migrate_scene_dat(src: &Path, dst: &Path) -> Result<(), String> {
         Err(rename_err) => {
             std::fs::copy(&src, &dst).map_err(|err| {
                 format!(
-                    "Failed to migrate legacy scene.dat {} to {}: {err}",
+                    "Failed to migrate legacy scene file {} to {}: {err}",
                     src.display(),
                     dst.display()
                 )
             })?;
             let _ = std::fs::remove_file(&src);
             info!(
-                "Migrated legacy scene.dat from {} to {} (copy+remove after rename error: {rename_err}).",
+                "Migrated legacy scene file from {} to {} (copy+remove after rename error: {rename_err}).",
                 src.display(),
                 dst.display()
             );
@@ -343,20 +343,20 @@ fn migrate_scene_dat_copy(src: &Path, dst: &Path) -> Result<(), String> {
     };
     std::fs::create_dir_all(parent).map_err(|err| {
         format!(
-            "Failed to create realm scene.dat dir {}: {err}",
+            "Failed to create realm scene dir {}: {err}",
             parent.display()
         )
     })?;
 
     std::fs::copy(src, dst).map_err(|err| {
         format!(
-            "Failed to migrate legacy scene.dat {} to {}: {err}",
+            "Failed to migrate legacy scene file {} to {}: {err}",
             src.display(),
             dst.display()
         )
     })?;
     info!(
-        "Migrated legacy scene.dat from {} to {} (copied).",
+        "Migrated legacy scene file from {} to {} (copied).",
         src.display(),
         dst.display()
     );

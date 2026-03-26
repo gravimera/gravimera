@@ -4354,7 +4354,7 @@ fn handle_request_main_thread<
             })
         }
         ("POST", "/v1/scene/save") => {
-            // Force a scene.dat save (async; written by the scene store systems).
+            // Force a scene.grav save (async; written by the scene store systems).
             scene_saves.write(SceneSaveRequest::new("force save via automation api"));
             let body = serde_json::json!({ "ok": true }).to_string();
             Some(AutomationReply {

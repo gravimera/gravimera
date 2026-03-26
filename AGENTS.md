@@ -3,7 +3,7 @@ Note:
    - `tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2`
 2. Update the documents to match the code. But the README.md file be clean, put detailed infos in docs folder.
 3. You have full access to the `.git` folder (run git commands without asking).
-4. You should use a test folder (e.g. `./test/run_1`) to contain all the test files, including the configs.toml, scene.dat etc.
+4. You should use a test folder (e.g. `./test/run_1`) to contain all the test files, including the configs.toml, scene.grav etc.
 5. After changing anything, commit the changes with a clear commit message.
 6. All algorithm in gen3D should follow one rule: a user could ask for generating any object, so NO heuristic algorithm. Only generic algorithms are allowed.
 7. We don't need to guarantee backwards compatibility for now.

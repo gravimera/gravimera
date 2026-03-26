@@ -2,11 +2,11 @@
 
 This spec defines the **realm-scoped prefab package** on-disk layout: how non-built-in prefabs (including Gen3D-saved prefabs) are stored under a realm directory for **editing, copying, and tooling**.
 
-This is intentionally separate from runtime persistence: **runtime scene load must not require these packages**. A scene must be able to load and render from `scene.dat` alone (plus built-in prefab defs compiled into the game).
+This is intentionally separate from runtime persistence: **runtime scene load must not require these packages**. A scene must be able to load and render from `scene.grav` alone (plus built-in prefab defs compiled into the game).
 
 ## Goals
 
-- **Scene reliability:** `scene.dat` is the single required runtime file for loading a scene.
+- **Scene reliability:** `scene.grav` is the single required runtime file for loading a scene.
 - **Realm-wide reuse:** user-created prefabs are shared across scenes within the same realm.
 - **Restart-safe Gen3D edit:** a Gen3D-saved prefab includes the minimum persisted metadata required to restart the game and continue editing (without relying on `~/.gravimera/cache/`).
 - **Prefab-scoped assets:** any non-built-in assets (textures/meshes/etc) associated with a prefab are stored under that prefab’s own folder so assets from different prefabs do not intermix.
@@ -15,7 +15,7 @@ This is intentionally separate from runtime persistence: **runtime scene load mu
 ## Non-Goals
 
 - This spec does not define a cross-realm shared library (no global depot).
-- This spec does not replace `scene.dat`. Packages exist to support authoring workflows, not as a runtime dependency.
+- This spec does not replace `scene.grav`. Packages exist to support authoring workflows, not as a runtime dependency.
 
 ## Terms
 
@@ -70,11 +70,11 @@ Non-UUID directories are ignored.
 
 - **A scene must load and render using only:**
   - built-in prefab defs (compiled into the game), and
-  - the `defs` embedded in `scene.dat`.
+  - the `defs` embedded in `scene.grav`.
 - Runtime scene load must not scan, parse, or depend on `.../prefabs/` packages.
 - Deleting or renaming `.../realm/<realm_id>/prefabs/` must not prevent scene load.
 
-If tooling wants to spawn/copy/edit prefabs that are not already referenced by the current `scene.dat`, it must load prefab defs from the relevant package **explicitly** (edit-time only).
+If tooling wants to spawn/copy/edit prefabs that are not already referenced by the current `scene.grav`, it must load prefab defs from the relevant package **explicitly** (edit-time only).
 
 ## Gen3D: Persisted Edit Metadata
 

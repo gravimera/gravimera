@@ -874,5 +874,5 @@ fn scene_build_scene_dat_path(realm_id: &str, scene_id: &str) -> PathBuf {
     let dir = scene_dat
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
-    dir.join("scene.build.dat")
+    dir.join("scene.build.grav")
 }

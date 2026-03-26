@@ -7,7 +7,7 @@ This document specifies a simple, instance-level “multiple forms” feature fo
 - Any eligible object instance can have **N forms** (default `N = 1`).
 - A player can switch forms quickly during play/build without an authoring panel.
 - Switching forms is **visualized** via an automatic “mechanical transform” animation between primitive parts.
-- Forms must **persist** in saves (both `scene.dat` and scene sources pinned instances).
+- Forms must **persist** in saves (both `scene.grav` and scene sources pinned instances).
 
 ## Definitions
 
@@ -67,9 +67,9 @@ The badge is always visible (not only when selected).
 
 ## Persistence
 
-### `scene.dat`
+### `scene.grav`
 
-`scene.dat` instance records must persist:
+`scene.grav` instance records must persist:
 
 - `forms[]` list of prefab ids (UUIDs)
 - `active` index

@@ -13,7 +13,7 @@ This spec defines how a Gravimera scene is represented so it can be:
 The key idea is to separate:
 
 - **authoritative scene sources** (text, canonical, mergeable), from
-- **derived build outputs** (binary caches like today’s `scene.dat` / `instances.dat`).
+- **derived build outputs** (binary caches like today’s `scene.grav` / `instances.dat`).
 
 ## Non-Negotiable Properties
 
@@ -36,7 +36,7 @@ The key idea is to separate:
 
 - **Sources are authoritative.** Build outputs must be regenerable from sources.
 - Build outputs **must not** be required for a realm package to be editable; they are performance caches.
-- Runtime formats like today’s `scene.dat` are considered **build outputs** for process management purposes.
+- Runtime formats like today’s `scene.grav` are considered **build outputs** for process management purposes.
 
 ## Scene Directory Layout (Normative)
 

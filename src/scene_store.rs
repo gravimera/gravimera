@@ -2,7 +2,9 @@ use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use prost::{Enumeration, Message, Oneof};
+use std::borrow::Cow;
 use std::collections::{HashSet, VecDeque};
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -41,6 +43,14 @@ pub(crate) fn ensure_default_scene_dat_exists(
     let path = crate::paths::scene_dat_path(realm_id, scene_id);
     if path.exists() {
         return Ok(());
+    }
+
+    if path.extension() == Some(OsStr::new("grav")) {
+        let legacy = path.with_extension("dat");
+        if legacy.exists() {
+            migrate_scene_dat_suffix(&legacy, &path)?;
+            return Ok(());
+        }
     }
 
     let scene = SceneDat {
@@ -698,7 +708,7 @@ fn workspace_scene_dat_path(active: &crate::realm::ActiveRealmScene, tab: Worksp
         WorkspaceTab::ObjectPreview => base,
         WorkspaceTab::SceneBuild => {
             let dir = base.parent().unwrap_or_else(|| Path::new("."));
-            dir.join("scene.build.dat")
+            dir.join("scene.build.grav")
         }
     }
 }
@@ -769,6 +779,41 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn migrate_scene_dat_suffix(src: &Path, dst: &Path) -> Result<(), String> {
+    let Some(parent) = dst.parent() else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(parent)
+        .map_err(|err| format!("Failed to create scene dir {}: {err}", parent.display()))?;
+
+    match std::fs::rename(src, dst) {
+        Ok(_) => {
+            info!(
+                "Migrated legacy scene file from {} to {}.",
+                src.display(),
+                dst.display()
+            );
+            Ok(())
+        }
+        Err(rename_err) => {
+            std::fs::copy(src, dst).map_err(|err| {
+                format!(
+                    "Failed to migrate legacy scene file {} to {}: {err}",
+                    src.display(),
+                    dst.display()
+                )
+            })?;
+            let _ = std::fs::remove_file(src);
+            info!(
+                "Migrated legacy scene file from {} to {} (copy+remove after rename error: {rename_err}).",
+                src.display(),
+                dst.display()
+            );
+            Ok(())
+        }
+    }
 }
 
 fn u128_to_uuid(value: u128) -> Uuid128Dat {
@@ -1608,7 +1653,7 @@ fn gather_referenced_defs(
             continue;
         }
         let Some(def) = library.get(object_id) else {
-            warn!("scene.dat: missing object def for {object_id:#x}");
+            warn!("scene.grav: missing object def for {object_id:#x}");
             continue;
         };
         if let Some(attack) = def.attack.as_ref() {
@@ -2101,7 +2146,7 @@ pub(crate) fn load_scene_dat(
     mut active_floor: ResMut<ActiveWorldFloor>,
     mut floor_library: ResMut<FloorLibraryUiState>,
 ) {
-    // Reset library to builtins only. `scene.dat` must contain all defs needed to spawn.
+    // Reset library to builtins only. `scene.grav` must contain all defs needed to spawn.
     *library = ObjectLibrary::default();
 
     // Prefab descriptors are realm-level and loaded by UI/tooling on demand. Scene loading does not
@@ -2208,7 +2253,7 @@ pub(crate) fn apply_pending_workspace_switch(
         commands.entity(entity).try_despawn();
     }
 
-    // Reset library to builtins only. `scene.dat` must contain all defs needed to spawn.
+    // Reset library to builtins only. `scene.grav` must contain all defs needed to spawn.
     *deps.library = ObjectLibrary::default();
     // Prefab descriptors are realm-level and reused across workspace tabs.
 
@@ -2303,7 +2348,7 @@ pub(crate) fn apply_pending_realm_scene_switch(
         commands.entity(entity).try_despawn();
     }
 
-    // Reset library to builtins only. `scene.dat` must contain all defs needed to spawn.
+    // Reset library to builtins only. `scene.grav` must contain all defs needed to spawn.
     *library = ObjectLibrary::default();
     // Prefab descriptors are realm-level; keep them across scene switches so Meta/Gen3D UI stays
     // stable. Clear on realm switch to avoid stale data for a different realm.
@@ -2345,19 +2390,43 @@ fn load_scene_dat_from_path(
     library: &mut ObjectLibrary,
     path: &Path,
 ) -> Result<usize, String> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(0),
+    let (bytes, loaded_path): (Vec<u8>, Cow<'_, Path>) = match std::fs::read(path) {
+        Ok(bytes) => (bytes, Cow::Borrowed(path)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            if path.extension() != Some(OsStr::new("grav")) {
+                return Ok(0);
+            }
+            let legacy = path.with_extension("dat");
+            if !legacy.exists() {
+                return Ok(0);
+            }
+
+            match migrate_scene_dat_suffix(&legacy, path) {
+                Ok(()) => (
+                    std::fs::read(path)
+                        .map_err(|err| format!("Failed to read {}: {err}", path.display()))?,
+                    Cow::Borrowed(path),
+                ),
+                Err(migrate_err) => {
+                    warn!("{migrate_err}");
+                    (
+                        std::fs::read(&legacy)
+                            .map_err(|err| format!("Failed to read {}: {err}", legacy.display()))?,
+                        Cow::Owned(legacy),
+                    )
+                }
+            }
+        }
         Err(err) => return Err(format!("Failed to read {}: {err}", path.display())),
     };
 
     let scene = SceneDat::decode(bytes.as_slice())
-        .map_err(|err| format!("Failed to decode {}: {err}", path.display()))?;
+        .map_err(|err| format!("Failed to decode {}: {err}", loaded_path.display()))?;
 
     if !matches!(scene.version, 7 | 8 | SCENE_DAT_VERSION) {
         warn!(
-            "Ignoring {}: unsupported scene.dat version {} (expected 7, 8, or {}).",
-            path.display(),
+            "Ignoring {}: unsupported scene version {} (expected 7, 8, or {}).",
+            loaded_path.display(),
             scene.version,
             SCENE_DAT_VERSION
         );
@@ -2368,7 +2437,7 @@ fn load_scene_dat_from_path(
         match def_from_dat(def) {
             Ok(def) => library.upsert(def),
             Err(err) => {
-                warn!("scene.dat: skipping invalid object def: {err}");
+                warn!("scene.grav: skipping invalid object def: {err}");
             }
         }
     }
@@ -2395,7 +2464,7 @@ fn load_scene_dat_from_path(
             continue;
         }
         if library.get(prefab_id).is_none() {
-            warn!("scene.dat: missing prefab for instance {prefab_id:#x}");
+            warn!("scene.grav: missing prefab for instance {prefab_id:#x}");
             continue;
         }
 
@@ -2992,5 +3061,25 @@ mod tests {
         assert!(ids.contains(&root_id));
         assert!(ids.contains(&muzzle_id));
         assert!(ids.contains(&projectile_id));
+    }
+
+    #[test]
+    fn migrates_scene_dat_suffix_to_grav() {
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "gravimera_scene_suffix_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let legacy = tmp_dir.join("scene.dat");
+        let dst = tmp_dir.join("scene.grav");
+        std::fs::write(&legacy, b"test").unwrap();
+
+        migrate_scene_dat_suffix(&legacy, &dst).unwrap();
+        assert!(!legacy.exists());
+        assert!(dst.exists());
+        assert_eq!(std::fs::read(&dst).unwrap(), b"test");
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }

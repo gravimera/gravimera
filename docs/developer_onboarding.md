@@ -95,7 +95,7 @@ Gravimera stores runtime data under `<root_dir>` (default: `~/.gravimera/`):
 - `<root_dir>/openai_capabilities_cache.json` (cached OpenAI-compatible endpoint capabilities, keyed by `base_url` + `model`; includes whether the gateway requires `stream=true`)
 - `<root_dir>/realm/` (realms + scenes)
 - `<root_dir>/realm/active.json` (active realm/scene selection)
-- `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/scene.dat` (saved scene)
+- `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/scene.grav` (saved scene)
 - `<root_dir>/realm/<realm_id>/prefabs/` (realm prefab packages; Gen3D saves prefabs here; layout spec `docs/gamedesign/39_realm_prefab_packages_v1.md`)
 - `<root_dir>/cache/` (Gen3D artifacts, logs, screenshots)
 
@@ -122,7 +122,7 @@ Gravimera can run under WSLg. Notes:
 
 - World space uses meters: `1.0` world unit = `1 meter`.
 - Build mode snapping uses a small grid: `0.05m` (5 cm).
-- Scene persistence (`scene.dat`) quantizes positions to centimeters (1 cm).
+- Scene persistence (`scene.grav`) quantizes positions to centimeters (1 cm).
 
 ## Optional services
 
