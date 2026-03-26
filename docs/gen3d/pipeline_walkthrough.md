@@ -49,6 +49,7 @@ Pipeline stages (simplified):
 2. `EnsureComponents`
    - Tool: `llm_generate_components_v1` (missing-only) until every planned component has `actual_size`
    - Tool: `apply_reuse_groups_v1` (deterministic) to copy/mirror component geometry per the plan’s `reuse_groups` once the reuse source exists
+   - Note: For `reuse_groups`, prefer omitting `anchors` (default is `preserve_interfaces`). Avoid `anchors=preserve_target` for `copy_component_subtree` reuse groups; it can keep internal join anchors unchanged and drift descendant attachments.
 3. `Qa`
    - Tool: `qa_v1`
    - If QA provides deterministic “fixits”, pipeline applies them using `apply_draft_ops_v1` and re-runs QA.

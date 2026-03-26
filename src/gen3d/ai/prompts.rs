@@ -808,6 +808,19 @@ mod tests {
     }
 
     #[test]
+    fn gen3d_plan_system_instructions_discourage_preserve_target_for_subtree_reuse() {
+        let text = build_gen3d_plan_system_instructions();
+        assert!(
+            text.contains("Do NOT use `preserve_target` for subtree reuse"),
+            "{text}"
+        );
+        assert!(
+            text.contains("kind=copy_component_subtree"),
+            "expected subtree guidance in prompt, got: {text}"
+        );
+    }
+
+    #[test]
     fn gen3d_plan_ops_system_instructions_disallow_full_plan_json() {
         let text = build_gen3d_plan_ops_system_instructions();
         assert!(text.contains("Do NOT output a full plan JSON"));
@@ -1173,7 +1186,12 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
            - `source` + `targets`: component names (no indices).\n\
            - `alignment`: `rotation` (same orientation) or `mirror_mount_x` (L/R mirror).\n\
            - Optional: `mode`: `detached` (default) or `linked` (only safe for leaf components).\n\
-           - Optional: `anchors`: `preserve_interfaces` (default, safest), `preserve_target`, or `copy_source`.\n\
+           - Optional: `anchors`:\n\
+             - Prefer omitting it (default is `preserve_interfaces`).\n\
+             - For `kind=copy_component_subtree`, use `preserve_interfaces` so INTERNAL child-attachment anchors move with the copied geometry.\n\
+               - Do NOT use `preserve_target` for subtree reuse (it keeps internal anchors unchanged and can misassemble descendants).\n\
+             - Use `preserve_target` only for leaf `copy_component` reuse when you intentionally want ALL target anchors unchanged.\n\
+             - Use `copy_source` only when you truly need to overwrite the target's anchors with the source's anchors.\n\
            - Optional: `alignment_frame`: `join` (default) or `child_anchor` (only for non-mirror rotation reuse).\n\n\
           Schema:\n\
           - Follow the provided JSON schema exactly (version=8).\n\n\
