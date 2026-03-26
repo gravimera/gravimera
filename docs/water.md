@@ -16,6 +16,8 @@ Common knobs (see `src/water_scene.rs`):
 
 - `height`: base Y of the water surface (keep below the ground plane at `y=0` to avoid flooding)
 - `amplitude`: wave height multiplier
+- `deep_color` / `shallow_color`: water tint (depth-prepass based)
+- `clarity`: how quickly the water absorbs with depth (Beer–Lambert)
 - `spawn_tiles`: grid size (tiles are `256x256` world units each)
 - `water_quality`: mesh subdivision + shader quality (`Basic`..`Ultra`)
 
@@ -23,3 +25,8 @@ Common knobs (see `src/water_scene.rs`):
 
 `src/water_scene.rs` adds `DepthPrepass` to the `MainCamera` so the water shader can use the depth buffer
 for shallow/deep tinting near geometry.
+
+## Horizon
+
+`src/water_scene.rs` also adds `DistanceFog` to the `MainCamera` so the ocean blends smoothly into the sky
+at the horizon (avoids a hard “water ends here” line).

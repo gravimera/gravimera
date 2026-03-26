@@ -10,4 +10,4 @@ Gravimera uses Bevy’s built-in atmosphere sky for rendered mode.
 
 - The atmosphere is attached to the `MainCamera` and also enables `AtmosphereEnvironmentMapLight`
   so PBR materials (including water) get plausible environment lighting/reflections.
-
+- `DistanceFog` is used alongside the atmosphere to soften the ocean/sky horizon.
