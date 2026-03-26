@@ -9,4 +9,6 @@ test
 tests
 
 *.log
+*.pyc
+__pycache__/
 config.toml
