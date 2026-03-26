@@ -1769,7 +1769,7 @@ Hint: include these names in scope_components, or omit scope_components, or use 
             "new_plan_summary": summary_before,
             "new_errors": [{
                 "kind": "scope_violation",
-                "error": err,
+                "error": err.clone(),
                 "scope_components_total": scope_components.len(),
                 "scope_components_sample": scope_components.iter().cloned().take(32).collect::<Vec<_>>(),
                 "touched_existing_components_total": touched_existing.len(),
@@ -1795,7 +1795,7 @@ Hint: include these names in scope_components, or omit scope_components, or use 
                 &plan_json,
             );
         }
-        return Ok(result);
+        return Err(err);
     }
 
     let plan_before_serialized = plan_json;
@@ -1821,6 +1821,74 @@ Hint: include these names in scope_components, or omit scope_components, or use 
         "reuse_groups_set": state.reuse_groups_set,
         "touched_components": state.touched_components.iter().cloned().take(32).collect::<Vec<_>>(),
     });
+    if !rejected_ops.is_empty() {
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(format!(
+            "llm_generate_plan_ops_v1 rejected {} op(s); refusing partial apply (atomic mode).",
+            rejected_ops.len()
+        ));
+        for rej in rejected_ops.iter().take(12) {
+            lines.push(format!(
+                "- op[{}] kind={} error={}",
+                rej.index, rej.kind, rej.error
+            ));
+        }
+        if rejected_ops.len() > 12 {
+            lines.push(format!(
+                "- … ({} more)",
+                rejected_ops.len().saturating_sub(12)
+            ));
+        }
+        lines.push(
+            "Hint: Fix rejected ops and retry. This tool commits only when ALL ops are accepted."
+                .into(),
+        );
+        let err = lines.join("\n");
+
+        let result = serde_json::json!({
+            "ok": false,
+            "version": 1,
+            "repaired": repaired,
+            "repair_diff": repair_diff,
+            "accepted": false,
+            "committed": false,
+            "assembly_rev_before": assembly_rev_before,
+            "new_assembly_rev": job.assembly_rev(),
+            "ops_total": ops_total,
+            "applied_ops": applied_ops,
+            "rejected_ops": rejected_ops,
+            "diff_summary": diff_summary,
+            "plan_before_after": {
+                "before": summary_before,
+                "after": summary_after,
+            },
+            "new_plan_summary": summary_after,
+            "new_errors": [{
+                "kind": "op_rejected",
+                "error": err.clone(),
+            }],
+        });
+
+        if let Some(dir) = job.step_dir_path() {
+            let filename = format!(
+                "plan_ops_apply_last_{}.json",
+                sanitize_prefix(call_id.unwrap_or(""))
+            );
+            super::artifacts::write_gen3d_json_artifact(Some(dir), &filename, &result);
+            super::artifacts::write_gen3d_json_artifact(
+                Some(dir),
+                "plan_ops_apply_last.json",
+                &result,
+            );
+            super::artifacts::write_gen3d_json_artifact(
+                Some(dir),
+                "plan_ops_plan_before.json",
+                &plan_before_serialized,
+            );
+        }
+
+        return Err(err);
+    }
 
     let can_preserve_geometry = preserve_existing_components
         && !job.planned_components.is_empty()
@@ -1938,6 +2006,14 @@ Hint: include these names in scope_components, or omit scope_components, or use 
 
     let assembly_rev_after = job.assembly_rev();
     let ok = accepted && rejected_ops.is_empty();
+    let err_for_retry = (!accepted).then(|| {
+        new_errors
+            .iter()
+            .find_map(|v| v.get("error").and_then(|e| e.as_str()))
+            .unwrap_or("plan ops apply rejected")
+            .trim()
+            .to_string()
+    });
 
     let result = serde_json::json!({
         "ok": ok,
@@ -1972,6 +2048,12 @@ Hint: include these names in scope_components, or omit scope_components, or use 
             "plan_ops_plan_before.json",
             &plan_before_serialized,
         );
+    }
+
+    if let Some(err) = err_for_retry {
+        return Err(format!(
+            "llm_generate_plan_ops_v1 failed to apply plan ops: {err}"
+        ));
     }
 
     Ok(result)
