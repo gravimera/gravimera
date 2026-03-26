@@ -6,6 +6,7 @@ Gravimera’s rendered mode includes a simple ocean surface powered by the `bevy
 
 - Plugin wiring: `src/app.rs`
 - Settings + camera depth prepass: `src/water_scene.rs`
+- Sky (atmosphere): `docs/sky.md`
 
 ## Tuning
 
@@ -22,4 +23,3 @@ Common knobs (see `src/water_scene.rs`):
 
 `src/water_scene.rs` adds `DepthPrepass` to the `MainCamera` so the water shader can use the depth buffer
 for shallow/deep tinting near geometry.
-
