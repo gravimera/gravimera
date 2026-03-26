@@ -656,6 +656,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     );
 
     app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default());
+    app.add_plugins(crate::water_scene::WaterScenePlugin);
 
     app.init_state::<GameMode>();
     app.init_state::<BuildScene>();

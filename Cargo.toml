@@ -16,6 +16,7 @@ bevy = { version = "0.18.0", default-features = false, features = [
   "png",
   "webp",
 ] }
+bevy_water = { path = "../bevy_water", default-features = false, features = ["embed_shaders"] }
 emojis = "0.8"
 image = "0.25"
 rand = "0.8"

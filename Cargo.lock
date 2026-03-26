@@ -1794,6 +1794,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_water"
+version = "0.18.1"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
 name = "bevy_window"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3389,6 +3396,7 @@ name = "gravimera"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy_water",
  "emojis",
  "image",
  "json5",
