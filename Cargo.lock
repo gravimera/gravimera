@@ -1796,6 +1796,7 @@ dependencies = [
 [[package]]
 name = "bevy_water"
 version = "0.18.1"
+source = "git+https://github.com/Neopallium/bevy_water?rev=da5fc110edf2d031831e72794f3793e44efcd8f9#da5fc110edf2d031831e72794f3793e44efcd8f9"
 dependencies = [
  "bevy",
 ]

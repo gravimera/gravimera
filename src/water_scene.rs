@@ -16,8 +16,8 @@ impl Plugin for WaterScenePlugin {
             clarity: 0.22,
             deep_color: Color::srgba(0.08, 0.20, 0.40, 1.0),
             shallow_color: Color::srgba(0.20, 0.55, 0.75, 1.0),
-            spawn_tiles: Some(UVec2::new(6, 6)),
-            water_quality: WaterQuality::Ultra,
+            spawn_tiles: Some(UVec2::new(4, 4)),
+            water_quality: WaterQuality::High,
             ..default()
         });
 
