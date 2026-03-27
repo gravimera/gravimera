@@ -6911,7 +6911,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     "Missing AI config".into(),
                 ));
             };
-            let Some(step_dir) = job.step_dir.clone() else {
+            let Some(_step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,
@@ -7386,7 +7386,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     "Missing AI config".into(),
                 ));
             };
-            let Some(step_dir) = job.step_dir.clone() else {
+            let Some(_step_dir) = job.step_dir.clone() else {
                 return ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::err(
                     call.call_id,
                     call.tool_id,

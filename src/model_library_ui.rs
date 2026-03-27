@@ -2403,7 +2403,11 @@ pub(crate) fn model_library_open_preview_panel(
         .and_then(|d| d.provenance.as_ref())
         .and_then(|p| p.total_unsplit_tokens)
         .or_else(|| sum_revision_tokens_for_key(revisions, "tokens_unsplit"));
-    let total_tokens = match (total_input_tokens, total_output_tokens, total_unsplit_tokens) {
+    let total_tokens = match (
+        total_input_tokens,
+        total_output_tokens,
+        total_unsplit_tokens,
+    ) {
         (Some(i), Some(o), Some(u)) => Some(i.saturating_add(o).saturating_add(u)),
         (Some(i), Some(o), None) => Some(i.saturating_add(o)),
         (Some(i), None, Some(u)) => Some(i.saturating_add(u)),
@@ -2411,7 +2415,7 @@ pub(crate) fn model_library_open_preview_panel(
         (Some(i), None, None) => Some(i),
         (None, Some(o), None) => Some(o),
         (None, None, Some(u)) => Some(u),
-        (None, None) => None,
+        (None, None, None) => None,
     }
     .or_else(|| {
         desc.and_then(|d| d.provenance.as_ref())
