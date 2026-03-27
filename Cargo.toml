@@ -16,7 +16,7 @@ bevy = { version = "0.18.0", default-features = false, features = [
   "png",
   "webp",
 ] }
-bevy_water = { git = "https://github.com/Neopallium/bevy_water", rev = "da5fc110edf2d031831e72794f3793e44efcd8f9", default-features = false, features = ["embed_shaders"] }
+bevy_water = { version = "0.18.1", default-features = false, features = ["embed_shaders"] }
 emojis = "0.8"
 image = "0.25"
 rand = "0.8"
