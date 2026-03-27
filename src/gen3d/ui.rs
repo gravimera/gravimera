@@ -2714,8 +2714,21 @@ pub(crate) fn gen3d_update_ui_text(
         .unwrap_or_else(|| "—".into());
     let run_tokens = format_compact_count(job.current_run_tokens());
     let total_tokens = format_compact_count(job.total_tokens());
+    let state = if workshop.error.is_some() {
+        "Error".to_string()
+    } else if active_session_is_queued(&task_queue) {
+        "Queued".to_string()
+    } else if job.is_running() {
+        "Running".to_string()
+    } else if job.is_build_complete() {
+        "Done ✓".to_string()
+    } else if job.can_resume() {
+        "Stopped".to_string()
+    } else {
+        "Idle".to_string()
+    };
     let stats_text = format!(
-        "Run time: {run_time}\nTokens (run): {run_tokens}\nTokens (total): {total_tokens}",
+        "State: {state}\nRun time: {run_time}\nTokens (run): {run_tokens}\nTokens (total): {total_tokens}",
     );
     {
         let mut stats = texts.p3();

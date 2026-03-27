@@ -163,6 +163,59 @@ pub(crate) fn gen3d_update_prefab_details_text(
     let created_at_ms = desc
         .and_then(|d| d.provenance.as_ref())
         .and_then(|p| p.created_at_ms);
+    let revisions = desc
+        .and_then(|d| d.provenance.as_ref())
+        .map(|p| p.revisions.as_slice())
+        .unwrap_or(&[]);
+
+    fn sum_revision_tokens(
+        revisions: &[crate::prefab_descriptors::PrefabDescriptorRevisionV1],
+    ) -> Option<u64> {
+        let mut any = false;
+        let mut total: u64 = 0;
+        for rev in revisions {
+            if let Some(tokens) = rev.extra.get("tokens_total").and_then(|v| v.as_u64()) {
+                any = true;
+                total = total.saturating_add(tokens);
+            }
+        }
+        any.then_some(total)
+    }
+
+    fn find_generated_duration_ms(
+        revisions: &[crate::prefab_descriptors::PrefabDescriptorRevisionV1],
+    ) -> Option<u128> {
+        revisions
+            .iter()
+            .find(|rev| rev.summary.trim() == "generated")
+            .and_then(|rev| rev.extra.get("duration_ms"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u128)
+    }
+
+    let created_duration_ms = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.created_duration_ms)
+        .or_else(|| find_generated_duration_ms(revisions));
+    let total_tokens = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.total_tokens)
+        .or_else(|| sum_revision_tokens(revisions));
+
+    fn format_duration_ms(ms: u128) -> String {
+        let ms = ms.min(u128::from(u64::MAX)) as u64;
+        let d = std::time::Duration::from_millis(ms);
+        let secs = d.as_secs();
+        if secs < 60 {
+            format!("{:.1}s", d.as_secs_f32())
+        } else if secs < 60 * 60 {
+            format!("{}m {}s", secs / 60, secs % 60)
+        } else {
+            let hours = secs / 3600;
+            let mins = (secs % 3600) / 60;
+            format!("{hours}h {mins}m")
+        }
+    }
 
     let mut out = String::new();
     out.push_str("Current Prefab\n\n");
@@ -171,10 +224,19 @@ pub(crate) fn gen3d_update_prefab_details_text(
     out.push_str(&format!("Name: {name}\n"));
     out.push_str(&format!("ID: {uuid}\n"));
     if let Some(modified_at_ms) = modified_at_ms {
-        out.push_str(&format!("Modified: {modified_at_ms}\n"));
+        out.push_str(&format!("Last modified: {modified_at_ms}\n"));
     }
     if let Some(created_at_ms) = created_at_ms {
         out.push_str(&format!("Created: {created_at_ms}\n"));
+    }
+    if let Some(created_duration_ms) = created_duration_ms {
+        out.push_str(&format!(
+            "Create duration: {} ({created_duration_ms}ms)\n",
+            format_duration_ms(created_duration_ms)
+        ));
+    }
+    if let Some(total_tokens) = total_tokens {
+        out.push_str(&format!("Tokens (total): {total_tokens}\n"));
     }
     if !roles.is_empty() {
         out.push_str(&format!("Roles: {}\n", roles.join(", ")));

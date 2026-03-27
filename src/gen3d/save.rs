@@ -2425,11 +2425,49 @@ fn save_generated_prefab_descriptor_best_effort(
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .and_then(|json| serde_json::from_value(json).ok());
+
+    fn sum_revision_tokens(
+        revisions: &[crate::prefab_descriptors::PrefabDescriptorRevisionV1],
+    ) -> u64 {
+        let mut out: u64 = 0;
+        for rev in revisions {
+            if let Some(tokens) = rev.extra.get("tokens_total").and_then(|v| v.as_u64()) {
+                out = out.saturating_add(tokens);
+            }
+        }
+        out
+    }
+
+    let run_tokens = job.current_run_tokens();
+    let run_duration_ms = job.run_elapsed().map(|d| d.as_millis() as u128);
+
+    let prev_total_tokens = existing_descriptor
+        .as_ref()
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.total_tokens)
+        .or_else(|| {
+            existing_descriptor
+                .as_ref()
+                .and_then(|d| d.provenance.as_ref())
+                .map(|p| sum_revision_tokens(&p.revisions))
+        })
+        .unwrap_or(0);
+    let new_total_tokens = prev_total_tokens.saturating_add(run_tokens);
     let created_at_ms = existing_descriptor
         .as_ref()
         .and_then(|d| d.provenance.as_ref())
         .and_then(|p| p.created_at_ms)
         .unwrap_or(now_ms);
+    let created_duration_ms = existing_descriptor
+        .as_ref()
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.created_duration_ms)
+        .or_else(|| {
+            existing_descriptor
+                .is_none()
+                .then_some(run_duration_ms)
+                .flatten()
+        });
 
     let mut revisions = existing_descriptor
         .as_ref()
@@ -2486,6 +2524,14 @@ fn save_generated_prefab_descriptor_best_effort(
             "prompt".to_string(),
             serde_json::Value::String(prompt_used.trim().to_string()),
         );
+    }
+    revision_extra.insert(
+        "tokens_total".to_string(),
+        serde_json::Value::from(run_tokens),
+    );
+    if let Some(ms) = run_duration_ms {
+        let ms = ms.min(u128::from(u64::MAX)) as u64;
+        revision_extra.insert("duration_ms".to_string(), serde_json::Value::from(ms));
     }
     if let Some((policy, meta)) = job.descriptor_meta_for_save() {
         revision_extra.insert(
@@ -2667,7 +2713,9 @@ fn save_generated_prefab_descriptor_best_effort(
         provenance: Some(crate::prefab_descriptors::PrefabDescriptorProvenanceV1 {
             source: Some("gen3d".to_string()),
             created_at_ms: Some(created_at_ms),
+            created_duration_ms,
             modified_at_ms: Some(now_ms),
+            total_tokens: Some(new_total_tokens),
             gen3d: Some(crate::prefab_descriptors::PrefabDescriptorGen3dV1 {
                 prompt: Some(prompt_used.trim().to_string()).filter(|v| !v.is_empty()),
                 style_prompt: None,
