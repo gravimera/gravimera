@@ -37,6 +37,10 @@ Tip: start from `config.example.toml` so sensible defaults (including `openai.mo
 cargo run
 ```
 
+## Screenshots
+<img src="assets/screenshot/ss1.png" width="640" height="374" alt="ss1.png" />
+<img src="assets/screenshot/ss2.png" width="640" height="374" alt="ss2.png" />
+
 ## Docs
 
 - Developer onboarding: [docs/developer_onboarding.md](docs/developer_onboarding.md)
