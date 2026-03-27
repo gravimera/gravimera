@@ -1,3 +1,4 @@
+use bevy::light::GlobalAmbientLight;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
@@ -25,6 +26,8 @@ pub(crate) fn setup_rendered(
          Camera: edge-pan (cursor near window edge), rotate with Z/X/Q/E, zoom with mouse wheel (WASD pans camera when nothing selected).\n\
          Minimap: top-right."
     );
+
+    commands.insert_resource(GlobalAmbientLight::NONE);
 
     let player_head_mesh = meshes.add(Cuboid::new(
         PLAYER_HEAD_SIZE,
@@ -345,15 +348,6 @@ pub(crate) fn setup_rendered(
     commands.spawn((WorldFloor, Transform::IDENTITY, Visibility::Inherited));
 
     let player_start = Vec3::new(0.0, PLAYER_Y, 0.0);
-
-    commands.spawn((
-        DirectionalLight {
-            shadows_enabled: false,
-            illuminance: 18_000.0,
-            ..default()
-        },
-        Transform::from_xyz(8.0, 18.0, -8.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
 
     commands.spawn((
         Camera3d::default(),
