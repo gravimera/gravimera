@@ -346,6 +346,10 @@ pub(super) fn parse_ai_review_delta_from_text(text: &str) -> Result<AiReviewDelt
             delta.version
         ));
     }
+
+    delta.applies_to.run_id = delta.applies_to.run_id.trim().to_string();
+    delta.applies_to.plan_hash = delta.applies_to.plan_hash.trim().to_string();
+
     if delta.actions.len() > 64 {
         debug!(
             "Gen3D: truncating review-delta actions from {} to 64",

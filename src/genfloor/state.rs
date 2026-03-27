@@ -16,15 +16,12 @@ pub(crate) struct GenFloorWorkshop {
 #[derive(Clone, Debug)]
 pub(crate) struct GenFloorAiUsage {
     pub(crate) total_tokens: u64,
-    pub(crate) input_tokens: u64,
-    pub(crate) output_tokens: u64,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct GenFloorAiResult {
     pub(crate) def: FloorDefV1,
     pub(crate) usage: Option<GenFloorAiUsage>,
-    pub(crate) raw_text: String,
 }
 
 #[derive(Resource, Default)]
@@ -58,10 +55,6 @@ impl GenFloorAiJob {
 
     pub(crate) fn set_edit_base_floor_id(&mut self, floor_id: Option<u128>) {
         self.edit_base_floor_id = floor_id;
-    }
-
-    pub(crate) fn last_saved_floor_id(&self) -> Option<u128> {
-        self.last_saved_floor_id
     }
 
     pub(crate) fn set_last_saved_floor_id(&mut self, floor_id: Option<u128>) {

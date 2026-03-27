@@ -9,21 +9,6 @@ pub(crate) struct Gen3dToolFeedbackHistory {
     pub(crate) entries: Vec<Gen3dToolFeedbackEntry>,
 }
 
-impl Gen3dToolFeedbackHistory {
-    pub(crate) fn last_run_id(&self) -> Option<&str> {
-        self.entries.last().and_then(|e| e.run_id.as_deref())
-    }
-
-    pub(crate) fn entries_for_run<'a>(
-        &'a self,
-        run_id: &'a str,
-    ) -> impl Iterator<Item = &'a Gen3dToolFeedbackEntry> + 'a {
-        self.entries
-            .iter()
-            .filter(move |e| e.run_id.as_deref() == Some(run_id))
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Gen3dToolFeedbackEntry {
     pub(crate) version: u32,

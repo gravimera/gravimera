@@ -961,9 +961,8 @@ fn apply_one_op(
             let replacement = animation_slot_from_spec(&channel, slot).map_err(reject)?;
 
             let mut diff = serde_json::Map::new();
-            let mut affected: usize = 0;
 
-            if let Some(att) = planned_child.attach_to.as_mut() {
+            let affected: usize = if let Some(att) = planned_child.attach_to.as_mut() {
                 let indices: Vec<usize> = att
                     .animations
                     .iter()
@@ -971,12 +970,12 @@ fn apply_one_op(
                     .filter(|(_, s)| s.channel.as_ref() == channel)
                     .map(|(idx, _)| idx)
                     .collect();
-                if indices.is_empty() {
+                let affected = if indices.is_empty() {
                     att.animations.push(replacement);
-                    affected = 1;
                     diff.insert("added".into(), serde_json::Value::Bool(true));
+                    1
                 } else {
-                    affected = indices.len();
+                    let affected = indices.len();
                     for idx in indices {
                         att.animations[idx] = replacement.clone();
                     }
@@ -985,12 +984,14 @@ fn apply_one_op(
                         "updated_count".into(),
                         serde_json::Value::Number(affected.into()),
                     );
-                }
+                    affected
+                };
                 super::attachment_motion_basis::normalize_attachment_motion(
                     &mut att.fallback_basis,
                     &mut att.animations,
                 );
                 mark_changed_component(state, att.parent.as_str());
+                affected
             } else {
                 let indices: Vec<usize> = planned_child
                     .root_animations
@@ -1001,11 +1002,11 @@ fn apply_one_op(
                     .collect();
                 if indices.is_empty() {
                     planned_child.root_animations.push(replacement);
-                    affected = 1;
                     diff.insert("added".into(), serde_json::Value::Bool(true));
                     diff.insert("root".into(), serde_json::Value::Bool(true));
+                    1
                 } else {
-                    affected = indices.len();
+                    let affected = indices.len();
                     for idx in indices {
                         planned_child.root_animations[idx] = replacement.clone();
                     }
@@ -1015,8 +1016,9 @@ fn apply_one_op(
                         serde_json::Value::Number(affected.into()),
                     );
                     diff.insert("root".into(), serde_json::Value::Bool(true));
+                    affected
                 }
-            }
+            };
 
             state.needs_sync_attachments = true;
             state.animation_slots_upserted = state

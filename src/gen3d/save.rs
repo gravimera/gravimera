@@ -2488,7 +2488,8 @@ fn save_generated_prefab_descriptor_best_effort(
                 .map(|p| {
                     let mut out: u64 = 0;
                     for rev in &p.revisions {
-                        if let Some(tokens) = rev.extra.get("tokens_unsplit").and_then(|v| v.as_u64())
+                        if let Some(tokens) =
+                            rev.extra.get("tokens_unsplit").and_then(|v| v.as_u64())
                         {
                             out = out.saturating_add(tokens);
                         }
@@ -2572,7 +2573,10 @@ fn save_generated_prefab_descriptor_best_effort(
             serde_json::Value::String(prompt_used.trim().to_string()),
         );
     }
-    revision_extra.insert("tokens_input".to_string(), serde_json::Value::from(run_input_tokens));
+    revision_extra.insert(
+        "tokens_input".to_string(),
+        serde_json::Value::from(run_input_tokens),
+    );
     revision_extra.insert(
         "tokens_output".to_string(),
         serde_json::Value::from(run_output_tokens),

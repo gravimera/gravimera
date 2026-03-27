@@ -290,13 +290,7 @@ fn call_genfloor_ai(
 
     let usage = response.total_tokens.map(|total| GenFloorAiUsage {
         total_tokens: total,
-        input_tokens: 0,
-        output_tokens: 0,
     });
 
-    Ok(GenFloorAiResult {
-        def,
-        usage,
-        raw_text: response.text,
-    })
+    Ok(GenFloorAiResult { def, usage })
 }

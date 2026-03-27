@@ -17,10 +17,6 @@ fn short_tool_id(tool_id: &str) -> &str {
     tool_id.strip_suffix("_v1").unwrap_or(tool_id)
 }
 
-fn key_first_line(text: &str) -> Option<&str> {
-    text.lines().map(str::trim).find(|line| !line.is_empty())
-}
-
 fn tool_step_label(tool_id: &str, call: Option<&Gen3dToolCallJsonV1>) -> String {
     match tool_id {
         TOOL_ID_LLM_SELECT_EDIT_STRATEGY => "Edit strategy".into(),
@@ -346,21 +342,10 @@ pub(super) fn log_ai_request_started(workshop: &mut Gen3dWorkshop, step: &str, w
         .start_step(step.to_string(), why.to_string());
 }
 
-pub(super) fn log_ai_request_finished(workshop: &mut Gen3dWorkshop, result: &str) {
-    workshop
-        .status_log
-        .finish_step_if_active(result.to_string());
-}
-
 pub(super) fn log_note(workshop: &mut Gen3dWorkshop, message: &str) {
     let step = "Note";
     workshop
         .status_log
         .start_step(step.to_string(), message.to_string());
     workshop.status_log.finish_step("OK".to_string());
-}
-
-pub(super) fn log_prefill_from_status(workshop: &Gen3dWorkshop) -> Option<String> {
-    let line = key_first_line(workshop.status.as_str())?;
-    Some(truncate_for_ui(line, 220))
 }

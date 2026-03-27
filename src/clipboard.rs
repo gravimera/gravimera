@@ -4,6 +4,7 @@ pub(crate) fn read_text() -> Option<String> {
     imp::read_text()
 }
 
+#[allow(dead_code)]
 pub(crate) fn write_text(text: &str) -> bool {
     imp::write_text(text)
 }
@@ -41,6 +42,7 @@ fn read_text_command(cmd: &str, args: &[&str]) -> Option<String> {
     decode_clipboard_stdout(&output.stdout)
 }
 
+#[allow(dead_code)]
 fn write_text_command(cmd: &str, args: &[&str], text: &str) -> bool {
     let mut child = match std::process::Command::new(cmd)
         .args(args)
@@ -65,6 +67,8 @@ fn write_text_command(cmd: &str, args: &[&str], text: &str) -> bool {
 
 #[cfg(target_os = "macos")]
 mod imp {
+    #![allow(dead_code)]
+
     use super::{read_text_command, write_text_command};
 
     pub(super) fn read_text() -> Option<String> {
@@ -78,6 +82,8 @@ mod imp {
 
 #[cfg(target_os = "windows")]
 mod imp {
+    #![allow(dead_code)]
+
     use super::{read_text_command, write_text_command};
 
     fn read_text_powershell(cmd: &str) -> Option<String> {
@@ -102,6 +108,8 @@ mod imp {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 mod imp {
+    #![allow(dead_code)]
+
     use super::{decode_clipboard_stdout, read_text_command, write_text_command};
 
     #[cfg(target_os = "linux")]
@@ -641,6 +649,8 @@ mod imp {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", unix)))]
 mod imp {
+    #![allow(dead_code)]
+
     pub(super) fn read_text() -> Option<String> {
         None
     }

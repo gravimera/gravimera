@@ -3716,7 +3716,7 @@ fn gen3d_set_current_attempt_step(
         }),
     );
 
-    job.metrics.note_step_started(step);
+    job.metrics.note_step_started();
 
     Ok(())
 }

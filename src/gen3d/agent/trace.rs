@@ -107,7 +107,3 @@ pub(crate) fn run_root_dir_from_artifact_dir(artifact_dir: &Path) -> Option<&Pat
 
     Some(artifact_dir)
 }
-
-pub(crate) fn run_root_dir_from_pass_dir(pass_dir: &Path) -> Option<&Path> {
-    run_root_dir_from_artifact_dir(pass_dir)
-}

@@ -757,6 +757,7 @@ pub(crate) enum UiToastCommand {
         kind: UiToastKind,
         ttl_secs: f32,
     },
+    #[allow(dead_code)]
     ClearAll,
 }
 

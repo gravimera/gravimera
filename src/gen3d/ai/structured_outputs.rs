@@ -66,28 +66,6 @@ fn schema_nullable_string_or_string_array() -> serde_json::Value {
     ])
 }
 
-fn schema_any_object() -> serde_json::Value {
-    json!({
-        "type": "object",
-        // Some OpenAI-compatible providers validate JSON Schema strictly when `strict=true` and
-        // require `additionalProperties=false` for every object schema (including nested ones).
-        //
-        // The Gen3D agent protocol uses `args` as an arbitrary JSON object whose shape depends on
-        // the tool. To keep the protocol flexible while satisfying strict validators, we allow
-        // any key via a permissive `patternProperties` entry, and still set
-        // `additionalProperties=false` to satisfy providers that require it.
-        //
-        // Some providers additionally require every object schema to specify both `properties`
-        // (possibly empty) and `required` (possibly empty) whenever `type=object`.
-        "additionalProperties": false,
-        "properties": {},
-        "required": [],
-        "patternProperties": {
-            "^.*$": {}
-        }
-    })
-}
-
 fn schema_fixed_num_array(len: usize) -> serde_json::Value {
     json!({
         "type": "array",

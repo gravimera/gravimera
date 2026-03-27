@@ -298,8 +298,6 @@ pub(super) struct Gen3dToolCallInFlight {
 
 #[derive(Clone, Debug)]
 pub(super) struct Gen3dStepMetrics {
-    pub(super) step: u32,
-    pub(super) started_at: std::time::Instant,
     pub(super) ended_at: Option<std::time::Instant>,
     pub(super) tool_ms_total: u128,
     pub(super) tool_calls: u32,
@@ -495,13 +493,11 @@ impl Gen3dRunMetrics {
             .and_then(|idx| self.steps.get_mut(idx))
     }
 
-    pub(super) fn note_step_started(&mut self, step: u32) {
+    pub(super) fn note_step_started(&mut self) {
         let now = std::time::Instant::now();
         self.finish_current_step_at(now);
 
         self.steps.push(Gen3dStepMetrics {
-            step,
-            started_at: now,
             ended_at: None,
             tool_ms_total: 0,
             tool_calls: 0,
@@ -719,10 +715,6 @@ impl Gen3dAiJob {
         self.edit_base_prefab_id
     }
 
-    pub(crate) fn set_edit_base_prefab_id(&mut self, id: Option<u128>) {
-        self.edit_base_prefab_id = id;
-    }
-
     pub(crate) fn save_overwrite_prefab_id(&self) -> Option<u128> {
         self.save_overwrite_prefab_id
     }
@@ -762,10 +754,6 @@ impl Gen3dAiJob {
 
     pub(crate) fn set_last_saved_prefab_id(&mut self, id: Option<u128>) {
         self.last_saved_prefab_id = id;
-    }
-
-    pub(crate) fn seed_target_entity(&self) -> Option<Entity> {
-        self.seed_target_entity
     }
 
     pub(crate) fn set_seed_target_entity(&mut self, entity: Option<Entity>) {
@@ -941,16 +929,6 @@ impl Gen3dAiJob {
         min_y
     }
 
-    pub(crate) fn motion_authoring_for_current_draft(&self) -> Option<&AiMotionAuthoringJsonV1> {
-        let authored = self.motion_authoring.as_ref()?;
-        // `gen3d_edit_bundle_v1.json` persists motion metadata so Edit/Fork remains restart-safe.
-        // A resumed session will typically have a NEW run_id (fresh cache dir), so treat
-        // run_id/attempt as provenance-only and gate freshness on plan_hash+assembly_rev.
-        (authored.applies_to.plan_hash.trim() == self.plan_hash.trim()
-            && authored.applies_to.assembly_rev == self.assembly_rev)
-            .then_some(authored)
-    }
-
     pub(crate) fn descriptor_meta_for_current_draft(&self) -> Option<&AiDescriptorMetaJsonV1> {
         let cached = self.descriptor_meta_cache.as_ref()?;
         // Descriptor meta is a semantic "best effort" label/short/tags suggestion. It should stay
@@ -981,10 +959,6 @@ impl Gen3dAiJob {
         self.agent.active_workspace_id.as_str()
     }
 
-    pub(crate) fn current_save_seq(&self) -> u32 {
-        self.save_seq
-    }
-
     pub(crate) fn bump_save_seq(&mut self) -> u32 {
         self.save_seq = self.save_seq.saturating_add(1);
         self.save_seq
@@ -1005,12 +979,6 @@ impl Gen3dAiJob {
         self.current_run_input_tokens
             .saturating_add(self.current_run_output_tokens)
             .saturating_add(self.current_run_unsplit_tokens)
-    }
-
-    pub(crate) fn total_tokens(&self) -> u64 {
-        self.total_input_tokens
-            .saturating_add(self.total_output_tokens)
-            .saturating_add(self.total_unsplit_tokens)
     }
 
     pub(crate) fn current_run_input_tokens(&self) -> u64 {
@@ -1130,16 +1098,6 @@ impl Gen3dAiJob {
         if matches!(api, Gen3dAiApi::ChatCompletions) {
             self.chat_fallbacks_this_run = self.chat_fallbacks_this_run.saturating_add(1);
         }
-    }
-
-    pub(crate) fn chat_fallbacks_this_run(&self) -> u32 {
-        self.chat_fallbacks_this_run
-    }
-
-    pub(crate) fn progress_message(&self) -> Option<String> {
-        let shared = self.shared_progress.as_ref()?;
-        let guard = shared.lock().ok()?;
-        Some(guard.message.clone())
     }
 }
 

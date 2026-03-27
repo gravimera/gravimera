@@ -2580,16 +2580,12 @@ pub(crate) fn gen3d_update_ui_text(
     let total_unsplit_tokens = format_compact_count(total_unsplit_tokens_raw);
 
     let run_tokens_summary = if run_unsplit_tokens_raw > 0 {
-        format!(
-            "in {run_input_tokens} out {run_output_tokens} unk {run_unsplit_tokens}"
-        )
+        format!("in {run_input_tokens} out {run_output_tokens} unk {run_unsplit_tokens}")
     } else {
         format!("in {run_input_tokens} out {run_output_tokens}")
     };
     let total_tokens_summary = if total_unsplit_tokens_raw > 0 {
-        format!(
-            "in {total_input_tokens} out {total_output_tokens} unk {total_unsplit_tokens}"
-        )
+        format!("in {total_input_tokens} out {total_output_tokens} unk {total_unsplit_tokens}")
     } else {
         format!("in {total_input_tokens} out {total_output_tokens}")
     };
@@ -2747,9 +2743,7 @@ pub(crate) fn gen3d_update_ui_text(
         format!("in {run_input_tokens} | out {run_output_tokens}")
     };
     let total_tokens_line = if total_unsplit_tokens_raw > 0 {
-        format!(
-            "in {total_input_tokens} | out {total_output_tokens} | unk {total_unsplit_tokens}"
-        )
+        format!("in {total_input_tokens} | out {total_output_tokens} | unk {total_unsplit_tokens}")
     } else {
         format!("in {total_input_tokens} | out {total_output_tokens}")
     };

@@ -424,19 +424,6 @@ struct AutomationWorld<'w, 's> {
         ),
         Or<(With<Commandable>, With<BuildObject>, With<Enemy>)>,
     >,
-    world_objects: Query<
-        'w,
-        's,
-        (
-            Entity,
-            &'static ObjectId,
-            &'static Transform,
-            &'static ObjectPrefabId,
-            Option<&'static ObjectTint>,
-        ),
-        (Without<Player>, Or<(With<BuildObject>, With<Commandable>)>),
-    >,
-    children_q: Query<'w, 's, &'static Children>,
     scene_instances: Query<
         'w,
         's,

@@ -86,14 +86,6 @@ impl Default for Gen3dTaskQueue {
 }
 
 impl Gen3dTaskQueue {
-    pub(crate) fn active_meta(&self) -> Option<&Gen3dSessionMeta> {
-        self.metas.get(&self.active_session_id)
-    }
-
-    pub(crate) fn active_meta_mut(&mut self) -> Option<&mut Gen3dSessionMeta> {
-        self.metas.get_mut(&self.active_session_id)
-    }
-
     pub(crate) fn ensure_meta(&mut self, id: Gen3dSessionId, kind: Gen3dSessionKind) {
         let now = now_ms();
         self.metas.entry(id).or_insert_with(|| Gen3dSessionMeta {
@@ -163,9 +155,5 @@ impl Gen3dTaskQueue {
                 Gen3dSessionKind::NewBuild => false,
             })
             .map(|meta| meta.id)
-    }
-
-    pub(crate) fn queue_len(&self) -> usize {
-        self.queue.len()
     }
 }
