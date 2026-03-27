@@ -64,7 +64,11 @@ pub(crate) fn apply_active_world_floor(
     mut active: ResMut<ActiveWorldFloor>,
     floors: Query<Entity, With<WorldFloor>>,
 ) {
-    if !active.dirty && !floors.is_empty() {
+    if floors.is_empty() {
+        return;
+    }
+
+    if !active.dirty {
         return;
     }
 
@@ -73,24 +77,42 @@ pub(crate) fn apply_active_world_floor(
     let mesh_handle = meshes.add(mesh);
     let material = material_from_def(&def, &mut materials);
 
+    // World floors can be spawned/despawned via deferred commands (e.g. preview scenes).
+    // Applying commands to entities that were despawned earlier in the same frame will
+    // otherwise panic when `apply_deferred` runs, so we gate on existence at apply time.
     for entity in &floors {
-        let mut entity_cmd = commands.entity(entity);
-        entity_cmd.insert((
-            Mesh3d(mesh_handle.clone()),
-            MeshMaterial3d(material.clone()),
-        ));
-        entity_cmd.remove::<FloorCpuWave>();
-
+        let mesh_handle = mesh_handle.clone();
+        let material = material.clone();
         match def.animation.mode {
             FloorAnimationMode::Cpu | FloorAnimationMode::Gpu => {
-                entity_cmd.insert(FloorCpuWave {
-                    mesh: mesh_handle.clone(),
-                    grid: grid.clone(),
-                    waves: def.animation.waves.clone(),
-                    normal_strength: def.animation.normal_strength,
+                let grid = grid.clone();
+                let waves = def.animation.waves.clone();
+                let normal_strength = def.animation.normal_strength;
+                commands.queue(move |world: &mut World| {
+                    let Ok(mut entity_mut) = world.get_entity_mut(entity) else {
+                        return;
+                    };
+
+                    entity_mut.insert((Mesh3d(mesh_handle.clone()), MeshMaterial3d(material)));
+                    entity_mut.remove::<FloorCpuWave>();
+                    entity_mut.insert(FloorCpuWave {
+                        mesh: mesh_handle,
+                        grid,
+                        waves,
+                        normal_strength,
+                    });
                 });
             }
-            FloorAnimationMode::None => {}
+            FloorAnimationMode::None => {
+                commands.queue(move |world: &mut World| {
+                    let Ok(mut entity_mut) = world.get_entity_mut(entity) else {
+                        return;
+                    };
+
+                    entity_mut.insert((Mesh3d(mesh_handle), MeshMaterial3d(material)));
+                    entity_mut.remove::<FloorCpuWave>();
+                });
+            }
         }
     }
 
@@ -570,5 +592,48 @@ mod tests {
             other => panic!("unexpected color attribute: {other:?}"),
         };
         assert_eq!(positions_len, colors_len);
+    }
+
+    #[test]
+    fn apply_active_world_floor_keeps_dirty_when_no_floors_exist() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<ActiveWorldFloor>();
+
+        app.add_systems(Update, apply_active_world_floor);
+
+        app.update();
+
+        let active = app.world().resource::<ActiveWorldFloor>();
+        assert!(active.dirty, "Expected dirty to remain true with no floors.");
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
+        assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 0);
+    }
+
+    #[test]
+    fn apply_active_world_floor_does_not_panic_if_floor_despawned_before_apply() {
+        fn despawn_floors_first(mut commands: Commands, floors: Query<Entity, With<WorldFloor>>) {
+            for entity in &floors {
+                commands.entity(entity).despawn();
+            }
+        }
+
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<ActiveWorldFloor>();
+        app.world_mut().spawn((WorldFloor,));
+
+        app.add_systems(Update, despawn_floors_first);
+        app.add_systems(
+            Update,
+            apply_active_world_floor.after(despawn_floors_first),
+        );
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            app.update();
+        }));
+        assert!(result.is_ok(), "Expected no panic, got: {result:?}");
     }
 }

@@ -483,6 +483,7 @@ fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.add_message::<AppExit>();
     app.add_message::<HealthChangeEvent>();
     app.add_message::<ModelSpeechBubbleCommand>();
+    app.add_message::<UiToastCommand>();
     app.add_message::<scene_store::SceneSaveRequest>();
     app.insert_resource(headless::HeadlessExit {
         timer: exit_after_seconds.map(|secs| Timer::from_seconds(secs, TimerMode::Once)),
