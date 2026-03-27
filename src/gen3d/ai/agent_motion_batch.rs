@@ -444,9 +444,10 @@ pub(super) fn poll_agent_motion_batch(
                     channel, resp.api
                 );
                 job.note_api_used(resp.api);
-                job.add_token_usage(
-                    resp.input_tokens.unwrap_or(0),
-                    resp.output_tokens.unwrap_or(0),
+                job.add_token_usage_from_response(
+                    resp.input_tokens,
+                    resp.output_tokens,
+                    resp.total_tokens,
                 );
                 job.session = resp.session;
 

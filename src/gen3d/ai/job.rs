@@ -620,8 +620,10 @@ pub(crate) struct Gen3dAiJob {
     pub(super) last_run_elapsed: Option<std::time::Duration>,
     pub(super) current_run_input_tokens: u64,
     pub(super) current_run_output_tokens: u64,
+    pub(super) current_run_unsplit_tokens: u64,
     pub(super) total_input_tokens: u64,
     pub(super) total_output_tokens: u64,
+    pub(super) total_unsplit_tokens: u64,
     pub(super) chat_fallbacks_this_run: u32,
     pub(super) agent: Gen3dAgentState,
     pub(super) save_seq: u32,
@@ -1002,11 +1004,13 @@ impl Gen3dAiJob {
     pub(crate) fn current_run_tokens(&self) -> u64 {
         self.current_run_input_tokens
             .saturating_add(self.current_run_output_tokens)
+            .saturating_add(self.current_run_unsplit_tokens)
     }
 
     pub(crate) fn total_tokens(&self) -> u64 {
         self.total_input_tokens
             .saturating_add(self.total_output_tokens)
+            .saturating_add(self.total_unsplit_tokens)
     }
 
     pub(crate) fn current_run_input_tokens(&self) -> u64 {
@@ -1023,6 +1027,14 @@ impl Gen3dAiJob {
 
     pub(crate) fn total_output_tokens(&self) -> u64 {
         self.total_output_tokens
+    }
+
+    pub(crate) fn current_run_unsplit_tokens(&self) -> u64 {
+        self.current_run_unsplit_tokens
+    }
+
+    pub(crate) fn total_unsplit_tokens(&self) -> u64 {
+        self.total_unsplit_tokens
     }
 
     pub(super) fn artifact_dir(&self) -> Option<&Path> {
@@ -1055,6 +1067,7 @@ impl Gen3dAiJob {
     pub(super) fn start_run_metrics(&mut self) {
         self.current_run_input_tokens = 0;
         self.current_run_output_tokens = 0;
+        self.current_run_unsplit_tokens = 0;
         self.chat_fallbacks_this_run = 0;
         self.run_started_at = Some(std::time::Instant::now());
         self.last_run_elapsed = None;
@@ -1084,6 +1097,26 @@ impl Gen3dAiJob {
             self.current_run_output_tokens.saturating_add(output_tokens);
         self.total_input_tokens = self.total_input_tokens.saturating_add(input_tokens);
         self.total_output_tokens = self.total_output_tokens.saturating_add(output_tokens);
+    }
+
+    pub(super) fn add_unsplit_tokens(&mut self, tokens: u64) {
+        self.current_run_unsplit_tokens = self.current_run_unsplit_tokens.saturating_add(tokens);
+        self.total_unsplit_tokens = self.total_unsplit_tokens.saturating_add(tokens);
+    }
+
+    pub(super) fn add_token_usage_from_response(
+        &mut self,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        total_tokens: Option<u64>,
+    ) {
+        match (input_tokens, output_tokens, total_tokens) {
+            (Some(input), Some(output), _) => self.add_token_usage(input, output),
+            (Some(input), None, _) => self.add_token_usage(input, 0),
+            (None, Some(output), _) => self.add_token_usage(0, output),
+            (None, None, Some(total),) => self.add_unsplit_tokens(total),
+            (None, None, None) => {}
+        }
     }
 
     fn stop_gen3d_log_capture(&mut self) {

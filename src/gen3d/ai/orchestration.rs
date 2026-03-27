@@ -862,6 +862,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.last_run_elapsed = None;
     job.current_run_input_tokens = 0;
     job.current_run_output_tokens = 0;
+    job.current_run_unsplit_tokens = 0;
     job.chat_fallbacks_this_run = 0;
     job.descriptor_meta_cache = None;
     job.descriptor_meta_in_flight = None;
@@ -1426,10 +1427,7 @@ pub(super) fn poll_gen3d_descriptor_meta_in_flight(job: &mut Gen3dAiJob) {
     match result {
         Ok(resp) => {
             job.note_api_used(resp.api);
-            job.add_token_usage(
-                resp.input_tokens.unwrap_or(0),
-                resp.output_tokens.unwrap_or(0),
-            );
+            job.add_token_usage_from_response(resp.input_tokens, resp.output_tokens, resp.total_tokens);
             if let Some(flag) = resp.session.responses_supported {
                 job.session.responses_supported = Some(flag);
             }
@@ -2078,10 +2076,7 @@ pub(crate) fn gen3d_poll_ai_job(
                 } else if let Some(tokens) = resp.total_tokens {
                     debug!("Gen3D: OpenAI usage total_tokens={tokens}");
                 }
-                job.add_token_usage(
-                    resp.input_tokens.unwrap_or(0),
-                    resp.output_tokens.unwrap_or(0),
-                );
+                job.add_token_usage_from_response(resp.input_tokens, resp.output_tokens, resp.total_tokens);
                 let max_tokens = config.gen3d_max_tokens;
                 if max_tokens > 0 && job.current_run_tokens() >= max_tokens {
                     let current_tokens = job.current_run_tokens();
@@ -3204,9 +3199,10 @@ fn poll_gen3d_parallel_components(
                     task.sent_images
                 );
                 job.note_api_used(resp.api);
-                job.add_token_usage(
-                    resp.input_tokens.unwrap_or(0),
-                    resp.output_tokens.unwrap_or(0),
+                job.add_token_usage_from_response(
+                    resp.input_tokens,
+                    resp.output_tokens,
+                    resp.total_tokens,
                 );
                 if let Some(flag) = resp.session.responses_supported {
                     job.session.responses_supported = Some(flag);

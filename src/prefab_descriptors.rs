@@ -191,6 +191,9 @@ pub(crate) struct PrefabDescriptorProvenanceV1 {
     /// Total output tokens consumed by Gen3D across all saved revisions for this prefab (best-effort).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) total_output_tokens: Option<u64>,
+    /// Total tokens consumed by Gen3D where an input/output breakdown was not available (best-effort).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) total_unsplit_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) gen3d: Option<PrefabDescriptorGen3dV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -226,6 +229,7 @@ impl PrefabDescriptorProvenanceV1 {
             && self.modified_at_ms.is_none()
             && self.total_input_tokens.is_none()
             && self.total_output_tokens.is_none()
+            && self.total_unsplit_tokens.is_none()
             && self.gen3d.is_none()
             && self.revisions.is_empty()
             && self.extra.is_empty()
@@ -525,6 +529,7 @@ mod tests {
                 modified_at_ms: None,
                 total_input_tokens: None,
                 total_output_tokens: None,
+                total_unsplit_tokens: None,
                 gen3d: Some(PrefabDescriptorGen3dV1 {
                     prompt: Some("  make a tower ".to_string()),
                     style_prompt: Some("  ".to_string()),

@@ -98,9 +98,10 @@ pub(super) fn poll_agent_component_batch(
                     idx, component_name, resp.api, task.sent_images
                 );
                 job.note_api_used(resp.api);
-                job.add_token_usage(
-                    resp.input_tokens.unwrap_or(0),
-                    resp.output_tokens.unwrap_or(0),
+                job.add_token_usage_from_response(
+                    resp.input_tokens,
+                    resp.output_tokens,
+                    resp.total_tokens,
                 );
                 if let Some(flag) = resp.session.responses_supported {
                     job.session.responses_supported = Some(flag);

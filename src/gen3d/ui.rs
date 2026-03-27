@@ -2572,8 +2572,27 @@ pub(crate) fn gen3d_update_ui_text(
 
     let run_input_tokens = format_compact_count(job.current_run_input_tokens());
     let run_output_tokens = format_compact_count(job.current_run_output_tokens());
+    let run_unsplit_tokens_raw = job.current_run_unsplit_tokens();
+    let run_unsplit_tokens = format_compact_count(run_unsplit_tokens_raw);
     let total_input_tokens = format_compact_count(job.total_input_tokens());
     let total_output_tokens = format_compact_count(job.total_output_tokens());
+    let total_unsplit_tokens_raw = job.total_unsplit_tokens();
+    let total_unsplit_tokens = format_compact_count(total_unsplit_tokens_raw);
+
+    let run_tokens_summary = if run_unsplit_tokens_raw > 0 {
+        format!(
+            "in {run_input_tokens} out {run_output_tokens} unk {run_unsplit_tokens}"
+        )
+    } else {
+        format!("in {run_input_tokens} out {run_output_tokens}")
+    };
+    let total_tokens_summary = if total_unsplit_tokens_raw > 0 {
+        format!(
+            "in {total_input_tokens} out {total_output_tokens} unk {total_unsplit_tokens}"
+        )
+    } else {
+        format!("in {total_input_tokens} out {total_output_tokens}")
+    };
 
     let mut step_status = "—".to_string();
     if let Some(active) = workshop.status_log.active.as_ref() {
@@ -2602,7 +2621,7 @@ pub(crate) fn gen3d_update_ui_text(
         "State: {state} | Prefab: {prefab_status}\n\
 	Draft: comps {components} | parts {parts} | motion {motions}\n\
 	Run: attempt {} | step {} | time {run_time}\n\
-	Tokens: run in {run_input_tokens} out {run_output_tokens} | total in {total_input_tokens} out {total_output_tokens}\n\
+	Tokens: run {run_tokens_summary} | total {total_tokens_summary}\n\
 	Step: {step_status}",
         job.attempt() + 1,
         job.step() + 1,
@@ -2716,8 +2735,24 @@ pub(crate) fn gen3d_update_ui_text(
         .unwrap_or_else(|| "—".into());
     let run_input_tokens = format_compact_count(job.current_run_input_tokens());
     let run_output_tokens = format_compact_count(job.current_run_output_tokens());
+    let run_unsplit_tokens_raw = job.current_run_unsplit_tokens();
+    let run_unsplit_tokens = format_compact_count(run_unsplit_tokens_raw);
     let total_input_tokens = format_compact_count(job.total_input_tokens());
     let total_output_tokens = format_compact_count(job.total_output_tokens());
+    let total_unsplit_tokens_raw = job.total_unsplit_tokens();
+    let total_unsplit_tokens = format_compact_count(total_unsplit_tokens_raw);
+    let run_tokens_line = if run_unsplit_tokens_raw > 0 {
+        format!("in {run_input_tokens} | out {run_output_tokens} | unk {run_unsplit_tokens}")
+    } else {
+        format!("in {run_input_tokens} | out {run_output_tokens}")
+    };
+    let total_tokens_line = if total_unsplit_tokens_raw > 0 {
+        format!(
+            "in {total_input_tokens} | out {total_output_tokens} | unk {total_unsplit_tokens}"
+        )
+    } else {
+        format!("in {total_input_tokens} | out {total_output_tokens}")
+    };
     let state = if workshop.error.is_some() {
         "Error".to_string()
     } else if active_session_is_queued(&task_queue) {
@@ -2732,7 +2767,7 @@ pub(crate) fn gen3d_update_ui_text(
         "Idle".to_string()
     };
     let stats_text = format!(
-        "State: {state}\nRun time: {run_time}\nTokens (run): in {run_input_tokens} | out {run_output_tokens}\nTokens (total): in {total_input_tokens} | out {total_output_tokens}",
+        "State: {state}\nRun time: {run_time}\nTokens (run): {run_tokens_line}\nTokens (total): {total_tokens_line}",
     );
     {
         let mut stats = texts.p3();

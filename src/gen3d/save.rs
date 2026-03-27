@@ -2452,6 +2452,7 @@ fn save_generated_prefab_descriptor_best_effort(
 
     let run_input_tokens = job.current_run_input_tokens();
     let run_output_tokens = job.current_run_output_tokens();
+    let run_unsplit_tokens = job.current_run_unsplit_tokens();
     let run_duration_ms = job.run_elapsed().map(|d| d.as_millis() as u128);
 
     let prev_total_input_tokens = existing_descriptor
@@ -2476,8 +2477,29 @@ fn save_generated_prefab_descriptor_best_effort(
                 .map(|p| sum_revision_output_tokens(&p.revisions))
         })
         .unwrap_or(0);
+    let prev_total_unsplit_tokens = existing_descriptor
+        .as_ref()
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.total_unsplit_tokens)
+        .or_else(|| {
+            existing_descriptor
+                .as_ref()
+                .and_then(|d| d.provenance.as_ref())
+                .map(|p| {
+                    let mut out: u64 = 0;
+                    for rev in &p.revisions {
+                        if let Some(tokens) = rev.extra.get("tokens_unsplit").and_then(|v| v.as_u64())
+                        {
+                            out = out.saturating_add(tokens);
+                        }
+                    }
+                    out
+                })
+        })
+        .unwrap_or(0);
     let new_total_input_tokens = prev_total_input_tokens.saturating_add(run_input_tokens);
     let new_total_output_tokens = prev_total_output_tokens.saturating_add(run_output_tokens);
+    let new_total_unsplit_tokens = prev_total_unsplit_tokens.saturating_add(run_unsplit_tokens);
     let created_at_ms = existing_descriptor
         .as_ref()
         .and_then(|d| d.provenance.as_ref())
@@ -2556,8 +2578,16 @@ fn save_generated_prefab_descriptor_best_effort(
         serde_json::Value::from(run_output_tokens),
     );
     revision_extra.insert(
+        "tokens_unsplit".to_string(),
+        serde_json::Value::from(run_unsplit_tokens),
+    );
+    revision_extra.insert(
         "tokens_total".to_string(),
-        serde_json::Value::from(run_input_tokens.saturating_add(run_output_tokens)),
+        serde_json::Value::from(
+            run_input_tokens
+                .saturating_add(run_output_tokens)
+                .saturating_add(run_unsplit_tokens),
+        ),
     );
     if let Some(ms) = run_duration_ms {
         let ms = ms.min(u128::from(u64::MAX)) as u64;
@@ -2747,6 +2777,7 @@ fn save_generated_prefab_descriptor_best_effort(
             modified_at_ms: Some(now_ms),
             total_input_tokens: Some(new_total_input_tokens),
             total_output_tokens: Some(new_total_output_tokens),
+            total_unsplit_tokens: Some(new_total_unsplit_tokens),
             gen3d: Some(crate::prefab_descriptors::PrefabDescriptorGen3dV1 {
                 prompt: Some(prompt_used.trim().to_string()).filter(|v| !v.is_empty()),
                 style_prompt: None,
