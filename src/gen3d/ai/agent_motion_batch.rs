@@ -444,9 +444,10 @@ pub(super) fn poll_agent_motion_batch(
                     channel, resp.api
                 );
                 job.note_api_used(resp.api);
-                if let Some(tokens) = resp.total_tokens {
-                    job.add_tokens(tokens);
-                }
+                job.add_token_usage(
+                    resp.input_tokens.unwrap_or(0),
+                    resp.output_tokens.unwrap_or(0),
+                );
                 job.session = resp.session;
 
                 if let Some(dir) = job.step_dir.as_deref() {

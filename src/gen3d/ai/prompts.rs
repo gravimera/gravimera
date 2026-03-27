@@ -1198,6 +1198,7 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - Use `reuse_groups` when multiple components share identical or mirrored geometry (wheels, legs, L/R symmetry).\n\
          - If you model L/R or numbered sets (ex: `left_arm`/`right_arm`, `leg_0..leg_7`), prefer `reuse_groups`.\n\
          - It does NOT create components; every source/target must exist in `components[]`.\n\
+         - Before returning JSON: verify every `reuse_groups.source` and every entry in `reuse_groups.targets[]` is also listed as a component `name` in `components[]`.\n\
          - Each reuse group MUST specify:\n\
            - `kind`: `copy_component` or `copy_component_subtree`.\n\
              - Prefer `copy_component_subtree` for whole limbs (arm/leg chains) so geometry + details stay consistent.\n\

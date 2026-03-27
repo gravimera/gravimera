@@ -382,7 +382,9 @@ fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
-fn extract_claude_stream_output(body: &str) -> (Option<String>, Option<u64>) {
+fn extract_claude_stream_output(
+    body: &str,
+) -> (Option<String>, Option<u64>, Option<u64>, Option<u64>) {
     let mut out = String::new();
     let mut input_tokens: Option<u64> = None;
     let mut output_tokens: Option<u64> = None;
@@ -450,7 +452,12 @@ fn extract_claude_stream_output(body: &str) -> (Option<String>, Option<u64>) {
         (None, None) => None,
     };
 
-    ((!out.trim().is_empty()).then_some(out), total_tokens)
+    (
+        (!out.trim().is_empty()).then_some(out),
+        input_tokens,
+        output_tokens,
+        total_tokens,
+    )
 }
 
 pub(super) fn generate_text_via_claude(
@@ -580,6 +587,8 @@ pub(super) fn generate_text_via_claude(
                 text,
                 api: Gen3dAiApi::ClaudeMessages,
                 session,
+                input_tokens: Some(1),
+                output_tokens: Some(0),
                 total_tokens: Some(1),
             };
             append_agent_trace_event_v1(
@@ -812,7 +821,8 @@ pub(super) fn generate_text_via_claude(
         );
     }
 
-    let (text_opt, total_tokens) = extract_claude_stream_output(&body);
+    let (text_opt, input_tokens, output_tokens, total_tokens) =
+        extract_claude_stream_output(&body);
     let text = text_opt.ok_or_else(|| {
         error!(
             "Gen3D: Claude stream returned no output text (prefix={}, http_status={})",
@@ -851,6 +861,8 @@ pub(super) fn generate_text_via_claude(
         text,
         api: Gen3dAiApi::ClaudeMessages,
         session,
+        input_tokens,
+        output_tokens,
         total_tokens,
     })
 }
@@ -883,9 +895,11 @@ data: {"type":"message_delta","usage":{"output_tokens":42}}
 event: message_stop
 data: {"type":"message_stop"}
         "#;
-        let (text, tokens) = extract_claude_stream_output(body);
+        let (text, input_tokens, output_tokens, total_tokens) = extract_claude_stream_output(body);
         assert_eq!(text.unwrap(), "Hello world");
-        assert_eq!(tokens, Some(52));
+        assert_eq!(input_tokens, Some(10));
+        assert_eq!(output_tokens, Some(42));
+        assert_eq!(total_tokens, Some(52));
     }
 
     #[test]

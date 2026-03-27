@@ -1548,6 +1548,26 @@ fn execute_qa_v1(
         }
     }
 
+    // Warning: reuse group validation produced warnings (some groups may have been ignored or normalized).
+    if !job.reuse_group_warnings.is_empty() {
+        let sample: Vec<String> = job.reuse_group_warnings.iter().cloned().take(6).collect();
+        push_issue(
+            &mut warnings,
+            "qa",
+            &serde_json::json!({
+                "severity":"warn",
+                "kind":"reuse_group_warnings",
+                "fix_step":"plan",
+                "message":"Plan reuse_groups produced warnings during validation; some reuse groups may be ignored or normalized.",
+                "evidence": {
+                    "reuse_groups_total": job.reuse_groups.len(),
+                    "warnings_total": job.reuse_group_warnings.len(),
+                    "warnings_sample": sample,
+                },
+            }),
+        );
+    }
+
     // Complaint: motion validation produced warnings after motion authoring; allow one retry to improve.
     let mobility_present = smoke
         .get("mobility_present")

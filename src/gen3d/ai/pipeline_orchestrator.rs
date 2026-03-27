@@ -204,9 +204,10 @@ fn poll_pipeline_user_image_summary(
         Ok(resp) => {
             job.note_api_used(resp.api);
             job.session = resp.session;
-            if let Some(tokens) = resp.total_tokens {
-                job.add_tokens(tokens);
-            }
+            job.add_token_usage(
+                resp.input_tokens.unwrap_or(0),
+                resp.output_tokens.unwrap_or(0),
+            );
 
             // Keep parsing logic identical to agent mode.
             let normalized = resp.text.replace("\r\n", "\n").replace('\r', "\n");
@@ -306,9 +307,10 @@ fn poll_pipeline_prompt_intent(
         Ok(resp) => {
             job.note_api_used(resp.api);
             job.session = resp.session;
-            if let Some(tokens) = resp.total_tokens {
-                job.add_tokens(tokens);
-            }
+            job.add_token_usage(
+                resp.input_tokens.unwrap_or(0),
+                resp.output_tokens.unwrap_or(0),
+            );
 
             let parsed = match super::parse::parse_ai_prompt_intent_from_text(&resp.text) {
                 Ok(v) => v,

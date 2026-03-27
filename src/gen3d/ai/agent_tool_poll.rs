@@ -609,9 +609,10 @@ pub(super) fn poll_agent_tool(
         Ok(resp) => {
             job.note_api_used(resp.api);
             job.session = resp.session;
-            if let Some(tokens) = resp.total_tokens {
-                job.add_tokens(tokens);
-            }
+            job.add_token_usage(
+                resp.input_tokens.unwrap_or(0),
+                resp.output_tokens.unwrap_or(0),
+            );
 
             match kind {
                 super::Gen3dAgentLlmToolKind::SelectEditStrategy => {
@@ -1244,6 +1245,12 @@ pub(super) fn poll_agent_tool(
                                             err,
                                         )
                                     } else {
+                                        let reuse_group_warnings_sample: Vec<String> = job
+                                            .reuse_group_warnings
+                                            .iter()
+                                            .cloned()
+                                            .take(12)
+                                            .collect();
                                         Gen3dToolResultJsonV1::ok(
                                             call.call_id.clone(),
                                             call.tool_id.clone(),
@@ -1251,6 +1258,10 @@ pub(super) fn poll_agent_tool(
                                                 "ok": true,
                                                 "components_total": job.planned_components.len(),
                                                 "plan_hash": job.plan_hash,
+                                                "reuse_groups_planned_total": plan_reuse_groups.len(),
+                                                "reuse_groups_validated_total": job.reuse_groups.len(),
+                                                "reuse_group_warnings_total": job.reuse_group_warnings.len(),
+                                                "reuse_group_warnings_sample": reuse_group_warnings_sample,
                                             }),
                                         )
                                     }

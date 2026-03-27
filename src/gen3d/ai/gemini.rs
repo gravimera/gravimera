@@ -235,8 +235,12 @@ fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
-fn extract_gemini_stream_output(body: &str) -> (Option<String>, Option<u64>) {
+fn extract_gemini_stream_output(
+    body: &str,
+) -> (Option<String>, Option<u64>, Option<u64>, Option<u64>) {
     let mut out = String::new();
+    let mut input_tokens = None::<u64>;
+    let mut output_tokens = None::<u64>;
     let mut total_tokens = None::<u64>;
 
     for line in body.lines() {
@@ -253,11 +257,20 @@ fn extract_gemini_stream_output(body: &str) -> (Option<String>, Option<u64>) {
             continue;
         };
 
-        if total_tokens.is_none() {
-            total_tokens = json
-                .get("usageMetadata")
-                .and_then(|v| v.get("totalTokenCount"))
-                .and_then(|v| v.as_u64());
+        if input_tokens.is_none() || output_tokens.is_none() || total_tokens.is_none() {
+            if let Some(usage) = json.get("usageMetadata") {
+                if input_tokens.is_none() {
+                    input_tokens = usage.get("promptTokenCount").and_then(|v| v.as_u64());
+                }
+                if output_tokens.is_none() {
+                    output_tokens = usage
+                        .get("candidatesTokenCount")
+                        .and_then(|v| v.as_u64());
+                }
+                if total_tokens.is_none() {
+                    total_tokens = usage.get("totalTokenCount").and_then(|v| v.as_u64());
+                }
+            }
         }
 
         let Some(candidates) = json.get("candidates").and_then(|v| v.as_array()) else {
@@ -289,7 +302,19 @@ fn extract_gemini_stream_output(body: &str) -> (Option<String>, Option<u64>) {
         }
     }
 
-    ((!out.trim().is_empty()).then_some(out), total_tokens)
+    let total_tokens = total_tokens.or_else(|| match (input_tokens, output_tokens) {
+        (Some(i), Some(o)) => Some(i.saturating_add(o)),
+        (Some(i), None) => Some(i),
+        (None, Some(o)) => Some(o),
+        (None, None) => None,
+    });
+
+    (
+        (!out.trim().is_empty()).then_some(out),
+        input_tokens,
+        output_tokens,
+        total_tokens,
+    )
 }
 
 fn is_gemini_structured_outputs_rejected(body: &str) -> bool {
@@ -503,6 +528,8 @@ pub(super) fn generate_text_via_gemini(
                 text,
                 api: Gen3dAiApi::GeminiStreamGenerateContent,
                 session,
+                input_tokens: Some(1),
+                output_tokens: Some(0),
                 total_tokens: Some(1),
             };
             append_agent_trace_event_v1(
@@ -704,7 +731,8 @@ pub(super) fn generate_text_via_gemini(
         );
     }
 
-    let (text_opt, total_tokens) = extract_gemini_stream_output(&body);
+    let (text_opt, input_tokens, output_tokens, total_tokens) =
+        extract_gemini_stream_output(&body);
     let text = text_opt.ok_or_else(|| {
         error!(
             "Gen3D: Gemini stream returned no output text (prefix={})",
@@ -739,6 +767,8 @@ pub(super) fn generate_text_via_gemini(
         text,
         api: Gen3dAiApi::GeminiStreamGenerateContent,
         session,
+        input_tokens,
+        output_tokens,
         total_tokens,
     })
 }
@@ -757,9 +787,11 @@ data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]}
 
 data: {"candidates":[{"content":{"parts":[{"text":" world"}]}}],"usageMetadata":{"totalTokenCount":42}}
         "#;
-        let (text, tokens) = extract_gemini_stream_output(body);
+        let (text, input_tokens, output_tokens, total_tokens) = extract_gemini_stream_output(body);
         assert_eq!(text.unwrap(), "Hello world");
-        assert_eq!(tokens, Some(42));
+        assert_eq!(input_tokens, None);
+        assert_eq!(output_tokens, None);
+        assert_eq!(total_tokens, Some(42));
     }
 
     #[test]

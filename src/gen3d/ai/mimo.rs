@@ -364,25 +364,23 @@ fn json_to_u64(value: &serde_json::Value) -> Option<u64> {
         .or_else(|| value.as_i64().and_then(|v| (v >= 0).then_some(v as u64)))
 }
 
-fn extract_mimo_total_tokens(json: &serde_json::Value) -> Option<u64> {
-    let usage = json.get("usage")?;
-    if let Some(value) = usage.get("total_tokens").and_then(json_to_u64) {
-        return Some(value);
-    }
+fn extract_mimo_token_usage(json: &serde_json::Value) -> (Option<u64>, Option<u64>, Option<u64>) {
+    let Some(usage) = json.get("usage") else {
+        return (None, None, None);
+    };
 
-    let prompt = usage
-        .get("prompt_tokens")
-        .and_then(json_to_u64)
-        .unwrap_or(0);
-    let completion = usage
-        .get("completion_tokens")
-        .and_then(json_to_u64)
-        .unwrap_or(0);
-    if prompt.saturating_add(completion) > 0 {
-        return Some(prompt.saturating_add(completion));
-    }
+    let total_tokens = usage.get("total_tokens").and_then(json_to_u64);
+    let input_tokens = usage.get("prompt_tokens").and_then(json_to_u64);
+    let output_tokens = usage.get("completion_tokens").and_then(json_to_u64);
 
-    None
+    let total_tokens = total_tokens.or_else(|| match (input_tokens, output_tokens) {
+        (Some(i), Some(o)) => Some(i.saturating_add(o)),
+        (Some(i), None) => Some(i),
+        (None, Some(o)) => Some(o),
+        (None, None) => None,
+    });
+
+    (input_tokens, output_tokens, total_tokens)
 }
 
 fn mimo_error_message(json: &serde_json::Value) -> Option<&str> {
@@ -765,7 +763,8 @@ fn mimo_chat_completions_flow(
         );
     }
 
-    let (text, total_tokens) = if let Some(json) = json_opt.as_ref() {
+    let (text, input_tokens, output_tokens, total_tokens) = if let Some(json) = json_opt.as_ref()
+    {
         if let Some(message) = mimo_error_message(json) {
             return Err(MimoError {
                 summary: format!("MiMo error: {message}"),
@@ -785,10 +784,14 @@ fn mimo_chat_completions_flow(
             .and_then(|v| v.as_str())
             .ok_or_else(|| MimoError::new("/chat/completions returned no content".into()))?
             .to_string();
-        (text, extract_mimo_total_tokens(json))
+        let (input_tokens, output_tokens, total_tokens) = extract_mimo_token_usage(json);
+        (text, input_tokens, output_tokens, total_tokens)
     } else if let Some(text) = extract_openai_chat_completions_sse_output_text(body_trim) {
-        let total_tokens = sse_last_json.as_ref().and_then(extract_mimo_total_tokens);
-        (text, total_tokens)
+        let (input_tokens, output_tokens, total_tokens) = sse_last_json
+            .as_ref()
+            .map(extract_mimo_token_usage)
+            .unwrap_or((None, None, None));
+        (text, input_tokens, output_tokens, total_tokens)
     } else if let Some(message) = sse_last_json.as_ref().and_then(mimo_error_message) {
         return Err(MimoError {
             summary: format!("MiMo error: {message}"),
@@ -823,6 +826,8 @@ fn mimo_chat_completions_flow(
         text,
         api: Gen3dAiApi::ChatCompletions,
         session: session.clone(),
+        input_tokens,
+        output_tokens,
         total_tokens,
     })
 }

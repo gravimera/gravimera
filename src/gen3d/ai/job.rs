@@ -618,8 +618,10 @@ pub(crate) struct Gen3dAiJob {
     pub(super) shared_progress: Option<Arc<Mutex<Gen3dAiProgress>>>,
     pub(super) run_started_at: Option<std::time::Instant>,
     pub(super) last_run_elapsed: Option<std::time::Duration>,
-    pub(super) current_run_tokens: u64,
-    pub(super) total_tokens: u64,
+    pub(super) current_run_input_tokens: u64,
+    pub(super) current_run_output_tokens: u64,
+    pub(super) total_input_tokens: u64,
+    pub(super) total_output_tokens: u64,
     pub(super) chat_fallbacks_this_run: u32,
     pub(super) agent: Gen3dAgentState,
     pub(super) save_seq: u32,
@@ -998,11 +1000,29 @@ impl Gen3dAiJob {
     }
 
     pub(crate) fn current_run_tokens(&self) -> u64 {
-        self.current_run_tokens
+        self.current_run_input_tokens
+            .saturating_add(self.current_run_output_tokens)
     }
 
     pub(crate) fn total_tokens(&self) -> u64 {
-        self.total_tokens
+        self.total_input_tokens
+            .saturating_add(self.total_output_tokens)
+    }
+
+    pub(crate) fn current_run_input_tokens(&self) -> u64 {
+        self.current_run_input_tokens
+    }
+
+    pub(crate) fn current_run_output_tokens(&self) -> u64 {
+        self.current_run_output_tokens
+    }
+
+    pub(crate) fn total_input_tokens(&self) -> u64 {
+        self.total_input_tokens
+    }
+
+    pub(crate) fn total_output_tokens(&self) -> u64 {
+        self.total_output_tokens
     }
 
     pub(super) fn artifact_dir(&self) -> Option<&Path> {
@@ -1033,7 +1053,8 @@ impl Gen3dAiJob {
     }
 
     pub(super) fn start_run_metrics(&mut self) {
-        self.current_run_tokens = 0;
+        self.current_run_input_tokens = 0;
+        self.current_run_output_tokens = 0;
         self.chat_fallbacks_this_run = 0;
         self.run_started_at = Some(std::time::Instant::now());
         self.last_run_elapsed = None;
@@ -1057,9 +1078,12 @@ impl Gen3dAiJob {
         self.stop_gen3d_log_capture();
     }
 
-    pub(super) fn add_tokens(&mut self, tokens: u64) {
-        self.current_run_tokens = self.current_run_tokens.saturating_add(tokens);
-        self.total_tokens = self.total_tokens.saturating_add(tokens);
+    pub(super) fn add_token_usage(&mut self, input_tokens: u64, output_tokens: u64) {
+        self.current_run_input_tokens = self.current_run_input_tokens.saturating_add(input_tokens);
+        self.current_run_output_tokens =
+            self.current_run_output_tokens.saturating_add(output_tokens);
+        self.total_input_tokens = self.total_input_tokens.saturating_add(input_tokens);
+        self.total_output_tokens = self.total_output_tokens.saturating_add(output_tokens);
     }
 
     fn stop_gen3d_log_capture(&mut self) {
@@ -1099,6 +1123,8 @@ pub(super) struct Gen3dAiTextResponse {
     pub(super) text: String,
     pub(super) api: Gen3dAiApi,
     pub(super) session: Gen3dAiSessionState,
+    pub(super) input_tokens: Option<u64>,
+    pub(super) output_tokens: Option<u64>,
     pub(super) total_tokens: Option<u64>,
 }
 

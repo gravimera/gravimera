@@ -1774,6 +1774,8 @@ fn mock_generate_text_via_openai(
         text,
         api: Gen3dAiApi::Responses,
         session,
+        input_tokens: Some(100),
+        output_tokens: Some(23),
         total_tokens: Some(123),
     })
 }
@@ -1795,36 +1797,36 @@ fn json_to_u64(value: &serde_json::Value) -> Option<u64> {
         .or_else(|| value.as_i64().and_then(|v| (v >= 0).then_some(v as u64)))
 }
 
-fn extract_openai_total_tokens(json: &serde_json::Value) -> Option<u64> {
-    let usage = json.get("usage")?;
-    if let Some(value) = usage.get("total_tokens").and_then(json_to_u64) {
-        return Some(value);
-    }
+fn extract_openai_token_usage(
+    json: &serde_json::Value,
+) -> (Option<u64>, Option<u64>, Option<u64>) {
+    let Some(usage) = json.get("usage") else {
+        return (None, None, None);
+    };
+
+    let total_tokens = usage.get("total_tokens").and_then(json_to_u64);
 
     // Responses API typically uses `input_tokens`/`output_tokens`.
-    let input = usage.get("input_tokens").and_then(json_to_u64).unwrap_or(0);
-    let output = usage
+    let input_tokens = usage
+        .get("input_tokens")
+        .and_then(json_to_u64)
+        // Chat Completions commonly uses `prompt_tokens`.
+        .or_else(|| usage.get("prompt_tokens").and_then(json_to_u64));
+
+    let output_tokens = usage
         .get("output_tokens")
         .and_then(json_to_u64)
-        .unwrap_or(0);
-    if input.saturating_add(output) > 0 {
-        return Some(input.saturating_add(output));
-    }
+        // Chat Completions commonly uses `completion_tokens`.
+        .or_else(|| usage.get("completion_tokens").and_then(json_to_u64));
 
-    // Chat Completions commonly uses `prompt_tokens`/`completion_tokens`.
-    let prompt = usage
-        .get("prompt_tokens")
-        .and_then(json_to_u64)
-        .unwrap_or(0);
-    let completion = usage
-        .get("completion_tokens")
-        .and_then(json_to_u64)
-        .unwrap_or(0);
-    if prompt.saturating_add(completion) > 0 {
-        return Some(prompt.saturating_add(completion));
-    }
+    let total_tokens = total_tokens.or_else(|| match (input_tokens, output_tokens) {
+        (Some(i), Some(o)) => Some(i.saturating_add(o)),
+        (Some(i), None) => Some(i),
+        (None, Some(o)) => Some(o),
+        (None, None) => None,
+    });
 
-    None
+    (input_tokens, output_tokens, total_tokens)
 }
 
 fn try_parse_openai_responses_sse(body: &str) -> Option<serde_json::Value> {
@@ -2297,7 +2299,7 @@ fn openai_responses_flow(
     }
 
     if let Some(text) = sse_output_text {
-        let total_tokens = extract_openai_total_tokens(&json);
+        let (input_tokens, output_tokens, total_tokens) = extract_openai_token_usage(&json);
 
         if success_used_previous_response_id {
             session.responses_continuation_supported = Some(true);
@@ -2310,6 +2312,8 @@ fn openai_responses_flow(
             text,
             api: Gen3dAiApi::Responses,
             session: session.clone(),
+            input_tokens,
+            output_tokens,
             total_tokens,
         });
     }
@@ -2402,7 +2406,7 @@ fn openai_responses_flow(
         }
     }
 
-    let total_tokens = extract_openai_total_tokens(&json);
+    let (input_tokens, output_tokens, total_tokens) = extract_openai_token_usage(&json);
     let text = extract_openai_responses_output_text(&json)
         .ok_or_else(|| OpenAiError::new("/responses returned no output text".into()))?;
 
@@ -2418,6 +2422,8 @@ fn openai_responses_flow(
         text,
         api: Gen3dAiApi::Responses,
         session: session.clone(),
+        input_tokens,
+        output_tokens,
         total_tokens,
     })
 }
@@ -2586,7 +2592,8 @@ fn openai_chat_completions_flow(
         );
     }
 
-    let (text, total_tokens) = if let Some(json) = json_opt.as_ref() {
+    let (text, input_tokens, output_tokens, total_tokens) = if let Some(json) = json_opt.as_ref()
+    {
         if let Some(message) = openai_error_message(json) {
             return Err(OpenAiError {
                 summary: format!("OpenAI error: {message}"),
@@ -2606,10 +2613,14 @@ fn openai_chat_completions_flow(
             .and_then(|v| v.as_str())
             .ok_or_else(|| OpenAiError::new("/chat/completions returned no content".into()))?
             .to_string();
-        (text, extract_openai_total_tokens(json))
+        let (input_tokens, output_tokens, total_tokens) = extract_openai_token_usage(json);
+        (text, input_tokens, output_tokens, total_tokens)
     } else if let Some(text) = extract_openai_chat_completions_sse_output_text(body_trim) {
-        let total_tokens = sse_last_json.as_ref().and_then(extract_openai_total_tokens);
-        (text, total_tokens)
+        let (input_tokens, output_tokens, total_tokens) = sse_last_json
+            .as_ref()
+            .map(extract_openai_token_usage)
+            .unwrap_or((None, None, None));
+        (text, input_tokens, output_tokens, total_tokens)
     } else if let Some(message) = sse_last_json.as_ref().and_then(openai_error_message) {
         return Err(OpenAiError {
             summary: format!("OpenAI error: {message}"),
@@ -2644,6 +2655,8 @@ fn openai_chat_completions_flow(
         text,
         api: Gen3dAiApi::ChatCompletions,
         session: session.clone(),
+        input_tokens,
+        output_tokens,
         total_tokens,
     })
 }

@@ -847,6 +847,95 @@ pub(super) fn ai_plan_to_initial_draft_defs(
         }
     }
 
+    // IMPORTANT: reuse groups do NOT create components.
+    // If a reuse group references a missing source/target component name, reject the plan
+    // instead of silently dropping reuse (which can lead to obvious asymmetry, e.g. one-sided limbs).
+    if !plan.reuse_groups.is_empty() {
+        fn is_reuse_kind(kind: AiReuseGroupKindJson) -> bool {
+            matches!(
+                kind,
+                AiReuseGroupKindJson::Component
+                    | AiReuseGroupKindJson::CopyComponent
+                    | AiReuseGroupKindJson::Subtree
+                    | AiReuseGroupKindJson::CopyComponentSubtree
+            )
+        }
+
+        let mut missing_refs: std::collections::BTreeMap<
+            String,
+            std::collections::BTreeSet<String>,
+        > = std::collections::BTreeMap::new();
+        for (group_idx, group) in plan.reuse_groups.iter().enumerate() {
+            if !is_reuse_kind(group.kind) {
+                continue;
+            }
+            let source = group.source.trim();
+            if !source.is_empty() && !name_to_idx.contains_key(source) {
+                missing_refs
+                    .entry(source.to_string())
+                    .or_default()
+                    .insert(format!("reuse_groups[{group_idx}].source"));
+            }
+            for (target_idx, raw_target) in group.targets.iter().enumerate() {
+                let target = raw_target.trim();
+                if target.is_empty() {
+                    continue;
+                }
+                if !name_to_idx.contains_key(target) {
+                    missing_refs
+                        .entry(target.to_string())
+                        .or_default()
+                        .insert(format!("reuse_groups[{group_idx}].targets[{target_idx}]"));
+                }
+            }
+        }
+
+        if !missing_refs.is_empty() {
+            let mut names: Vec<String> = missing_refs.keys().cloned().collect();
+            names.sort();
+            let total = names.len();
+            let mut names_sample = names.clone();
+            names_sample.truncate(12);
+            let more = total.saturating_sub(names_sample.len());
+
+            let mut lines: Vec<String> = Vec::new();
+            if more > 0 {
+                lines.push(format!(
+                    "AI plan invalid: reuse_groups references missing components in components[]: {names_sample:?} (+{more} more)."
+                ));
+            } else {
+                lines.push(format!(
+                    "AI plan invalid: reuse_groups references missing components in components[]: {names_sample:?}."
+                ));
+            }
+            lines.push(
+                "Note: reuse_groups does NOT create components; every reuse_groups.source/targets entry must also appear in components[]."
+                    .into(),
+            );
+            lines.push(
+                "Fix: add the missing components to components[] (with attach_to), or remove/rename the reuse_groups entries."
+                    .into(),
+            );
+
+            let mut details: Vec<String> = Vec::new();
+            for (name, locations) in missing_refs.iter().take(8) {
+                let locs: Vec<String> = locations.iter().cloned().take(6).collect();
+                let suffix = if locations.len() > locs.len() {
+                    format!(" (+{} more)", locations.len().saturating_sub(locs.len()))
+                } else {
+                    String::new()
+                };
+                details.push(format!("- {name}: {locs:?}{suffix}"));
+            }
+            if !details.is_empty() {
+                lines.push("Details:".into());
+                lines.extend(details);
+            }
+
+            return Err(lines.join("\n"));
+        }
+    }
+
     // Reuse groups are allowed to omit duplicate anchor definitions on targets, because geometry
     // (and most anchors) will be produced by deterministic copy later. However, the plan
     // conversion phase still needs the attachment interface anchors to exist so it can validate
@@ -4015,6 +4104,37 @@ mod tests {
             forward,
             expected
         );
+    }
+
+    #[test]
+    fn plan_errors_when_reuse_groups_reference_missing_components() {
+        let plan_text = r##"{
+          "version": 8,
+          "mobility": { "kind": "static" },
+          "reuse_groups": [
+            { "kind": "component", "source": "child_source", "targets": ["child_target"], "alignment": "rotation" }
+          ],
+          "components": [
+            {
+              "name": "root",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": []
+            },
+            {
+              "name": "child_source",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": []
+            }
+          ]
+        }"##;
+
+        let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+        let err = ai_plan_to_initial_draft_defs(plan).unwrap_err();
+        assert!(
+            err.contains("reuse_groups references missing components"),
+            "unexpected error: {err}"
+        );
+        assert!(err.contains("child_target"), "unexpected error: {err}");
     }
 
     fn assembled_child_transform(

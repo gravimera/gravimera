@@ -2570,8 +2570,10 @@ pub(crate) fn gen3d_update_ui_text(
         })
         .unwrap_or_else(|| "—".into());
 
-    let run_tokens = format_compact_count(job.current_run_tokens());
-    let total_tokens = format_compact_count(job.total_tokens());
+    let run_input_tokens = format_compact_count(job.current_run_input_tokens());
+    let run_output_tokens = format_compact_count(job.current_run_output_tokens());
+    let total_input_tokens = format_compact_count(job.total_input_tokens());
+    let total_output_tokens = format_compact_count(job.total_output_tokens());
 
     let mut step_status = "—".to_string();
     if let Some(active) = workshop.status_log.active.as_ref() {
@@ -2600,7 +2602,7 @@ pub(crate) fn gen3d_update_ui_text(
         "State: {state} | Prefab: {prefab_status}\n\
 	Draft: comps {components} | parts {parts} | motion {motions}\n\
 	Run: attempt {} | step {} | time {run_time}\n\
-	Tokens: run {run_tokens} | total {total_tokens}\n\
+	Tokens: run in {run_input_tokens} out {run_output_tokens} | total in {total_input_tokens} out {total_output_tokens}\n\
 	Step: {step_status}",
         job.attempt() + 1,
         job.step() + 1,
@@ -2712,8 +2714,10 @@ pub(crate) fn gen3d_update_ui_text(
             }
         })
         .unwrap_or_else(|| "—".into());
-    let run_tokens = format_compact_count(job.current_run_tokens());
-    let total_tokens = format_compact_count(job.total_tokens());
+    let run_input_tokens = format_compact_count(job.current_run_input_tokens());
+    let run_output_tokens = format_compact_count(job.current_run_output_tokens());
+    let total_input_tokens = format_compact_count(job.total_input_tokens());
+    let total_output_tokens = format_compact_count(job.total_output_tokens());
     let state = if workshop.error.is_some() {
         "Error".to_string()
     } else if active_session_is_queued(&task_queue) {
@@ -2728,7 +2732,7 @@ pub(crate) fn gen3d_update_ui_text(
         "Idle".to_string()
     };
     let stats_text = format!(
-        "State: {state}\nRun time: {run_time}\nTokens (run): {run_tokens}\nTokens (total): {total_tokens}",
+        "State: {state}\nRun time: {run_time}\nTokens (run): in {run_input_tokens} | out {run_output_tokens}\nTokens (total): in {total_input_tokens} | out {total_output_tokens}",
     );
     {
         let mut stats = texts.p3();

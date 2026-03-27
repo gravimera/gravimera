@@ -860,7 +860,8 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.pipeline = super::Gen3dPipelineState::default();
     job.run_started_at = None;
     job.last_run_elapsed = None;
-    job.current_run_tokens = 0;
+    job.current_run_input_tokens = 0;
+    job.current_run_output_tokens = 0;
     job.chat_fallbacks_this_run = 0;
     job.descriptor_meta_cache = None;
     job.descriptor_meta_in_flight = None;
@@ -1425,9 +1426,10 @@ pub(super) fn poll_gen3d_descriptor_meta_in_flight(job: &mut Gen3dAiJob) {
     match result {
         Ok(resp) => {
             job.note_api_used(resp.api);
-            if let Some(tokens) = resp.total_tokens {
-                job.add_tokens(tokens);
-            }
+            job.add_token_usage(
+                resp.input_tokens.unwrap_or(0),
+                resp.output_tokens.unwrap_or(0),
+            );
             if let Some(flag) = resp.session.responses_supported {
                 job.session.responses_supported = Some(flag);
             }
@@ -1585,8 +1587,8 @@ pub(crate) fn gen3d_poll_ai_job(
         }
     }
     let max_tokens = config.gen3d_max_tokens;
-    if max_tokens > 0 && job.current_run_tokens >= max_tokens {
-        let current_tokens = job.current_run_tokens;
+    if max_tokens > 0 && job.current_run_tokens() >= max_tokens {
+        let current_tokens = job.current_run_tokens();
         finish_job_best_effort(
             &mut commands,
             &review_cameras,
@@ -2068,13 +2070,21 @@ pub(crate) fn gen3d_poll_ai_job(
                 debug!("Gen3D: OpenAI response via {:?}", resp.api);
                 job.note_api_used(resp.api);
                 job.session = resp.session;
-                if let Some(tokens) = resp.total_tokens {
+                if resp.input_tokens.is_some() || resp.output_tokens.is_some() {
+                    debug!(
+                        "Gen3D: OpenAI usage input_tokens={:?} output_tokens={:?} total_tokens={:?}",
+                        resp.input_tokens, resp.output_tokens, resp.total_tokens
+                    );
+                } else if let Some(tokens) = resp.total_tokens {
                     debug!("Gen3D: OpenAI usage total_tokens={tokens}");
-                    job.add_tokens(tokens);
                 }
+                job.add_token_usage(
+                    resp.input_tokens.unwrap_or(0),
+                    resp.output_tokens.unwrap_or(0),
+                );
                 let max_tokens = config.gen3d_max_tokens;
-                if max_tokens > 0 && job.current_run_tokens >= max_tokens {
-                    let current_tokens = job.current_run_tokens;
+                if max_tokens > 0 && job.current_run_tokens() >= max_tokens {
+                    let current_tokens = job.current_run_tokens();
                     finish_job_best_effort(
                         &mut commands,
                         &review_cameras,
@@ -3194,9 +3204,10 @@ fn poll_gen3d_parallel_components(
                     task.sent_images
                 );
                 job.note_api_used(resp.api);
-                if let Some(tokens) = resp.total_tokens {
-                    job.add_tokens(tokens);
-                }
+                job.add_token_usage(
+                    resp.input_tokens.unwrap_or(0),
+                    resp.output_tokens.unwrap_or(0),
+                );
                 if let Some(flag) = resp.session.responses_supported {
                     job.session.responses_supported = Some(flag);
                 }

@@ -131,7 +131,8 @@ Fields:
 - `created_at_ms`: optional integer (unix epoch milliseconds).
 - `created_duration_ms`: optional integer (milliseconds). Best-effort duration of the *initial* Gen3D creation run (the first saved `generated` revision).
 - `modified_at_ms`: optional integer (unix epoch milliseconds). Last-modified timestamp (for sorting and recency).
-- `total_tokens`: optional integer. Best-effort total tokens consumed by Gen3D across all saved revisions for this prefab (creation + modifications). When present, it should match the sum of per-revision `tokens_total`.
+- `total_input_tokens`: optional integer. Best-effort total **input** tokens consumed by Gen3D across all saved revisions for this prefab (creation + modifications).
+- `total_output_tokens`: optional integer. Best-effort total **output** tokens consumed by Gen3D across all saved revisions for this prefab (creation + modifications).
 - `gen3d`: optional object (present when `source = "gen3d"`):
   - `prompt`: optional string (the user’s intent; may be multi-line).
   - `style_prompt`: optional string
@@ -155,7 +156,9 @@ Fields:
   - `summary`: string
   - Additional fields may be present. Recommended fields when available:
     - `prompt`: string. The Gen3D prompt used at the time this revision was saved.
-    - `tokens_total`: integer. Best-effort token count consumed by Gen3D to produce this revision.
+    - `tokens_input`: integer. Best-effort input tokens consumed by Gen3D to produce this revision.
+    - `tokens_output`: integer. Best-effort output tokens consumed by Gen3D to produce this revision.
+    - `tokens_total`: integer. Best-effort total tokens consumed by Gen3D to produce this revision (`tokens_input + tokens_output`).
     - `duration_ms`: integer. Best-effort duration (milliseconds) of the Gen3D run that produced this revision.
     - `descriptor_meta_policy`: string (`"suggest"` or `"preserve"`). Indicates how descriptor-meta was applied.
     - `descriptor_meta_v1`: object. Raw Gen3D descriptor-meta output (see `gen3d.descriptor_meta_v1` above).

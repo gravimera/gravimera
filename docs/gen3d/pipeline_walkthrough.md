@@ -49,6 +49,7 @@ Pipeline stages (simplified):
 2. `EnsureComponents`
    - Tool: `llm_generate_components_v1` (missing-only) until every planned component has `actual_size`
    - Tool: `apply_reuse_groups_v1` (deterministic) to copy/mirror component geometry per the plan’s `reuse_groups` once the reuse source exists
+   - Important: `reuse_groups` does NOT create components. Every `reuse_groups.source` and `reuse_groups.targets[]` entry must also exist as a component `name` in the plan’s `components[]` (the engine rejects plans that reference missing components).
    - Note: For `reuse_groups`, prefer omitting `anchors` (default is `preserve_interfaces`). Avoid `anchors=preserve_target` for `copy_component_subtree` reuse groups; it can keep internal join anchors unchanged and drift descendant attachments.
 3. `Qa`
    - Tool: `qa_v1`

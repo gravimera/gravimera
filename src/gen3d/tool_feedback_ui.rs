@@ -168,13 +168,14 @@ pub(crate) fn gen3d_update_prefab_details_text(
         .map(|p| p.revisions.as_slice())
         .unwrap_or(&[]);
 
-    fn sum_revision_tokens(
+    fn sum_revision_tokens_for_key(
         revisions: &[crate::prefab_descriptors::PrefabDescriptorRevisionV1],
+        key: &str,
     ) -> Option<u64> {
         let mut any = false;
         let mut total: u64 = 0;
         for rev in revisions {
-            if let Some(tokens) = rev.extra.get("tokens_total").and_then(|v| v.as_u64()) {
+            if let Some(tokens) = rev.extra.get(key).and_then(|v| v.as_u64()) {
                 any = true;
                 total = total.saturating_add(tokens);
             }
@@ -197,10 +198,26 @@ pub(crate) fn gen3d_update_prefab_details_text(
         .and_then(|d| d.provenance.as_ref())
         .and_then(|p| p.created_duration_ms)
         .or_else(|| find_generated_duration_ms(revisions));
-    let total_tokens = desc
+    let total_input_tokens = desc
         .and_then(|d| d.provenance.as_ref())
-        .and_then(|p| p.total_tokens)
-        .or_else(|| sum_revision_tokens(revisions));
+        .and_then(|p| p.total_input_tokens)
+        .or_else(|| sum_revision_tokens_for_key(revisions, "tokens_input"));
+    let total_output_tokens = desc
+        .and_then(|d| d.provenance.as_ref())
+        .and_then(|p| p.total_output_tokens)
+        .or_else(|| sum_revision_tokens_for_key(revisions, "tokens_output"));
+    let total_tokens = match (total_input_tokens, total_output_tokens) {
+        (Some(i), Some(o)) => Some(i.saturating_add(o)),
+        (Some(i), None) => Some(i),
+        (None, Some(o)) => Some(o),
+        (None, None) => None,
+    }
+    .or_else(|| {
+        desc.and_then(|d| d.provenance.as_ref())
+            .and_then(|p| p.extra.get("total_tokens"))
+            .and_then(|v| v.as_u64())
+    })
+    .or_else(|| sum_revision_tokens_for_key(revisions, "tokens_total"));
 
     fn format_duration_ms(ms: u128) -> String {
         let ms = ms.min(u128::from(u64::MAX)) as u64;
@@ -235,7 +252,12 @@ pub(crate) fn gen3d_update_prefab_details_text(
             format_duration_ms(created_duration_ms)
         ));
     }
-    if let Some(total_tokens) = total_tokens {
+    if let (Some(input), Some(output)) = (total_input_tokens, total_output_tokens) {
+        out.push_str(&format!(
+            "Tokens (total): in {input} | out {output} | sum {}\n",
+            input.saturating_add(output)
+        ));
+    } else if let Some(total_tokens) = total_tokens {
         out.push_str(&format!("Tokens (total): {total_tokens}\n"));
     }
     if !roles.is_empty() {
