@@ -40,6 +40,7 @@ cargo run
 ## Screenshots
 <img src="assets/screenshot/ss1.png" width="640" height="374" alt="ss1.png" />
 <img src="assets/screenshot/ss2.png" width="640" height="374" alt="ss2.png" />
+<img src="assets/screenshot/ss3.png" width="640" height="374" alt="ss3.png" />
 
 ## Docs
 
