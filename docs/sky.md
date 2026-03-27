@@ -11,9 +11,9 @@ Gravimera uses Bevy’s built-in atmosphere sky for rendered mode.
 - The atmosphere is attached to the `MainCamera` and also enables `AtmosphereEnvironmentMapLight`
   so PBR materials (including water) get plausible environment lighting/reflections.
 - `DistanceFog` is used alongside the atmosphere to soften the ocean/sky horizon.
-- Rendered mode relies on this atmosphere-driven environment lighting as the default scene lighting.
-  `GlobalAmbientLight` is disabled and no default `DirectionalLight` is spawned, so you should not
-  expect shadow-mapped cast shadows unless you add a direct light yourself.
+- Rendered mode disables Bevy’s `GlobalAmbientLight` and relies on a single `DirectionalLight` plus
+  the atmosphere-generated environment map lighting. The environment map intensity is tuned down to
+  avoid over-brightening the scene when the sky lighting kicks in.
 
 ## Performance
 

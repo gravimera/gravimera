@@ -350,6 +350,15 @@ pub(crate) fn setup_rendered(
     let player_start = Vec3::new(0.0, PLAYER_Y, 0.0);
 
     commands.spawn((
+        DirectionalLight {
+            shadows_enabled: false,
+            illuminance: 18_000.0,
+            ..default()
+        },
+        Transform::from_xyz(8.0, 18.0, -8.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+
+    commands.spawn((
         Camera3d::default(),
         Transform::from_translation(player_start + CAMERA_OFFSET).looking_at(player_start, Vec3::Y),
         MainCamera,
