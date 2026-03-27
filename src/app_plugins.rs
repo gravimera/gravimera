@@ -609,8 +609,6 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_prompt_box_focus)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::genfloor::genfloor_poll_ai_job
-                    .after(crate::genfloor::genfloor_generate_button),
                 crate::genfloor::genfloor_save_button
                     .after(crate::genfloor::genfloor_poll_ai_job)
                     .run_if(crate::automation::local_input_enabled)
@@ -670,6 +668,10 @@ impl Plugin for RenderedGen3dPlugin {
         app.add_systems(
             Update,
             crate::gen3d::gen3d_poll_ai_job.after(crate::gen3d::gen3d_generate_button),
+        );
+        app.add_systems(
+            Update,
+            crate::genfloor::genfloor_poll_ai_job.after(crate::genfloor::genfloor_generate_button),
         );
         app.add_systems(
             Update,

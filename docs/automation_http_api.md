@@ -171,7 +171,7 @@ Response (shape):
 
 Notes:
 
-- `build_scene` is only meaningful when `mode="build"` and is one of: `realm`, `preview`.
+- `build_scene` is only meaningful when `mode="build"` and is one of: `realm`, `preview`, `floor_preview`.
 
 ### `GET /v1/discovery`
 
@@ -794,6 +794,9 @@ Switch game mode: `build`, `play`.
 To enter the Gen3D workshop (Build Preview scene), set `mode` to `preview` / `build_preview`.
 For legacy compatibility, `gen3d` (alias `gen3d_workshop`) maps to the same behavior.
 
+To enter the GenFloor workshop (Floor Preview scene), set `mode` to `floor_preview`.
+For legacy compatibility, `genfloor` maps to the same behavior.
+
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/mode \
   -H 'Content-Type: application/json' \
@@ -1332,6 +1335,76 @@ Response (shape):
   "prefab_id_uuid": "41d2d0fb-24ff-498f-ad05-c0884aa620ba",
   "mobility": true
 }
+```
+
+## GenFloor endpoints
+
+GenFloor requires rendered mode (no `--headless`).
+
+Workshop endpoints (`/v1/genfloor/*`) operate on the active GenFloor session and require the Floor Preview scene (`mode=build`, `build_scene=floor_preview`).
+
+### `GET /v1/genfloor/status`
+
+```bash
+curl -s http://127.0.0.1:8791/v1/genfloor/status
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "running": true,
+  "draft_ready": false,
+  "edit_base_floor_id_uuid": null,
+  "last_saved_floor_id_uuid": null,
+  "prompt": "…",
+  "status": "Building floor…",
+  "error": null
+}
+```
+
+### `POST /v1/genfloor/new`
+
+Reset to a fresh GenFloor session (clears prompt/draft and resets edit-overwrite state).
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/genfloor/new \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+### `POST /v1/genfloor/prompt`
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/genfloor/prompt \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"A subtle stone floor with gentle variation."}'
+```
+
+### `POST /v1/genfloor/build`
+
+Start (or edit-overwrite) a build using the current prompt.
+
+Notes:
+
+- On success, GenFloor auto-saves the generated floor and sets `edit_base_floor_id_uuid`.
+- Subsequent builds overwrite the same `edit_base_floor_id_uuid` until you call `/v1/genfloor/new` (or start a fresh session from the Floors panel).
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/genfloor/build \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+### `POST /v1/genfloor/stop`
+
+Request cancellation of the active build (best-effort).
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/genfloor/stop \
+  -H 'Content-Type: application/json' \
+  -d '{}'
 ```
 
 ## Scene Build endpoints

@@ -448,6 +448,8 @@ struct AutomationGen3d<'w> {
     draft: Option<ResMut<'w, crate::gen3d::Gen3dDraft>>,
     task_queue: Option<ResMut<'w, crate::gen3d::Gen3dTaskQueue>>,
     pending_seed: Option<ResMut<'w, crate::gen3d::Gen3dPendingSeedFromPrefab>>,
+    genfloor_workshop: Option<ResMut<'w, crate::genfloor::GenFloorWorkshop>>,
+    genfloor_job: Option<ResMut<'w, crate::genfloor::GenFloorAiJob>>,
     asset_server: Option<Res<'w, AssetServer>>,
     assets: Option<Res<'w, SceneAssets>>,
     images: Option<ResMut<'w, Assets<Image>>>,
@@ -786,6 +788,11 @@ struct ForceAnimationChannelRequest {
 
 #[derive(Deserialize)]
 struct Gen3dPromptRequest {
+    prompt: String,
+}
+
+#[derive(Deserialize)]
+struct GenfloorPromptRequest {
     prompt: String,
 }
 
@@ -3152,6 +3159,227 @@ fn handle_ui_routes<
     }
 }
 
+fn handle_genfloor_routes<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    let config = ctx.config;
+    let mode = ctx.mode;
+    let build_scene = ctx.build_scene;
+
+    let mut gen3d_workshop = ctx.gen3d.workshop.as_deref_mut();
+    let mut genfloor_workshop = ctx.gen3d.genfloor_workshop.as_deref_mut();
+    let mut genfloor_job = ctx.gen3d.genfloor_job.as_deref_mut();
+
+    match (msg.method.as_str(), msg.path.as_str()) {
+        ("GET", "/v1/genfloor/status") => {
+            let Some(floor_workshop) = genfloor_workshop.as_deref() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            let Some(job) = genfloor_job.as_deref() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+
+            let (prompt, status, error) = if mode
+                .as_ref()
+                .is_some_and(|mode| matches!(mode.get(), GameMode::Build))
+                && build_scene
+                    .as_ref()
+                    .is_some_and(|scene| matches!(scene.get(), BuildScene::FloorPreview))
+            {
+                match gen3d_workshop.as_deref() {
+                    Some(workshop) => (
+                        workshop.prompt.clone(),
+                        workshop.status.clone(),
+                        workshop.error.clone(),
+                    ),
+                    None => (
+                        floor_workshop.prompt.clone(),
+                        floor_workshop.status.clone(),
+                        floor_workshop.error.clone(),
+                    ),
+                }
+            } else {
+                (
+                    floor_workshop.prompt.clone(),
+                    floor_workshop.status.clone(),
+                    floor_workshop.error.clone(),
+                )
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "running": job.running,
+                "draft_ready": floor_workshop.draft.is_some(),
+                "edit_base_floor_id_uuid": job.edit_base_floor_id().map(|id| uuid::Uuid::from_u128(id).to_string()),
+                "last_saved_floor_id_uuid": job.last_saved_floor_id.map(|id| uuid::Uuid::from_u128(id).to_string()),
+                "prompt": prompt,
+                "status": status,
+                "error": error,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/genfloor/new") => {
+            let Some(floor_workshop) = genfloor_workshop.as_deref_mut() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            let Some(job) = genfloor_job.as_deref_mut() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            if job.running {
+                return Some(json_error(
+                    409,
+                    "GenFloor build is running. Stop it before starting a new build.",
+                ));
+            }
+
+            job.reset_for_new_build();
+            floor_workshop.reset_for_new_build();
+
+            const DEFAULT_STATUS: &str = "Describe the floor and click Build.";
+            floor_workshop.status = DEFAULT_STATUS.to_string();
+            floor_workshop.error = None;
+
+            if let Some(workshop) = gen3d_workshop.as_deref_mut() {
+                if mode
+                    .as_ref()
+                    .is_some_and(|mode| matches!(mode.get(), GameMode::Build))
+                    && build_scene
+                        .as_ref()
+                        .is_some_and(|scene| matches!(scene.get(), BuildScene::FloorPreview))
+                {
+                    workshop.prompt.clear();
+                    workshop.status = DEFAULT_STATUS.to_string();
+                    workshop.error = None;
+                }
+            }
+
+            Some(AutomationReply {
+                status: 200,
+                body: serde_json::json!({ "ok": true }).to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/genfloor/prompt") => {
+            let Some(floor_workshop) = genfloor_workshop.as_deref_mut() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            let req: GenfloorPromptRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            if let Err(err) = crate::gen3d::validate_gen3d_user_prompt_limits(&req.prompt) {
+                return Some(json_error(400, err));
+            }
+            floor_workshop.prompt = req.prompt.clone();
+
+            if let Some(workshop) = gen3d_workshop.as_deref_mut() {
+                if mode
+                    .as_ref()
+                    .is_some_and(|mode| matches!(mode.get(), GameMode::Build))
+                    && build_scene
+                        .as_ref()
+                        .is_some_and(|scene| matches!(scene.get(), BuildScene::FloorPreview))
+                {
+                    workshop.prompt = req.prompt;
+                }
+            }
+
+            Some(AutomationReply {
+                status: 200,
+                body: serde_json::json!({ "ok": true }).to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/genfloor/build") => {
+            let Some(mode) = mode else {
+                return Some(json_error(501, "GenFloor build requires rendered mode."));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(501, "GenFloor build requires rendered mode."));
+            };
+            if !matches!(mode.get(), GameMode::Build)
+                || !matches!(build_scene.get(), BuildScene::FloorPreview)
+            {
+                return Some(json_error(409, "Switch to Build Floor Preview scene first."));
+            }
+            let Some(workshop) = gen3d_workshop.as_deref_mut() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            let Some(floor_workshop) = genfloor_workshop.as_deref_mut() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            let Some(job) = genfloor_job.as_deref_mut() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            if job.running {
+                return Some(json_error(409, "GenFloor build is already running."));
+            }
+
+            let prompt = workshop.prompt.clone();
+            crate::genfloor::genfloor_start_ai_job(
+                config,
+                prompt.as_str(),
+                job,
+                workshop,
+                floor_workshop,
+            );
+
+            Some(AutomationReply {
+                status: 200,
+                body: serde_json::json!({ "ok": true }).to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/genfloor/stop") => {
+            let Some(workshop) = gen3d_workshop.as_deref_mut() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            let Some(floor_workshop) = genfloor_workshop.as_deref_mut() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            let Some(job) = genfloor_job.as_deref_mut() else {
+                return Some(json_error(501, "GenFloor is not available in this app mode."));
+            };
+            crate::genfloor::genfloor_cancel_ai_job(job, workshop);
+            floor_workshop.status = workshop.status.clone();
+            floor_workshop.error = workshop.error.clone();
+
+            Some(AutomationReply {
+                status: 200,
+                body: serde_json::json!({ "ok": true }).to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        _ => Some(json_error(404, "Not found")),
+    }
+}
+
 fn handle_request_main_thread<
     'a,
     'cmd_w,
@@ -3181,6 +3409,9 @@ fn handle_request_main_thread<
     }
     if msg.path.starts_with("/v1/gen3d/") {
         return handle_gen3d_routes(ctx, msg);
+    }
+    if msg.path.starts_with("/v1/genfloor/") {
+        return handle_genfloor_routes(ctx, msg);
     }
     if msg.path.starts_with("/v1/scene_build/") {
         return handle_scene_build_routes(ctx, msg);
@@ -3276,6 +3507,11 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/tasks/enqueue"}),
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/tasks/{task_id}"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/save"}),
+                serde_json::json!({"method":"GET","path":"/v1/genfloor/status"}),
+                serde_json::json!({"method":"POST","path":"/v1/genfloor/new"}),
+                serde_json::json!({"method":"POST","path":"/v1/genfloor/prompt"}),
+                serde_json::json!({"method":"POST","path":"/v1/genfloor/build"}),
+                serde_json::json!({"method":"POST","path":"/v1/genfloor/stop"}),
                 serde_json::json!({"method":"GET","path":"/v1/scene_sources/signature"}),
                 serde_json::json!({"method":"POST","path":"/v1/scene_sources/patch_apply"}),
             ];
@@ -4326,10 +4562,20 @@ fn handle_request_main_thread<
                     next_mode.set(GameMode::Build);
                     next_build_scene.set(BuildScene::Preview);
                 }
+                "genfloor" | "floor_preview" => {
+                    let Some(next_build_scene) = next_build_scene else {
+                        return Some(json_error(
+                            501,
+                            "Build scene switching is not available in this app mode.",
+                        ));
+                    };
+                    next_mode.set(GameMode::Build);
+                    next_build_scene.set(BuildScene::FloorPreview);
+                }
                 _ => {
                     return Some(json_error(
                         400,
-                        "Invalid mode (expected build/play; legacy: gen3d).",
+                        "Invalid mode (expected build/play; legacy: gen3d/genfloor).",
                     ));
                 }
             }

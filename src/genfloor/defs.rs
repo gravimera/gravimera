@@ -6,7 +6,7 @@ use crate::constants::WORLD_HALF_SIZE;
 pub(crate) const FLOOR_DEF_FORMAT_VERSION: u32 = 1;
 const DEFAULT_FLOOR_SIZE_M: f32 = WORLD_HALF_SIZE * 2.4;
 const DEFAULT_SUBDIV: u32 = 64;
-const MAX_SUBDIV: u32 = 512;
+const MAX_SUBDIV: u32 = 256;
 const MIN_WAVELENGTH: f32 = 0.05;
 const MAX_WAVES: usize = 8;
 const MAX_COLOR_PALETTE: usize = 6;
@@ -426,4 +426,52 @@ fn canonicalize_noise(noise: &mut FloorNoiseV1) {
         noise.octaves = 1;
     }
     noise.octaves = noise.octaves.min(MAX_NOISE_OCTAVES);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonicalize_clamps_subdiv_and_adds_palette_for_patterns() {
+        let mut def = FloorDefV1 {
+            format_version: 999,
+            label: Some("  ".to_string()),
+            mesh: FloorMeshV1 {
+                kind: FloorMeshKind::Grid,
+                size_m: [-10.0, 0.0],
+                subdiv: [9999, 0],
+                thickness_m: f32::NAN,
+                uv_tiling: [0.0, -0.0],
+            },
+            material: FloorMaterialV1::default(),
+            coloring: FloorColoringV1 {
+                mode: FloorColoringMode::Checker,
+                palette: Vec::new(),
+                scale: [0.0, f32::INFINITY],
+                angle_deg: f32::NAN,
+                noise: FloorNoiseV1 {
+                    seed: 1,
+                    frequency: 0.0,
+                    octaves: 999,
+                    lacunarity: f32::NAN,
+                    gain: 2.0,
+                },
+            },
+            relief: FloorReliefV1::default(),
+            animation: FloorAnimationV1::default(),
+            extra: BTreeMap::default(),
+        };
+
+        def.canonicalize_in_place();
+
+        assert_eq!(def.format_version, FLOOR_DEF_FORMAT_VERSION);
+        assert!(def.label.is_none());
+        assert_eq!(def.mesh.subdiv[0], MAX_SUBDIV);
+        assert_eq!(def.mesh.subdiv[1], 1);
+        assert!(def.mesh.size_m[0] >= DEFAULT_FLOOR_SIZE_M);
+        assert!(def.mesh.size_m[1] >= DEFAULT_FLOOR_SIZE_M);
+        assert!(!def.coloring.palette.is_empty());
+        assert!(def.coloring.noise.octaves <= MAX_NOISE_OCTAVES);
+    }
 }

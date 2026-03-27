@@ -1,0 +1,9 @@
+[gen3d]
+ai_service = "openai"
+
+[openai]
+base_url = "mock://gen3d"
+model = "gpt-5.4"
+reasoning_effort = "none"
+token = ""
+

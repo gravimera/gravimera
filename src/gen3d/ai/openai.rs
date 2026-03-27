@@ -1758,6 +1758,84 @@ fn mock_generate_text_via_openai(
             "tags": ["mock", "gen3d"]
         })
         .to_string()
+    } else if stable_prefix == "genfloor" {
+        let t = user_text.to_ascii_lowercase();
+
+        let coloring_mode = if t.contains("checker") || t.contains("checkerboard") {
+            "checker"
+        } else if t.contains("stripe") {
+            "stripes"
+        } else if t.contains("gradient") {
+            "gradient"
+        } else if t.contains("noise") {
+            "noise"
+        } else {
+            "solid"
+        };
+
+        let (palette, base_color_rgba): (Vec<[f32; 4]>, [f32; 4]) = if coloring_mode == "solid"
+        {
+            (Vec::new(), [0.16, 0.17, 0.20, 1.0])
+        } else {
+            (
+                vec![
+                    [0.12, 0.35, 0.75, 1.0],
+                    [0.88, 0.55, 0.20, 1.0],
+                    [0.20, 0.70, 0.35, 1.0],
+                ],
+                [1.0, 1.0, 1.0, 1.0],
+            )
+        };
+
+        let relief_mode = if t.contains("bumpy") || t.contains("uneven") || t.contains("rough") {
+            "noise"
+        } else {
+            "none"
+        };
+        let relief_amplitude = if relief_mode == "noise" { 0.35 } else { 0.0 };
+
+        let animation_mode = if t.contains("wave") || t.contains("water") {
+            "cpu"
+        } else {
+            "none"
+        };
+
+        serde_json::json!({
+            "format_version": 1,
+            "mesh": {
+                "kind": "grid",
+                "size_m": [60.0, 60.0],
+                "subdiv": [64, 64],
+                "thickness_m": 0.1,
+                "uv_tiling": [4.0, 4.0],
+            },
+            "material": {
+                "base_color_rgba": base_color_rgba,
+                "metallic": 0.0,
+                "roughness": 0.92,
+                "unlit": false,
+            },
+            "coloring": {
+                "mode": coloring_mode,
+                "palette": palette,
+                "scale": [4.0, 4.0],
+                "angle_deg": 0.0,
+                "noise": { "seed": 1, "frequency": 0.25, "octaves": 3, "lacunarity": 2.0, "gain": 0.5 },
+            },
+            "relief": {
+                "mode": relief_mode,
+                "amplitude": relief_amplitude,
+                "noise": { "seed": 3, "frequency": 0.08, "octaves": 4, "lacunarity": 2.0, "gain": 0.5 },
+            },
+            "animation": {
+                "mode": animation_mode,
+                "waves": [
+                    { "amplitude": 0.15, "wavelength": 6.0, "direction": [1.0, 0.2], "speed": 1.2, "phase": 0.0 }
+                ],
+                "normal_strength": 1.0,
+            }
+        })
+        .to_string()
     } else {
         return Err(format!(
             "mock://gen3d has no response for artifact_prefix `{artifact_prefix}`"

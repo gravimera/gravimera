@@ -90,6 +90,8 @@ pub(crate) fn genfloor_start_ai_job(
     floor_workshop.draft = None;
     workshop.error = None;
     workshop.status = "Building floor...".to_string();
+    floor_workshop.error = None;
+    floor_workshop.status = workshop.status.clone();
 
     let shared: SharedResult<GenFloorAiResult, String> = new_shared_result();
     job.shared = Some(shared.clone());
@@ -131,6 +133,8 @@ pub(crate) fn genfloor_poll_ai_job(
         job.shared = None;
         workshop.status = "Build canceled.".to_string();
         workshop.error = None;
+        floor_workshop.status = workshop.status.clone();
+        floor_workshop.error = None;
         floor_workshop.draft = None;
         return;
     }
@@ -185,17 +189,23 @@ pub(crate) fn genfloor_poll_ai_job(
                     job.set_last_saved_floor_id(Some(floor_id));
                     floor_workshop.draft = Some(res.def);
                     workshop.status = "Build finished. Floor saved. Click Edit to run again (auto-save overwrites the same floor).".to_string();
+                    floor_workshop.status = workshop.status.clone();
+                    floor_workshop.error = workshop.error.clone();
                 }
                 Err(err) => {
                     floor_workshop.draft = Some(res.def);
                     workshop.error = Some(err);
                     workshop.status = "Build finished, but auto-save failed.".to_string();
+                    floor_workshop.status = workshop.status.clone();
+                    floor_workshop.error = workshop.error.clone();
                 }
             }
         }
         Err(err) => {
             workshop.error = Some(err);
             workshop.status = "Build failed.".to_string();
+            floor_workshop.status = workshop.status.clone();
+            floor_workshop.error = workshop.error.clone();
             floor_workshop.draft = None;
         }
     }
@@ -293,4 +303,31 @@ fn call_genfloor_ai(
     });
 
     Ok(GenFloorAiResult { def, usage })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mock_genfloor_ai_returns_valid_floor_def() {
+        let mut config = crate::config::AppConfig::default();
+        config.gen3d_ai_service = crate::config::Gen3dAiService::OpenAi;
+        config.openai = Some(crate::config::OpenAiConfig {
+            base_url: "mock://gen3d".to_string(),
+            model: "gpt-5.4".to_string(),
+            reasoning_effort: "none".to_string(),
+            api_key: "".to_string(),
+        });
+
+        let result = call_genfloor_ai(&config, "A checkerboard floor (mock)", None)
+            .expect("genfloor mock call");
+        assert_eq!(result.def.format_version, crate::genfloor::defs::FLOOR_DEF_FORMAT_VERSION);
+        assert!(matches!(
+            result.def.coloring.mode,
+            crate::genfloor::defs::FloorColoringMode::Checker
+        ));
+        assert!(result.def.mesh.subdiv[0] <= 256);
+        assert!(result.def.mesh.subdiv[1] <= 256);
+    }
 }

@@ -514,3 +514,61 @@ fn fract01(v: f32) -> f32 {
         f
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_grid_mesh_counts_vertices_and_indices() {
+        let mut def = FloorDefV1::default_world();
+        def.mesh.subdiv = [2, 3];
+        def.coloring.mode = FloorColoringMode::Solid;
+        def.coloring.palette.clear();
+        def.relief.mode = FloorReliefMode::None;
+        def.relief.amplitude = 0.0;
+        def.animation.mode = FloorAnimationMode::None;
+        def.animation.waves.clear();
+        def.canonicalize_in_place();
+
+        let (mesh, _grid) = build_grid_mesh(&def);
+
+        let positions_len = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+            Some(VertexAttributeValues::Float32x3(values)) => values.len(),
+            other => panic!("unexpected positions attribute: {other:?}"),
+        };
+        let indices_len = match mesh.indices() {
+            Some(bevy::mesh::Indices::U32(values)) => values.len(),
+            other => panic!("unexpected indices: {other:?}"),
+        };
+
+        let nx = def.mesh.subdiv[0] as usize + 1;
+        let nz = def.mesh.subdiv[1] as usize + 1;
+        assert_eq!(positions_len, nx * nz);
+        assert_eq!(indices_len, def.mesh.subdiv[0] as usize * def.mesh.subdiv[1] as usize * 6);
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_none());
+    }
+
+    #[test]
+    fn build_grid_mesh_emits_vertex_colors_for_non_solid_modes() {
+        let mut def = FloorDefV1::default_world();
+        def.mesh.subdiv = [2, 2];
+        def.coloring.mode = FloorColoringMode::Checker;
+        def.coloring.palette.clear();
+        def.animation.mode = FloorAnimationMode::None;
+        def.animation.waves.clear();
+        def.canonicalize_in_place();
+
+        let (mesh, _grid) = build_grid_mesh(&def);
+
+        let positions_len = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+            Some(VertexAttributeValues::Float32x3(values)) => values.len(),
+            other => panic!("unexpected positions attribute: {other:?}"),
+        };
+        let colors_len = match mesh.attribute(Mesh::ATTRIBUTE_COLOR) {
+            Some(VertexAttributeValues::Float32x4(values)) => values.len(),
+            other => panic!("unexpected color attribute: {other:?}"),
+        };
+        assert_eq!(positions_len, colors_len);
+    }
+}

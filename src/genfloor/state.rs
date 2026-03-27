@@ -13,6 +13,15 @@ pub(crate) struct GenFloorWorkshop {
     pub(crate) draft: Option<FloorDefV1>,
 }
 
+impl GenFloorWorkshop {
+    pub(crate) fn reset_for_new_build(&mut self) {
+        self.prompt.clear();
+        self.status.clear();
+        self.error = None;
+        self.draft = None;
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct GenFloorAiUsage {
     pub(crate) total_tokens: u64,
@@ -59,5 +68,19 @@ impl GenFloorAiJob {
 
     pub(crate) fn set_last_saved_floor_id(&mut self, floor_id: Option<u128>) {
         self.last_saved_floor_id = floor_id;
+    }
+
+    pub(crate) fn reset_for_new_build(&mut self) {
+        if self.running {
+            return;
+        }
+        self.cancel_requested = false;
+        self.cancel_flag = None;
+        self.started_at = None;
+        self.last_run_elapsed = None;
+        self.run_tokens = 0;
+        self.edit_base_floor_id = None;
+        self.last_saved_floor_id = None;
+        self.shared = None;
     }
 }

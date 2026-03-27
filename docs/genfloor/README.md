@@ -54,8 +54,24 @@ Note: `mesh.size_m` is clamped to at least the default floor size so generated f
 
 - Clicking `Build` sends the prompt to the GenFloor AI and returns a `FloorDefV1` draft.
 - GenFloor auto-saves the draft on completion and switches the Build button to Edit (subsequent runs overwrite the same floor id).
+- Clicking `Generate` from the Floors panel starts a fresh GenFloor session (clears the previous edit-overwrite floor id), unless a build is currently running (in which case it resumes the active session).
 - Floors can be switched at runtime by clicking items in the Floors list.
 - Floors list always includes a built-in “Default Floor” entry (legacy plain floor).
 - GenFloor uses the same AI service selection as Gen3D (`[gen3d].ai_service`).
 - Floors list shows placeholder rows for active GenFloor work (`Generating`, `Editing`, `Queued`).
 - If a scene has no stored floor selection, Default Floor is used.
+
+## Automation API
+
+See `docs/automation_http_api.md`:
+
+- Enter GenFloor: `POST /v1/mode {"mode":"genfloor"}`
+- Reset to a fresh session: `POST /v1/genfloor/new {}`
+- Set prompt: `POST /v1/genfloor/prompt {"prompt":"..."}`
+- Build: `POST /v1/genfloor/build {}`
+- Status: `GET /v1/genfloor/status`
+
+Test runners:
+
+- Mock/offline API regression: `python3 test/run_1/genfloor_api/run.py`
+- Real provider (uses your `~/.gravimera/config.toml`): `python3 tools/genfloor_real_test.py`

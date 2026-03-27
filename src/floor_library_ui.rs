@@ -407,6 +407,17 @@ pub(crate) fn floor_library_update_visibility(
     mut commands: Commands,
     mut state: ResMut<FloorLibraryUiState>,
     mut roots: Query<&mut Visibility, With<FloorLibraryRoot>>,
+    mut interactions: Query<
+        &mut Interaction,
+        Or<(
+            With<FloorLibraryGenerateButton>,
+            With<FloorLibrarySearchField>,
+            With<FloorLibraryListItem>,
+            With<FloorLibraryPreviewCloseButton>,
+            With<FloorLibraryGenfloorPlaceholderItem>,
+        )>,
+    >,
+    mut was_visible: Local<bool>,
 ) {
     let visible = state.is_open()
         && matches!(mode.get(), GameMode::Build)
@@ -423,13 +434,23 @@ pub(crate) fn floor_library_update_visibility(
         state.scrollbar_drag = None;
         state.search_focused = false;
         close_floor_library_preview(&mut commands, &mut state);
+
+        if *was_visible {
+            for mut interaction in &mut interactions {
+                *interaction = Interaction::None;
+            }
+        }
     }
+
+    *was_visible = visible;
 }
 
 pub(crate) fn floor_library_generate_button_interactions(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
     mut next_scene: ResMut<NextState<BuildScene>>,
+    mut genfloor_job: ResMut<crate::genfloor::GenFloorAiJob>,
+    mut genfloor_workshop: ResMut<crate::genfloor::GenFloorWorkshop>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         (Changed<Interaction>, With<FloorLibraryGenerateButton>),
@@ -452,6 +473,10 @@ pub(crate) fn floor_library_generate_button_interactions(
             Interaction::Pressed => {
                 *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
                 *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+                if !genfloor_job.running {
+                    genfloor_job.reset_for_new_build();
+                    genfloor_workshop.reset_for_new_build();
+                }
                 next_scene.set(BuildScene::FloorPreview);
             }
         }
@@ -1954,5 +1979,111 @@ fn system_time_ms(time: std::time::SystemTime) -> u128 {
 impl FloorLibraryUiState {
     pub(crate) fn is_drag_active(&self) -> bool {
         self.scrollbar_drag.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_button_resets_genfloor_session_when_idle() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<GameMode>();
+        app.init_state::<BuildScene>();
+
+        app.init_resource::<crate::genfloor::GenFloorWorkshop>();
+        app.init_resource::<crate::genfloor::GenFloorAiJob>();
+
+        let mut job = app
+            .world_mut()
+            .resource_mut::<crate::genfloor::GenFloorAiJob>();
+        job.set_edit_base_floor_id(Some(123));
+        job.set_last_saved_floor_id(Some(123));
+
+        let mut workshop = app
+            .world_mut()
+            .resource_mut::<crate::genfloor::GenFloorWorkshop>();
+        workshop.prompt = "previous".to_string();
+        workshop.status = "previous".to_string();
+        workshop.error = Some("previous".to_string());
+        workshop.draft = Some(crate::genfloor::defs::FloorDefV1::default_world());
+
+        let button = app
+            .world_mut()
+            .spawn((
+                FloorLibraryGenerateButton,
+                Interaction::None,
+                BackgroundColor(Color::NONE),
+                BorderColor::all(Color::NONE),
+            ))
+            .id();
+
+        app.add_systems(Update, floor_library_generate_button_interactions);
+
+        app.update();
+
+        app.world_mut()
+            .entity_mut(button)
+            .insert(Interaction::Pressed);
+        app.update();
+        // `NextState` transitions are applied on the next frame (StateTransition runs before Update).
+        app.update();
+
+        assert!(matches!(
+            app.world().resource::<State<BuildScene>>().get(),
+            BuildScene::FloorPreview
+        ));
+
+        let job = app.world().resource::<crate::genfloor::GenFloorAiJob>();
+        assert!(job.edit_base_floor_id().is_none());
+        assert!(job.last_saved_floor_id.is_none());
+
+        let workshop = app.world().resource::<crate::genfloor::GenFloorWorkshop>();
+        assert!(workshop.prompt.is_empty());
+        assert!(workshop.status.is_empty());
+        assert!(workshop.error.is_none());
+        assert!(workshop.draft.is_none());
+    }
+
+    #[test]
+    fn update_visibility_resets_stuck_interactions_on_hide() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<GameMode>();
+        app.init_state::<BuildScene>();
+
+        let mut state = FloorLibraryUiState::default();
+        state.open = true;
+        app.insert_resource(state);
+
+        let button = app
+            .world_mut()
+            .spawn((FloorLibraryGenerateButton, Interaction::Pressed))
+            .id();
+        let _ = app
+            .world_mut()
+            .spawn((FloorLibraryRoot, Visibility::Visible))
+            .id();
+
+        app.add_systems(Update, floor_library_update_visibility);
+
+        // Visible pass.
+        app.update();
+
+        // Switch scene (state transitions apply end-of-frame).
+        app.world_mut()
+            .resource_mut::<NextState<BuildScene>>()
+            .set(BuildScene::FloorPreview);
+        app.update();
+
+        // Now hidden: should reset Interaction::Pressed -> Interaction::None.
+        app.update();
+
+        let interaction = app.world().get::<Interaction>(button).copied();
+        assert_eq!(interaction, Some(Interaction::None));
     }
 }
