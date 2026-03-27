@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CONFIG_OVERRIDE_ENV: &str = "GRAVIMERA_CONFIG";
 
+pub(crate) const DEFAULT_AI_REQUEST_TIMEOUT_SECS: u64 = 60 * 4;
+
 #[derive(Resource, Clone, Debug)]
 pub(crate) struct AppConfig {
     pub(crate) root_dir: PathBuf,
@@ -13,6 +15,11 @@ pub(crate) struct AppConfig {
     pub(crate) claude: Option<ClaudeConfig>,
     pub(crate) log_path: Option<PathBuf>,
     pub(crate) log_level: bevy::log::Level,
+    /// Max time to wait for an AI backend to start sending a response body.
+    ///
+    /// Applied as a "first-byte timeout" for streaming AI requests (Gen3D), and as a total curl
+    /// `--max-time` cap for non-streaming AI requests (Scene Build AI).
+    pub(crate) ai_request_timeout_secs: u64,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
     pub(crate) gen3d_ai_service: Gen3dAiService,
     pub(crate) intelligence_service_enabled: bool,
@@ -69,6 +76,7 @@ impl Default for AppConfig {
             claude: None,
             log_path: Some(log_path),
             log_level: bevy::log::Level::INFO,
+            ai_request_timeout_secs: DEFAULT_AI_REQUEST_TIMEOUT_SECS,
             gen3d_cache_dir: None,
             gen3d_ai_service: Gen3dAiService::OpenAi,
             intelligence_service_enabled: false,
@@ -217,6 +225,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_root_dir_into_config(out, text);
     parse_log_path_into_config(out, text);
     parse_log_level_into_config(out, text);
+    parse_ai_request_timeout_secs_into_config(out, text);
     parse_gen3d_cache_dir_into_config(out, text);
     parse_gen3d_ai_service_into_config(out, text);
     validate_gen3d_orchestrator_removed_into_config(out, text);
@@ -475,6 +484,14 @@ fn parse_log_path_into_config(out: &mut AppConfig, text: &str) {
 fn parse_log_level_into_config(out: &mut AppConfig, text: &str) {
     match parse_log_level(text) {
         Ok(Some(value)) => out.log_level = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_ai_request_timeout_secs_into_config(out: &mut AppConfig, text: &str) {
+    match parse_ai_request_timeout_secs(text) {
+        Ok(Some(value)) => out.ai_request_timeout_secs = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -814,6 +831,92 @@ fn parse_log_level(text: &str) -> Result<Option<bevy::log::Level>, String> {
                 ))
             }
         };
+    }
+
+    Ok(out)
+}
+
+fn parse_ai_request_timeout_secs(text: &str) -> Result<Option<u64>, String> {
+    const MAX_ALLOWED: u64 = 24 * 60 * 60;
+
+    let mut section: Option<String> = None;
+    let mut out: Option<u64> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "ai_request_timeout_secs"
+            && key != "request_timeout_secs"
+            && key != "timeout_secs"
+        {
+            continue;
+        }
+
+        // Accept:
+        // - top-level: `ai_request_timeout_secs = 240`
+        // - `[ai] request_timeout_secs = 240` (preferred)
+        // - `[ai] timeout_secs = 240` (alias)
+        // - `[app] ai_request_timeout_secs = 240` (convenience)
+        match section.as_deref() {
+            None => {
+                if key != "ai_request_timeout_secs" {
+                    continue;
+                }
+            }
+            Some("ai") => {}
+            Some("app") => {
+                if key != "ai_request_timeout_secs" {
+                    continue;
+                }
+            }
+            Some(_) => continue,
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let value = if value.starts_with('"') || value.starts_with('\'') {
+            parse_toml_string(value).ok_or_else(|| {
+                format!(
+                    "config.toml:{line_no}: expected an integer for `ai.request_timeout_secs` (example: [ai]\\nrequest_timeout_secs = 240)"
+                )
+            })?
+        } else {
+            value.to_string()
+        };
+
+        let parsed: i128 = value.trim().parse().map_err(|_| {
+            format!(
+                "config.toml:{line_no}: expected an integer for `ai.request_timeout_secs` (example: [ai]\\nrequest_timeout_secs = 240)"
+            )
+        })?;
+        if parsed <= 0 {
+            return Err(format!(
+                "config.toml:{line_no}: `ai.request_timeout_secs` must be >= 1"
+            ));
+        }
+
+        out = Some((parsed as u64).min(MAX_ALLOWED));
     }
 
     Ok(out)

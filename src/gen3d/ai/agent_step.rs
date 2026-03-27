@@ -379,6 +379,7 @@ fn maybe_start_descriptor_meta_request(
         shared,
         progress,
         job.cancel_flag.clone(),
+        job.ai_request_timeout(),
         job.session.clone(),
         Some(super::structured_outputs::Gen3dAiJsonSchemaKind::DescriptorMetaV1),
         job.require_structured_outputs,

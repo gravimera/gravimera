@@ -343,6 +343,7 @@ pub(super) fn generate_text_via_ai_service(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: Gen3dAiSessionState,
     cancel: Option<Arc<AtomicBool>>,
+    first_byte_timeout: Duration,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     require_structured_outputs: bool,
     ai: &Gen3dAiServiceConfig,
@@ -366,6 +367,12 @@ pub(super) fn generate_text_via_ai_service(
     loop {
         attempt = attempt.saturating_add(1);
 
+        let attempt_artifact_prefix = if attempt <= 1 {
+            artifact_prefix.to_string()
+        } else {
+            format!("{artifact_prefix}_retry_{attempt}")
+        };
+
         let call_session = if attempt > 1 && require_structured_outputs && expected_schema.is_some()
         {
             // Avoid `/responses` continuation while retrying; if the previous response was
@@ -382,6 +389,7 @@ pub(super) fn generate_text_via_ai_service(
                 progress,
                 call_session,
                 cancel.clone(),
+                first_byte_timeout,
                 expected_schema,
                 require_structured_outputs,
                 &openai.base_url,
@@ -392,12 +400,13 @@ pub(super) fn generate_text_via_ai_service(
                 user_text,
                 image_paths,
                 run_dir,
-                artifact_prefix,
+                &attempt_artifact_prefix,
             ),
             Gen3dAiServiceConfig::Mimo(mimo) => super::mimo::generate_text_via_mimo(
                 progress,
                 call_session,
                 cancel.clone(),
+                first_byte_timeout,
                 expected_schema,
                 require_structured_outputs,
                 &mimo.base_url,
@@ -408,12 +417,13 @@ pub(super) fn generate_text_via_ai_service(
                 user_text,
                 image_paths,
                 run_dir,
-                artifact_prefix,
+                &attempt_artifact_prefix,
             ),
             Gen3dAiServiceConfig::Gemini(gemini) => super::gemini::generate_text_via_gemini(
                 progress,
                 call_session,
                 cancel.clone(),
+                first_byte_timeout,
                 expected_schema,
                 require_structured_outputs,
                 &gemini.base_url,
@@ -423,12 +433,13 @@ pub(super) fn generate_text_via_ai_service(
                 user_text,
                 image_paths,
                 run_dir,
-                artifact_prefix,
+                &attempt_artifact_prefix,
             ),
             Gen3dAiServiceConfig::Claude(claude) => super::claude::generate_text_via_claude(
                 progress,
                 call_session,
                 cancel.clone(),
+                first_byte_timeout,
                 expected_schema,
                 require_structured_outputs,
                 &claude.base_url,
@@ -438,7 +449,7 @@ pub(super) fn generate_text_via_ai_service(
                 user_text,
                 image_paths,
                 run_dir,
-                artifact_prefix,
+                &attempt_artifact_prefix,
             ),
         }?;
 
@@ -446,13 +457,23 @@ pub(super) fn generate_text_via_ai_service(
 
         if require_structured_outputs && expected_schema.is_some() {
             let kind = expected_schema.unwrap();
-            if let Err(err) = enforce_structured_outputs_json_object(
+            if let Err(mut err) = enforce_structured_outputs_json_object(
                 &mut resp,
                 kind,
                 ai,
                 run_dir,
-                artifact_prefix,
+                &attempt_artifact_prefix,
             ) {
+                artifacts::write_gen3d_text_artifact(
+                    run_dir,
+                    format!("{attempt_artifact_prefix}_structured_outputs_invalid.txt"),
+                    resp.text.trim(),
+                );
+
+                if err.contains("EOF while parsing") {
+                    err.push_str(" (possible truncated response)");
+                }
+
                 if attempt < max_attempts {
                     warn!(
                         "Gen3D: structured outputs invalid; retrying (attempt {}/{}) service={} base_url={} schema={kind:?} err={}",
@@ -466,7 +487,7 @@ pub(super) fn generate_text_via_ai_service(
                         run_dir,
                         format!(
                             "structured_outputs_retry prefix={} schema={kind:?} service={} base_url={} attempt={}/{} delay_ms={} err={}",
-                            artifact_prefix,
+                            attempt_artifact_prefix,
                             ai.service_label(),
                             ai.base_url(),
                             attempt,
@@ -550,6 +571,7 @@ mod tests {
             &progress,
             Gen3dAiSessionState::default(),
             None,
+            Duration::from_secs(crate::config::DEFAULT_AI_REQUEST_TIMEOUT_SECS),
             Some(Gen3dAiJsonSchemaKind::PlanV1),
             true,
             &ai,

@@ -575,6 +575,7 @@ pub(crate) fn gen3d_start_edit_run_from_current_draft_from_api(
     job.user_image_object_summary = None;
     job.prompt_intent = None;
     job.require_structured_outputs = config.gen3d_require_structured_outputs;
+    job.ai_request_timeout_secs = config.ai_request_timeout_secs;
     job.review_appearance = config.gen3d_review_appearance;
     job.auto_refine_passes_done = 0;
     job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
@@ -847,6 +848,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.motion_in_flight.clear();
     job.review_appearance = config.gen3d_review_appearance;
     job.require_structured_outputs = config.gen3d_require_structured_outputs;
+    job.ai_request_timeout_secs = config.ai_request_timeout_secs;
     job.auto_refine_passes_done = 0;
     job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
     job.replan_attempts = 0;
@@ -1332,6 +1334,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.step_dir = Some(step_dir.clone());
     job.review_appearance = config.gen3d_review_appearance;
     job.require_structured_outputs = config.gen3d_require_structured_outputs;
+    job.ai_request_timeout_secs = config.ai_request_timeout_secs;
     job.auto_refine_passes_done = 0;
     job.auto_refine_passes_remaining = refine_passes_for_speed(config, workshop.speed_mode);
     job.replan_attempts = 0;
@@ -1942,14 +1945,15 @@ pub(crate) fn gen3d_poll_ai_job(
                 );
                 job.last_review_user_text = user_text.clone();
                 let reasoning_effort = ai.model_reasoning_effort().to_string();
-                spawn_gen3d_ai_text_thread(
-                    shared,
-                    progress,
-                    job.cancel_flag.clone(),
-                    job.session.clone(),
-                    Some(if regen_allowed {
-                        Gen3dAiJsonSchemaKind::ReviewDeltaV1
-                    } else {
+	                spawn_gen3d_ai_text_thread(
+	                    shared,
+	                    progress,
+	                    job.cancel_flag.clone(),
+	                    job.ai_request_timeout(),
+	                    job.session.clone(),
+	                    Some(if regen_allowed {
+	                        Gen3dAiJsonSchemaKind::ReviewDeltaV1
+	                    } else {
                         Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
                     }),
                     config.gen3d_require_structured_outputs,
@@ -2521,13 +2525,14 @@ pub(crate) fn gen3d_poll_ai_job(
                             },
                         };
                         let reasoning_effort = ai.model_reasoning_effort().to_string();
-                        spawn_gen3d_ai_text_thread(
-                            shared,
-                            progress,
-                            job.cancel_flag.clone(),
-                            job.session.clone(),
-                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-                            config.gen3d_require_structured_outputs,
+	                        spawn_gen3d_ai_text_thread(
+	                            shared,
+	                            progress,
+	                            job.cancel_flag.clone(),
+	                            job.ai_request_timeout(),
+	                            job.session.clone(),
+	                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+	                            config.gen3d_require_structured_outputs,
                             ai,
                             reasoning_effort,
                             system,
@@ -2923,13 +2928,14 @@ pub(crate) fn gen3d_poll_ai_job(
                             ),
                         };
                         let reasoning_effort = ai.model_reasoning_effort().to_string();
-                        spawn_gen3d_ai_text_thread(
-                            shared,
-                            progress,
-                            job.cancel_flag.clone(),
-                            job.session.clone(),
-                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-                            config.gen3d_require_structured_outputs,
+	                        spawn_gen3d_ai_text_thread(
+	                            shared,
+	                            progress,
+	                            job.cancel_flag.clone(),
+	                            job.ai_request_timeout(),
+	                            job.session.clone(),
+	                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+	                            config.gen3d_require_structured_outputs,
                             ai,
                             reasoning_effort,
                             system,
@@ -3041,6 +3047,7 @@ fn retry_gen3d_review_delta(
         shared,
         progress,
         job.cancel_flag.clone(),
+        job.ai_request_timeout(),
         job.session.clone(),
         Some(if regen_allowed {
             Gen3dAiJsonSchemaKind::ReviewDeltaV1
@@ -3132,6 +3139,7 @@ fn retry_gen3d_plan(
         shared,
         progress,
         job.cancel_flag.clone(),
+        job.ai_request_timeout(),
         job.session.clone(),
         Some(Gen3dAiJsonSchemaKind::PlanV1),
         job.require_structured_outputs,
@@ -3395,6 +3403,7 @@ fn poll_gen3d_parallel_components(
             shared.clone(),
             progress.clone(),
             job.cancel_flag.clone(),
+            job.ai_request_timeout(),
             job.session.clone(),
             Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
             job.require_structured_outputs,
@@ -5300,6 +5309,7 @@ pub(super) fn spawn_gen3d_ai_text_thread(
     shared: SharedResult<Gen3dAiTextResponse, String>,
     progress: Arc<Mutex<Gen3dAiProgress>>,
     cancel: Option<Arc<AtomicBool>>,
+    first_byte_timeout: std::time::Duration,
     session: Gen3dAiSessionState,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     require_structured_outputs: bool,
@@ -5351,6 +5361,7 @@ pub(super) fn spawn_gen3d_ai_text_thread(
                 &progress,
                 session,
                 cancel,
+                first_byte_timeout,
                 expected_schema,
                 require_structured_outputs,
                 &ai,
@@ -5437,6 +5448,7 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
     let step_dir = job.step_dir.clone();
     let user_prompt = job.user_prompt_raw.clone();
     let require_structured_outputs = job.require_structured_outputs;
+    let first_byte_timeout = job.ai_request_timeout();
 
     std::thread::spawn(move || {
         let progress: Arc<Mutex<Gen3dAiProgress>> = Arc::new(Mutex::new(Gen3dAiProgress {
@@ -5462,6 +5474,7 @@ pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
             &progress,
             session,
             None,
+            first_byte_timeout,
             Some(Gen3dAiJsonSchemaKind::DescriptorMetaV1),
             require_structured_outputs,
             &ai,

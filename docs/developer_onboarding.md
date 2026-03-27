@@ -57,6 +57,13 @@ model = "gpt-5.4"
 token = "YOUR_OPENAI_API_KEY"
 ```
 
+Optional: configure a global AI request timeout (default 240s):
+
+```toml
+[ai]
+request_timeout_secs = 240
+```
+
 Other providers:
 
 - MiMo (Xiaomi): set `[gen3d].ai_service = "mimo"` and configure `[mimo]` (token env: `MIMO_API_KEY`). See `docs/ai_services/mimo.md`.

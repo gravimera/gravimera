@@ -559,6 +559,7 @@ pub(crate) struct Gen3dAiJob {
     pub(super) pipeline: Gen3dPipelineState,
     pub(super) ai: Option<Gen3dAiServiceConfig>,
     pub(super) require_structured_outputs: bool,
+    pub(super) ai_request_timeout_secs: u64,
     pub(super) run_id: Option<Uuid>,
     pub(super) attempt: u32,
     pub(super) step: u32,
@@ -656,6 +657,15 @@ pub(super) struct Gen3dInFlightMotion {
 impl Gen3dAiJob {
     pub(crate) fn is_running(&self) -> bool {
         self.running
+    }
+
+    pub(super) fn ai_request_timeout(&self) -> std::time::Duration {
+        let secs = if self.ai_request_timeout_secs > 0 {
+            self.ai_request_timeout_secs
+        } else {
+            crate::config::DEFAULT_AI_REQUEST_TIMEOUT_SECS
+        };
+        std::time::Duration::from_secs(secs.max(1))
     }
 
     pub(crate) fn has_prior_run(&self) -> bool {

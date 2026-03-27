@@ -20,6 +20,8 @@ cp config.example.toml ~/.gravimera/config.toml
 
 - Set your AI provider in `[openai]` / `[mimo]` / `[gemini]` / `[claude]`
 - (Optional) Configure Gen3D behavior under `[gen3d]`
+- (Optional) Configure AI request timeouts under `[ai]`
+  - `request_timeout_secs = 240` (default). For Gen3D this is a “first-byte timeout” (how long we wait for the provider to start sending the response body).
 
 ## Run artifacts
 

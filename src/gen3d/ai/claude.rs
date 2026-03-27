@@ -22,7 +22,6 @@ use super::{
 use super::super::GEN3D_MAX_REQUEST_IMAGES;
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
-const CURL_FIRST_BYTE_TIMEOUT_SECS: u32 = 120;
 const CURL_IDLE_TIMEOUT_SECS: u32 = 300;
 const CURL_HARD_TIMEOUT_SECS_DEFAULT: u32 = 1_200;
 
@@ -458,6 +457,7 @@ pub(super) fn generate_text_via_claude(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: Gen3dAiSessionState,
     cancel: Option<Arc<AtomicBool>>,
+    first_byte_timeout: std::time::Duration,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     require_structured_outputs: bool,
     base_url: &str,
@@ -678,7 +678,7 @@ pub(super) fn generate_text_via_claude(
             child,
             Some(&request_body),
             CurlByteTimeouts {
-                first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+                first_byte: first_byte_timeout,
                 idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
                 hard: std::time::Duration::from_secs(CURL_HARD_TIMEOUT_SECS_DEFAULT.into()),
             },

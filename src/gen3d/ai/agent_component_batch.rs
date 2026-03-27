@@ -374,6 +374,7 @@ pub(super) fn poll_agent_component_batch(
             shared.clone(),
             progress.clone(),
             job.cancel_flag.clone(),
+            job.ai_request_timeout(),
             job.session.clone(),
             Some(super::structured_outputs::Gen3dAiJsonSchemaKind::ComponentDraftV1),
             config.gen3d_require_structured_outputs,

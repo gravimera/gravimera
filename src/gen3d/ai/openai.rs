@@ -34,7 +34,6 @@ const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 // - First-byte timeout: fail fast if the provider never starts sending a body.
 // - Idle timeout: allow long responses if bytes keep arriving, but abort if the transfer stalls.
 // - Hard timeout: absolute safety net so a single request can't monopolize the whole build budget.
-const CURL_FIRST_BYTE_TIMEOUT_SECS: u32 = 120;
 const CURL_IDLE_TIMEOUT_SECS: u32 = 300;
 const CURL_HARD_TIMEOUT_SECS_DEFAULT: u32 = 1_200;
 const CURL_HARD_TIMEOUT_SECS_STRUCTURED: u32 = 1_200;
@@ -631,6 +630,7 @@ pub(super) fn generate_text_via_openai(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     mut session: Gen3dAiSessionState,
     cancel: Option<Arc<AtomicBool>>,
+    first_byte_timeout: std::time::Duration,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     require_structured_outputs: bool,
     base_url: &str,
@@ -827,6 +827,7 @@ pub(super) fn generate_text_via_openai(
             progress,
             &mut session,
             cancel,
+            first_byte_timeout,
             expected_schema,
             require_structured_outputs,
             base_url,
@@ -924,6 +925,7 @@ pub(super) fn generate_text_via_openai(
         progress,
         &mut session,
         cancel,
+        first_byte_timeout,
         expected_schema,
         require_structured_outputs,
         base_url,
@@ -1389,8 +1391,15 @@ fn mock_generate_text_via_openai(
 
         static TRUNCATED_KEYS: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
 
+        let stable_prefix = artifact_prefix
+            .rsplit_once("_retry_")
+            .and_then(|(head, tail)| {
+                (!tail.is_empty() && tail.chars().all(|ch| ch.is_ascii_digit())).then_some(head)
+            })
+            .unwrap_or(artifact_prefix);
+
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        artifact_prefix.hash(&mut hasher);
+        stable_prefix.hash(&mut hasher);
         user_text.hash(&mut hasher);
         let key = hasher.finish();
 
@@ -1404,7 +1413,14 @@ fn mock_generate_text_via_openai(
         text
     }
 
-    let text = if artifact_prefix == "prompt_intent" {
+    let stable_prefix = artifact_prefix
+        .rsplit_once("_retry_")
+        .and_then(|(head, tail)| {
+            (!tail.is_empty() && tail.chars().all(|ch| ch.is_ascii_digit())).then_some(head)
+        })
+        .unwrap_or(artifact_prefix);
+
+    let text = if stable_prefix == "prompt_intent" {
         let kind = mock_kind_from_text(user_text);
         let requires_attack = !matches!(kind, MockKind::Snake);
         serde_json::json!({
@@ -1412,7 +1428,7 @@ fn mock_generate_text_via_openai(
             "requires_attack": requires_attack,
         })
         .to_string()
-    } else if artifact_prefix.starts_with("tool_edit_strategy_") {
+    } else if stable_prefix.starts_with("tool_edit_strategy_") {
         fn parse_edit_prompt(user_text: &str) -> String {
             for line in user_text.lines() {
                 let line = line.trim();
@@ -1498,10 +1514,10 @@ fn mock_generate_text_via_openai(
             "reason": "Mock: selected strategy and a minimal snapshot scope."
         })
         .to_string()
-    } else if artifact_prefix.starts_with("tool_plan_ops_") {
+    } else if stable_prefix.starts_with("tool_plan_ops_") {
         // A "no-op" plan-ops patch. This exercises the PlanOps parsing/apply path offline.
         serde_json::json!({ "version": 1, "ops": [] }).to_string()
-    } else if artifact_prefix.starts_with("tool_review_") {
+    } else if stable_prefix.starts_with("tool_review_") {
         let (run_id, attempt, plan_hash, assembly_rev) = parse_applies_to_from_user_text(user_text)
             .unwrap_or_else(|| ("".into(), 0, "".into(), 0));
         serde_json::json!({
@@ -1513,7 +1529,7 @@ fn mock_generate_text_via_openai(
             "summary": "Mock: accept review."
         })
         .to_string()
-    } else if artifact_prefix.starts_with("tool_draft_ops_") {
+    } else if stable_prefix.starts_with("tool_draft_ops_") {
         fn find_first_part_id_by_component(user_text: &str) -> Option<(String, String, [f32; 3])> {
             let marker = "Component parts snapshots (JSON; includes part_id_uuid + recipes):";
             let after = user_text.split(marker).nth(1)?;
@@ -1735,7 +1751,7 @@ fn mock_generate_text_via_openai(
             })
             .to_string()
         }
-    } else if artifact_prefix == "descriptor_meta" {
+    } else if stable_prefix == "descriptor_meta" {
         serde_json::json!({
             "version": 1,
             "short": "Mock prefab (Gen3D).",
@@ -1918,6 +1934,7 @@ fn openai_responses_flow(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
     cancel: Option<&AtomicBool>,
+    first_byte_timeout: std::time::Duration,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     require_structured_outputs: bool,
     base_url: &str,
@@ -2037,6 +2054,7 @@ fn openai_responses_flow(
         match openai_responses_curl(
             progress,
             cancel,
+            first_byte_timeout,
             base_url,
             api_key,
             model,
@@ -2247,6 +2265,7 @@ fn openai_responses_flow(
                 body = openai_responses_curl(
                     progress,
                     cancel,
+                    first_byte_timeout,
                     base_url,
                     api_key,
                     model,
@@ -2358,7 +2377,7 @@ fn openai_responses_flow(
                 poll,
                 None,
                 CurlByteTimeouts {
-                    first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+                    first_byte: first_byte_timeout,
                     idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
                     hard: std::time::Duration::from_secs(CURL_HARD_TIMEOUT_SECS_DEFAULT.into()),
                 },
@@ -2407,6 +2426,7 @@ fn openai_chat_completions_flow(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
     cancel: Option<&AtomicBool>,
+    first_byte_timeout: std::time::Duration,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     require_structured_outputs: bool,
     base_url: &str,
@@ -2472,6 +2492,7 @@ fn openai_chat_completions_flow(
             progress,
             session,
             cancel,
+            first_byte_timeout,
             base_url,
             api_key,
             model,
@@ -2838,6 +2859,7 @@ fn build_openai_chat_completions_request_json(
 fn openai_responses_curl(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     cancel: Option<&AtomicBool>,
+    first_byte_timeout: std::time::Duration,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -2962,7 +2984,7 @@ fn openai_responses_curl(
         child,
         Some(&body),
         CurlByteTimeouts {
-            first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+            first_byte: first_byte_timeout,
             idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
             hard: std::time::Duration::from_secs(hard_timeout_secs.into()),
         },
@@ -3044,6 +3066,7 @@ fn openai_chat_completions_curl(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &Gen3dAiSessionState,
     cancel: Option<&AtomicBool>,
+    first_byte_timeout: std::time::Duration,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -3162,7 +3185,7 @@ fn openai_chat_completions_curl(
         child,
         Some(&body),
         CurlByteTimeouts {
-            first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+            first_byte: first_byte_timeout,
             idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
             hard: std::time::Duration::from_secs(hard_timeout_secs.into()),
         },

@@ -177,6 +177,7 @@ pub(super) fn start_agent_llm_review_delta_call(
         shared,
         progress,
         job.cancel_flag.clone(),
+        job.ai_request_timeout(),
         job.session.clone(),
         Some(if regen_allowed {
             super::structured_outputs::Gen3dAiJsonSchemaKind::ReviewDeltaV1

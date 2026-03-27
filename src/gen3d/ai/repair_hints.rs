@@ -15,6 +15,10 @@ fn extract_serde_missing_field(err: &str) -> Option<String> {
     extract_backticked_token(err, "missing field `")
 }
 
+fn extract_serde_unknown_variant(err: &str) -> Option<String> {
+    extract_backticked_token(err, "unknown variant `")
+}
+
 fn trim_wrapping_quotes(raw: &str) -> String {
     raw.trim()
         .trim_matches('"')
@@ -201,6 +205,39 @@ pub(super) fn build_schema_repair_hints(
                 push_once(
                     &mut out,
                     "Set top-level `version` to 2 for a component draft.",
+                );
+            }
+            if let Some(field) = extract_serde_missing_field(err) {
+                match field.as_str() {
+                    "collider" => {
+                        push_once(
+                            &mut out,
+                            "Top-level component draft output MUST include `collider` (use `null` if not needed).",
+                        );
+                    }
+                    "radius" => {
+                        push_once(
+                            &mut out,
+                            "For `collider.kind=\"circle_xz\"`, include `radius` (a number).",
+                        );
+                    }
+                    "half_extents" | "min" | "max" => {
+                        push_once(
+                            &mut out,
+                            "For `collider.kind=\"aabb_xz\"`, include keys `half_extents`, `min`, and `max` (set unused ones to null).",
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if err.contains("unknown variant")
+                && err.contains("circle_xz")
+                && err.contains("aabb_xz")
+                && extract_serde_unknown_variant(err).is_some()
+            {
+                push_once(
+                    &mut out,
+                    "For component drafts, `collider.kind` must be one of: none, circle_xz, aabb_xz (or set `collider` to null).",
                 );
             }
             if err.contains("AI draft has no parts") {

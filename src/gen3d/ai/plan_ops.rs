@@ -1795,7 +1795,7 @@ Hint: include these names in scope_components, or omit scope_components, or use 
                 &plan_json,
             );
         }
-        return Err(err);
+        return Ok(result);
     }
 
     let plan_before_serialized = plan_json;
@@ -1887,7 +1887,7 @@ Hint: include these names in scope_components, or omit scope_components, or use 
             );
         }
 
-        return Err(err);
+        return Ok(result);
     }
 
     let can_preserve_geometry = preserve_existing_components
@@ -2002,19 +2002,10 @@ Hint: include these names in scope_components, or omit scope_components, or use 
 
         job.pending_plan_attempt = Some(pending_for_inspect);
     }
-    let committed = true;
+    let committed = accepted;
 
     let assembly_rev_after = job.assembly_rev();
     let ok = accepted && rejected_ops.is_empty();
-    let err_for_retry = (!accepted).then(|| {
-        new_errors
-            .iter()
-            .find_map(|v| v.get("error").and_then(|e| e.as_str()))
-            .unwrap_or("plan ops apply rejected")
-            .trim()
-            .to_string()
-    });
-
     let result = serde_json::json!({
         "ok": ok,
         "version": 1,
@@ -2048,12 +2039,6 @@ Hint: include these names in scope_components, or omit scope_components, or use 
             "plan_ops_plan_before.json",
             &plan_before_serialized,
         );
-    }
-
-    if let Some(err) = err_for_retry {
-        return Err(format!(
-            "llm_generate_plan_ops_v1 failed to apply plan ops: {err}"
-        ));
     }
 
     Ok(result)

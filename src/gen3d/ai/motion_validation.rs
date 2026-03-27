@@ -2307,19 +2307,19 @@ fn compute_world_transforms_for_channels(
     let mut visited = vec![false; components.len()];
     world[root_idx] = Transform::IDENTITY;
 
-    fn choose_slot<'a>(
-        att: &'a Gen3dPlannedAttachment,
-        attacking_primary: bool,
-        acting: bool,
-        moving: bool,
-        idle: bool,
-    ) -> Option<&'a PartAnimationSlot> {
-        for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
-            let active = match channel {
-                "attack_primary" => attacking_primary,
-                "action" => acting,
-                "move" => moving,
-                "idle" => idle,
+	    fn choose_slot<'a>(
+	        att: &'a Gen3dPlannedAttachment,
+	        attacking_primary: bool,
+	        acting: bool,
+	        moving: bool,
+	        idle: bool,
+	    ) -> Option<&'a PartAnimationSlot> {
+	        for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
+	            let active = match channel {
+	                "attack_primary" => attacking_primary,
+	                "action" => acting,
+	                "move" => moving,
+	                "idle" => idle,
                 "ambient" => true,
                 _ => false,
             };
@@ -3475,18 +3475,18 @@ mod tests {
 
         let mut child = stub_component("child", Vec::new());
         child.planned_size = Vec3::splat(1.0);
-        child.attach_to = Some(Gen3dPlannedAttachment {
-            parent: "root".into(),
-            parent_anchor: "origin".into(),
-            child_anchor: "origin".into(),
-            offset: Transform::from_translation(Vec3::new(1.5, 0.0, 0.0)),
-            fallback_basis: Transform::IDENTITY,
-            joint: None,
-            animations: vec![PartAnimationSlot {
-                channel: "attack_primary".into(),
-                spec: attack_spec,
-            }],
-        });
+	        child.attach_to = Some(Gen3dPlannedAttachment {
+	            parent: "root".into(),
+	            parent_anchor: "origin".into(),
+	            child_anchor: "origin".into(),
+	            offset: Transform::from_translation(Vec3::new(1.5, 0.0, 0.0)),
+	            fallback_basis: Transform::IDENTITY,
+	            joint: None,
+	            animations: vec![PartAnimationSlot {
+	                channel: "attack_primary".into(),
+	                spec: attack_spec,
+	            }],
+	        });
 
         let components = vec![root, child];
         let report = build_motion_validation_report(None, &components);
@@ -3547,18 +3547,18 @@ mod tests {
         child.planned_size = Vec3::splat(1.0);
         // Idle pose already intersects; attack moves away, so there should be no "increased"
         // self-intersection relative to idle.
-        child.attach_to = Some(Gen3dPlannedAttachment {
-            parent: "root".into(),
-            parent_anchor: "origin".into(),
-            child_anchor: "origin".into(),
-            offset: Transform::from_translation(Vec3::new(0.5, 0.0, 0.0)),
-            fallback_basis: Transform::IDENTITY,
-            joint: None,
-            animations: vec![PartAnimationSlot {
-                channel: "attack_primary".into(),
-                spec: attack_spec,
-            }],
-        });
+	        child.attach_to = Some(Gen3dPlannedAttachment {
+	            parent: "root".into(),
+	            parent_anchor: "origin".into(),
+	            child_anchor: "origin".into(),
+	            offset: Transform::from_translation(Vec3::new(0.5, 0.0, 0.0)),
+	            fallback_basis: Transform::IDENTITY,
+	            joint: None,
+	            animations: vec![PartAnimationSlot {
+	                channel: "attack_primary".into(),
+	                spec: attack_spec,
+	            }],
+	        });
 
         let components = vec![root, child];
         let report = build_motion_validation_report(None, &components);

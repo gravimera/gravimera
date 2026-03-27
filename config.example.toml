@@ -67,6 +67,17 @@
 # Optional: start with time paused (default: false). Use the API to resume/step.
 # pause_on_start = true
 
+[ai]
+
+# Optional: max seconds to wait for an AI backend to start sending a response body.
+#
+# This is applied as:
+# - a "first-byte timeout" for Gen3D's streaming AI requests, and
+# - a curl `--max-time` cap for Scene Build AI requests.
+#
+# Default: 240 (4 minutes).
+# request_timeout_secs = 240
+
 [gen3d]
 
 # AI service used by Gen3D:

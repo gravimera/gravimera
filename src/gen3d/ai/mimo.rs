@@ -29,7 +29,6 @@ const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
 // - First-byte timeout: fail fast if the provider never starts sending a body.
 // - Idle timeout: allow long responses if bytes keep arriving, but abort if the transfer stalls.
 // - Hard timeout: absolute safety net so a single request can't monopolize the whole build budget.
-const CURL_FIRST_BYTE_TIMEOUT_SECS: u32 = 120;
 const CURL_IDLE_TIMEOUT_SECS: u32 = 300;
 const CURL_HARD_TIMEOUT_SECS_DEFAULT: u32 = 1_200;
 
@@ -462,6 +461,7 @@ fn mimo_chat_completions_curl(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &Gen3dAiSessionState,
     cancel: Option<&AtomicBool>,
+    first_byte_timeout: std::time::Duration,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -573,7 +573,7 @@ fn mimo_chat_completions_curl(
         child,
         Some(&body),
         CurlByteTimeouts {
-            first_byte: std::time::Duration::from_secs(CURL_FIRST_BYTE_TIMEOUT_SECS.into()),
+            first_byte: first_byte_timeout,
             idle: std::time::Duration::from_secs(CURL_IDLE_TIMEOUT_SECS.into()),
             hard: std::time::Duration::from_secs(CURL_HARD_TIMEOUT_SECS_DEFAULT.into()),
         },
@@ -645,6 +645,7 @@ fn mimo_chat_completions_flow(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     session: &mut Gen3dAiSessionState,
     cancel: Option<&AtomicBool>,
+    first_byte_timeout: std::time::Duration,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     base_url: &str,
     api_key: &str,
@@ -697,6 +698,7 @@ fn mimo_chat_completions_flow(
             progress,
             session,
             cancel,
+            first_byte_timeout,
             base_url,
             api_key,
             model,
@@ -829,6 +831,7 @@ pub(super) fn generate_text_via_mimo(
     progress: &Arc<Mutex<Gen3dAiProgress>>,
     mut session: Gen3dAiSessionState,
     cancel: Option<Arc<AtomicBool>>,
+    first_byte_timeout: std::time::Duration,
     expected_schema: Option<Gen3dAiJsonSchemaKind>,
     _require_structured_outputs: bool,
     base_url: &str,
@@ -944,6 +947,7 @@ pub(super) fn generate_text_via_mimo(
         progress,
         &mut session,
         cancel,
+        first_byte_timeout,
         expected_schema,
         base_url,
         api_key,

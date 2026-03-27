@@ -33,7 +33,6 @@ use crate::types::{
 };
 
 const CURL_CONNECT_TIMEOUT_SECS: u32 = 15;
-const CURL_MAX_TIME_SECS: u32 = 600;
 const MAX_STEP_ATTEMPTS: u8 = 3;
 
 const SCENE_BUILD_STEP_SCREENSHOT_WIDTH_PX: u32 = 1920;
@@ -331,6 +330,7 @@ struct SceneBuildAiJob {
     openai_api_key: String,
     openai_model: String,
     openai_reasoning_effort: String,
+    ai_request_timeout_secs: u64,
 
     phase: SceneBuildAiPhase,
     plan_steps: Vec<SceneBuildAiPlanStep>,
@@ -615,6 +615,7 @@ pub(crate) fn start_scene_build_from_description(
         openai_api_key: openai.api_key.clone(),
         openai_model: openai.model.clone(),
         openai_reasoning_effort: openai.reasoning_effort.clone(),
+        ai_request_timeout_secs: config.ai_request_timeout_secs,
         phase: SceneBuildAiPhase::Cleanup,
         plan_steps: Vec::new(),
         next_run_step: 1,
@@ -797,6 +798,7 @@ pub(crate) fn scene_build_ai_poll(
                         job.openai_api_key.clone(),
                         job.openai_model.clone(),
                         job.openai_reasoning_effort.clone(),
+                        job.ai_request_timeout_secs,
                         system_text,
                         user_text,
                         llm_dir,
@@ -1514,6 +1516,7 @@ Fix the JSON so it matches the schemas exactly and resolves the error. Return ON
         job.openai_api_key.clone(),
         job.openai_model.clone(),
         job.openai_reasoning_effort.clone(),
+        job.ai_request_timeout_secs,
         system_text,
         user_text,
         llm_dir,
@@ -2108,6 +2111,7 @@ fn spawn_scene_build_llm_thread(
     api_key: String,
     model: String,
     reasoning_effort: String,
+    request_timeout_secs: u64,
     system_text: String,
     user_text: String,
     llm_dir: PathBuf,
@@ -2127,6 +2131,7 @@ fn spawn_scene_build_llm_thread(
                 &api_key,
                 &model,
                 &reasoning_effort,
+                request_timeout_secs,
                 &system_text,
                 &user_text,
                 &llm_dir,
@@ -2160,6 +2165,7 @@ fn call_openai_responses_json_object(
     api_key: &str,
     model: &str,
     reasoning_effort: &str,
+    request_timeout_secs: u64,
     system_instructions: &str,
     user_text: &str,
     llm_dir: &Path,
@@ -2225,7 +2231,7 @@ fn call_openai_responses_json_object(
         .arg("--connect-timeout")
         .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
         .arg("--max-time")
-        .arg(CURL_MAX_TIME_SECS.to_string())
+        .arg(request_timeout_secs.max(1).to_string())
         .arg("-X")
         .arg("POST")
         .arg("-H")
@@ -2333,6 +2339,7 @@ fn call_openai_json_object(
     api_key: &str,
     model: &str,
     reasoning_effort: &str,
+    request_timeout_secs: u64,
     system_instructions: &str,
     user_text: &str,
     llm_dir: &Path,
@@ -2347,6 +2354,7 @@ fn call_openai_json_object(
         api_key,
         model,
         reasoning_effort,
+        request_timeout_secs,
         system_instructions,
         user_text,
         &responses_dir,
@@ -2373,6 +2381,7 @@ fn call_openai_json_object(
                 api_key,
                 model,
                 reasoning_effort,
+                request_timeout_secs,
                 system_instructions,
                 user_text,
                 &chat_dir,
@@ -2396,6 +2405,7 @@ fn call_openai_chat_json_object(
     api_key: &str,
     model: &str,
     reasoning_effort: &str,
+    request_timeout_secs: u64,
     system_instructions: &str,
     user_text: &str,
     llm_dir: &Path,
@@ -2456,7 +2466,7 @@ fn call_openai_chat_json_object(
         .arg("--connect-timeout")
         .arg(CURL_CONNECT_TIMEOUT_SECS.to_string())
         .arg("--max-time")
-        .arg(CURL_MAX_TIME_SECS.to_string())
+        .arg(request_timeout_secs.max(1).to_string())
         .arg("-X")
         .arg("POST")
         .arg("-H")

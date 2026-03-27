@@ -890,14 +890,14 @@ pub(crate) fn update_part_animations(
                 player.root_entity,
                 attack_clock,
             );
-        }
-
-        if chosen.is_none() {
-            for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
-                let channel_active = match channel {
-                    "attack_primary" => attack_active,
-                    "action" => action_active,
-                    "move" => move_active,
+	        }
+	
+	        if chosen.is_none() {
+	            for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
+	                let channel_active = match channel {
+	                    "attack_primary" => attack_active,
+	                    "action" => action_active,
+	                    "move" => move_active,
                     "idle" => idle_active,
                     // Ambient is always active (fallback animation like fans/spinners).
                     "ambient" => true,
