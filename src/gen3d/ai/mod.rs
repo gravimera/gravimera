@@ -111,6 +111,7 @@ pub(crate) fn gen3d_generate_text_simple(
         &progress,
         session,
         cancel,
+        std::time::Duration::from_secs(config.ai_request_timeout_secs.max(1)),
         None,
         config.gen3d_require_structured_outputs,
         &ai,

@@ -1114,7 +1114,7 @@ impl Gen3dAiJob {
             (Some(input), Some(output), _) => self.add_token_usage(input, output),
             (Some(input), None, _) => self.add_token_usage(input, 0),
             (None, Some(output), _) => self.add_token_usage(0, output),
-            (None, None, Some(total),) => self.add_unsplit_tokens(total),
+            (None, None, Some(total)) => self.add_unsplit_tokens(total),
             (None, None, None) => {}
         }
     }

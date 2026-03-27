@@ -263,9 +263,7 @@ fn extract_gemini_stream_output(
                     input_tokens = usage.get("promptTokenCount").and_then(|v| v.as_u64());
                 }
                 if output_tokens.is_none() {
-                    output_tokens = usage
-                        .get("candidatesTokenCount")
-                        .and_then(|v| v.as_u64());
+                    output_tokens = usage.get("candidatesTokenCount").and_then(|v| v.as_u64());
                 }
                 if total_tokens.is_none() {
                     total_tokens = usage.get("totalTokenCount").and_then(|v| v.as_u64());
@@ -731,8 +729,7 @@ pub(super) fn generate_text_via_gemini(
         );
     }
 
-    let (text_opt, input_tokens, output_tokens, total_tokens) =
-        extract_gemini_stream_output(&body);
+    let (text_opt, input_tokens, output_tokens, total_tokens) = extract_gemini_stream_output(&body);
     let text = text_opt.ok_or_else(|| {
         error!(
             "Gen3D: Gemini stream returned no output text (prefix={})",

@@ -835,7 +835,7 @@ pub(crate) fn update_part_animations(
             return None;
         }
 
-        if channel != "attack_primary" {
+        if channel != "attack" {
             return animations
                 .iter()
                 .find(|slot| slot.channel.as_ref() == channel)
@@ -844,7 +844,7 @@ pub(crate) fn update_part_animations(
 
         let mut matches = animations
             .iter()
-            .filter(|slot| slot.channel.as_ref() == "attack_primary");
+            .filter(|slot| slot.channel.as_ref() == "attack");
         let first = matches.next()?;
         let Some(second) = matches.next() else {
             return Some(&first.spec);
@@ -890,14 +890,14 @@ pub(crate) fn update_part_animations(
                 player.root_entity,
                 attack_clock,
             );
-	        }
-	
-	        if chosen.is_none() {
-	            for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
-	                let channel_active = match channel {
-	                    "attack_primary" => attack_active,
-	                    "action" => action_active,
-	                    "move" => move_active,
+        }
+
+        if chosen.is_none() {
+            for channel in ["attack", "action", "move", "idle", "ambient"] {
+                let channel_active = match channel {
+                    "attack" => attack_active,
+                    "action" => action_active,
+                    "move" => move_active,
                     "idle" => idle_active,
                     // Ambient is always active (fallback animation like fans/spinners).
                     "ambient" => true,

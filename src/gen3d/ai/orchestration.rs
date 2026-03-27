@@ -1427,7 +1427,11 @@ pub(super) fn poll_gen3d_descriptor_meta_in_flight(job: &mut Gen3dAiJob) {
     match result {
         Ok(resp) => {
             job.note_api_used(resp.api);
-            job.add_token_usage_from_response(resp.input_tokens, resp.output_tokens, resp.total_tokens);
+            job.add_token_usage_from_response(
+                resp.input_tokens,
+                resp.output_tokens,
+                resp.total_tokens,
+            );
             if let Some(flag) = resp.session.responses_supported {
                 job.session.responses_supported = Some(flag);
             }
@@ -1945,15 +1949,15 @@ pub(crate) fn gen3d_poll_ai_job(
                 );
                 job.last_review_user_text = user_text.clone();
                 let reasoning_effort = ai.model_reasoning_effort().to_string();
-	                spawn_gen3d_ai_text_thread(
-	                    shared,
-	                    progress,
-	                    job.cancel_flag.clone(),
-	                    job.ai_request_timeout(),
-	                    job.session.clone(),
-	                    Some(if regen_allowed {
-	                        Gen3dAiJsonSchemaKind::ReviewDeltaV1
-	                    } else {
+                spawn_gen3d_ai_text_thread(
+                    shared,
+                    progress,
+                    job.cancel_flag.clone(),
+                    job.ai_request_timeout(),
+                    job.session.clone(),
+                    Some(if regen_allowed {
+                        Gen3dAiJsonSchemaKind::ReviewDeltaV1
+                    } else {
                         Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
                     }),
                     config.gen3d_require_structured_outputs,
@@ -2076,7 +2080,11 @@ pub(crate) fn gen3d_poll_ai_job(
                 } else if let Some(tokens) = resp.total_tokens {
                     debug!("Gen3D: OpenAI usage total_tokens={tokens}");
                 }
-                job.add_token_usage_from_response(resp.input_tokens, resp.output_tokens, resp.total_tokens);
+                job.add_token_usage_from_response(
+                    resp.input_tokens,
+                    resp.output_tokens,
+                    resp.total_tokens,
+                );
                 let max_tokens = config.gen3d_max_tokens;
                 if max_tokens > 0 && job.current_run_tokens() >= max_tokens {
                     let current_tokens = job.current_run_tokens();
@@ -2530,14 +2538,14 @@ pub(crate) fn gen3d_poll_ai_job(
                             },
                         };
                         let reasoning_effort = ai.model_reasoning_effort().to_string();
-	                        spawn_gen3d_ai_text_thread(
-	                            shared,
-	                            progress,
-	                            job.cancel_flag.clone(),
-	                            job.ai_request_timeout(),
-	                            job.session.clone(),
-	                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-	                            config.gen3d_require_structured_outputs,
+                        spawn_gen3d_ai_text_thread(
+                            shared,
+                            progress,
+                            job.cancel_flag.clone(),
+                            job.ai_request_timeout(),
+                            job.session.clone(),
+                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+                            config.gen3d_require_structured_outputs,
                             ai,
                             reasoning_effort,
                             system,
@@ -2933,14 +2941,14 @@ pub(crate) fn gen3d_poll_ai_job(
                             ),
                         };
                         let reasoning_effort = ai.model_reasoning_effort().to_string();
-	                        spawn_gen3d_ai_text_thread(
-	                            shared,
-	                            progress,
-	                            job.cancel_flag.clone(),
-	                            job.ai_request_timeout(),
-	                            job.session.clone(),
-	                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-	                            config.gen3d_require_structured_outputs,
+                        spawn_gen3d_ai_text_thread(
+                            shared,
+                            progress,
+                            job.cancel_flag.clone(),
+                            job.ai_request_timeout(),
+                            job.session.clone(),
+                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+                            config.gen3d_require_structured_outputs,
                             ai,
                             reasoning_effort,
                             system,

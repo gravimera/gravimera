@@ -1797,9 +1797,7 @@ fn json_to_u64(value: &serde_json::Value) -> Option<u64> {
         .or_else(|| value.as_i64().and_then(|v| (v >= 0).then_some(v as u64)))
 }
 
-fn extract_openai_token_usage(
-    json: &serde_json::Value,
-) -> (Option<u64>, Option<u64>, Option<u64>) {
+fn extract_openai_token_usage(json: &serde_json::Value) -> (Option<u64>, Option<u64>, Option<u64>) {
     let Some(usage) = json.get("usage") else {
         return (None, None, None);
     };
@@ -2592,8 +2590,7 @@ fn openai_chat_completions_flow(
         );
     }
 
-    let (text, input_tokens, output_tokens, total_tokens) = if let Some(json) = json_opt.as_ref()
-    {
+    let (text, input_tokens, output_tokens, total_tokens) = if let Some(json) = json_opt.as_ref() {
         if let Some(message) = openai_error_message(json) {
             return Err(OpenAiError {
                 summary: format!("OpenAI error: {message}"),

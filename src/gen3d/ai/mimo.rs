@@ -763,8 +763,7 @@ fn mimo_chat_completions_flow(
         );
     }
 
-    let (text, input_tokens, output_tokens, total_tokens) = if let Some(json) = json_opt.as_ref()
-    {
+    let (text, input_tokens, output_tokens, total_tokens) = if let Some(json) = json_opt.as_ref() {
         if let Some(message) = mimo_error_message(json) {
             return Err(MimoError {
                 summary: format!("MiMo error: {message}"),

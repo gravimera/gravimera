@@ -821,8 +821,7 @@ pub(super) fn generate_text_via_claude(
         );
     }
 
-    let (text_opt, input_tokens, output_tokens, total_tokens) =
-        extract_claude_stream_output(&body);
+    let (text_opt, input_tokens, output_tokens, total_tokens) = extract_claude_stream_output(&body);
     let text = text_opt.ok_or_else(|| {
         error!(
             "Gen3D: Claude stream returned no output text (prefix={}, http_status={})",

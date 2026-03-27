@@ -609,7 +609,11 @@ pub(super) fn poll_agent_tool(
         Ok(resp) => {
             job.note_api_used(resp.api);
             job.session = resp.session;
-            job.add_token_usage_from_response(resp.input_tokens, resp.output_tokens, resp.total_tokens);
+            job.add_token_usage_from_response(
+                resp.input_tokens,
+                resp.output_tokens,
+                resp.total_tokens,
+            );
 
             match kind {
                 super::Gen3dAgentLlmToolKind::SelectEditStrategy => {
