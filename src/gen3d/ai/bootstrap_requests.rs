@@ -18,10 +18,14 @@ pub(super) fn spawn_gen3d_user_image_summary_request(
     step_dir: PathBuf,
 ) -> Result<(), String> {
     if job.user_images.is_empty() {
-        return Err("Internal error: requested user-image summary but no user images exist.".into());
+        return Err(
+            "Internal error: requested user-image summary but no user images exist.".into(),
+        );
     }
     if job.user_image_object_summary.is_some() {
-        return Err("Internal error: requested user-image summary but summary already exists.".into());
+        return Err(
+            "Internal error: requested user-image summary but summary already exists.".into(),
+        );
     }
 
     let Some(ai) = job.ai.clone() else {
@@ -96,7 +100,9 @@ pub(super) fn spawn_gen3d_prompt_intent_request(
     step_dir: PathBuf,
 ) -> Result<(), String> {
     if job.prompt_intent.is_some() {
-        return Err("Internal error: requested prompt-intent analysis but it already exists.".into());
+        return Err(
+            "Internal error: requested prompt-intent analysis but it already exists.".into(),
+        );
     }
 
     let Some(ai) = job.ai.clone() else {

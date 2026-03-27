@@ -20,11 +20,11 @@ use crate::object::visuals;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
 use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
 use crate::scene_store::SceneSaveRequest;
-use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::types::{
     AabbCollider, BuildDimensions, BuildObject, Collider, Commandable, EmojiAtlas, GameMode,
     ObjectId, ObjectPrefabId, UiFonts, UiToastCommand, UiToastKind,
 };
+use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 
 const PANEL_Z_INDEX: i32 = 930;
 const PANEL_WIDTH_PX: f32 = 260.0;
@@ -166,7 +166,8 @@ impl Default for ModelLibraryExportJob {
 
 #[derive(Resource)]
 pub(crate) struct ModelLibraryImportJob {
-    receiver: Mutex<Option<mpsc::Receiver<Result<crate::prefab_zip::PrefabZipImportReport, String>>>>,
+    receiver:
+        Mutex<Option<mpsc::Receiver<Result<crate::prefab_zip::PrefabZipImportReport, String>>>>,
 }
 
 impl Default for ModelLibraryImportJob {

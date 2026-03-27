@@ -331,7 +331,11 @@ pub(super) fn parse_ai_review_delta_from_text(text: &str) -> Result<AiReviewDelt
     }
 
     normalize_ai_nullable_string_field_allowing_array(&mut json_value, "summary", "review-delta");
-    normalize_ai_nullable_string_field_allowing_array(&mut json_value, "notes_text", "review-delta");
+    normalize_ai_nullable_string_field_allowing_array(
+        &mut json_value,
+        "notes_text",
+        "review-delta",
+    );
     normalize_ai_nullable_string_field_allowing_array(&mut json_value, "notes", "review-delta");
 
     let mut delta: AiReviewDeltaJsonV1 =
@@ -482,7 +486,11 @@ pub(super) fn parse_ai_motion_authoring_from_text(
         return Err("AI motion-authoring JSON missing required `version` (expected 1).".into());
     }
 
-    normalize_ai_nullable_string_field_allowing_array(&mut json_value, "notes_text", "motion-authoring");
+    normalize_ai_nullable_string_field_allowing_array(
+        &mut json_value,
+        "notes_text",
+        "motion-authoring",
+    );
     normalize_ai_nullable_string_field_allowing_array(&mut json_value, "notes", "motion-authoring");
 
     let mut authored: AiMotionAuthoringJsonV1 =

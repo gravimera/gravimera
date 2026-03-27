@@ -35,6 +35,10 @@ impl Plugin for RenderedStartupPlugin {
         );
         app.add_systems(
             Startup,
+            crate::floor_library_ui::setup_floor_library_ui.after(setup::setup_rendered),
+        );
+        app.add_systems(
+            Startup,
             crate::motion_ui::setup_motion_algorithm_ui.after(setup::setup_rendered),
         );
         app.add_systems(
@@ -55,6 +59,13 @@ impl Plugin for RenderedStartupPlugin {
 }
 
 pub(crate) struct RenderedSceneRuntimePlugin;
+
+fn in_realm_or_floor_preview(build_scene: Res<State<BuildScene>>) -> bool {
+    matches!(
+        build_scene.get(),
+        BuildScene::Realm | BuildScene::FloorPreview
+    )
+}
 
 impl Plugin for RenderedSceneRuntimePlugin {
     fn build(&self, app: &mut App) {
@@ -114,6 +125,15 @@ impl Plugin for RenderedSceneRuntimePlugin {
         );
         app.add_systems(Update, crate::object::visuals::update_part_animations);
         app.add_systems(
+            Update,
+            (
+                crate::genfloor::apply_active_world_floor,
+                crate::genfloor::genfloor_update_cpu_waves
+                    .after(crate::genfloor::apply_active_world_floor),
+            )
+                .run_if(in_realm_or_floor_preview),
+        );
+        app.add_systems(
             PostUpdate,
             (
                 scene_store::scene_autosave_detect_changes,
@@ -164,8 +184,10 @@ impl Plugin for RenderedUiPlugin {
                     .run_if(crate::scene_authoring_ui::scene_ui_closed),
                 crate::workspace_ui::workspace_toolbar_sync_model_library_open
                     .after(crate::workspace_ui::workspace_toolbar_update_visibility),
-                crate::workspace_ui::workspace_toolbar_update_toggle_button_styles
+                crate::workspace_ui::workspace_toolbar_sync_floor_library_open
                     .after(crate::workspace_ui::workspace_toolbar_sync_model_library_open),
+                crate::workspace_ui::workspace_toolbar_update_toggle_button_styles
+                    .after(crate::workspace_ui::workspace_toolbar_sync_floor_library_open),
                 crate::workspace_ui::workspace_toolbar_update_scene_builder_button_styles
                     .after(crate::workspace_ui::workspace_toolbar_update_toggle_button_styles),
                 crate::workspace_ui::workspace_toolbar_update_scenes_panel_visibility.after(
@@ -305,7 +327,9 @@ impl Plugin for RenderedUiPlugin {
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::model_library_ui::model_library_preview_delete_modal_interactions
-                    .after(crate::model_library_ui::model_library_preview_delete_button_interactions)
+                    .after(
+                        crate::model_library_ui::model_library_preview_delete_button_interactions,
+                    )
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_preview_modify_button_interactions
                     .after(crate::model_library_ui::model_library_preview_delete_modal_interactions)
@@ -344,6 +368,72 @@ impl Plugin for RenderedUiPlugin {
                 .after(crate::model_library_ui::model_library_sync_gen3d_placeholders)
                 .run_if(crate::automation::local_input_enabled)
                 .run_if(crate::monitor_mode::local_world_mutations_allowed)
+                .run_if(console::console_closed)
+                .run_if(crate::scene_authoring_ui::scene_ui_closed),
+        );
+
+        app.add_systems(
+            Update,
+            crate::floor_library_ui::floor_library_update_visibility
+                .after(crate::workspace_ui::workspace_toolbar_sync_floor_library_open),
+        );
+        app.add_systems(
+            Update,
+            (
+                crate::floor_library_ui::floor_library_generate_button_interactions
+                    .after(crate::floor_library_ui::floor_library_update_visibility)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::floor_library_ui::floor_library_search_field_focus
+                    .after(crate::floor_library_ui::floor_library_generate_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::floor_library_ui::floor_library_search_text_input
+                    .after(crate::floor_library_ui::floor_library_search_field_focus)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::floor_library_ui::floor_library_update_search_field_ui
+                    .after(crate::floor_library_ui::floor_library_search_text_input)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::floor_library_ui::floor_library_rebuild_list_ui
+                    .after(crate::floor_library_ui::floor_library_update_visibility)
+                    .after(crate::floor_library_ui::floor_library_update_search_field_ui),
+                crate::floor_library_ui::floor_library_sync_genfloor_placeholders
+                    .after(crate::floor_library_ui::floor_library_rebuild_list_ui),
+                crate::floor_library_ui::floor_library_update_genfloor_thumbnail_indicators
+                    .after(crate::floor_library_ui::floor_library_rebuild_list_ui),
+                crate::floor_library_ui::floor_library_genfloor_placeholder_item_interactions
+                    .after(crate::floor_library_ui::floor_library_sync_genfloor_placeholders)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::floor_library_ui::floor_library_item_button_interactions
+                    .after(crate::floor_library_ui::floor_library_rebuild_list_ui)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::floor_library_ui::floor_library_open_preview_panel
+                    .after(crate::floor_library_ui::floor_library_item_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::floor_library_ui::floor_library_preview_close_button_interactions
+                    .after(crate::floor_library_ui::floor_library_open_preview_panel)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::floor_library_ui::floor_library_preview_close_on_escape
+                    .after(crate::floor_library_ui::floor_library_preview_close_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::floor_library_ui::floor_library_update_list_item_styles
+                    .after(crate::floor_library_ui::floor_library_rebuild_list_ui)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::floor_library_ui::floor_library_scroll_wheel
+                    .after(crate::floor_library_ui::floor_library_item_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::floor_library_ui::floor_library_scrollbar_drag
+                    .after(crate::floor_library_ui::floor_library_scroll_wheel)
+                    .run_if(crate::automation::local_input_enabled),
+            )
+                .run_if(console::console_closed)
+                .run_if(crate::scene_authoring_ui::scene_ui_closed),
+        );
+        app.add_systems(
+            Update,
+            crate::floor_library_ui::floor_library_search_ime_position
+                .after(crate::floor_library_ui::floor_library_search_text_input)
+                .run_if(crate::automation::local_input_enabled)
                 .run_if(console::console_closed)
                 .run_if(crate::scene_authoring_ui::scene_ui_closed),
         );
@@ -437,12 +527,27 @@ impl Plugin for RenderedUiPlugin {
 
 pub(crate) struct RenderedGen3dPlugin;
 
+fn in_gen3d_ui_scene(build_scene: Res<State<BuildScene>>) -> bool {
+    matches!(
+        build_scene.get(),
+        BuildScene::Preview | BuildScene::FloorPreview
+    )
+}
+
 impl Plugin for RenderedGen3dPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, crate::gen3d::gen3d_load_tool_feedback_history);
 
         app.add_systems(OnEnter(BuildScene::Preview), crate::gen3d::enter_gen3d_mode);
         app.add_systems(OnExit(BuildScene::Preview), crate::gen3d::exit_gen3d_mode);
+        app.add_systems(
+            OnEnter(BuildScene::FloorPreview),
+            crate::genfloor::enter_genfloor_mode,
+        );
+        app.add_systems(
+            OnExit(BuildScene::FloorPreview),
+            crate::genfloor::exit_genfloor_mode,
+        );
 
         app.add_systems(
             Update,
@@ -457,9 +562,12 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_prompt_box_focus
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::gen3d::gen3d_exit_button.run_if(crate::automation::local_input_enabled),
+                crate::gen3d::gen3d_exit_button
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview)),
                 crate::gen3d::gen3d_exit_on_escape
                     .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
                     .before(crate::gen3d::gen3d_image_viewer_keyboard_navigation),
                 crate::gen3d::gen3d_side_panel_toggle_button
                     .run_if(crate::automation::local_input_enabled),
@@ -471,17 +579,56 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_generate_button
                     .after(crate::gen3d::gen3d_prompt_box_focus)
                     .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_cancel_queue_button
                     .after(crate::gen3d::gen3d_generate_button)
                     .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_save_button
                     .after(crate::gen3d::gen3d_poll_ai_job)
                     .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
             )
-                .run_if(in_state(BuildScene::Preview)),
+                .run_if(in_gen3d_ui_scene),
+        );
+        app.add_systems(
+            Update,
+            (
+                crate::genfloor::genfloor_ensure_preview_floor,
+                crate::genfloor::genfloor_set_status_from_gen3d,
+            )
+                .run_if(in_state(BuildScene::FloorPreview)),
+        );
+        app.add_systems(
+            Update,
+            (
+                crate::genfloor::genfloor_generate_button
+                    .after(crate::gen3d::gen3d_prompt_box_focus)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::genfloor::genfloor_poll_ai_job
+                    .after(crate::genfloor::genfloor_generate_button),
+                crate::genfloor::genfloor_save_button
+                    .after(crate::genfloor::genfloor_poll_ai_job)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::genfloor::genfloor_exit_button
+                    .run_if(crate::automation::local_input_enabled),
+                crate::genfloor::genfloor_exit_on_escape
+                    .run_if(crate::automation::local_input_enabled)
+                    .before(crate::gen3d::gen3d_image_viewer_keyboard_navigation),
+            )
+                .run_if(in_state(BuildScene::FloorPreview)),
+        );
+        app.add_systems(
+            Update,
+            crate::genfloor::genfloor_update_ui_stats
+                .after(crate::gen3d::gen3d_update_ui_text)
+                .after(crate::genfloor::genfloor_poll_ai_job)
+                .run_if(in_state(BuildScene::FloorPreview)),
         );
         app.add_systems(
             Update,
@@ -500,7 +647,7 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_preview_orbit_controls
                     .run_if(crate::automation::local_input_enabled),
             )
-                .run_if(in_state(BuildScene::Preview)),
+                .run_if(in_gen3d_ui_scene),
         );
         app.add_systems(Update, crate::gen3d::gen3d_prefab_thumbnail_capture_poll);
         app.add_systems(
@@ -512,7 +659,7 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_update_collision_overlay
                     .after(crate::gen3d::gen3d_apply_draft_to_preview),
             )
-                .run_if(in_state(BuildScene::Preview)),
+                .run_if(in_gen3d_ui_scene),
         );
         app.add_systems(
             Update,
@@ -544,7 +691,7 @@ impl Plugin for RenderedGen3dPlugin {
             Update,
             crate::gen3d::gen3d_update_preview_camera_render_layers
                 .after(crate::gen3d::gen3d_task_queue_runner)
-                .run_if(in_state(BuildScene::Preview)),
+                .run_if(in_gen3d_ui_scene),
         );
         app.add_systems(
             Update,
@@ -605,7 +752,7 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_update_prefab_details_text
                     .after(crate::gen3d::gen3d_update_side_tab_ui),
             )
-                .run_if(in_state(BuildScene::Preview)),
+                .run_if(in_gen3d_ui_scene),
         );
         app.add_systems(
             PostUpdate,
@@ -615,7 +762,7 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_update_prefab_scrollbar_ui,
             )
                 .in_set(UiSystems::Content)
-                .run_if(in_state(BuildScene::Preview)),
+                .run_if(in_gen3d_ui_scene),
         );
         app.add_systems(
             PostUpdate,
@@ -626,6 +773,7 @@ impl Plugin for RenderedGen3dPlugin {
             (
                 crate::model_library_ui::model_library_update_scrollbar_ui,
                 crate::model_library_ui::model_library_update_preview_info_scrollbar_ui,
+                crate::floor_library_ui::floor_library_update_scrollbar_ui,
                 crate::motion_ui::motion_algorithm_ui_update_scrollbar_ui,
             )
                 .in_set(UiSystems::Content)

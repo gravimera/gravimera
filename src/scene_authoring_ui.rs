@@ -14,11 +14,11 @@ use crate::scene_sources_runtime::{
 };
 use crate::scene_store::SceneSaveRequest;
 use crate::scene_validation::{HardGateSpecV1, ScorecardSpecV1};
-use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::types::{
     BuildObject, Commandable, EmojiAtlas, ObjectId, ObjectPrefabId, ObjectTint, Player,
     SceneLayerOwner, UiFonts,
 };
+use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 
 const PANEL_Z_INDEX: i32 = 940;
 

@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
+use crate::floor_library_ui::{FloorLibraryUiState, DEFAULT_FLOOR_ID};
+use crate::genfloor::defs::FloorDefV1;
+use crate::genfloor::{set_active_world_floor, ActiveWorldFloor};
 use crate::object::registry::{
     AnchorDef, AnchorRef, AttachmentDef, ColliderProfile, MaterialKey, MeleeAttackProfile, MeshKey,
     MobilityDef, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction, ObjectLibrary,
@@ -126,6 +129,12 @@ pub(crate) struct WorkspaceSwitchDeps<'w> {
     camera_pitch: ResMut<'w, CameraPitch>,
     camera_focus: ResMut<'w, CameraFocus>,
     workspace_camera: ResMut<'w, WorkspaceCameraState>,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct SceneFloorSelectionDeps<'w> {
+    active_floor: ResMut<'w, ActiveWorldFloor>,
+    floor_library: ResMut<'w, FloorLibraryUiState>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -692,6 +701,44 @@ fn workspace_scene_dat_path(active: &crate::realm::ActiveRealmScene, tab: Worksp
             dir.join("scene.build.dat")
         }
     }
+}
+
+fn apply_scene_floor_selection(
+    realm_id: &str,
+    scene_id: &str,
+    active_floor: &mut ActiveWorldFloor,
+    floor_library: &mut FloorLibraryUiState,
+) {
+    let loaded = match crate::scene_floor_selection::load_scene_floor_selection(realm_id, scene_id)
+    {
+        Ok(floor_id) => floor_id,
+        Err(err) => {
+            warn!("{err}");
+            None
+        }
+    };
+
+    let mut selected_floor_id = None;
+    if let Some(floor_id) = loaded {
+        match crate::realm_floor_packages::load_realm_floor_def(realm_id, floor_id) {
+            Ok(def) => {
+                set_active_world_floor(active_floor, Some(floor_id), def);
+                selected_floor_id = Some(floor_id);
+            }
+            Err(err) => {
+                warn!("{err}");
+                let _ = crate::scene_floor_selection::save_scene_floor_selection(
+                    realm_id, scene_id, None,
+                );
+                set_active_world_floor(active_floor, None, FloorDefV1::default_world());
+            }
+        }
+    } else {
+        set_active_world_floor(active_floor, None, FloorDefV1::default_world());
+    }
+
+    let list_id = selected_floor_id.unwrap_or(DEFAULT_FLOOR_ID);
+    floor_library.set_selected_floor_id(Some(list_id));
 }
 
 fn quantize_world(value_m: f32, units_per_meter: u32) -> i32 {
@@ -1410,7 +1457,9 @@ fn part_from_dat(part: &SceneDatPartDef) -> Result<ObjectPartDef, String> {
         && fallback_basis.scale == Vec3::ONE
     {
         if let Some(mut legacy) = legacy_base_basis {
-            if !legacy.translation.is_finite() || !legacy.rotation.is_finite() || !legacy.scale.is_finite()
+            if !legacy.translation.is_finite()
+                || !legacy.rotation.is_finite()
+                || !legacy.scale.is_finite()
             {
                 legacy = Transform::IDENTITY;
             }
@@ -2049,12 +2098,21 @@ pub(crate) fn load_scene_dat(
     mut material_cache: ResMut<crate::object::visuals::MaterialCache>,
     mut mesh_cache: ResMut<crate::object::visuals::PrimitiveMeshCache>,
     mut library: ResMut<ObjectLibrary>,
+    mut active_floor: ResMut<ActiveWorldFloor>,
+    mut floor_library: ResMut<FloorLibraryUiState>,
 ) {
     // Reset library to builtins only. `scene.dat` must contain all defs needed to spawn.
     *library = ObjectLibrary::default();
 
     // Prefab descriptors are realm-level and loaded by UI/tooling on demand. Scene loading does not
     // depend on them, but we keep the cache so panels (Meta/Gen3D) stay stable across scene loads.
+
+    apply_scene_floor_selection(
+        &active.realm_id,
+        &active.scene_id,
+        &mut active_floor,
+        &mut floor_library,
+    );
 
     let path = workspace_scene_dat_path(&active, workspace_ui.tab);
     match load_scene_dat_from_path(
@@ -2191,6 +2249,7 @@ pub(crate) fn apply_pending_realm_scene_switch(
     mut autosave: ResMut<SceneAutosaveState>,
     mut workspace: ResMut<crate::scene_sources_runtime::SceneSourcesWorkspace>,
     workspace_ui: Res<crate::workspace_ui::WorkspaceUiState>,
+    mut floor_deps: SceneFloorSelectionDeps,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -2232,6 +2291,13 @@ pub(crate) fn apply_pending_realm_scene_switch(
 
     workspace.loaded_from_dir = Some(crate::realm::scene_src_dir(&active));
     workspace.sources = None;
+
+    apply_scene_floor_selection(
+        &active.realm_id,
+        &active.scene_id,
+        &mut floor_deps.active_floor,
+        &mut floor_deps.floor_library,
+    );
 
     for entity in &existing_scene_entities {
         commands.entity(entity).try_despawn();
@@ -2607,61 +2673,61 @@ mod tests {
                     .with_rotation(Quat::from_rotation_y(0.5))
                     .with_scale(Vec3::ONE),
             }],
-	            parts: vec![ObjectPartDef {
-	                part_id: Some(0xABCD_u128),
-	                render_priority: None,
-	                kind: ObjectPartKind::ObjectRef {
-	                    object_id: child_id,
-	                },
-	                attachment: Some(AttachmentDef {
-	                    parent_anchor: "mount".to_string().into(),
-	                    child_anchor: "origin".to_string().into(),
-	                }),
-	                animations: vec![
-	                    PartAnimationSlot {
-	                        channel: "move".to_string().into(),
-	                        spec: PartAnimationSpec {
-	                            driver: PartAnimationDriver::MovePhase,
-	                            speed_scale: 1.25,
-	                            time_offset_units: 0.4,
-	                            basis: Transform::IDENTITY,
-	                            clip: PartAnimationDef::Loop {
-	                                duration_secs: 2.0,
-	                                keyframes: vec![
-	                                    PartAnimationKeyframeDef {
-	                                        time_secs: 0.0,
-	                                        delta: Transform::IDENTITY,
-	                                    },
-	                                    PartAnimationKeyframeDef {
-	                                        time_secs: 1.0,
-	                                        delta: Transform::IDENTITY
-	                                            .with_rotation(Quat::from_rotation_y(0.5)),
-	                                    },
-	                                ],
-	                            },
-	                        },
-	                    },
-	                    PartAnimationSlot {
-	                        channel: "ambient".to_string().into(),
-	                        spec: PartAnimationSpec {
-	                            driver: PartAnimationDriver::Always,
-	                            speed_scale: 2.0,
-	                            time_offset_units: 0.0,
-	                            basis: Transform::IDENTITY,
-	                            clip: PartAnimationDef::Spin {
-	                                axis: Vec3::Z,
-	                                radians_per_unit: 3.5,
-	                                axis_space:
-	                                    crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal,
-	                            },
-	                        },
-	                    },
-	                ],
-	                transform: Transform::from_translation(Vec3::new(0.1, 0.2, 0.3))
-	                    .with_rotation(Quat::from_rotation_x(0.25))
-	                    .with_scale(Vec3::new(1.0, 2.0, 3.0)),
-	                fallback_basis: Transform::from_translation(Vec3::new(0.05, 0.0, -0.02)),
-	            }],
+            parts: vec![ObjectPartDef {
+                part_id: Some(0xABCD_u128),
+                render_priority: None,
+                kind: ObjectPartKind::ObjectRef {
+                    object_id: child_id,
+                },
+                attachment: Some(AttachmentDef {
+                    parent_anchor: "mount".to_string().into(),
+                    child_anchor: "origin".to_string().into(),
+                }),
+                animations: vec![
+                    PartAnimationSlot {
+                        channel: "move".to_string().into(),
+                        spec: PartAnimationSpec {
+                            driver: PartAnimationDriver::MovePhase,
+                            speed_scale: 1.25,
+                            time_offset_units: 0.4,
+                            basis: Transform::IDENTITY,
+                            clip: PartAnimationDef::Loop {
+                                duration_secs: 2.0,
+                                keyframes: vec![
+                                    PartAnimationKeyframeDef {
+                                        time_secs: 0.0,
+                                        delta: Transform::IDENTITY,
+                                    },
+                                    PartAnimationKeyframeDef {
+                                        time_secs: 1.0,
+                                        delta: Transform::IDENTITY
+                                            .with_rotation(Quat::from_rotation_y(0.5)),
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                    PartAnimationSlot {
+                        channel: "ambient".to_string().into(),
+                        spec: PartAnimationSpec {
+                            driver: PartAnimationDriver::Always,
+                            speed_scale: 2.0,
+                            time_offset_units: 0.0,
+                            basis: Transform::IDENTITY,
+                            clip: PartAnimationDef::Spin {
+                                axis: Vec3::Z,
+                                radians_per_unit: 3.5,
+                                axis_space:
+                                    crate::object::registry::PartAnimationSpinAxisSpace::ChildLocal,
+                            },
+                        },
+                    },
+                ],
+                transform: Transform::from_translation(Vec3::new(0.1, 0.2, 0.3))
+                    .with_rotation(Quat::from_rotation_x(0.25))
+                    .with_scale(Vec3::new(1.0, 2.0, 3.0)),
+                fallback_basis: Transform::from_translation(Vec3::new(0.05, 0.0, -0.02)),
+            }],
             minimap_color: Some(Color::srgb(0.2, 0.3, 0.4)),
             health_bar_offset_y: Some(1.5),
             enemy: None,
@@ -2733,26 +2799,25 @@ mod tests {
             .expect("attachment should roundtrip");
         assert_eq!(attachment.parent_anchor.as_ref(), "mount");
         assert_eq!(attachment.child_anchor.as_ref(), "origin");
-	        assert!((part.transform.translation - Vec3::new(0.1, 0.2, 0.3)).length_squared() < 1e-6);
-	        assert!(
-	            part.transform
-	                .rotation
-	                .angle_between(Quat::from_rotation_x(0.25))
-	                < 1e-4
-	        );
-	        assert!((part.transform.scale - Vec3::new(1.0, 2.0, 3.0)).length_squared() < 1e-6);
-	        assert!(
-	            (part.fallback_basis.translation - Vec3::new(0.05, 0.0, -0.02)).length_squared()
-	                < 1e-6
-	        );
-	        assert!(
-	            part.fallback_basis.rotation.angle_between(Quat::IDENTITY) < 1e-6,
-	            "expected fallback_basis rotation to remain identity"
-	        );
-	        assert!(
-	            (part.fallback_basis.scale - Vec3::ONE).length_squared() < 1e-6,
-	            "expected fallback_basis scale to remain identity"
-	        );
+        assert!((part.transform.translation - Vec3::new(0.1, 0.2, 0.3)).length_squared() < 1e-6);
+        assert!(
+            part.transform
+                .rotation
+                .angle_between(Quat::from_rotation_x(0.25))
+                < 1e-4
+        );
+        assert!((part.transform.scale - Vec3::new(1.0, 2.0, 3.0)).length_squared() < 1e-6);
+        assert!(
+            (part.fallback_basis.translation - Vec3::new(0.05, 0.0, -0.02)).length_squared() < 1e-6
+        );
+        assert!(
+            part.fallback_basis.rotation.angle_between(Quat::IDENTITY) < 1e-6,
+            "expected fallback_basis rotation to remain identity"
+        );
+        assert!(
+            (part.fallback_basis.scale - Vec3::ONE).length_squared() < 1e-6,
+            "expected fallback_basis scale to remain identity"
+        );
 
         assert_eq!(part.animations.len(), 2);
         let slot = part

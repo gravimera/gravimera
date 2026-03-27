@@ -887,30 +887,40 @@ fn build_gen3d_plan_schema_key_contract_text() -> String {
         .get("properties")
         .and_then(|v| v.get("components"))
         .and_then(schema_array_items);
-    let component_keys = components_schema.map(schema_object_property_keys).unwrap_or_default();
+    let component_keys = components_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
 
     let attach_to_schema = components_schema
         .and_then(|v| v.get("properties"))
         .and_then(|v| v.get("attach_to"));
-    let attach_to_keys = attach_to_schema.map(schema_object_property_keys).unwrap_or_default();
+    let attach_to_keys = attach_to_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
 
     let attach_to_object = attach_to_schema.and_then(schema_unwrap_object);
     let joint_schema = attach_to_object
         .and_then(|v| v.get("properties"))
         .and_then(|v| v.get("joint"));
-    let joint_keys = joint_schema.map(schema_object_property_keys).unwrap_or_default();
+    let joint_keys = joint_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
 
     let contact_schema = components_schema
         .and_then(|v| v.get("properties"))
         .and_then(|v| v.get("contacts"))
         .and_then(schema_array_items);
-    let contact_keys = contact_schema.map(schema_object_property_keys).unwrap_or_default();
+    let contact_keys = contact_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
 
     let reuse_schema = schema
         .get("properties")
         .and_then(|v| v.get("reuse_groups"))
         .and_then(schema_array_items);
-    let reuse_keys = reuse_schema.map(schema_object_property_keys).unwrap_or_default();
+    let reuse_keys = reuse_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
 
     let mut out = String::new();
     out.push_str("Schema key contract (do not invent extra keys):\n");
@@ -956,19 +966,25 @@ fn build_gen3d_motion_authoring_schema_key_contract_text() -> String {
     let top_level = schema_object_property_keys(&schema);
 
     let applies_to_schema = schema.get("properties").and_then(|v| v.get("applies_to"));
-    let applies_to_keys = applies_to_schema.map(schema_object_property_keys).unwrap_or_default();
+    let applies_to_keys = applies_to_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
 
     let edges_schema = schema
         .get("properties")
         .and_then(|v| v.get("edges"))
         .and_then(schema_array_items);
-    let edge_keys = edges_schema.map(schema_object_property_keys).unwrap_or_default();
+    let edge_keys = edges_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
 
     let slots_schema = edges_schema
         .and_then(|v| v.get("properties"))
         .and_then(|v| v.get("slots"))
         .and_then(schema_array_items);
-    let slot_keys = slots_schema.map(schema_object_property_keys).unwrap_or_default();
+    let slot_keys = slots_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
 
     let clip_schema = slots_schema
         .and_then(|v| v.get("properties"))
@@ -1021,7 +1037,9 @@ fn build_gen3d_motion_authoring_schema_key_contract_text() -> String {
     let delta_schema = keyframe_schema
         .and_then(|v| v.get("properties"))
         .and_then(|v| v.get("delta"));
-    let delta_keys = delta_schema.map(schema_object_property_keys).unwrap_or_default();
+    let delta_keys = delta_schema
+        .map(schema_object_property_keys)
+        .unwrap_or_default();
 
     let mut out = String::new();
     out.push_str("Schema key contract (do not invent extra keys):\n");

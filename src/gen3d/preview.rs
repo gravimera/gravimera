@@ -24,7 +24,7 @@ pub(crate) fn gen3d_update_preview_camera_render_layers(
     build_scene: Res<State<BuildScene>>,
     mut cameras: Query<&mut bevy::camera::visibility::RenderLayers, With<Gen3dPreviewCamera>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     let desired = bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_UI_LAYER);
@@ -284,7 +284,7 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
         With<Gen3dPreviewUiModelRoot>,
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     // Agent-driven render/motion capture sets locomotion/attack clocks deterministically.
@@ -400,7 +400,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
     mut preview: ResMut<Gen3dPreview>,
     mut cameras: Query<&mut Transform, With<Gen3dPreviewCamera>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     let Ok(window) = windows.single() else {
@@ -555,7 +555,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
         (defs, root_id)
     }
 
-    let in_preview = matches!(build_scene.get(), BuildScene::Preview);
+    let in_preview = super::gen3d_ui_scene(build_scene.get());
 
     let mut running_session = None;
     if job.is_running() {
@@ -762,7 +762,7 @@ pub(crate) fn gen3d_update_collision_overlay(
     mut preview: ResMut<Gen3dPreview>,
     existing: Query<Entity, With<Gen3dPreviewCollisionRoot>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     if !preview.collision_dirty {

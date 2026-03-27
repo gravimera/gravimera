@@ -274,6 +274,11 @@ pub(crate) fn update_window_title(
                         .into();
                 return;
             }
+            if matches!(build_scene.get(), BuildScene::FloorPreview) {
+                window.title =
+                    "Gravimera — BUILD (Floor Preview) | Build/Stop | Scene: Realm".into();
+                return;
+            }
             if build.placing_active {
                 window.title = format!(
                     "Gravimera — BUILD ({}) | score: {} | health: {} | LMB place | Esc select | F1 play | Tab forms | hold C copy",

@@ -9,17 +9,16 @@ use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_PLAN_OPS, TOOL_ID_APPLY_REUSE_GROUPS, TOOL_ID_BASIS_FROM_UP_FORWARD,
     TOOL_ID_COPY_COMPONENT, TOOL_ID_COPY_COMPONENT_SUBTREE, TOOL_ID_COPY_FROM_WORKSPACE,
     TOOL_ID_CREATE_WORKSPACE, TOOL_ID_DELETE_WORKSPACE, TOOL_ID_DETACH_COMPONENT,
-    TOOL_ID_DIFF_SNAPSHOTS,
-    TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE, TOOL_ID_GET_SCENE_GRAPH_SUMMARY,
-    TOOL_ID_GET_USER_INPUTS, TOOL_ID_INFO_BLOBS_GET, TOOL_ID_INFO_BLOBS_LIST,
-    TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST, TOOL_ID_INFO_EVENTS_SEARCH,
-    TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY, TOOL_ID_INFO_KV_GET_PAGED,
-    TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS, TOOL_ID_INSPECT_PLAN,
-    TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS,
-    TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION, TOOL_ID_LLM_GENERATE_MOTIONS,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_LLM_SELECT_EDIT_STRATEGY, TOOL_ID_MERGE_WORKSPACE, TOOL_ID_MIRROR_COMPONENT,
-    TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
+    TOOL_ID_DIFF_SNAPSHOTS, TOOL_ID_DIFF_WORKSPACES, TOOL_ID_GET_PLAN_TEMPLATE,
+    TOOL_ID_GET_SCENE_GRAPH_SUMMARY, TOOL_ID_GET_USER_INPUTS, TOOL_ID_INFO_BLOBS_GET,
+    TOOL_ID_INFO_BLOBS_LIST, TOOL_ID_INFO_EVENTS_GET, TOOL_ID_INFO_EVENTS_LIST,
+    TOOL_ID_INFO_EVENTS_SEARCH, TOOL_ID_INFO_KV_GET, TOOL_ID_INFO_KV_GET_MANY,
+    TOOL_ID_INFO_KV_GET_PAGED, TOOL_ID_INFO_KV_LIST_HISTORY, TOOL_ID_INFO_KV_LIST_KEYS,
+    TOOL_ID_INSPECT_PLAN, TOOL_ID_LIST_SNAPSHOTS, TOOL_ID_LLM_GENERATE_COMPONENT,
+    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTION,
+    TOOL_ID_LLM_GENERATE_MOTIONS, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS,
+    TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_LLM_SELECT_EDIT_STRATEGY, TOOL_ID_MERGE_WORKSPACE,
+    TOOL_ID_MIRROR_COMPONENT, TOOL_ID_MIRROR_COMPONENT_SUBTREE, TOOL_ID_MOTION_METRICS, TOOL_ID_QA,
     TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW, TOOL_ID_RESTORE_SNAPSHOT,
     TOOL_ID_SET_ACTIVE_WORKSPACE, TOOL_ID_SET_DESCRIPTOR_META, TOOL_ID_SMOKE_CHECK,
     TOOL_ID_SNAPSHOT, TOOL_ID_SUBMIT_TOOLING_FEEDBACK, TOOL_ID_VALIDATE,
@@ -1487,10 +1486,7 @@ fn execute_qa_v1(
     ) {
         let mut issue = issue;
         if let serde_json::Value::Object(map) = &mut issue {
-            map.insert(
-                "source".into(),
-                serde_json::Value::String("qa".to_string()),
-            );
+            map.insert("source".into(), serde_json::Value::String("qa".to_string()));
         }
         complaints.push(issue.clone());
         warnings.push(issue);
@@ -5026,9 +5022,9 @@ pub(super) fn execute_tool_call(
                         &mut job.planned_components,
                         root_idx,
                     ) {
-                        report
-                            .errors
-                            .push(format!("apply_reuse_groups: resolve transforms failed: {err}"));
+                        report.errors.push(format!(
+                            "apply_reuse_groups: resolve transforms failed: {err}"
+                        ));
                     }
                 }
                 super::convert::update_root_def_from_planned_components(
@@ -5117,11 +5113,7 @@ pub(super) fn execute_tool_call(
                 write_gen3d_json_artifact(Some(step_dir), "apply_reuse_groups_last.json", &json);
             }
 
-            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(
-                call.call_id,
-                call.tool_id,
-                json,
-            ))
+            ToolCallOutcome::Immediate(Gen3dToolResultJsonV1::ok(call.call_id, call.tool_id, json))
         }
         TOOL_ID_SNAPSHOT => {
             let call_id = call.call_id.clone();
@@ -8793,8 +8785,8 @@ mod tests {
 
     #[test]
     fn gen3d_smoke_results_include_motion_quality_complaints_for_movable_ground() {
-        use crate::object::registry::AnchorDef;
         use super::super::job::{Gen3dPlannedAttachment, Gen3dPlannedComponent};
+        use crate::object::registry::AnchorDef;
 
         let planned = vec![
             Gen3dPlannedComponent {
@@ -8842,7 +8834,8 @@ mod tests {
             defs: vec![make_test_root_def_movable(true)],
         };
 
-        let smoke = super::super::build_gen3d_smoke_results(Some(false), false, None, &planned, &draft);
+        let smoke =
+            super::super::build_gen3d_smoke_results(Some(false), false, None, &planned, &draft);
         let kinds: Vec<&str> = smoke
             .get("issues")
             .and_then(|v| v.as_array())

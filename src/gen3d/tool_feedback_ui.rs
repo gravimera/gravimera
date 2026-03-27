@@ -16,7 +16,7 @@ pub(crate) fn gen3d_side_tab_buttons(
         Changed<Interaction>,
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -44,7 +44,7 @@ pub(crate) fn gen3d_update_side_tab_ui(
     mut buttons: Query<(&Gen3dSideTabButton, &Interaction, &mut BackgroundColor)>,
     mut texts: Query<(&Gen3dSideTabButtonText, &mut Text)>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -94,7 +94,7 @@ pub(crate) fn gen3d_update_prefab_details_text(
     library: Res<ObjectLibrary>,
     mut texts: Query<&mut Text, With<Gen3dPrefabDetailsText>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -266,7 +266,7 @@ pub(crate) fn gen3d_prefab_scroll_wheel(
         With<Gen3dPrefabScrollPanel>,
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     if !matches!(workshop.side_tab, Gen3dSideTab::Prefab) {
@@ -314,7 +314,7 @@ pub(crate) fn gen3d_update_prefab_scrollbar_ui(
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dPrefabScrollbarTrack>>,
     mut thumbs: Query<&mut Node, With<Gen3dPrefabScrollbarThumb>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     if !matches!(workshop.side_tab, Gen3dSideTab::Prefab) {

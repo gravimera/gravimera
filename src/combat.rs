@@ -221,24 +221,24 @@ mod tests {
                 components: vec![child_id],
             }),
             mobility: None,
-	            anchors: vec![AnchorDef {
-	                name: "neck".into(),
-	                transform: Transform::from_rotation(anchor_rot),
-	            }],
-	            parts: vec![ObjectPartDef {
-	                part_id: None,
-	                render_priority: None,
-	                kind: ObjectPartKind::ObjectRef {
-	                    object_id: child_id,
-	                },
-	                attachment: Some(AttachmentDef {
-	                    parent_anchor: "neck".into(),
-	                    child_anchor: "neck_mount".into(),
-	                }),
-	                animations: Vec::new(),
-	                transform: Transform::IDENTITY,
-	                fallback_basis: Transform::IDENTITY,
-	            }],
+            anchors: vec![AnchorDef {
+                name: "neck".into(),
+                transform: Transform::from_rotation(anchor_rot),
+            }],
+            parts: vec![ObjectPartDef {
+                part_id: None,
+                render_priority: None,
+                kind: ObjectPartKind::ObjectRef {
+                    object_id: child_id,
+                },
+                attachment: Some(AttachmentDef {
+                    parent_anchor: "neck".into(),
+                    child_anchor: "neck_mount".into(),
+                }),
+                animations: Vec::new(),
+                transform: Transform::IDENTITY,
+                fallback_basis: Transform::IDENTITY,
+            }],
             minimap_color: None,
             health_bar_offset_y: None,
             enemy: None,

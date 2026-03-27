@@ -118,12 +118,8 @@ pub(crate) fn delete_realm_prefab_package(
     if !root.exists() {
         return Ok(false);
     }
-    std::fs::remove_dir_all(&root).map_err(|err| {
-        format!(
-            "Failed to delete prefab package {}: {err}",
-            root.display()
-        )
-    })?;
+    std::fs::remove_dir_all(&root)
+        .map_err(|err| format!("Failed to delete prefab package {}: {err}", root.display()))?;
     Ok(true)
 }
 

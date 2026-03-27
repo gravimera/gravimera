@@ -1325,7 +1325,7 @@ pub(crate) fn gen3d_prompt_ime_position(
         Option<&Visibility>,
     )>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     if !workshop.prompt_focused {
@@ -1476,7 +1476,7 @@ pub(crate) fn gen3d_side_panel_toggle_button(
         (Changed<Interaction>, With<Gen3dSidePanelToggleButton>),
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -1502,7 +1502,7 @@ pub(crate) fn gen3d_update_side_panel_ui(
     mut panels: Query<(&mut Node, &mut Visibility), With<Gen3dSidePanelRoot>>,
     mut texts: Query<&mut Text, With<Gen3dSidePanelToggleButtonText>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -1537,7 +1537,7 @@ pub(crate) fn gen3d_prompt_scroll_wheel(
     >,
     workshop: Res<Gen3dWorkshop>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     if workshop.prompt_scrollbar_drag.is_some() {
@@ -1592,7 +1592,7 @@ pub(crate) fn gen3d_update_prompt_scrollbar_ui(
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dPromptScrollbarTrack>>,
     mut thumbs: Query<&mut Node, With<Gen3dPromptScrollbarThumb>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     let Ok(panel) = panels.single() else {
@@ -1649,7 +1649,7 @@ pub(crate) fn gen3d_prompt_scrollbar_drag(
     >,
     thumbs: Query<(&Interaction, &ComputedNode, &Node), With<Gen3dPromptScrollbarThumb>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         workshop.prompt_scrollbar_drag = None;
         return;
     }
@@ -1752,7 +1752,7 @@ pub(crate) fn gen3d_prompt_text_input(
     mut ime_events: bevy::ecs::message::MessageReader<Ime>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     let mut accept_input = workshop.prompt_focused;
@@ -1943,7 +1943,7 @@ pub(crate) fn gen3d_preview_animation_dropdown_button(
         ),
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -1972,7 +1972,7 @@ pub(crate) fn gen3d_preview_animation_option_buttons(
         Changed<Interaction>,
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -2006,7 +2006,7 @@ pub(crate) fn gen3d_rebuild_preview_animation_dropdown_options_ui(
     existing_buttons: Query<Entity, With<Gen3dPreviewAnimationOptionButton>>,
     mut commands: Commands,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -2118,7 +2118,7 @@ pub(crate) fn gen3d_preview_animation_dropdown_scroll_wheel(
         With<Gen3dPreviewAnimationDropdownList>,
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         for _ in mouse_wheel.read() {}
         return;
     }
@@ -2208,7 +2208,7 @@ pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
         Without<Gen3dPreviewAnimationDropdownButton>,
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -2378,18 +2378,10 @@ pub(crate) struct Gen3dUpdateUiTextDeps<'w, 's> {
     >,
     rich_text: Query<'w, 's, Entity, With<Gen3dPromptRichText>>,
     hint_text: Query<'w, 's, Entity, With<Gen3dPromptHintText>>,
-    prompt_nodes: Query<
-        'w,
-        's,
-        &'static mut Node,
-        (With<Gen3dPromptRichText>, Without<Gen3dPromptHintText>),
-    >,
-    hint_nodes: Query<
-        'w,
-        's,
-        &'static mut Node,
-        (With<Gen3dPromptHintText>, Without<Gen3dPromptRichText>),
-    >,
+    prompt_nodes:
+        Query<'w, 's, &'static mut Node, (With<Gen3dPromptRichText>, Without<Gen3dPromptHintText>)>,
+    hint_nodes:
+        Query<'w, 's, &'static mut Node, (With<Gen3dPromptHintText>, Without<Gen3dPromptRichText>)>,
 }
 
 pub(crate) fn gen3d_update_ui_text(
@@ -2422,7 +2414,7 @@ pub(crate) fn gen3d_update_ui_text(
         mut hint_nodes,
     } = deps;
 
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -2448,10 +2440,18 @@ pub(crate) fn gen3d_update_ui_text(
     }
 
     if let Ok(mut node) = prompt_nodes.single_mut() {
-        node.display = if prompt_empty { Display::None } else { Display::Flex };
+        node.display = if prompt_empty {
+            Display::None
+        } else {
+            Display::Flex
+        };
     }
     if let Ok(mut node) = hint_nodes.single_mut() {
-        node.display = if prompt_empty { Display::Flex } else { Display::None };
+        node.display = if prompt_empty {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
 
     if prompt_empty {
@@ -2596,15 +2596,15 @@ pub(crate) fn gen3d_update_ui_text(
         "—"
     };
 
-	    let status_summary = format!(
-	        "State: {state} | Prefab: {prefab_status}\n\
+    let status_summary = format!(
+        "State: {state} | Prefab: {prefab_status}\n\
 	Draft: comps {components} | parts {parts} | motion {motions}\n\
 	Run: attempt {} | step {} | time {run_time}\n\
 	Tokens: run {run_tokens} | total {total_tokens}\n\
 	Step: {step_status}",
-	        job.attempt() + 1,
-	        job.step() + 1,
-	    );
+        job.attempt() + 1,
+        job.step() + 1,
+    );
     {
         let mut status = texts.p0();
         for mut text in &mut status {

@@ -127,7 +127,11 @@ pub(super) fn start_agent_llm_review_delta_call(
         "scene_graph_summary.json",
         &scene_graph_summary,
     );
-    write_gen3d_json_artifact(Some(step_dir.as_path()), "smoke_results.json", &smoke_results);
+    write_gen3d_json_artifact(
+        Some(step_dir.as_path()),
+        "smoke_results.json",
+        &smoke_results,
+    );
 
     let edit_session = job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
     let regen_allowed = !job.preserve_existing_components_mode

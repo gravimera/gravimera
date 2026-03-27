@@ -61,10 +61,7 @@ fn gen3d_mock_pipeline_builds_warcar_prompt_end_to_end() {
 
     let run_id = Uuid::new_v4();
     let run_dir = make_temp_gen3d_run_dir("gravimera_gen3d_pipeline_test", run_id);
-    let step0 = run_dir
-        .join("attempt_0")
-        .join("steps")
-        .join("step_0000");
+    let step0 = run_dir.join("attempt_0").join("steps").join("step_0000");
     std::fs::create_dir_all(&step0).expect("create temp gen3d step dir");
 
     let openai = OpenAiConfig {
@@ -136,10 +133,7 @@ fn gen3d_mock_pipeline_seeded_edit_prefers_draft_ops_and_does_not_regen() {
 
     let run_id = Uuid::new_v4();
     let run_dir = make_temp_gen3d_run_dir("gravimera_gen3d_pipeline_edit_test", run_id);
-    let step0 = run_dir
-        .join("attempt_0")
-        .join("steps")
-        .join("step_0000");
+    let step0 = run_dir.join("attempt_0").join("steps").join("step_0000");
     std::fs::create_dir_all(&step0).expect("create temp gen3d step_0000 dir");
 
     let openai = OpenAiConfig {
@@ -296,10 +290,7 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
 
     let run_id = Uuid::new_v4();
     let run_dir = make_temp_gen3d_run_dir("gravimera_gen3d_pipeline_fallback_test", run_id);
-    let step0 = run_dir
-        .join("attempt_0")
-        .join("steps")
-        .join("step_0000");
+    let step0 = run_dir.join("attempt_0").join("steps").join("step_0000");
     std::fs::create_dir_all(&step0).expect("create temp gen3d attempt_0 step_0000 dir");
 
     let openai = OpenAiConfig {
@@ -351,10 +342,7 @@ fn gen3d_mock_pipeline_stops_best_effort_on_persistent_draft_ops_schema_failure(
     app = run_app_until_build_stops(app, Duration::from_secs(5));
 
     // Start seeded edit run that forces DraftOps tool failures until the pipeline stops.
-    let step0 = run_dir
-        .join("attempt_1")
-        .join("steps")
-        .join("step_0000");
+    let step0 = run_dir.join("attempt_1").join("steps").join("step_0000");
     std::fs::create_dir_all(&step0).expect("create temp gen3d attempt_1 step_0000 dir");
     {
         let mut workshop = app.world_mut().resource_mut::<Gen3dWorkshop>();

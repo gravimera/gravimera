@@ -968,7 +968,10 @@ pub(crate) fn keyboard_move_input(
         (With<Commandable>, Without<MainCamera>),
     >,
 ) {
-    if matches!(build_scene.get(), BuildScene::Preview) {
+    if matches!(
+        build_scene.get(),
+        BuildScene::Preview | BuildScene::FloorPreview
+    ) {
         return;
     }
     if matches!(mode.get(), GameMode::Build) && build.placing_active {

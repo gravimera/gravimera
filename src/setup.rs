@@ -3,7 +3,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::object::types::buildings;
+use crate::genfloor::WorldFloor;
 use crate::types::*;
 
 pub(crate) fn setup_rendered(
@@ -25,9 +25,6 @@ pub(crate) fn setup_rendered(
          Camera: edge-pan (cursor near window edge), rotate with Z/X/Q/E, zoom with mouse wheel (WASD pans camera when nothing selected).\n\
          Minimap: top-right."
     );
-
-    let ground_mesh = meshes.add(Cuboid::new(60.0, 0.1, 60.0));
-    let ground_material = materials.add(Color::srgb(0.16, 0.17, 0.20));
 
     let player_head_mesh = meshes.add(Cuboid::new(
         PLAYER_HEAD_SIZE,
@@ -345,14 +342,7 @@ pub(crate) fn setup_rendered(
         triangle: minimap_triangle,
     });
 
-    commands.spawn((
-        ObjectId::new_v4(),
-        ObjectPrefabId(buildings::ground::object_id()),
-        Mesh3d(ground_mesh),
-        MeshMaterial3d(ground_material),
-        Transform::from_xyz(0.0, -0.05, 0.0),
-        Visibility::Inherited,
-    ));
+    commands.spawn((WorldFloor, Transform::IDENTITY, Visibility::Inherited));
 
     let player_start = Vec3::new(0.0, PLAYER_Y, 0.0);
 

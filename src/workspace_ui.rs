@@ -48,6 +48,7 @@ impl Default for WorkspaceUiState {
 pub(crate) enum TopPanelTab {
     Scenes,
     Models,
+    Floors,
 }
 
 #[derive(Resource, Debug)]
@@ -158,6 +159,12 @@ pub(crate) struct WorkspaceModelsToggleButton;
 pub(crate) struct WorkspaceModelsToggleButtonText;
 
 #[derive(Component)]
+pub(crate) struct WorkspaceFloorsToggleButton;
+
+#[derive(Component)]
+pub(crate) struct WorkspaceFloorsToggleButtonText;
+
+#[derive(Component)]
 pub(crate) struct WorkspaceSceneBuilderButton;
 
 #[derive(Component)]
@@ -248,6 +255,38 @@ pub(crate) fn setup_workspace_ui(
                     },
                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                     WorkspaceModelsToggleButtonText,
+                ));
+            });
+
+            root.spawn((
+                Button,
+                Node {
+                    width: Val::Px(TOOLBAR_BUTTON_WIDTH_PX),
+                    height: Val::Px(TOOLBAR_BUTTON_HEIGHT_PX),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60)),
+                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                Outline {
+                    width: Val::Px(1.0),
+                    color: Color::srgba(0.25, 0.25, 0.30, 0.65),
+                    offset: Val::Px(0.0),
+                },
+                WorkspaceFloorsToggleButton,
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new("Floors"),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    WorkspaceFloorsToggleButtonText,
                 ));
             });
 
@@ -596,17 +635,19 @@ pub(crate) fn workspace_toolbar_toggle_buttons(
             &Interaction,
             Option<&WorkspaceScenesToggleButton>,
             Option<&WorkspaceModelsToggleButton>,
+            Option<&WorkspaceFloorsToggleButton>,
         ),
         (
             Changed<Interaction>,
             Or<(
                 With<WorkspaceScenesToggleButton>,
                 With<WorkspaceModelsToggleButton>,
+                With<WorkspaceFloorsToggleButton>,
             )>,
         ),
     >,
 ) {
-    for (interaction, scenes, models) in &mut buttons {
+    for (interaction, scenes, models, floors) in &mut buttons {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -614,6 +655,8 @@ pub(crate) fn workspace_toolbar_toggle_buttons(
             state.toggle(TopPanelTab::Scenes);
         } else if models.is_some() {
             state.toggle(TopPanelTab::Models);
+        } else if floors.is_some() {
+            state.toggle(TopPanelTab::Floors);
         }
     }
 }
@@ -624,23 +667,32 @@ pub(crate) fn workspace_toolbar_close_models_panel_on_escape(
     build_scene: Res<State<BuildScene>>,
     mut top_panel: ResMut<TopPanelUiState>,
     model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
+    floor_library: Res<crate::floor_library_ui::FloorLibraryUiState>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
-        return;
-    }
-    if top_panel.selected != Some(TopPanelTab::Models) {
         return;
     }
     if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Realm) {
         return;
     }
-    if model_library.is_preview_open() || model_library.is_search_focused() {
+
+    if top_panel.selected == Some(TopPanelTab::Models) {
+        if model_library.is_preview_open() || model_library.is_search_focused() {
+            return;
+        }
+        if model_library.is_drag_active() {
+            return;
+        }
+        top_panel.selected = None;
         return;
     }
-    if model_library.is_drag_active() {
-        return;
+
+    if top_panel.selected == Some(TopPanelTab::Floors) {
+        if floor_library.is_search_focused() || floor_library.is_drag_active() {
+            return;
+        }
+        top_panel.selected = None;
     }
-    top_panel.selected = None;
 }
 
 pub(crate) fn workspace_toolbar_sync_model_library_open(
@@ -655,6 +707,18 @@ pub(crate) fn workspace_toolbar_sync_model_library_open(
     model_library.set_open(open);
 }
 
+pub(crate) fn workspace_toolbar_sync_floor_library_open(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    state: Res<TopPanelUiState>,
+    mut floor_library: ResMut<crate::floor_library_ui::FloorLibraryUiState>,
+) {
+    let open = matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm)
+        && state.selected == Some(TopPanelTab::Floors);
+    floor_library.set_open(open);
+}
+
 pub(crate) fn workspace_toolbar_update_visibility(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
@@ -663,6 +727,7 @@ pub(crate) fn workspace_toolbar_update_visibility(
         Or<(
             With<WorkspaceScenesToggleButton>,
             With<WorkspaceModelsToggleButton>,
+            With<WorkspaceFloorsToggleButton>,
             With<WorkspaceSceneBuilderButton>,
         )>,
     >,
@@ -690,20 +755,24 @@ pub(crate) fn workspace_toolbar_update_toggle_button_styles(
             &Interaction,
             Option<&WorkspaceScenesToggleButton>,
             Option<&WorkspaceModelsToggleButton>,
+            Option<&WorkspaceFloorsToggleButton>,
             &mut BackgroundColor,
             &mut BorderColor,
         ),
         Or<(
             With<WorkspaceScenesToggleButton>,
             With<WorkspaceModelsToggleButton>,
+            With<WorkspaceFloorsToggleButton>,
         )>,
     >,
 ) {
-    for (interaction, scenes, models, mut bg, mut border) in &mut buttons {
+    for (interaction, scenes, models, floors, mut bg, mut border) in &mut buttons {
         let selected = if scenes.is_some() {
             state.selected == Some(TopPanelTab::Scenes)
         } else if models.is_some() {
             state.selected == Some(TopPanelTab::Models)
+        } else if floors.is_some() {
+            state.selected == Some(TopPanelTab::Floors)
         } else {
             false
         };

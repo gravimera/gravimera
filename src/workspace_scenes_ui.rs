@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use crate::realm::ActiveRealmScene;
 use crate::rich_text::set_rich_text_line;
 use crate::scene_store::SceneSaveRequest;
-use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
+use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::workspace_ui::{TopPanelTab, TopPanelUiState};
 
 const SCENE_NAME_MAX_CHARS: usize = 128;

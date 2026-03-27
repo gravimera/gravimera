@@ -17,11 +17,11 @@ use crate::scene_store::SceneSaveRequest;
 use crate::threaded_result::{
     new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
 };
-use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::types::{
     CameraFocus, Commandable, EmojiAtlas, Health, LaserDamageAccum, ModelSpeechBubbleCommand,
     ModelSpeechSource, MoveOrder, ObjectPrefabId, Player, PlayerAnimator, SelectionState, UiFonts,
 };
+use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 
 const PANEL_Z_INDEX: i32 = 940;
 const PANEL_WIDTH_PX: f32 = 300.0;

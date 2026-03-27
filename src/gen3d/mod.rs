@@ -39,9 +39,9 @@ const GEN3D_IMAGE_OBJECT_SUMMARY_MAX_WORDS: usize = 300;
 const GEN3D_RESPONSES_POLL_MAX_SECS: u64 = 1_800;
 const GEN3D_RESPONSES_POLL_INITIAL_DELAY_MS: u64 = 250;
 const GEN3D_RESPONSES_POLL_MAX_DELAY_MS: u64 = 2_000;
-const GEN3D_PREVIEW_UI_LAYER: usize = 27;
-const GEN3D_PREVIEW_LAYER: usize = 30;
-const GEN3D_REVIEW_LAYER: usize = 31;
+pub(crate) const GEN3D_PREVIEW_UI_LAYER: usize = 27;
+pub(crate) const GEN3D_PREVIEW_LAYER: usize = 30;
+pub(crate) const GEN3D_REVIEW_LAYER: usize = 31;
 const GEN3D_PREVIEW_WIDTH_PX: u32 = 960;
 const GEN3D_PREVIEW_HEIGHT_PX: u32 = 540;
 const GEN3D_REVIEW_CAPTURE_WIDTH_PX: u32 = GEN3D_PREVIEW_WIDTH_PX * 2;
@@ -59,6 +59,13 @@ const GEN3D_DEFAULT_STYLE_PROMPT: &str =
 
 pub(crate) fn gen3d_count_whitespace_separated_words(text: &str) -> usize {
     text.split_whitespace().count()
+}
+
+pub(crate) fn gen3d_ui_scene(scene: &crate::types::BuildScene) -> bool {
+    matches!(
+        scene,
+        crate::types::BuildScene::Preview | crate::types::BuildScene::FloorPreview
+    )
 }
 
 pub(crate) fn validate_gen3d_user_prompt_limits(prompt: &str) -> Result<(), String> {
@@ -127,6 +134,7 @@ fn gen3d_draft_projectile_object_id() -> u128 {
     builtin_object_id(GEN3D_DRAFT_PROJECTILE_KEY)
 }
 
+pub(crate) use ai::gen3d_generate_text_simple;
 pub(crate) use ai::{
     gen3d_apply_draft_ops_from_api, gen3d_apply_pending_seed_from_prefab,
     gen3d_cancel_build_from_api, gen3d_copy_from_workspace_from_api,
@@ -171,12 +179,11 @@ pub(crate) use tool_feedback_ui::{
 pub(crate) use ui::{
     enter_gen3d_mode, exit_gen3d_mode, gen3d_cancel_queue_button,
     gen3d_cleanup_preview_scene_when_idle, gen3d_exit_button, gen3d_exit_on_escape,
-    gen3d_preview_animation_dropdown_button,
-    gen3d_preview_animation_dropdown_scroll_wheel, gen3d_preview_animation_option_buttons,
-    gen3d_prompt_box_focus, gen3d_prompt_ime_position, gen3d_prompt_scroll_wheel,
-    gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
-    gen3d_rebuild_preview_animation_dropdown_options_ui,
-    gen3d_side_panel_toggle_button, gen3d_update_preview_animation_dropdown_ui,
-    gen3d_update_preview_panel_image_fit, gen3d_update_prompt_scrollbar_ui,
-    gen3d_update_side_panel_ui, gen3d_update_ui_text, spawn_gen3d_preview_panel,
+    gen3d_preview_animation_dropdown_button, gen3d_preview_animation_dropdown_scroll_wheel,
+    gen3d_preview_animation_option_buttons, gen3d_prompt_box_focus, gen3d_prompt_ime_position,
+    gen3d_prompt_scroll_wheel, gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
+    gen3d_rebuild_preview_animation_dropdown_options_ui, gen3d_side_panel_toggle_button,
+    gen3d_update_preview_animation_dropdown_ui, gen3d_update_preview_panel_image_fit,
+    gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
+    spawn_gen3d_preview_panel,
 };

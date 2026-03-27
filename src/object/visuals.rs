@@ -835,7 +835,7 @@ pub(crate) fn update_part_animations(
             return None;
         }
 
-        if channel != "attack" {
+        if channel != "attack_primary" {
             return animations
                 .iter()
                 .find(|slot| slot.channel.as_ref() == channel)
@@ -844,7 +844,7 @@ pub(crate) fn update_part_animations(
 
         let mut matches = animations
             .iter()
-            .filter(|slot| slot.channel.as_ref() == "attack");
+            .filter(|slot| slot.channel.as_ref() == "attack_primary");
         let first = matches.next()?;
         let Some(second) = matches.next() else {
             return Some(&first.spec);
@@ -893,15 +893,9 @@ pub(crate) fn update_part_animations(
         }
 
         if chosen.is_none() {
-            for channel in [
-                "attack",
-                "action",
-                "move",
-                "idle",
-                "ambient",
-            ] {
+            for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
                 let channel_active = match channel {
-                    "attack" => attack_active,
+                    "attack_primary" => attack_active,
                     "action" => action_active,
                     "move" => move_active,
                     "idle" => idle_active,

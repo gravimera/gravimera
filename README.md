@@ -43,6 +43,7 @@ cargo run
 - Game design (final target): [docs/gamedesign/README.md](docs/gamedesign/README.md)
 - Specs (contracts/formats): [docs/gamedesign/specs.md](docs/gamedesign/specs.md)
 - Gen3D workflow + schemas: [docs/gen3d/README.md](docs/gen3d/README.md)
+- GenFloor workflow + schemas: [docs/genfloor/README.md](docs/genfloor/README.md)
 - Controls (rendered UI): [docs/controls.md](docs/controls.md)
 - Local Automation HTTP API: [docs/automation_http_api.md](docs/automation_http_api.md)
 - External agent monitor skill (scene + units + toast + TTS): [docs/agent_skills/SKILL_agent.md](docs/agent_skills/SKILL_agent.md)

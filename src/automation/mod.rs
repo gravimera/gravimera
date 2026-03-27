@@ -3422,6 +3422,7 @@ fn handle_request_main_thread<
                     Some(match scene.get() {
                         BuildScene::Realm => "realm",
                         BuildScene::Preview => "preview",
+                        BuildScene::FloorPreview => "floor_preview",
                     })
                 }
                 _ => None,

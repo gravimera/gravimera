@@ -933,17 +933,17 @@ mod tests {
             anchors: Vec::new(),
             contacts: Vec::new(),
             root_animations: Vec::new(),
-	            attach_to: parent.map(|p| super::super::job::Gen3dPlannedAttachment {
-	                parent: p.to_string(),
-	                parent_anchor: "origin".into(),
-	                child_anchor: "origin".into(),
-	                offset: Transform::IDENTITY,
-	                fallback_basis: Transform::IDENTITY,
-	                joint: None,
-	                animations: Vec::new(),
-	            }),
-	        }
-	    }
+            attach_to: parent.map(|p| super::super::job::Gen3dPlannedAttachment {
+                parent: p.to_string(),
+                parent_anchor: "origin".into(),
+                child_anchor: "origin".into(),
+                offset: Transform::IDENTITY,
+                fallback_basis: Transform::IDENTITY,
+                joint: None,
+                animations: Vec::new(),
+            }),
+        }
+    }
 
     fn dummy_plan(
         components: Vec<AiPlanComponentJson>,

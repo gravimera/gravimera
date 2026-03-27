@@ -562,16 +562,16 @@ mod tests {
         parent_anchor: &str,
         child_anchor: &str,
     ) {
-	        child.attach_to = Some(super::super::Gen3dPlannedAttachment {
-	            parent: parent.to_string(),
-	            parent_anchor: parent_anchor.to_string(),
-	            child_anchor: child_anchor.to_string(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: Vec::new(),
-	        });
-	    }
+        child.attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: parent.to_string(),
+            parent_anchor: parent_anchor.to_string(),
+            child_anchor: child_anchor.to_string(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+    }
 
     fn anchor(name: &str) -> AnchorDef {
         AnchorDef {

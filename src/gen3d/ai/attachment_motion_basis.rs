@@ -112,7 +112,9 @@ pub(super) fn rebase_bases_for_offset_change(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object::registry::{PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSpec};
+    use crate::object::registry::{
+        PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSpec,
+    };
 
     fn approx_eq_f32(a: f32, b: f32, eps: f32) -> bool {
         (a - b).abs() <= eps
@@ -195,9 +197,9 @@ mod tests {
     #[test]
     fn normalize_attachment_motion_resets_without_channels() {
         let mut fallback_basis = Transform::from_translation(Vec3::new(0.0, 0.2, 0.0));
-        let mut animations = vec![base_slot_with_basis(Transform::from_translation(Vec3::new(
-            0.0, 0.1, 0.0,
-        )))];
+        let mut animations = vec![base_slot_with_basis(Transform::from_translation(
+            Vec3::new(0.0, 0.1, 0.0),
+        ))];
 
         normalize_attachment_motion(&mut fallback_basis, &mut animations);
         assert!(
@@ -212,15 +214,15 @@ mod tests {
 
     #[test]
     fn rebase_preserves_composed_offset_basis() {
-        let old_offset =
-            Transform::from_translation(Vec3::new(0.0, 0.0, 0.1)).with_rotation(Quat::from_rotation_y(0.3));
-        let new_offset =
-            Transform::from_translation(Vec3::new(0.0, 0.0, 0.1)).with_rotation(Quat::from_rotation_y(-0.8));
+        let old_offset = Transform::from_translation(Vec3::new(0.0, 0.0, 0.1))
+            .with_rotation(Quat::from_rotation_y(0.3));
+        let new_offset = Transform::from_translation(Vec3::new(0.0, 0.0, 0.1))
+            .with_rotation(Quat::from_rotation_y(-0.8));
 
-        let basis_old =
-            Transform::from_translation(Vec3::new(0.0, 0.05, 0.0)).with_rotation(Quat::from_rotation_x(0.2));
-        let fallback_old =
-            Transform::from_translation(Vec3::new(0.02, 0.0, 0.0)).with_rotation(Quat::from_rotation_z(0.1));
+        let basis_old = Transform::from_translation(Vec3::new(0.0, 0.05, 0.0))
+            .with_rotation(Quat::from_rotation_x(0.2));
+        let fallback_old = Transform::from_translation(Vec3::new(0.02, 0.0, 0.0))
+            .with_rotation(Quat::from_rotation_z(0.1));
 
         let mut fallback_basis = fallback_old;
         let mut animations = vec![PartAnimationSlot {
@@ -240,7 +242,12 @@ mod tests {
             },
         }];
 
-        rebase_bases_for_offset_change(old_offset, new_offset, &mut fallback_basis, &mut animations);
+        rebase_bases_for_offset_change(
+            old_offset,
+            new_offset,
+            &mut fallback_basis,
+            &mut animations,
+        );
 
         let composed_expected = old_offset.to_matrix() * basis_old.to_matrix();
         let composed_got = new_offset.to_matrix() * animations[0].spec.basis.to_matrix();
@@ -269,4 +276,3 @@ mod tests {
         );
     }
 }
-

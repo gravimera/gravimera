@@ -13,6 +13,7 @@ mod agent_tool_poll;
 mod agent_utils;
 mod ai_service;
 mod artifacts;
+mod attachment_motion_basis;
 mod basis_from_up_forward;
 mod bootstrap_requests;
 mod claude;
@@ -23,7 +24,6 @@ mod edit_bundle;
 mod gemini;
 mod headless_prefab;
 mod info_store;
-mod attachment_motion_basis;
 mod job;
 mod mimo;
 mod motion_validation;
@@ -49,6 +49,10 @@ mod pipeline_orchestrator_tests;
 mod regression_tests;
 
 use super::{GEN3D_MAX_REQUEST_IMAGES, GEN3D_PREVIEW_DEFAULT_PITCH, GEN3D_PREVIEW_DEFAULT_YAW};
+
+use crate::config::AppConfig;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 
 use job::*;
 #[cfg(test)]
@@ -85,6 +89,44 @@ pub(crate) use workspaces::{
     gen3d_delete_workspace_from_api, gen3d_diff_workspaces_from_api,
     gen3d_merge_workspace_from_api, gen3d_set_active_workspace_from_api,
 };
+
+#[derive(Clone, Debug)]
+pub(crate) struct Gen3dSimpleTextResponse {
+    pub(crate) text: String,
+    pub(crate) total_tokens: Option<u64>,
+}
+
+pub(crate) fn gen3d_generate_text_simple(
+    config: &AppConfig,
+    system_instructions: &str,
+    user_text: &str,
+    cancel: Option<Arc<AtomicBool>>,
+) -> Result<Gen3dSimpleTextResponse, String> {
+    let ai = orchestration::resolve_gen3d_ai_service_config(config)?;
+    let progress = Arc::new(Mutex::new(Gen3dAiProgress::default()));
+    let session = Gen3dAiSessionState::default();
+    let reasoning_effort = ai.model_reasoning_effort().to_string();
+
+    let response = ai_service::generate_text_via_ai_service(
+        &progress,
+        session,
+        cancel,
+        None,
+        config.gen3d_require_structured_outputs,
+        &ai,
+        reasoning_effort.as_str(),
+        system_instructions,
+        user_text,
+        &[],
+        None,
+        "genfloor",
+    )?;
+
+    Ok(Gen3dSimpleTextResponse {
+        text: response.text,
+        total_tokens: response.total_tokens,
+    })
+}
 
 pub(super) fn spawn_prefab_descriptor_meta_enrichment_thread_best_effort(
     job: &Gen3dAiJob,

@@ -13,7 +13,7 @@ pub(crate) fn gen3d_update_images_inline_visibility(
     workshop: Res<Gen3dWorkshop>,
     mut panels: Query<(&mut Node, &mut Visibility), With<Gen3dImagesInlinePanel>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     let has_images = !workshop.images.is_empty();
@@ -41,7 +41,7 @@ pub(crate) fn gen3d_clear_images_button(
         (Changed<Interaction>, With<Gen3dClearImagesButton>),
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     for (interaction, mut bg) in &mut buttons {
@@ -86,7 +86,7 @@ pub(crate) fn gen3d_handle_drag_and_drop(
     mut images: ResMut<Assets<Image>>,
     mut drag_and_drop: bevy::ecs::message::MessageReader<FileDragAndDrop>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -163,7 +163,7 @@ pub(crate) fn gen3d_rebuild_images_list_ui(
     existing_items: Query<Entity, With<Gen3dImagesListItem>>,
     mut last_paths: Local<Vec<PathBuf>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     let Ok(root) = list_root.single() else {
@@ -225,7 +225,7 @@ pub(crate) fn gen3d_thumbnail_button_open_viewer(
     mut workshop: ResMut<Gen3dWorkshop>,
     mut buttons: Query<(&Interaction, &Gen3dThumbnailButton), Changed<Interaction>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     for (interaction, button) in &mut buttons {
@@ -252,7 +252,7 @@ pub(crate) fn gen3d_thumbnail_button_style_on_interaction(
         Changed<Interaction>,
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     for (interaction, button, mut bg, mut border) in &mut buttons {
@@ -272,7 +272,7 @@ pub(crate) fn gen3d_thumbnail_button_style_on_selection(
         &mut BorderColor,
     )>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     if *last_selected == workshop.image_viewer {
@@ -328,7 +328,7 @@ pub(crate) fn gen3d_update_thumbnail_tooltip(
     mut tooltip: Query<(&mut Node, &mut Visibility), With<Gen3dThumbnailTooltipRoot>>,
     mut tooltip_text: Query<&mut Text, With<Gen3dThumbnailTooltipText>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 
@@ -396,7 +396,7 @@ pub(crate) fn gen3d_image_viewer_keyboard_navigation(
     input: Res<ButtonInput<KeyCode>>,
     mut workshop: ResMut<Gen3dWorkshop>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     let Some(current) = workshop.image_viewer else {
@@ -425,7 +425,7 @@ pub(crate) fn gen3d_image_viewer_click_to_close(
     mut workshop: ResMut<Gen3dWorkshop>,
     mut overlays: Query<&Interaction, (Changed<Interaction>, With<Gen3dImageViewerRoot>)>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     if workshop.image_viewer.is_none() {
@@ -446,7 +446,7 @@ pub(crate) fn gen3d_update_image_viewer_ui(
     existing: Query<Entity, With<Gen3dImageViewerRoot>>,
     mut last_open: Local<Option<usize>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
 

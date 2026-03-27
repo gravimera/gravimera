@@ -2012,14 +2012,14 @@ fn validate_attack_self_intersection(
         return;
     }
 
-    let has_attack = components.iter().any(|c| {
+    let has_attack_primary = components.iter().any(|c| {
         c.attach_to.as_ref().is_some_and(|att| {
             att.animations
                 .iter()
-                .any(|slot| slot.channel.as_ref() == "attack")
+                .any(|slot| slot.channel.as_ref() == "attack_primary")
         })
     });
-    if !has_attack {
+    if !has_attack_primary {
         return;
     }
 
@@ -2044,7 +2044,7 @@ fn validate_attack_self_intersection(
             c.attach_to.as_ref().is_some_and(|att| {
                 att.animations
                     .iter()
-                    .any(|slot| slot.channel.as_ref() == "attack")
+                    .any(|slot| slot.channel.as_ref() == "attack_primary")
             })
         })
         .collect();
@@ -2107,7 +2107,7 @@ fn validate_attack_self_intersection(
             continue;
         };
         for slot in att.animations.iter() {
-            if slot.channel.as_ref() != "attack" {
+            if slot.channel.as_ref() != "attack_primary" {
                 continue;
             }
             let PartAnimationDef::Loop { duration_secs, .. } = &slot.spec.clip else {
@@ -2260,13 +2260,13 @@ fn validate_attack_self_intersection(
         let component_name = components[blame_idx].name.clone();
         issues.push(MotionIssue {
             // Self-intersection is often a cosmetic issue (and OBB tests can be conservative).
-            // Keep reporting it, but do not block Gen3D acceptance or encourage "disable attack"
+            // Keep reporting it, but do not block Gen3D acceptance or encourage "disable attack_primary"
             // fixes that remove all attack motion.
             severity: MotionSeverity::Warn,
             kind: "attack_self_intersection",
             component_id: component_id_uuid_for_name(&component_name),
             component_name,
-            channel: "attack".to_string(),
+            channel: "attack_primary".to_string(),
             message: "Attack animation increases self-intersection relative to idle pose."
                 .into(),
             evidence: serde_json::json!({
@@ -2314,15 +2314,9 @@ fn compute_world_transforms_for_channels(
         moving: bool,
         idle: bool,
     ) -> Option<&'a PartAnimationSlot> {
-        for channel in [
-            "attack",
-            "action",
-            "move",
-            "idle",
-            "ambient",
-        ] {
+        for channel in ["attack_primary", "action", "move", "idle", "ambient"] {
             let active = match channel {
-                "attack" => attacking_primary,
+                "attack_primary" => attacking_primary,
                 "action" => acting,
                 "move" => moving,
                 "idle" => idle,
@@ -2414,7 +2408,9 @@ fn compute_world_transforms_for_channels(
                 } else {
                     (None, att.fallback_basis, Transform::IDENTITY)
                 };
-            if !basis.translation.is_finite() || !basis.rotation.is_finite() || !basis.scale.is_finite()
+            if !basis.translation.is_finite()
+                || !basis.rotation.is_finite()
+                || !basis.scale.is_finite()
             {
                 basis = Transform::IDENTITY;
             }
@@ -2423,7 +2419,11 @@ fn compute_world_transforms_for_channels(
                 Some(PartAnimationDef::Spin {
                     axis_space: PartAnimationSpinAxisSpace::ChildLocal,
                     ..
-                }) => apply_child_local_delta_to_attachment_offset(base_with_basis, child_anchor, delta),
+                }) => apply_child_local_delta_to_attachment_offset(
+                    base_with_basis,
+                    child_anchor,
+                    delta,
+                ),
                 _ => mul_transform(&base_with_basis, &delta),
             };
 
@@ -2669,16 +2669,16 @@ mod tests {
         };
 
         let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
-	        limb.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: vec![PartAnimationSlot {
-	                channel: "move".into(),
-	                spec: move_spec,
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
             }],
         });
 
@@ -2752,16 +2752,16 @@ mod tests {
         };
 
         let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
-	        limb.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: vec![PartAnimationSlot {
-	                channel: "move".into(),
-	                spec: move_spec,
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
             }],
         });
 
@@ -2800,16 +2800,16 @@ mod tests {
         };
 
         let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
-	        limb.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: vec![PartAnimationSlot {
-	                channel: "move".into(),
-	                spec: move_spec,
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
             }],
         });
 
@@ -2842,32 +2842,32 @@ mod tests {
                 anchor_with_rot("dist", Vec3::new(0.0, 0.0, 0.5), bad_rot),
             ],
         );
-	        link.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "prox".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: Some(super::super::AiJointJson {
-	                kind: AiJointKindJson::Ball,
-	                axis_join: None,
+        link.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "prox".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Ball,
+                axis_join: None,
                 limits_degrees: None,
                 swing_limits_degrees: None,
                 twist_limits_degrees: None,
-	            }),
-	            animations: Vec::new(),
-	        });
+            }),
+            animations: Vec::new(),
+        });
 
         let mut child = stub_component("child", vec![anchor("prox", Vec3::ZERO)]);
-	        child.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "link".into(),
-	            parent_anchor: "dist".into(),
-	            child_anchor: "prox".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: Vec::new(),
-	        });
+        child.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "link".into(),
+            parent_anchor: "dist".into(),
+            child_anchor: "prox".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
 
         let components = vec![root, link, child];
         let report = build_motion_validation_report(Some(1.0), &components);
@@ -2907,32 +2907,32 @@ mod tests {
                 anchor("dist", Vec3::new(0.0, 0.0, 0.5)),
             ],
         );
-	        link.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "prox".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: Some(super::super::AiJointJson {
-	                kind: AiJointKindJson::Ball,
-	                axis_join: None,
+        link.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "prox".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Ball,
+                axis_join: None,
                 limits_degrees: None,
                 swing_limits_degrees: None,
                 twist_limits_degrees: None,
-	            }),
-	            animations: Vec::new(),
-	        });
+            }),
+            animations: Vec::new(),
+        });
 
         let mut child = stub_component("child", vec![anchor("prox", Vec3::ZERO)]);
-	        child.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "link".into(),
-	            parent_anchor: "dist".into(),
-	            child_anchor: "prox".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: Vec::new(),
-	        });
+        child.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "link".into(),
+            parent_anchor: "dist".into(),
+            child_anchor: "prox".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
 
         let components = vec![root, link, child];
         let report = build_motion_validation_report(Some(1.0), &components);
@@ -2985,15 +2985,15 @@ mod tests {
         };
 
         let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
-	        limb.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: Some(super::super::AiJointJson {
-	                kind: AiJointKindJson::Hinge,
-	                axis_join: Some([1.0, 0.0, 0.0]),
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Hinge,
+                axis_join: Some([1.0, 0.0, 0.0]),
                 limits_degrees: Some([-20.0, 20.0]),
                 swing_limits_degrees: None,
                 twist_limits_degrees: None,
@@ -3059,15 +3059,15 @@ mod tests {
         };
 
         let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
-	        limb.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: Some(super::super::AiJointJson {
-	                kind: AiJointKindJson::Hinge,
-	                axis_join: Some([1.0, 0.0, 0.0]),
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Hinge,
+                axis_join: Some([1.0, 0.0, 0.0]),
                 limits_degrees: Some([-20.0, 20.0]),
                 swing_limits_degrees: None,
                 twist_limits_degrees: None,
@@ -3134,17 +3134,17 @@ mod tests {
         };
 
         let mut head = stub_component("head", vec![anchor("mount", Vec3::ZERO)]);
-	        head.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: Some(super::super::AiJointJson {
-	                kind: AiJointKindJson::Ball,
-	                axis_join: None,
-	                limits_degrees: None,
-	                swing_limits_degrees: None,
+        head.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Ball,
+                axis_join: None,
+                limits_degrees: None,
+                swing_limits_degrees: None,
                 twist_limits_degrees: None,
             }),
             animations: vec![PartAnimationSlot {
@@ -3202,16 +3202,16 @@ mod tests {
         };
 
         let mut limb = stub_component("limb", vec![anchor("mount", Vec3::ZERO)]);
-	        limb.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: Some(super::super::AiJointJson {
-	                kind: AiJointKindJson::Hinge,
-	                axis_join: Some([1.0, 0.0, 0.0]),
-	                limits_degrees: Some([-20.0, 20.0]),
+        limb.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: Some(super::super::AiJointJson {
+                kind: AiJointKindJson::Hinge,
+                axis_join: Some([1.0, 0.0, 0.0]),
+                limits_degrees: Some([-20.0, 20.0]),
                 swing_limits_degrees: None,
                 twist_limits_degrees: None,
             }),
@@ -3277,18 +3277,18 @@ mod tests {
             kind: AiContactKindJson::Ground,
             stance: None,
         });
-	        foot.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: vec![PartAnimationSlot {
-	                channel: "move".into(),
-	                spec: move_spec,
-	            }],
-	        });
+        foot.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
+            }],
+        });
 
         let components = vec![root, foot];
         let report = build_motion_validation_report(Some(1.0), &components);
@@ -3346,18 +3346,18 @@ mod tests {
                 duty_factor_01: 1.0,
             }),
         });
-	        wheel.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: vec![PartAnimationSlot {
-	                channel: "move".into(),
-	                spec: move_spec,
-	            }],
-	        });
+        wheel.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: move_spec,
+            }],
+        });
 
         let components = vec![root, wheel];
         let report = build_motion_validation_report(Some(1.0), &components);
@@ -3394,17 +3394,17 @@ mod tests {
             "wheel",
             vec![anchor_with_rot("mount", Vec3::ZERO, child_anchor_rot)],
         );
-	        wheel.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "mount".into(),
-	            child_anchor: "mount".into(),
-	            offset: Transform::IDENTITY,
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: vec![PartAnimationSlot {
-	                channel: "move".into(),
-	                spec: PartAnimationSpec {
-	                    driver: PartAnimationDriver::MoveDistance,
+        wheel.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "move".into(),
+                spec: PartAnimationSpec {
+                    driver: PartAnimationDriver::MoveDistance,
                     speed_scale: 1.0,
                     time_offset_units: 0.0,
                     basis: Transform::IDENTITY,
@@ -3475,18 +3475,18 @@ mod tests {
 
         let mut child = stub_component("child", Vec::new());
         child.planned_size = Vec3::splat(1.0);
-	        child.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "origin".into(),
-	            child_anchor: "origin".into(),
-	            offset: Transform::from_translation(Vec3::new(1.5, 0.0, 0.0)),
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: vec![PartAnimationSlot {
-	                channel: "attack".into(),
-	                spec: attack_spec,
-	            }],
-	        });
+        child.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "origin".into(),
+            child_anchor: "origin".into(),
+            offset: Transform::from_translation(Vec3::new(1.5, 0.0, 0.0)),
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "attack_primary".into(),
+                spec: attack_spec,
+            }],
+        });
 
         let components = vec![root, child];
         let report = build_motion_validation_report(None, &components);
@@ -3506,7 +3506,7 @@ mod tests {
         assert!(
             issues.iter().any(|i| {
                 i.get("kind").and_then(|v| v.as_str()) == Some("attack_self_intersection")
-                    && i.get("channel").and_then(|v| v.as_str()) == Some("attack")
+                    && i.get("channel").and_then(|v| v.as_str()) == Some("attack_primary")
                     && i.get("component_name").and_then(|v| v.as_str()) == Some("child")
                     && i.get("severity").and_then(|v| v.as_str()) == Some("warn")
             }),
@@ -3547,18 +3547,18 @@ mod tests {
         child.planned_size = Vec3::splat(1.0);
         // Idle pose already intersects; attack moves away, so there should be no "increased"
         // self-intersection relative to idle.
-	        child.attach_to = Some(Gen3dPlannedAttachment {
-	            parent: "root".into(),
-	            parent_anchor: "origin".into(),
-	            child_anchor: "origin".into(),
-	            offset: Transform::from_translation(Vec3::new(0.5, 0.0, 0.0)),
-	            fallback_basis: Transform::IDENTITY,
-	            joint: None,
-	            animations: vec![PartAnimationSlot {
-	                channel: "attack".into(),
-	                spec: attack_spec,
-	            }],
-	        });
+        child.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "origin".into(),
+            child_anchor: "origin".into(),
+            offset: Transform::from_translation(Vec3::new(0.5, 0.0, 0.0)),
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: vec![PartAnimationSlot {
+                channel: "attack_primary".into(),
+                spec: attack_spec,
+            }],
+        });
 
         let components = vec![root, child];
         let report = build_motion_validation_report(None, &components);

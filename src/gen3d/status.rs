@@ -14,7 +14,7 @@ pub(crate) fn gen3d_status_scroll_wheel(
         With<Gen3dStatusScrollPanel>,
     >,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     if !matches!(workshop.side_tab, Gen3dSideTab::Status) {
@@ -62,7 +62,7 @@ pub(crate) fn gen3d_update_status_scrollbar_ui(
     mut tracks: Query<(&ComputedNode, &mut Visibility), With<Gen3dStatusScrollbarTrack>>,
     mut thumbs: Query<&mut Node, With<Gen3dStatusScrollbarThumb>>,
 ) {
-    if !matches!(build_scene.get(), BuildScene::Preview) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
     if !matches!(workshop.side_tab, Gen3dSideTab::Status) {

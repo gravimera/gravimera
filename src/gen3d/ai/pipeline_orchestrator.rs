@@ -438,9 +438,8 @@ fn append_motion_authoring_retry_feedback(job: &Gen3dAiJob, feedback: &mut Strin
     if !feedback.trim().is_empty() && !feedback.ends_with('\n') {
         feedback.push('\n');
     }
-    feedback.push_str(
-        "Schema reminder: top-level `version` MUST be the number 1 (not a string).\n",
-    );
+    feedback
+        .push_str("Schema reminder: top-level `version` MUST be the number 1 (not a string).\n");
 
     let failures = pipeline_last_motion_tool_failure_lines(job);
     if failures.is_empty() {
@@ -916,10 +915,9 @@ fn poll_pipeline_tick(
                     job.pipeline.plan_authoring_attempts.saturating_add(1);
                 let mut args = serde_json::json!({ "prompt": job.user_prompt_raw });
                 if let Some(feedback) = job.pipeline.pending_plan_qa_feedback.take() {
-                    args.as_object_mut().unwrap().insert(
-                        "qa_feedback".into(),
-                        serde_json::Value::String(feedback),
-                    );
+                    args.as_object_mut()
+                        .unwrap()
+                        .insert("qa_feedback".into(), serde_json::Value::String(feedback));
                 }
                 if let Some(result) = start_pipeline_tool_call(
                     config,
@@ -1067,17 +1065,17 @@ fn poll_pipeline_tick(
                 return;
             };
             workshop.status = "Pipeline: replanning…".into();
-            job.pipeline.plan_authoring_attempts = job.pipeline.plan_authoring_attempts.saturating_add(1);
+            job.pipeline.plan_authoring_attempts =
+                job.pipeline.plan_authoring_attempts.saturating_add(1);
             let mut args = serde_json::json!({
                 "prompt": job.user_prompt_raw,
                 "plan_template_kv": kv,
                 "constraints": { "preserve_existing_components": true, "preserve_edit_policy": "allow_offsets" }
             });
             if let Some(feedback) = job.pipeline.pending_plan_qa_feedback.take() {
-                args.as_object_mut().unwrap().insert(
-                    "qa_feedback".into(),
-                    serde_json::Value::String(feedback),
-                );
+                args.as_object_mut()
+                    .unwrap()
+                    .insert("qa_feedback".into(), serde_json::Value::String(feedback));
             }
             if let Some(result) = start_pipeline_tool_call(
                 config,
@@ -1525,10 +1523,8 @@ fn poll_pipeline_tick(
                         }
 
                         if !motion_msgs.is_empty() && job.pipeline.motion_authoring_attempts < 2 {
-                            let next_attempt = job
-                                .pipeline
-                                .motion_authoring_attempts
-                                .saturating_add(1);
+                            let next_attempt =
+                                job.pipeline.motion_authoring_attempts.saturating_add(1);
                             job.pipeline.motion_authoring_attempts = next_attempt;
                             // Force a QA re-run after motion authoring (do not reuse stale ok flags).
                             job.agent.last_validate_ok = None;
@@ -1544,12 +1540,13 @@ fn poll_pipeline_tick(
                             }
 
                             let mut feedback = String::new();
-                            feedback.push_str(&format!("QA complaints (attempt {next_attempt}/2):\n"));
+                            feedback
+                                .push_str(&format!("QA complaints (attempt {next_attempt}/2):\n"));
                             for item in motion_msgs.iter().take(12) {
                                 feedback.push_str("- ");
-                            feedback.push_str(item);
-                            feedback.push('\n');
-                        }
+                                feedback.push_str(item);
+                                feedback.push('\n');
+                            }
                             append_motion_authoring_retry_feedback(job, &mut feedback);
                             feedback.push_str(
                                 "Fix these if applicable; if you believe they don't apply, keep the current motion.\n",
@@ -1725,10 +1722,7 @@ fn poll_pipeline_tick(
                     .unwrap_or(false);
 
                 if motion_failed && job.pipeline.motion_authoring_attempts < 2 {
-                    let next_attempt = job
-                        .pipeline
-                        .motion_authoring_attempts
-                        .saturating_add(1);
+                    let next_attempt = job.pipeline.motion_authoring_attempts.saturating_add(1);
                     job.pipeline.motion_authoring_attempts = next_attempt;
                     // Force a QA re-run after motion authoring (do not reuse stale ok flags).
                     job.agent.last_validate_ok = None;
@@ -1762,7 +1756,8 @@ fn poll_pipeline_tick(
                                 .get("component_name")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
-                            let channel = issue.get("channel").and_then(|v| v.as_str()).unwrap_or("");
+                            let channel =
+                                issue.get("channel").and_then(|v| v.as_str()).unwrap_or("");
 
                             let mut line = String::new();
                             if !severity.trim().is_empty() {

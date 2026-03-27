@@ -14,9 +14,7 @@ use crate::object::registry::{
     builtin_object_id, ObjectDef, ObjectLibrary, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, UnitAttackKind,
 };
-use crate::threaded_result::{
-    spawn_worker_thread, take_shared_result, SharedResult,
-};
+use crate::threaded_result::{spawn_worker_thread, take_shared_result, SharedResult};
 use crate::types::{AnimationChannelsActive, AttackClock, BuildScene, LocomotionClock};
 
 use super::ai_service::{generate_text_via_ai_service, Gen3dAiServiceConfig};
@@ -43,8 +41,7 @@ use super::super::tool_feedback::{
 };
 use super::super::{
     gen3d_draft_object_id, GEN3D_PREVIEW_DEFAULT_PITCH, GEN3D_PREVIEW_LAYER,
-    GEN3D_REVIEW_CAPTURE_HEIGHT_PX,
-    GEN3D_REVIEW_CAPTURE_WIDTH_PX, GEN3D_REVIEW_LAYER,
+    GEN3D_REVIEW_CAPTURE_HEIGHT_PX, GEN3D_REVIEW_CAPTURE_WIDTH_PX, GEN3D_REVIEW_LAYER,
 };
 
 pub(crate) fn gen3d_generate_button(
@@ -614,7 +611,9 @@ pub(crate) fn gen3d_start_edit_run_from_current_draft_from_api(
     Ok(())
 }
 
-fn resolve_gen3d_ai_service_config(config: &AppConfig) -> Result<Gen3dAiServiceConfig, String> {
+pub(super) fn resolve_gen3d_ai_service_config(
+    config: &AppConfig,
+) -> Result<Gen3dAiServiceConfig, String> {
     match config.gen3d_ai_service {
         crate::config::Gen3dAiService::OpenAi => match config.openai.clone() {
             Some(openai) => Ok(Gen3dAiServiceConfig::OpenAi(openai)),
@@ -1646,78 +1645,142 @@ pub(crate) fn gen3d_poll_ai_job(
                 desired_total_passes.saturating_sub(job.auto_refine_passes_done);
         }
 
-    let per_component_enabled = component_refine_cycles_for_speed(&config, workshop.speed_mode) > 0;
-    if !per_component_enabled
-        && matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent)
-        && matches!(
-            job.phase,
-            Gen3dAiPhase::CapturingReview | Gen3dAiPhase::WaitingReview
-        )
-    {
-        debug!("Gen3D: per-component review disabled mid-run; resuming build.");
-        for entity in &review_cameras {
-            commands.entity(entity).try_despawn();
+        let per_component_enabled =
+            component_refine_cycles_for_speed(&config, workshop.speed_mode) > 0;
+        if !per_component_enabled
+            && matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent)
+            && matches!(
+                job.phase,
+                Gen3dAiPhase::CapturingReview | Gen3dAiPhase::WaitingReview
+            )
+        {
+            debug!("Gen3D: per-component review disabled mid-run; resuming build.");
+            for entity in &review_cameras {
+                commands.entity(entity).try_despawn();
+            }
+            job.review_capture = None;
+            job.shared_result = None;
+            workshop.status =
+                "Auto-review skipped due to speed mode change (continuing build).".into();
+            resume_after_per_component_review(&mut workshop, &mut job);
+            return;
         }
-        job.review_capture = None;
-        job.shared_result = None;
-        workshop.status = "Auto-review skipped due to speed mode change (continuing build).".into();
-        resume_after_per_component_review(&mut workshop, &mut job);
-        return;
-    }
 
-    // Parallel component generation: we don't use `shared_result` during this phase.
-    // (Keep the legacy single-request path working if `shared_result` is still set.)
-    if matches!(job.phase, Gen3dAiPhase::WaitingComponent) && job.shared_result.is_none() {
-        poll_gen3d_parallel_components(&mut workshop, &mut job, &mut draft, speed_mode);
-        return;
-    }
+        // Parallel component generation: we don't use `shared_result` during this phase.
+        // (Keep the legacy single-request path working if `shared_result` is still set.)
+        if matches!(job.phase, Gen3dAiPhase::WaitingComponent) && job.shared_result.is_none() {
+            poll_gen3d_parallel_components(&mut workshop, &mut job, &mut draft, speed_mode);
+            return;
+        }
 
-    // Phase without an AI thread: capture review views as PNGs.
-    if matches!(job.phase, Gen3dAiPhase::CapturingReview) {
-        // 1) Poll static capture (7 views).
-        if let Some(state) = &job.review_capture {
-            let (done, expected) = state
-                .progress
-                .lock()
-                .map(|g| (g.completed, g.expected))
-                .unwrap_or((0, 7));
-            if done < expected {
-                if let Some(progress) = job.shared_progress.as_ref() {
-                    if job.capture_previews_only {
-                        set_progress(
-                            progress,
-                            format!("Capturing preview renders… ({done}/{expected})"),
-                        );
-                    } else {
-                        set_progress(
-                            progress,
-                            format!("Capturing review views… ({done}/{expected})"),
-                        );
+        // Phase without an AI thread: capture review views as PNGs.
+        if matches!(job.phase, Gen3dAiPhase::CapturingReview) {
+            // 1) Poll static capture (7 views).
+            if let Some(state) = &job.review_capture {
+                let (done, expected) = state
+                    .progress
+                    .lock()
+                    .map(|g| (g.completed, g.expected))
+                    .unwrap_or((0, 7));
+                if done < expected {
+                    if let Some(progress) = job.shared_progress.as_ref() {
+                        if job.capture_previews_only {
+                            set_progress(
+                                progress,
+                                format!("Capturing preview renders… ({done}/{expected})"),
+                            );
+                        } else {
+                            set_progress(
+                                progress,
+                                format!("Capturing review views… ({done}/{expected})"),
+                            );
+                        }
                     }
+                    return;
+                }
+
+                // Clean up capture cameras.
+                for cam in state.cameras.iter().copied() {
+                    commands.entity(cam).try_despawn();
+                }
+                let review_paths = state.image_paths.clone();
+                job.review_capture = None;
+
+                for path in &review_paths {
+                    if std::fs::metadata(path).is_err() {
+                        let label = if job.capture_previews_only {
+                            "preview"
+                        } else {
+                            "review"
+                        };
+                        workshop.error = Some(format!(
+                            "Failed to capture {label} image: {}",
+                            path.display()
+                        ));
+                        if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
+                            debug!("Gen3D: per-component review image missing; continuing build.");
+                            workshop.status = "Auto-review failed (continuing build).".into();
+                            resume_after_per_component_review(&mut workshop, &mut job);
+                            return;
+                        }
+
+                        job.finish_run_metrics();
+                        job.running = false;
+                        job.build_complete = true;
+                        job.phase = Gen3dAiPhase::Idle;
+                        job.shared_progress = None;
+                        workshop.status =
+                        "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
+                            .into();
+                        return;
+                    }
+                }
+
+                if job.capture_previews_only {
+                    append_gen3d_run_log(job.run_dir.as_deref(), "capture_previews_done");
+                    job.capture_previews_only = false;
+                    job.finish_run_metrics();
+                    job.running = false;
+                    job.build_complete = true;
+                    job.phase = Gen3dAiPhase::Idle;
+                    job.shared_progress = None;
+                    workshop.status =
+                    "Build finished. (Preview renders saved.) Orbit/zoom the preview. Click Build/Edit to start a new run."
+                        .into();
+                    return;
+                }
+
+                // After static views, capture motion sprite sheets (move + attack), then start the review request.
+                job.review_static_paths = review_paths;
+                job.motion_capture = Some(Gen3dMotionCaptureState::new());
+                if let Some(progress) = job.shared_progress.as_ref() {
+                    set_progress(progress, "Capturing move animation…");
                 }
                 return;
             }
 
-            // Clean up capture cameras.
-            for cam in state.cameras.iter().copied() {
-                commands.entity(cam).try_despawn();
+            // 2) Poll motion capture (2× 2x2 sprite sheets), which appends to `review_static_paths`.
+            if job.motion_capture.is_some() {
+                poll_gen3d_motion_capture(
+                    &time,
+                    &mut commands,
+                    &mut images,
+                    &mut workshop,
+                    &mut job,
+                    &draft,
+                    &mut preview_model,
+                );
+                return;
             }
-            let review_paths = state.image_paths.clone();
-            job.review_capture = None;
 
-            for path in &review_paths {
-                if std::fs::metadata(path).is_err() {
-                    let label = if job.capture_previews_only {
-                        "preview"
-                    } else {
-                        "review"
-                    };
-                    workshop.error = Some(format!(
-                        "Failed to capture {label} image: {}",
-                        path.display()
-                    ));
+            // 3) If we have review images ready, start the AI review request.
+            if !job.review_static_paths.is_empty() {
+                let review_paths = job.review_static_paths.clone();
+                job.review_static_paths.clear();
+
+                let Some(ai) = job.ai.clone() else {
+                    workshop.error = Some("Internal error: missing AI config.".into());
                     if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
-                        debug!("Gen3D: per-component review image missing; continuing build.");
                         workshop.status = "Auto-review failed (continuing build).".into();
                         resume_after_per_component_review(&mut workshop, &mut job);
                         return;
@@ -1729,300 +1792,182 @@ pub(crate) fn gen3d_poll_ai_job(
                     job.phase = Gen3dAiPhase::Idle;
                     job.shared_progress = None;
                     workshop.status =
-                        "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
-                            .into();
-                    return;
-                }
-            }
-
-            if job.capture_previews_only {
-                append_gen3d_run_log(job.run_dir.as_deref(), "capture_previews_done");
-                job.capture_previews_only = false;
-                job.finish_run_metrics();
-                job.running = false;
-                job.build_complete = true;
-                job.phase = Gen3dAiPhase::Idle;
-                job.shared_progress = None;
-                workshop.status =
-                    "Build finished. (Preview renders saved.) Orbit/zoom the preview. Click Build/Edit to start a new run."
-                        .into();
-                return;
-            }
-
-            // After static views, capture motion sprite sheets (move + attack), then start the review request.
-            job.review_static_paths = review_paths;
-            job.motion_capture = Some(Gen3dMotionCaptureState::new());
-            if let Some(progress) = job.shared_progress.as_ref() {
-                set_progress(progress, "Capturing move animation…");
-            }
-            return;
-        }
-
-        // 2) Poll motion capture (2× 2x2 sprite sheets), which appends to `review_static_paths`.
-        if job.motion_capture.is_some() {
-            poll_gen3d_motion_capture(
-                &time,
-                &mut commands,
-                &mut images,
-                &mut workshop,
-                &mut job,
-                &draft,
-                &mut preview_model,
-            );
-            return;
-        }
-
-        // 3) If we have review images ready, start the AI review request.
-        if !job.review_static_paths.is_empty() {
-            let review_paths = job.review_static_paths.clone();
-            job.review_static_paths.clear();
-
-            let Some(ai) = job.ai.clone() else {
-                workshop.error = Some("Internal error: missing AI config.".into());
-                if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
-                    workshop.status = "Auto-review failed (continuing build).".into();
-                    resume_after_per_component_review(&mut workshop, &mut job);
-                    return;
-                }
-
-                job.finish_run_metrics();
-                job.running = false;
-                job.build_complete = true;
-                job.phase = Gen3dAiPhase::Idle;
-                job.shared_progress = None;
-                workshop.status =
                     "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
                         .into();
-                return;
-            };
-            let Some(run_dir) = job.step_dir.clone() else {
-                workshop.error = Some("Internal error: missing Gen3D step dir.".into());
-                if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
-                    workshop.status = "Auto-review failed (continuing build).".into();
-                    resume_after_per_component_review(&mut workshop, &mut job);
                     return;
-                }
+                };
+                let Some(run_dir) = job.step_dir.clone() else {
+                    workshop.error = Some("Internal error: missing Gen3D step dir.".into());
+                    if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
+                        workshop.status = "Auto-review failed (continuing build).".into();
+                        resume_after_per_component_review(&mut workshop, &mut job);
+                        return;
+                    }
 
-                job.finish_run_metrics();
-                job.running = false;
-                job.build_complete = true;
-                job.phase = Gen3dAiPhase::Idle;
-                job.shared_progress = None;
-                workshop.status =
+                    job.finish_run_metrics();
+                    job.running = false;
+                    job.build_complete = true;
+                    job.phase = Gen3dAiPhase::Idle;
+                    job.shared_progress = None;
+                    workshop.status =
                     "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
                         .into();
-                return;
-            };
+                    return;
+                };
 
-            let mut review_inputs = review_paths.clone();
-            if review_inputs.len() > GEN3D_MAX_REQUEST_IMAGES {
-                debug!(
+                let mut review_inputs = review_paths.clone();
+                if review_inputs.len() > GEN3D_MAX_REQUEST_IMAGES {
+                    debug!(
                     "Gen3D: review inputs exceed max images ({} > {}), truncating extra preview renders",
                     review_inputs.len(),
                     GEN3D_MAX_REQUEST_IMAGES
                 );
-                review_inputs.truncate(GEN3D_MAX_REQUEST_IMAGES);
-            }
-            if !job.review_appearance {
-                review_inputs.clear();
-            }
-
-            job.phase = Gen3dAiPhase::WaitingReview;
-            job.last_review_inputs = review_inputs.clone();
-            job.review_delta_repair_attempt = 0;
-            let (status, prefix) = match job.review_kind {
-                Gen3dAutoReviewKind::EndOfRun => (
-                    format!(
-                        "Auto-reviewing assembly… (pass {})",
-                        job.auto_refine_passes_done.max(1)
-                    ),
-                    format!("review{:02}", job.auto_refine_passes_done.max(1)),
-                ),
-                Gen3dAutoReviewKind::PerComponent => {
-                    let pass = job.per_component_refine_passes_done.max(1);
-                    let total = pass + job.per_component_refine_passes_remaining;
-                    let component = job
-                        .review_component_idx
-                        .and_then(|idx| job.planned_components.get(idx))
-                        .map(|c| c.display_name.clone())
-                        .unwrap_or_else(|| "unknown".into());
-                    (
-                        format!(
-                            "Auto-reviewing assembly… (after {})\n(pass {pass}/{total})",
-                            component
-                        ),
-                        format!(
-                            "percomp_component{:02}_review{:02}",
-                            job.review_component_idx.map(|idx| idx + 1).unwrap_or(0),
-                            pass
-                        ),
-                    )
+                    review_inputs.truncate(GEN3D_MAX_REQUEST_IMAGES);
                 }
-            };
-            workshop.status = status;
-            if let Some(progress) = job.shared_progress.as_ref() {
-                set_progress(progress, "Requesting AI auto-review…");
-            }
+                if !job.review_appearance {
+                    review_inputs.clear();
+                }
 
-            let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
-            job.shared_result = Some(shared.clone());
-            let progress = job
-                .shared_progress
-                .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
-                .clone();
+                job.phase = Gen3dAiPhase::WaitingReview;
+                job.last_review_inputs = review_inputs.clone();
+                job.review_delta_repair_attempt = 0;
+                let (status, prefix) = match job.review_kind {
+                    Gen3dAutoReviewKind::EndOfRun => (
+                        format!(
+                            "Auto-reviewing assembly… (pass {})",
+                            job.auto_refine_passes_done.max(1)
+                        ),
+                        format!("review{:02}", job.auto_refine_passes_done.max(1)),
+                    ),
+                    Gen3dAutoReviewKind::PerComponent => {
+                        let pass = job.per_component_refine_passes_done.max(1);
+                        let total = pass + job.per_component_refine_passes_remaining;
+                        let component = job
+                            .review_component_idx
+                            .and_then(|idx| job.planned_components.get(idx))
+                            .map(|c| c.display_name.clone())
+                            .unwrap_or_else(|| "unknown".into());
+                        (
+                            format!(
+                                "Auto-reviewing assembly… (after {})\n(pass {pass}/{total})",
+                                component
+                            ),
+                            format!(
+                                "percomp_component{:02}_review{:02}",
+                                job.review_component_idx.map(|idx| idx + 1).unwrap_or(0),
+                                pass
+                            ),
+                        )
+                    }
+                };
+                workshop.status = status;
+                if let Some(progress) = job.shared_progress.as_ref() {
+                    set_progress(progress, "Requesting AI auto-review…");
+                }
 
-            let run_id = job
-                .run_id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "unknown".into());
-            let plan_hash = compute_gen3d_plan_hash(
-                &job.assembly_notes,
-                job.rig_move_cycle_m,
-                &job.planned_components,
-            );
-            job.plan_hash = plan_hash.clone();
+                let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+                job.shared_result = Some(shared.clone());
+                let progress = job
+                    .shared_progress
+                    .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
+                    .clone();
 
-            let scene_graph_summary = build_gen3d_scene_graph_summary(
-                &run_id,
-                job.attempt,
-                job.step,
-                &plan_hash,
-                job.assembly_rev,
-                &job.planned_components,
-                &draft,
-            );
-            let smoke_results = build_gen3d_smoke_results(
-                job.prompt_intent.as_ref().map(|i| i.requires_attack),
-                !job.user_images.is_empty(),
-                job.rig_move_cycle_m,
-                &job.planned_components,
-                &draft,
-            );
+                let run_id = job
+                    .run_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "unknown".into());
+                let plan_hash = compute_gen3d_plan_hash(
+                    &job.assembly_notes,
+                    job.rig_move_cycle_m,
+                    &job.planned_components,
+                );
+                job.plan_hash = plan_hash.clone();
 
-            write_gen3d_json_artifact(
-                job.artifact_dir(),
-                "scene_graph_summary.json",
-                &scene_graph_summary,
-            );
-            write_gen3d_json_artifact(job.artifact_dir(), "smoke_results.json", &smoke_results);
+                let scene_graph_summary = build_gen3d_scene_graph_summary(
+                    &run_id,
+                    job.attempt,
+                    job.step,
+                    &plan_hash,
+                    job.assembly_rev,
+                    &job.planned_components,
+                    &draft,
+                );
+                let smoke_results = build_gen3d_smoke_results(
+                    job.prompt_intent.as_ref().map(|i| i.requires_attack),
+                    !job.user_images.is_empty(),
+                    job.rig_move_cycle_m,
+                    &job.planned_components,
+                    &draft,
+                );
 
-            let edit_session =
-                job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
-            let regen_allowed = !job.preserve_existing_components_mode
-                || job.agent.last_validate_ok == Some(false)
-                || job.agent.last_smoke_ok == Some(false);
-            let review_delta_rounds_max = config.gen3d_review_delta_rounds_max.max(1);
-            let review_delta_round_index = job
-                .review_delta_rounds_used
-                .saturating_add(1)
-                .min(review_delta_rounds_max);
-            let system = build_gen3d_review_delta_system_instructions(
-                job.review_appearance,
-                edit_session,
-                regen_allowed,
-                review_delta_round_index,
-                review_delta_rounds_max,
-            );
-            let image_object_summary = job
-                .user_image_object_summary
-                .as_ref()
-                .map(|s| s.text.as_str());
-            let user_text = build_gen3d_review_delta_user_text(
-                &run_id,
-                job.attempt,
-                &plan_hash,
-                job.assembly_rev,
-                &job.user_prompt_raw,
-                image_object_summary,
-                &scene_graph_summary,
-                &smoke_results,
-                review_delta_round_index,
-                review_delta_rounds_max,
-            );
-            job.last_review_user_text = user_text.clone();
-            let reasoning_effort = ai.model_reasoning_effort().to_string();
-            spawn_gen3d_ai_text_thread(
-                shared,
-                progress,
-                job.cancel_flag.clone(),
-                job.session.clone(),
-                Some(if regen_allowed {
-                    Gen3dAiJsonSchemaKind::ReviewDeltaV1
-                } else {
-                    Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
-                }),
-                config.gen3d_require_structured_outputs,
-                ai,
-                reasoning_effort,
-                system,
-                user_text,
-                review_inputs,
-                run_dir,
-                prefix,
-            );
-            return;
-        }
+                write_gen3d_json_artifact(
+                    job.artifact_dir(),
+                    "scene_graph_summary.json",
+                    &scene_graph_summary,
+                );
+                write_gen3d_json_artifact(job.artifact_dir(), "smoke_results.json", &smoke_results);
 
-        // 4) Start a new static capture.
-        let Some(run_dir) = job.step_dir.clone() else {
-            workshop.error = Some("Internal error: missing Gen3D cache dir.".into());
-            if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
-                workshop.status = "Auto-review failed (continuing build).".into();
-                resume_after_per_component_review(&mut workshop, &mut job);
+                let edit_session =
+                    job.edit_base_prefab_id.is_some() && !job.user_prompt_raw.trim().is_empty();
+                let regen_allowed = !job.preserve_existing_components_mode
+                    || job.agent.last_validate_ok == Some(false)
+                    || job.agent.last_smoke_ok == Some(false);
+                let review_delta_rounds_max = config.gen3d_review_delta_rounds_max.max(1);
+                let review_delta_round_index = job
+                    .review_delta_rounds_used
+                    .saturating_add(1)
+                    .min(review_delta_rounds_max);
+                let system = build_gen3d_review_delta_system_instructions(
+                    job.review_appearance,
+                    edit_session,
+                    regen_allowed,
+                    review_delta_round_index,
+                    review_delta_rounds_max,
+                );
+                let image_object_summary = job
+                    .user_image_object_summary
+                    .as_ref()
+                    .map(|s| s.text.as_str());
+                let user_text = build_gen3d_review_delta_user_text(
+                    &run_id,
+                    job.attempt,
+                    &plan_hash,
+                    job.assembly_rev,
+                    &job.user_prompt_raw,
+                    image_object_summary,
+                    &scene_graph_summary,
+                    &smoke_results,
+                    review_delta_round_index,
+                    review_delta_rounds_max,
+                );
+                job.last_review_user_text = user_text.clone();
+                let reasoning_effort = ai.model_reasoning_effort().to_string();
+                spawn_gen3d_ai_text_thread(
+                    shared,
+                    progress,
+                    job.cancel_flag.clone(),
+                    job.session.clone(),
+                    Some(if regen_allowed {
+                        Gen3dAiJsonSchemaKind::ReviewDeltaV1
+                    } else {
+                        Gen3dAiJsonSchemaKind::ReviewDeltaNoRegenV1
+                    }),
+                    config.gen3d_require_structured_outputs,
+                    ai,
+                    reasoning_effort,
+                    system,
+                    user_text,
+                    review_inputs,
+                    run_dir,
+                    prefix,
+                );
                 return;
             }
 
-            job.finish_run_metrics();
-            job.running = false;
-            job.build_complete = true;
-            job.phase = Gen3dAiPhase::Idle;
-            job.shared_progress = None;
-            workshop.status =
-                "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
-                    .into();
-            return;
-        };
-        let prefix = if job.capture_previews_only {
-            "preview"
-        } else {
-            "review"
-        };
-        let include_overlay = !job.capture_previews_only;
-        let views = [
-            Gen3dReviewView::Front,
-            Gen3dReviewView::FrontLeft,
-            Gen3dReviewView::LeftBack,
-            Gen3dReviewView::Back,
-            Gen3dReviewView::RightBack,
-            Gen3dReviewView::FrontRight,
-            Gen3dReviewView::Top,
-        ];
-        match start_gen3d_review_capture(
-            &mut commands,
-            &mut images,
-            &run_dir,
-            &draft,
-            include_overlay,
-            prefix,
-            &views,
-            GEN3D_REVIEW_CAPTURE_WIDTH_PX,
-            GEN3D_REVIEW_CAPTURE_HEIGHT_PX,
-        ) {
-            Ok(state) => {
-                job.review_capture = Some(state);
-                if let Some(progress) = job.shared_progress.as_ref() {
-                    if job.capture_previews_only {
-                        set_progress(progress, "Capturing preview renders… (0/7)");
-                    } else {
-                        set_progress(progress, "Capturing review views… (0/7)");
-                    }
-                }
-            }
-            Err(err) => {
-                workshop.error = Some(err);
+            // 4) Start a new static capture.
+            let Some(run_dir) = job.step_dir.clone() else {
+                workshop.error = Some("Internal error: missing Gen3D cache dir.".into());
                 if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
-                    debug!("Gen3D: per-component review capture failed; continuing build.");
-                    job.review_capture = None;
                     workshop.status = "Auto-review failed (continuing build).".into();
                     resume_after_per_component_review(&mut workshop, &mut job);
                     return;
@@ -2033,125 +1978,181 @@ pub(crate) fn gen3d_poll_ai_job(
                 job.build_complete = true;
                 job.phase = Gen3dAiPhase::Idle;
                 job.shared_progress = None;
-                job.review_capture = None;
                 workshop.status =
-                    "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
-                        .into();
-            }
-        }
-        return;
-    }
-
-    // Phases that wait for an AI response.
-    let Some(shared) = job.shared_result.as_ref() else {
-        fail_job(
-            &mut workshop,
-            &mut job,
-            "Internal error: missing AI job handle.",
-        );
-        return;
-    };
-
-    let Some(result) = take_shared_result(shared) else {
-        return;
-    };
-
-    job.shared_result = None;
-
-    match result {
-        Ok(resp) => {
-            debug!("Gen3D: OpenAI response via {:?}", resp.api);
-            job.note_api_used(resp.api);
-            job.session = resp.session;
-            if let Some(tokens) = resp.total_tokens {
-                debug!("Gen3D: OpenAI usage total_tokens={tokens}");
-                job.add_tokens(tokens);
-            }
-            let max_tokens = config.gen3d_max_tokens;
-            if max_tokens > 0 && job.current_run_tokens >= max_tokens {
-                let current_tokens = job.current_run_tokens;
-                finish_job_best_effort(
-                    &mut commands,
-                    &review_cameras,
-                    &mut workshop,
-                    &mut job,
-                    format!("Token budget exhausted ({current_tokens} >= {max_tokens})."),
-                );
+                "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
+                    .into();
                 return;
-            }
-            let text = resp.text;
-
-            match job.phase {
-                Gen3dAiPhase::AgentWaitingStep
-                | Gen3dAiPhase::AgentWaitingUserImageSummary
-                | Gen3dAiPhase::AgentWaitingPromptIntent
-                | Gen3dAiPhase::AgentExecutingActions
-                | Gen3dAiPhase::AgentWaitingTool
-                | Gen3dAiPhase::AgentCapturingRender
-                | Gen3dAiPhase::AgentCapturingPassSnapshot
-                | Gen3dAiPhase::AgentWaitingDescriptorMeta => {
-                    // Agent mode is polled via `agent_loop::poll_gen3d_agent`. If we end up here,
-                    // just ignore this legacy response path.
-                    debug!("Gen3D: ignoring legacy AI result while in agent phase.");
-                }
-                Gen3dAiPhase::WaitingPlan => {
-                    debug!("Gen3D: plan request finished.");
-                    let mut plan = match parse::parse_ai_plan_from_text(&text) {
-                        Ok(plan) => plan,
-                        Err(err) => {
-                            debug!("Gen3D: failed to parse AI plan: {err}");
-                            if retry_gen3d_plan(
-                                &mut workshop,
-                                &mut job,
-                                &mut draft,
-                                speed_mode,
-                                &err,
-                            ) {
-                                return;
-                            }
-                            fail_job(&mut workshop, &mut job, err);
-                            return;
+            };
+            let prefix = if job.capture_previews_only {
+                "preview"
+            } else {
+                "review"
+            };
+            let include_overlay = !job.capture_previews_only;
+            let views = [
+                Gen3dReviewView::Front,
+                Gen3dReviewView::FrontLeft,
+                Gen3dReviewView::LeftBack,
+                Gen3dReviewView::Back,
+                Gen3dReviewView::RightBack,
+                Gen3dReviewView::FrontRight,
+                Gen3dReviewView::Top,
+            ];
+            match start_gen3d_review_capture(
+                &mut commands,
+                &mut images,
+                &run_dir,
+                &draft,
+                include_overlay,
+                prefix,
+                &views,
+                GEN3D_REVIEW_CAPTURE_WIDTH_PX,
+                GEN3D_REVIEW_CAPTURE_HEIGHT_PX,
+            ) {
+                Ok(state) => {
+                    job.review_capture = Some(state);
+                    if let Some(progress) = job.shared_progress.as_ref() {
+                        if job.capture_previews_only {
+                            set_progress(progress, "Capturing preview renders… (0/7)");
+                        } else {
+                            set_progress(progress, "Capturing review views… (0/7)");
                         }
-                    };
-
-                    let max_components = max_components_for_speed(workshop.speed_mode);
-                    if plan.components.len() > max_components {
-                        debug!(
-                            "Gen3D: truncating plan components from {} to {} due to speed mode",
-                            plan.components.len(),
-                            max_components
-                        );
-                        plan.components.truncate(max_components);
+                    }
+                }
+                Err(err) => {
+                    workshop.error = Some(err);
+                    if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
+                        debug!("Gen3D: per-component review capture failed; continuing build.");
+                        job.review_capture = None;
+                        workshop.status = "Auto-review failed (continuing build).".into();
+                        resume_after_per_component_review(&mut workshop, &mut job);
+                        return;
                     }
 
-                    job.plan_collider = plan.collider.clone();
-                    job.rig_move_cycle_m = plan
-                        .rig
-                        .as_ref()
-                        .and_then(|r| r.move_cycle_m)
-                        .filter(|v| v.is_finite())
-                        .map(|v| v.abs())
-                        .filter(|v| *v > 1e-3);
-                    let plan_reuse_groups = plan.reuse_groups.clone();
-                    match convert::ai_plan_to_initial_draft_defs(plan) {
-                        Ok((planned, assembly_notes, defs)) => {
-                            job.planned_components = planned;
-                            job.assembly_notes = assembly_notes;
-                            let (validated, warnings) = reuse_groups::validate_reuse_groups(
-                                &plan_reuse_groups,
-                                &job.planned_components,
-                            );
-                            job.reuse_groups = validated;
-                            job.reuse_group_warnings = warnings;
-                            job.component_queue = (0..job.planned_components.len()).collect();
-                            job.component_queue_pos = 0;
-                            job.generation_kind = Gen3dComponentGenerationKind::Initial;
-                            job.regen_per_component = vec![0; job.planned_components.len()];
-                            draft.defs = defs;
-                            workshop.error = None;
+                    job.finish_run_metrics();
+                    job.running = false;
+                    job.build_complete = true;
+                    job.phase = Gen3dAiPhase::Idle;
+                    job.shared_progress = None;
+                    job.review_capture = None;
+                    workshop.status =
+                    "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
+                        .into();
+                }
+            }
+            return;
+        }
 
-                            if let Some(run_dir) = job.artifact_dir() {
-                                let components: Vec<serde_json::Value> = job
+        // Phases that wait for an AI response.
+        let Some(shared) = job.shared_result.as_ref() else {
+            fail_job(
+                &mut workshop,
+                &mut job,
+                "Internal error: missing AI job handle.",
+            );
+            return;
+        };
+
+        let Some(result) = take_shared_result(shared) else {
+            return;
+        };
+
+        job.shared_result = None;
+
+        match result {
+            Ok(resp) => {
+                debug!("Gen3D: OpenAI response via {:?}", resp.api);
+                job.note_api_used(resp.api);
+                job.session = resp.session;
+                if let Some(tokens) = resp.total_tokens {
+                    debug!("Gen3D: OpenAI usage total_tokens={tokens}");
+                    job.add_tokens(tokens);
+                }
+                let max_tokens = config.gen3d_max_tokens;
+                if max_tokens > 0 && job.current_run_tokens >= max_tokens {
+                    let current_tokens = job.current_run_tokens;
+                    finish_job_best_effort(
+                        &mut commands,
+                        &review_cameras,
+                        &mut workshop,
+                        &mut job,
+                        format!("Token budget exhausted ({current_tokens} >= {max_tokens})."),
+                    );
+                    return;
+                }
+                let text = resp.text;
+
+                match job.phase {
+                    Gen3dAiPhase::AgentWaitingStep
+                    | Gen3dAiPhase::AgentWaitingUserImageSummary
+                    | Gen3dAiPhase::AgentWaitingPromptIntent
+                    | Gen3dAiPhase::AgentExecutingActions
+                    | Gen3dAiPhase::AgentWaitingTool
+                    | Gen3dAiPhase::AgentCapturingRender
+                    | Gen3dAiPhase::AgentCapturingPassSnapshot
+                    | Gen3dAiPhase::AgentWaitingDescriptorMeta => {
+                        // Agent mode is polled via `agent_loop::poll_gen3d_agent`. If we end up here,
+                        // just ignore this legacy response path.
+                        debug!("Gen3D: ignoring legacy AI result while in agent phase.");
+                    }
+                    Gen3dAiPhase::WaitingPlan => {
+                        debug!("Gen3D: plan request finished.");
+                        let mut plan = match parse::parse_ai_plan_from_text(&text) {
+                            Ok(plan) => plan,
+                            Err(err) => {
+                                debug!("Gen3D: failed to parse AI plan: {err}");
+                                if retry_gen3d_plan(
+                                    &mut workshop,
+                                    &mut job,
+                                    &mut draft,
+                                    speed_mode,
+                                    &err,
+                                ) {
+                                    return;
+                                }
+                                fail_job(&mut workshop, &mut job, err);
+                                return;
+                            }
+                        };
+
+                        let max_components = max_components_for_speed(workshop.speed_mode);
+                        if plan.components.len() > max_components {
+                            debug!(
+                                "Gen3D: truncating plan components from {} to {} due to speed mode",
+                                plan.components.len(),
+                                max_components
+                            );
+                            plan.components.truncate(max_components);
+                        }
+
+                        job.plan_collider = plan.collider.clone();
+                        job.rig_move_cycle_m = plan
+                            .rig
+                            .as_ref()
+                            .and_then(|r| r.move_cycle_m)
+                            .filter(|v| v.is_finite())
+                            .map(|v| v.abs())
+                            .filter(|v| *v > 1e-3);
+                        let plan_reuse_groups = plan.reuse_groups.clone();
+                        match convert::ai_plan_to_initial_draft_defs(plan) {
+                            Ok((planned, assembly_notes, defs)) => {
+                                job.planned_components = planned;
+                                job.assembly_notes = assembly_notes;
+                                let (validated, warnings) = reuse_groups::validate_reuse_groups(
+                                    &plan_reuse_groups,
+                                    &job.planned_components,
+                                );
+                                job.reuse_groups = validated;
+                                job.reuse_group_warnings = warnings;
+                                job.component_queue = (0..job.planned_components.len()).collect();
+                                job.component_queue_pos = 0;
+                                job.generation_kind = Gen3dComponentGenerationKind::Initial;
+                                job.regen_per_component = vec![0; job.planned_components.len()];
+                                draft.defs = defs;
+                                workshop.error = None;
+
+                                if let Some(run_dir) = job.artifact_dir() {
+                                    let components: Vec<serde_json::Value> = job
                                     .planned_components
                                     .iter()
                                     .map(|c| {
@@ -2168,32 +2169,61 @@ pub(crate) fn gen3d_poll_ai_job(
                                         })
                                     })
                                     .collect();
-                                let extracted = serde_json::json!({
-                                    "version": 2,
-                                    "assembly_notes": job.assembly_notes.as_str(),
-                                    "components": components,
-                                });
-                                write_gen3d_json_artifact(
-                                    Some(run_dir),
-                                    "plan_extracted.json",
-                                    &extracted,
+                                    let extracted = serde_json::json!({
+                                        "version": 2,
+                                        "assembly_notes": job.assembly_notes.as_str(),
+                                        "components": components,
+                                    });
+                                    write_gen3d_json_artifact(
+                                        Some(run_dir),
+                                        "plan_extracted.json",
+                                        &extracted,
+                                    );
+                                }
+                                write_gen3d_assembly_snapshot(
+                                    job.artifact_dir(),
+                                    &job.planned_components,
+                                );
+
+                                if let Some(def) = draft.root_def() {
+                                    let max_dim =
+                                        def.size.x.max(def.size.y).max(def.size.z).max(0.5);
+                                    preview.distance = (max_dim * 2.8 + 0.8).clamp(2.0, 250.0);
+                                    preview.pitch = GEN3D_PREVIEW_DEFAULT_PITCH;
+                                    preview.yaw = GEN3D_PREVIEW_DEFAULT_YAW;
+                                    preview.last_cursor = None;
+                                }
+
+                                if job.component_queue.is_empty() {
+                                    let err = "AI plan did not include any components.".to_string();
+                                    if retry_gen3d_plan(
+                                        &mut workshop,
+                                        &mut job,
+                                        &mut draft,
+                                        speed_mode,
+                                        &err,
+                                    ) {
+                                        return;
+                                    }
+                                    fail_job(&mut workshop, &mut job, err);
+                                    return;
+                                }
+
+                                job.phase = Gen3dAiPhase::WaitingComponent;
+                                job.component_attempts = vec![0; job.planned_components.len()];
+                                job.component_last_errors =
+                                    vec![None; job.planned_components.len()];
+                                job.component_in_flight.clear();
+                                job.shared_progress = None;
+
+                                workshop.status = format!(
+                                    "Building components… (0/{})\nParallel: {}",
+                                    job.planned_components.len(),
+                                    job.max_parallel_components.max(1),
                                 );
                             }
-                            write_gen3d_assembly_snapshot(
-                                job.artifact_dir(),
-                                &job.planned_components,
-                            );
-
-                            if let Some(def) = draft.root_def() {
-                                let max_dim = def.size.x.max(def.size.y).max(def.size.z).max(0.5);
-                                preview.distance = (max_dim * 2.8 + 0.8).clamp(2.0, 250.0);
-                                preview.pitch = GEN3D_PREVIEW_DEFAULT_PITCH;
-                                preview.yaw = GEN3D_PREVIEW_DEFAULT_YAW;
-                                preview.last_cursor = None;
-                            }
-
-                            if job.component_queue.is_empty() {
-                                let err = "AI plan did not include any components.".to_string();
+                            Err(err) => {
+                                debug!("Gen3D: failed to build draft from plan: {err}");
                                 if retry_gen3d_plan(
                                     &mut workshop,
                                     &mut job,
@@ -2204,255 +2234,229 @@ pub(crate) fn gen3d_poll_ai_job(
                                     return;
                                 }
                                 fail_job(&mut workshop, &mut job, err);
-                                return;
                             }
-
-                            job.phase = Gen3dAiPhase::WaitingComponent;
-                            job.component_attempts = vec![0; job.planned_components.len()];
-                            job.component_last_errors = vec![None; job.planned_components.len()];
-                            job.component_in_flight.clear();
-                            job.shared_progress = None;
-
-                            workshop.status = format!(
-                                "Building components… (0/{})\nParallel: {}",
-                                job.planned_components.len(),
-                                job.max_parallel_components.max(1),
-                            );
                         }
-                        Err(err) => {
-                            debug!("Gen3D: failed to build draft from plan: {err}");
-                            if retry_gen3d_plan(
+                    }
+                    Gen3dAiPhase::WaitingComponent => {
+                        if job.component_queue_pos >= job.component_queue.len() {
+                            fail_job(
                                 &mut workshop,
                                 &mut job,
-                                &mut draft,
-                                speed_mode,
-                                &err,
-                            ) {
+                                "Internal error: component queue out of range.",
+                            );
+                            return;
+                        }
+                        let idx = job.component_queue[job.component_queue_pos];
+                        if idx >= job.planned_components.len() {
+                            fail_job(
+                                &mut workshop,
+                                &mut job,
+                                "Internal error: component index out of range.",
+                            );
+                            return;
+                        }
+
+                        let component_name = job.planned_components[idx].name.clone();
+                        debug!(
+                            "Gen3D: component generation finished ({}/{}, name={})",
+                            job.component_queue_pos + 1,
+                            job.component_queue.len(),
+                            component_name
+                        );
+
+                        let ai = match parse::parse_ai_draft_from_text(&text) {
+                            Ok(ai) => ai,
+                            Err(err) => {
+                                debug!("Gen3D: failed to parse component draft: {err}");
+                                fail_job(&mut workshop, &mut job, err);
                                 return;
                             }
-                            fail_job(&mut workshop, &mut job, err);
-                        }
-                    }
-                }
-                Gen3dAiPhase::WaitingComponent => {
-                    if job.component_queue_pos >= job.component_queue.len() {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: component queue out of range.",
-                        );
-                        return;
-                    }
-                    let idx = job.component_queue[job.component_queue_pos];
-                    if idx >= job.planned_components.len() {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: component index out of range.",
-                        );
-                        return;
-                    }
+                        };
 
-                    let component_name = job.planned_components[idx].name.clone();
-                    debug!(
-                        "Gen3D: component generation finished ({}/{}, name={})",
-                        job.component_queue_pos + 1,
-                        job.component_queue.len(),
-                        component_name
-                    );
-
-                    let ai = match parse::parse_ai_draft_from_text(&text) {
-                        Ok(ai) => ai,
-                        Err(err) => {
-                            debug!("Gen3D: failed to parse component draft: {err}");
-                            fail_job(&mut workshop, &mut job, err);
-                            return;
-                        }
-                    };
-
-                    let component_def = match convert::ai_to_component_def(
-                        &job.planned_components[idx],
-                        ai,
-                        job.artifact_dir(),
-                    ) {
-                        Ok(def) => def,
-                        Err(err) => {
-                            debug!("Gen3D: failed to convert component draft: {err}");
-                            fail_job(&mut workshop, &mut job, err);
-                            return;
-                        }
-                    };
-
-                    job.planned_components[idx].actual_size = Some(component_def.size);
-                    job.planned_components[idx].anchors = component_def.anchors.clone();
-
-                    // Replace component def in-place.
-                    let target_id = component_def.object_id;
-                    if let Some(existing) = draft.defs.iter_mut().find(|d| d.object_id == target_id)
-                    {
-                        let preserved_refs: Vec<ObjectPartDef> = existing
-                            .parts
-                            .iter()
-                            .filter(|p| matches!(p.kind, ObjectPartKind::ObjectRef { .. }))
-                            .cloned()
-                            .collect();
-                        let mut merged = component_def;
-                        merged.parts.extend(preserved_refs);
-                        *existing = merged;
-                    } else {
-                        draft.defs.push(component_def);
-                    }
-
-                    if let Some(root_idx) = job
-                        .planned_components
-                        .iter()
-                        .position(|c| c.attach_to.is_none())
-                    {
-                        if let Err(err) = convert::resolve_planned_component_transforms(
-                            &mut job.planned_components,
-                            root_idx,
+                        let component_def = match convert::ai_to_component_def(
+                            &job.planned_components[idx],
+                            ai,
+                            job.artifact_dir(),
                         ) {
-                            fail_job(&mut workshop, &mut job, err);
-                            return;
-                        }
-                    }
-                    convert::update_root_def_from_planned_components(
-                        &job.planned_components,
-                        &job.plan_collider,
-                        &mut draft,
-                    );
-                    write_gen3d_assembly_snapshot(job.artifact_dir(), &job.planned_components);
-                    job.assembly_rev = job.assembly_rev.saturating_add(1);
-
-                    let next_pos = job.component_queue_pos + 1;
-                    let per_component_refine_total =
-                        component_refine_cycles_for_speed(&config, workshop.speed_mode);
-                    if per_component_refine_total > 0
-                        && matches!(job.generation_kind, Gen3dComponentGenerationKind::Initial)
-                        && job.per_component_resume.is_none()
-                    {
-                        job.review_kind = Gen3dAutoReviewKind::PerComponent;
-                        job.review_component_idx = Some(idx);
-                        job.per_component_resume = Some(Gen3dComponentBatchResume {
-                            generation_kind: job.generation_kind,
-                            component_queue: job.component_queue.clone(),
-                            component_queue_pos: next_pos,
-                        });
-                        job.component_queue_pos = next_pos;
-                        job.per_component_refine_passes_done = 1;
-                        job.per_component_refine_passes_remaining =
-                            per_component_refine_total.saturating_sub(1);
-                        job.phase = Gen3dAiPhase::CapturingReview;
-                        job.review_capture = None;
-                        job.review_static_paths.clear();
-                        job.motion_capture = None;
-                        workshop.status = format!(
-                            "Auto-reviewing assembly… (after {})\n(pass {}/{})",
-                            job.planned_components[idx].display_name,
-                            job.per_component_refine_passes_done,
-                            job.per_component_refine_passes_done
-                                + job.per_component_refine_passes_remaining
-                        );
-                        if let Some(progress) = job.shared_progress.as_ref() {
-                            set_progress(progress, "Preparing review capture…");
-                        }
-                        return;
-                    }
-                    if next_pos >= job.component_queue.len() {
-                        if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent)
-                            && matches!(
-                                job.generation_kind,
-                                Gen3dComponentGenerationKind::Regenerate
-                            )
-                            && job.per_component_resume.is_some()
-                        {
-                            if job.per_component_refine_passes_remaining > 0 {
-                                job.per_component_refine_passes_remaining -= 1;
-                                job.per_component_refine_passes_done += 1;
-                                job.phase = Gen3dAiPhase::CapturingReview;
-                                job.review_capture = None;
-                                job.review_static_paths.clear();
-                                job.motion_capture = None;
-                                workshop.status = format!(
-                                    "Auto-reviewing assembly… (component pass {}/{})",
-                                    job.per_component_refine_passes_done,
-                                    job.per_component_refine_passes_done
-                                        + job.per_component_refine_passes_remaining
-                                );
-                                if let Some(progress) = job.shared_progress.as_ref() {
-                                    set_progress(progress, "Preparing review capture…");
-                                }
+                            Ok(def) => def,
+                            Err(err) => {
+                                debug!("Gen3D: failed to convert component draft: {err}");
+                                fail_job(&mut workshop, &mut job, err);
                                 return;
                             }
+                        };
 
-                            resume_after_per_component_review(&mut workshop, &mut job);
-                            return;
+                        job.planned_components[idx].actual_size = Some(component_def.size);
+                        job.planned_components[idx].anchors = component_def.anchors.clone();
+
+                        // Replace component def in-place.
+                        let target_id = component_def.object_id;
+                        if let Some(existing) =
+                            draft.defs.iter_mut().find(|d| d.object_id == target_id)
+                        {
+                            let preserved_refs: Vec<ObjectPartDef> = existing
+                                .parts
+                                .iter()
+                                .filter(|p| matches!(p.kind, ObjectPartKind::ObjectRef { .. }))
+                                .cloned()
+                                .collect();
+                            let mut merged = component_def;
+                            merged.parts.extend(preserved_refs);
+                            *existing = merged;
+                        } else {
+                            draft.defs.push(component_def);
                         }
 
-                        // Finished this generation batch.
-                        match job.generation_kind {
-                            Gen3dComponentGenerationKind::Initial
-                            | Gen3dComponentGenerationKind::Regenerate => {
-                                if job.auto_refine_passes_remaining > 0 {
-                                    job.auto_refine_passes_remaining -= 1;
-                                    job.auto_refine_passes_done += 1;
+                        if let Some(root_idx) = job
+                            .planned_components
+                            .iter()
+                            .position(|c| c.attach_to.is_none())
+                        {
+                            if let Err(err) = convert::resolve_planned_component_transforms(
+                                &mut job.planned_components,
+                                root_idx,
+                            ) {
+                                fail_job(&mut workshop, &mut job, err);
+                                return;
+                            }
+                        }
+                        convert::update_root_def_from_planned_components(
+                            &job.planned_components,
+                            &job.plan_collider,
+                            &mut draft,
+                        );
+                        write_gen3d_assembly_snapshot(job.artifact_dir(), &job.planned_components);
+                        job.assembly_rev = job.assembly_rev.saturating_add(1);
+
+                        let next_pos = job.component_queue_pos + 1;
+                        let per_component_refine_total =
+                            component_refine_cycles_for_speed(&config, workshop.speed_mode);
+                        if per_component_refine_total > 0
+                            && matches!(job.generation_kind, Gen3dComponentGenerationKind::Initial)
+                            && job.per_component_resume.is_none()
+                        {
+                            job.review_kind = Gen3dAutoReviewKind::PerComponent;
+                            job.review_component_idx = Some(idx);
+                            job.per_component_resume = Some(Gen3dComponentBatchResume {
+                                generation_kind: job.generation_kind,
+                                component_queue: job.component_queue.clone(),
+                                component_queue_pos: next_pos,
+                            });
+                            job.component_queue_pos = next_pos;
+                            job.per_component_refine_passes_done = 1;
+                            job.per_component_refine_passes_remaining =
+                                per_component_refine_total.saturating_sub(1);
+                            job.phase = Gen3dAiPhase::CapturingReview;
+                            job.review_capture = None;
+                            job.review_static_paths.clear();
+                            job.motion_capture = None;
+                            workshop.status = format!(
+                                "Auto-reviewing assembly… (after {})\n(pass {}/{})",
+                                job.planned_components[idx].display_name,
+                                job.per_component_refine_passes_done,
+                                job.per_component_refine_passes_done
+                                    + job.per_component_refine_passes_remaining
+                            );
+                            if let Some(progress) = job.shared_progress.as_ref() {
+                                set_progress(progress, "Preparing review capture…");
+                            }
+                            return;
+                        }
+                        if next_pos >= job.component_queue.len() {
+                            if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent)
+                                && matches!(
+                                    job.generation_kind,
+                                    Gen3dComponentGenerationKind::Regenerate
+                                )
+                                && job.per_component_resume.is_some()
+                            {
+                                if job.per_component_refine_passes_remaining > 0 {
+                                    job.per_component_refine_passes_remaining -= 1;
+                                    job.per_component_refine_passes_done += 1;
                                     job.phase = Gen3dAiPhase::CapturingReview;
                                     job.review_capture = None;
                                     job.review_static_paths.clear();
                                     job.motion_capture = None;
                                     workshop.status = format!(
-                                        "Auto-reviewing assembly… (pass {}/{})",
-                                        job.auto_refine_passes_done,
-                                        job.auto_refine_passes_done
-                                            + job.auto_refine_passes_remaining
+                                        "Auto-reviewing assembly… (component pass {}/{})",
+                                        job.per_component_refine_passes_done,
+                                        job.per_component_refine_passes_done
+                                            + job.per_component_refine_passes_remaining
                                     );
                                     if let Some(progress) = job.shared_progress.as_ref() {
                                         set_progress(progress, "Preparing review capture…");
                                     }
                                     return;
                                 }
-                            }
-                        }
 
-                        job.finish_run_metrics();
-                        job.running = false;
-                        job.build_complete = true;
-                        job.phase = Gen3dAiPhase::Idle;
-                        job.shared_progress = None;
-                        workshop.status =
+                                resume_after_per_component_review(&mut workshop, &mut job);
+                                return;
+                            }
+
+                            // Finished this generation batch.
+                            match job.generation_kind {
+                                Gen3dComponentGenerationKind::Initial
+                                | Gen3dComponentGenerationKind::Regenerate => {
+                                    if job.auto_refine_passes_remaining > 0 {
+                                        job.auto_refine_passes_remaining -= 1;
+                                        job.auto_refine_passes_done += 1;
+                                        job.phase = Gen3dAiPhase::CapturingReview;
+                                        job.review_capture = None;
+                                        job.review_static_paths.clear();
+                                        job.motion_capture = None;
+                                        workshop.status = format!(
+                                            "Auto-reviewing assembly… (pass {}/{})",
+                                            job.auto_refine_passes_done,
+                                            job.auto_refine_passes_done
+                                                + job.auto_refine_passes_remaining
+                                        );
+                                        if let Some(progress) = job.shared_progress.as_ref() {
+                                            set_progress(progress, "Preparing review capture…");
+                                        }
+                                        return;
+                                    }
+                                }
+                            }
+
+                            job.finish_run_metrics();
+                            job.running = false;
+                            job.build_complete = true;
+                            job.phase = Gen3dAiPhase::Idle;
+                            job.shared_progress = None;
+                            workshop.status =
                             "Build finished. Orbit/zoom the preview. Click Build/Edit to start a new run."
                                 .into();
-                        return;
-                    }
+                            return;
+                        }
 
-                    job.component_queue_pos = next_pos;
-                    let next_idx = job.component_queue[next_pos];
+                        job.component_queue_pos = next_pos;
+                        let next_idx = job.component_queue[next_pos];
 
-                    let Some(ai) = job.ai.clone() else {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: missing AI config.",
-                        );
-                        return;
-                    };
-                    let Some(run_dir) = job.step_dir.clone() else {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: missing Gen3D step dir.",
-                        );
-                        return;
-                    };
+                        let Some(ai) = job.ai.clone() else {
+                            fail_job(
+                                &mut workshop,
+                                &mut job,
+                                "Internal error: missing AI config.",
+                            );
+                            return;
+                        };
+                        let Some(run_dir) = job.step_dir.clone() else {
+                            fail_job(
+                                &mut workshop,
+                                &mut job,
+                                "Internal error: missing Gen3D step dir.",
+                            );
+                            return;
+                        };
 
-                    let phase_label = match job.generation_kind {
-                        Gen3dComponentGenerationKind::Initial => "Building components…",
-                        Gen3dComponentGenerationKind::Regenerate => "Regenerating components…",
-                    };
-                    let comp = &job.planned_components[next_idx];
-                    let forward = comp.rot * Vec3::Z;
-                    let up = comp.rot * Vec3::Y;
-                    workshop.status = format!(
+                        let phase_label = match job.generation_kind {
+                            Gen3dComponentGenerationKind::Initial => "Building components…",
+                            Gen3dComponentGenerationKind::Regenerate => "Regenerating components…",
+                        };
+                        let comp = &job.planned_components[next_idx];
+                        let forward = comp.rot * Vec3::Z;
+                        let up = comp.rot * Vec3::Y;
+                        workshop.status = format!(
                         "{phase_label} ({}/{})\nComponent: {}\nPlacement: pos=[{:.2},{:.2},{:.2}], forward=[{:.2},{:.2},{:.2}], up=[{:.2},{:.2},{:.2}]",
                         next_pos + 1,
                         job.component_queue.len(),
@@ -2467,335 +2471,339 @@ pub(crate) fn gen3d_poll_ai_job(
                         up.y,
                         up.z,
                     );
-                    if let Some(progress) = job.shared_progress.as_ref() {
-                        set_progress(progress, "Starting next component…");
+                        if let Some(progress) = job.shared_progress.as_ref() {
+                            set_progress(progress, "Starting next component…");
+                        }
+
+                        let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+                        job.shared_result = Some(shared.clone());
+
+                        let progress = job
+                            .shared_progress
+                            .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
+                            .clone();
+
+                        let system = build_gen3d_component_system_instructions();
+                        let image_object_summary = job
+                            .user_image_object_summary
+                            .as_ref()
+                            .map(|s| s.text.as_str());
+                        let user_text = build_gen3d_component_user_text(
+                            &job.user_prompt_raw,
+                            image_object_summary,
+                            workshop.speed_mode,
+                            &job.assembly_notes,
+                            &job.planned_components,
+                            next_idx,
+                        );
+                        let prefix = match job.generation_kind {
+                            Gen3dComponentGenerationKind::Initial => format!(
+                                "component{:02}_{}",
+                                next_idx + 1,
+                                job.planned_components[next_idx].name
+                            ),
+                            Gen3dComponentGenerationKind::Regenerate => match job.review_kind {
+                                Gen3dAutoReviewKind::EndOfRun => format!(
+                                    "review{:02}_regen_component{:02}_{}",
+                                    job.auto_refine_passes_done.max(1),
+                                    next_idx + 1,
+                                    job.planned_components[next_idx].name
+                                ),
+                                Gen3dAutoReviewKind::PerComponent => format!(
+                                    "percomp_component{:02}_pass{:02}_regen_component{:02}_{}",
+                                    job.review_component_idx
+                                        .map(|idx| idx + 1)
+                                        .unwrap_or(next_idx + 1),
+                                    job.per_component_refine_passes_done.max(1),
+                                    next_idx + 1,
+                                    job.planned_components[next_idx].name
+                                ),
+                            },
+                        };
+                        let reasoning_effort = ai.model_reasoning_effort().to_string();
+                        spawn_gen3d_ai_text_thread(
+                            shared,
+                            progress,
+                            job.cancel_flag.clone(),
+                            job.session.clone(),
+                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+                            config.gen3d_require_structured_outputs,
+                            ai,
+                            reasoning_effort,
+                            system,
+                            user_text,
+                            job.user_images_component.clone(),
+                            run_dir,
+                            prefix,
+                        );
                     }
+                    Gen3dAiPhase::WaitingReview => {
+                        debug!("Gen3D: auto-review delta request finished.");
+                        let delta = match parse::parse_ai_review_delta_from_text(&text) {
+                            Ok(delta) => delta,
+                            Err(err) => {
+                                warn!("Gen3D: failed to parse AI review-delta: {err}");
+                                if retry_gen3d_review_delta(
+                                    &mut workshop,
+                                    &mut job,
+                                    &config,
+                                    speed_mode,
+                                    &format!("Parse error: {err}"),
+                                ) {
+                                    return;
+                                }
+                                workshop.error = Some(err);
+                                if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
+                                    debug!("Gen3D: per-component review failed; continuing build.");
+                                    workshop.status =
+                                        "Auto-review failed (continuing build).".into();
+                                    resume_after_per_component_review(&mut workshop, &mut job);
+                                    return;
+                                }
 
-                    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
-                    job.shared_result = Some(shared.clone());
-
-                    let progress = job
-                        .shared_progress
-                        .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
-                        .clone();
-
-                    let system = build_gen3d_component_system_instructions();
-                    let image_object_summary = job
-                        .user_image_object_summary
-                        .as_ref()
-                        .map(|s| s.text.as_str());
-                    let user_text = build_gen3d_component_user_text(
-                        &job.user_prompt_raw,
-                        image_object_summary,
-                        workshop.speed_mode,
-                        &job.assembly_notes,
-                        &job.planned_components,
-                        next_idx,
-                    );
-                    let prefix = match job.generation_kind {
-                        Gen3dComponentGenerationKind::Initial => format!(
-                            "component{:02}_{}",
-                            next_idx + 1,
-                            job.planned_components[next_idx].name
-                        ),
-                        Gen3dComponentGenerationKind::Regenerate => match job.review_kind {
-                            Gen3dAutoReviewKind::EndOfRun => format!(
-                                "review{:02}_regen_component{:02}_{}",
-                                job.auto_refine_passes_done.max(1),
-                                next_idx + 1,
-                                job.planned_components[next_idx].name
-                            ),
-                            Gen3dAutoReviewKind::PerComponent => format!(
-                                "percomp_component{:02}_pass{:02}_regen_component{:02}_{}",
-                                job.review_component_idx
-                                    .map(|idx| idx + 1)
-                                    .unwrap_or(next_idx + 1),
-                                job.per_component_refine_passes_done.max(1),
-                                next_idx + 1,
-                                job.planned_components[next_idx].name
-                            ),
-                        },
-                    };
-                    let reasoning_effort = ai.model_reasoning_effort().to_string();
-                    spawn_gen3d_ai_text_thread(
-                        shared,
-                        progress,
-                        job.cancel_flag.clone(),
-                        job.session.clone(),
-                        Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-                        config.gen3d_require_structured_outputs,
-                        ai,
-                        reasoning_effort,
-                        system,
-                        user_text,
-                        job.user_images_component.clone(),
-                        run_dir,
-                        prefix,
-                    );
-                }
-                Gen3dAiPhase::WaitingReview => {
-                    debug!("Gen3D: auto-review delta request finished.");
-                    let delta = match parse::parse_ai_review_delta_from_text(&text) {
-                        Ok(delta) => delta,
-                        Err(err) => {
-                            warn!("Gen3D: failed to parse AI review-delta: {err}");
-                            if retry_gen3d_review_delta(
-                                &mut workshop,
-                                &mut job,
-                                &config,
-                                speed_mode,
-                                &format!("Parse error: {err}"),
-                            ) {
-                                return;
-                            }
-                            workshop.error = Some(err);
-                            if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
-                                debug!("Gen3D: per-component review failed; continuing build.");
-                                workshop.status = "Auto-review failed (continuing build).".into();
-                                resume_after_per_component_review(&mut workshop, &mut job);
-                                return;
-                            }
-
-                            job.finish_run_metrics();
-                            job.running = false;
-                            job.build_complete = true;
-                            job.phase = Gen3dAiPhase::Idle;
-                            job.shared_progress = None;
-                            workshop.status =
+                                job.finish_run_metrics();
+                                job.running = false;
+                                job.build_complete = true;
+                                job.phase = Gen3dAiPhase::Idle;
+                                job.shared_progress = None;
+                                workshop.status =
                                 "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
                                     .into();
-                            return;
-                        }
-                    };
+                                return;
+                            }
+                        };
 
-                    if let Some(summary) = delta.summary.as_deref() {
-                        if !summary.trim().is_empty() {
-                            debug!(
-                                "Gen3D: review-delta summary: {}",
-                                truncate_for_ui(summary.trim(), 800)
-                            );
+                        if let Some(summary) = delta.summary.as_deref() {
+                            if !summary.trim().is_empty() {
+                                debug!(
+                                    "Gen3D: review-delta summary: {}",
+                                    truncate_for_ui(summary.trim(), 800)
+                                );
+                            }
                         }
-                    }
-                    if let Some(notes) = delta.notes_text.as_deref() {
-                        if !notes.trim().is_empty() {
-                            debug!(
-                                "Gen3D: review-delta notes: {}",
-                                truncate_for_ui(notes.trim(), 800)
-                            );
+                        if let Some(notes) = delta.notes_text.as_deref() {
+                            if !notes.trim().is_empty() {
+                                debug!(
+                                    "Gen3D: review-delta notes: {}",
+                                    truncate_for_ui(notes.trim(), 800)
+                                );
+                            }
                         }
-                    }
 
-                    let expected_run_id = job
-                        .run_id
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| "unknown".into());
-                    if delta.applies_to.run_id != expected_run_id
-                        || delta.applies_to.attempt != job.attempt
-                        || delta.applies_to.plan_hash != job.plan_hash
-                        || delta.applies_to.assembly_rev != job.assembly_rev
-                    {
-                        let msg = format!(
+                        let expected_run_id = job
+                            .run_id
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "unknown".into());
+                        if delta.applies_to.run_id != expected_run_id
+                            || delta.applies_to.attempt != job.attempt
+                            || delta.applies_to.plan_hash != job.plan_hash
+                            || delta.applies_to.assembly_rev != job.assembly_rev
+                        {
+                            let msg = format!(
                             "applies_to mismatch (expected run_id={}, attempt={}, plan_hash={}, assembly_rev={})",
                             expected_run_id, job.attempt, job.plan_hash, job.assembly_rev
                         );
-                        warn!("Gen3D: review-delta rejected: {msg}");
-                        if retry_gen3d_review_delta(
-                            &mut workshop,
-                            &mut job,
-                            &config,
-                            speed_mode,
-                            &msg,
-                        ) {
-                            return;
-                        }
-                        workshop.error = Some(msg);
-                        job.finish_run_metrics();
-                        job.running = false;
-                        job.build_complete = true;
-                        job.phase = Gen3dAiPhase::Idle;
-                        job.shared_progress = None;
-                        workshop.status =
-                            "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
-                                .into();
-                        return;
-                    }
-
-                    let plan_collider = job.plan_collider.clone();
-                    let artifact_dir = job.step_dir.clone();
-                    let apply = match convert::apply_ai_review_delta_actions(
-                        delta,
-                        &mut job.planned_components,
-                        &plan_collider,
-                        &mut draft,
-                        artifact_dir.as_deref(),
-                    ) {
-                        Ok(apply) => apply,
-                        Err(err) => {
-                            warn!("Gen3D: failed to apply review-delta actions: {err}");
+                            warn!("Gen3D: review-delta rejected: {msg}");
                             if retry_gen3d_review_delta(
                                 &mut workshop,
                                 &mut job,
                                 &config,
                                 speed_mode,
-                                &format!("Apply error: {err}"),
+                                &msg,
                             ) {
                                 return;
                             }
-                            workshop.error = Some(err);
+                            workshop.error = Some(msg);
                             job.finish_run_metrics();
                             job.running = false;
                             job.build_complete = true;
                             job.phase = Gen3dAiPhase::Idle;
                             job.shared_progress = None;
                             workshop.status =
+                            "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
+                                .into();
+                            return;
+                        }
+
+                        let plan_collider = job.plan_collider.clone();
+                        let artifact_dir = job.step_dir.clone();
+                        let apply = match convert::apply_ai_review_delta_actions(
+                            delta,
+                            &mut job.planned_components,
+                            &plan_collider,
+                            &mut draft,
+                            artifact_dir.as_deref(),
+                        ) {
+                            Ok(apply) => apply,
+                            Err(err) => {
+                                warn!("Gen3D: failed to apply review-delta actions: {err}");
+                                if retry_gen3d_review_delta(
+                                    &mut workshop,
+                                    &mut job,
+                                    &config,
+                                    speed_mode,
+                                    &format!("Apply error: {err}"),
+                                ) {
+                                    return;
+                                }
+                                workshop.error = Some(err);
+                                job.finish_run_metrics();
+                                job.running = false;
+                                job.build_complete = true;
+                                job.phase = Gen3dAiPhase::Idle;
+                                job.shared_progress = None;
+                                workshop.status =
                                 "Build finished (auto-review failed). Orbit/zoom the preview, then click Build to start a new run."
                                     .into();
-                            return;
-                        }
-                    };
-
-                    if !apply.tooling_feedback.is_empty() {
-                        record_gen3d_tooling_feedback(
-                            &config,
-                            &mut workshop,
-                            &mut feedback_history,
-                            &job,
-                            &apply.tooling_feedback,
-                        );
-                    }
-
-                    if apply.accepted {
-                        job.finish_run_metrics();
-                        job.running = false;
-                        job.build_complete = true;
-                        job.phase = Gen3dAiPhase::Idle;
-                        job.shared_progress = None;
-                        workshop.status =
-                            "Build finished. (Reviewer accepted.) Orbit/zoom the preview. Click Build/Edit to start a new run."
-                                .into();
-                        return;
-                    }
-
-                    if apply.had_actions {
-                        job.assembly_rev = job.assembly_rev.saturating_add(1);
-                        write_gen3d_assembly_snapshot(job.artifact_dir(), &job.planned_components);
-                    }
-
-                    if let Some(reason) = apply.replan_reason {
-                        if try_start_gen3d_replan(
-                            &config,
-                            &mut workshop,
-                            &mut job,
-                            &mut draft,
-                            reason,
-                        ) {
-                            return;
-                        }
-                        finish_job_best_effort(
-                            &mut commands,
-                            &review_cameras,
-                            &mut workshop,
-                            &mut job,
-                            format!(
-                                "Replan budget exhausted (max_replans={}).",
-                                config.gen3d_max_replans
-                            ),
-                        );
-                        return;
-                    }
-
-                    if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
-                        // Keep the old per-component review behavior for now.
-                        if !apply.had_actions {
-                            resume_after_per_component_review(&mut workshop, &mut job);
-                            return;
-                        }
-                        if apply.regen_indices.is_empty() {
-                            resume_after_per_component_review(&mut workshop, &mut job);
-                            return;
-                        }
-                    } else if !apply.had_actions {
-                        job.finish_run_metrics();
-                        job.running = false;
-                        job.build_complete = true;
-                        job.phase = Gen3dAiPhase::Idle;
-                        job.shared_progress = None;
-                        workshop.status =
-                            "Build finished. (Auto-review made no changes.) Orbit/zoom the preview. Click Build/Edit to start a new run."
-                                .into();
-                        return;
-                    }
-
-                    if matches!(job.review_kind, Gen3dAutoReviewKind::EndOfRun)
-                        && apply.regen_indices.is_empty()
-                    {
-                        if job.auto_refine_passes_remaining > 0 {
-                            if let Err(err) = gen3d_advance_step(&mut job) {
-                                fail_job(&mut workshop, &mut job, err);
                                 return;
                             }
-                            job.auto_refine_passes_remaining -= 1;
-                            job.auto_refine_passes_done += 1;
-                            job.phase = Gen3dAiPhase::CapturingReview;
-                            job.review_capture = None;
-                            job.review_static_paths.clear();
-                            job.motion_capture = None;
-                            workshop.status = format!(
-                                "Auto-reviewing assembly… (pass {}/{})",
-                                job.auto_refine_passes_done,
-                                job.auto_refine_passes_done + job.auto_refine_passes_remaining
+                        };
+
+                        if !apply.tooling_feedback.is_empty() {
+                            record_gen3d_tooling_feedback(
+                                &config,
+                                &mut workshop,
+                                &mut feedback_history,
+                                &job,
+                                &apply.tooling_feedback,
                             );
-                            if let Some(progress) = job.shared_progress.as_ref() {
-                                set_progress(progress, "Preparing review capture…");
-                            }
+                        }
+
+                        if apply.accepted {
+                            job.finish_run_metrics();
+                            job.running = false;
+                            job.build_complete = true;
+                            job.phase = Gen3dAiPhase::Idle;
+                            job.shared_progress = None;
+                            workshop.status =
+                            "Build finished. (Reviewer accepted.) Orbit/zoom the preview. Click Build/Edit to start a new run."
+                                .into();
                             return;
                         }
 
-                        job.finish_run_metrics();
-                        job.running = false;
-                        job.build_complete = true;
-                        job.phase = Gen3dAiPhase::Idle;
-                        job.shared_progress = None;
-                        workshop.status =
+                        if apply.had_actions {
+                            job.assembly_rev = job.assembly_rev.saturating_add(1);
+                            write_gen3d_assembly_snapshot(
+                                job.artifact_dir(),
+                                &job.planned_components,
+                            );
+                        }
+
+                        if let Some(reason) = apply.replan_reason {
+                            if try_start_gen3d_replan(
+                                &config,
+                                &mut workshop,
+                                &mut job,
+                                &mut draft,
+                                reason,
+                            ) {
+                                return;
+                            }
+                            finish_job_best_effort(
+                                &mut commands,
+                                &review_cameras,
+                                &mut workshop,
+                                &mut job,
+                                format!(
+                                    "Replan budget exhausted (max_replans={}).",
+                                    config.gen3d_max_replans
+                                ),
+                            );
+                            return;
+                        }
+
+                        if matches!(job.review_kind, Gen3dAutoReviewKind::PerComponent) {
+                            // Keep the old per-component review behavior for now.
+                            if !apply.had_actions {
+                                resume_after_per_component_review(&mut workshop, &mut job);
+                                return;
+                            }
+                            if apply.regen_indices.is_empty() {
+                                resume_after_per_component_review(&mut workshop, &mut job);
+                                return;
+                            }
+                        } else if !apply.had_actions {
+                            job.finish_run_metrics();
+                            job.running = false;
+                            job.build_complete = true;
+                            job.phase = Gen3dAiPhase::Idle;
+                            job.shared_progress = None;
+                            workshop.status =
+                            "Build finished. (Auto-review made no changes.) Orbit/zoom the preview. Click Build/Edit to start a new run."
+                                .into();
+                            return;
+                        }
+
+                        if matches!(job.review_kind, Gen3dAutoReviewKind::EndOfRun)
+                            && apply.regen_indices.is_empty()
+                        {
+                            if job.auto_refine_passes_remaining > 0 {
+                                if let Err(err) = gen3d_advance_step(&mut job) {
+                                    fail_job(&mut workshop, &mut job, err);
+                                    return;
+                                }
+                                job.auto_refine_passes_remaining -= 1;
+                                job.auto_refine_passes_done += 1;
+                                job.phase = Gen3dAiPhase::CapturingReview;
+                                job.review_capture = None;
+                                job.review_static_paths.clear();
+                                job.motion_capture = None;
+                                workshop.status = format!(
+                                    "Auto-reviewing assembly… (pass {}/{})",
+                                    job.auto_refine_passes_done,
+                                    job.auto_refine_passes_done + job.auto_refine_passes_remaining
+                                );
+                                if let Some(progress) = job.shared_progress.as_ref() {
+                                    set_progress(progress, "Preparing review capture…");
+                                }
+                                return;
+                            }
+
+                            job.finish_run_metrics();
+                            job.running = false;
+                            job.build_complete = true;
+                            job.phase = Gen3dAiPhase::Idle;
+                            job.shared_progress = None;
+                            workshop.status =
                             "Build finished (auto-review applied tweaks). Orbit/zoom the preview. Click Build/Edit to start a new run."
                                 .into();
-                        return;
-                    }
-
-                    let requested_regen = apply.regen_indices;
-                    let mut regen_allowed = Vec::new();
-                    let mut regen_skipped = Vec::new();
-                    if !requested_regen.is_empty() {
-                        let max_total = config.gen3d_max_regen_total;
-                        let max_per_component = config.gen3d_max_regen_per_component;
-                        let planned_len = job.planned_components.len();
-                        if job.regen_per_component.len() != planned_len {
-                            job.regen_per_component.resize(planned_len, 0);
+                            return;
                         }
 
-                        for idx in requested_regen {
-                            if idx >= planned_len {
-                                continue;
-                            }
-                            if max_total > 0 && job.regen_total >= max_total {
-                                regen_skipped.push(idx);
-                                continue;
-                            }
-                            if max_per_component > 0
-                                && job.regen_per_component[idx] >= max_per_component
-                            {
-                                regen_skipped.push(idx);
-                                continue;
+                        let requested_regen = apply.regen_indices;
+                        let mut regen_allowed = Vec::new();
+                        let mut regen_skipped = Vec::new();
+                        if !requested_regen.is_empty() {
+                            let max_total = config.gen3d_max_regen_total;
+                            let max_per_component = config.gen3d_max_regen_per_component;
+                            let planned_len = job.planned_components.len();
+                            if job.regen_per_component.len() != planned_len {
+                                job.regen_per_component.resize(planned_len, 0);
                             }
 
-                            job.regen_total = job.regen_total.saturating_add(1);
-                            job.regen_per_component[idx] =
-                                job.regen_per_component[idx].saturating_add(1);
-                            regen_allowed.push(idx);
-                        }
+                            for idx in requested_regen {
+                                if idx >= planned_len {
+                                    continue;
+                                }
+                                if max_total > 0 && job.regen_total >= max_total {
+                                    regen_skipped.push(idx);
+                                    continue;
+                                }
+                                if max_per_component > 0
+                                    && job.regen_per_component[idx] >= max_per_component
+                                {
+                                    regen_skipped.push(idx);
+                                    continue;
+                                }
 
-                        if regen_allowed.is_empty() {
-                            finish_job_best_effort(
+                                job.regen_total = job.regen_total.saturating_add(1);
+                                job.regen_per_component[idx] =
+                                    job.regen_per_component[idx].saturating_add(1);
+                                regen_allowed.push(idx);
+                            }
+
+                            if regen_allowed.is_empty() {
+                                finish_job_best_effort(
                                 &mut commands,
                                 &review_cameras,
                                 &mut workshop,
@@ -2805,17 +2813,17 @@ pub(crate) fn gen3d_poll_ai_job(
                                     config.gen3d_max_regen_total, config.gen3d_max_regen_per_component
                                 ),
                             );
-                            return;
-                        }
-                        if !regen_skipped.is_empty() {
-                            regen_skipped.sort();
-                            regen_skipped.dedup();
-                            warn!(
+                                return;
+                            }
+                            if !regen_skipped.is_empty() {
+                                regen_skipped.sort();
+                                regen_skipped.dedup();
+                                warn!(
                                 "Gen3D: regen budget reached; skipping regen for {} component(s): {:?}",
                                 regen_skipped.len(),
                                 regen_skipped
                             );
-                            append_gen3d_run_log(
+                                append_gen3d_run_log(
                                 job.artifact_dir(),
                                 format!(
                                     "regen_budget_skip skipped={} max_total={} max_per_component={}",
@@ -2824,43 +2832,43 @@ pub(crate) fn gen3d_poll_ai_job(
                                     config.gen3d_max_regen_per_component
                                 ),
                             );
+                            }
                         }
-                    }
 
-                    if !regen_allowed.is_empty() {
-                        if let Err(err) = gen3d_advance_step(&mut job) {
-                            fail_job(&mut workshop, &mut job, err);
+                        if !regen_allowed.is_empty() {
+                            if let Err(err) = gen3d_advance_step(&mut job) {
+                                fail_job(&mut workshop, &mut job, err);
+                                return;
+                            }
+                        }
+
+                        job.generation_kind = Gen3dComponentGenerationKind::Regenerate;
+                        job.component_queue = regen_allowed;
+                        job.component_queue_pos = 0;
+
+                        let Some(ai) = job.ai.clone() else {
+                            fail_job(
+                                &mut workshop,
+                                &mut job,
+                                "Internal error: missing AI config.",
+                            );
                             return;
-                        }
-                    }
+                        };
+                        let Some(run_dir) = job.step_dir.clone() else {
+                            fail_job(
+                                &mut workshop,
+                                &mut job,
+                                "Internal error: missing Gen3D step dir.",
+                            );
+                            return;
+                        };
 
-                    job.generation_kind = Gen3dComponentGenerationKind::Regenerate;
-                    job.component_queue = regen_allowed;
-                    job.component_queue_pos = 0;
-
-                    let Some(ai) = job.ai.clone() else {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: missing AI config.",
-                        );
-                        return;
-                    };
-                    let Some(run_dir) = job.step_dir.clone() else {
-                        fail_job(
-                            &mut workshop,
-                            &mut job,
-                            "Internal error: missing Gen3D step dir.",
-                        );
-                        return;
-                    };
-
-                    let idx = job.component_queue[0];
-                    job.phase = Gen3dAiPhase::WaitingComponent;
-                    let comp = &job.planned_components[idx];
-                    let forward = comp.rot * Vec3::Z;
-                    let up = comp.rot * Vec3::Y;
-                    workshop.status = format!(
+                        let idx = job.component_queue[0];
+                        job.phase = Gen3dAiPhase::WaitingComponent;
+                        let comp = &job.planned_components[idx];
+                        let forward = comp.rot * Vec3::Z;
+                        let up = comp.rot * Vec3::Y;
+                        workshop.status = format!(
                         "Regenerating components… (1/{})\nComponent: {}\nPlacement: pos=[{:.2},{:.2},{:.2}], forward=[{:.2},{:.2},{:.2}], up=[{:.2},{:.2},{:.2}]",
                         job.component_queue.len(),
                         comp.display_name,
@@ -2874,77 +2882,77 @@ pub(crate) fn gen3d_poll_ai_job(
                         up.y,
                         up.z,
                     );
-                    if let Some(progress) = job.shared_progress.as_ref() {
-                        set_progress(progress, "Starting component regeneration…");
+                        if let Some(progress) = job.shared_progress.as_ref() {
+                            set_progress(progress, "Starting component regeneration…");
+                        }
+
+                        let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
+                        job.shared_result = Some(shared.clone());
+                        let progress = job
+                            .shared_progress
+                            .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
+                            .clone();
+                        let system = build_gen3d_component_system_instructions();
+                        let image_object_summary = job
+                            .user_image_object_summary
+                            .as_ref()
+                            .map(|s| s.text.as_str());
+                        let user_text = build_gen3d_component_user_text(
+                            &job.user_prompt_raw,
+                            image_object_summary,
+                            workshop.speed_mode,
+                            &job.assembly_notes,
+                            &job.planned_components,
+                            idx,
+                        );
+                        let prefix = match job.review_kind {
+                            Gen3dAutoReviewKind::EndOfRun => format!(
+                                "review{:02}_regen_component{:02}_{}",
+                                job.auto_refine_passes_done.max(1),
+                                idx + 1,
+                                job.planned_components[idx].name
+                            ),
+                            Gen3dAutoReviewKind::PerComponent => format!(
+                                "percomp_component{:02}_pass{:02}_regen_component{:02}_{}",
+                                job.review_component_idx
+                                    .map(|idx| idx + 1)
+                                    .unwrap_or(idx + 1),
+                                job.per_component_refine_passes_done.max(1),
+                                idx + 1,
+                                job.planned_components[idx].name
+                            ),
+                        };
+                        let reasoning_effort = ai.model_reasoning_effort().to_string();
+                        spawn_gen3d_ai_text_thread(
+                            shared,
+                            progress,
+                            job.cancel_flag.clone(),
+                            job.session.clone(),
+                            Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
+                            config.gen3d_require_structured_outputs,
+                            ai,
+                            reasoning_effort,
+                            system,
+                            user_text,
+                            job.user_images_component.clone(),
+                            run_dir,
+                            prefix,
+                        );
                     }
-
-                    let shared: SharedResult<Gen3dAiTextResponse, String> = new_shared_result();
-                    job.shared_result = Some(shared.clone());
-                    let progress = job
-                        .shared_progress
-                        .get_or_insert_with(|| Arc::new(Mutex::new(Gen3dAiProgress::default())))
-                        .clone();
-                    let system = build_gen3d_component_system_instructions();
-                    let image_object_summary = job
-                        .user_image_object_summary
-                        .as_ref()
-                        .map(|s| s.text.as_str());
-                    let user_text = build_gen3d_component_user_text(
-                        &job.user_prompt_raw,
-                        image_object_summary,
-                        workshop.speed_mode,
-                        &job.assembly_notes,
-                        &job.planned_components,
-                        idx,
-                    );
-                    let prefix = match job.review_kind {
-                        Gen3dAutoReviewKind::EndOfRun => format!(
-                            "review{:02}_regen_component{:02}_{}",
-                            job.auto_refine_passes_done.max(1),
-                            idx + 1,
-                            job.planned_components[idx].name
-                        ),
-                        Gen3dAutoReviewKind::PerComponent => format!(
-                            "percomp_component{:02}_pass{:02}_regen_component{:02}_{}",
-                            job.review_component_idx
-                                .map(|idx| idx + 1)
-                                .unwrap_or(idx + 1),
-                            job.per_component_refine_passes_done.max(1),
-                            idx + 1,
-                            job.planned_components[idx].name
-                        ),
-                    };
-                    let reasoning_effort = ai.model_reasoning_effort().to_string();
-                    spawn_gen3d_ai_text_thread(
-                        shared,
-                        progress,
-                        job.cancel_flag.clone(),
-                        job.session.clone(),
-                        Some(Gen3dAiJsonSchemaKind::ComponentDraftV1),
-                        config.gen3d_require_structured_outputs,
-                        ai,
-                        reasoning_effort,
-                        system,
-                        user_text,
-                        job.user_images_component.clone(),
-                        run_dir,
-                        prefix,
-                    );
+                    Gen3dAiPhase::CapturingReview | Gen3dAiPhase::Idle => {}
                 }
-                Gen3dAiPhase::CapturingReview | Gen3dAiPhase::Idle => {}
             }
-        }
-        Err(err) => {
-            debug!("Gen3D: AI job failed: {err}");
-            if matches!(job.phase, Gen3dAiPhase::WaitingPlan)
-                && retry_gen3d_plan(&mut workshop, &mut job, &mut draft, speed_mode, &err)
-            {
-                return;
-            }
+            Err(err) => {
+                debug!("Gen3D: AI job failed: {err}");
+                if matches!(job.phase, Gen3dAiPhase::WaitingPlan)
+                    && retry_gen3d_plan(&mut workshop, &mut job, &mut draft, speed_mode, &err)
+                {
+                    return;
+                }
 
-            fail_job(&mut workshop, &mut job, err);
+                fail_job(&mut workshop, &mut job, err);
+            }
         }
-    }
     }
 }
 
@@ -5034,7 +5042,10 @@ pub(super) fn build_gen3d_smoke_results(
     // "attempt 2" LLM improvement pass in the pipeline when possible.
     let mobility_mode = root.and_then(|r| r.mobility.as_ref()).map(|m| m.mode);
     let is_movable = mobility_mode.is_some();
-    let is_ground = matches!(mobility_mode, Some(crate::object::registry::MobilityMode::Ground));
+    let is_ground = matches!(
+        mobility_mode,
+        Some(crate::object::registry::MobilityMode::Ground)
+    );
     let has_attachments = components.iter().any(|c| c.attach_to.is_some());
 
     let joints_total = motion_report

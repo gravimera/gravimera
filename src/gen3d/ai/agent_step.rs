@@ -16,11 +16,15 @@ use super::super::state::{Gen3dDraft, Gen3dWorkshop};
 use super::super::tool_feedback::Gen3dToolFeedbackHistory;
 use super::artifacts::append_gen3d_run_log;
 use super::{
-    fail_job, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase,
-    Gen3dAiProgress, Gen3dAiTextResponse, Gen3dPendingFinishRun,
+    fail_job, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiPhase, Gen3dAiProgress,
+    Gen3dAiTextResponse, Gen3dPendingFinishRun,
 };
 
-fn finalize_run_now(workshop: &mut Gen3dWorkshop, job: &mut Gen3dAiJob, finish: Gen3dPendingFinishRun) {
+fn finalize_run_now(
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    finish: Gen3dPendingFinishRun,
+) {
     workshop.status = finish.workshop_status;
     workshop
         .status_log
@@ -268,8 +272,8 @@ fn maybe_start_descriptor_meta_request(
     }
 
     if let Some(in_flight) = job.descriptor_meta_in_flight.as_ref() {
-        let stale =
-            job.run_id != Some(in_flight.run_id) || job.plan_hash.trim() != in_flight.plan_hash.trim();
+        let stale = job.run_id != Some(in_flight.run_id)
+            || job.plan_hash.trim() != in_flight.plan_hash.trim();
         if !stale {
             let in_flight = job.descriptor_meta_in_flight.take().unwrap();
             job.shared_result = Some(in_flight.shared_result);
@@ -315,7 +319,9 @@ fn maybe_start_descriptor_meta_request(
     });
     let attack_kind_str = root_def.attack.as_ref().map(|a| match a.kind {
         crate::object::registry::UnitAttackKind::Melee => "melee".to_string(),
-        crate::object::registry::UnitAttackKind::RangedProjectile => "ranged_projectile".to_string(),
+        crate::object::registry::UnitAttackKind::RangedProjectile => {
+            "ranged_projectile".to_string()
+        }
     });
 
     let mut anchors: Vec<String> = root_def
@@ -567,7 +573,11 @@ pub(super) fn poll_agent_pass_snapshot_capture(
     job: &mut Gen3dAiJob,
 ) {
     let Some(state) = job.agent.pending_pass_snapshot.as_ref() else {
-        fail_job(workshop, job, "Internal error: missing pending pass snapshot");
+        fail_job(
+            workshop,
+            job,
+            "Internal error: missing pending pass snapshot",
+        );
         return;
     };
     let (done, expected) = state

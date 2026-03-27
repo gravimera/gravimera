@@ -51,7 +51,10 @@ fn add_dir_to_zip(
             }
 
             let rel = path.strip_prefix(src_dir).map_err(|err| {
-                format!("Failed to compute relative path for {}: {err}", path.display())
+                format!(
+                    "Failed to compute relative path for {}: {err}",
+                    path.display()
+                )
             })?;
             let zip_path = zip_root.join(rel);
             let zip_name = zip_path_string(&zip_path)?;
@@ -112,8 +115,7 @@ pub(crate) fn import_prefab_packages_from_zip(
 ) -> Result<PrefabZipImportReport, String> {
     let file = File::open(zip_path)
         .map_err(|err| format!("Failed to open {}: {err}", zip_path.display()))?;
-    let mut archive =
-        ZipArchive::new(file).map_err(|err| format!("Failed to read zip: {err}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|err| format!("Failed to read zip: {err}"))?;
 
     struct PackageEntries {
         indices: Vec<usize>,
@@ -135,10 +137,7 @@ pub(crate) fn import_prefab_packages_from_zip(
             return Err("Zip contains invalid entry path.".to_string());
         };
         if root != "prefabs" {
-            return Err(format!(
-                "Zip entry outside prefabs/: {}",
-                file.name()
-            ));
+            return Err(format!("Zip entry outside prefabs/: {}", file.name()));
         }
 
         let Some(Component::Normal(uuid_component)) = components.next() else {
@@ -151,11 +150,13 @@ pub(crate) fn import_prefab_packages_from_zip(
             .map_err(|_| format!("Invalid prefab UUID in zip: {uuid_str}"))?;
 
         let rel: PathBuf = components.collect();
-        let entry = packages.entry(uuid.as_u128()).or_insert_with(|| PackageEntries {
-            indices: Vec::new(),
-            has_prefab_json: false,
-            uuid_str: uuid_str.to_string(),
-        });
+        let entry = packages
+            .entry(uuid.as_u128())
+            .or_insert_with(|| PackageEntries {
+                indices: Vec::new(),
+                has_prefab_json: false,
+                uuid_str: uuid_str.to_string(),
+            });
         entry.indices.push(idx);
 
         if !file.is_dir() {

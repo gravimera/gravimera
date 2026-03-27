@@ -585,12 +585,16 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::gen3d::Gen3dTaskQueue>();
     app.init_resource::<crate::gen3d::Gen3dToolFeedbackHistory>();
     app.init_resource::<crate::gen3d::Gen3dPrefabThumbnailCaptureRuntime>();
+    app.init_resource::<crate::genfloor::GenFloorWorkshop>();
+    app.init_resource::<crate::genfloor::GenFloorAiJob>();
+    app.init_resource::<crate::genfloor::ActiveWorldFloor>();
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
     app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();
     app.init_resource::<crate::model_library_ui::ModelLibraryExportJob>();
     app.init_resource::<crate::model_library_ui::ModelLibraryImportJob>();
     app.init_resource::<crate::model_library_ui::ModelLibraryExportDialogJob>();
     app.init_resource::<crate::model_library_ui::ModelLibraryImportDialogJob>();
+    app.init_resource::<crate::floor_library_ui::FloorLibraryUiState>();
     app.init_resource::<crate::motion_ui::MotionAlgorithmUiState>();
     app.init_resource::<crate::meta_speak::MetaSpeakRuntime>();
     app.init_resource::<crate::workspace_ui::WorkspaceUiState>();
