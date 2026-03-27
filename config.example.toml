@@ -26,6 +26,14 @@
 
 [scene]
 
+# Optional: disable the ocean water rendering for performance.
+# Default: true
+# ocean_enabled = true
+
+# Optional: disable sky atmosphere scattering + horizon fog for performance.
+# Default: true
+# sky_enabled = true
+
 [intelligence_service]
 
 # Optional: enable standalone brains via an intelligence service.

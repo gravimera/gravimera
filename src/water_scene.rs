@@ -10,30 +10,41 @@ pub(crate) struct WaterScenePlugin;
 
 impl Plugin for WaterScenePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(WaterSettings {
-            height: -0.2,
-            amplitude: 0.25,
-            clarity: 0.22,
-            deep_color: Color::srgba(0.08, 0.20, 0.40, 1.0),
-            shallow_color: Color::srgba(0.20, 0.55, 0.75, 1.0),
-            spawn_tiles: Some(UVec2::new(4, 4)),
-            water_quality: WaterQuality::High,
-            ..default()
-        });
+        let (ocean_enabled, sky_enabled) = app
+            .world()
+            .get_resource::<crate::config::AppConfig>()
+            .map(|cfg| (cfg.scene_ocean_enabled, cfg.scene_sky_enabled))
+            .unwrap_or((true, true));
 
-        app.add_plugins(WaterPlugin);
-        app.add_systems(
-            Startup,
-            ensure_main_camera_depth_prepass.after(crate::setup::setup_rendered),
-        );
-        app.add_systems(
-            Startup,
-            ensure_main_camera_atmosphere.after(crate::setup::setup_rendered),
-        );
-        app.add_systems(
-            Startup,
-            ensure_main_camera_ocean_horizon.after(crate::setup::setup_rendered),
-        );
+        if ocean_enabled {
+            app.insert_resource(WaterSettings {
+                height: -0.2,
+                amplitude: 0.25,
+                clarity: 0.22,
+                deep_color: Color::srgba(0.08, 0.20, 0.40, 1.0),
+                shallow_color: Color::srgba(0.20, 0.55, 0.75, 1.0),
+                spawn_tiles: Some(UVec2::new(4, 4)),
+                water_quality: WaterQuality::High,
+                ..default()
+            });
+
+            app.add_plugins(WaterPlugin);
+            app.add_systems(
+                Startup,
+                ensure_main_camera_depth_prepass.after(crate::setup::setup_rendered),
+            );
+        }
+
+        if sky_enabled {
+            app.add_systems(
+                Startup,
+                ensure_main_camera_atmosphere.after(crate::setup::setup_rendered),
+            );
+            app.add_systems(
+                Startup,
+                ensure_main_camera_ocean_horizon.after(crate::setup::setup_rendered),
+            );
+        }
     }
 }
 

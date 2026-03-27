@@ -72,6 +72,16 @@ Other providers:
 
 See `config.example.toml` for the full config surface.
 
+### Rendering (performance toggles)
+
+If the ocean water / atmosphere sky are slow on some GPUs, you can disable them:
+
+```toml
+[scene]
+ocean_enabled = false
+sky_enabled = false
+```
+
 ## Build & run
 
 Rendered (normal UI):

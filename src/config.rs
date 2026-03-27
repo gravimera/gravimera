@@ -15,6 +15,8 @@ pub(crate) struct AppConfig {
     pub(crate) claude: Option<ClaudeConfig>,
     pub(crate) log_path: Option<PathBuf>,
     pub(crate) log_level: bevy::log::Level,
+    pub(crate) scene_ocean_enabled: bool,
+    pub(crate) scene_sky_enabled: bool,
     /// Max time to wait for an AI backend to start sending a response body.
     ///
     /// Applied as a "first-byte timeout" for streaming AI requests (Gen3D), and as a total curl
@@ -76,6 +78,8 @@ impl Default for AppConfig {
             claude: None,
             log_path: Some(log_path),
             log_level: bevy::log::Level::INFO,
+            scene_ocean_enabled: true,
+            scene_sky_enabled: true,
             ai_request_timeout_secs: DEFAULT_AI_REQUEST_TIMEOUT_SECS,
             gen3d_cache_dir: None,
             gen3d_ai_service: Gen3dAiService::OpenAi,
@@ -225,6 +229,8 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_root_dir_into_config(out, text);
     parse_log_path_into_config(out, text);
     parse_log_level_into_config(out, text);
+    parse_scene_ocean_enabled_into_config(out, text);
+    parse_scene_sky_enabled_into_config(out, text);
     parse_ai_request_timeout_secs_into_config(out, text);
     parse_gen3d_cache_dir_into_config(out, text);
     parse_gen3d_ai_service_into_config(out, text);
@@ -484,6 +490,22 @@ fn parse_log_path_into_config(out: &mut AppConfig, text: &str) {
 fn parse_log_level_into_config(out: &mut AppConfig, text: &str) {
     match parse_log_level(text) {
         Ok(Some(value)) => out.log_level = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_scene_ocean_enabled_into_config(out: &mut AppConfig, text: &str) {
+    match parse_scene_ocean_enabled(text) {
+        Ok(Some(value)) => out.scene_ocean_enabled = value,
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_scene_sky_enabled_into_config(out: &mut AppConfig, text: &str) {
+    match parse_scene_sky_enabled(text) {
+        Ok(Some(value)) => out.scene_sky_enabled = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -831,6 +853,118 @@ fn parse_log_level(text: &str) -> Result<Option<bevy::log::Level>, String> {
                 ))
             }
         };
+    }
+
+    Ok(out)
+}
+
+fn parse_scene_ocean_enabled(text: &str) -> Result<Option<bool>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<bool> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "scene_ocean_enabled"
+            && !(section.as_deref() == Some("scene") && key == "ocean_enabled")
+        {
+            continue;
+        }
+
+        if let Some(sec) = section.as_deref() {
+            if sec != "scene" && sec != "app" && key == "scene_ocean_enabled" {
+                continue;
+            }
+            if sec != "scene" && key == "ocean_enabled" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let parsed = parse_toml_bool(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a boolean for `scene.ocean_enabled` (example: [scene]\\nocean_enabled = false)"
+            )
+        })?;
+        out = Some(parsed);
+    }
+
+    Ok(out)
+}
+
+fn parse_scene_sky_enabled(text: &str) -> Result<Option<bool>, String> {
+    let mut section: Option<String> = None;
+    let mut out: Option<bool> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "scene_sky_enabled"
+            && !(section.as_deref() == Some("scene") && key == "sky_enabled")
+        {
+            continue;
+        }
+
+        if let Some(sec) = section.as_deref() {
+            if sec != "scene" && sec != "app" && key == "scene_sky_enabled" {
+                continue;
+            }
+            if sec != "scene" && key == "sky_enabled" {
+                continue;
+            }
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let parsed = parse_toml_bool(value).ok_or_else(|| {
+            format!(
+                "config.toml:{line_no}: expected a boolean for `scene.sky_enabled` (example: [scene]\\nsky_enabled = false)"
+            )
+        })?;
+        out = Some(parsed);
     }
 
     Ok(out)
@@ -3237,6 +3371,28 @@ mod tests {
             "expected log level parse error, got: {:?}",
             cfg.errors
         );
+    }
+
+    #[test]
+    fn parses_scene_ocean_enabled_from_scene_section() {
+        let text = r#"
+        [scene]
+        ocean_enabled = false
+        "#;
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert!(!cfg.scene_ocean_enabled);
+    }
+
+    #[test]
+    fn parses_scene_sky_enabled_from_scene_section() {
+        let text = r#"
+        [scene]
+        sky_enabled = false
+        "#;
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert!(!cfg.scene_sky_enabled);
     }
 
     #[test]
