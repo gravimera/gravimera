@@ -2,13 +2,16 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::message::MessageReader;
+use bevy::ecs::system::SystemParam;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::{Ime, PrimaryWindow};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{mpsc, Mutex};
 
+use crate::config::AppConfig;
 use crate::genfloor::defs::FloorDefV1;
 use crate::genfloor::set_active_world_floor;
 use crate::genfloor::ActiveWorldFloor;
@@ -16,12 +19,14 @@ use crate::genfloor::WorldFloor;
 use crate::orbit_capture;
 use crate::realm::ActiveRealmScene;
 use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
-use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
+use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts, UiToastCommand, UiToastKind};
 use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 
 const PANEL_WIDTH_PX: f32 = 320.0;
+const PANEL_WIDTH_MANAGE_PX: f32 = 380.0;
 const PANEL_Z_INDEX: i32 = 920;
 const FLOOR_PREVIEW_Z_INDEX: i32 = 1200;
+const FLOOR_PREVIEW_MODAL_Z_INDEX: i32 = FLOOR_PREVIEW_Z_INDEX + 20;
 const FLOOR_PREVIEW_LAYER: usize = 29;
 const FLOOR_PREVIEW_WIDTH_PX: u32 = 640;
 const FLOOR_PREVIEW_HEIGHT_PX: u32 = 360;
@@ -36,10 +41,77 @@ pub(crate) struct FloorLibraryUiState {
     scrollbar_drag: Option<FloorLibraryScrollbarDrag>,
     thumbnail_cache: HashMap<u128, FloorLibraryThumbnailCacheEntry>,
     listed_floors: Vec<u128>,
+    multi_select_mode: bool,
+    multi_selected_floors: HashSet<u128>,
+    multi_select_anchor_floor_id: Option<u128>,
+    export_dialog_pending_ids: Vec<u128>,
+    export_dialog_pending_realm: Option<String>,
+    import_dialog_pending_realm: Option<String>,
     selected_floor_id: Option<u128>,
     pending_preview: Option<u128>,
     preview: Option<FloorLibraryPreview>,
+    manage_delete_modal_root: Option<Entity>,
+    manage_delete_modal_pending_realm: Option<String>,
+    manage_delete_modal_pending_ids: Vec<u128>,
     last_rebuilt_scene: Option<(String, String)>,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct FloorLibraryEnv<'w> {
+    config: Res<'w, AppConfig>,
+    active: Res<'w, ActiveRealmScene>,
+}
+
+#[derive(Resource)]
+pub(crate) struct FloorLibraryExportJob {
+    receiver: Mutex<Option<mpsc::Receiver<Result<usize, String>>>>,
+}
+
+impl Default for FloorLibraryExportJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct FloorLibraryImportJob {
+    receiver: Mutex<Option<mpsc::Receiver<Result<crate::floor_zip::FloorZipImportReport, String>>>>,
+}
+
+impl Default for FloorLibraryImportJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct FloorLibraryExportDialogJob {
+    receiver: Mutex<Option<mpsc::Receiver<Option<std::path::PathBuf>>>>,
+}
+
+impl Default for FloorLibraryExportDialogJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct FloorLibraryImportDialogJob {
+    receiver: Mutex<Option<mpsc::Receiver<Option<std::path::PathBuf>>>>,
+}
+
+impl Default for FloorLibraryImportDialogJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
 }
 
 impl Default for FloorLibraryUiState {
@@ -52,9 +124,18 @@ impl Default for FloorLibraryUiState {
             scrollbar_drag: None,
             thumbnail_cache: HashMap::new(),
             listed_floors: Vec::new(),
+            multi_select_mode: false,
+            multi_selected_floors: HashSet::new(),
+            multi_select_anchor_floor_id: None,
+            export_dialog_pending_ids: Vec::new(),
+            export_dialog_pending_realm: None,
+            import_dialog_pending_realm: None,
             selected_floor_id: None,
             pending_preview: None,
             preview: None,
+            manage_delete_modal_root: None,
+            manage_delete_modal_pending_realm: None,
+            manage_delete_modal_pending_ids: Vec::new(),
             last_rebuilt_scene: None,
         }
     }
@@ -174,6 +255,44 @@ pub(crate) struct FloorLibraryGenerateButton;
 #[derive(Component)]
 pub(crate) struct FloorLibraryGenerateButtonText;
 #[derive(Component)]
+pub(crate) struct FloorLibraryManageToggleButton;
+#[derive(Component)]
+pub(crate) struct FloorLibraryManageToggleButtonText;
+#[derive(Component)]
+pub(crate) struct FloorLibraryNormalActionsRow;
+#[derive(Component)]
+pub(crate) struct FloorLibraryManageActionsRow;
+#[derive(Component)]
+pub(crate) struct FloorLibraryImportButton;
+#[derive(Component)]
+pub(crate) struct FloorLibraryImportButtonText;
+#[derive(Component)]
+pub(crate) struct FloorLibraryExportButton;
+#[derive(Component)]
+pub(crate) struct FloorLibraryExportButtonText;
+#[derive(Component)]
+pub(crate) struct FloorLibraryManageDeleteButton;
+#[derive(Component)]
+pub(crate) struct FloorLibraryManageDeleteButtonText;
+#[derive(Component)]
+pub(crate) struct FloorLibraryManageSelectAllButton;
+#[derive(Component)]
+pub(crate) struct FloorLibraryManageSelectNoneButton;
+#[derive(Component)]
+pub(crate) struct FloorLibraryMultiSelectIndicator {
+    floor_id: u128,
+}
+#[derive(Component)]
+pub(crate) struct FloorLibraryMultiSelectIndicatorDot {
+    floor_id: u128,
+}
+#[derive(Component)]
+pub(crate) struct FloorLibraryManageDeleteModalRoot;
+#[derive(Component)]
+pub(crate) struct FloorLibraryManageDeleteConfirmButton;
+#[derive(Component)]
+pub(crate) struct FloorLibraryManageDeleteCancelButton;
+#[derive(Component)]
 pub(crate) struct FloorLibrarySearchField;
 #[derive(Component)]
 pub(crate) struct FloorLibrarySearchFieldText;
@@ -245,23 +364,216 @@ pub(crate) fn setup_floor_library_ui(
                     Button,
                     Node {
                         padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                        border: UiRect::all(Val::Px(1.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(999.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
-                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                    FloorLibraryGenerateButton,
+                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.35)),
+                    BorderColor::all(Color::srgba(0.25, 0.95, 0.85, 0.90)),
+                    FloorLibraryManageToggleButton,
                 ))
                 .with_children(|b| {
                     b.spawn((
-                        Text::new("Generate"),
+                        Text::new("Manage"),
                         TextFont {
                             font_size: 14.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                        FloorLibraryGenerateButtonText,
+                        TextColor(Color::srgba(0.25, 0.95, 0.85, 0.95)),
+                        FloorLibraryManageToggleButtonText,
                     ));
+                });
+            });
+
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                FloorLibraryNormalActionsRow,
+            ))
+            .with_children(|buttons| {
+                buttons
+                    .spawn((
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                        FloorLibraryImportButton,
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Import"),
+                            TextFont {
+                                font_size: 14.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            FloorLibraryImportButtonText,
+                        ));
+                    });
+
+                buttons
+                    .spawn((
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                        FloorLibraryGenerateButton,
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Generate"),
+                            TextFont {
+                                font_size: 14.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            FloorLibraryGenerateButtonText,
+                        ));
+                    });
+            });
+
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::FlexStart,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                FloorLibraryManageActionsRow,
+            ))
+            .with_children(|row| {
+                row.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                ))
+                .with_children(|buttons| {
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            FloorLibraryExportButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Export"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                FloorLibraryExportButtonText,
+                            ));
+                        });
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            FloorLibraryManageDeleteButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Delete"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                FloorLibraryManageDeleteButtonText,
+                            ));
+                        });
+                });
+
+                row.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                ))
+                .with_children(|buttons| {
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            FloorLibraryManageSelectAllButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("All"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ));
+                        });
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            FloorLibraryManageSelectNoneButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("None"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ));
+                        });
                 });
             });
 
@@ -411,6 +723,12 @@ pub(crate) fn floor_library_update_visibility(
         &mut Interaction,
         Or<(
             With<FloorLibraryGenerateButton>,
+            With<FloorLibraryManageToggleButton>,
+            With<FloorLibraryImportButton>,
+            With<FloorLibraryExportButton>,
+            With<FloorLibraryManageDeleteButton>,
+            With<FloorLibraryManageSelectAllButton>,
+            With<FloorLibraryManageSelectNoneButton>,
             With<FloorLibrarySearchField>,
             With<FloorLibraryListItem>,
             With<FloorLibraryPreviewCloseButton>,
@@ -433,6 +751,9 @@ pub(crate) fn floor_library_update_visibility(
     if !visible {
         state.scrollbar_drag = None;
         state.search_focused = false;
+        state.multi_select_mode = false;
+        state.multi_selected_floors.clear();
+        close_floor_library_manage_delete_modal(&mut commands, &mut state);
         close_floor_library_preview(&mut commands, &mut state);
 
         if *was_visible {
@@ -445,9 +766,159 @@ pub(crate) fn floor_library_update_visibility(
     *was_visible = visible;
 }
 
+pub(crate) fn floor_library_update_manage_mode_ui(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    state: Res<FloorLibraryUiState>,
+    mut manage_text: Query<(&mut Text, &mut TextColor), With<FloorLibraryManageToggleButtonText>>,
+    mut rows: Query<(
+        &mut Node,
+        Option<&FloorLibraryNormalActionsRow>,
+        Option<&FloorLibraryManageActionsRow>,
+    )>,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm);
+
+    let manage_mode = visible && state.multi_select_mode;
+    let normal_mode = visible && !state.multi_select_mode;
+
+    for (mut node, is_normal, is_manage) in &mut rows {
+        if is_normal.is_some() {
+            node.display = if normal_mode {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+        if is_manage.is_some() {
+            node.display = if manage_mode {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+    }
+
+    for (mut text, mut color) in &mut manage_text {
+        let next = if state.multi_select_mode {
+            "Done"
+        } else {
+            "Manage"
+        };
+        if text.0 != next {
+            text.0 = next.to_string();
+        }
+
+        let next_color = if state.multi_select_mode {
+            Color::srgba(0.02, 0.02, 0.03, 0.95)
+        } else {
+            Color::srgba(0.25, 0.95, 0.85, 0.95)
+        };
+        if color.0 != next_color {
+            color.0 = next_color;
+        }
+    }
+}
+
+pub(crate) fn floor_library_update_panel_width(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    state: Res<FloorLibraryUiState>,
+    mut roots: Query<&mut Node, With<FloorLibraryRoot>>,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm);
+    let width = if visible && state.multi_select_mode {
+        PANEL_WIDTH_MANAGE_PX
+    } else {
+        PANEL_WIDTH_PX
+    };
+
+    for mut node in &mut roots {
+        node.width = Val::Px(width);
+    }
+}
+
+pub(crate) fn floor_library_manage_toggle_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    mut commands: Commands,
+    mut state: ResMut<FloorLibraryUiState>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<FloorLibraryManageToggleButton>),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm);
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        let done = state.multi_select_mode;
+        match *interaction {
+            Interaction::None => {
+                if done {
+                    *bg = BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.78));
+                    *border = BorderColor::all(Color::srgba(0.25, 0.95, 0.85, 0.95));
+                } else {
+                    *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.35));
+                    *border = BorderColor::all(Color::srgba(0.25, 0.95, 0.85, 0.90));
+                }
+            }
+            Interaction::Hovered => {
+                if done {
+                    *bg = BackgroundColor(Color::srgba(0.30, 0.97, 0.87, 0.86));
+                    *border = BorderColor::all(Color::srgba(0.30, 0.97, 0.87, 0.98));
+                } else {
+                    *bg = BackgroundColor(Color::srgba(0.04, 0.08, 0.08, 0.55));
+                    *border = BorderColor::all(Color::srgba(0.30, 0.97, 0.87, 0.95));
+                }
+            }
+            Interaction::Pressed => {
+                if done {
+                    *bg = BackgroundColor(Color::srgba(0.20, 0.85, 0.78, 0.90));
+                    *border = BorderColor::all(Color::srgba(0.30, 0.97, 0.87, 0.98));
+                } else {
+                    *bg = BackgroundColor(Color::srgba(0.06, 0.12, 0.12, 0.75));
+                    *border = BorderColor::all(Color::srgba(0.30, 0.97, 0.87, 0.95));
+                }
+
+                state.search_focused = false;
+                state.pending_preview = None;
+
+                close_floor_library_manage_delete_modal(&mut commands, &mut state);
+
+                let next_manage_mode = !state.multi_select_mode;
+                state.multi_select_mode = next_manage_mode;
+                if next_manage_mode {
+                    state.multi_selected_floors.clear();
+                    if let Some(selected) = state.selected_floor_id {
+                        if selected != DEFAULT_FLOOR_ID {
+                            state.multi_selected_floors.insert(selected);
+                        }
+                    }
+                    state.multi_select_anchor_floor_id =
+                        state.selected_floor_id.filter(|floor_id| *floor_id != DEFAULT_FLOOR_ID);
+                    close_floor_library_preview(&mut commands, &mut state);
+                } else {
+                    state.multi_selected_floors.clear();
+                    state.multi_select_anchor_floor_id = None;
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn floor_library_generate_button_interactions(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
+    state: Res<FloorLibraryUiState>,
     mut next_scene: ResMut<NextState<BuildScene>>,
     mut genfloor_job: ResMut<crate::genfloor::GenFloorAiJob>,
     mut genfloor_workshop: ResMut<crate::genfloor::GenFloorWorkshop>,
@@ -456,7 +927,10 @@ pub(crate) fn floor_library_generate_button_interactions(
         (Changed<Interaction>, With<FloorLibraryGenerateButton>),
     >,
 ) {
-    if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Realm) {
+    if state.multi_select_mode
+        || !matches!(mode.get(), GameMode::Build)
+        || !matches!(build_scene.get(), BuildScene::Realm)
+    {
         return;
     }
 
@@ -479,6 +953,705 @@ pub(crate) fn floor_library_generate_button_interactions(
                 }
                 next_scene.set(BuildScene::FloorPreview);
             }
+        }
+    }
+}
+
+pub(crate) fn floor_library_manage_select_all_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    mut state: ResMut<FloorLibraryUiState>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Changed<Interaction>,
+            With<FloorLibraryManageSelectAllButton>,
+        ),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm)
+        && state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                state.multi_selected_floors = state
+                    .listed_floors
+                    .iter()
+                    .copied()
+                    .filter(|floor_id| *floor_id != DEFAULT_FLOOR_ID)
+                    .collect();
+                let anchor_valid = state.multi_select_anchor_floor_id.is_some_and(|floor_id| {
+                    floor_id != DEFAULT_FLOOR_ID && state.listed_floors.iter().any(|id| *id == floor_id)
+                });
+                if !anchor_valid {
+                    state.multi_select_anchor_floor_id = state
+                        .listed_floors
+                        .iter()
+                        .copied()
+                        .find(|floor_id| *floor_id != DEFAULT_FLOOR_ID);
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn floor_library_manage_select_none_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    mut state: ResMut<FloorLibraryUiState>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Changed<Interaction>,
+            With<FloorLibraryManageSelectNoneButton>,
+        ),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm)
+        && state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                state.multi_selected_floors.clear();
+            }
+        }
+    }
+}
+
+pub(crate) fn floor_library_import_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    env: FloorLibraryEnv,
+    mut state: ResMut<FloorLibraryUiState>,
+    import_job: Res<FloorLibraryImportJob>,
+    import_dialog: Res<FloorLibraryImportDialogJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<FloorLibraryImportButton>),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm)
+        && !state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if let Ok(guard) = import_job.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Import already running.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+                if let Ok(guard) = import_dialog.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Import dialog already open.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+
+                let (tx, rx) = mpsc::channel();
+                if let Ok(mut guard) = import_dialog.receiver.lock() {
+                    *guard = Some(rx);
+                }
+                state.import_dialog_pending_realm = Some(env.active.realm_id.clone());
+                std::thread::spawn(move || {
+                    let path = rfd::FileDialog::new()
+                        .add_filter("Floor Zip", &["zip"])
+                        .pick_file();
+                    let _ = tx.send(path);
+                });
+            }
+        }
+    }
+}
+
+pub(crate) fn floor_library_export_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    env: FloorLibraryEnv,
+    mut state: ResMut<FloorLibraryUiState>,
+    export_job: Res<FloorLibraryExportJob>,
+    export_dialog: Res<FloorLibraryExportDialogJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<FloorLibraryExportButton>),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm)
+        && state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    fn ensure_zip_extension(path: std::path::PathBuf) -> std::path::PathBuf {
+        match path.extension().and_then(|v| v.to_str()) {
+            Some(ext) if ext.eq_ignore_ascii_case("zip") => path,
+            _ => path.with_extension("zip"),
+        }
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if let Ok(guard) = export_job.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Export already running.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+                if let Ok(guard) = export_dialog.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Export dialog already open.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+
+                if state.multi_selected_floors.is_empty() {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Select floors to export first.".to_string(),
+                        kind: UiToastKind::Warn,
+                        ttl_secs: 4.0,
+                    });
+                    continue;
+                }
+
+                let mut ids: Vec<u128> = state
+                    .multi_selected_floors
+                    .iter()
+                    .copied()
+                    .filter(|floor_id| *floor_id != DEFAULT_FLOOR_ID)
+                    .collect();
+                ids.sort();
+                ids.dedup();
+                state.export_dialog_pending_ids = ids;
+                state.export_dialog_pending_realm = Some(env.active.realm_id.clone());
+
+                let (tx, rx) = mpsc::channel();
+                if let Ok(mut guard) = export_dialog.receiver.lock() {
+                    *guard = Some(rx);
+                }
+                toasts.write(UiToastCommand::Show {
+                    text: "Select export location…".to_string(),
+                    kind: UiToastKind::Info,
+                    ttl_secs: 3.0,
+                });
+                std::thread::spawn(move || {
+                    let path = rfd::FileDialog::new()
+                        .add_filter("Floor Zip", &["zip"])
+                        .set_file_name("floors.zip")
+                        .save_file()
+                        .map(ensure_zip_extension);
+                    let _ = tx.send(path);
+                });
+            }
+        }
+    }
+}
+
+pub(crate) fn floor_library_manage_delete_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    env: FloorLibraryEnv,
+    mut commands: Commands,
+    mut state: ResMut<FloorLibraryUiState>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<FloorLibraryManageDeleteButton>),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm)
+        && state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if state.manage_delete_modal_root.is_some() {
+                    continue;
+                }
+                if state.multi_selected_floors.is_empty() {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Select floors to delete first.".to_string(),
+                        kind: UiToastKind::Warn,
+                        ttl_secs: 4.0,
+                    });
+                    continue;
+                }
+
+                let mut ids: Vec<u128> = state
+                    .multi_selected_floors
+                    .iter()
+                    .copied()
+                    .filter(|floor_id| *floor_id != DEFAULT_FLOOR_ID)
+                    .collect();
+                ids.sort();
+                ids.dedup();
+                open_floor_library_manage_delete_modal(
+                    &mut commands,
+                    &mut state,
+                    env.active.realm_id.clone(),
+                    ids,
+                );
+            }
+        }
+    }
+}
+
+pub(crate) fn floor_library_manage_delete_modal_interactions(
+    mut commands: Commands,
+    env: FloorLibraryEnv,
+    mut state: ResMut<FloorLibraryUiState>,
+    mut active_floor: ResMut<ActiveWorldFloor>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut confirm: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<FloorLibraryManageDeleteConfirmButton>,
+        ),
+    >,
+    mut cancel: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<FloorLibraryManageDeleteCancelButton>,
+        ),
+    >,
+) {
+    if state.manage_delete_modal_root.is_none() {
+        return;
+    }
+
+    for interaction in &mut cancel {
+        if *interaction == Interaction::Pressed {
+            close_floor_library_manage_delete_modal(&mut commands, &mut state);
+            return;
+        }
+    }
+
+    for interaction in &mut confirm {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        if env.config.automation_enabled && env.config.automation_monitor_mode {
+            close_floor_library_manage_delete_modal(&mut commands, &mut state);
+            break;
+        }
+
+        let realm_id = state
+            .manage_delete_modal_pending_realm
+            .clone()
+            .unwrap_or_else(|| env.active.realm_id.clone());
+        let ids = state.manage_delete_modal_pending_ids.clone();
+
+        let mut deleted = 0usize;
+        let mut failed = 0usize;
+        for floor_id in &ids {
+            if *floor_id == DEFAULT_FLOOR_ID {
+                continue;
+            }
+            match crate::realm_floor_packages::delete_realm_floor_package(&realm_id, *floor_id) {
+                Ok(_) => {
+                    deleted += 1;
+                    state.thumbnail_cache.remove(floor_id);
+                }
+                Err(err) => {
+                    failed += 1;
+                    warn!("{err}");
+                }
+            }
+        }
+
+        let deleted_selected = state.selected_floor_id.is_some_and(|floor_id| {
+            floor_id != DEFAULT_FLOOR_ID && ids.iter().any(|deleted_id| *deleted_id == floor_id)
+        });
+        let deleted_active = active_floor
+            .floor_id
+            .is_some_and(|floor_id| ids.iter().any(|deleted_id| *deleted_id == floor_id));
+        if deleted_active {
+            set_active_world_floor(&mut active_floor, None, FloorDefV1::default_world());
+            let _ = crate::scene_floor_selection::save_scene_floor_selection(
+                &realm_id,
+                &env.active.scene_id,
+                None,
+            );
+        }
+        if deleted_active || deleted_selected {
+            state.selected_floor_id = Some(DEFAULT_FLOOR_ID);
+        }
+
+        if deleted > 0 {
+            state.mark_models_dirty();
+        }
+        state.multi_selected_floors.clear();
+        state.pending_preview = None;
+        close_floor_library_preview(&mut commands, &mut state);
+
+        close_floor_library_manage_delete_modal(&mut commands, &mut state);
+
+        if failed == 0 {
+            toasts.write(UiToastCommand::Show {
+                text: format!("Deleted {} floor(s).", deleted),
+                kind: UiToastKind::Info,
+                ttl_secs: 4.0,
+            });
+        } else if deleted > 0 {
+            toasts.write(UiToastCommand::Show {
+                text: format!("Deleted {}, failed {}.", deleted, failed),
+                kind: UiToastKind::Warn,
+                ttl_secs: 5.0,
+            });
+        } else {
+            toasts.write(UiToastCommand::Show {
+                text: "Delete failed.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 5.0,
+            });
+        }
+        break;
+    }
+}
+
+pub(crate) fn floor_library_manage_delete_modal_close_on_escape(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut state: ResMut<FloorLibraryUiState>,
+) {
+    if state.manage_delete_modal_root.is_none() {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        close_floor_library_manage_delete_modal(&mut commands, &mut state);
+    }
+}
+
+pub(crate) fn floor_library_export_job_poll(
+    export_job: Res<FloorLibraryExportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = export_job.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    match receiver.try_recv() {
+        Ok(result) => {
+            *guard = None;
+            match result {
+                Ok(count) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: format!("Exported {} floor(s).", count),
+                        kind: UiToastKind::Info,
+                        ttl_secs: 4.0,
+                    });
+                }
+                Err(err) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: err,
+                        kind: UiToastKind::Error,
+                        ttl_secs: 5.0,
+                    });
+                }
+            }
+        }
+        Err(mpsc::TryRecvError::Empty) => {}
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Export failed: worker disconnected.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 5.0,
+            });
+        }
+    }
+}
+
+pub(crate) fn floor_library_export_dialog_poll(
+    mut state: ResMut<FloorLibraryUiState>,
+    export_dialog: Res<FloorLibraryExportDialogJob>,
+    export_job: Res<FloorLibraryExportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = export_dialog.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    let path = match receiver.try_recv() {
+        Ok(path) => {
+            *guard = None;
+            path
+        }
+        Err(mpsc::TryRecvError::Empty) => return,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            state.export_dialog_pending_ids.clear();
+            state.export_dialog_pending_realm = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Export canceled: dialog failed.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 4.0,
+            });
+            return;
+        }
+    };
+
+    let Some(path) = path else {
+        state.export_dialog_pending_ids.clear();
+        state.export_dialog_pending_realm = None;
+        return;
+    };
+    let Some(realm_id) = state.export_dialog_pending_realm.take() else {
+        return;
+    };
+    if state.export_dialog_pending_ids.is_empty() {
+        return;
+    }
+
+    let (tx, rx) = mpsc::channel();
+    if let Ok(mut job_guard) = export_job.receiver.lock() {
+        if job_guard.is_some() {
+            toasts.write(UiToastCommand::Show {
+                text: "Export already running.".to_string(),
+                kind: UiToastKind::Warn,
+                ttl_secs: 3.0,
+            });
+            return;
+        }
+        *job_guard = Some(rx);
+    }
+
+    let mut ids = state.export_dialog_pending_ids.clone();
+    state.export_dialog_pending_ids.clear();
+    ids.retain(|floor_id| *floor_id != DEFAULT_FLOOR_ID);
+    ids.sort();
+    ids.dedup();
+    toasts.write(UiToastCommand::Show {
+        text: "Exporting floors…".to_string(),
+        kind: UiToastKind::Info,
+        ttl_secs: 3.0,
+    });
+    std::thread::spawn(move || {
+        let result = crate::floor_zip::export_floor_packages_to_zip(&realm_id, &ids, &path);
+        let _ = tx.send(result);
+    });
+}
+
+pub(crate) fn floor_library_import_dialog_poll(
+    mut state: ResMut<FloorLibraryUiState>,
+    import_dialog: Res<FloorLibraryImportDialogJob>,
+    import_job: Res<FloorLibraryImportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = import_dialog.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    let path = match receiver.try_recv() {
+        Ok(path) => {
+            *guard = None;
+            path
+        }
+        Err(mpsc::TryRecvError::Empty) => return,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            state.import_dialog_pending_realm = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Import canceled: dialog failed.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 4.0,
+            });
+            return;
+        }
+    };
+
+    let Some(path) = path else {
+        state.import_dialog_pending_realm = None;
+        return;
+    };
+    let Some(realm_id) = state.import_dialog_pending_realm.take() else {
+        return;
+    };
+
+    let (tx, rx) = mpsc::channel();
+    if let Ok(mut job_guard) = import_job.receiver.lock() {
+        if job_guard.is_some() {
+            toasts.write(UiToastCommand::Show {
+                text: "Import already running.".to_string(),
+                kind: UiToastKind::Warn,
+                ttl_secs: 3.0,
+            });
+            return;
+        }
+        *job_guard = Some(rx);
+    }
+
+    toasts.write(UiToastCommand::Show {
+        text: "Importing floors…".to_string(),
+        kind: UiToastKind::Info,
+        ttl_secs: 3.0,
+    });
+    std::thread::spawn(move || {
+        let result = crate::floor_zip::import_floor_packages_from_zip(&realm_id, &path);
+        let _ = tx.send(result);
+    });
+}
+
+pub(crate) fn floor_library_import_job_poll(
+    mut state: ResMut<FloorLibraryUiState>,
+    import_job: Res<FloorLibraryImportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = import_job.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    match receiver.try_recv() {
+        Ok(result) => {
+            *guard = None;
+            match result {
+                Ok(report) => {
+                    state.mark_models_dirty();
+                    let summary = format!(
+                        "Imported {}, skipped {}, invalid {}.",
+                        report.imported, report.skipped, report.invalid
+                    );
+                    let kind = if report.invalid > 0 {
+                        UiToastKind::Warn
+                    } else {
+                        UiToastKind::Info
+                    };
+                    toasts.write(UiToastCommand::Show {
+                        text: summary,
+                        kind,
+                        ttl_secs: 4.0,
+                    });
+                }
+                Err(err) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: err,
+                        kind: UiToastKind::Error,
+                        ttl_secs: 5.0,
+                    });
+                }
+            }
+        }
+        Err(mpsc::TryRecvError::Empty) => {}
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Import failed: worker disconnected.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 5.0,
+            });
         }
     }
 }
@@ -935,6 +2108,12 @@ pub(crate) fn floor_library_rebuild_list_ui(
     });
 
     state.listed_floors = rows.iter().map(|row| row.floor_id).collect();
+    if state.multi_select_mode && !state.multi_selected_floors.is_empty() {
+        let listed: HashSet<u128> = state.listed_floors.iter().copied().collect();
+        state
+            .multi_selected_floors
+            .retain(|floor_id| listed.contains(floor_id) && *floor_id != DEFAULT_FLOOR_ID);
+    }
 
     let edit_states = floor_library_collect_edit_states(&genfloor_job, &genfloor_workshop);
 
@@ -949,6 +2128,7 @@ pub(crate) fn floor_library_rebuild_list_ui(
                     padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
                     column_gap: Val::Px(10.0),
                     ..default()
@@ -979,111 +2159,158 @@ pub(crate) fn floor_library_rebuild_list_ui(
 
                 b.spawn((
                     Node {
-                        width: Val::Px(42.0),
-                        height: Val::Px(42.0),
-                        border: UiRect::all(Val::Px(1.0)),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
+                        flex_grow: 1.0,
+                        flex_basis: Val::Px(0.0),
+                        min_width: Val::Px(0.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.75)),
-                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    BackgroundColor(Color::NONE),
                 ))
-                .with_children(|thumb| {
-                    if let Some(handle) = row.thumbnail.as_ref() {
-                        thumb.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                            ImageNode::new(handle.clone()).with_mode(NodeImageMode::Stretch),
-                        ));
-                    }
-
-                    thumb
-                        .spawn((
-                            Node {
-                                position_type: PositionType::Absolute,
-                                right: Val::Px(3.0),
-                                top: Val::Px(3.0),
-                                width: Val::Px(14.0),
-                                height: Val::Px(14.0),
-                                border: UiRect::all(Val::Px(2.0)),
-                                border_radius: BorderRadius::all(Val::Px(999.0)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-                            BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
-                            UiTransform::default(),
-                            Visibility::Hidden,
-                            FloorLibraryGenfloorThumbnailIndicator {
-                                floor_id: row.floor_id,
-                                kind: FloorLibraryGenfloorIndicatorKind::Working,
-                            },
-                        ))
-                        .with_children(|spinner| {
-                            spinner.spawn((
-                                Text::new("↻"),
-                                TextFont {
-                                    font_size: 12.0,
+                .with_children(|left| {
+                    left.spawn((
+                        Node {
+                            width: Val::Px(42.0),
+                            height: Val::Px(42.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.75)),
+                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ))
+                    .with_children(|thumb| {
+                        if let Some(handle) = row.thumbnail.as_ref() {
+                            thumb.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Percent(100.0),
                                     ..default()
                                 },
-                                TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                                ImageNode::new(handle.clone()).with_mode(NodeImageMode::Stretch),
                             ));
-                        });
+                        }
 
-                    thumb
-                        .spawn((
-                            Node {
-                                position_type: PositionType::Absolute,
-                                right: Val::Px(3.0),
-                                top: Val::Px(3.0),
-                                width: Val::Px(14.0),
-                                height: Val::Px(14.0),
-                                border: UiRect::all(Val::Px(2.0)),
-                                border_radius: BorderRadius::all(Val::Px(999.0)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-                            BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
-                            UiTransform::default(),
-                            Visibility::Hidden,
-                            FloorLibraryGenfloorThumbnailIndicator {
-                                floor_id: row.floor_id,
-                                kind: FloorLibraryGenfloorIndicatorKind::Waiting,
-                            },
-                        ))
-                        .with_children(|spinner| {
-                            spinner.spawn((
-                                Text::new("↻"),
-                                TextFont {
-                                    font_size: 12.0,
+                        thumb
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(3.0),
+                                    top: Val::Px(3.0),
+                                    width: Val::Px(14.0),
+                                    height: Val::Px(14.0),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(Val::Px(999.0)),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
                                     ..default()
                                 },
-                                TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
-                            ));
-                        });
-                });
+                                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                                BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                                UiTransform::default(),
+                                Visibility::Hidden,
+                                FloorLibraryGenfloorThumbnailIndicator {
+                                    floor_id: row.floor_id,
+                                    kind: FloorLibraryGenfloorIndicatorKind::Working,
+                                },
+                            ))
+                            .with_children(|spinner| {
+                                spinner.spawn((
+                                    Text::new("↻"),
+                                    TextFont {
+                                        font_size: 12.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                                ));
+                            });
 
-                b.spawn((
-                    Text::new(prefix_text),
-                    TextFont {
-                        font_size: 14.0,
-                        ..default()
-                    },
-                    TextColor(prefix_color),
-                ))
-                .with_children(|label_root| {
-                    label_root.spawn((
-                        TextSpan::new(row.display_name),
+                        thumb
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(3.0),
+                                    top: Val::Px(3.0),
+                                    width: Val::Px(14.0),
+                                    height: Val::Px(14.0),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(Val::Px(999.0)),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                                BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                                UiTransform::default(),
+                                Visibility::Hidden,
+                                FloorLibraryGenfloorThumbnailIndicator {
+                                    floor_id: row.floor_id,
+                                    kind: FloorLibraryGenfloorIndicatorKind::Waiting,
+                                },
+                            ))
+                            .with_children(|spinner| {
+                                spinner.spawn((
+                                    Text::new("↻"),
+                                    TextFont {
+                                        font_size: 12.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                                ));
+                            });
+                    });
+
+                    left.spawn((
+                        Text::new(prefix_text),
                         TextFont {
                             font_size: 14.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                        TextColor(prefix_color),
+                    ))
+                    .with_children(|label_root| {
+                        label_root.spawn((
+                            TextSpan::new(row.display_name),
+                            TextFont {
+                                font_size: 14.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                        ));
+                    });
+                });
+
+                b.spawn((
+                    Node {
+                        width: Val::Px(18.0),
+                        height: Val::Px(18.0),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(999.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        display: Display::None,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    FloorLibraryMultiSelectIndicator {
+                        floor_id: row.floor_id,
+                    },
+                ))
+                .with_children(|radio| {
+                    radio.spawn((
+                        Node {
+                            width: Val::Px(8.0),
+                            height: Val::Px(8.0),
+                            border_radius: BorderRadius::all(Val::Px(999.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.90)),
+                        Visibility::Hidden,
+                        FloorLibraryMultiSelectIndicatorDot {
+                            floor_id: row.floor_id,
+                        },
                     ));
                 });
             });
@@ -1235,6 +2462,7 @@ pub(crate) fn floor_library_sync_genfloor_placeholders(
 pub(crate) fn floor_library_genfloor_placeholder_item_interactions(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
+    state: Res<FloorLibraryUiState>,
     mut next_build_scene: ResMut<NextState<BuildScene>>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
@@ -1257,6 +2485,9 @@ pub(crate) fn floor_library_genfloor_placeholder_item_interactions(
             Interaction::Pressed => {
                 *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
                 *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+                if state.multi_select_mode {
+                    continue;
+                }
                 if !matches!(mode.get(), GameMode::Build)
                     || !matches!(build_scene.get(), BuildScene::Realm)
                 {
@@ -1308,6 +2539,151 @@ pub(crate) fn floor_library_update_genfloor_thumbnail_indicators(
             FloorLibraryGenfloorIndicatorKind::Waiting => Rot2::radians(0.0),
         };
     }
+}
+
+fn close_floor_library_manage_delete_modal(
+    commands: &mut Commands,
+    state: &mut FloorLibraryUiState,
+) {
+    if let Some(root) = state.manage_delete_modal_root.take() {
+        commands.entity(root).try_despawn();
+    }
+    state.manage_delete_modal_pending_realm = None;
+    state.manage_delete_modal_pending_ids.clear();
+}
+
+fn open_floor_library_manage_delete_modal(
+    commands: &mut Commands,
+    state: &mut FloorLibraryUiState,
+    realm_id: String,
+    floor_ids: Vec<u128>,
+) {
+    if state.manage_delete_modal_root.is_some() {
+        return;
+    }
+
+    let count = floor_ids.len();
+    let title = if count == 1 {
+        "Delete selected floor?".to_string()
+    } else {
+        format!("Delete {count} selected floors?")
+    };
+
+    let root = commands
+        .spawn((
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            ZIndex(FLOOR_PREVIEW_MODAL_Z_INDEX),
+            FloorLibraryManageDeleteModalRoot,
+        ))
+        .with_children(|overlay| {
+            overlay
+                .spawn((
+                    Node {
+                        width: Val::Px(460.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        padding: UiRect::all(Val::Px(14.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.96)),
+                    BorderColor::all(Color::srgba(0.35, 0.35, 0.40, 0.85)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new(title),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.95, 0.95, 0.97)),
+                    ));
+
+                    panel.spawn((
+                        Text::new(
+                            "This deletes floor files from disk. Scenes referencing deleted floors may fall back to Default Floor.",
+                        ),
+                        TextFont {
+                            font_size: 13.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.86, 0.86, 0.90)),
+                    ));
+
+                    panel
+                        .spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::FlexEnd,
+                                column_gap: Val::Px(8.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                        ))
+                        .with_children(|row| {
+                            row.spawn((
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.25, 0.05, 0.05, 0.92)),
+                                BorderColor::all(Color::srgba(0.80, 0.25, 0.25, 0.90)),
+                                FloorLibraryManageDeleteConfirmButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Confirm Delete"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.98, 0.90, 0.90)),
+                                ));
+                            });
+
+                            row.spawn((
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.85)),
+                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75)),
+                                FloorLibraryManageDeleteCancelButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Cancel"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ));
+                            });
+                        });
+                });
+        })
+        .id();
+
+    state.manage_delete_modal_root = Some(root);
+    state.manage_delete_modal_pending_realm = Some(realm_id);
+    state.manage_delete_modal_pending_ids = floor_ids;
 }
 
 fn close_floor_library_preview(commands: &mut Commands, state: &mut FloorLibraryUiState) {
@@ -1444,6 +2820,10 @@ pub(crate) fn floor_library_open_preview_panel(
         return;
     }
     if !state.is_open() {
+        return;
+    }
+    if state.multi_select_mode {
+        state.pending_preview = None;
         return;
     }
 
@@ -1643,6 +3023,7 @@ pub(crate) fn floor_library_preview_close_on_escape(
 }
 
 pub(crate) fn floor_library_item_button_interactions(
+    keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<FloorLibraryUiState>,
     active: Res<ActiveRealmScene>,
     mut active_floor: ResMut<ActiveWorldFloor>,
@@ -1652,6 +3033,44 @@ pub(crate) fn floor_library_item_button_interactions(
         if !matches!(*interaction, Interaction::Pressed) {
             continue;
         }
+
+        if state.multi_select_mode {
+            if button.floor_id == DEFAULT_FLOOR_ID {
+                continue;
+            }
+            state.pending_preview = None;
+
+            let shift_pressed =
+                keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            if shift_pressed {
+                let anchor = state.multi_select_anchor_floor_id;
+                let clicked = button.floor_id;
+                if let Some(anchor) = anchor {
+                    let anchor_index = state.listed_floors.iter().position(|id| *id == anchor);
+                    let clicked_index = state.listed_floors.iter().position(|id| *id == clicked);
+                    if let (Some(a), Some(b)) = (anchor_index, clicked_index) {
+                        let (start, end) = if a <= b { (a, b) } else { (b, a) };
+                        for idx in start..=end {
+                            let floor_id = state.listed_floors[idx];
+                            if floor_id != DEFAULT_FLOOR_ID {
+                                state.multi_selected_floors.insert(floor_id);
+                            }
+                        }
+                    } else {
+                        state.multi_selected_floors.insert(clicked);
+                    }
+                } else {
+                    state.multi_selected_floors.insert(clicked);
+                }
+            } else if state.multi_selected_floors.contains(&button.floor_id) {
+                state.multi_selected_floors.remove(&button.floor_id);
+            } else {
+                state.multi_selected_floors.insert(button.floor_id);
+            }
+            state.multi_select_anchor_floor_id = Some(button.floor_id);
+            continue;
+        }
+
         state.selected_floor_id = Some(button.floor_id);
         if button.floor_id == DEFAULT_FLOOR_ID {
             set_active_world_floor(&mut active_floor, None, FloorDefV1::default_world());
@@ -1687,6 +3106,8 @@ pub(crate) fn floor_library_item_button_interactions(
 pub(crate) fn floor_library_update_list_item_styles(
     state: Res<FloorLibraryUiState>,
     mut last_selected: Local<Option<u128>>,
+    mut last_multi_mode: Local<bool>,
+    mut last_multi: Local<Vec<u128>>,
     mut buttons: Query<
         (
             Ref<Interaction>,
@@ -1697,44 +3118,144 @@ pub(crate) fn floor_library_update_list_item_styles(
         With<FloorLibraryListItem>,
     >,
     mut marks: Query<(Ref<FloorLibrarySelectionMark>, &mut Visibility)>,
+    mut radios: Query<
+        (
+            Ref<FloorLibraryMultiSelectIndicator>,
+            &mut Node,
+            &mut BorderColor,
+        ),
+        Without<FloorLibraryListItem>,
+    >,
+    mut dots: Query<
+        (Ref<FloorLibraryMultiSelectIndicatorDot>, &mut Visibility),
+        Without<FloorLibrarySelectionMark>,
+    >,
 ) {
     let selected_id = state.selected_floor_id();
-    let selection_changed = *last_selected != selected_id;
-    if selection_changed {
-        *last_selected = selected_id;
+    let mut multi_ids: Vec<u128> = if state.multi_select_mode {
+        state.multi_selected_floors.iter().copied().collect()
+    } else {
+        Vec::new()
+    };
+    multi_ids.sort();
+
+    let multi_mode_changed = *last_multi_mode != state.multi_select_mode;
+    if multi_mode_changed {
+        *last_multi_mode = state.multi_select_mode;
     }
+
+    let multi_changed = *last_multi != multi_ids;
+    if multi_changed {
+        *last_multi = multi_ids;
+    }
+
+    let selection_changed = if state.multi_select_mode {
+        multi_mode_changed || multi_changed
+    } else {
+        let changed = *last_selected != selected_id;
+        if changed {
+            *last_selected = selected_id;
+        }
+        changed || multi_mode_changed
+    };
 
     for (interaction, button, mut bg, mut border) in &mut buttons {
         if !selection_changed && !interaction.is_changed() && !interaction.is_added() {
             continue;
         }
-        let selected = selected_id == Some(button.floor_id);
-        match *interaction {
-            Interaction::Pressed => {
-                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
-                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
-                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
-            }
-            Interaction::None => {
-                if selected {
-                    *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.85));
-                    *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+
+        let is_selected = if state.multi_select_mode {
+            state.multi_selected_floors.contains(&button.floor_id)
+        } else {
+            selected_id == Some(button.floor_id)
+        };
+
+        let (bg_color, border_color) = match *interaction {
+            Interaction::Pressed => (
+                Color::srgba(0.10, 0.10, 0.12, 0.92),
+                if is_selected {
+                    Color::srgba(0.30, 0.97, 0.87, 0.95)
                 } else {
-                    *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
-                    *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
-                }
-            }
-        }
+                    Color::srgba(0.45, 0.45, 0.55, 0.85)
+                },
+            ),
+            Interaction::Hovered => (
+                if is_selected {
+                    Color::srgba(0.08, 0.08, 0.10, 0.86)
+                } else {
+                    Color::srgba(0.07, 0.07, 0.09, 0.84)
+                },
+                if is_selected {
+                    Color::srgba(0.25, 0.95, 0.85, 0.85)
+                } else {
+                    Color::srgba(0.35, 0.35, 0.42, 0.75)
+                },
+            ),
+            Interaction::None => (
+                if is_selected {
+                    Color::srgba(0.06, 0.06, 0.08, 0.82)
+                } else {
+                    Color::srgba(0.05, 0.05, 0.06, 0.75)
+                },
+                if is_selected {
+                    Color::srgba(0.25, 0.95, 0.85, 0.85)
+                } else {
+                    Color::srgba(0.25, 0.25, 0.30, 0.65)
+                },
+            ),
+        };
+
+        *bg = BackgroundColor(bg_color);
+        *border = BorderColor::all(border_color);
     }
 
     for (mark, mut vis) in &mut marks {
         if !selection_changed && !mark.is_added() {
             continue;
         }
-        *vis = if Some(mark.floor_id) == selected_id {
+        let is_selected = if state.multi_select_mode {
+            state.multi_selected_floors.contains(&mark.floor_id)
+        } else {
+            Some(mark.floor_id) == selected_id
+        };
+        *vis = if is_selected {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    for (radio, mut node, mut border) in &mut radios {
+        if !selection_changed && !radio.is_added() {
+            continue;
+        }
+
+        let is_default = radio.floor_id == DEFAULT_FLOOR_ID;
+        node.display = if state.multi_select_mode && !is_default {
+            Display::Flex
+        } else {
+            Display::None
+        };
+
+        let is_selected =
+            state.multi_select_mode && state.multi_selected_floors.contains(&radio.floor_id);
+        *border = BorderColor::all(if is_selected {
+            Color::srgba(0.25, 0.95, 0.85, 0.85)
+        } else {
+            Color::srgba(0.25, 0.25, 0.30, 0.65)
+        });
+    }
+
+    for (dot, mut vis) in &mut dots {
+        if !selection_changed && !dot.is_added() {
+            continue;
+        }
+
+        let is_default = dot.floor_id == DEFAULT_FLOOR_ID;
+        let is_selected = !is_default
+            && state.multi_select_mode
+            && state.multi_selected_floors.contains(&dot.floor_id);
+        *vis = if is_selected {
             Visibility::Visible
         } else {
             Visibility::Hidden

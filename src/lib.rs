@@ -16,6 +16,7 @@ mod cursor_pick;
 mod effects;
 mod enemies;
 mod floor_library_ui;
+mod floor_zip;
 mod gen3d;
 mod genfloor;
 mod geometry;

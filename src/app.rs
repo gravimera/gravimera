@@ -594,6 +594,10 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::model_library_ui::ModelLibraryExportDialogJob>();
     app.init_resource::<crate::model_library_ui::ModelLibraryImportDialogJob>();
     app.init_resource::<crate::floor_library_ui::FloorLibraryUiState>();
+    app.init_resource::<crate::floor_library_ui::FloorLibraryExportJob>();
+    app.init_resource::<crate::floor_library_ui::FloorLibraryImportJob>();
+    app.init_resource::<crate::floor_library_ui::FloorLibraryExportDialogJob>();
+    app.init_resource::<crate::floor_library_ui::FloorLibraryImportDialogJob>();
     app.init_resource::<crate::motion_ui::MotionAlgorithmUiState>();
     app.init_resource::<crate::meta_speak::MetaSpeakRuntime>();
     app.init_resource::<crate::workspace_ui::WorkspaceUiState>();
