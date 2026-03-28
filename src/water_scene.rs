@@ -86,7 +86,7 @@ fn ensure_main_camera_atmosphere(
             Atmosphere::earthlike(medium.clone()),
             settings,
             AtmosphereEnvironmentMapLight {
-                intensity: 0.3,
+                intensity: 0.15,
                 size: UVec2::new(128, 128),
                 ..default()
             },
