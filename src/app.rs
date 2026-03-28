@@ -590,8 +590,10 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
     app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();
     app.init_resource::<crate::model_library_ui::ModelLibraryExportJob>();
+    app.init_resource::<crate::model_library_ui::ModelLibraryExportGlbJob>();
     app.init_resource::<crate::model_library_ui::ModelLibraryImportJob>();
     app.init_resource::<crate::model_library_ui::ModelLibraryExportDialogJob>();
+    app.init_resource::<crate::model_library_ui::ModelLibraryExportGlbDialogJob>();
     app.init_resource::<crate::model_library_ui::ModelLibraryImportDialogJob>();
     app.init_resource::<crate::floor_library_ui::FloorLibraryUiState>();
     app.init_resource::<crate::floor_library_ui::FloorLibraryExportJob>();

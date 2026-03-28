@@ -681,6 +681,16 @@ struct PrefabDuplicateRequest {
 }
 
 #[derive(Deserialize)]
+struct PrefabsExportGlbRequest {
+    out_dir: String,
+    prefab_id_uuids: Vec<String>,
+    #[serde(default)]
+    fps: Option<u32>,
+    #[serde(default)]
+    move_units_per_sec: Option<f32>,
+}
+
+#[derive(Deserialize)]
 struct ModeRequest {
     mode: String,
 }
@@ -3194,10 +3204,16 @@ fn handle_genfloor_routes<
     match (msg.method.as_str(), msg.path.as_str()) {
         ("GET", "/v1/genfloor/status") => {
             let Some(floor_workshop) = genfloor_workshop.as_deref() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             let Some(job) = genfloor_job.as_deref() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
 
             let (prompt, status, error) = if mode
@@ -3246,10 +3262,16 @@ fn handle_genfloor_routes<
         }
         ("POST", "/v1/genfloor/new") => {
             let Some(floor_workshop) = genfloor_workshop.as_deref_mut() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             let Some(job) = genfloor_job.as_deref_mut() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             if job.running {
                 return Some(json_error(
@@ -3287,7 +3309,10 @@ fn handle_genfloor_routes<
         }
         ("POST", "/v1/genfloor/prompt") => {
             let Some(floor_workshop) = genfloor_workshop.as_deref_mut() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             let req: GenfloorPromptRequest = match serde_json::from_slice(&msg.body) {
                 Ok(v) => v,
@@ -3326,16 +3351,28 @@ fn handle_genfloor_routes<
             if !matches!(mode.get(), GameMode::Build)
                 || !matches!(build_scene.get(), BuildScene::FloorPreview)
             {
-                return Some(json_error(409, "Switch to Build Floor Preview scene first."));
+                return Some(json_error(
+                    409,
+                    "Switch to Build Floor Preview scene first.",
+                ));
             }
             let Some(workshop) = gen3d_workshop.as_deref_mut() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             let Some(floor_workshop) = genfloor_workshop.as_deref_mut() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             let Some(job) = genfloor_job.as_deref_mut() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             if job.running {
                 return Some(json_error(409, "GenFloor build is already running."));
@@ -3358,13 +3395,22 @@ fn handle_genfloor_routes<
         }
         ("POST", "/v1/genfloor/stop") => {
             let Some(workshop) = gen3d_workshop.as_deref_mut() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             let Some(floor_workshop) = genfloor_workshop.as_deref_mut() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             let Some(job) = genfloor_job.as_deref_mut() else {
-                return Some(json_error(501, "GenFloor is not available in this app mode."));
+                return Some(json_error(
+                    501,
+                    "GenFloor is not available in this app mode.",
+                ));
             };
             crate::genfloor::genfloor_cancel_ai_job(job, workshop);
             floor_workshop.status = workshop.status.clone();
@@ -3486,6 +3532,7 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"GET","path":"/v1/state"}),
                 serde_json::json!({"method":"GET","path":"/v1/prefabs"}),
                 serde_json::json!({"method":"POST","path":"/v1/prefabs/duplicate"}),
+                serde_json::json!({"method":"POST","path":"/v1/prefabs/export_glb"}),
                 serde_json::json!({"method":"GET","path":"/v1/realm_scene/active"}),
                 serde_json::json!({"method":"GET","path":"/v1/realm_scene/list"}),
                 serde_json::json!({"method":"POST","path":"/v1/realm_scene/create"}),
@@ -3603,6 +3650,72 @@ fn handle_request_main_thread<
                 "ok": true,
                 "src_prefab_id_uuid": uuid::Uuid::from_u128(src_prefab_id).to_string(),
                 "new_prefab_id_uuid": uuid::Uuid::from_u128(new_prefab_id).to_string(),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/prefabs/export_glb") => {
+            let req: PrefabsExportGlbRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let out_dir_str = req.out_dir.trim();
+            if out_dir_str.is_empty() {
+                return Some(json_error(400, "`out_dir` is required."));
+            }
+            let out_dir = std::path::PathBuf::from(out_dir_str);
+
+            if req.prefab_id_uuids.is_empty() {
+                return Some(json_error(400, "`prefab_id_uuids` is required."));
+            }
+
+            let mut prefab_ids: Vec<u128> = Vec::with_capacity(req.prefab_id_uuids.len());
+            for raw in &req.prefab_id_uuids {
+                let uuid = match uuid::Uuid::parse_str(raw.trim()) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        return Some(json_error(400, format!("Invalid prefab_id_uuid: {err}")))
+                    }
+                };
+                prefab_ids.push(uuid.as_u128());
+            }
+            prefab_ids.sort();
+            prefab_ids.dedup();
+
+            let mut options = crate::prefab_glb::PrefabGlbExportOptions::default();
+            if let Some(fps) = req.fps {
+                options.fps = fps;
+            }
+            if let Some(move_units_per_sec) = req.move_units_per_sec {
+                options.move_units_per_sec = move_units_per_sec;
+            }
+
+            let report = match crate::prefab_glb::export_prefabs_to_glb_dir(
+                &prefab_ids,
+                out_dir.as_path(),
+                library,
+                options,
+            ) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(409, err)),
+            };
+
+            let out_paths: Vec<String> = report
+                .out_paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect();
+
+            let body = serde_json::json!({
+                "ok": true,
+                "exported": report.exported,
+                "out_dir": out_dir.display().to_string(),
+                "out_paths": out_paths,
             })
             .to_string();
             Some(AutomationReply {

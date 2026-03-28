@@ -3400,6 +3400,7 @@ dependencies = [
  "bevy",
  "bevy_water",
  "emojis",
+ "gltf-json",
  "image",
  "json5",
  "ort",

@@ -268,6 +268,9 @@ impl Plugin for RenderedUiPlugin {
                 crate::model_library_ui::model_library_export_button_interactions
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::model_library_ui::model_library_export_glb_button_interactions
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::model_library_ui::model_library_manage_select_all_button_interactions
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_manage_select_none_button_interactions
@@ -284,6 +287,10 @@ impl Plugin for RenderedUiPlugin {
                 crate::model_library_ui::model_library_export_dialog_poll
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_export_job_poll
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_export_glb_dialog_poll
+                    .run_if(crate::automation::local_input_enabled),
+                crate::model_library_ui::model_library_export_glb_job_poll
                     .run_if(crate::automation::local_input_enabled),
                 crate::model_library_ui::model_library_import_dialog_poll
                     .run_if(crate::automation::local_input_enabled),

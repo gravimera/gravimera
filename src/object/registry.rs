@@ -456,7 +456,7 @@ pub(crate) struct ObjectDef {
     pub(crate) attack: Option<UnitAttackProfile>,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub(crate) struct ObjectLibrary {
     defs: HashMap<u128, ObjectDef>,
 }

@@ -143,6 +143,7 @@ pub(crate) struct ModelLibraryUiState {
     multi_selected_prefabs: HashSet<u128>,
     export_dialog_pending_ids: Vec<u128>,
     export_dialog_pending_realm: Option<String>,
+    export_glb_dialog_pending_ids: Vec<u128>,
     import_dialog_pending_realm: Option<String>,
     selected_prefab_id: Option<u128>,
     pending_preview: Option<u128>,
@@ -161,6 +162,20 @@ pub(crate) struct ModelLibraryExportJob {
 }
 
 impl Default for ModelLibraryExportJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct ModelLibraryExportGlbJob {
+    receiver:
+        Mutex<Option<mpsc::Receiver<Result<crate::prefab_glb::PrefabGlbExportReport, String>>>>,
+}
+
+impl Default for ModelLibraryExportGlbJob {
     fn default() -> Self {
         Self {
             receiver: Mutex::new(None),
@@ -188,6 +203,19 @@ pub(crate) struct ModelLibraryExportDialogJob {
 }
 
 impl Default for ModelLibraryExportDialogJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct ModelLibraryExportGlbDialogJob {
+    receiver: Mutex<Option<mpsc::Receiver<Option<std::path::PathBuf>>>>,
+}
+
+impl Default for ModelLibraryExportGlbDialogJob {
     fn default() -> Self {
         Self {
             receiver: Mutex::new(None),
@@ -225,6 +253,7 @@ impl Default for ModelLibraryUiState {
             multi_selected_prefabs: HashSet::new(),
             export_dialog_pending_ids: Vec::new(),
             export_dialog_pending_realm: None,
+            export_glb_dialog_pending_ids: Vec::new(),
             import_dialog_pending_realm: None,
             selected_prefab_id: None,
             pending_preview: None,
@@ -263,6 +292,7 @@ impl ModelLibraryUiState {
             self.multi_selected_prefabs.clear();
             self.export_dialog_pending_ids.clear();
             self.export_dialog_pending_realm = None;
+            self.export_glb_dialog_pending_ids.clear();
             self.import_dialog_pending_realm = None;
             self.manage_delete_modal_pending_realm = None;
             self.manage_delete_modal_pending_ids.clear();
@@ -387,6 +417,12 @@ pub(crate) struct ModelLibraryExportButton;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryExportButtonText;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryExportGlbButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryExportGlbButtonText;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryManageToggleButton;
@@ -631,8 +667,10 @@ pub(crate) fn setup_model_library_ui(
                 row.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
+                        flex_wrap: FlexWrap::Wrap,
                         align_items: AlignItems::Center,
                         column_gap: Val::Px(6.0),
+                        row_gap: Val::Px(6.0),
                         ..default()
                     },
                     BackgroundColor(Color::NONE),
@@ -659,6 +697,30 @@ pub(crate) fn setup_model_library_ui(
                                 },
                                 TextColor(Color::srgb(0.92, 0.92, 0.96)),
                                 ModelLibraryExportButtonText,
+                            ));
+                        });
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryExportGlbButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Export GLB"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ModelLibraryExportGlbButtonText,
                             ));
                         });
 
@@ -4466,6 +4528,93 @@ pub(crate) fn model_library_export_button_interactions(
     }
 }
 
+pub(crate) fn model_library_export_glb_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    mut state: ResMut<ModelLibraryUiState>,
+    export_job: Res<ModelLibraryExportGlbJob>,
+    export_dialog: Res<ModelLibraryExportGlbDialogJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ModelLibraryExportGlbButton>),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        && state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if let Ok(guard) = export_job.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Export GLB already running.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+                if let Ok(guard) = export_dialog.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Export GLB dialog already open.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+
+                if state.multi_selected_prefabs.is_empty() {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Select prefabs to export first.".to_string(),
+                        kind: UiToastKind::Warn,
+                        ttl_secs: 4.0,
+                    });
+                    continue;
+                }
+
+                let mut ids: Vec<u128> = state.multi_selected_prefabs.iter().copied().collect();
+                ids.sort();
+                ids.dedup();
+                state.export_glb_dialog_pending_ids = ids;
+
+                let (tx, rx) = mpsc::channel();
+                if let Ok(mut guard) = export_dialog.receiver.lock() {
+                    *guard = Some(rx);
+                }
+                toasts.write(UiToastCommand::Show {
+                    text: "Select export folder…".to_string(),
+                    kind: UiToastKind::Info,
+                    ttl_secs: 3.0,
+                });
+                std::thread::spawn(move || {
+                    let path = rfd::FileDialog::new().pick_folder();
+                    let _ = tx.send(path);
+                });
+            }
+        }
+    }
+}
+
 pub(crate) fn model_library_manage_delete_button_interactions(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
@@ -4674,6 +4823,49 @@ pub(crate) fn model_library_export_job_poll(
     }
 }
 
+pub(crate) fn model_library_export_glb_job_poll(
+    export_job: Res<ModelLibraryExportGlbJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = export_job.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    match receiver.try_recv() {
+        Ok(result) => {
+            *guard = None;
+            match result {
+                Ok(report) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: format!("Exported {} prefab(s) as GLB.", report.exported),
+                        kind: UiToastKind::Info,
+                        ttl_secs: 4.0,
+                    });
+                }
+                Err(err) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: err,
+                        kind: UiToastKind::Error,
+                        ttl_secs: 5.0,
+                    });
+                }
+            }
+        }
+        Err(mpsc::TryRecvError::Empty) => {}
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Export GLB failed: worker disconnected.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 5.0,
+            });
+        }
+    }
+}
+
 pub(crate) fn model_library_export_dialog_poll(
     mut state: ResMut<ModelLibraryUiState>,
     export_dialog: Res<ModelLibraryExportDialogJob>,
@@ -4742,6 +4934,83 @@ pub(crate) fn model_library_export_dialog_poll(
     });
     std::thread::spawn(move || {
         let result = crate::prefab_zip::export_prefab_packages_to_zip(&realm_id, &ids, &path);
+        let _ = tx.send(result);
+    });
+}
+
+pub(crate) fn model_library_export_glb_dialog_poll(
+    mut state: ResMut<ModelLibraryUiState>,
+    export_dialog: Res<ModelLibraryExportGlbDialogJob>,
+    export_job: Res<ModelLibraryExportGlbJob>,
+    library: Res<ObjectLibrary>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = export_dialog.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    let out_dir = match receiver.try_recv() {
+        Ok(path) => {
+            *guard = None;
+            path
+        }
+        Err(mpsc::TryRecvError::Empty) => return,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            state.export_glb_dialog_pending_ids.clear();
+            toasts.write(UiToastCommand::Show {
+                text: "Export GLB canceled: dialog failed.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 4.0,
+            });
+            return;
+        }
+    };
+
+    let Some(out_dir) = out_dir else {
+        state.export_glb_dialog_pending_ids.clear();
+        return;
+    };
+    if state.export_glb_dialog_pending_ids.is_empty() {
+        return;
+    }
+
+    let (tx, rx) = mpsc::channel();
+    if let Ok(mut job_guard) = export_job.receiver.lock() {
+        if job_guard.is_some() {
+            state.export_glb_dialog_pending_ids.clear();
+            toasts.write(UiToastCommand::Show {
+                text: "Export GLB already running.".to_string(),
+                kind: UiToastKind::Warn,
+                ttl_secs: 3.0,
+            });
+            return;
+        }
+        *job_guard = Some(rx);
+    }
+
+    let mut ids = state.export_glb_dialog_pending_ids.clone();
+    state.export_glb_dialog_pending_ids.clear();
+    ids.sort();
+    ids.dedup();
+    let library_snapshot = (*library).clone();
+
+    toasts.write(UiToastCommand::Show {
+        text: "Exporting prefabs as GLB…".to_string(),
+        kind: UiToastKind::Info,
+        ttl_secs: 3.0,
+    });
+    std::thread::spawn(move || {
+        let options = crate::prefab_glb::PrefabGlbExportOptions::default();
+        let result = crate::prefab_glb::export_prefabs_to_glb_dir(
+            &ids,
+            out_dir.as_path(),
+            &library_snapshot,
+            options,
+        );
         let _ = tx.send(result);
     });
 }
