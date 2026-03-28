@@ -4,8 +4,10 @@ This document describes the prefab package import/export workflow from the Prefa
 
 ## UI Workflow
 
-- **Import** is always available in the Prefabs panel header. It prompts for a zip file and imports any valid prefab packages into the active realm.
-- **Export** appears only when multi-select mode is enabled (toggle with `Shift`). It saves the selected prefab packages into a zip.
+- In normal mode, the Prefabs panel shows **Import** (and **Generate**) below the title. **Import** prompts for a zip file and imports any valid prefab packages into the active realm.
+- Click **Manage** to enter manage mode (multi-select). In manage mode the panel shows **Export** (and **Delete**) plus **All**/**None**.
+- In manage mode, select prefabs by clicking list items; `Shift`+click selects a contiguous range.
+- **Export** saves the selected prefab packages into a zip.
 - If no prefabs are selected when exporting, the UI shows a warning toast.
 
 ## Zip Layout

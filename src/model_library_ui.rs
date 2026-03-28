@@ -28,6 +28,7 @@ use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 
 const PANEL_Z_INDEX: i32 = 930;
 const PANEL_WIDTH_PX: f32 = 260.0;
+const PANEL_WIDTH_MANAGE_PX: f32 = 320.0;
 const DRAG_START_THRESHOLD_PX: f32 = 6.0;
 const PREFAB_PREVIEW_Z_INDEX: i32 = 1200;
 const PREFAB_PREVIEW_MODAL_Z_INDEX: i32 = PREFAB_PREVIEW_Z_INDEX + 20;
@@ -148,6 +149,9 @@ pub(crate) struct ModelLibraryUiState {
     preview: Option<ModelLibraryPrefabPreview>,
     delete_modal_prefab_id: Option<u128>,
     delete_modal_root: Option<Entity>,
+    manage_delete_modal_root: Option<Entity>,
+    manage_delete_modal_pending_realm: Option<String>,
+    manage_delete_modal_pending_ids: Vec<u128>,
     last_rebuilt_scene: Option<(String, String)>,
 }
 
@@ -227,6 +231,9 @@ impl Default for ModelLibraryUiState {
             preview: None,
             delete_modal_prefab_id: None,
             delete_modal_root: None,
+            manage_delete_modal_root: None,
+            manage_delete_modal_pending_realm: None,
+            manage_delete_modal_pending_ids: Vec::new(),
             last_rebuilt_scene: None,
         }
     }
@@ -257,6 +264,8 @@ impl ModelLibraryUiState {
             self.export_dialog_pending_ids.clear();
             self.export_dialog_pending_realm = None;
             self.import_dialog_pending_realm = None;
+            self.manage_delete_modal_pending_realm = None;
+            self.manage_delete_modal_pending_ids.clear();
         }
     }
 
@@ -380,6 +389,40 @@ pub(crate) struct ModelLibraryExportButton;
 pub(crate) struct ModelLibraryExportButtonText;
 
 #[derive(Component)]
+pub(crate) struct ModelLibraryManageToggleButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryManageToggleButtonText;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryNormalActionsRow;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryManageActionsRow;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryManageDeleteButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryManageDeleteButtonText;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryManageSelectAllButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryManageSelectNoneButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryMultiSelectIndicator {
+    pub(crate) model_id: u128,
+}
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryMultiSelectIndicatorDot {
+    pub(crate) model_id: u128,
+}
+
+#[derive(Component)]
 pub(crate) struct ModelLibrarySearchField;
 
 #[derive(Component)]
@@ -408,6 +451,15 @@ pub(crate) struct ModelLibraryPreviewDeleteConfirmButton;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryPreviewDeleteCancelButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryManageDeleteModalRoot;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryManageDeleteConfirmButton;
+
+#[derive(Component)]
+pub(crate) struct ModelLibraryManageDeleteCancelButton;
 
 #[derive(Component)]
 pub(crate) struct ModelLibraryPreviewInfoScrollPanel;
@@ -477,6 +529,106 @@ pub(crate) fn setup_model_library_ui(
                 ));
 
                 row.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(999.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.35)),
+                    BorderColor::all(Color::srgba(0.25, 0.95, 0.85, 0.90)),
+                    ModelLibraryManageToggleButton,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("Manage"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgba(0.25, 0.95, 0.85, 0.95)),
+                        ModelLibraryManageToggleButtonText,
+                    ));
+                });
+            });
+
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                ModelLibraryNormalActionsRow,
+            ))
+            .with_children(|buttons| {
+                buttons
+                    .spawn((
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                        ModelLibraryImportButton,
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Import"),
+                            TextFont {
+                                font_size: 14.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ModelLibraryImportButtonText,
+                        ));
+                    });
+
+                buttons
+                    .spawn((
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                        ModelLibraryGen3dButton,
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Generate"),
+                            TextFont {
+                                font_size: 14.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ModelLibraryGen3dButtonText,
+                        ));
+                    });
+            });
+
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::FlexStart,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                ModelLibraryManageActionsRow,
+            ))
+            .with_children(|row| {
+                row.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
@@ -492,31 +644,6 @@ pub(crate) fn setup_model_library_ui(
                             Node {
                                 padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
                                 border: UiRect::all(Val::Px(1.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
-                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                            ModelLibraryImportButton,
-                        ))
-                        .with_children(|b| {
-                            b.spawn((
-                                Text::new("Import"),
-                                TextFont {
-                                    font_size: 14.0,
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                ModelLibraryImportButtonText,
-                            ));
-                        });
-
-                    buttons
-                        .spawn((
-                            Button,
-                            Node {
-                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                                border: UiRect::all(Val::Px(1.0)),
-                                display: Display::None,
                                 ..default()
                             },
                             BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
@@ -545,17 +672,74 @@ pub(crate) fn setup_model_library_ui(
                             },
                             BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
                             BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                            ModelLibraryGen3dButton,
+                            ModelLibraryManageDeleteButton,
                         ))
                         .with_children(|b| {
                             b.spawn((
-                                Text::new("Generate"),
+                                Text::new("Delete"),
                                 TextFont {
                                     font_size: 14.0,
                                     ..default()
                                 },
                                 TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                ModelLibraryGen3dButtonText,
+                                ModelLibraryManageDeleteButtonText,
+                            ));
+                        });
+                });
+
+                row.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                ))
+                .with_children(|buttons| {
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryManageSelectAllButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("All"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ));
+                        });
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryManageSelectNoneButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("None"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
                             ));
                         });
                 });
@@ -715,81 +899,83 @@ pub(crate) fn model_library_update_visibility(
         state.preview_scrollbar_drag = None;
         state.multi_select_mode = false;
         state.multi_selected_prefabs.clear();
+        close_model_library_manage_delete_modal(&mut commands, &mut state);
         close_model_library_preview(&mut commands, &mut state);
     }
 }
 
-pub(crate) fn model_library_toggle_multi_select(
-    mode: Res<State<GameMode>>,
-    build_scene: Res<State<crate::types::BuildScene>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mut commands: Commands,
-    mut state: ResMut<ModelLibraryUiState>,
-) {
-    let visible = state.is_open()
-        && matches!(mode.get(), GameMode::Build)
-        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
-    if !visible || state.search_focused {
-        return;
-    }
-
-    let shift_pressed =
-        keys.just_pressed(KeyCode::ShiftLeft) || keys.just_pressed(KeyCode::ShiftRight);
-    if !shift_pressed {
-        return;
-    }
-
-    state.multi_select_mode = !state.multi_select_mode;
-    state.drag = None;
-    state.pending_preview = None;
-    if state.multi_select_mode {
-        state.multi_selected_prefabs.clear();
-        if let Some(selected) = state.selected_prefab_id {
-            state.multi_selected_prefabs.insert(selected);
-        }
-        if state.preview.is_some() {
-            close_model_library_preview(&mut commands, &mut state);
-        }
-    } else {
-        state.multi_selected_prefabs.clear();
-    }
-}
-
-pub(crate) fn model_library_update_import_export_button_display(
+pub(crate) fn model_library_update_manage_mode_ui(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
     state: Res<ModelLibraryUiState>,
-    mut buttons: Query<(
+    mut manage_text: Query<(&mut Text, &mut TextColor), With<ModelLibraryManageToggleButtonText>>,
+    mut rows: Query<(
         &mut Node,
-        Option<&ModelLibraryImportButton>,
-        Option<&ModelLibraryExportButton>,
+        Option<&ModelLibraryNormalActionsRow>,
+        Option<&ModelLibraryManageActionsRow>,
     )>,
 ) {
     let visible = state.is_open()
         && matches!(mode.get(), GameMode::Build)
         && matches!(build_scene.get(), crate::types::BuildScene::Realm);
 
-    let (show_import, show_export) = if visible {
-        (!state.multi_select_mode, state.multi_select_mode)
+    let manage_mode = visible && state.multi_select_mode;
+    let normal_mode = visible && !state.multi_select_mode;
+
+    for (mut node, is_normal, is_manage) in &mut rows {
+        if is_normal.is_some() {
+            node.display = if normal_mode {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+        if is_manage.is_some() {
+            node.display = if manage_mode {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+    }
+    for (mut text, mut color) in &mut manage_text {
+        let next = if state.multi_select_mode {
+            "Done"
+        } else {
+            "Manage"
+        };
+        if text.0 != next {
+            text.0 = next.to_string();
+        }
+
+        let next_color = if state.multi_select_mode {
+            Color::srgba(0.02, 0.02, 0.03, 0.95)
+        } else {
+            Color::srgba(0.25, 0.95, 0.85, 0.95)
+        };
+        if color.0 != next_color {
+            color.0 = next_color;
+        }
+    }
+}
+
+pub(crate) fn model_library_update_panel_width(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    state: Res<ModelLibraryUiState>,
+    mut roots: Query<&mut Node, With<ModelLibraryRoot>>,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
+    let width = if visible && state.multi_select_mode {
+        PANEL_WIDTH_MANAGE_PX
     } else {
-        (false, false)
+        PANEL_WIDTH_PX
     };
 
-    for (mut node, is_import, is_export) in &mut buttons {
-        if is_import.is_some() {
-            node.display = if show_import {
-                Display::Flex
-            } else {
-                Display::None
-            };
-        }
-        if is_export.is_some() {
-            node.display = if show_export {
-                Display::Flex
-            } else {
-                Display::None
-            };
-        }
+    for mut node in &mut roots {
+        node.width = Val::Px(width);
     }
 }
 
@@ -1380,6 +1566,7 @@ pub(crate) fn model_library_rebuild_list_ui(
                     padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
                     column_gap: Val::Px(10.0),
                     ..default()
@@ -1410,114 +1597,161 @@ pub(crate) fn model_library_rebuild_list_ui(
 
                 b.spawn((
                     Node {
-                        width: Val::Px(42.0),
-                        height: Val::Px(42.0),
-                        border: UiRect::all(Val::Px(1.0)),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
+                        flex_grow: 1.0,
+                        flex_basis: Val::Px(0.0),
+                        min_width: Val::Px(0.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.75)),
-                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    BackgroundColor(Color::NONE),
                 ))
-                .with_children(|thumb| {
-                    if let Some(handle) = row.thumbnail.as_ref() {
-                        thumb.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                            ImageNode::new(handle.clone()).with_mode(NodeImageMode::Stretch),
-                        ));
-                    }
-
-                    thumb
-                        .spawn((
-                            Node {
-                                position_type: PositionType::Absolute,
-                                right: Val::Px(3.0),
-                                top: Val::Px(3.0),
-                                width: Val::Px(14.0),
-                                height: Val::Px(14.0),
-                                border: UiRect::all(Val::Px(2.0)),
-                                border_radius: BorderRadius::all(Val::Px(999.0)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-                            BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
-                            UiTransform::default(),
-                            Visibility::Hidden,
-                            ModelLibraryGen3dThumbnailIndicator {
-                                prefab_id: row.prefab_id,
-                                kind: ModelLibraryGen3dIndicatorKind::Working,
-                            },
-                        ))
-                        .with_children(|spinner| {
-                            spinner.spawn((
-                                Text::new("↻"),
-                                TextFont {
-                                    font_size: 12.0,
+                .with_children(|left| {
+                    left.spawn((
+                        Node {
+                            width: Val::Px(42.0),
+                            height: Val::Px(42.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.75)),
+                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ))
+                    .with_children(|thumb| {
+                        if let Some(handle) = row.thumbnail.as_ref() {
+                            thumb.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Percent(100.0),
                                     ..default()
                                 },
-                                TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                                ImageNode::new(handle.clone()).with_mode(NodeImageMode::Stretch),
                             ));
-                        });
+                        }
 
-                    thumb
-                        .spawn((
-                            Node {
-                                position_type: PositionType::Absolute,
-                                right: Val::Px(3.0),
-                                top: Val::Px(3.0),
-                                width: Val::Px(14.0),
-                                height: Val::Px(14.0),
-                                border: UiRect::all(Val::Px(2.0)),
-                                border_radius: BorderRadius::all(Val::Px(999.0)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-                            BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
-                            UiTransform::default(),
-                            Visibility::Hidden,
-                            ModelLibraryGen3dThumbnailIndicator {
-                                prefab_id: row.prefab_id,
-                                kind: ModelLibraryGen3dIndicatorKind::Waiting,
-                            },
-                        ))
-                        .with_children(|spinner| {
-                            spinner.spawn((
-                                Text::new("↻"),
-                                TextFont {
-                                    font_size: 12.0,
+                        thumb
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(3.0),
+                                    top: Val::Px(3.0),
+                                    width: Val::Px(14.0),
+                                    height: Val::Px(14.0),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(Val::Px(999.0)),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
                                     ..default()
                                 },
-                                TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
-                            ));
-                        });
-                });
+                                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                                BorderColor::all(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                                UiTransform::default(),
+                                Visibility::Hidden,
+                                ModelLibraryGen3dThumbnailIndicator {
+                                    prefab_id: row.prefab_id,
+                                    kind: ModelLibraryGen3dIndicatorKind::Working,
+                                },
+                            ))
+                            .with_children(|spinner| {
+                                spinner.spawn((
+                                    Text::new("↻"),
+                                    TextFont {
+                                        font_size: 12.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgba(0.30, 0.97, 0.45, 0.95)),
+                                ));
+                            });
 
-                b.spawn((
-                    Text::new(prefix_text),
-                    TextFont {
-                        font_size: 14.0,
-                        ..default()
-                    },
-                    TextColor(prefix_color),
-                    ModelLibraryPrefabLabelText {
-                        prefab_id: row.prefab_id,
-                    },
-                ))
-                .with_children(|label| {
-                    label.spawn((
-                        TextSpan::new(row.display_name),
+                        thumb
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(3.0),
+                                    top: Val::Px(3.0),
+                                    width: Val::Px(14.0),
+                                    height: Val::Px(14.0),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(Val::Px(999.0)),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                                BorderColor::all(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                                UiTransform::default(),
+                                Visibility::Hidden,
+                                ModelLibraryGen3dThumbnailIndicator {
+                                    prefab_id: row.prefab_id,
+                                    kind: ModelLibraryGen3dIndicatorKind::Waiting,
+                                },
+                            ))
+                            .with_children(|spinner| {
+                                spinner.spawn((
+                                    Text::new("↻"),
+                                    TextFont {
+                                        font_size: 12.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgba(0.95, 0.85, 0.25, 0.95)),
+                                ));
+                            });
+                    });
+
+                    left.spawn((
+                        Text::new(prefix_text),
                         TextFont {
                             font_size: 14.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                        TextColor(prefix_color),
+                        ModelLibraryPrefabLabelText {
+                            prefab_id: row.prefab_id,
+                        },
+                    ))
+                    .with_children(|label| {
+                        label.spawn((
+                            TextSpan::new(row.display_name),
+                            TextFont {
+                                font_size: 14.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                        ));
+                    });
+                });
+
+                b.spawn((
+                    Node {
+                        width: Val::Px(18.0),
+                        height: Val::Px(18.0),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(999.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        display: Display::None,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ModelLibraryMultiSelectIndicator {
+                        model_id: row.prefab_id,
+                    },
+                ))
+                .with_children(|radio| {
+                    radio.spawn((
+                        Node {
+                            width: Val::Px(8.0),
+                            height: Val::Px(8.0),
+                            border_radius: BorderRadius::all(Val::Px(999.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.90)),
+                        Visibility::Hidden,
+                        ModelLibraryMultiSelectIndicatorDot {
+                            model_id: row.prefab_id,
+                        },
                     ));
                 });
             });
@@ -1765,6 +1999,7 @@ pub(crate) fn model_library_sync_gen3d_placeholders(
 
 pub(crate) fn model_library_gen3d_placeholder_item_interactions(
     mode: Res<State<GameMode>>,
+    state: Res<ModelLibraryUiState>,
     mut gen3d: ModelLibraryGen3dSessionOpener,
     mut buttons: Query<
         (
@@ -1790,6 +2025,9 @@ pub(crate) fn model_library_gen3d_placeholder_item_interactions(
                 *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
                 *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
 
+                if state.multi_select_mode {
+                    continue;
+                }
                 if !matches!(mode.get(), GameMode::Build) {
                     continue;
                 }
@@ -2084,6 +2322,151 @@ fn open_model_library_delete_modal(
     state.delete_modal_root = Some(root);
 }
 
+fn close_model_library_manage_delete_modal(
+    commands: &mut Commands,
+    state: &mut ModelLibraryUiState,
+) {
+    if let Some(root) = state.manage_delete_modal_root.take() {
+        commands.entity(root).try_despawn();
+    }
+    state.manage_delete_modal_pending_realm = None;
+    state.manage_delete_modal_pending_ids.clear();
+}
+
+fn open_model_library_manage_delete_modal(
+    commands: &mut Commands,
+    state: &mut ModelLibraryUiState,
+    realm_id: String,
+    prefab_ids: Vec<u128>,
+) {
+    if state.manage_delete_modal_root.is_some() {
+        return;
+    }
+
+    let count = prefab_ids.len();
+    let title = if count == 1 {
+        "Delete selected prefab?".to_string()
+    } else {
+        format!("Delete {count} selected prefabs?")
+    };
+
+    let root = commands
+        .spawn((
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            ZIndex(PREFAB_PREVIEW_MODAL_Z_INDEX),
+            ModelLibraryManageDeleteModalRoot,
+        ))
+        .with_children(|overlay| {
+            overlay
+                .spawn((
+                    Node {
+                        width: Val::Px(460.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        padding: UiRect::all(Val::Px(14.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.96)),
+                    BorderColor::all(Color::srgba(0.35, 0.35, 0.40, 0.85)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new(title),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.95, 0.95, 0.97)),
+                    ));
+
+                    panel.spawn((
+                        Text::new(
+                            "This deletes prefab files from disk. Existing scene instances remain.",
+                        ),
+                        TextFont {
+                            font_size: 13.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.86, 0.86, 0.90)),
+                    ));
+
+                    panel
+                        .spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::FlexEnd,
+                                column_gap: Val::Px(8.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                        ))
+                        .with_children(|row| {
+                            row.spawn((
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.25, 0.05, 0.05, 0.92)),
+                                BorderColor::all(Color::srgba(0.80, 0.25, 0.25, 0.90)),
+                                ModelLibraryManageDeleteConfirmButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Confirm Delete"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.98, 0.90, 0.90)),
+                                ));
+                            });
+
+                            row.spawn((
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.85)),
+                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75)),
+                                ModelLibraryManageDeleteCancelButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Cancel"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ));
+                            });
+                        });
+                });
+        })
+        .id();
+
+    state.manage_delete_modal_root = Some(root);
+    state.manage_delete_modal_pending_realm = Some(realm_id);
+    state.manage_delete_modal_pending_ids = prefab_ids;
+}
+
 fn close_model_library_preview(commands: &mut Commands, state: &mut ModelLibraryUiState) {
     close_model_library_delete_modal(commands, state);
     let Some(preview) = state.preview.take() else {
@@ -2278,6 +2661,10 @@ pub(crate) fn model_library_open_preview_panel(
         return;
     }
     if !state.is_open() {
+        return;
+    }
+    if state.multi_select_mode {
+        state.pending_preview = None;
         return;
     }
 
@@ -3696,6 +4083,158 @@ pub(crate) fn model_library_preview_info_scrollbar_drag(
     scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
 }
 
+pub(crate) fn model_library_manage_toggle_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    mut commands: Commands,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ModelLibraryManageToggleButton>),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm);
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        let done = state.multi_select_mode;
+        match *interaction {
+            Interaction::None => {
+                if done {
+                    *bg = BackgroundColor(Color::srgba(0.25, 0.95, 0.85, 0.78));
+                    *border = BorderColor::all(Color::srgba(0.25, 0.95, 0.85, 0.95));
+                } else {
+                    *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.35));
+                    *border = BorderColor::all(Color::srgba(0.25, 0.95, 0.85, 0.90));
+                }
+            }
+            Interaction::Hovered => {
+                if done {
+                    *bg = BackgroundColor(Color::srgba(0.30, 0.97, 0.87, 0.86));
+                    *border = BorderColor::all(Color::srgba(0.30, 0.97, 0.87, 0.98));
+                } else {
+                    *bg = BackgroundColor(Color::srgba(0.04, 0.08, 0.08, 0.55));
+                    *border = BorderColor::all(Color::srgba(0.30, 0.97, 0.87, 0.95));
+                }
+            }
+            Interaction::Pressed => {
+                if done {
+                    *bg = BackgroundColor(Color::srgba(0.20, 0.85, 0.78, 0.90));
+                    *border = BorderColor::all(Color::srgba(0.30, 0.97, 0.87, 0.98));
+                } else {
+                    *bg = BackgroundColor(Color::srgba(0.06, 0.12, 0.12, 0.75));
+                    *border = BorderColor::all(Color::srgba(0.30, 0.97, 0.87, 0.95));
+                }
+
+                state.search_focused = false;
+                state.drag = None;
+                state.pending_preview = None;
+
+                close_model_library_manage_delete_modal(&mut commands, &mut state);
+
+                let next_manage_mode = !state.multi_select_mode;
+                state.multi_select_mode = next_manage_mode;
+                if next_manage_mode {
+                    state.multi_selected_prefabs.clear();
+                    if let Some(selected) = state.selected_prefab_id {
+                        state.multi_selected_prefabs.insert(selected);
+                    }
+                    close_model_library_preview(&mut commands, &mut state);
+                } else {
+                    state.multi_selected_prefabs.clear();
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn model_library_manage_select_all_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Changed<Interaction>,
+            With<ModelLibraryManageSelectAllButton>,
+        ),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        && state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                state.multi_selected_prefabs = state.listed_prefabs.iter().copied().collect();
+                if state.selected_prefab_id.is_none() {
+                    state.selected_prefab_id = state.listed_prefabs.first().copied();
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn model_library_manage_select_none_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Changed<Interaction>,
+            With<ModelLibraryManageSelectNoneButton>,
+        ),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        && state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                state.multi_selected_prefabs.clear();
+            }
+        }
+    }
+}
+
 pub(crate) fn model_library_gen3d_button_interactions(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<crate::types::BuildScene>>,
@@ -3924,6 +4463,171 @@ pub(crate) fn model_library_export_button_interactions(
                 });
             }
         }
+    }
+}
+
+pub(crate) fn model_library_manage_delete_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<crate::types::BuildScene>>,
+    env: ModelLibraryEnv,
+    mut commands: Commands,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ModelLibraryManageDeleteButton>),
+    >,
+) {
+    let visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), crate::types::BuildScene::Realm)
+        && state.multi_select_mode;
+    if !visible {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if state.manage_delete_modal_root.is_some() {
+                    continue;
+                }
+                if state.multi_selected_prefabs.is_empty() {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Select prefabs to delete first.".to_string(),
+                        kind: UiToastKind::Warn,
+                        ttl_secs: 4.0,
+                    });
+                    continue;
+                }
+
+                let mut ids: Vec<u128> = state.multi_selected_prefabs.iter().copied().collect();
+                ids.sort();
+                ids.dedup();
+                open_model_library_manage_delete_modal(
+                    &mut commands,
+                    &mut state,
+                    env.active.realm_id.clone(),
+                    ids,
+                );
+            }
+        }
+    }
+}
+
+pub(crate) fn model_library_manage_delete_modal_interactions(
+    mut commands: Commands,
+    env: ModelLibraryEnv,
+    mut state: ResMut<ModelLibraryUiState>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut confirm: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<ModelLibraryManageDeleteConfirmButton>,
+        ),
+    >,
+    mut cancel: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<ModelLibraryManageDeleteCancelButton>,
+        ),
+    >,
+) {
+    if state.manage_delete_modal_root.is_none() {
+        return;
+    }
+
+    for interaction in &mut cancel {
+        if *interaction == Interaction::Pressed {
+            close_model_library_manage_delete_modal(&mut commands, &mut state);
+            return;
+        }
+    }
+
+    for interaction in &mut confirm {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        if env.config.automation_enabled && env.config.automation_monitor_mode {
+            close_model_library_manage_delete_modal(&mut commands, &mut state);
+            break;
+        }
+
+        let realm_id = state
+            .manage_delete_modal_pending_realm
+            .clone()
+            .unwrap_or_else(|| env.active.realm_id.clone());
+        let ids = state.manage_delete_modal_pending_ids.clone();
+
+        let mut deleted = 0usize;
+        let mut failed = 0usize;
+        for prefab_id in &ids {
+            match crate::realm_prefab_packages::delete_realm_prefab_package(&realm_id, *prefab_id) {
+                Ok(_) => deleted += 1,
+                Err(err) => {
+                    failed += 1;
+                    warn!("{err}");
+                }
+            }
+        }
+
+        if deleted > 0 {
+            state.mark_models_dirty();
+        }
+        state.multi_selected_prefabs.clear();
+        state.selected_prefab_id = None;
+        state.pending_preview = None;
+        close_model_library_preview(&mut commands, &mut state);
+
+        close_model_library_manage_delete_modal(&mut commands, &mut state);
+
+        if failed == 0 {
+            toasts.write(UiToastCommand::Show {
+                text: format!("Deleted {} prefab(s).", deleted),
+                kind: UiToastKind::Info,
+                ttl_secs: 4.0,
+            });
+        } else if deleted > 0 {
+            toasts.write(UiToastCommand::Show {
+                text: format!("Deleted {}, failed {}.", deleted, failed),
+                kind: UiToastKind::Warn,
+                ttl_secs: 5.0,
+            });
+        } else {
+            toasts.write(UiToastCommand::Show {
+                text: "Delete failed.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 5.0,
+            });
+        }
+        break;
+    }
+}
+
+pub(crate) fn model_library_manage_delete_modal_close_on_escape(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut state: ResMut<ModelLibraryUiState>,
+) {
+    if state.manage_delete_modal_root.is_none() {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        close_model_library_manage_delete_modal(&mut commands, &mut state);
     }
 }
 
@@ -4160,6 +4864,7 @@ pub(crate) fn model_library_import_job_poll(
 }
 
 pub(crate) fn model_library_item_button_interactions(
+    keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<ModelLibraryUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut buttons: Query<(&Interaction, &ModelLibraryItemButton), Changed<Interaction>>,
@@ -4174,7 +4879,30 @@ pub(crate) fn model_library_item_button_interactions(
         }
 
         if state.multi_select_mode {
-            if state.multi_selected_prefabs.contains(&button.model_id) {
+            state.drag = None;
+            state.pending_preview = None;
+
+            let shift_pressed =
+                keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            if shift_pressed {
+                let anchor = state.selected_prefab_id;
+                let clicked = button.model_id;
+                if let Some(anchor) = anchor {
+                    let anchor_index = state.listed_prefabs.iter().position(|id| *id == anchor);
+                    let clicked_index = state.listed_prefabs.iter().position(|id| *id == clicked);
+                    if let (Some(a), Some(b)) = (anchor_index, clicked_index) {
+                        let (start, end) = if a <= b { (a, b) } else { (b, a) };
+                        for idx in start..=end {
+                            let prefab_id = state.listed_prefabs[idx];
+                            state.multi_selected_prefabs.insert(prefab_id);
+                        }
+                    } else {
+                        state.multi_selected_prefabs.insert(clicked);
+                    }
+                } else {
+                    state.multi_selected_prefabs.insert(clicked);
+                }
+            } else if state.multi_selected_prefabs.contains(&button.model_id) {
                 state.multi_selected_prefabs.remove(&button.model_id);
             } else {
                 state.multi_selected_prefabs.insert(button.model_id);
@@ -4213,6 +4941,18 @@ pub(crate) fn model_library_update_list_item_styles(
         With<ModelLibraryListItem>,
     >,
     mut marks: Query<(Ref<ModelLibrarySelectionMark>, &mut Visibility)>,
+    mut radios: Query<
+        (
+            Ref<ModelLibraryMultiSelectIndicator>,
+            &mut Node,
+            &mut BorderColor,
+        ),
+        Without<ModelLibraryListItem>,
+    >,
+    mut dots: Query<
+        (Ref<ModelLibraryMultiSelectIndicatorDot>, &mut Visibility),
+        Without<ModelLibrarySelectionMark>,
+    >,
 ) {
     let selected_id = state.selected_prefab_id();
     let mut multi_ids: Vec<u128> = if state.multi_select_mode {
@@ -4301,6 +5041,40 @@ pub(crate) fn model_library_update_list_item_styles(
         } else {
             selected_id == Some(mark.model_id)
         };
+        *vis = if is_selected {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    for (radio, mut node, mut border) in &mut radios {
+        if !selection_changed && !radio.is_added() {
+            continue;
+        }
+
+        node.display = if state.multi_select_mode {
+            Display::Flex
+        } else {
+            Display::None
+        };
+
+        let is_selected =
+            state.multi_select_mode && state.multi_selected_prefabs.contains(&radio.model_id);
+        *border = BorderColor::all(if is_selected {
+            Color::srgba(0.25, 0.95, 0.85, 0.85)
+        } else {
+            Color::srgba(0.25, 0.25, 0.30, 0.65)
+        });
+    }
+
+    for (dot, mut vis) in &mut dots {
+        if !selection_changed && !dot.is_added() {
+            continue;
+        }
+
+        let is_selected =
+            state.multi_select_mode && state.multi_selected_prefabs.contains(&dot.model_id);
         *vis = if is_selected {
             Visibility::Inherited
         } else {

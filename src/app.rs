@@ -1,6 +1,5 @@
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::asset::AssetPlugin;
-use bevy::ecs::message::MessageWriter;
 use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
 #[cfg(target_os = "macos")]
@@ -47,12 +46,11 @@ struct RenderedExitAfter {
 
 fn rendered_exit_after_timer(
     time: Res<Time<bevy::time::Real>>,
-    mut exit: MessageWriter<AppExit>,
     mut exit_after: ResMut<RenderedExitAfter>,
 ) {
     exit_after.timer.tick(time.delta());
     if exit_after.timer.just_finished() {
-        exit.write(AppExit::Success);
+        std::process::exit(0);
     }
 }
 
