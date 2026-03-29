@@ -2589,6 +2589,19 @@ pub(crate) fn gen3d_update_ui_text(
     } else {
         format!("in {total_input_tokens} out {total_output_tokens}")
     };
+    let pipeline_status = job
+        .pipeline_progress()
+        .map(|progress| {
+            format!(
+                "{}/{} | {}",
+                progress.current, progress.total, progress.label
+            )
+        })
+        .unwrap_or_else(|| "—".to_string());
+    let reuse_counts = job.reuse_counts();
+    let task_counts_summary = job
+        .active_parallel_task_counts()
+        .map(format_parallel_task_counts);
 
     let mut step_status = "—".to_string();
     if let Some(active) = workshop.status_log.active.as_ref() {
@@ -2597,7 +2610,11 @@ pub(crate) fn gen3d_update_ui_text(
             .status_log
             .active_elapsed()
             .unwrap_or_else(|| std::time::Duration::from_secs(0));
-        step_status = format!("{step} (running {})", format_duration(elapsed));
+        if let Some(tasks) = task_counts_summary.as_deref() {
+            step_status = format!("{step} ({tasks}; running {})", format_duration(elapsed));
+        } else {
+            step_status = format!("{step} (running {})", format_duration(elapsed));
+        }
     } else if let Some(last) = workshop.status_log.entries.last() {
         let step = truncate_ellipsis(last.step.as_str(), 36);
         let result = truncate_ellipsis(last.result.as_str(), 26);
@@ -2617,10 +2634,14 @@ pub(crate) fn gen3d_update_ui_text(
         "State: {state} | Prefab: {prefab_status}\n\
 	Draft: comps {components} | parts {parts} | motion {motions}\n\
 	Run: attempt {} | step {} | time {run_time}\n\
+	Pipeline: {pipeline_status}\n\
+	Reuse: copied {} | mirrored {}\n\
 	Tokens: run {run_tokens_summary} | total {total_tokens_summary}\n\
 	Step: {step_status}",
         job.attempt() + 1,
         job.step() + 1,
+        reuse_counts.copied,
+        reuse_counts.mirrored,
     );
     {
         let mut status = texts.p0();
@@ -2659,13 +2680,24 @@ pub(crate) fn gen3d_update_ui_text(
                 .status_log
                 .active_elapsed()
                 .unwrap_or_else(|| std::time::Duration::from_secs(0));
-            logs_text.push_str(&format!(
-                "[{:03}] {} — {} → running… ({})\n",
-                active.seq,
-                active.step.trim(),
-                active.why.trim(),
-                format_duration(elapsed)
-            ));
+            if let Some(tasks) = task_counts_summary.as_deref() {
+                logs_text.push_str(&format!(
+                    "[{:03}] {} — {} | {} → running… ({})\n",
+                    active.seq,
+                    active.step.trim(),
+                    active.why.trim(),
+                    tasks,
+                    format_duration(elapsed)
+                ));
+            } else {
+                logs_text.push_str(&format!(
+                    "[{:03}] {} — {} → running… ({})\n",
+                    active.seq,
+                    active.step.trim(),
+                    active.why.trim(),
+                    format_duration(elapsed)
+                ));
+            }
         }
     }
     {
@@ -2792,6 +2824,13 @@ fn format_duration_ms(ms: u128) -> String {
     format_duration(std::time::Duration::from_millis(
         ms.min(u128::from(u64::MAX)) as u64,
     ))
+}
+
+fn format_parallel_task_counts(counts: crate::gen3d::ai::Gen3dParallelTaskCounts) -> String {
+    format!(
+        "tasks: running {} | queued {} | total {}",
+        counts.running, counts.queued, counts.total
+    )
 }
 
 fn format_duration(d: std::time::Duration) -> String {

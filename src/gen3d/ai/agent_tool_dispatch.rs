@@ -5099,15 +5099,39 @@ pub(super) fn execute_tool_call(
 
             let mut outcomes_json: Vec<serde_json::Value> = Vec::new();
             const MAX_OUTCOMES: usize = 24;
+            let copied_targets = report
+                .outcomes
+                .iter()
+                .filter(|outcome| {
+                    outcome.alignment_used
+                        != Some(super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX)
+                })
+                .count();
+            let mirrored_targets = report
+                .outcomes
+                .iter()
+                .filter(|outcome| {
+                    outcome.alignment_used
+                        == Some(super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX)
+                })
+                .count();
             for outcome in report.outcomes.iter().take(MAX_OUTCOMES) {
                 let mode = match outcome.mode_used {
                     super::copy_component::Gen3dCopyMode::Detached => "detached",
                     super::copy_component::Gen3dCopyMode::Linked => "linked",
                 };
+                let alignment = match outcome
+                    .alignment_used
+                    .unwrap_or(super::copy_component::Gen3dCopyAlignmentMode::Rotation)
+                {
+                    super::copy_component::Gen3dCopyAlignmentMode::Rotation => "rotation",
+                    super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX => "mirror_mount_x",
+                };
                 outcomes_json.push(serde_json::json!({
                     "source": outcome.source_component_name.as_str(),
                     "target": outcome.target_component_name.as_str(),
                     "mode": mode,
+                    "alignment": alignment,
                 }));
             }
             let outcomes_omitted = report.outcomes.len().saturating_sub(MAX_OUTCOMES);
@@ -5119,6 +5143,8 @@ pub(super) fn execute_tool_call(
                 "reuse_groups_total": reuse_groups_total,
                 "component_copies_applied": report.component_copies_applied,
                 "subtree_copies_applied": report.subtree_copies_applied,
+                "copied_targets": copied_targets,
+                "mirrored_targets": mirrored_targets,
                 "targets_skipped_already_generated": report.targets_skipped_already_generated,
                 "subtrees_skipped_partially_generated": report.subtrees_skipped_partially_generated,
                 "preflight_mismatches": report.preflight_mismatches,
@@ -5456,6 +5482,10 @@ pub(super) fn execute_tool_call(
                         super::copy_component::Gen3dCopyMode::Detached => "detached",
                         super::copy_component::Gen3dCopyMode::Linked => "linked",
                     },
+                    "alignment": match alignment {
+                        super::copy_component::Gen3dCopyAlignmentMode::Rotation => "rotation",
+                        super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX => "mirror_mount_x",
+                    },
                 }));
             }
 
@@ -5722,6 +5752,10 @@ pub(super) fn execute_tool_call(
                         "mode": match outcome.mode_used {
                             super::copy_component::Gen3dCopyMode::Detached => "detached",
                             super::copy_component::Gen3dCopyMode::Linked => "linked",
+                        },
+                        "alignment": match alignment {
+                            super::copy_component::Gen3dCopyAlignmentMode::Rotation => "rotation",
+                            super::copy_component::Gen3dCopyAlignmentMode::MirrorMountX => "mirror_mount_x",
                         },
                     }));
                 }

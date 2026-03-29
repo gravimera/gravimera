@@ -61,6 +61,7 @@ pub(super) struct Gen3dCopyComponentOutcome {
     pub(super) source_component_name: String,
     pub(super) target_component_name: String,
     pub(super) mode_used: Gen3dCopyMode,
+    pub(super) alignment_used: Option<Gen3dCopyAlignmentMode>,
 }
 
 fn is_attachment_object_ref(part: &ObjectPartDef) -> bool {
@@ -509,6 +510,7 @@ pub(super) fn copy_component_into(
         source_component_name: source_name,
         target_component_name: target_name,
         mode_used,
+        alignment_used: Some(alignment),
     })
 }
 
@@ -598,6 +600,7 @@ pub(super) fn detach_component_copy(
         source_component_name: source_name,
         target_component_name: target_name,
         mode_used: Gen3dCopyMode::Detached,
+        alignment_used: None,
     })
 }
 

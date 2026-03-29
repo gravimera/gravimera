@@ -28,7 +28,7 @@ cp config.example.toml ~/.gravimera/config.toml
 By default, each Gen3D run writes artifacts under:
 
 - `<root_dir>/cache/gen3d/<run_id>/` (default `<root_dir>` is `~/.gravimera/`)
-  - `attempt_<n>/pass_<m>/...` (per-pass artifacts)
+  - `attempt_<n>/steps/step_####/...` (per-tool-call artifacts in pipeline order)
   - `info_store_v1/` (KV + events + blobs metadata)
 
 ## Reference images
@@ -48,9 +48,9 @@ including:
 
 DraftOps-specific artifacts:
 
-- `attempt_*/pass_*/draft_ops_suggested_last.json` — latest `llm_generate_draft_ops_v1` suggestion
+- `attempt_*/steps/step_*/draft_ops_suggested_last.json` — latest `llm_generate_draft_ops_v1` suggestion
   payload.
-- `attempt_*/pass_*/apply_draft_ops_last.json` — latest `apply_draft_ops_v1` result (`diff_summary`,
+- `attempt_*/steps/step_*/apply_draft_ops_last.json` — latest `apply_draft_ops_v1` result (`diff_summary`,
   `rejected_ops`, etc).
 
 ## Orchestration
@@ -72,6 +72,19 @@ Config note:
 
 - Legacy `[gen3d].orchestrator = "pipeline"` is accepted but ignored.
 - `[gen3d].orchestrator = "agent"` is rejected (agent-step orchestrator removed).
+
+## Status panel
+
+The left-side Gen3D Status panel shows a compact run summary plus a scrolling step log.
+
+- Summary:
+  - `Pipeline: current/total | label` shows the current user-facing pipeline step for the active route
+    (create, preserve edit, optional review).
+  - `Reuse: copied X | mirrored Y` counts successful reuse operations from actual tool results.
+- Log:
+  - Active component and motion batch lines include live task counts:
+    `tasks: running X | queued Y | total Z`
+  - Finished batch lines keep the total task count in the result summary.
 
 ## DraftOps-first primitive editing (seeded edits)
 

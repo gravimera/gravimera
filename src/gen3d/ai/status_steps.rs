@@ -133,6 +133,10 @@ fn summarize_tool_error(err: Option<&str>) -> String {
     }
 }
 
+fn summarize_batch_task_counts(total: usize) -> Option<String> {
+    (total > 0).then(|| format!("tasks: running 0 | queued 0 | total {total}"))
+}
+
 pub(super) fn log_tool_call_started(workshop: &mut Gen3dWorkshop, call: &Gen3dToolCallJsonV1) {
     let label = tool_step_label(call.tool_id.as_str(), Some(call));
     let why = tool_step_why(call.tool_id.as_str(), Some(call));
@@ -186,8 +190,18 @@ pub(super) fn log_tool_call_finished(
                     .iter()
                     .filter(|c| c.actual_size.is_some())
                     .count();
+                let batch_total = result
+                    .result
+                    .as_ref()
+                    .and_then(|v| v.get("requested"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
                 if total > 0 {
-                    format!("OK (generated: {generated}/{total})")
+                    if let Some(tasks) = summarize_batch_task_counts(batch_total) {
+                        format!("OK (generated: {generated}/{total}; {tasks})")
+                    } else {
+                        format!("OK (generated: {generated}/{total})")
+                    }
                 } else {
                     "OK".into()
                 }
@@ -319,7 +333,32 @@ pub(super) fn log_tool_call_finished(
                     }
                 }
             }
-            TOOL_ID_LLM_GENERATE_MOTION | TOOL_ID_LLM_GENERATE_MOTIONS => "OK".into(),
+            TOOL_ID_LLM_GENERATE_MOTION => "OK".into(),
+            TOOL_ID_LLM_GENERATE_MOTIONS => {
+                let total = result
+                    .result
+                    .as_ref()
+                    .and_then(|v| v.get("requested"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                let succeeded = result
+                    .result
+                    .as_ref()
+                    .and_then(|v| v.get("succeeded"))
+                    .map(|value| match value {
+                        serde_json::Value::Array(items) => items.len(),
+                        serde_json::Value::Number(value) => value.as_u64().unwrap_or(0) as usize,
+                        _ => 0,
+                    })
+                    .unwrap_or(0);
+                if total > 0 {
+                    format!(
+                        "OK (channels: {succeeded}/{total}; tasks: running 0 | queued 0 | total {total})"
+                    )
+                } else {
+                    "OK".into()
+                }
+            }
             TOOL_ID_GET_PLAN_TEMPLATE | TOOL_ID_LLM_GENERATE_PLAN_OPS => "OK".into(),
             other => {
                 let _ = other;

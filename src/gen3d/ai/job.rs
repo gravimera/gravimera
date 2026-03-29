@@ -45,6 +45,82 @@ pub(super) enum Gen3dPipelineStage {
     Finish,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gen3dPipelineProgressStage {
+    EditStrategy,
+    Plan,
+    Components,
+    PartSnapshots,
+    DraftOps,
+    Qa,
+    RenderPreview,
+    ReviewDelta,
+    Finish,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Gen3dPipelineProgress {
+    pub(crate) current: usize,
+    pub(crate) total: usize,
+    pub(crate) label: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Gen3dParallelTaskCounts {
+    pub(crate) running: usize,
+    pub(crate) queued: usize,
+    pub(crate) total: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Gen3dReuseCounts {
+    pub(crate) copied: u32,
+    pub(crate) mirrored: u32,
+}
+
+impl Gen3dPipelineStage {
+    fn progress_stage(self) -> Option<Gen3dPipelineProgressStage> {
+        match self {
+            Self::Start => None,
+            Self::CreatePlan
+            | Self::PreserveReplanTemplate
+            | Self::PreserveReplanPlan
+            | Self::EditPlanTemplate
+            | Self::EditPlanOps => Some(Gen3dPipelineProgressStage::Plan),
+            Self::EditSelectStrategy => Some(Gen3dPipelineProgressStage::EditStrategy),
+            Self::EnsureComponents => Some(Gen3dPipelineProgressStage::Components),
+            Self::EditQueryComponentParts => Some(Gen3dPipelineProgressStage::PartSnapshots),
+            Self::EditSuggestDraftOps | Self::EditApplyDraftOps => {
+                Some(Gen3dPipelineProgressStage::DraftOps)
+            }
+            Self::Qa => Some(Gen3dPipelineProgressStage::Qa),
+            Self::RenderPreview => Some(Gen3dPipelineProgressStage::RenderPreview),
+            Self::ReviewDelta => Some(Gen3dPipelineProgressStage::ReviewDelta),
+            Self::Finish => Some(Gen3dPipelineProgressStage::Finish),
+        }
+    }
+
+    fn status_label(self) -> &'static str {
+        match self {
+            Self::Start => "Start",
+            Self::CreatePlan => "Plan",
+            Self::PreserveReplanTemplate => "Plan template",
+            Self::PreserveReplanPlan => "Replan",
+            Self::EditSelectStrategy => "Edit strategy",
+            Self::EditPlanTemplate => "Plan template",
+            Self::EditPlanOps => "Plan ops",
+            Self::EnsureComponents => "Components",
+            Self::EditQueryComponentParts => "Part snapshots",
+            Self::EditSuggestDraftOps => "DraftOps suggest",
+            Self::EditApplyDraftOps => "DraftOps apply",
+            Self::Qa => "QA",
+            Self::RenderPreview => "Render preview",
+            Self::ReviewDelta => "Review delta",
+            Self::Finish => "Finish",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct Gen3dPipelineState {
     pub(super) stage: Gen3dPipelineStage,
@@ -306,19 +382,24 @@ pub(super) struct Gen3dStepMetrics {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Gen3dCopyMetrics {
-    pub(super) auto_component_copies: u32,
-    pub(super) auto_subtree_copies: u32,
+    pub(super) copied_targets: u32,
+    pub(super) mirrored_targets: u32,
     pub(super) auto_errors: u32,
-    pub(super) manual_component_calls: u32,
-    pub(super) manual_component_copies: u32,
-    pub(super) manual_subtree_calls: u32,
-    pub(super) manual_subtree_copies: u32,
+    pub(super) manual_calls: u32,
     pub(super) manual_failures: u32,
     pub(super) last_error: Option<String>,
     pub(super) recent_outcomes: std::collections::VecDeque<String>,
 }
 
 impl Gen3dCopyMetrics {
+    fn note_alignment(&mut self, alignment: Option<&str>) {
+        if alignment.is_some_and(|value| value.trim() == "mirror_mount_x") {
+            self.mirrored_targets = self.mirrored_targets.saturating_add(1);
+        } else {
+            self.copied_targets = self.copied_targets.saturating_add(1);
+        }
+    }
+
     fn push_outcome(&mut self, outcome: String) {
         const MAX_RECENT: usize = 8;
         if outcome.trim().is_empty() {
@@ -327,6 +408,62 @@ impl Gen3dCopyMetrics {
         self.recent_outcomes.push_back(outcome);
         while self.recent_outcomes.len() > MAX_RECENT {
             self.recent_outcomes.pop_front();
+        }
+    }
+
+    fn note_outcomes_with_prefix(&mut self, outcomes: &[serde_json::Value], prefix: &str) {
+        for item in outcomes {
+            let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
+            let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+            let alignment = item.get("alignment").and_then(|v| v.as_str());
+            self.note_alignment(alignment);
+
+            if !source.is_empty() && !target.is_empty() {
+                let alignment_label = match alignment.unwrap_or("rotation") {
+                    "mirror_mount_x" => "mirror",
+                    _ => "copy",
+                };
+                let prefix = prefix.trim();
+                if prefix.is_empty() {
+                    self.push_outcome(format!("{source} -> {target} ({alignment_label}, {mode})"));
+                } else {
+                    self.push_outcome(format!(
+                        "{prefix} {source} -> {target} ({alignment_label}, {mode})"
+                    ));
+                }
+            }
+        }
+    }
+
+    fn push_outcomes_with_prefix(&mut self, outcomes: &[serde_json::Value], prefix: &str) {
+        for item in outcomes {
+            let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
+            let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+            let alignment = item.get("alignment").and_then(|v| v.as_str());
+
+            if !source.is_empty() && !target.is_empty() {
+                let alignment_label = match alignment.unwrap_or("rotation") {
+                    "mirror_mount_x" => "mirror",
+                    _ => "copy",
+                };
+                let prefix = prefix.trim();
+                if prefix.is_empty() {
+                    self.push_outcome(format!("{source} -> {target} ({alignment_label}, {mode})"));
+                } else {
+                    self.push_outcome(format!(
+                        "{prefix} {source} -> {target} ({alignment_label}, {mode})"
+                    ));
+                }
+            }
+        }
+    }
+
+    pub(super) fn reuse_counts(&self) -> Gen3dReuseCounts {
+        Gen3dReuseCounts {
+            copied: self.copied_targets,
+            mirrored: self.mirrored_targets,
         }
     }
 
@@ -342,6 +479,8 @@ impl Gen3dCopyMetrics {
                 let Some(value) = result.result.as_ref() else {
                     return;
                 };
+                let copied_targets = value.get("copied_targets").and_then(|v| v.as_u64());
+                let mirrored_targets = value.get("mirrored_targets").and_then(|v| v.as_u64());
                 let component_copies_applied = value
                     .get("component_copies_applied")
                     .and_then(|v| v.as_u64())
@@ -350,12 +489,8 @@ impl Gen3dCopyMetrics {
                     .get("subtree_copies_applied")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
-                self.auto_component_copies = self
-                    .auto_component_copies
-                    .saturating_add(component_copies_applied.min(u32::MAX as u64) as u32);
-                self.auto_subtree_copies = self
-                    .auto_subtree_copies
-                    .saturating_add(subtree_copies_applied.min(u32::MAX as u64) as u32);
+                let total_reported =
+                    component_copies_applied.saturating_add(subtree_copies_applied);
 
                 if let Some(errors) = value.get("errors").and_then(|v| v.as_array()) {
                     self.auto_errors = self
@@ -369,18 +504,43 @@ impl Gen3dCopyMetrics {
                 }
 
                 if let Some(outcomes) = value.get("outcomes").and_then(|v| v.as_array()) {
-                    for item in outcomes {
-                        let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
-                        let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
-                        let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
-                        if !source.is_empty() && !target.is_empty() {
-                            self.push_outcome(format!("reuse {source} -> {target} ({mode})"));
+                    if copied_targets.is_some() || mirrored_targets.is_some() {
+                        self.push_outcomes_with_prefix(outcomes, "reuse");
+                    } else {
+                        self.note_outcomes_with_prefix(outcomes, "reuse");
+                    }
+                    if copied_targets.is_none() && mirrored_targets.is_none() {
+                        let observed = outcomes.len() as u64;
+                        if observed < total_reported {
+                            self.copied_targets = self.copied_targets.saturating_add(
+                                total_reported.saturating_sub(observed).min(u32::MAX as u64) as u32,
+                            );
                         }
                     }
+                } else if total_reported > 0
+                    && copied_targets.is_none()
+                    && mirrored_targets.is_none()
+                {
+                    self.copied_targets = self
+                        .copied_targets
+                        .saturating_add(total_reported.min(u32::MAX as u64) as u32);
+                }
+                if let Some(copied_targets) = copied_targets {
+                    self.copied_targets = self
+                        .copied_targets
+                        .saturating_add(copied_targets.min(u32::MAX as u64) as u32);
+                }
+                if let Some(mirrored_targets) = mirrored_targets {
+                    self.mirrored_targets = self
+                        .mirrored_targets
+                        .saturating_add(mirrored_targets.min(u32::MAX as u64) as u32);
                 }
             }
-            TOOL_ID_COPY_COMPONENT | TOOL_ID_MIRROR_COMPONENT => {
-                self.manual_component_calls = self.manual_component_calls.saturating_add(1);
+            TOOL_ID_COPY_COMPONENT
+            | TOOL_ID_MIRROR_COMPONENT
+            | TOOL_ID_COPY_COMPONENT_SUBTREE
+            | TOOL_ID_MIRROR_COMPONENT_SUBTREE => {
+                self.manual_calls = self.manual_calls.saturating_add(1);
                 if !result.ok {
                     self.manual_failures = self.manual_failures.saturating_add(1);
                     self.last_error = result.error.clone();
@@ -392,42 +552,7 @@ impl Gen3dCopyMetrics {
                 let Some(copies) = value.get("copies").and_then(|v| v.as_array()) else {
                     return;
                 };
-                self.manual_component_copies = self
-                    .manual_component_copies
-                    .saturating_add(copies.len().min(u32::MAX as usize) as u32);
-                for item in copies {
-                    let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
-                    let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
-                    let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
-                    if !source.is_empty() && !target.is_empty() {
-                        self.push_outcome(format!("{source} -> {target} ({mode})"));
-                    }
-                }
-            }
-            TOOL_ID_COPY_COMPONENT_SUBTREE | TOOL_ID_MIRROR_COMPONENT_SUBTREE => {
-                self.manual_subtree_calls = self.manual_subtree_calls.saturating_add(1);
-                if !result.ok {
-                    self.manual_failures = self.manual_failures.saturating_add(1);
-                    self.last_error = result.error.clone();
-                    return;
-                }
-                let Some(value) = result.result.as_ref() else {
-                    return;
-                };
-                let Some(copies) = value.get("copies").and_then(|v| v.as_array()) else {
-                    return;
-                };
-                self.manual_subtree_copies = self
-                    .manual_subtree_copies
-                    .saturating_add(copies.len().min(u32::MAX as usize) as u32);
-                for item in copies {
-                    let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
-                    let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
-                    let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
-                    if !source.is_empty() && !target.is_empty() {
-                        self.push_outcome(format!("{source} -> {target} ({mode})"));
-                    }
-                }
+                self.note_outcomes_with_prefix(copies, "");
             }
             TOOL_ID_LLM_GENERATE_COMPONENTS => {
                 let Some(value) = result.result.as_ref() else {
@@ -437,6 +562,8 @@ impl Gen3dCopyMetrics {
                     return;
                 };
 
+                let copied_targets = auto_copy.get("copied_targets").and_then(|v| v.as_u64());
+                let mirrored_targets = auto_copy.get("mirrored_targets").and_then(|v| v.as_u64());
                 let component_copies_applied = auto_copy
                     .get("component_copies_applied")
                     .and_then(|v| v.as_u64())
@@ -445,12 +572,8 @@ impl Gen3dCopyMetrics {
                     .get("subtree_copies_applied")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
-                self.auto_component_copies = self
-                    .auto_component_copies
-                    .saturating_add(component_copies_applied.min(u32::MAX as u64) as u32);
-                self.auto_subtree_copies = self
-                    .auto_subtree_copies
-                    .saturating_add(subtree_copies_applied.min(u32::MAX as u64) as u32);
+                let total_reported =
+                    component_copies_applied.saturating_add(subtree_copies_applied);
 
                 if let Some(errors) = auto_copy.get("errors").and_then(|v| v.as_array()) {
                     self.auto_errors = self
@@ -464,14 +587,36 @@ impl Gen3dCopyMetrics {
                 }
 
                 if let Some(outcomes) = auto_copy.get("outcomes").and_then(|v| v.as_array()) {
-                    for item in outcomes {
-                        let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
-                        let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("");
-                        let mode = item.get("mode").and_then(|v| v.as_str()).unwrap_or("");
-                        if !source.is_empty() && !target.is_empty() {
-                            self.push_outcome(format!("auto {source} -> {target} ({mode})"));
+                    if copied_targets.is_some() || mirrored_targets.is_some() {
+                        self.push_outcomes_with_prefix(outcomes, "auto");
+                    } else {
+                        self.note_outcomes_with_prefix(outcomes, "auto");
+                    }
+                    if copied_targets.is_none() && mirrored_targets.is_none() {
+                        let observed = outcomes.len() as u64;
+                        if observed < total_reported {
+                            self.copied_targets = self.copied_targets.saturating_add(
+                                total_reported.saturating_sub(observed).min(u32::MAX as u64) as u32,
+                            );
                         }
                     }
+                } else if total_reported > 0
+                    && copied_targets.is_none()
+                    && mirrored_targets.is_none()
+                {
+                    self.copied_targets = self
+                        .copied_targets
+                        .saturating_add(total_reported.min(u32::MAX as u64) as u32);
+                }
+                if let Some(copied_targets) = copied_targets {
+                    self.copied_targets = self
+                        .copied_targets
+                        .saturating_add(copied_targets.min(u32::MAX as u64) as u32);
+                }
+                if let Some(mirrored_targets) = mirrored_targets {
+                    self.mirrored_targets = self
+                        .mirrored_targets
+                        .saturating_add(mirrored_targets.min(u32::MAX as u64) as u32);
                 }
             }
             _ => {}
@@ -543,6 +688,10 @@ impl Gen3dRunMetrics {
         }
 
         self.copy.note_tool_result(result);
+    }
+
+    pub(super) fn reuse_counts(&self) -> Gen3dReuseCounts {
+        self.copy.reuse_counts()
     }
 }
 
@@ -655,6 +804,104 @@ pub(super) struct Gen3dInFlightMotion {
 }
 
 impl Gen3dAiJob {
+    fn is_pipeline_edit_session(&self) -> bool {
+        self.edit_base_prefab_id.is_some()
+            && !self.user_prompt_raw.trim().is_empty()
+            && self.preserve_existing_components_mode
+    }
+
+    fn review_appearance_enabled_for_pipeline(&self) -> bool {
+        let llm_available = self
+            .ai
+            .as_ref()
+            .map(|ai| !ai.base_url().starts_with("mock://gen3d"))
+            .unwrap_or(true);
+        llm_available && self.review_appearance
+    }
+
+    fn pipeline_route_stages(&self) -> Vec<Gen3dPipelineProgressStage> {
+        let mut stages: Vec<Gen3dPipelineProgressStage> = Vec::new();
+
+        if self.is_pipeline_edit_session() {
+            stages.push(Gen3dPipelineProgressStage::EditStrategy);
+            match self
+                .pipeline
+                .edit_strategy
+                .as_ref()
+                .map(|strategy| strategy.strategy.clone())
+                .unwrap_or(AiEditStrategyKindJsonV1::Unknown)
+            {
+                AiEditStrategyKindJsonV1::DraftOpsOnly => {
+                    stages.push(Gen3dPipelineProgressStage::Components);
+                    stages.push(Gen3dPipelineProgressStage::PartSnapshots);
+                    stages.push(Gen3dPipelineProgressStage::DraftOps);
+                }
+                AiEditStrategyKindJsonV1::PlanOpsOnly | AiEditStrategyKindJsonV1::Rebuild => {
+                    stages.push(Gen3dPipelineProgressStage::Plan);
+                    stages.push(Gen3dPipelineProgressStage::Components);
+                }
+                AiEditStrategyKindJsonV1::PlanOpsThenDraftOps
+                | AiEditStrategyKindJsonV1::Unknown => {
+                    stages.push(Gen3dPipelineProgressStage::Plan);
+                    stages.push(Gen3dPipelineProgressStage::Components);
+                    stages.push(Gen3dPipelineProgressStage::PartSnapshots);
+                    stages.push(Gen3dPipelineProgressStage::DraftOps);
+                }
+            }
+            stages.push(Gen3dPipelineProgressStage::Qa);
+        } else {
+            stages.push(Gen3dPipelineProgressStage::Plan);
+            stages.push(Gen3dPipelineProgressStage::Components);
+            stages.push(Gen3dPipelineProgressStage::Qa);
+        }
+
+        if self.review_appearance_enabled_for_pipeline()
+            || matches!(
+                self.pipeline.stage,
+                Gen3dPipelineStage::RenderPreview | Gen3dPipelineStage::ReviewDelta
+            )
+        {
+            stages.push(Gen3dPipelineProgressStage::RenderPreview);
+            stages.push(Gen3dPipelineProgressStage::ReviewDelta);
+        }
+
+        stages.push(Gen3dPipelineProgressStage::Finish);
+        stages
+    }
+
+    pub(crate) fn pipeline_progress(&self) -> Option<Gen3dPipelineProgress> {
+        let current_stage = self.pipeline.stage.progress_stage()?;
+        let route = self.pipeline_route_stages();
+        let idx = route.iter().position(|stage| *stage == current_stage)?;
+        Some(Gen3dPipelineProgress {
+            current: idx + 1,
+            total: route.len(),
+            label: self.pipeline.stage.status_label(),
+        })
+    }
+
+    pub(crate) fn active_parallel_task_counts(&self) -> Option<Gen3dParallelTaskCounts> {
+        if let Some(batch) = self.agent.pending_component_batch.as_ref() {
+            return Some(Gen3dParallelTaskCounts {
+                running: self.component_in_flight.len(),
+                queued: self.component_queue.len(),
+                total: batch.requested_indices.len(),
+            });
+        }
+        if let Some(batch) = self.agent.pending_motion_batch.as_ref() {
+            return Some(Gen3dParallelTaskCounts {
+                running: self.motion_in_flight.len(),
+                queued: self.motion_queue.len(),
+                total: batch.requested_channels.len(),
+            });
+        }
+        None
+    }
+
+    pub(crate) fn reuse_counts(&self) -> Gen3dReuseCounts {
+        self.metrics.reuse_counts()
+    }
+
     pub(crate) fn is_running(&self) -> bool {
         self.running
     }
@@ -1295,6 +1542,8 @@ impl Gen3dMotionCaptureState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gen3d::agent::tools::{TOOL_ID_APPLY_REUSE_GROUPS, TOOL_ID_MIRROR_COMPONENT};
+    use crate::gen3d::agent::Gen3dToolResultJsonV1;
 
     #[test]
     fn overwrite_save_blocked_by_qa_errors_requires_overwrite_mode() {
@@ -1319,5 +1568,83 @@ mod tests {
 
         job.agent.last_validate_ok = Some(false);
         assert!(job.overwrite_save_blocked_by_qa_errors());
+    }
+
+    #[test]
+    fn pipeline_progress_for_create_route_uses_grouped_steps() {
+        let mut job = Gen3dAiJob::default();
+        job.pipeline.stage = Gen3dPipelineStage::EnsureComponents;
+
+        let progress = job.pipeline_progress().expect("progress");
+        assert_eq!(progress.current, 2);
+        assert_eq!(progress.total, 4);
+        assert_eq!(progress.label, "Components");
+    }
+
+    #[test]
+    fn pipeline_progress_for_edit_draftops_route_includes_review_steps() {
+        let mut job = Gen3dAiJob::default();
+        job.edit_base_prefab_id = Some(42);
+        job.user_prompt_raw = "make the fins wider".into();
+        job.preserve_existing_components_mode = true;
+        job.review_appearance = true;
+        job.pipeline.stage = Gen3dPipelineStage::EditSuggestDraftOps;
+        job.pipeline.edit_strategy = Some(AiEditStrategyJsonV1 {
+            version: 1,
+            strategy: AiEditStrategyKindJsonV1::DraftOpsOnly,
+            snapshot_components: Vec::new(),
+            reason: String::new(),
+        });
+
+        let progress = job.pipeline_progress().expect("progress");
+        assert_eq!(progress.current, 4);
+        assert_eq!(progress.total, 8);
+        assert_eq!(progress.label, "DraftOps suggest");
+    }
+
+    #[test]
+    fn reuse_counts_split_copy_and_mirror_from_tool_results() {
+        let mut metrics = Gen3dRunMetrics::default();
+        metrics.note_tool_result(&Gen3dToolResultJsonV1::ok(
+            "call_reuse".into(),
+            TOOL_ID_APPLY_REUSE_GROUPS.into(),
+            serde_json::json!({
+                "component_copies_applied": 2,
+                "subtree_copies_applied": 0,
+                "errors": [],
+                "outcomes": [
+                    {
+                        "source": "arm_l",
+                        "target": "arm_r",
+                        "mode": "detached",
+                        "alignment": "mirror_mount_x"
+                    },
+                    {
+                        "source": "leg_a",
+                        "target": "leg_b",
+                        "mode": "detached",
+                        "alignment": "rotation"
+                    }
+                ]
+            }),
+        ));
+        metrics.note_tool_result(&Gen3dToolResultJsonV1::ok(
+            "call_manual".into(),
+            TOOL_ID_MIRROR_COMPONENT.into(),
+            serde_json::json!({
+                "copies": [
+                    {
+                        "source": "wing_l",
+                        "target": "wing_r",
+                        "mode": "detached",
+                        "alignment": "mirror_mount_x"
+                    }
+                ]
+            }),
+        ));
+
+        let counts = metrics.reuse_counts();
+        assert_eq!(counts.copied, 1);
+        assert_eq!(counts.mirrored, 2);
     }
 }
