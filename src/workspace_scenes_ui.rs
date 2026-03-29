@@ -4,7 +4,7 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::realm::ActiveRealmScene;
 use crate::rich_text::set_rich_text_line;
@@ -28,6 +28,7 @@ pub(crate) struct ScenesPanelUiState {
     pub(crate) focused_field: ScenesUiField,
     pub(crate) name: String,
     pub(crate) error: Option<String>,
+    scrollbar_drag: Option<ScenesPanelScrollbarDrag>,
     last_realm_id: Option<String>,
     last_panel_open: bool,
 }
@@ -40,6 +41,7 @@ impl Default for ScenesPanelUiState {
             focused_field: ScenesUiField::None,
             name: String::new(),
             error: None,
+            scrollbar_drag: None,
             last_realm_id: None,
             last_panel_open: false,
         }
@@ -60,6 +62,12 @@ pub(crate) struct ScenesList;
 
 #[derive(Component)]
 pub(crate) struct ScenesListItem;
+
+#[derive(Component)]
+pub(crate) struct ScenesScrollbarTrack;
+
+#[derive(Component)]
+pub(crate) struct ScenesScrollbarThumb;
 
 #[derive(Component)]
 pub(crate) struct SceneSelectButton {
@@ -84,6 +92,11 @@ pub(crate) struct AddSceneCancelButton;
 #[derive(Component)]
 pub(crate) struct AddSceneErrorText;
 
+#[derive(Debug, Clone, Copy)]
+struct ScenesPanelScrollbarDrag {
+    grab_offset: f32,
+}
+
 fn scenes_panel_open(
     mode: &State<GameMode>,
     build_scene: &State<BuildScene>,
@@ -106,6 +119,9 @@ pub(crate) fn scenes_panel_sync_active_realm(
         state.add_open = false;
         state.focused_field = ScenesUiField::None;
         state.error = None;
+    }
+    if !open {
+        state.scrollbar_drag = None;
     }
 
     let realm_changed = state.last_realm_id.as_deref() != Some(active.realm_id.as_str());
@@ -154,7 +170,17 @@ pub(crate) fn scenes_panel_rebuild_list_ui(
         commands.entity(entity).try_despawn();
     }
 
-    let scenes = crate::realm::list_scenes(&active.realm_id);
+    let mut scenes: Vec<(String, u128)> = crate::realm::list_scenes(&active.realm_id)
+        .into_iter()
+        .map(|scene_id| {
+            let created_at_ms = metadata_created_or_modified_ms(&crate::paths::scene_dir(
+                &active.realm_id,
+                &scene_id,
+            ));
+            (scene_id, created_at_ms)
+        })
+        .collect();
+    scenes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     if scenes.is_empty() {
         commands.entity(list_entity).with_children(|list| {
             list.spawn((
@@ -172,7 +198,7 @@ pub(crate) fn scenes_panel_rebuild_list_ui(
     }
 
     commands.entity(list_entity).with_children(|list| {
-        for scene_id in scenes {
+        for (scene_id, _created_at_ms) in scenes {
             list.spawn((
                 Button,
                 Node {
@@ -545,13 +571,14 @@ pub(crate) fn scenes_panel_scroll_wheel(
     top: Res<TopPanelUiState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut mouse_wheel: bevy::ecs::message::MessageReader<MouseWheel>,
+    state: Res<ScenesPanelUiState>,
     roots: Query<
         (&ComputedNode, &UiGlobalTransform, &Visibility),
         With<crate::workspace_ui::ScenesPanelRoot>,
     >,
     mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<ScenesListScrollPanel>>,
 ) {
-    if !scenes_panel_open(&mode, &build_scene, &top) {
+    if !scenes_panel_open(&mode, &build_scene, &top) || state.scrollbar_drag.is_some() {
         for _ in mouse_wheel.read() {}
         return;
     }
@@ -603,6 +630,160 @@ pub(crate) fn scenes_panel_scroll_wheel(
     }
     let max_scroll = (content_h - viewport_h).max(0.0);
     scroll.y = (scroll.y - delta_px).clamp(0.0, max_scroll);
+}
+
+pub(crate) fn scenes_panel_scrollbar_drag(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut state: ResMut<ScenesPanelUiState>,
+    mut panels: Query<(&ComputedNode, &mut ScrollPosition), With<ScenesListScrollPanel>>,
+    tracks: Query<(&ComputedNode, &UiGlobalTransform, &Visibility), With<ScenesScrollbarTrack>>,
+    thumbs: Query<(&Interaction, &ComputedNode, &Node), With<ScenesScrollbarThumb>>,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) {
+        state.scrollbar_drag = None;
+        return;
+    }
+
+    if !mouse_buttons.pressed(MouseButton::Left) {
+        state.scrollbar_drag = None;
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        return;
+    };
+    let Ok((panel_node, mut scroll)) = panels.single_mut() else {
+        return;
+    };
+    let Ok((track_node, track_transform, track_vis)) = tracks.single() else {
+        return;
+    };
+    if *track_vis == Visibility::Hidden {
+        state.scrollbar_drag = None;
+        return;
+    }
+    let Ok((interaction, thumb_node, thumb_layout)) = thumbs.single() else {
+        return;
+    };
+
+    if state.scrollbar_drag.is_none() && *interaction == Interaction::Pressed {
+        if let Some(local) = track_transform
+            .try_inverse()
+            .map(|transform| transform.transform_point2(cursor))
+        {
+            let track_scale = track_node.inverse_scale_factor();
+            let thumb_scale = thumb_node.inverse_scale_factor();
+            let cursor_in_track = (local.y + track_node.size.y * 0.5) * track_scale;
+            let thumb_top = match thumb_layout.top {
+                Val::Px(value) => value,
+                _ => 0.0,
+            };
+            let grab_offset =
+                (cursor_in_track - thumb_top).clamp(0.0, thumb_node.size.y.max(1.0) * thumb_scale);
+            state.scrollbar_drag = Some(ScenesPanelScrollbarDrag { grab_offset });
+        }
+    }
+
+    let Some(drag) = state.scrollbar_drag else {
+        return;
+    };
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let viewport_h = panel_node.size.y.max(0.0) * panel_scale;
+    let content_h = panel_node.content_size.y.max(0.0) * panel_scale;
+    if viewport_h < 1.0 || content_h <= viewport_h + 0.5 {
+        return;
+    }
+
+    let track_scale = track_node.inverse_scale_factor();
+    let thumb_scale = thumb_node.inverse_scale_factor();
+    let track_h = track_node.size.y.max(1.0) * track_scale;
+    let thumb_h = thumb_node.size.y.max(1.0) * thumb_scale;
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    if max_thumb_top <= 1e-4 {
+        scroll.y = 0.0;
+        return;
+    }
+    let max_scroll = (content_h - viewport_h).max(1.0);
+
+    let Some(local) = track_transform
+        .try_inverse()
+        .map(|transform| transform.transform_point2(cursor))
+    else {
+        return;
+    };
+    let cursor_in_track = ((local.y + track_node.size.y * 0.5) * track_scale).clamp(0.0, track_h);
+    let thumb_top = (cursor_in_track - drag.grab_offset).clamp(0.0, max_thumb_top);
+
+    scroll.y = (thumb_top / max_thumb_top * max_scroll).clamp(0.0, max_scroll);
+}
+
+pub(crate) fn scenes_panel_update_scrollbar_ui(
+    panels: Query<(&ComputedNode, &ScrollPosition), With<ScenesListScrollPanel>>,
+    mut tracks: Query<(&ComputedNode, &mut Visibility), With<ScenesScrollbarTrack>>,
+    mut thumbs: Query<&mut Node, With<ScenesScrollbarThumb>>,
+) {
+    let Ok((panel, scroll_pos)) = panels.single() else {
+        return;
+    };
+    let Ok((track_node, mut track_vis)) = tracks.single_mut() else {
+        return;
+    };
+    let Ok(mut thumb) = thumbs.single_mut() else {
+        return;
+    };
+
+    let panel_scale = panel.inverse_scale_factor();
+    let track_scale = track_node.inverse_scale_factor();
+    let viewport_h = panel.size.y.max(0.0) * panel_scale;
+    let content_h = panel.content_size.y.max(0.0) * panel_scale;
+    let track_h = track_node.size.y.max(1.0) * track_scale;
+
+    if viewport_h < 1.0 || content_h < 1.0 {
+        *track_vis = Visibility::Hidden;
+        return;
+    }
+
+    if content_h <= viewport_h + 0.5 {
+        *track_vis = Visibility::Hidden;
+        thumb.top = Val::Px(0.0);
+        thumb.height = Val::Px(track_h);
+        return;
+    }
+
+    *track_vis = Visibility::Inherited;
+
+    let max_scroll = (content_h - viewport_h).max(1.0);
+    let scroll_y = scroll_pos.y.clamp(0.0, max_scroll);
+
+    let min_thumb_h = 14.0;
+    let thumb_h = (viewport_h * viewport_h / content_h).clamp(min_thumb_h, track_h);
+    let max_thumb_top = (track_h - thumb_h).max(0.0);
+    let thumb_top = (max_thumb_top * (scroll_y / max_scroll)).clamp(0.0, max_thumb_top);
+
+    thumb.top = Val::Px(thumb_top);
+    thumb.height = Val::Px(thumb_h);
+}
+
+fn system_time_ms(time: std::time::SystemTime) -> u128 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn metadata_created_or_modified_ms(path: &Path) -> u128 {
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.created().or_else(|_| meta.modified()).ok())
+        .map(system_time_ms)
+        .unwrap_or(0)
 }
 
 pub(crate) fn scenes_panel_update_texts(

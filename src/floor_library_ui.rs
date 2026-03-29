@@ -22,8 +22,8 @@ use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
 use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts, UiToastCommand, UiToastKind};
 use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 
-const PANEL_WIDTH_PX: f32 = 320.0;
-const PANEL_WIDTH_MANAGE_PX: f32 = 380.0;
+const PANEL_WIDTH_PX: f32 = 260.0;
+const PANEL_WIDTH_MANAGE_PX: f32 = 320.0;
 const PANEL_Z_INDEX: i32 = 920;
 const FLOOR_PREVIEW_Z_INDEX: i32 = 1200;
 const FLOOR_PREVIEW_MODAL_Z_INDEX: i32 = FLOOR_PREVIEW_Z_INDEX + 20;
@@ -1934,7 +1934,7 @@ pub(crate) fn floor_library_rebuild_list_ui(
     struct Row {
         floor_id: u128,
         display_name: String,
-        modified_at_ms: u128,
+        created_at_ms: u128,
         score: u32,
         thumbnail: Option<Handle<Image>>,
     }
@@ -1986,7 +1986,7 @@ pub(crate) fn floor_library_rebuild_list_ui(
         Some(Row {
             floor_id: DEFAULT_FLOOR_ID,
             display_name,
-            modified_at_ms: u128::MAX,
+            created_at_ms: u128::MAX,
             score,
             thumbnail: None,
         })
@@ -2008,14 +2008,9 @@ pub(crate) fn floor_library_rebuild_list_ui(
             .map(|v| v.to_string())
             .unwrap_or_else(|| uuid.clone());
 
-        let floor_def_path = crate::realm_floor_packages::realm_floor_package_floor_def_path(
-            &active.realm_id,
-            floor_id,
+        let created_at_ms = metadata_created_or_modified_ms(
+            &crate::realm_floor_packages::realm_floor_package_dir(&active.realm_id, floor_id),
         );
-        let modified_at_ms = std::fs::metadata(&floor_def_path)
-            .and_then(|m| m.modified())
-            .map(system_time_ms)
-            .unwrap_or(0);
 
         let score = relevance_score(&query, &display_name, &uuid);
         if !query.is_empty() && score == 0 {
@@ -2076,7 +2071,7 @@ pub(crate) fn floor_library_rebuild_list_ui(
         rows.push(Row {
             floor_id,
             display_name,
-            modified_at_ms,
+            created_at_ms,
             score,
             thumbnail,
         });
@@ -2096,12 +2091,12 @@ pub(crate) fn floor_library_rebuild_list_ui(
         if !query.is_empty() {
             b.score
                 .cmp(&a.score)
-                .then_with(|| b.modified_at_ms.cmp(&a.modified_at_ms))
+                .then_with(|| b.created_at_ms.cmp(&a.created_at_ms))
                 .then_with(|| a.display_name.cmp(&b.display_name))
                 .then_with(|| a.floor_id.cmp(&b.floor_id))
         } else {
-            b.modified_at_ms
-                .cmp(&a.modified_at_ms)
+            b.created_at_ms
+                .cmp(&a.created_at_ms)
                 .then_with(|| a.display_name.cmp(&b.display_name))
                 .then_with(|| a.floor_id.cmp(&b.floor_id))
         }
@@ -3494,6 +3489,14 @@ fn load_png_ui_image(
 fn system_time_ms(time: std::time::SystemTime) -> u128 {
     time.duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn metadata_created_or_modified_ms(path: &std::path::Path) -> u128 {
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.created().or_else(|_| meta.modified()).ok())
+        .map(system_time_ms)
         .unwrap_or(0)
 }
 

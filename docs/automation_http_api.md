@@ -1366,7 +1366,7 @@ Save the current draft to prefabs:
 
 Notes:
 
-- Does **not** spawn an instance into the world. Use the Prefabs UI or `POST /v1/spawn` to spawn.
+- Does **not** spawn an instance into the world. Use the 3D Models UI or `POST /v1/spawn` to spawn.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/gen3d/save \

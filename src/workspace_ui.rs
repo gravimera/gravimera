@@ -5,7 +5,7 @@ use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 use crate::workspace_scenes_ui::{
     AddSceneAddButton, AddSceneCancelButton, AddSceneErrorText, AddSceneNameField,
     AddSceneNameFieldText, AddScenePanelRoot, ScenesAddSceneButton, ScenesAddSceneButtonText,
-    ScenesList, ScenesListScrollPanel,
+    ScenesList, ScenesListScrollPanel, ScenesScrollbarThumb, ScenesScrollbarTrack,
 };
 
 const WORKSPACE_UI_Z_INDEX: i32 = 960;
@@ -241,7 +241,7 @@ pub(crate) fn setup_workspace_ui(
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new("Prefabs"),
+                    Text::new("3D Models"),
                     TextFont {
                         font_size: 16.0,
                         ..default()
@@ -569,6 +569,44 @@ pub(crate) fn setup_workspace_ui(
                         BackgroundColor(Color::NONE),
                         ScenesList,
                     ));
+                });
+
+                row.spawn((
+                    Node {
+                        width: Val::Px(10.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Stretch,
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                ))
+                .with_children(|scroll| {
+                    scroll
+                        .spawn((
+                            Node {
+                                flex_grow: 1.0,
+                                width: Val::Percent(100.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ScenesScrollbarTrack,
+                        ))
+                        .with_children(|thumb| {
+                            thumb.spawn((
+                                Button,
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(40.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.35, 0.35, 0.42, 0.85)),
+                                BorderColor::all(Color::srgba(0.55, 0.55, 0.65, 0.95)),
+                                ScenesScrollbarThumb,
+                            ));
+                        });
                 });
             });
         });

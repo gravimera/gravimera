@@ -39,7 +39,7 @@ Each prefab package directory is named by the root prefab UUID:
 
 Within a prefab package:
 
-- `thumbnail.png` (optional; recommended; used by Prefabs UI)
+- `thumbnail.png` (optional; recommended; used by 3D Models UI)
 - `prefabs/`
   - `<prefab_uuid>.json` (required; `PrefabFileV1`)
   - `<prefab_uuid>.desc.json` (optional; `PrefabDescriptorFileV1`)

@@ -1,6 +1,6 @@
 # Prefab Export (glTF/GLB / Blender)
 
-Gravimera can export prefab definitions from the **Prefabs** panel as:
+Gravimera can export prefab definitions from the **3D Models** panel as:
 
 - **glTF 2.0 binary** (`.glb`)
 - **glTF 2.0 JSON + BIN** (`.gltf` + `.bin`)
@@ -9,7 +9,7 @@ These exports are intended to be Blender-friendly and work in other DCC tools / 
 
 ## UI workflow
 
-1. Open **Prefabs** panel.
+1. Open **3D Models** panel.
 2. Click **Manage** (multi-select mode).
 3. Select one or more prefabs.
 4. Click **Export glTF/GLB** and choose an output folder.

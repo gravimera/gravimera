@@ -1501,7 +1501,8 @@ pub(crate) fn gen3d_save_button(
                     ) {
                         warn!("Gen3D: thumbnail capture skipped: {err}");
                     }
-                    workshop.status = "Saved snapshot. Open Prefabs to view/spawn it.".to_string();
+                    workshop.status =
+                        "Saved snapshot. Open 3D Models to view/spawn it.".to_string();
                 }
                 Err(err) => {
                     workshop.error = Some(err);
@@ -2054,12 +2055,12 @@ pub(crate) fn gen3d_save_current_draft_seed_aware_from_api(
 
     workshop.status = match (overwrite_prefab_id, base_prefab_id) {
         (Some(_), _) => {
-            "Saved prefab (overwrite). Exit Gen3D and open Prefabs to view/spawn it.".into()
+            "Saved prefab (overwrite). Exit Gen3D and open 3D Models to view/spawn it.".into()
         }
         (None, Some(_)) => {
-            "Saved prefab (fork). Exit Gen3D and open Prefabs to view/spawn it.".into()
+            "Saved prefab (fork). Exit Gen3D and open 3D Models to view/spawn it.".into()
         }
-        (None, None) => "Saved prefab. Exit Gen3D and open Prefabs to view/spawn it.".into(),
+        (None, None) => "Saved prefab. Exit Gen3D and open 3D Models to view/spawn it.".into(),
     };
     workshop.error = None;
 

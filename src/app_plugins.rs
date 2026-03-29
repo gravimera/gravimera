@@ -549,6 +549,9 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::workspace_scenes_ui::scenes_panel_name_field_focus)
                     .after(crate::workspace_scenes_ui::scenes_panel_update_ime_position)
                     .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_scrollbar_drag
+                    .after(crate::workspace_scenes_ui::scenes_panel_scroll_wheel)
+                    .run_if(crate::automation::local_input_enabled),
             )
                 .run_if(console::console_closed)
                 .run_if(in_state(BuildScene::Realm))
@@ -863,6 +866,7 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::model_library_ui::model_library_update_scrollbar_ui,
                 crate::model_library_ui::model_library_update_preview_info_scrollbar_ui,
                 crate::floor_library_ui::floor_library_update_scrollbar_ui,
+                crate::workspace_scenes_ui::scenes_panel_update_scrollbar_ui,
                 crate::motion_ui::motion_algorithm_ui_update_scrollbar_ui,
             )
                 .in_set(UiSystems::Content)

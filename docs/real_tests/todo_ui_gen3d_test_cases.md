@@ -27,7 +27,7 @@ Automated:
 
 Manual QA:
 
-1. Generate a movable unit via Prefabs → `Generate`.
+1. Generate a movable unit via 3D Models → `Generate`.
 2. Confirm it animates movement after generation (not a static “slide”).
 3. Use Preview → `Edit` and confirm the edited unit still has move animation.
 
@@ -44,7 +44,7 @@ Manual QA:
 3. Confirm **no** Copy/Edit/Fork buttons exist.
 4. Confirm a **Close** button exists in the top-right corner and closes the panel.
 
-### 3) Double-click instance opens Prefabs + selects prefab + pops Preview (and Meta for units)
+### 3) Double-click instance opens 3D Models + selects prefab + pops Preview (and Meta for units)
 
 Automated:
 
@@ -55,7 +55,7 @@ Manual QA:
 1. Place/spawn an instance that has `ObjectPrefabId` (a prefab-backed unit or build object).
 2. Double-click it:
    - If it’s a unit: Meta opens.
-   - Prefabs panel opens (Models tab selected), correct prefab highlighted.
+   - 3D Models panel opens (Models tab selected), correct prefab highlighted.
    - Preview overlay opens for that prefab.
 
 ### 4) Preview overlay: `Edit` + `Duplicate`; taller info section
@@ -69,7 +69,7 @@ Automated:
 
 Manual QA:
 
-1. Open a prefab Preview overlay from Prefabs panel.
+1. Open a prefab Preview overlay from 3D Models panel.
 2. Confirm `Edit` and `Duplicate` buttons exist.
 3. Confirm the info section shows more text than before (taller scroll area).
 4. Click `Edit`:
@@ -86,7 +86,7 @@ Manual QA:
    - The preview closes; the prefab is removed from the list.
    - Existing scene instances of that prefab remain.
 
-### 5) Prefabs panel: multi-session UI + single-runner task queue + indicators + placeholder + `Generate` rename
+### 5) 3D Models panel: multi-session UI + single-runner task queue + indicators + placeholder + `Generate` rename
 
 Automated:
 

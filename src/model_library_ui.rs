@@ -556,7 +556,7 @@ pub(crate) fn setup_model_library_ui(
             ))
             .with_children(|row| {
                 row.spawn((
-                    Text::new("Prefabs"),
+                    Text::new("3D Models"),
                     TextFont {
                         font_size: 18.0,
                         ..default()
@@ -907,30 +907,40 @@ pub(crate) fn setup_model_library_ui(
 
                 row.spawn((
                     Node {
-                        width: Val::Px(8.0),
-                        height: Val::Percent(100.0),
-                        position_type: PositionType::Relative,
+                        width: Val::Px(10.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Stretch,
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.45)),
-                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                    Visibility::Hidden,
-                    ModelLibraryScrollbarTrack,
+                    BackgroundColor(Color::NONE),
                 ))
-                .with_children(|track| {
-                    track.spawn((
-                        Button,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(1.0),
-                            right: Val::Px(1.0),
-                            top: Val::Px(0.0),
-                            height: Val::Px(18.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.20)),
-                        ModelLibraryScrollbarThumb,
-                    ));
+                .with_children(|scroll| {
+                    scroll
+                        .spawn((
+                            Node {
+                                flex_grow: 1.0,
+                                width: Val::Percent(100.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.65)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ModelLibraryScrollbarTrack,
+                        ))
+                        .with_children(|thumb| {
+                            thumb.spawn((
+                                Button,
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(40.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.35, 0.35, 0.42, 0.85)),
+                                BorderColor::all(Color::srgba(0.55, 0.55, 0.65, 0.95)),
+                                ModelLibraryScrollbarThumb,
+                            ));
+                        });
                 });
             });
         });
