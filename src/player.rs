@@ -86,15 +86,12 @@ pub(crate) fn camera_zoom_input(
     zoom.t = (zoom.t + scroll * CAMERA_ZOOM_SENSITIVITY).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
 }
 
-fn edge_pan_factor(window: &Window) -> Option<(Vec2, Vec2)> {
-    let cursor = window.cursor_position()?;
-    let width = window.width();
-    let height = window.height();
+fn edge_pan_factor_for_cursor(cursor: Vec2, width: f32, height: f32, margin_px: f32) -> Vec2 {
     if width <= 1.0 || height <= 1.0 {
-        return None;
+        return Vec2::ZERO;
     }
 
-    let margin = CAMERA_EDGE_PAN_MARGIN_PX.max(1.0);
+    let margin = margin_px.max(1.0);
     let mut factor = Vec2::ZERO;
     if cursor.x < margin {
         let raw = ((margin - cursor.x) / margin).clamp(0.0, 1.0);
@@ -112,6 +109,18 @@ fn edge_pan_factor(window: &Window) -> Option<(Vec2, Vec2)> {
         factor.y = -raw * raw;
     }
 
+    factor
+}
+
+fn edge_pan_factor(window: &Window) -> Option<(Vec2, Vec2)> {
+    let cursor = window.cursor_position()?;
+    let width = window.width();
+    let height = window.height();
+    if width <= 1.0 || height <= 1.0 {
+        return None;
+    }
+
+    let factor = edge_pan_factor_for_cursor(cursor, width, height, CAMERA_EDGE_PAN_MARGIN_PX);
     Some((cursor, factor))
 }
 
@@ -486,9 +495,9 @@ fn edge_pan_arrow_glyph(factor: Vec2) -> &'static str {
     }
     if factor.x.abs() >= factor.y.abs() {
         if factor.x < -1e-4 {
-            "←"
-        } else if factor.x > 1e-4 {
             "→"
+        } else if factor.x > 1e-4 {
+            "←"
         } else {
             ""
         }
@@ -595,5 +604,41 @@ pub(crate) fn update_player_gun_visuals(
         } else {
             Visibility::Hidden
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edge_pan_factor_left_is_positive_right_is_negative() {
+        let width = 100.0;
+        let height = 100.0;
+        let margin_px = 10.0;
+
+        let left =
+            edge_pan_factor_for_cursor(Vec2::new(0.0, height * 0.5), width, height, margin_px);
+        assert!(
+            left.x > 0.0,
+            "expected left edge pan factor x > 0; got {left:?}"
+        );
+
+        let right = edge_pan_factor_for_cursor(
+            Vec2::new(width - 0.1, height * 0.5),
+            width,
+            height,
+            margin_px,
+        );
+        assert!(
+            right.x < 0.0,
+            "expected right edge pan factor x < 0; got {right:?}"
+        );
+    }
+
+    #[test]
+    fn edge_pan_arrow_glyph_matches_signs() {
+        assert_eq!(edge_pan_arrow_glyph(Vec2::new(1.0, 0.0)), "←");
+        assert_eq!(edge_pan_arrow_glyph(Vec2::new(-1.0, 0.0)), "→");
     }
 }

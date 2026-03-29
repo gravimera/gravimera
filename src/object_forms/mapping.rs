@@ -547,6 +547,7 @@ mod tests {
         LeafResolved {
             key: LeafKindKey::Primitive(key),
             transform: Transform::from_translation(translation),
+            mirrored: false,
             spawn: super::super::LeafSpawnKind::Mesh {
                 mesh: Handle::default(),
                 material_proto: StandardMaterial::default(),
