@@ -17,7 +17,7 @@ use super::schema::{
     AiAnimationClipJsonV1, AiAnimationDeltaTransformJsonV1, AiAnimationDriverJsonV1, AiJointJson,
     AiJointKindJson,
 };
-use super::{Gen3dAiJob, Gen3dPlannedComponent};
+use super::{Gen3dAiJob, Gen3dPlannedArticulationNode, Gen3dPlannedComponent};
 
 const LEGACY_INTERNAL_BASE_CHANNEL: &str = "__base";
 
@@ -38,6 +38,25 @@ struct TransformDeltaJsonV1 {
     forward: Option<[f32; 3]>,
     #[serde(default)]
     up: Option<[f32; 3]>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum NullableStringFieldJsonV1 {
+    String(String),
+    Null(()),
+}
+
+impl NullableStringFieldJsonV1 {
+    fn into_option_trimmed(self) -> Option<String> {
+        match self {
+            Self::String(value) => {
+                let value = value.trim();
+                (!value.is_empty()).then(|| value.to_string())
+            }
+            Self::Null(()) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -131,6 +150,22 @@ enum DraftOpJsonV1 {
     RemovePrimitivePart {
         component: String,
         part_id_uuid: String,
+    },
+    UpsertArticulationNode {
+        component: String,
+        node_id: String,
+        parent_node_id: NullableStringFieldJsonV1,
+        set_transform: TransformDeltaJsonV1,
+        bound_part_id_uuids: Vec<String>,
+    },
+    RemoveArticulationNode {
+        component: String,
+        node_id: String,
+    },
+    RebindArticulationNodeParts {
+        component: String,
+        node_id: String,
+        bound_part_id_uuids: Vec<String>,
     },
     UpsertAnimationSlot {
         child_component: String,
@@ -602,6 +637,9 @@ struct ApplyWorkState {
     primitive_parts_added: u32,
     primitive_parts_removed: u32,
     primitive_parts_updated: u32,
+    articulation_nodes_upserted: u32,
+    articulation_nodes_removed: u32,
+    articulation_nodes_rebound: u32,
     anchors_updated: u32,
     attachments_updated: u32,
     animation_slots_upserted: u32,
@@ -613,6 +651,168 @@ struct ApplyWorkState {
 fn mark_changed_component(state: &mut ApplyWorkState, component_name: &str) {
     let id = component_object_id_for_name(component_name);
     state.changed_component_ids.insert(id);
+}
+
+fn primitive_part_ids_for_def(def: &ObjectDef) -> std::collections::BTreeSet<u128> {
+    let mut ids = std::collections::BTreeSet::<u128>::new();
+    for part in def.parts.iter() {
+        if matches!(part.kind, ObjectPartKind::Primitive { .. }) {
+            if let Some(part_id) = part.part_id {
+                ids.insert(part_id);
+            }
+        }
+    }
+    ids
+}
+
+fn parse_bound_part_ids(field: &str, raw_ids: &[String]) -> Result<Vec<u128>, String> {
+    let mut out: Vec<u128> = Vec::with_capacity(raw_ids.len());
+    for (idx, raw) in raw_ids.iter().enumerate() {
+        out.push(parse_uuid_u128(&format!("{field}[{idx}]"), raw.as_str())?);
+    }
+    out.sort_unstable();
+    out.dedup();
+    if out.is_empty() {
+        return Err(format!("{field} must contain at least one part id"));
+    }
+    Ok(out)
+}
+
+fn validate_component_articulation_nodes(
+    component_name: &str,
+    nodes: &mut [Gen3dPlannedArticulationNode],
+    available_part_ids: &std::collections::BTreeSet<u128>,
+) -> Result<(), String> {
+    let mut node_index_by_id: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut part_owner: std::collections::HashMap<u128, String> = std::collections::HashMap::new();
+
+    for (idx, node) in nodes.iter_mut().enumerate() {
+        node.node_id = node.node_id.trim().to_string();
+        if node.node_id.is_empty() {
+            return Err(format!(
+                "Articulation node on component `{component_name}` is missing required `node_id`."
+            ));
+        }
+        node.parent_node_id = match node.parent_node_id.take() {
+            Some(value) => {
+                let value = value.trim().to_string();
+                (!value.is_empty()).then_some(value)
+            }
+            None => None,
+        };
+
+        if !node.transform.translation.is_finite()
+            || !node.transform.rotation.is_finite()
+            || !node.transform.scale.is_finite()
+        {
+            return Err(format!(
+                "Articulation node `{}` on component `{component_name}` has a non-finite transform.",
+                node.node_id
+            ));
+        }
+
+        if node
+            .parent_node_id
+            .as_deref()
+            .is_some_and(|parent| parent == node.node_id)
+        {
+            return Err(format!(
+                "Articulation node `{}` on component `{component_name}` cannot parent itself.",
+                node.node_id
+            ));
+        }
+
+        node.bound_part_ids.sort_unstable();
+        node.bound_part_ids.dedup();
+        if node.bound_part_ids.is_empty() {
+            return Err(format!(
+                "Articulation node `{}` on component `{component_name}` must bind at least one primitive part.",
+                node.node_id
+            ));
+        }
+
+        for &part_id in node.bound_part_ids.iter() {
+            if !available_part_ids.contains(&part_id) {
+                return Err(format!(
+                    "Articulation node `{}` on component `{component_name}` references missing primitive part {}.",
+                    node.node_id,
+                    Uuid::from_u128(part_id)
+                ));
+            }
+            if let Some(other_node_id) = part_owner.insert(part_id, node.node_id.clone()) {
+                return Err(format!(
+                    "Articulation node `{}` on component `{component_name}` reuses primitive part {} already bound by articulation node `{}`.",
+                    node.node_id,
+                    Uuid::from_u128(part_id),
+                    other_node_id
+                ));
+            }
+        }
+
+        if node_index_by_id.insert(node.node_id.clone(), idx).is_some() {
+            return Err(format!(
+                "Component `{component_name}` contains duplicate articulation node id `{}`.",
+                node.node_id
+            ));
+        }
+    }
+
+    let mut visiting = vec![false; nodes.len()];
+    let mut visited = vec![false; nodes.len()];
+
+    fn dfs(
+        idx: usize,
+        component_name: &str,
+        nodes: &[Gen3dPlannedArticulationNode],
+        node_index_by_id: &std::collections::HashMap<String, usize>,
+        visiting: &mut [bool],
+        visited: &mut [bool],
+    ) -> Result<(), String> {
+        if visited[idx] {
+            return Ok(());
+        }
+        if visiting[idx] {
+            return Err(format!(
+                "Component `{component_name}` contains an articulation-node parent cycle involving `{}`.",
+                nodes[idx].node_id
+            ));
+        }
+        visiting[idx] = true;
+        if let Some(parent_id) = nodes[idx].parent_node_id.as_ref() {
+            let Some(&parent_idx) = node_index_by_id.get(parent_id) else {
+                return Err(format!(
+                    "Articulation node `{}` on component `{component_name}` references missing parent `{}`.",
+                    nodes[idx].node_id,
+                    parent_id
+                ));
+            };
+            dfs(
+                parent_idx,
+                component_name,
+                nodes,
+                node_index_by_id,
+                visiting,
+                visited,
+            )?;
+        }
+        visiting[idx] = false;
+        visited[idx] = true;
+        Ok(())
+    }
+
+    for idx in 0..nodes.len() {
+        dfs(
+            idx,
+            component_name,
+            nodes,
+            &node_index_by_id,
+            &mut visiting,
+            &mut visited,
+        )?;
+    }
+
+    Ok(())
 }
 
 fn apply_one_op(
@@ -629,6 +829,9 @@ fn apply_one_op(
         DraftOpJsonV1::UpdatePrimitivePart { .. } => "update_primitive_part",
         DraftOpJsonV1::AddPrimitivePart { .. } => "add_primitive_part",
         DraftOpJsonV1::RemovePrimitivePart { .. } => "remove_primitive_part",
+        DraftOpJsonV1::UpsertArticulationNode { .. } => "upsert_articulation_node",
+        DraftOpJsonV1::RemoveArticulationNode { .. } => "remove_articulation_node",
+        DraftOpJsonV1::RebindArticulationNodeParts { .. } => "rebind_articulation_node_parts",
         DraftOpJsonV1::UpsertAnimationSlot { .. } => "upsert_animation_slot",
         DraftOpJsonV1::ScaleAnimationSlotRotation { .. } => "scale_animation_slot_rotation",
         DraftOpJsonV1::RemoveAnimationSlot { .. } => "remove_animation_slot",
@@ -912,6 +1115,21 @@ fn apply_one_op(
             let component_name = component.trim();
             let part_id = parse_uuid_u128("part_id_uuid", part_id_uuid.as_str()).map_err(reject)?;
 
+            let planned_comp =
+                find_planned_component_mut(planned, component_name).map_err(reject)?;
+            if let Some(node) = planned_comp
+                .articulation_nodes
+                .iter()
+                .find(|node| node.bound_part_ids.contains(&part_id))
+            {
+                return Err(reject(format!(
+                    "Cannot remove primitive part {} from component `{}` because articulation node `{}` still binds it. Rebind or remove that articulation node first.",
+                    Uuid::from_u128(part_id),
+                    component_name,
+                    node.node_id
+                )));
+            }
+
             let def = find_component_def_mut(draft, component_name).map_err(reject)?;
             let mut match_index: Option<usize> = None;
             let mut matches = 0usize;
@@ -948,6 +1166,238 @@ fn apply_one_op(
             state.primitive_parts_removed = state.primitive_parts_removed.saturating_add(1);
             mark_changed_component(state, component_name);
             serde_json::json!({"removed": true})
+        }
+        DraftOpJsonV1::UpsertArticulationNode {
+            component,
+            node_id,
+            parent_node_id,
+            set_transform,
+            bound_part_id_uuids,
+        } => {
+            let component_name = component.trim();
+            let node_id = node_id.trim();
+            if node_id.is_empty() {
+                return Err(reject("node_id must be non-empty".into()));
+            }
+
+            let available_part_ids = {
+                let def = find_component_def_mut(draft, component_name).map_err(reject)?;
+                primitive_part_ids_for_def(def)
+            };
+            let bound_part_ids =
+                parse_bound_part_ids("bound_part_id_uuids", bound_part_id_uuids.as_slice())
+                    .map_err(reject)?;
+            let parent_node_id = parent_node_id.clone().into_option_trimmed();
+
+            let planned_comp =
+                find_planned_component_mut(planned, component_name).map_err(reject)?;
+            let existing_idx = planned_comp
+                .articulation_nodes
+                .iter()
+                .position(|node| node.node_id == node_id);
+
+            let mut next_transform = existing_idx
+                .and_then(|idx| {
+                    planned_comp
+                        .articulation_nodes
+                        .get(idx)
+                        .map(|node| node.transform)
+                })
+                .unwrap_or(Transform::IDENTITY);
+            let transform_diff =
+                apply_transform_delta(&mut next_transform, set_transform, false, "set_transform")
+                    .map_err(reject)?;
+
+            let mut diff = serde_json::Map::new();
+            diff.insert(
+                "node_id".into(),
+                serde_json::Value::String(node_id.to_string()),
+            );
+            diff.insert("transform".into(), transform_diff);
+
+            let parent_after = parent_node_id.clone();
+            if let Some(idx) = existing_idx {
+                let node = planned_comp
+                    .articulation_nodes
+                    .get_mut(idx)
+                    .ok_or_else(|| {
+                        reject("Internal error: articulation node index out of range".into())
+                    })?;
+                let parent_before = node.parent_node_id.clone();
+                let bindings_before: Vec<String> = node
+                    .bound_part_ids
+                    .iter()
+                    .map(|id| Uuid::from_u128(*id).to_string())
+                    .collect();
+                node.parent_node_id = parent_after.clone();
+                node.transform = next_transform;
+                node.bound_part_ids = bound_part_ids;
+                diff.insert("updated".into(), serde_json::Value::Bool(true));
+                diff.insert(
+                    "parent_node_id".into(),
+                    serde_json::json!({
+                        "before": parent_before,
+                        "after": parent_after,
+                    }),
+                );
+                diff.insert(
+                    "bound_part_id_uuids".into(),
+                    serde_json::json!({
+                        "before": bindings_before,
+                        "after": node
+                            .bound_part_ids
+                            .iter()
+                            .map(|id| Uuid::from_u128(*id).to_string())
+                            .collect::<Vec<_>>(),
+                    }),
+                );
+            } else {
+                planned_comp
+                    .articulation_nodes
+                    .push(Gen3dPlannedArticulationNode {
+                        node_id: node_id.to_string(),
+                        parent_node_id: parent_after.clone(),
+                        transform: next_transform,
+                        bound_part_ids,
+                    });
+                diff.insert("added".into(), serde_json::Value::Bool(true));
+                diff.insert(
+                    "parent_node_id".into(),
+                    serde_json::json!({"after": parent_after}),
+                );
+                diff.insert(
+                    "bound_part_id_uuids".into(),
+                    serde_json::json!({
+                        "after": planned_comp
+                            .articulation_nodes
+                            .last()
+                            .map(|node| {
+                                node.bound_part_ids
+                                    .iter()
+                                    .map(|id| Uuid::from_u128(*id).to_string())
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default(),
+                    }),
+                );
+            }
+
+            validate_component_articulation_nodes(
+                component_name,
+                planned_comp.articulation_nodes.as_mut_slice(),
+                &available_part_ids,
+            )
+            .map_err(reject)?;
+
+            state.articulation_nodes_upserted = state.articulation_nodes_upserted.saturating_add(1);
+            mark_changed_component(state, component_name);
+            serde_json::Value::Object(diff)
+        }
+        DraftOpJsonV1::RemoveArticulationNode { component, node_id } => {
+            let component_name = component.trim();
+            let node_id = node_id.trim();
+            if node_id.is_empty() {
+                return Err(reject("node_id must be non-empty".into()));
+            }
+
+            let planned_comp =
+                find_planned_component_mut(planned, component_name).map_err(reject)?;
+            let Some(idx) = planned_comp
+                .articulation_nodes
+                .iter()
+                .position(|node| node.node_id == node_id)
+            else {
+                return Err(reject(format!(
+                    "Articulation node `{}` not found on component `{}`",
+                    node_id, component_name
+                )));
+            };
+
+            if let Some(child) = planned_comp
+                .articulation_nodes
+                .iter()
+                .find(|node| node.parent_node_id.as_deref() == Some(node_id))
+            {
+                return Err(reject(format!(
+                    "Cannot remove articulation node `{}` on component `{}` because child articulation node `{}` still parents to it.",
+                    node_id,
+                    component_name,
+                    child.node_id
+                )));
+            }
+
+            let removed = planned_comp.articulation_nodes.remove(idx);
+            state.articulation_nodes_removed = state.articulation_nodes_removed.saturating_add(1);
+            mark_changed_component(state, component_name);
+            serde_json::json!({
+                "removed": true,
+                "node_id": removed.node_id,
+                "bound_part_id_uuids": removed
+                    .bound_part_ids
+                    .iter()
+                    .map(|id| Uuid::from_u128(*id).to_string())
+                    .collect::<Vec<_>>(),
+            })
+        }
+        DraftOpJsonV1::RebindArticulationNodeParts {
+            component,
+            node_id,
+            bound_part_id_uuids,
+        } => {
+            let component_name = component.trim();
+            let node_id = node_id.trim();
+            if node_id.is_empty() {
+                return Err(reject("node_id must be non-empty".into()));
+            }
+
+            let available_part_ids = {
+                let def = find_component_def_mut(draft, component_name).map_err(reject)?;
+                primitive_part_ids_for_def(def)
+            };
+            let bound_part_ids =
+                parse_bound_part_ids("bound_part_id_uuids", bound_part_id_uuids.as_slice())
+                    .map_err(reject)?;
+
+            let planned_comp =
+                find_planned_component_mut(planned, component_name).map_err(reject)?;
+            let Some(idx) = planned_comp
+                .articulation_nodes
+                .iter()
+                .position(|node| node.node_id == node_id)
+            else {
+                return Err(reject(format!(
+                    "Articulation node `{}` not found on component `{}`",
+                    node_id, component_name
+                )));
+            };
+
+            let before = planned_comp.articulation_nodes[idx]
+                .bound_part_ids
+                .iter()
+                .map(|id| Uuid::from_u128(*id).to_string())
+                .collect::<Vec<_>>();
+            planned_comp.articulation_nodes[idx].bound_part_ids = bound_part_ids;
+            validate_component_articulation_nodes(
+                component_name,
+                planned_comp.articulation_nodes.as_mut_slice(),
+                &available_part_ids,
+            )
+            .map_err(reject)?;
+
+            state.articulation_nodes_rebound = state.articulation_nodes_rebound.saturating_add(1);
+            mark_changed_component(state, component_name);
+            serde_json::json!({
+                "rebound": true,
+                "node_id": node_id,
+                "bound_part_id_uuids": {
+                    "before": before,
+                    "after": planned_comp.articulation_nodes[idx]
+                        .bound_part_ids
+                        .iter()
+                        .map(|id| Uuid::from_u128(*id).to_string())
+                        .collect::<Vec<_>>(),
+                }
+            })
         }
         DraftOpJsonV1::UpsertAnimationSlot {
             child_component,
@@ -1494,46 +1944,56 @@ pub(super) fn query_component_parts_v1(
         .iter()
         .position(|c| c.name == component)
         .map(|idx| idx as u32);
-    let articulation_nodes = job
+    let planned_articulation_nodes = job
         .planned_components
         .iter()
         .find(|c| c.name == component)
-        .map(|planned| {
-            planned
-                .articulation_nodes
-                .iter()
-                .map(|node| {
-                    serde_json::json!({
-                        "node_id": node.node_id,
-                        "parent_node_id": node.parent_node_id,
-                        "transform": {
-                            "pos": [
-                                node.transform.translation.x,
-                                node.transform.translation.y,
-                                node.transform.translation.z,
-                            ],
-                            "rot_quat_xyzw": [
-                                node.transform.rotation.x,
-                                node.transform.rotation.y,
-                                node.transform.rotation.z,
-                                node.transform.rotation.w,
-                            ],
-                            "scale": [
-                                node.transform.scale.x,
-                                node.transform.scale.y,
-                                node.transform.scale.z,
-                            ],
-                        },
-                        "bound_part_id_uuids": node
-                            .bound_part_ids
-                            .iter()
-                            .map(|id| Uuid::from_u128(*id).to_string())
-                            .collect::<Vec<_>>(),
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
+        .map(|planned| planned.articulation_nodes.clone())
         .unwrap_or_default();
+    let articulation_nodes = planned_articulation_nodes
+        .iter()
+        .map(|node| {
+            serde_json::json!({
+                "node_id": node.node_id,
+                "parent_node_id": node.parent_node_id,
+                "transform": {
+                    "pos": [
+                        node.transform.translation.x,
+                        node.transform.translation.y,
+                        node.transform.translation.z,
+                    ],
+                    "rot_quat_xyzw": [
+                        node.transform.rotation.x,
+                        node.transform.rotation.y,
+                        node.transform.rotation.z,
+                        node.transform.rotation.w,
+                    ],
+                    "scale": [
+                        node.transform.scale.x,
+                        node.transform.scale.y,
+                        node.transform.scale.z,
+                    ],
+                },
+                "bound_part_id_uuids": node
+                    .bound_part_ids
+                    .iter()
+                    .map(|id| Uuid::from_u128(*id).to_string())
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let articulation_part_id_samples: Vec<String> = out_parts
+        .iter()
+        .filter_map(|part| {
+            part.get("part_id_uuid")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty() && *value != "null")
+                .map(|value| value.to_string())
+        })
+        .take(3)
+        .collect();
 
     let mut recipes: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     let recolor_sample_total = recolor_samples.len();
@@ -1568,6 +2028,119 @@ pub(super) fn query_component_parts_v1(
             }),
         );
     }
+    if let Some(node) = planned_articulation_nodes.first() {
+        recipes.insert(
+            "upsert_articulation_node_sample".into(),
+            serde_json::json!({
+                "tool_id": "apply_draft_ops_v1",
+                "note": "Add or update an internal articulation node without regenerating geometry. Use existing part_id_uuid values from this snapshot; articulation nodes are rig metadata only.",
+                "args": {
+                    "version": 1,
+                    "atomic": true,
+                    "if_assembly_rev": job.assembly_rev(),
+                    "ops": [{
+                        "kind": "upsert_articulation_node",
+                        "component": component.as_str(),
+                        "node_id": node.node_id,
+                        "parent_node_id": node.parent_node_id,
+                        "set_transform": {
+                            "pos": [
+                                node.transform.translation.x,
+                                node.transform.translation.y + 0.02,
+                                node.transform.translation.z,
+                            ],
+                            "rot_quat_xyzw": [
+                                node.transform.rotation.x,
+                                node.transform.rotation.y,
+                                node.transform.rotation.z,
+                                node.transform.rotation.w,
+                            ],
+                        },
+                        "bound_part_id_uuids": node
+                            .bound_part_ids
+                            .iter()
+                            .map(|id| Uuid::from_u128(*id).to_string())
+                            .collect::<Vec<_>>(),
+                    }],
+                },
+            }),
+        );
+        recipes.insert(
+            "rebind_articulation_node_parts_sample".into(),
+            serde_json::json!({
+                "tool_id": "apply_draft_ops_v1",
+                "note": "Replace the part bindings of an existing articulation node. One primitive part may belong to only one articulation node at a time.",
+                "args": {
+                    "version": 1,
+                    "atomic": true,
+                    "if_assembly_rev": job.assembly_rev(),
+                    "ops": [{
+                        "kind": "rebind_articulation_node_parts",
+                        "component": component.as_str(),
+                        "node_id": node.node_id,
+                        "bound_part_id_uuids": node
+                            .bound_part_ids
+                            .iter()
+                            .map(|id| Uuid::from_u128(*id).to_string())
+                            .collect::<Vec<_>>(),
+                    }],
+                },
+            }),
+        );
+
+        let mut parent_node_ids = std::collections::HashSet::<&str>::new();
+        for other in planned_articulation_nodes.iter() {
+            if let Some(parent) = other.parent_node_id.as_deref() {
+                parent_node_ids.insert(parent);
+            }
+        }
+        if let Some(leaf) = planned_articulation_nodes
+            .iter()
+            .find(|candidate| !parent_node_ids.contains(candidate.node_id.as_str()))
+        {
+            recipes.insert(
+                "remove_articulation_node_sample".into(),
+                serde_json::json!({
+                    "tool_id": "apply_draft_ops_v1",
+                    "note": "Remove a leaf articulation node. Removal is rejected when another articulation node still parents to it.",
+                    "args": {
+                        "version": 1,
+                        "atomic": true,
+                        "if_assembly_rev": job.assembly_rev(),
+                        "ops": [{
+                            "kind": "remove_articulation_node",
+                            "component": component.as_str(),
+                            "node_id": leaf.node_id,
+                        }],
+                    },
+                }),
+            );
+        }
+    } else if !articulation_part_id_samples.is_empty() {
+        recipes.insert(
+            "add_articulation_node_sample".into(),
+            serde_json::json!({
+                "tool_id": "apply_draft_ops_v1",
+                "note": "Create a new internal articulation node bound to existing primitive parts. This keeps the same component geometry and only adds rig metadata.",
+                "args": {
+                    "version": 1,
+                    "atomic": true,
+                    "if_assembly_rev": job.assembly_rev(),
+                    "ops": [{
+                        "kind": "upsert_articulation_node",
+                        "component": component.as_str(),
+                        "node_id": "articulation_sample",
+                        "parent_node_id": serde_json::Value::Null,
+                        "set_transform": {
+                            "pos": [0.0, 0.0, 0.0],
+                            "rot_quat_xyzw": [0.0, 0.0, 0.0, 1.0],
+                        },
+                        "bound_part_id_uuids": articulation_part_id_samples,
+                    }],
+                },
+            }),
+        );
+    }
 
     let result = serde_json::json!({
         "ok": true,
@@ -1583,12 +2156,15 @@ pub(super) fn query_component_parts_v1(
         "editability": {
             "primitives_with_part_id_total": primitives_with_part_id_total,
             "recolorable_primitives_total": recolorable_primitives_total,
+            "articulation_nodes_total": planned_articulation_nodes.len(),
             "recolor_sample_total": recolor_sample_total,
             "update_transform_sample_total": transform_sample_total,
         },
         "hints": [
             "For recolor: use apply_draft_ops_v1 with kind=update_primitive_part and set_primitive (mesh+params required; change only color_rgba/unlit).",
             "Edits require part_id_uuid. If part_id_uuid is null, that part is not directly editable via apply_draft_ops_v1.",
+            "Articulation nodes can be edited in place via upsert_articulation_node, remove_articulation_node, and rebind_articulation_node_parts.",
+            "A primitive part may belong to only one articulation node at a time; remove_primitive_part is rejected while a node still binds that part.",
             "All transforms in apply_draft_ops_v1 are absolute sets (not additive deltas).",
         ],
         "recipes": recipes,
@@ -1695,6 +2271,11 @@ pub(super) fn apply_draft_ops_v1(
             "removed": state.primitive_parts_removed,
             "updated": state.primitive_parts_updated,
         },
+        "articulation_nodes": {
+            "upserted": state.articulation_nodes_upserted,
+            "removed": state.articulation_nodes_removed,
+            "rebound": state.articulation_nodes_rebound,
+        },
         "animation_slots": {
             "upserted": state.animation_slots_upserted,
             "scaled": state.animation_slots_scaled,
@@ -1758,23 +2339,33 @@ mod tests {
     use crate::gen3d::gen3d_draft_object_id;
     use crate::object::registry::{AnchorDef, ColliderProfile, ObjectInteraction};
 
-    fn make_component_def(name: &str) -> ObjectDef {
+    fn component_part_id(name: &str, idx: usize) -> u128 {
+        builtin_object_id(&format!("gravimera/gen3d/part/{name}/{idx}"))
+    }
+
+    fn make_component_def_with_parts(name: &str, primitive_count: usize) -> ObjectDef {
         let object_id = component_object_id_for_name(name);
-        let mut part0 = ObjectPartDef::primitive(
-            PrimitiveVisualDef::Primitive {
-                mesh: MeshKey::UnitCube,
-                params: None,
-                color: Color::srgb(0.5, 0.5, 0.5),
-                unlit: false,
-            },
-            Transform::IDENTITY,
-        );
-        part0.part_id = Some(builtin_object_id(&format!("gravimera/gen3d/part/{name}/0")));
+        let mut parts: Vec<ObjectPartDef> = Vec::new();
+        for idx in 0..primitive_count.max(1) {
+            let mut part = ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::srgb(0.5, 0.5, 0.5),
+                    unlit: false,
+                },
+                Transform::from_translation(Vec3::new(idx as f32 * 0.25, 0.0, 0.0)),
+            );
+            part.part_id = Some(component_part_id(name, idx));
+            parts.push(part);
+        }
+
+        let size = crate::gen3d::ai::convert::size_from_primitive_parts(&parts);
 
         ObjectDef {
             object_id,
             label: format!("gen3d_component_{name}").into(),
-            size: Vec3::ONE,
+            size,
             ground_origin_y: None,
             collider: ColliderProfile::None,
             interaction: ObjectInteraction::none(),
@@ -1784,7 +2375,7 @@ mod tests {
                 name: "mount".into(),
                 transform: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
             }],
-            parts: vec![part0],
+            parts,
             minimap_color: None,
             health_bar_offset_y: None,
             enemy: None,
@@ -1792,6 +2383,10 @@ mod tests {
             projectile: None,
             attack: None,
         }
+    }
+
+    fn make_component_def(name: &str) -> ObjectDef {
+        make_component_def_with_parts(name, 1)
     }
 
     fn make_root_def() -> ObjectDef {
@@ -2097,5 +2692,175 @@ mod tests {
             .rotation;
         let (_axis, angle) = q.normalize().to_axis_angle();
         assert!((angle - std::f32::consts::FRAC_PI_4).abs() < 1e-3);
+    }
+
+    #[test]
+    fn apply_upserts_articulation_node() {
+        let mut job = make_job_with_components(&["root"]);
+        let mut draft = Gen3dDraft {
+            defs: vec![make_root_def(), make_component_def_with_parts("root", 2)],
+        };
+
+        let args = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "ops": [{
+                "kind": "upsert_articulation_node",
+                "component": "root",
+                "node_id": "jaw",
+                "parent_node_id": null,
+                "set_transform": {
+                    "pos": [0.0, -0.1, 0.2],
+                    "rot_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+                },
+                "bound_part_id_uuids": [Uuid::from_u128(component_part_id("root", 0)).to_string()]
+            }]
+        });
+        let out = apply_draft_ops_v1(&mut job, &mut draft, Some("test"), args).unwrap();
+        assert!(out.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+        assert_eq!(job.planned_components[0].articulation_nodes.len(), 1);
+        let node = &job.planned_components[0].articulation_nodes[0];
+        assert_eq!(node.node_id, "jaw");
+        assert_eq!(node.parent_node_id, None);
+        assert_eq!(node.bound_part_ids, vec![component_part_id("root", 0)]);
+        assert_eq!(
+            out.get("diff_summary")
+                .and_then(|v| v.get("articulation_nodes"))
+                .and_then(|v| v.get("upserted"))
+                .and_then(|v| v.as_u64()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn apply_rebinds_articulation_node_parts() {
+        let mut job = make_job_with_components(&["root"]);
+        job.planned_components[0].articulation_nodes = vec![Gen3dPlannedArticulationNode {
+            node_id: "jaw".into(),
+            parent_node_id: None,
+            transform: Transform::IDENTITY,
+            bound_part_ids: vec![component_part_id("root", 0)],
+        }];
+        let mut draft = Gen3dDraft {
+            defs: vec![make_root_def(), make_component_def_with_parts("root", 2)],
+        };
+
+        let args = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "ops": [{
+                "kind": "rebind_articulation_node_parts",
+                "component": "root",
+                "node_id": "jaw",
+                "bound_part_id_uuids": [Uuid::from_u128(component_part_id("root", 1)).to_string()]
+            }]
+        });
+        let out = apply_draft_ops_v1(&mut job, &mut draft, Some("test"), args).unwrap();
+        assert!(out.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+        assert_eq!(
+            job.planned_components[0].articulation_nodes[0].bound_part_ids,
+            vec![component_part_id("root", 1)]
+        );
+        assert_eq!(
+            out.get("diff_summary")
+                .and_then(|v| v.get("articulation_nodes"))
+                .and_then(|v| v.get("rebound"))
+                .and_then(|v| v.as_u64()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn apply_rejects_removing_articulation_node_with_children() {
+        let mut job = make_job_with_components(&["root"]);
+        job.planned_components[0].articulation_nodes = vec![
+            Gen3dPlannedArticulationNode {
+                node_id: "head_core".into(),
+                parent_node_id: None,
+                transform: Transform::IDENTITY,
+                bound_part_ids: vec![component_part_id("root", 0)],
+            },
+            Gen3dPlannedArticulationNode {
+                node_id: "jaw".into(),
+                parent_node_id: Some("head_core".into()),
+                transform: Transform::IDENTITY,
+                bound_part_ids: vec![component_part_id("root", 1)],
+            },
+        ];
+        let mut draft = Gen3dDraft {
+            defs: vec![make_root_def(), make_component_def_with_parts("root", 2)],
+        };
+
+        let args = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "ops": [{
+                "kind": "remove_articulation_node",
+                "component": "root",
+                "node_id": "head_core"
+            }]
+        });
+        let out = apply_draft_ops_v1(&mut job, &mut draft, Some("test"), args).unwrap();
+        assert!(!out.get("ok").and_then(|v| v.as_bool()).unwrap_or(true));
+        assert_eq!(job.planned_components[0].articulation_nodes.len(), 2);
+    }
+
+    #[test]
+    fn apply_removes_leaf_articulation_node() {
+        let mut job = make_job_with_components(&["root"]);
+        job.planned_components[0].articulation_nodes = vec![Gen3dPlannedArticulationNode {
+            node_id: "jaw".into(),
+            parent_node_id: None,
+            transform: Transform::IDENTITY,
+            bound_part_ids: vec![component_part_id("root", 0)],
+        }];
+        let mut draft = Gen3dDraft {
+            defs: vec![make_root_def(), make_component_def_with_parts("root", 1)],
+        };
+
+        let args = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "ops": [{
+                "kind": "remove_articulation_node",
+                "component": "root",
+                "node_id": "jaw"
+            }]
+        });
+        let out = apply_draft_ops_v1(&mut job, &mut draft, Some("test"), args).unwrap();
+        assert!(out.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+        assert!(job.planned_components[0].articulation_nodes.is_empty());
+    }
+
+    #[test]
+    fn apply_rejects_removing_bound_primitive_part() {
+        let mut job = make_job_with_components(&["root"]);
+        job.planned_components[0].articulation_nodes = vec![Gen3dPlannedArticulationNode {
+            node_id: "jaw".into(),
+            parent_node_id: None,
+            transform: Transform::IDENTITY,
+            bound_part_ids: vec![component_part_id("root", 0)],
+        }];
+        let mut draft = Gen3dDraft {
+            defs: vec![make_root_def(), make_component_def_with_parts("root", 1)],
+        };
+
+        let args = serde_json::json!({
+            "version": 1,
+            "atomic": true,
+            "ops": [{
+                "kind": "remove_primitive_part",
+                "component": "root",
+                "part_id_uuid": Uuid::from_u128(component_part_id("root", 0)).to_string()
+            }]
+        });
+        let out = apply_draft_ops_v1(&mut job, &mut draft, Some("test"), args).unwrap();
+        assert!(!out.get("ok").and_then(|v| v.as_bool()).unwrap_or(true));
+        let root_def = draft
+            .defs
+            .iter()
+            .find(|d| d.object_id == component_object_id_for_name("root"))
+            .expect("root def");
+        assert_eq!(root_def.parts.len(), 1);
     }
 }

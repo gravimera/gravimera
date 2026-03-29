@@ -95,8 +95,8 @@ Build button becomes Edit, and subsequent runs overwrite the same prefab id (the
 clicking Edit from a prefab preview). If auto-save is skipped or fails, the session remains a Build
 session.
 
-For edit requests like “make the wings larger” where regeneration is not required, Gen3D prefers
-**in-place primitive edits**:
+For edit requests like “make the wings larger” or “keep this component but make internal parts
+animatable” where regeneration is not required, Gen3D prefers **in-place DraftOps edits**:
 
 1. Capture editable part snapshots (per-component): `query_component_parts_v1`
    - The pipeline prefers a small scope (selected via `llm_select_edit_strategy_v1`).
@@ -162,6 +162,17 @@ channels like `blink` or `jaw_open` can play without replacing the body’s base
 
 `query_component_parts_v1` now returns both `parts[]` and `articulation_nodes[]` so seeded edits can
 reason about internal rig handles deterministically.
+
+Seeded edits can now mutate articulation nodes directly through DraftOps:
+
+- `upsert_articulation_node`: add a new node or update an existing node in place
+- `remove_articulation_node`: remove a leaf node
+- `rebind_articulation_node_parts`: replace the part bindings of an existing node
+
+These ops edit only Gen3D rig metadata. They do not create geometry by themselves. If the desired
+internal region does not already exist as primitive parts, the edit still needs primitive-part edits
+or regeneration first. One primitive part may belong to only one articulation node at a time, and
+`remove_primitive_part` is rejected while an articulation node still binds that part.
 
 ## Motion slots: per-slot basis + per-edge fallback basis
 

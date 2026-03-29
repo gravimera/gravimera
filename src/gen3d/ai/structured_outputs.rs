@@ -1014,6 +1014,43 @@ fn schema_draft_op() -> serde_json::Value {
         "required": ["kind", "component", "part_id_uuid"],
     });
 
+    let upsert_articulation_node = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["upsert_articulation_node"]),
+            "component": schema_string(),
+            "node_id": schema_string(),
+            "parent_node_id": schema_nullable(schema_string()),
+            "set_transform": schema_transform_delta_draft_ops(),
+            "bound_part_id_uuids": schema_array_of(schema_string()),
+        },
+        "required": ["kind", "component", "node_id", "parent_node_id", "set_transform", "bound_part_id_uuids"],
+    });
+
+    let remove_articulation_node = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["remove_articulation_node"]),
+            "component": schema_string(),
+            "node_id": schema_string(),
+        },
+        "required": ["kind", "component", "node_id"],
+    });
+
+    let rebind_articulation_node_parts = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": schema_enum(&["rebind_articulation_node_parts"]),
+            "component": schema_string(),
+            "node_id": schema_string(),
+            "bound_part_id_uuids": schema_array_of(schema_string()),
+        },
+        "required": ["kind", "component", "node_id", "bound_part_id_uuids"],
+    });
+
     let upsert_animation_slot = json!({
         "type": "object",
         "additionalProperties": false,
@@ -1056,6 +1093,9 @@ fn schema_draft_op() -> serde_json::Value {
         update_primitive_part,
         add_primitive_part,
         remove_primitive_part,
+        upsert_articulation_node,
+        remove_articulation_node,
+        rebind_articulation_node_parts,
         upsert_animation_slot,
         scale_animation_slot_rotation,
         remove_animation_slot,

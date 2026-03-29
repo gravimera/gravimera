@@ -1356,6 +1356,82 @@ Notes:
 - Returns `409` if a build is already running.
 - Returns `400` if there is no prior Gen3D session to resume.
 
+### `POST /v1/gen3d/apply_draft_ops`
+
+Apply deterministic DraftOps to the active Gen3D draft.
+
+Requirements:
+
+- Rendered mode.
+- Build Preview scene.
+- An active Gen3D session (build or seeded edit).
+
+This is the same deterministic edit surface used by the seeded-edit pipeline. It supports primitive
+part edits, anchor edits, attachment offset/joint edits, animation-slot edits, and articulation-node
+rig edits such as `upsert_articulation_node`, `remove_articulation_node`, and
+`rebind_articulation_node_parts`.
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen3d/apply_draft_ops \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "version": 1,
+    "atomic": true,
+    "if_assembly_rev": 1,
+    "ops": [
+      {
+        "kind": "upsert_articulation_node",
+        "component": "head",
+        "node_id": "jaw_hinge",
+        "parent_node_id": "head_core",
+        "set_transform": {
+          "pos": [0.0, -0.12, 0.16],
+          "rot_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+        },
+        "bound_part_id_uuids": ["2f6b7d3e-4f16-4a2b-8d35-0e15a8c4d3b0"]
+      }
+    ]
+  }'
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "version": 1,
+  "atomic": true,
+  "committed": true,
+  "assembly_rev_before": 1,
+  "new_assembly_rev": 2,
+  "applied_ops": [
+    {
+      "index": 0,
+      "kind": "upsert_articulation_node",
+      "diff": {
+        "node_id": "jaw_hinge",
+        "added": true
+      }
+    }
+  ],
+  "rejected_ops": [],
+  "diff_summary": {
+    "articulation_nodes": {
+      "upserted": 1,
+      "removed": 0,
+      "rebound": 0
+    }
+  }
+}
+```
+
+Notes:
+
+- `atomic=true` is strongly recommended so invalid ops do not partially apply.
+- `if_assembly_rev` is strongly recommended so stale DraftOps cannot apply to a changed draft.
+- `remove_articulation_node` is rejected for non-leaf nodes.
+- `remove_primitive_part` is rejected while an articulation node still binds that part.
+
 ### `POST /v1/gen3d/save`
 
 Save the current draft to prefabs:

@@ -110,6 +110,8 @@ Pipeline stages (simplified):
      - Snapshot payloads now include both `parts[]` and `articulation_nodes[]`.
    - `EditSuggestDraftOps` (tool: `llm_generate_draft_ops_v1` with `scope_components`)
    - `EditApplyDraftOps` (tool: `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev=<current>`)
+     - DraftOps may now edit primitive parts, anchors, attachment offsets/joints, animation slots,
+       and articulation nodes.
 5. `Qa` → optional render/review-delta → `Finish`
 
 ## Which tools are called (and the args the pipeline uses)
@@ -138,11 +140,14 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
   - `query_component_parts_v1`
     - Args: `{ "component": "<component name>", "max_parts": 128 }`
     - Result highlights: `parts[]`, `articulation_nodes[]`, and sample `apply_draft_ops_v1` recipes
+      for primitive edits and articulation-node rig edits
 - `llm_generate_draft_ops_v1`
   - Args: `{ "prompt": "<edit prompt>", "scope_components": ["..."], "max_ops": 24, "strategy": "conservative" }`
       - If `scope_components=[]` (or omitted), the tool defaults to “all components”, which is more expensive and may truncate snapshots.
   - `apply_draft_ops_v1`
     - Args (pipeline): `{ "version": 1, "atomic": true, "if_assembly_rev": <u32>, "ops": [...] }`
+    - Supported edit families: primitive parts, anchors, attachment offsets/joints, animation slots,
+      `upsert_articulation_node`, `remove_articulation_node`, and `rebind_articulation_node_parts`
 
 - QA / remediation
   - `qa_v1`

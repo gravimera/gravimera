@@ -1842,6 +1842,23 @@ pub(super) fn poll_agent_tool(
                                     "render_priority",
                                 ],
                                 "remove_primitive_part" => &["kind", "component", "part_id_uuid"],
+                                "upsert_articulation_node" => &[
+                                    "kind",
+                                    "component",
+                                    "node_id",
+                                    "parent_node_id",
+                                    "set_transform",
+                                    "bound_part_id_uuids",
+                                ],
+                                "remove_articulation_node" => {
+                                    &["kind", "component", "node_id"]
+                                }
+                                "rebind_articulation_node_parts" => &[
+                                    "kind",
+                                    "component",
+                                    "node_id",
+                                    "bound_part_id_uuids",
+                                ],
                                 "upsert_animation_slot" => {
                                     &["kind", "child_component", "channel", "slot"]
                                 }
@@ -2133,6 +2150,8 @@ pub(super) fn poll_agent_tool(
                         let workspace_id = job.active_workspace_id().trim().to_string();
                         let mut parts_by_component: std::collections::HashMap<String, std::collections::HashSet<String>> =
                             std::collections::HashMap::new();
+                        let mut articulation_nodes_by_component: std::collections::HashMap<String, std::collections::HashSet<String>> =
+                            std::collections::HashMap::new();
                         {
                             let store = job.ensure_info_store()?;
                             for comp in planned_components.iter() {
@@ -2149,6 +2168,7 @@ pub(super) fn poll_agent_tool(
                                     continue;
                                 };
                                 let mut ids = std::collections::HashSet::<String>::new();
+                                let mut node_ids = std::collections::HashSet::<String>::new();
                                 if let Some(parts) =
                                     record.value.get("parts").and_then(|v| v.as_array())
                                 {
@@ -2163,8 +2183,26 @@ pub(super) fn poll_agent_tool(
                                         }
                                     }
                                 }
+                                if let Some(nodes) =
+                                    record.value.get("articulation_nodes").and_then(|v| v.as_array())
+                                {
+                                    for node in nodes {
+                                        if let Some(node_id) =
+                                            node.get("node_id").and_then(|v| v.as_str())
+                                        {
+                                            let node_id = node_id.trim();
+                                            if !node_id.is_empty() {
+                                                node_ids.insert(node_id.to_string());
+                                            }
+                                        }
+                                    }
+                                }
                                 if !ids.is_empty() {
                                     parts_by_component.insert(comp.name.clone(), ids);
+                                }
+                                if !node_ids.is_empty() {
+                                    articulation_nodes_by_component
+                                        .insert(comp.name.clone(), node_ids);
                                 }
                             }
                         }
@@ -2259,6 +2297,9 @@ pub(super) fn poll_agent_tool(
                                             "ops[{idx}] unknown part_id_uuid={part_id:?} for component={component:?} (call query_component_parts_v1 first)"
                                         ));
                                     }
+                                    if let Some(set) = parts_by_component.get_mut(component) {
+                                        set.remove(part_id);
+                                    }
                                 }
                                 "update_primitive_part" => {
                                     let component = component.ok_or_else(|| {
@@ -2312,6 +2353,197 @@ pub(super) fn poll_agent_tool(
                                         return Err(format!(
                                             "ops[{idx}] add_primitive_part part_id_uuid is not a valid UUID: {part_id:?}"
                                         ));
+                                    }
+                                    parts_by_component
+                                        .entry(component.to_string())
+                                        .or_default()
+                                        .insert(part_id.to_string());
+                                }
+                                "upsert_articulation_node" => {
+                                    let component = component.ok_or_else(|| {
+                                        "upsert_articulation_node requires component".to_string()
+                                    })?;
+                                    if !planned_names.contains(component) {
+                                        return Err(format!(
+                                            "ops[{idx}] references unknown component={component:?}"
+                                        ));
+                                    }
+                                    let node_id = op
+                                        .get("node_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .trim();
+                                    if node_id.is_empty() {
+                                        return Err(format!(
+                                            "ops[{idx}] upsert_articulation_node requires node_id"
+                                        ));
+                                    }
+                                    if !obj.contains_key("parent_node_id") {
+                                        return Err(format!(
+                                            "ops[{idx}] upsert_articulation_node requires parent_node_id (use null for a root articulation node)"
+                                        ));
+                                    }
+                                    let Some(set_transform) =
+                                        op.get("set_transform").and_then(|v| v.as_object())
+                                    else {
+                                        return Err(format!(
+                                            "ops[{idx}] upsert_articulation_node requires set_transform as an object"
+                                        ));
+                                    };
+                                    if set_transform.contains_key("scale") {
+                                        return Err(format!(
+                                            "ops[{idx}] upsert_articulation_node.set_transform must not include scale"
+                                        ));
+                                    }
+
+                                    let parent_node_id = op
+                                        .get("parent_node_id")
+                                        .and_then(|v| v.as_str())
+                                        .map(str::trim)
+                                        .filter(|value| !value.is_empty());
+                                    if parent_node_id == Some(node_id) {
+                                        return Err(format!(
+                                            "ops[{idx}] upsert_articulation_node cannot parent node_id={node_id:?} to itself"
+                                        ));
+                                    }
+                                    if let Some(parent_node_id) = parent_node_id {
+                                        let known_parent = articulation_nodes_by_component
+                                            .get(component)
+                                            .map(|set| set.contains(parent_node_id))
+                                            .unwrap_or(false);
+                                        if !known_parent {
+                                            return Err(format!(
+                                                "ops[{idx}] unknown parent_node_id={parent_node_id:?} for component={component:?}"
+                                            ));
+                                        }
+                                    }
+
+                                    let Some(bound_part_ids) = op
+                                        .get("bound_part_id_uuids")
+                                        .and_then(|v| v.as_array())
+                                    else {
+                                        return Err(format!(
+                                            "ops[{idx}] upsert_articulation_node requires bound_part_id_uuids"
+                                        ));
+                                    };
+                                    if bound_part_ids.is_empty() {
+                                        return Err(format!(
+                                            "ops[{idx}] bound_part_id_uuids must be non-empty"
+                                        ));
+                                    }
+                                    for (part_idx, value) in bound_part_ids.iter().enumerate() {
+                                        let Some(part_id) = value.as_str().map(str::trim) else {
+                                            return Err(format!(
+                                                "ops[{idx}] bound_part_id_uuids[{part_idx}] must be a string UUID"
+                                            ));
+                                        };
+                                        let known = parts_by_component
+                                            .get(component)
+                                            .map(|set| set.contains(part_id))
+                                            .unwrap_or(false);
+                                        if !known {
+                                            return Err(format!(
+                                                "ops[{idx}] unknown bound_part_id_uuid={part_id:?} for component={component:?} (call query_component_parts_v1 first)"
+                                            ));
+                                        }
+                                    }
+
+                                    articulation_nodes_by_component
+                                        .entry(component.to_string())
+                                        .or_default()
+                                        .insert(node_id.to_string());
+                                }
+                                "remove_articulation_node" => {
+                                    let component = component.ok_or_else(|| {
+                                        "remove_articulation_node requires component".to_string()
+                                    })?;
+                                    if !planned_names.contains(component) {
+                                        return Err(format!(
+                                            "ops[{idx}] references unknown component={component:?}"
+                                        ));
+                                    }
+                                    let node_id = op
+                                        .get("node_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .trim();
+                                    if node_id.is_empty() {
+                                        return Err(format!(
+                                            "ops[{idx}] remove_articulation_node requires node_id"
+                                        ));
+                                    }
+                                    let known = articulation_nodes_by_component
+                                        .get(component)
+                                        .map(|set| set.contains(node_id))
+                                        .unwrap_or(false);
+                                    if !known {
+                                        return Err(format!(
+                                            "ops[{idx}] unknown node_id={node_id:?} for component={component:?} (call query_component_parts_v1 first)"
+                                        ));
+                                    }
+                                    if let Some(set) =
+                                        articulation_nodes_by_component.get_mut(component)
+                                    {
+                                        set.remove(node_id);
+                                    }
+                                }
+                                "rebind_articulation_node_parts" => {
+                                    let component = component.ok_or_else(|| {
+                                        "rebind_articulation_node_parts requires component"
+                                            .to_string()
+                                    })?;
+                                    if !planned_names.contains(component) {
+                                        return Err(format!(
+                                            "ops[{idx}] references unknown component={component:?}"
+                                        ));
+                                    }
+                                    let node_id = op
+                                        .get("node_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .trim();
+                                    if node_id.is_empty() {
+                                        return Err(format!(
+                                            "ops[{idx}] rebind_articulation_node_parts requires node_id"
+                                        ));
+                                    }
+                                    let known = articulation_nodes_by_component
+                                        .get(component)
+                                        .map(|set| set.contains(node_id))
+                                        .unwrap_or(false);
+                                    if !known {
+                                        return Err(format!(
+                                            "ops[{idx}] unknown node_id={node_id:?} for component={component:?} (call query_component_parts_v1 first)"
+                                        ));
+                                    }
+                                    let Some(bound_part_ids) = op
+                                        .get("bound_part_id_uuids")
+                                        .and_then(|v| v.as_array())
+                                    else {
+                                        return Err(format!(
+                                            "ops[{idx}] rebind_articulation_node_parts requires bound_part_id_uuids"
+                                        ));
+                                    };
+                                    if bound_part_ids.is_empty() {
+                                        return Err(format!(
+                                            "ops[{idx}] bound_part_id_uuids must be non-empty"
+                                        ));
+                                    }
+                                    for (part_idx, value) in bound_part_ids.iter().enumerate() {
+                                        let Some(part_id) = value.as_str().map(str::trim) else {
+                                            return Err(format!(
+                                                "ops[{idx}] bound_part_id_uuids[{part_idx}] must be a string UUID"
+                                            ));
+                                        };
+                                        let known = parts_by_component
+                                            .get(component)
+                                            .map(|set| set.contains(part_id))
+                                            .unwrap_or(false);
+                                        if !known {
+                                            return Err(format!(
+                                                "ops[{idx}] unknown bound_part_id_uuid={part_id:?} for component={component:?} (call query_component_parts_v1 first)"
+                                            ));
+                                        }
                                     }
                                 }
                                 "upsert_animation_slot"

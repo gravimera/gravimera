@@ -871,6 +871,44 @@ mod tests {
     }
 
     #[test]
+    fn gen3d_draft_ops_system_instructions_include_articulation_node_ops() {
+        let text = build_gen3d_draft_ops_system_instructions();
+        assert!(text.contains("upsert_articulation_node"), "{text}");
+        assert!(text.contains("remove_articulation_node"), "{text}");
+        assert!(text.contains("rebind_articulation_node_parts"), "{text}");
+        assert!(
+            text.contains("same look but gain or adjust internal motion handles"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Do NOT use `scale` for articulation nodes"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn gen3d_draft_ops_user_text_mentions_internal_motion_handle_edits() {
+        let text = build_gen3d_draft_ops_user_text(
+            "Keep the same head shell but make the visor internally animatable.",
+            None,
+            "run",
+            0,
+            0,
+            "hash",
+            1,
+            "balanced",
+            8,
+            &serde_json::json!({"components":[]}),
+            &[],
+            &[],
+        );
+        assert!(
+            text.contains("prefer articulation-node DraftOps over regeneration"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn gen3d_plan_system_instructions_discourage_preserve_target_for_subtree_reuse() {
         let text = build_gen3d_plan_system_instructions();
         assert!(
@@ -1404,10 +1442,23 @@ Output format:\n\
 - Do NOT output markdown or extra commentary.\n\n\
 Hard rules:\n\
 - Use ONLY component names and part_id_uuid values present in the provided snapshots.\n\
+- Use ONLY existing `node_id` values from the provided snapshots for `remove_articulation_node` and `rebind_articulation_node_parts`.\n\
+- `upsert_articulation_node` MAY introduce a NEW `node_id` when you are adding a new internal rig handle.\n\
 - Do NOT invent part_id_uuid for updates/removals.\n\
 - For `add_primitive_part`, you MUST generate a NEW `part_id_uuid` (UUID v4 string). You may reference it later in the same ops list.\n\
 - Only add new primitives when necessary; prefer updating existing primitives (transform/color/mesh params).\n\
 - Removals are allowed, but use `remove_primitive_part` ONLY when required to satisfy the user request.\n\
+- Articulation nodes are internal rig metadata only; they do NOT create geometry.\n\
+- Prefer articulation-node edits when the user wants a component to keep the same look but gain or adjust internal motion handles.\n\
+- One primitive part may belong to only ONE articulation node at a time.\n\
+\n\
+Articulation-node rules (IMPORTANT):\n\
+- For `upsert_articulation_node`, the ONLY allowed top-level keys are: kind, component, node_id, parent_node_id, set_transform, bound_part_id_uuids.\n\
+- `parent_node_id` must be either a string node id or `null`.\n\
+- `set_transform` uses the same absolute-set shape as other transform edits: `pos`, `rot_quat_xyzw`, or `forward`+`up`. Do NOT use `scale` for articulation nodes.\n\
+- `bound_part_id_uuids` must reference primitive parts from the provided snapshots.\n\
+- Use `rebind_articulation_node_parts` when you only need to change bindings and keep the node itself.\n\
+- Use `remove_articulation_node` only for leaf nodes; the engine rejects removal when another node still parents to it.\n\
 \n\
 Animation slot rules (IMPORTANT):\n\
 - For `upsert_animation_slot`, the ONLY allowed top-level keys are: kind, child_component, channel, slot.\n\
@@ -1431,6 +1482,9 @@ Allowed DraftOp kinds:\n\
 - update_primitive_part\n\
 - add_primitive_part\n\
 - remove_primitive_part\n\
+- upsert_articulation_node\n\
+- remove_articulation_node\n\
+- rebind_articulation_node_parts\n\
 - upsert_animation_slot\n\
 - scale_animation_slot_rotation\n\
 - remove_animation_slot\n"
@@ -1457,6 +1511,7 @@ pub(super) fn build_gen3d_draft_ops_user_text(
     out.push_str(
         "EDIT MODE (DraftOps suggestions): Suggest `apply_draft_ops_v1` ops to modify an existing Gen3D draft IN-PLACE.\n\
 Goal: satisfy the user edit request with minimal safe primitive edits.\n\
+If the user wants the same component look but different internal motion handles, prefer articulation-node DraftOps over regeneration.\n\
 Do NOT regenerate components.\n\n",
     );
 
