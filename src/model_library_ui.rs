@@ -172,7 +172,7 @@ impl Default for ModelLibraryExportJob {
 #[derive(Resource)]
 pub(crate) struct ModelLibraryExportGlbJob {
     receiver:
-        Mutex<Option<mpsc::Receiver<Result<crate::prefab_glb::PrefabGlbExportReport, String>>>>,
+        Mutex<Option<mpsc::Receiver<Result<crate::prefab_glb::PrefabGltfGlbExportReport, String>>>>,
 }
 
 impl Default for ModelLibraryExportGlbJob {
@@ -714,7 +714,7 @@ pub(crate) fn setup_model_library_ui(
                         ))
                         .with_children(|b| {
                             b.spawn((
-                                Text::new("Export GLB"),
+                                Text::new("Export glTF/GLB"),
                                 TextFont {
                                     font_size: 14.0,
                                     ..default()
@@ -4565,7 +4565,7 @@ pub(crate) fn model_library_export_glb_button_interactions(
                 if let Ok(guard) = export_job.receiver.lock() {
                     if guard.is_some() {
                         toasts.write(UiToastCommand::Show {
-                            text: "Export GLB already running.".to_string(),
+                            text: "Export glTF/GLB already running.".to_string(),
                             kind: UiToastKind::Warn,
                             ttl_secs: 3.0,
                         });
@@ -4575,7 +4575,7 @@ pub(crate) fn model_library_export_glb_button_interactions(
                 if let Ok(guard) = export_dialog.receiver.lock() {
                     if guard.is_some() {
                         toasts.write(UiToastCommand::Show {
-                            text: "Export GLB dialog already open.".to_string(),
+                            text: "Export glTF/GLB dialog already open.".to_string(),
                             kind: UiToastKind::Warn,
                             ttl_secs: 3.0,
                         });
@@ -4840,7 +4840,7 @@ pub(crate) fn model_library_export_glb_job_poll(
             match result {
                 Ok(report) => {
                     toasts.write(UiToastCommand::Show {
-                        text: format!("Exported {} prefab(s) as GLB.", report.exported),
+                        text: format!("Exported {} prefab(s) as glTF/GLB.", report.exported),
                         kind: UiToastKind::Info,
                         ttl_secs: 4.0,
                     });
@@ -4858,7 +4858,7 @@ pub(crate) fn model_library_export_glb_job_poll(
         Err(mpsc::TryRecvError::Disconnected) => {
             *guard = None;
             toasts.write(UiToastCommand::Show {
-                text: "Export GLB failed: worker disconnected.".to_string(),
+                text: "Export glTF/GLB failed: worker disconnected.".to_string(),
                 kind: UiToastKind::Error,
                 ttl_secs: 5.0,
             });
@@ -4962,7 +4962,7 @@ pub(crate) fn model_library_export_glb_dialog_poll(
             *guard = None;
             state.export_glb_dialog_pending_ids.clear();
             toasts.write(UiToastCommand::Show {
-                text: "Export GLB canceled: dialog failed.".to_string(),
+                text: "Export glTF/GLB canceled: dialog failed.".to_string(),
                 kind: UiToastKind::Error,
                 ttl_secs: 4.0,
             });
@@ -4983,7 +4983,7 @@ pub(crate) fn model_library_export_glb_dialog_poll(
         if job_guard.is_some() {
             state.export_glb_dialog_pending_ids.clear();
             toasts.write(UiToastCommand::Show {
-                text: "Export GLB already running.".to_string(),
+                text: "Export glTF/GLB already running.".to_string(),
                 kind: UiToastKind::Warn,
                 ttl_secs: 3.0,
             });
@@ -4999,13 +4999,13 @@ pub(crate) fn model_library_export_glb_dialog_poll(
     let library_snapshot = (*library).clone();
 
     toasts.write(UiToastCommand::Show {
-        text: "Exporting prefabs as GLB…".to_string(),
+        text: "Exporting prefabs as glTF/GLB…".to_string(),
         kind: UiToastKind::Info,
         ttl_secs: 3.0,
     });
     std::thread::spawn(move || {
-        let options = crate::prefab_glb::PrefabGlbExportOptions::default();
-        let result = crate::prefab_glb::export_prefabs_to_glb_dir(
+        let options = crate::prefab_glb::PrefabGltfGlbExportOptions::default();
+        let result = crate::prefab_glb::export_prefabs_to_gltf_glb_dir(
             &ids,
             out_dir.as_path(),
             &library_snapshot,

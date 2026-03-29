@@ -15,12 +15,12 @@ const DEFAULT_ACTION_DURATION_SECS: f32 = 1.0;
 const MAX_ANIM_DURATION_SECS: f32 = 10.0;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PrefabGlbExportOptions {
+pub(crate) struct PrefabGltfGlbExportOptions {
     pub(crate) fps: u32,
     pub(crate) move_units_per_sec: f32,
 }
 
-impl Default for PrefabGlbExportOptions {
+impl Default for PrefabGltfGlbExportOptions {
     fn default() -> Self {
         Self {
             fps: DEFAULT_EXPORT_FPS,
@@ -29,7 +29,7 @@ impl Default for PrefabGlbExportOptions {
     }
 }
 
-pub(crate) struct PrefabGlbExportReport {
+pub(crate) struct PrefabGltfGlbExportReport {
     pub(crate) exported: usize,
     pub(crate) out_paths: Vec<PathBuf>,
 }
@@ -67,12 +67,12 @@ fn sanitize_label_for_filename(label: &str) -> String {
     trimmed.chars().take(48).collect()
 }
 
-pub(crate) fn export_prefabs_to_glb_dir(
+pub(crate) fn export_prefabs_to_gltf_glb_dir(
     prefab_ids: &[u128],
     out_dir: &Path,
     library: &ObjectLibrary,
-    options: PrefabGlbExportOptions,
-) -> Result<PrefabGlbExportReport, String> {
+    options: PrefabGltfGlbExportOptions,
+) -> Result<PrefabGltfGlbExportReport, String> {
     if prefab_ids.is_empty() {
         return Err("No prefab ids provided.".to_string());
     }
@@ -89,13 +89,20 @@ pub(crate) fn export_prefabs_to_glb_dir(
             .map(|def| def.label.as_ref().to_string())
             .ok_or_else(|| format!("Missing prefab def {uuid} (not loaded in ObjectLibrary)."))?;
         let label = sanitize_label_for_filename(&label);
-        let path = out_dir.join(format!("{label}_{uuid}.glb"));
-        export_prefab_to_glb_path(*prefab_id, &path, library, options)?;
+        let base = format!("{label}_{uuid}");
+        let glb_path = out_dir.join(format!("{base}.glb"));
+        let gltf_path = out_dir.join(format!("{base}.gltf"));
+        let bin_path = out_dir.join(format!("{base}.bin"));
+        export_prefab_to_gltf_glb_paths(
+            *prefab_id, &glb_path, &gltf_path, &bin_path, library, options,
+        )?;
         exported += 1;
-        out_paths.push(path);
+        out_paths.push(glb_path);
+        out_paths.push(gltf_path);
+        out_paths.push(bin_path);
     }
 
-    Ok(PrefabGlbExportReport {
+    Ok(PrefabGltfGlbExportReport {
         exported,
         out_paths,
     })
@@ -208,10 +215,15 @@ impl PrimitiveParamsKey {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-struct MeshExportKey {
+struct MeshGeometryKey {
     mesh: MeshKey,
     params: Option<PrimitiveParamsKey>,
-    mirrored: bool,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct MeshInstanceKey {
+    geometry: MeshGeometryKey,
+    material: MaterialKeyHash,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -293,15 +305,16 @@ struct ExportNodeAnim {
 #[derive(Clone, Debug)]
 struct ExportNodeMeta {
     gltf_node: usize,
-    mesh: Option<(MeshExportKey, MaterialKeyHash, MaterialSpec)>,
     anim: Option<ExportNodeAnim>,
 }
 
-fn export_prefab_to_glb_path(
+fn export_prefab_to_gltf_glb_paths(
     prefab_id: u128,
     glb_path: &Path,
+    gltf_path: &Path,
+    bin_path: &Path,
     library: &ObjectLibrary,
-    options: PrefabGlbExportOptions,
+    options: PrefabGltfGlbExportOptions,
 ) -> Result<(), String> {
     let Some(root_def) = library.get(prefab_id) else {
         return Err(format!(
@@ -316,7 +329,7 @@ fn export_prefab_to_glb_path(
     } else {
         1.0
     };
-    let options = PrefabGlbExportOptions {
+    let options = PrefabGltfGlbExportOptions {
         fps,
         move_units_per_sec,
     };
@@ -335,7 +348,6 @@ fn export_prefab_to_glb_path(
         library,
         prefab_id,
         root_node,
-        false,
         &mut stack,
         &mut builder,
         &mut nodes,
@@ -368,8 +380,25 @@ fn export_prefab_to_glb_path(
 
     // Finalize scene.
     builder.root_scene_nodes = vec![root_node];
-    let (json_bytes, bin_bytes) = builder.finish()?;
+    let (mut root, bin_bytes) = builder.finish_root()?;
+
+    // Write GLB.
+    let json_bytes = json::serialize::to_vec(&root)
+        .map_err(|err| format!("Failed to serialize glTF JSON: {err}"))?;
     write_glb(glb_path, &json_bytes, &bin_bytes)?;
+
+    // Write glTF (JSON + .bin).
+    let bin_file_name = bin_path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .ok_or_else(|| "Invalid bin output path.".to_string())?;
+    if let Some(buffer) = root.buffers.first_mut() {
+        buffer.uri = Some(bin_file_name.to_string());
+    }
+    let gltf_json_bytes = json::serialize::to_vec(&root)
+        .map_err(|err| format!("Failed to serialize glTF JSON: {err}"))?;
+    write_gltf(gltf_path, &gltf_json_bytes)?;
+    write_bin(bin_path, &bin_bytes)?;
     Ok(())
 }
 
@@ -377,7 +406,6 @@ fn build_object_nodes(
     library: &ObjectLibrary,
     object_id: u128,
     parent_node: usize,
-    ancestor_mirrored: bool,
     stack: &mut Vec<u128>,
     builder: &mut GltfGlbBuilder,
     nodes: &mut Vec<ExportNodeMeta>,
@@ -416,10 +444,6 @@ fn build_object_nodes(
                 .unwrap_or(part.transform);
         }
 
-        let local_det = resolved.scale.x * resolved.scale.y * resolved.scale.z;
-        let local_mirrored = local_det.is_finite() && local_det < 0.0;
-        let mirrored = ancestor_mirrored ^ local_mirrored;
-
         let node_name = format!(
             "{} part#{}",
             def.label.as_ref(),
@@ -435,7 +459,6 @@ fn build_object_nodes(
 
         let mut meta = ExportNodeMeta {
             gltf_node,
-            mesh: None,
             anim: None,
         };
 
@@ -456,23 +479,21 @@ fn build_object_nodes(
 
         match &part.kind {
             ObjectPartKind::ObjectRef { object_id: child } => {
-                build_object_nodes(library, *child, gltf_node, mirrored, stack, builder, nodes)?;
+                build_object_nodes(library, *child, gltf_node, stack, builder, nodes)?;
             }
             ObjectPartKind::Primitive { primitive } => {
                 let (mesh_key, params) = primitive_mesh_key(primitive);
-                let mesh_export_key = MeshExportKey {
+                let geometry_key = MeshGeometryKey {
                     mesh: mesh_key,
                     params,
-                    mirrored,
                 };
                 let material_spec = material_spec_for_primitive_visual(primitive);
                 let material_key = MaterialKeyHash::from_spec(&material_spec);
-                builder.attach_mesh(gltf_node, mesh_export_key, &material_key, &material_spec)?;
-                meta.mesh = Some((mesh_export_key, material_key, material_spec));
+                builder.attach_mesh(gltf_node, geometry_key, &material_key, &material_spec)?;
             }
             ObjectPartKind::Model { scene } => {
                 return Err(format!(
-                    "Prefab contains Model part which is not supported for GLB export yet: scene={scene}"
+                    "Prefab contains Model part which is not supported for glTF/GLB export yet: scene={scene}"
                 ));
             }
         }
@@ -572,7 +593,7 @@ fn export_channel_animation(
     channel: &str,
     nodes: &[ExportNodeMeta],
     builder: &mut GltfGlbBuilder,
-    options: &PrefabGlbExportOptions,
+    options: &PrefabGltfGlbExportOptions,
 ) -> Result<(), String> {
     let duration = animation_duration_secs(library, prefab_id, channel);
     let fps = options.fps.max(1) as f32;
@@ -976,13 +997,21 @@ fn lerp_transform(a: &Transform, b: &Transform, alpha: f32) -> Transform {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct GeometryAccessors {
+    positions: json::Index<json::Accessor>,
+    normals: Option<json::Index<json::Accessor>>,
+    indices: Option<json::Index<json::Accessor>>,
+}
+
 struct GltfGlbBuilder {
     root: json::Root,
     bin: Vec<u8>,
     node_children: HashMap<usize, Vec<usize>>,
     node_transforms: HashMap<usize, Transform>,
     root_scene_nodes: Vec<usize>,
-    mesh_cache: HashMap<MeshExportKey, json::Index<json::Mesh>>,
+    geometry_cache: HashMap<MeshGeometryKey, GeometryAccessors>,
+    mesh_cache: HashMap<MeshInstanceKey, json::Index<json::Mesh>>,
     material_cache: HashMap<MaterialKeyHash, json::Index<json::Material>>,
     uses_unlit: bool,
 }
@@ -1001,6 +1030,7 @@ impl GltfGlbBuilder {
             node_children: HashMap::new(),
             node_transforms: HashMap::new(),
             root_scene_nodes: Vec::new(),
+            geometry_cache: HashMap::new(),
             mesh_cache: HashMap::new(),
             material_cache: HashMap::new(),
             uses_unlit: false,
@@ -1030,29 +1060,123 @@ impl GltfGlbBuilder {
     fn attach_mesh(
         &mut self,
         node: usize,
-        mesh_key: MeshExportKey,
+        geometry_key: MeshGeometryKey,
         material_key: &MaterialKeyHash,
         material_spec: &MaterialSpec,
     ) -> Result<(), String> {
-        let mesh_index = self.get_or_create_mesh(mesh_key, material_key, material_spec)?;
+        let mesh_index = self.get_or_create_mesh(geometry_key, material_key, material_spec)?;
         self.root.nodes[node].mesh = Some(mesh_index);
         Ok(())
     }
 
     fn get_or_create_mesh(
         &mut self,
-        key: MeshExportKey,
+        geometry_key: MeshGeometryKey,
         material_key: &MaterialKeyHash,
         material_spec: &MaterialSpec,
     ) -> Result<json::Index<json::Mesh>, String> {
-        if let Some(existing) = self.mesh_cache.get(&key) {
+        let cache_key = MeshInstanceKey {
+            geometry: geometry_key,
+            material: *material_key,
+        };
+        if let Some(existing) = self.mesh_cache.get(&cache_key) {
+            return Ok(*existing);
+        }
+
+        let geo = self.get_or_create_geometry(geometry_key)?;
+        let material_idx = self.get_or_create_material(material_key, material_spec);
+
+        let mut attributes: BTreeMap<
+            json::validation::Checked<json::mesh::Semantic>,
+            json::Index<json::Accessor>,
+        > = BTreeMap::new();
+        attributes.insert(
+            json::validation::Checked::Valid(json::mesh::Semantic::Positions),
+            geo.positions,
+        );
+        if let Some(normals) = geo.normals {
+            attributes.insert(
+                json::validation::Checked::Valid(json::mesh::Semantic::Normals),
+                normals,
+            );
+        }
+
+        let primitive = json::mesh::Primitive {
+            attributes,
+            extensions: None,
+            extras: Default::default(),
+            indices: geo.indices,
+            material: Some(material_idx),
+            mode: json::validation::Checked::Valid(json::mesh::Mode::Triangles),
+            targets: None,
+        };
+
+        let json_mesh = json::Mesh {
+            extensions: None,
+            extras: Default::default(),
+            name: None,
+            primitives: vec![primitive],
+            weights: None,
+        };
+
+        let idx = json::Index::new(self.root.meshes.len() as u32);
+        self.root.meshes.push(json_mesh);
+        self.mesh_cache.insert(cache_key, idx);
+        Ok(idx)
+    }
+
+    fn get_or_create_geometry(
+        &mut self,
+        key: MeshGeometryKey,
+    ) -> Result<GeometryAccessors, String> {
+        if let Some(existing) = self.geometry_cache.get(&key) {
             return Ok(*existing);
         }
 
         let mesh = build_bevy_mesh_from_key(key)?;
-        let mesh_idx = self.add_bevy_mesh(&mesh, material_key, material_spec)?;
-        self.mesh_cache.insert(key, mesh_idx);
-        Ok(mesh_idx)
+        if mesh.primitive_topology()
+            != bevy::render::render_resource::PrimitiveTopology::TriangleList
+        {
+            return Err("Only triangle list meshes are supported for glTF/GLB export.".to_string());
+        }
+
+        let Some(positions) = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .and_then(|v| v.as_float3())
+        else {
+            return Err("Mesh is missing POSITION attribute.".to_string());
+        };
+
+        let normals = mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .and_then(|v| v.as_float3());
+
+        let indices: Option<Vec<u32>> = mesh.indices().map(|indices| {
+            indices
+                .iter()
+                .map(|idx| idx.try_into().unwrap_or(0u32))
+                .collect()
+        });
+
+        let pos_accessor = self.push_accessor_vec3_f32(positions, Some("POSITION"))?;
+        let normal_accessor = if let Some(normals) = normals {
+            Some(self.push_accessor_vec3_f32(normals, Some("NORMAL"))?)
+        } else {
+            None
+        };
+        let indices_accessor = if let Some(indices) = indices.as_ref() {
+            Some(self.push_accessor_indices_u32(indices)?)
+        } else {
+            None
+        };
+
+        let accessors = GeometryAccessors {
+            positions: pos_accessor,
+            normals: normal_accessor,
+            indices: indices_accessor,
+        };
+        self.geometry_cache.insert(key, accessors);
+        Ok(accessors)
     }
 
     fn get_or_create_material(
@@ -1098,85 +1222,6 @@ impl GltfGlbBuilder {
         self.root.materials.push(material);
         self.material_cache.insert(*key, idx);
         idx
-    }
-
-    fn add_bevy_mesh(
-        &mut self,
-        mesh: &Mesh,
-        material_key: &MaterialKeyHash,
-        material_spec: &MaterialSpec,
-    ) -> Result<json::Index<json::Mesh>, String> {
-        if mesh.primitive_topology()
-            != bevy::render::render_resource::PrimitiveTopology::TriangleList
-        {
-            return Err("Only triangle list meshes are supported for GLB export.".to_string());
-        }
-
-        let Some(positions) = mesh
-            .attribute(Mesh::ATTRIBUTE_POSITION)
-            .and_then(|v| v.as_float3())
-        else {
-            return Err("Mesh is missing POSITION attribute.".to_string());
-        };
-
-        let normals = mesh
-            .attribute(Mesh::ATTRIBUTE_NORMAL)
-            .and_then(|v| v.as_float3());
-
-        let indices: Option<Vec<u32>> = mesh.indices().map(|indices| {
-            indices
-                .iter()
-                .map(|idx| idx.try_into().unwrap_or(0u32))
-                .collect()
-        });
-
-        let material_idx = self.get_or_create_material(material_key, material_spec);
-
-        let mut attributes: BTreeMap<
-            json::validation::Checked<json::mesh::Semantic>,
-            json::Index<json::Accessor>,
-        > = BTreeMap::new();
-        let pos_accessor = self.push_accessor_vec3_f32(positions, Some("POSITION"))?;
-        attributes.insert(
-            json::validation::Checked::Valid(json::mesh::Semantic::Positions),
-            pos_accessor,
-        );
-
-        if let Some(normals) = normals {
-            let accessor = self.push_accessor_vec3_f32(normals, Some("NORMAL"))?;
-            attributes.insert(
-                json::validation::Checked::Valid(json::mesh::Semantic::Normals),
-                accessor,
-            );
-        }
-
-        let indices_accessor = if let Some(indices) = indices.as_ref() {
-            Some(self.push_accessor_indices_u32(indices)?)
-        } else {
-            None
-        };
-
-        let primitive = json::mesh::Primitive {
-            attributes,
-            extensions: None,
-            extras: Default::default(),
-            indices: indices_accessor,
-            material: Some(material_idx),
-            mode: json::validation::Checked::Valid(json::mesh::Mode::Triangles),
-            targets: None,
-        };
-
-        let json_mesh = json::Mesh {
-            extensions: None,
-            extras: Default::default(),
-            name: None,
-            primitives: vec![primitive],
-            weights: None,
-        };
-
-        let idx = json::Index::new(self.root.meshes.len() as u32);
-        self.root.meshes.push(json_mesh);
-        Ok(idx)
     }
 
     fn push_aligned(&mut self, bytes: &[u8]) -> (u64, u64) {
@@ -1230,7 +1275,7 @@ impl GltfGlbBuilder {
             }
         }
         let (offset, len) = self.push_aligned(&bytes);
-        let view = self.push_view(offset, len, Some(json::buffer::Target::ArrayBuffer));
+        let view = self.push_view(offset, len, None);
 
         let accessor = json::Accessor {
             buffer_view: Some(view),
@@ -1262,7 +1307,7 @@ impl GltfGlbBuilder {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
         let (offset, len) = self.push_aligned(&bytes);
-        let view = self.push_view(offset, len, Some(json::buffer::Target::ElementArrayBuffer));
+        let view = self.push_view(offset, len, None);
 
         let accessor = json::Accessor {
             buffer_view: Some(view),
@@ -1422,7 +1467,7 @@ impl GltfGlbBuilder {
             bytes.extend_from_slice(&t.to_le_bytes());
         }
         let (offset, len) = self.push_aligned(&bytes);
-        let view = self.push_view(offset, len, Some(json::buffer::Target::ArrayBuffer));
+        let view = self.push_view(offset, len, None);
 
         let accessor = json::Accessor {
             buffer_view: Some(view),
@@ -1456,7 +1501,7 @@ impl GltfGlbBuilder {
             }
         }
         let (offset, len) = self.push_aligned(&bytes);
-        let view = self.push_view(offset, len, Some(json::buffer::Target::ArrayBuffer));
+        let view = self.push_view(offset, len, None);
 
         let accessor = json::Accessor {
             buffer_view: Some(view),
@@ -1479,7 +1524,7 @@ impl GltfGlbBuilder {
         Ok(idx)
     }
 
-    fn finish(mut self) -> Result<(Vec<u8>, Vec<u8>), String> {
+    fn finish_root(mut self) -> Result<(json::Root, Vec<u8>), String> {
         // Stitch children + transforms into root nodes.
         for (idx, node) in self.root.nodes.iter_mut().enumerate() {
             if let Some(children) = self.node_children.get(&idx) {
@@ -1533,14 +1578,12 @@ impl GltfGlbBuilder {
         self.root.scenes.push(scene);
         self.root.scene = Some(json::Index::new(0));
 
-        let json_bytes = json::serialize::to_vec(&self.root)
-            .map_err(|err| format!("Failed to serialize glTF JSON: {err}"))?;
-        Ok((json_bytes, self.bin))
+        Ok((self.root, self.bin))
     }
 }
 
-fn build_bevy_mesh_from_key(key: MeshExportKey) -> Result<Mesh, String> {
-    let mut mesh: Mesh = match (key.mesh, key.params) {
+fn build_bevy_mesh_from_key(key: MeshGeometryKey) -> Result<Mesh, String> {
+    let mesh: Mesh = match (key.mesh, key.params) {
         (MeshKey::UnitCube, _) => Cuboid::new(1.0, 1.0, 1.0).into(),
         (MeshKey::UnitCylinder, _) => Cylinder::new(0.5, 1.0).into(),
         (MeshKey::UnitCone, _) => Cone::new(0.5, 1.0).into(),
@@ -1580,12 +1623,6 @@ fn build_bevy_mesh_from_key(key: MeshExportKey) -> Result<Mesh, String> {
         (MeshKey::TreeTrunk, _) => Cylinder::new(1.0, 1.0).into(),
         (MeshKey::TreeCone, _) => Cone::new(1.0, 1.0).into(),
     };
-
-    if key.mirrored {
-        if let Err(err) = mesh.invert_winding() {
-            return Err(format!("Failed to mirror mesh winding: {err:?}"));
-        }
-    }
     Ok(mesh)
 }
 
@@ -1620,4 +1657,22 @@ fn write_glb(path: &Path, json_bytes: &[u8], bin_bytes: &[u8]) -> Result<(), Str
             .map_err(|err| format!("Failed to create {}: {err}", parent.display()))?;
     }
     std::fs::write(path, out).map_err(|err| format!("Failed to write {}: {err}", path.display()))
+}
+
+fn write_gltf(path: &Path, json_bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create {}: {err}", parent.display()))?;
+    }
+    std::fs::write(path, json_bytes)
+        .map_err(|err| format!("Failed to write {}: {err}", path.display()))
+}
+
+fn write_bin(path: &Path, bin_bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create {}: {err}", parent.display()))?;
+    }
+    std::fs::write(path, bin_bytes)
+        .map_err(|err| format!("Failed to write {}: {err}", path.display()))
 }

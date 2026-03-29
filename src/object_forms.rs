@@ -998,14 +998,17 @@ fn begin_form_transform_animation(
         used_new.insert(new_idx);
         let old = &resolved_old[old_idx];
         let new = &resolved_new[new_idx];
+        let same_mirror = old.mirrored == new.mirrored;
 
         if same_key
+            && same_mirror
             && matches!(old.spawn, LeafSpawnKind::Mesh { .. })
             && matches!(new.spawn, LeafSpawnKind::Mesh { .. })
         {
             // Same primitive type: interpolate transform and color.
             specs.push(LeafAnimSpawnSpec::morph_same_type(old, new));
         } else if same_key
+            && same_mirror
             && matches!(old.spawn, LeafSpawnKind::Scene { .. })
             && matches!(new.spawn, LeafSpawnKind::Scene { .. })
         {
@@ -1281,6 +1284,7 @@ enum LeafSpawnKind {
 struct LeafResolved {
     key: LeafKindKey,
     transform: Transform,
+    mirrored: bool,
     spawn: LeafSpawnKind,
 }
 
@@ -1296,6 +1300,8 @@ fn resolve_leaf_assets(
     let mut out = Vec::with_capacity(leaves.len());
     let tint = tint.unwrap_or(Color::WHITE);
     for leaf in leaves {
+        let det = leaf.transform.scale.x * leaf.transform.scale.y * leaf.transform.scale.z;
+        let mirrored = det.is_finite() && det < 0.0;
         match &leaf.kind {
             LeafKind::Primitive(primitive) => {
                 let Some((mesh, material_proto, base_color)) =
@@ -1303,9 +1309,15 @@ fn resolve_leaf_assets(
                 else {
                     continue;
                 };
+                let mesh = if mirrored {
+                    mesh_cache.get_or_create_mirrored_winding(meshes, &mesh)
+                } else {
+                    mesh
+                };
                 out.push(LeafResolved {
                     key: leaf.key.clone(),
                     transform: leaf.transform,
+                    mirrored,
                     spawn: LeafSpawnKind::Mesh {
                         mesh,
                         material_proto,
@@ -1318,6 +1330,7 @@ fn resolve_leaf_assets(
                 out.push(LeafResolved {
                     key: leaf.key.clone(),
                     transform: leaf.transform,
+                    mirrored,
                     spawn: LeafSpawnKind::Scene { scene: handle },
                 });
             }

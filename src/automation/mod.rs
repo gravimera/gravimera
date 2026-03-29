@@ -681,7 +681,7 @@ struct PrefabDuplicateRequest {
 }
 
 #[derive(Deserialize)]
-struct PrefabsExportGlbRequest {
+struct PrefabsExportGltfGlbRequest {
     out_dir: String,
     prefab_id_uuids: Vec<String>,
     #[serde(default)]
@@ -3533,6 +3533,7 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"GET","path":"/v1/prefabs"}),
                 serde_json::json!({"method":"POST","path":"/v1/prefabs/duplicate"}),
                 serde_json::json!({"method":"POST","path":"/v1/prefabs/export_glb"}),
+                serde_json::json!({"method":"POST","path":"/v1/prefabs/export_gltf_glb"}),
                 serde_json::json!({"method":"GET","path":"/v1/realm_scene/active"}),
                 serde_json::json!({"method":"GET","path":"/v1/realm_scene/list"}),
                 serde_json::json!({"method":"POST","path":"/v1/realm_scene/create"}),
@@ -3658,8 +3659,8 @@ fn handle_request_main_thread<
                 content_type: "application/json",
             })
         }
-        ("POST", "/v1/prefabs/export_glb") => {
-            let req: PrefabsExportGlbRequest = match serde_json::from_slice(&msg.body) {
+        ("POST", "/v1/prefabs/export_glb") | ("POST", "/v1/prefabs/export_gltf_glb") => {
+            let req: PrefabsExportGltfGlbRequest = match serde_json::from_slice(&msg.body) {
                 Ok(v) => v,
                 Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
             };
@@ -3687,7 +3688,7 @@ fn handle_request_main_thread<
             prefab_ids.sort();
             prefab_ids.dedup();
 
-            let mut options = crate::prefab_glb::PrefabGlbExportOptions::default();
+            let mut options = crate::prefab_glb::PrefabGltfGlbExportOptions::default();
             if let Some(fps) = req.fps {
                 options.fps = fps;
             }
@@ -3695,7 +3696,7 @@ fn handle_request_main_thread<
                 options.move_units_per_sec = move_units_per_sec;
             }
 
-            let report = match crate::prefab_glb::export_prefabs_to_glb_dir(
+            let report = match crate::prefab_glb::export_prefabs_to_gltf_glb_dir(
                 &prefab_ids,
                 out_dir.as_path(),
                 library,

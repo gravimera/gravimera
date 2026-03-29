@@ -174,29 +174,67 @@ def main():
         if not prefab_id_uuid:
             raise RuntimeError(f"Missing prefab_id_uuid. payload={payload}")
 
-        out_dir = run_root / "out_glb"
+        out_dir = run_root / "out_gltf_glb"
         status, payload = http_json(
             "POST",
-            f"{base_url}/v1/prefabs/export_glb",
+            f"{base_url}/v1/prefabs/export_gltf_glb",
             {"out_dir": str(out_dir), "prefab_id_uuids": [prefab_id_uuid]},
             timeout_secs=60.0,
         )
-        ensure_ok(status, payload, "prefabs/export_glb")
+        ensure_ok(status, payload, "prefabs/export_gltf_glb")
 
         out_paths = payload.get("out_paths") or []
         if not out_paths:
             raise RuntimeError(f"Expected out_paths. payload={payload}")
 
-        out_path = Path(out_paths[0])
-        if not out_path.exists():
-            raise RuntimeError(f"Expected exported file to exist: {out_path}")
+        paths = [Path(p) for p in out_paths]
+        glb_paths = [p for p in paths if p.suffix.lower() == ".glb"]
+        gltf_paths = [p for p in paths if p.suffix.lower() == ".gltf"]
+        bin_paths = [p for p in paths if p.suffix.lower() == ".bin"]
+        if len(glb_paths) != 1 or len(gltf_paths) != 1 or len(bin_paths) != 1:
+            raise RuntimeError(
+                "Expected exactly one .glb, .gltf, and .bin for a single prefab export. "
+                f"got glb={glb_paths} gltf={gltf_paths} bin={bin_paths}"
+            )
 
-        with open(out_path, "rb") as fp:
+        glb_path = glb_paths[0]
+        gltf_path = gltf_paths[0]
+        bin_path = bin_paths[0]
+
+        for p in [glb_path, gltf_path, bin_path]:
+            if not p.exists():
+                raise RuntimeError(f"Expected exported file to exist: {p}")
+
+        with open(glb_path, "rb") as fp:
             magic = fp.read(4)
             if magic != b"glTF":
                 raise RuntimeError(
-                    f"Expected GLB magic glTF. got={magic} path={out_path}"
+                    f"Expected GLB magic glTF. got={magic} path={glb_path}"
                 )
+
+        if bin_path.stat().st_size <= 0:
+            raise RuntimeError(f"Expected non-empty BIN: {bin_path}")
+
+        with open(gltf_path, "rb") as fp:
+            gltf_json = json.loads(fp.read().decode("utf-8", errors="replace"))
+        buffers = gltf_json.get("buffers") or []
+        if not buffers:
+            raise RuntimeError(f"Expected glTF to contain buffers. path={gltf_path}")
+        uri = (buffers[0] or {}).get("uri")
+        if not uri:
+            raise RuntimeError(f"Expected buffers[0].uri. path={gltf_path}")
+        if Path(uri).name != bin_path.name:
+            raise RuntimeError(
+                "Expected glTF buffers[0].uri to match BIN filename. "
+                f"got uri={uri} bin={bin_path.name} path={gltf_path}"
+            )
+
+        resolved_bin = gltf_path.parent / uri
+        if resolved_bin.resolve() != bin_path.resolve():
+            raise RuntimeError(
+                "Expected glTF buffer uri to resolve to exported BIN. "
+                f"got {resolved_bin} expected {bin_path}"
+            )
 
         # Shutdown.
         http_json("POST", f"{base_url}/v1/shutdown", {}, timeout_secs=30.0)

@@ -254,17 +254,26 @@ Notes:
 - This duplicates on-disk packages under `realm/<realm_id>/prefabs/<prefab_id_uuid>/` (the “realm prefabs” system).
 - Built-in prefabs that are not backed by a realm prefab package cannot be duplicated via this endpoint.
 
-### `POST /v1/prefabs/export_glb`
+### `POST /v1/prefabs/export_gltf_glb`
 
-Export one or more prefab definitions to **glTF 2.0 binary** (`.glb`) files (Blender-friendly), written into `out_dir`.
+Export one or more prefab definitions to **glTF 2.0** files (Blender-friendly), written into `out_dir`.
+
+This endpoint writes **both**:
+
+- `.glb` (binary container)
+- `.gltf` + `.bin` (JSON + external buffer)
+
+Notes:
+
+- `POST /v1/prefabs/export_glb` currently aliases to the same exporter.
 
 Request:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8791/v1/prefabs/export_glb \
+curl -s -X POST http://127.0.0.1:8791/v1/prefabs/export_gltf_glb \
   -H 'Content-Type: application/json' \
   -d '{
-    "out_dir":"./out/prefabs_glb",
+    "out_dir":"./out/prefabs_gltf_glb",
     "prefab_id_uuids":["..."],
     "fps": 30,
     "move_units_per_sec": 1.0
@@ -277,16 +286,20 @@ Response (shape):
 {
   "ok": true,
   "exported": 1,
-  "out_dir": "./out/prefabs_glb",
-  "out_paths": ["./out/prefabs_glb/TreeSmall_<uuid>.glb"]
+  "out_dir": "./out/prefabs_gltf_glb",
+  "out_paths": [
+    "./out/prefabs_gltf_glb/TreeSmall_<uuid>.glb",
+    "./out/prefabs_gltf_glb/TreeSmall_<uuid>.gltf",
+    "./out/prefabs_gltf_glb/TreeSmall_<uuid>.bin"
+  ]
 }
 ```
 
 Notes:
 
 - `fps` and `move_units_per_sec` are optional.
-- One file is written per prefab id.
-- Current limitations are documented in `docs/prefab_export_glb.md`.
+- Three files are written per prefab id (`.glb`, `.gltf`, `.bin`).
+- Current limitations are documented in `docs/prefab_export_gltf_glb.md`.
 
 ### `GET /v1/realm_scene/active`
 

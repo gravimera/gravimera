@@ -1,21 +1,28 @@
-# Prefab Export (GLB / Blender)
+# Prefab Export (glTF/GLB / Blender)
 
-Gravimera can export prefab definitions from the **Prefabs** panel as **glTF 2.0 binary** (`.glb`) files for Blender and other DCC tools.
+Gravimera can export prefab definitions from the **Prefabs** panel as:
+
+- **glTF 2.0 binary** (`.glb`)
+- **glTF 2.0 JSON + BIN** (`.gltf` + `.bin`)
+
+These exports are intended to be Blender-friendly and work in other DCC tools / glTF viewers.
 
 ## UI workflow
 
 1. Open **Prefabs** panel.
 2. Click **Manage** (multi-select mode).
 3. Select one or more prefabs.
-4. Click **Export GLB** and choose an output folder.
+4. Click **Export glTF/GLB** and choose an output folder.
 
-The exporter writes one `.glb` per selected prefab.
+The exporter writes both formats per selected prefab.
 
 ## Output layout
 
 Files are written to the chosen folder:
 
 - `<out_dir>/<Label>_<prefab_uuid>.glb`
+- `<out_dir>/<Label>_<prefab_uuid>.gltf`
+- `<out_dir>/<Label>_<prefab_uuid>.bin`
 
 `Label` is sanitized for filesystem safety (non-alphanumeric characters become `_`), and `prefab_uuid` is the prefab id.
 
@@ -41,5 +48,4 @@ Files are written to the chosen folder:
 
 ## Automation API
 
-See `POST /v1/prefabs/export_glb` in `docs/automation_http_api.md`.
-
+See `POST /v1/prefabs/export_gltf_glb` in `docs/automation_http_api.md` (and `POST /v1/prefabs/export_glb` which currently aliases to the same exporter).

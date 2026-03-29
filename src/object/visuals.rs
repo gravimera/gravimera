@@ -210,7 +210,7 @@ impl PrimitiveMeshCache {
         handle
     }
 
-    fn get_or_create_mirrored_winding(
+    pub(crate) fn get_or_create_mirrored_winding(
         &mut self,
         meshes: &mut Assets<Mesh>,
         mesh: &Handle<Mesh>,
