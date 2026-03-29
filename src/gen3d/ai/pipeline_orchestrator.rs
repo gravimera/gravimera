@@ -326,6 +326,7 @@ fn poll_pipeline_prompt_intent(
                 }
             };
             let requires_attack = parsed.requires_attack;
+            let explicit_motion_channels = parsed.explicit_motion_channels.clone();
             job.prompt_intent = Some(parsed.clone());
 
             if let Some(run_dir) = job.run_dir.clone() {
@@ -333,9 +334,13 @@ fn poll_pipeline_prompt_intent(
                 super::artifacts::write_gen3d_json_artifact(
                     Some(&attempt_dir),
                     "inputs/prompt_intent.json",
-                    &serde_json::to_value(&parsed).unwrap_or_else(
-                        |_| serde_json::json!({"version": 1, "requires_attack": requires_attack}),
-                    ),
+                    &serde_json::to_value(&parsed).unwrap_or_else(|_| {
+                        serde_json::json!({
+                            "version": 1,
+                            "requires_attack": requires_attack,
+                            "explicit_motion_channels": explicit_motion_channels,
+                        })
+                    }),
                 );
             }
 
@@ -365,34 +370,55 @@ fn appearance_review_enabled(job: &Gen3dAiJob) -> bool {
     llm_available && job.review_appearance
 }
 
-fn pipeline_missing_move_slot_coverage(job: &Gen3dAiJob, draft: &Gen3dDraft) -> bool {
+fn pipeline_missing_required_motion_channels(job: &Gen3dAiJob, draft: &Gen3dDraft) -> Vec<String> {
     let movable = draft
         .root_def()
         .and_then(|def| def.mobility.as_ref())
         .is_some();
-    if !movable {
-        return false;
+
+    let mut required_channels: Vec<String> = Vec::new();
+    if movable {
+        required_channels.push("move".into());
+        required_channels.push("action".into());
+    }
+    if let Some(intent) = job.prompt_intent.as_ref() {
+        for channel in intent.explicit_motion_channels.iter() {
+            let channel = channel.trim();
+            if channel.is_empty() {
+                continue;
+            }
+            if required_channels.iter().any(|existing| existing == channel) {
+                continue;
+            }
+            required_channels.push(channel.to_string());
+        }
     }
 
-    let mut has_move = false;
-    let mut has_action = false;
+    if required_channels.is_empty() {
+        return Vec::new();
+    }
+
+    let mut present_channels: Vec<&str> = Vec::new();
     for comp in job.planned_components.iter() {
         let Some(att) = comp.attach_to.as_ref() else {
             continue;
         };
         for slot in att.animations.iter() {
-            match slot.channel.as_ref() {
-                "move" => has_move = true,
-                "action" => has_action = true,
-                _ => {}
+            let channel = slot.channel.as_ref().trim();
+            if channel.is_empty() {
+                continue;
             }
-        }
-        if has_move && has_action {
-            break;
+            if present_channels.iter().any(|existing| existing == &channel) {
+                continue;
+            }
+            present_channels.push(channel);
         }
     }
 
-    !has_move || !has_action
+    required_channels
+        .into_iter()
+        .filter(|channel| !present_channels.iter().any(|existing| existing == channel))
+        .collect()
 }
 
 fn pipeline_last_motion_tool_failure_lines(job: &Gen3dAiJob) -> Vec<String> {
@@ -461,6 +487,28 @@ fn append_motion_authoring_retry_feedback(job: &Gen3dAiJob, feedback: &mut Strin
     }
 }
 
+fn pipeline_motion_batch_channels(job: &Gen3dAiJob, draft: &Gen3dDraft) -> Vec<String> {
+    let mut channels: Vec<String> = vec!["move".into(), "action".into()];
+    if let Some(intent) = job.prompt_intent.as_ref() {
+        for channel in intent.explicit_motion_channels.iter() {
+            let channel = channel.trim();
+            if channel.is_empty() {
+                continue;
+            }
+            if channels.iter().any(|existing| existing == channel) {
+                continue;
+            }
+            channels.push(channel.to_string());
+        }
+    }
+    if draft.root_def().and_then(|r| r.attack.as_ref()).is_some()
+        && !channels.iter().any(|existing| existing == "attack")
+    {
+        channels.push("attack".into());
+    }
+    channels
+}
+
 fn run_complete_enough_for_pipeline_finish(job: &Gen3dAiJob, draft: &Gen3dDraft) -> bool {
     if draft.total_non_projectile_primitive_parts() == 0 {
         return false;
@@ -484,7 +532,7 @@ fn run_complete_enough_for_pipeline_finish(job: &Gen3dAiJob, draft: &Gen3dDraft)
     if job.agent.last_motion_ok == Some(false) {
         return false;
     }
-    if pipeline_missing_move_slot_coverage(job, draft) {
+    if !pipeline_missing_required_motion_channels(job, draft).is_empty() {
         return false;
     }
 
@@ -1536,12 +1584,7 @@ fn poll_pipeline_tick(
                             job.agent.last_motion_ok = None;
 
                             workshop.status = "Pipeline: improving motion…".into();
-                            let mut channels: Vec<&'static str> = vec!["move", "action"];
-                            let attack_present =
-                                draft.root_def().and_then(|r| r.attack.as_ref()).is_some();
-                            if attack_present {
-                                channels.push("attack");
-                            }
+                            let channels = pipeline_motion_batch_channels(job, draft);
 
                             let mut feedback = String::new();
                             feedback
@@ -1576,7 +1619,9 @@ fn poll_pipeline_tick(
                         }
                     }
 
-                    if pipeline_missing_move_slot_coverage(job, draft)
+                    let missing_motion_channels =
+                        pipeline_missing_required_motion_channels(job, draft);
+                    if !missing_motion_channels.is_empty()
                         && job.pipeline.motion_authoring_attempts < 2
                     {
                         let next_attempt = job.pipeline.motion_authoring_attempts.saturating_add(1);
@@ -1587,36 +1632,13 @@ fn poll_pipeline_tick(
                         job.agent.last_motion_ok = None;
 
                         workshop.status = "Pipeline: authoring motion…".into();
-                        let mut missing_channels: Vec<&'static str> = Vec::new();
-                        let mut has_move = false;
-                        let mut has_action = false;
-                        for comp in job.planned_components.iter() {
-                            let Some(att) = comp.attach_to.as_ref() else {
-                                continue;
-                            };
-                            for slot in att.animations.iter() {
-                                match slot.channel.as_ref() {
-                                    "move" => has_move = true,
-                                    "action" => has_action = true,
-                                    _ => {}
-                                }
-                            }
-                            if has_move && has_action {
-                                break;
-                            }
-                        }
-                        if !has_move {
-                            missing_channels.push("move");
-                        }
-                        if !has_action {
-                            missing_channels.push("action");
-                        }
                         let mut feedback = String::new();
                         feedback.push_str(&format!(
                             "Missing required motion channels (attempt {next_attempt}/2): {}\n",
-                            missing_channels.join(", ")
+                            missing_motion_channels.join(", ")
                         ));
                         append_motion_authoring_retry_feedback(job, &mut feedback);
+                        let channels = pipeline_motion_batch_channels(job, draft);
                         if let Some(result) = start_pipeline_tool_call(
                             config,
                             time,
@@ -1629,7 +1651,7 @@ fn poll_pipeline_tick(
                             preview,
                             preview_model,
                             TOOL_ID_LLM_GENERATE_MOTIONS,
-                            serde_json::json!({ "channels": missing_channels, "qa_feedback": feedback }),
+                            serde_json::json!({ "channels": channels, "qa_feedback": feedback }),
                         ) {
                             pipeline_record_tool_result(workshop, job, &*draft, &result);
                         }
@@ -1645,14 +1667,16 @@ fn poll_pipeline_tick(
                         return;
                     }
 
+                    let missing_motion_channels =
+                        pipeline_missing_required_motion_channels(job, draft);
                     stop_pipeline_best_effort(
                         commands,
                         review_cameras,
                         workshop,
                         job,
                         format!(
-                            "Pipeline stopped: QA ok but run not complete (missing_move_slots={} motion_authoring_attempts={} appearance_review_enabled={}). Retry Build; if this repeats, file a bug with the run cache directory.",
-                            pipeline_missing_move_slot_coverage(job, draft),
+                            "Pipeline stopped: QA ok but run not complete (missing_motion_channels=[{}] motion_authoring_attempts={} appearance_review_enabled={}). Retry Build; if this repeats, file a bug with the run cache directory.",
+                            missing_motion_channels.join(", "),
                             job.pipeline.motion_authoring_attempts,
                             appearance_review_enabled(job)
                         ),
@@ -1733,11 +1757,7 @@ fn poll_pipeline_tick(
                     job.agent.last_smoke_ok = None;
                     job.agent.last_motion_ok = None;
                     workshop.status = "Pipeline: authoring motion…".into();
-                    let mut channels: Vec<&'static str> = vec!["move", "action"];
-                    let attack_present = draft.root_def().and_then(|r| r.attack.as_ref()).is_some();
-                    if attack_present {
-                        channels.push("attack");
-                    }
+                    let channels = pipeline_motion_batch_channels(job, draft);
 
                     let mut feedback = String::new();
                     feedback.push_str(&format!(

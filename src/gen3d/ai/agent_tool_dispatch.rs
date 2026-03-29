@@ -7318,6 +7318,11 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 .user_image_object_summary
                 .as_ref()
                 .map(|s| s.text.as_str());
+            let explicit_motion_channels = job
+                .prompt_intent
+                .as_ref()
+                .map(|intent| intent.explicit_motion_channels.as_slice())
+                .unwrap_or(&[]);
             let user_text = super::prompts::build_gen3d_motion_authoring_user_text(
                 &job.user_prompt_raw,
                 image_object_summary,
@@ -7326,6 +7331,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 &job.plan_hash,
                 job.assembly_rev,
                 &channel,
+                explicit_motion_channels,
                 job.rig_move_cycle_m,
                 has_idle_slot,
                 has_move_slot,

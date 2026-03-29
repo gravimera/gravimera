@@ -86,7 +86,7 @@ fn gen3d_mock_pipeline_builds_warcar_prompt_end_to_end() {
     let mut job = Gen3dAiJob::default();
     job.running = true;
     job.build_complete = false;
-    job.phase = Gen3dAiPhase::AgentExecutingActions;
+    job.phase = Gen3dAiPhase::AgentWaitingPromptIntent;
     job.ai = Some(Gen3dAiServiceConfig::OpenAi(openai));
     job.run_id = Some(run_id);
     job.attempt = 0;
@@ -123,6 +123,123 @@ fn gen3d_mock_pipeline_builds_warcar_prompt_end_to_end() {
     assert!(
         !trace.contains("\"artifact_prefix\":\"agent_step\""),
         "pipeline run unexpectedly called agent_step"
+    );
+}
+
+#[test]
+fn gen3d_mock_pipeline_requests_named_motion_channels_from_prompt_intent() {
+    let prompt = "蔡徐坤，会唱、跳、rap动作";
+
+    let run_id = Uuid::new_v4();
+    let run_dir = make_temp_gen3d_run_dir("gravimera_gen3d_pipeline_named_motion_test", run_id);
+    let step0 = run_dir.join("attempt_0").join("steps").join("step_0000");
+    std::fs::create_dir_all(&step0).expect("create temp gen3d step dir");
+
+    let openai = OpenAiConfig {
+        base_url: "mock://gen3d".into(),
+        model: "mock".into(),
+        reasoning_effort: "none".into(),
+        api_key: "mock".into(),
+    };
+
+    let mut config = AppConfig {
+        openai: Some(openai.clone()),
+        ..Default::default()
+    };
+    config.gen3d_max_seconds = 0;
+    config.gen3d_max_tokens = 0;
+    config.gen3d_no_progress_tries_max = 0;
+
+    let mut workshop = Gen3dWorkshop::default();
+    workshop.prompt = prompt.to_string();
+    workshop.speed_mode = Gen3dSpeedMode::Level3;
+
+    let mut job = Gen3dAiJob::default();
+    job.running = true;
+    job.build_complete = false;
+    job.phase = Gen3dAiPhase::AgentWaitingPromptIntent;
+    job.ai = Some(Gen3dAiServiceConfig::OpenAi(openai));
+    job.run_id = Some(run_id);
+    job.attempt = 0;
+    job.step = 0;
+    job.plan_hash.clear();
+    job.assembly_rev = 0;
+    job.max_parallel_components = 1;
+    job.user_prompt_raw = prompt.to_string();
+    job.user_images.clear();
+    job.run_dir = Some(run_dir.clone());
+    job.step_dir = Some(step0.clone());
+    job.agent = Gen3dAgentState::default();
+    job.pipeline = Gen3dPipelineState::default();
+
+    let app = build_test_app(
+        config,
+        workshop,
+        Gen3dToolFeedbackHistory::default(),
+        job,
+        Gen3dDraft::default(),
+        Gen3dPreview::default(),
+    );
+
+    let app = run_app_until_build_stops(app, Duration::from_secs(5));
+
+    let explicit_motion_channels = app
+        .world()
+        .resource::<Gen3dAiJob>()
+        .prompt_intent
+        .as_ref()
+        .expect("prompt intent should be present")
+        .explicit_motion_channels
+        .clone();
+    assert_eq!(
+        explicit_motion_channels,
+        vec!["sing".to_string(), "dance".to_string(), "rap".to_string()]
+    );
+
+    let steps_dir = run_dir.join("attempt_0").join("steps");
+    let mut saw_named_motion_batch = false;
+    for entry in steps_dir
+        .read_dir()
+        .expect("read attempt_0 steps dir")
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path().join("tool_calls.jsonl");
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in text.lines() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if value.get("tool_id").and_then(|v| v.as_str()) != Some("llm_generate_motions_v1") {
+                continue;
+            }
+            let channels: Vec<String> = value
+                .get("args")
+                .and_then(|v| v.get("channels"))
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect();
+            if channels.iter().any(|ch| ch == "move")
+                && channels.iter().any(|ch| ch == "action")
+                && channels.iter().any(|ch| ch == "sing")
+                && channels.iter().any(|ch| ch == "dance")
+                && channels.iter().any(|ch| ch == "rap")
+            {
+                saw_named_motion_batch = true;
+                break;
+            }
+        }
+        if saw_named_motion_batch {
+            break;
+        }
+    }
+    assert!(
+        saw_named_motion_batch,
+        "expected llm_generate_motions_v1 call to include move/action plus named motion channels"
     );
 }
 

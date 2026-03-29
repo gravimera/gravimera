@@ -607,6 +607,8 @@ pub(crate) struct AiPromptIntentJsonV1 {
     #[serde(default)]
     pub(crate) version: u32,
     pub(crate) requires_attack: bool,
+    #[serde(default)]
+    pub(crate) explicit_motion_channels: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]

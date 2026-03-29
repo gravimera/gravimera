@@ -392,7 +392,7 @@ pub(super) fn parse_ai_prompt_intent_from_text(text: &str) -> Result<AiPromptInt
         return Err("AI prompt-intent JSON missing required `version` (expected 1).".into());
     }
 
-    let intent: AiPromptIntentJsonV1 =
+    let mut intent: AiPromptIntentJsonV1 =
         serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
     if intent.version != 1 {
         return Err(format!(
@@ -400,6 +400,21 @@ pub(super) fn parse_ai_prompt_intent_from_text(text: &str) -> Result<AiPromptInt
             intent.version
         ));
     }
+    let mut normalized_channels: Vec<String> = Vec::new();
+    for channel in intent.explicit_motion_channels.drain(..) {
+        let channel = channel.trim();
+        if channel.is_empty() {
+            continue;
+        }
+        if normalized_channels
+            .iter()
+            .any(|existing| existing == channel)
+        {
+            continue;
+        }
+        normalized_channels.push(channel.to_string());
+    }
+    intent.explicit_motion_channels = normalized_channels;
 
     Ok(intent)
 }
@@ -873,6 +888,23 @@ mod tests {
                 "rabbit".to_string(),
                 "voxel_art".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn parses_prompt_intent_and_normalizes_named_motion_channels() {
+        let text = r#"{
+          "version": 1,
+          "requires_attack": false,
+          "explicit_motion_channels": [" sing ", "", "dance", "sing", "rap "]
+        }"#;
+
+        let intent = parse_ai_prompt_intent_from_text(text).expect("prompt intent should parse");
+        assert_eq!(intent.version, 1);
+        assert!(!intent.requires_attack);
+        assert_eq!(
+            intent.explicit_motion_channels,
+            vec!["sing".to_string(), "dance".to_string(), "rap".to_string()]
         );
     }
 

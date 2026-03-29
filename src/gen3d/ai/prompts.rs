@@ -70,13 +70,18 @@ pub(super) fn build_gen3d_user_image_object_summary_user_text(
 
 pub(super) fn build_gen3d_prompt_intent_system_instructions() -> String {
     "You are a prompt-intent classifier for Gravimera Gen3D.\n\
-Your job: decide whether the requested object MUST have gameplay attack capability (a root attack profile).\n\n\
+Your job: decide whether the requested object MUST have gameplay attack capability (a root attack profile), and extract any explicitly named motion channels the user requests.\n\n\
 Definitions:\n\
 - requires_attack=true means the user wants the object to be able to perform an attack action (ex: bite/claw, punch, swing a weapon, shoot/projectiles/lasers, cast an offensive spell, explode to damage others).\n\
 - requires_attack=false means the user does NOT request attack capability (ex: decorative statue, harmless animal, prop) OR explicitly says it cannot/should not attack.\n\n\
+- `explicit_motion_channels` is the ordered list of user-named motions that must stay separate from the generic `action` channel.\n\
+- `action` is the generic default handling/working motion. If the user explicitly names motions, do NOT collapse them into `action`; list them separately in `explicit_motion_channels`.\n\
+- Use compact lower_snake_case ASCII channel ids when obvious (example: \"sing, dance, rap\" -> [\"sing\", \"dance\", \"rap\"]).\n\
+\n\
 Rules:\n\
 - Be language-agnostic: the user notes can be any language.\n\
 - If the prompt is ambiguous, set requires_attack=false.\n\
+- If the user does not explicitly name motions, return `explicit_motion_channels=[]`.\n\
 - Output MUST be a single JSON object that matches the schema exactly (no extra text)."
         .to_string()
 }
@@ -107,8 +112,10 @@ pub(super) fn build_gen3d_prompt_intent_user_text(
     }
 
     out.push_str(
-        "Question: Does the user request that the object can attack in gameplay?\n\
-Return JSON with {\"version\":1,\"requires_attack\":true|false}.\n",
+        "Questions:\n\
+- Does the user request that the object can attack in gameplay?\n\
+- Does the user explicitly name any motions that must stay separate from the generic `action` channel?\n\
+Return JSON with {\"version\":1,\"requires_attack\":true|false,\"explicit_motion_channels\":[...] }.\n",
     );
     out
 }
@@ -829,12 +836,27 @@ mod tests {
     }
 
     #[test]
+    fn gen3d_prompt_intent_instructions_require_named_motion_channels() {
+        let text = build_gen3d_prompt_intent_system_instructions();
+        assert!(text.contains("explicit_motion_channels"), "{text}");
+        assert!(
+            text.contains("do NOT collapse them into `action`")
+                || text.contains("Do NOT collapse them into `action`"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn gen3d_motion_authoring_system_instructions_include_schema_key_contract() {
         let text = build_gen3d_motion_authoring_system_instructions();
         assert!(text.contains("Schema key contract (do not invent extra keys):"));
         assert!(text.contains("clip(kind=spin)"), "{text}");
         assert!(text.contains("radians_per_unit"), "{text}");
         assert!(text.contains("axis_space"), "{text}");
+        assert!(
+            text.contains("NEVER use `action` as a substitute"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -2282,6 +2304,12 @@ Rules:\n\
     - You MUST set replace_channels=[target_channel] (exactly one entry).\n\
     - Every authored slot.channel MUST equal target_channel.\n\
     - Do NOT author any other channels in this tool call.\n\
+- Named motion semantics (IMPORTANT):\n\
+  - `action` is the generic default handling/working motion.\n\
+  - If the user explicitly named motions and the user text lists them in `explicit_motion_channels`, those motions MUST remain separate channels.\n\
+  - NEVER use `action` as a substitute for a user-named motion.\n\
+  - If `target_channel` is one of the explicit named motions, author that named motion specifically.\n\
+  - If `target_channel` is `action` and explicit named motions exist, author a generic default handling/working motion that does NOT collapse those named motions into `action`.\n\
 - Minimize output size:\n\
   - Only include `edges[]` entries you intend to CHANGE. Omit edges you are not touching.\n\
   - Prefer replacing ONLY the channels you actually author (e.g. if you only author `move`, set replace_channels=[\"move\"]).\n\
@@ -2330,6 +2358,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     plan_hash: &str,
     assembly_rev: u32,
     target_channel: &str,
+    requested_explicit_motion_channels: &[String],
     rig_move_cycle_m: Option<f32>,
     has_idle_slot: bool,
     has_move_slot: bool,
@@ -2426,6 +2455,47 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
         "- Every authored slot.channel MUST be \"{target_channel}\"\n"
     ));
     out.push_str("- Do NOT author any other channels in this tool call.\n\n");
+    let mut explicit_motion_channels: Vec<String> = Vec::new();
+    for channel in requested_explicit_motion_channels.iter() {
+        let channel = channel.trim();
+        if channel.is_empty() {
+            continue;
+        }
+        if explicit_motion_channels
+            .iter()
+            .any(|existing| existing == channel)
+        {
+            continue;
+        }
+        explicit_motion_channels.push(channel.to_string());
+    }
+    if explicit_motion_channels.is_empty() {
+        out.push_str("explicit_motion_channels: []\n");
+        out.push_str(
+            "Named motion semantics: the prompt did not name any explicit motion channels; `action` keeps its generic default handling/working meaning.\n\n",
+        );
+    } else {
+        out.push_str("explicit_motion_channels:\n");
+        for ch in explicit_motion_channels.iter() {
+            out.push_str(&format!("- {ch}\n"));
+        }
+        if target_channel == "action" {
+            out.push_str(
+                "Named motion semantics: `action` must stay a generic default handling/working motion in this tool call. Do NOT collapse the explicit named motions listed above into `action`.\n\n",
+            );
+        } else if explicit_motion_channels
+            .iter()
+            .any(|ch| ch == target_channel)
+        {
+            out.push_str(&format!(
+                "Named motion semantics: `{target_channel}` is an explicit user-requested motion channel. Author that named motion specifically in this tool call.\n\n"
+            ));
+        } else {
+            out.push_str(&format!(
+                "Named motion semantics: keep the explicit named motions listed above separate from `{target_channel}`.\n\n"
+            ));
+        }
+    }
     if let Some(summary) = image_object_summary
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())

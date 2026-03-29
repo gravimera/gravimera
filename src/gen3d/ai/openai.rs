@@ -1074,6 +1074,31 @@ fn mock_generate_text_via_openai(
         MockKind::Warcar
     }
 
+    fn mock_explicit_motion_channels_from_text(text: &str) -> Vec<String> {
+        let lower = text.to_ascii_lowercase();
+        let mut out: Vec<String> = Vec::new();
+        let mut push_unique = |channel: &str| {
+            if !out.iter().any(|existing| existing == channel) {
+                out.push(channel.to_string());
+            }
+        };
+
+        if text.contains('唱') || lower.contains("sing") || lower.contains("singer") {
+            push_unique("sing");
+        }
+        if text.contains('跳') || lower.contains("dance") || lower.contains("dancer") {
+            push_unique("dance");
+        }
+        if lower.contains("rap") || lower.contains("rapper") {
+            push_unique("rap");
+        }
+        if lower.contains("wave") || lower.contains("waving") {
+            push_unique("wave");
+        }
+
+        out
+    }
+
     fn plan_json_for_kind(kind: MockKind) -> serde_json::Value {
         match kind {
             MockKind::Warcar => serde_json::json!({
@@ -1423,9 +1448,11 @@ fn mock_generate_text_via_openai(
     let text = if stable_prefix == "prompt_intent" {
         let kind = mock_kind_from_text(user_text);
         let requires_attack = !matches!(kind, MockKind::Snake);
+        let explicit_motion_channels = mock_explicit_motion_channels_from_text(user_text);
         serde_json::json!({
             "version": 1,
             "requires_attack": requires_attack,
+            "explicit_motion_channels": explicit_motion_channels,
         })
         .to_string()
     } else if stable_prefix.starts_with("tool_edit_strategy_") {

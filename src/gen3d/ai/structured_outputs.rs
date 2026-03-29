@@ -1066,8 +1066,9 @@ fn schema_prompt_intent() -> serde_json::Value {
         "properties": {
             "version": { "type": "integer", "enum": [1] },
             "requires_attack": schema_bool(),
+            "explicit_motion_channels": schema_array_of(schema_string()),
         },
-        "required": ["version", "requires_attack"],
+        "required": ["version", "requires_attack", "explicit_motion_channels"],
     })
 }
 

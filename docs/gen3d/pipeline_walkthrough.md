@@ -44,24 +44,29 @@ At a high level, there are two common flows:
 
 Pipeline stages (simplified):
 
-1. `CreatePlan`
+1. Prompt intent bootstrap
+   - Structured output: `gen3d_prompt_intent_v1`
+   - Purpose: cache gameplay attack intent and any explicitly named motion channels from the raw prompt before planning starts.
+   - Artifact: `attempt_N/inputs/prompt_intent.json`
+2. `CreatePlan`
    - Tool: `llm_generate_plan_v1`
-2. `EnsureComponents`
+3. `EnsureComponents`
    - Tool: `llm_generate_components_v1` (missing-only) until every planned component has `actual_size`
    - Tool: `apply_reuse_groups_v1` (deterministic) to copy/mirror component geometry per the plan’s `reuse_groups` once the reuse source exists
    - Important: `reuse_groups` does NOT create components. Every `reuse_groups.source` and `reuse_groups.targets[]` entry must also exist as a component `name` in the plan’s `components[]` (the engine rejects plans that reference missing components).
    - Note: For `reuse_groups`, prefer omitting `anchors` (default is `preserve_interfaces`). Avoid `anchors=preserve_target` for `copy_component_subtree` reuse groups; it can keep internal join anchors unchanged and drift descendant attachments.
-3. `Qa`
+4. `Qa`
    - Tool: `qa_v1`
    - If QA provides deterministic “fixits”, pipeline applies them using `apply_draft_ops_v1` and re-runs QA.
    - If QA returns non-fatal `complaints[]` (quality hints), pipeline spends a *second chance* on improvement when possible:
      - Motion complaints → re-run `llm_generate_motions_v1` once with `qa_feedback` attached, then re-run QA.
      - Plan complaints are surfaced as hints but do not currently trigger an automatic plan retry.
-   - If motion channels are missing for a movable unit, pipeline calls `llm_generate_motions_v1` (with a schema reminder + prior failures as `qa_feedback`) and re-runs QA.
-4. Optional appearance review (if enabled)
+   - If motion channels are missing for a movable unit, or if prompt intent includes explicit named motion channels that are still missing, pipeline calls `llm_generate_motions_v1` (with a schema reminder + prior failures as `qa_feedback`) and re-runs QA.
+   - `action` stays the generic default handling/working motion; explicitly named motions from prompt intent are requested as additional channels, not collapsed into `action`.
+5. Optional appearance review (if enabled)
    - Tools: `render_preview_v1` → `llm_review_delta_v1`
    - Then loop back to `EnsureComponents` (review-delta can request regen/replan).
-5. `Finish`
+6. `Finish`
 
 The actual stage machine is in `src/gen3d/ai/pipeline_orchestrator.rs` (match on `job.pipeline.stage`).
 
@@ -118,7 +123,7 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
   - `qa_v1`
     - Args: `{}`
   - `llm_generate_motions_v1`
-    - Args: `{ "channels": ["move","action"], "qa_feedback": "<optional QA complaints text>" }` (and `attack` when needed)
+    - Args: `{ "channels": ["move","action", ...explicit named prompt motions...], "qa_feedback": "<optional QA complaints text>" }` (and `attack` when needed)
 
 - Appearance review
   - `render_preview_v1`
