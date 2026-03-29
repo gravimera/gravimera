@@ -14,10 +14,13 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Gen3D workshop: in **Object Preview**, click **Gen3D** (top-left)
 - Models panel (hidden by default): in **Object Preview**, click **Show Models** / **Hide Models** (top-left)
 - 3D Models panel manage mode: click **Manage** (panel header) to enter multi-select. **Export**/**Delete** + **All**/**None** appear; `Shift`+click selects a range. Click **Done** to exit.
-- Floors panel manage mode: click **Manage** (panel header) to enter multi-select. **Export**/**Delete** + **All**/**None** appear; `Shift`+click selects a range. The **Default Floor** row is not selectable. Click **Done** to exit.
+- Scenes panel manage mode: click **Manage** (panel header) to enter multi-select. **Import** stays available, and **Export**/**Delete** + **All**/**None** appear. Delete skips the currently active scene.
+- Scene package import/export details: `docs/scene_import_export.md`
+- Terrain panel manage mode: click **Manage** (panel header) to enter multi-select. **Export**/**Delete** + **All**/**None** appear; `Shift`+click selects a range. The **Default Terrain** row is not selectable. Click **Done** to exit.
+- Terrain package import/export details: `docs/terrain_import_export.md`
 - Console: `Enter` (commands: `/easy`, `/hard`, `/hell`; cheat: `who's your daddy` (+ optional amount) boosts all commandable units)
 - HUD stats (top-right): object count, primitive count, FPS
-- Zoom: mouse wheel (in/out; no orbit/rotation; scrolling over **Scenes**/**3D Models**/**Floors**/**Meta** panels scrolls their lists instead)
+- Zoom: mouse wheel (in/out; no orbit/rotation; scrolling over **Scenes**/**3D Models**/**Terrain**/**Meta** panels scrolls their lists instead)
 - Meta panel Speak: double-click a unit selection circle to open **Meta**, then use **Speak** (voice: `dog`/`cow`/`dragon`, `content` field, `Speak` button). While speaking, a speech bubble appears above that model showing the spoken content.
 - Text inputs: the IME candidate/keyboard anchor follows the focused input field.
 - Meta panel Player Character: double-click a commandable unit to open **Meta**, then use **Player Character** → **Set as Player Character**. Each scene has exactly one Player Character, and the choice is saved per scene/workspace.

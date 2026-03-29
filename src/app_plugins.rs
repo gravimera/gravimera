@@ -198,13 +198,20 @@ impl Plugin for RenderedUiPlugin {
             (
                 crate::workspace_scenes_ui::scenes_panel_sync_active_realm
                     .after(crate::workspace_ui::workspace_toolbar_update_scenes_panel_visibility),
+                crate::workspace_scenes_ui::scenes_panel_update_panel_width
+                    .after(crate::workspace_scenes_ui::scenes_panel_sync_active_realm),
+                crate::workspace_scenes_ui::scenes_panel_update_action_visibility
+                    .after(crate::workspace_scenes_ui::scenes_panel_update_panel_width),
                 crate::workspace_scenes_ui::scenes_panel_set_add_panel_visibility
-                    .after(crate::workspace_scenes_ui::scenes_panel_sync_active_realm)
+                    .after(crate::workspace_scenes_ui::scenes_panel_update_action_visibility)
                     .after(crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions)
+                    .after(crate::workspace_scenes_ui::scenes_panel_manage_button_interactions)
                     .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons),
                 crate::workspace_scenes_ui::scenes_panel_rebuild_list_ui
                     .after(crate::workspace_scenes_ui::scenes_panel_sync_active_realm)
-                    .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons),
+                    .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons)
+                    .after(crate::workspace_scenes_ui::scenes_panel_delete_button_interactions)
+                    .after(crate::workspace_scenes_ui::scenes_panel_import_job_poll),
                 crate::workspace_scenes_ui::scenes_panel_update_texts
                     .after(crate::workspace_scenes_ui::scenes_panel_set_add_panel_visibility),
                 crate::workspace_scenes_ui::scenes_panel_update_styles
@@ -531,15 +538,49 @@ impl Plugin for RenderedUiPlugin {
                 crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::workspace_scenes_ui::scenes_panel_scene_select_button_actions
+                crate::workspace_scenes_ui::scenes_panel_manage_button_interactions
                     .after(crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::workspace_scenes_ui::scenes_panel_import_button_interactions
+                    .after(crate::workspace_scenes_ui::scenes_panel_manage_button_interactions)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::workspace_scenes_ui::scenes_panel_export_button_interactions
+                    .after(crate::workspace_scenes_ui::scenes_panel_import_button_interactions)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::workspace_scenes_ui::scenes_panel_select_all_button_interactions
+                    .after(crate::workspace_scenes_ui::scenes_panel_export_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_select_none_button_interactions
+                    .after(crate::workspace_scenes_ui::scenes_panel_select_all_button_interactions)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_delete_button_interactions
+                    .after(crate::workspace_scenes_ui::scenes_panel_select_none_button_interactions)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::workspace_scenes_ui::scenes_panel_scene_select_button_actions
+                    .after(crate::workspace_scenes_ui::scenes_panel_delete_button_interactions)
                     .run_if(crate::automation::local_input_enabled),
                 crate::workspace_scenes_ui::scenes_panel_add_panel_buttons
                     .after(crate::workspace_scenes_ui::scenes_panel_scene_select_button_actions)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::workspace_scenes_ui::scenes_panel_name_field_focus
+                crate::workspace_scenes_ui::scenes_panel_export_dialog_poll
                     .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_export_job_poll
+                    .after(crate::workspace_scenes_ui::scenes_panel_export_dialog_poll)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_import_dialog_poll
+                    .after(crate::workspace_scenes_ui::scenes_panel_export_job_poll)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_import_job_poll
+                    .after(crate::workspace_scenes_ui::scenes_panel_import_dialog_poll)
+                    .run_if(crate::automation::local_input_enabled),
+                crate::workspace_scenes_ui::scenes_panel_name_field_focus
+                    .after(crate::workspace_scenes_ui::scenes_panel_import_job_poll)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::workspace_scenes_ui::scenes_panel_update_ime_position

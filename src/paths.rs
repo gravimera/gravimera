@@ -115,6 +115,10 @@ pub(crate) fn realm_prefabs_dir(realm_id: &str) -> PathBuf {
 }
 
 pub(crate) fn realm_floors_dir(realm_id: &str) -> PathBuf {
+    realm_dir(realm_id).join("terrain")
+}
+
+pub(crate) fn legacy_realm_floors_dir(realm_id: &str) -> PathBuf {
     realm_dir(realm_id).join("floors")
 }
 
@@ -159,6 +163,10 @@ pub(crate) fn scene_dat_path(realm_id: &str, scene_id: &str) -> PathBuf {
 }
 
 pub(crate) fn scene_floor_selection_path(realm_id: &str, scene_id: &str) -> PathBuf {
+    scene_build_dir(realm_id, scene_id).join("terrain.grav")
+}
+
+pub(crate) fn legacy_scene_floor_selection_path(realm_id: &str, scene_id: &str) -> PathBuf {
     scene_build_dir(realm_id, scene_id).join("floor_selection.json")
 }
 

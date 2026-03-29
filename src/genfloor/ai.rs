@@ -12,7 +12,7 @@ use crate::threaded_result::{
 };
 use crate::types::BuildScene;
 
-const GENFLOOR_SYSTEM_PROMPT: &str = "You are a floor generator for a game editor.\n\
+const GENFLOOR_SYSTEM_PROMPT: &str = "You are a terrain generator for a game editor.\n\
 Return ONLY a single JSON object. No markdown, no commentary.\n\
 The JSON must follow this schema (all fields required unless marked optional):\n\
 {\n\
@@ -53,10 +53,10 @@ The JSON must follow this schema (all fields required unless marked optional):\n
 }\n\
 Rules:\n\
 - Use safe, moderate values and keep subdiv <= 256.\n\
-- Floors should fill the scene; keep size_m around [60, 60] unless the user explicitly requests otherwise.\n\
+- Terrain should fill the scene; keep size_m around [60, 60] unless the user explicitly requests otherwise.\n\
 - If the prompt is short, prefer a subtle look.\n\
 - If you use coloring.mode != 'solid', include a 2-5 color palette and set material.base_color_rgba to [1,1,1,1].\n\
-- If the prompt asks for bumpy/uneven floors, use relief.mode = 'noise' with a non-zero amplitude.\n\
+- If the prompt asks for bumpy/uneven terrain, use relief.mode = 'noise' with a non-zero amplitude.\n\
 - The output MUST be valid JSON (not JSON5).\n\
 ";
 
@@ -89,7 +89,7 @@ pub(crate) fn genfloor_start_ai_job(
     job.run_tokens = 0;
     floor_workshop.draft = None;
     workshop.error = None;
-    workshop.status = "Building floor...".to_string();
+    workshop.status = "Building terrain...".to_string();
     floor_workshop.error = None;
     floor_workshop.status = workshop.status.clone();
 
@@ -178,7 +178,7 @@ pub(crate) fn genfloor_poll_ai_job(
                         Some(floor_id),
                     ) {
                         workshop.error = Some(format!(
-                            "Floor saved, but failed to persist selection: {err}"
+                            "Terrain saved, but failed to persist selection: {err}"
                         ));
                     } else {
                         workshop.error = None;
@@ -188,7 +188,7 @@ pub(crate) fn genfloor_poll_ai_job(
                     }
                     job.set_last_saved_floor_id(Some(floor_id));
                     floor_workshop.draft = Some(res.def);
-                    workshop.status = "Build finished. Floor saved. Click Edit to run again (auto-save overwrites the same floor).".to_string();
+                    workshop.status = "Build finished. Terrain saved. Click Edit to run again (auto-save overwrites the same terrain).".to_string();
                     floor_workshop.status = workshop.status.clone();
                     floor_workshop.error = workshop.error.clone();
                 }
@@ -295,7 +295,7 @@ fn call_genfloor_ai(
 
     let mut def: FloorDefV1 = serde_json::from_str(&response.text)
         .or_else(|_| json5::from_str(&response.text))
-        .map_err(|err| format!("Floor JSON parse error: {err}"))?;
+        .map_err(|err| format!("Terrain JSON parse error: {err}"))?;
     def.canonicalize_in_place();
 
     let usage = response.total_tokens.map(|total| GenFloorAiUsage {
@@ -322,7 +322,10 @@ mod tests {
 
         let result = call_genfloor_ai(&config, "A checkerboard floor (mock)", None)
             .expect("genfloor mock call");
-        assert_eq!(result.def.format_version, crate::genfloor::defs::FLOOR_DEF_FORMAT_VERSION);
+        assert_eq!(
+            result.def.format_version,
+            crate::genfloor::defs::FLOOR_DEF_FORMAT_VERSION
+        );
         assert!(matches!(
             result.def.coloring.mode,
             crate::genfloor::defs::FloorColoringMode::Checker

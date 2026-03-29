@@ -353,7 +353,7 @@ pub(crate) fn setup_floor_library_ui(
             ))
             .with_children(|row| {
                 row.spawn((
-                    Text::new("Floors"),
+                    Text::new("Terrain"),
                     TextFont {
                         font_size: 18.0,
                         ..default()
@@ -1120,7 +1120,7 @@ pub(crate) fn floor_library_import_button_interactions(
                 state.import_dialog_pending_realm = Some(env.active.realm_id.clone());
                 std::thread::spawn(move || {
                     let path = rfd::FileDialog::new()
-                        .add_filter("Floor Zip", &["zip"])
+                        .add_filter("Terrain Zip", &["zip"])
                         .pick_file();
                     let _ = tx.send(path);
                 });
@@ -1223,8 +1223,8 @@ pub(crate) fn floor_library_export_button_interactions(
                 });
                 std::thread::spawn(move || {
                     let path = rfd::FileDialog::new()
-                        .add_filter("Floor Zip", &["zip"])
-                        .set_file_name("floors.zip")
+                        .add_filter("Terrain Zip", &["zip"])
+                        .set_file_name("terrain.zip")
                         .save_file()
                         .map(ensure_zip_extension);
                     let _ = tx.send(path);
@@ -1394,7 +1394,7 @@ pub(crate) fn floor_library_manage_delete_modal_interactions(
 
         if failed == 0 {
             toasts.write(UiToastCommand::Show {
-                text: format!("Deleted {} floor(s).", deleted),
+                text: format!("Deleted {} terrain package(s).", deleted),
                 kind: UiToastKind::Info,
                 ttl_secs: 4.0,
             });
@@ -1445,7 +1445,7 @@ pub(crate) fn floor_library_export_job_poll(
             match result {
                 Ok(count) => {
                     toasts.write(UiToastCommand::Show {
-                        text: format!("Exported {} floor(s).", count),
+                        text: format!("Exported {} terrain package(s).", count),
                         kind: UiToastKind::Info,
                         ttl_secs: 4.0,
                     });
@@ -1534,7 +1534,7 @@ pub(crate) fn floor_library_export_dialog_poll(
     ids.sort();
     ids.dedup();
     toasts.write(UiToastCommand::Show {
-        text: "Exporting floors…".to_string(),
+        text: "Exporting terrain packages…".to_string(),
         kind: UiToastKind::Info,
         ttl_secs: 3.0,
     });
@@ -1597,7 +1597,7 @@ pub(crate) fn floor_library_import_dialog_poll(
     }
 
     toasts.write(UiToastCommand::Show {
-        text: "Importing floors…".to_string(),
+        text: "Importing terrain packages…".to_string(),
         kind: UiToastKind::Info,
         ttl_secs: 3.0,
     });
@@ -1983,7 +1983,7 @@ pub(crate) fn floor_library_rebuild_list_ui(
     }
 
     fn build_default_floor_row(query: &str) -> Option<Row> {
-        let display_name = "Default Floor".to_string();
+        let display_name = "Default Terrain".to_string();
         let score = relevance_score(query, &display_name, "default");
         if !query.is_empty() && score == 0 {
             return None;
@@ -2565,9 +2565,9 @@ fn open_floor_library_manage_delete_modal(
 
     let count = floor_ids.len();
     let title = if count == 1 {
-        "Delete selected floor?".to_string()
+        "Delete selected terrain package?".to_string()
     } else {
-        format!("Delete {count} selected floors?")
+        format!("Delete {count} selected terrain packages?")
     };
 
     let root = commands
@@ -2613,7 +2613,7 @@ fn open_floor_library_manage_delete_modal(
 
                     panel.spawn((
                         Text::new(
-                            "This deletes floor files from disk. Scenes referencing deleted floors may fall back to Default Floor.",
+                            "This deletes terrain files from disk. Scenes referencing deleted terrain may fall back to Default Terrain.",
                         ),
                         TextFont {
                             font_size: 13.0,
@@ -2858,7 +2858,7 @@ pub(crate) fn floor_library_open_preview_panel(
 
     let uuid = uuid::Uuid::from_u128(floor_id).to_string();
     let name = if floor_id == DEFAULT_FLOOR_ID {
-        "Default Floor".to_string()
+        "Default Terrain".to_string()
     } else {
         def.label
             .as_ref()

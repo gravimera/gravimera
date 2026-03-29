@@ -3283,7 +3283,7 @@ fn handle_genfloor_routes<
             job.reset_for_new_build();
             floor_workshop.reset_for_new_build();
 
-            const DEFAULT_STATUS: &str = "Describe the floor and click Build.";
+            const DEFAULT_STATUS: &str = "Describe the terrain and click Build.";
             floor_workshop.status = DEFAULT_STATUS.to_string();
             floor_workshop.error = None;
 
@@ -3353,7 +3353,7 @@ fn handle_genfloor_routes<
             {
                 return Some(json_error(
                     409,
-                    "Switch to Build Floor Preview scene first.",
+                    "Switch to Build Terrain Preview scene first.",
                 ));
             }
             let Some(workshop) = gen3d_workshop.as_deref_mut() else {

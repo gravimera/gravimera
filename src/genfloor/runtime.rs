@@ -567,7 +567,10 @@ mod tests {
         let nx = def.mesh.subdiv[0] as usize + 1;
         let nz = def.mesh.subdiv[1] as usize + 1;
         assert_eq!(positions_len, nx * nz);
-        assert_eq!(indices_len, def.mesh.subdiv[0] as usize * def.mesh.subdiv[1] as usize * 6);
+        assert_eq!(
+            indices_len,
+            def.mesh.subdiv[0] as usize * def.mesh.subdiv[1] as usize * 6
+        );
         assert!(mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_none());
     }
 
@@ -606,7 +609,10 @@ mod tests {
         app.update();
 
         let active = app.world().resource::<ActiveWorldFloor>();
-        assert!(active.dirty, "Expected dirty to remain true with no floors.");
+        assert!(
+            active.dirty,
+            "Expected dirty to remain true with no floors."
+        );
         assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
         assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 0);
     }
@@ -626,10 +632,7 @@ mod tests {
         app.world_mut().spawn((WorldFloor,));
 
         app.add_systems(Update, despawn_floors_first);
-        app.add_systems(
-            Update,
-            apply_active_world_floor.after(despawn_floors_first),
-        );
+        app.add_systems(Update, apply_active_world_floor.after(despawn_floors_first));
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             app.update();

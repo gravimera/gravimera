@@ -2390,48 +2390,9 @@ fn load_scene_dat_from_path(
     library: &mut ObjectLibrary,
     path: &Path,
 ) -> Result<usize, String> {
-    let (bytes, loaded_path): (Vec<u8>, Cow<'_, Path>) = match std::fs::read(path) {
-        Ok(bytes) => (bytes, Cow::Borrowed(path)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            if path.extension() != Some(OsStr::new("grav")) {
-                return Ok(0);
-            }
-            let legacy = path.with_extension("dat");
-            if !legacy.exists() {
-                return Ok(0);
-            }
-
-            match migrate_scene_dat_suffix(&legacy, path) {
-                Ok(()) => (
-                    std::fs::read(path)
-                        .map_err(|err| format!("Failed to read {}: {err}", path.display()))?,
-                    Cow::Borrowed(path),
-                ),
-                Err(migrate_err) => {
-                    warn!("{migrate_err}");
-                    (
-                        std::fs::read(&legacy)
-                            .map_err(|err| format!("Failed to read {}: {err}", legacy.display()))?,
-                        Cow::Owned(legacy),
-                    )
-                }
-            }
-        }
-        Err(err) => return Err(format!("Failed to read {}: {err}", path.display())),
-    };
-
-    let scene = SceneDat::decode(bytes.as_slice())
-        .map_err(|err| format!("Failed to decode {}: {err}", loaded_path.display()))?;
-
-    if !matches!(scene.version, 7 | 8 | SCENE_DAT_VERSION) {
-        warn!(
-            "Ignoring {}: unsupported scene version {} (expected 7, 8, or {}).",
-            loaded_path.display(),
-            scene.version,
-            SCENE_DAT_VERSION
-        );
+    let Some((scene, _loaded_path)) = decode_scene_dat_from_path(path)? else {
         return Ok(0);
-    }
+    };
 
     for def in &scene.defs {
         match def_from_dat(def) {
@@ -2518,6 +2479,105 @@ fn load_scene_dat_from_path(
     }
 
     Ok(spawned)
+}
+
+pub(crate) fn referenced_prefab_ids_in_scene_dat_path(path: &Path) -> Result<Vec<u128>, String> {
+    let Some((scene, _loaded_path)) = decode_scene_dat_from_path(path)? else {
+        return Ok(Vec::new());
+    };
+
+    Ok(referenced_prefab_ids_in_scene(&scene))
+}
+
+fn referenced_prefab_ids_in_scene(scene: &SceneDat) -> Vec<u128> {
+    let mut ids = HashSet::new();
+    for def in &scene.defs {
+        if let Some(object_id) = def.object_id.as_ref().map(uuid_to_u128) {
+            ids.insert(object_id);
+        }
+        if let Some(attack) = def
+            .attack
+            .as_ref()
+            .and_then(|attack| attack.ranged.as_ref())
+        {
+            if let Some(projectile_prefab) = attack.projectile_prefab.as_ref().map(uuid_to_u128) {
+                ids.insert(projectile_prefab);
+            }
+            if let Some(muzzle_object_id) = attack
+                .muzzle
+                .as_ref()
+                .and_then(|muzzle| muzzle.object_id.as_ref())
+                .map(uuid_to_u128)
+            {
+                ids.insert(muzzle_object_id);
+            }
+        }
+        for part in &def.parts {
+            if let Some(scene_dat_part_def::Kind::ObjectRef(object_id)) = part.kind.as_ref() {
+                ids.insert(uuid_to_u128(object_id));
+            }
+        }
+    }
+
+    for instance in &scene.instances {
+        if let Some(base_prefab_id) = instance.base_object_id.as_ref().map(uuid_to_u128) {
+            ids.insert(base_prefab_id);
+        }
+        for form in &instance.forms {
+            ids.insert(uuid_to_u128(form));
+        }
+    }
+
+    let mut out: Vec<u128> = ids.into_iter().collect();
+    out.sort();
+    out
+}
+
+fn decode_scene_dat_from_path(path: &Path) -> Result<Option<(SceneDat, PathBuf)>, String> {
+    let (bytes, loaded_path): (Vec<u8>, Cow<'_, Path>) = match std::fs::read(path) {
+        Ok(bytes) => (bytes, Cow::Borrowed(path)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            if path.extension() != Some(OsStr::new("grav")) {
+                return Ok(None);
+            }
+            let legacy = path.with_extension("dat");
+            if !legacy.exists() {
+                return Ok(None);
+            }
+
+            match migrate_scene_dat_suffix(&legacy, path) {
+                Ok(()) => (
+                    std::fs::read(path)
+                        .map_err(|err| format!("Failed to read {}: {err}", path.display()))?,
+                    Cow::Borrowed(path),
+                ),
+                Err(migrate_err) => {
+                    warn!("{migrate_err}");
+                    (
+                        std::fs::read(&legacy)
+                            .map_err(|err| format!("Failed to read {}: {err}", legacy.display()))?,
+                        Cow::Owned(legacy),
+                    )
+                }
+            }
+        }
+        Err(err) => return Err(format!("Failed to read {}: {err}", path.display())),
+    };
+
+    let scene = SceneDat::decode(bytes.as_slice())
+        .map_err(|err| format!("Failed to decode {}: {err}", loaded_path.display()))?;
+
+    if !matches!(scene.version, 7 | 8 | SCENE_DAT_VERSION) {
+        warn!(
+            "Ignoring {}: unsupported scene version {} (expected 7, 8, or {}).",
+            loaded_path.display(),
+            scene.version,
+            SCENE_DAT_VERSION
+        );
+        return Ok(None);
+    }
+
+    Ok(Some((scene, loaded_path.into_owned())))
 }
 
 pub(crate) fn request_scene_save_on_enter_play(mut saves: MessageWriter<SceneSaveRequest>) {
@@ -2709,8 +2769,119 @@ pub(crate) fn scene_autosave_tick(
 }
 
 #[cfg(test)]
+pub(crate) fn test_encode_scene_dat_with_prefab_ids(prefab_ids: &[u128]) -> Vec<u8> {
+    let instances: Vec<SceneDatObjectInstance> = prefab_ids
+        .iter()
+        .enumerate()
+        .map(|(idx, prefab_id)| SceneDatObjectInstance {
+            instance_id: Some(u128_to_uuid((idx as u128) + 1)),
+            base_object_id: Some(u128_to_uuid(*prefab_id)),
+            x_units: idx as i32,
+            y_units: 0,
+            z_units: 0,
+            rot_x: 0.0,
+            rot_y: 0.0,
+            rot_z: 0.0,
+            rot_w: 1.0,
+            tint: None,
+            scale_x: None,
+            scale_y: None,
+            scale_z: None,
+            forms: Vec::new(),
+            active_form: 0,
+            is_protagonist: false,
+        })
+        .collect();
+
+    SceneDat {
+        version: SCENE_DAT_VERSION,
+        units_per_meter: DEFAULT_UNITS_PER_METER,
+        defs: Vec::new(),
+        instances,
+    }
+    .encode_to_vec()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn referenced_prefab_ids_in_scene_includes_scene_defs_and_instance_ids() {
+        let instance_id = uuid::Uuid::new_v4().as_u128();
+        let def_id = uuid::Uuid::new_v4().as_u128();
+        let projectile_id = uuid::Uuid::new_v4().as_u128();
+        let child_part_id = uuid::Uuid::new_v4().as_u128();
+        let form_id = uuid::Uuid::new_v4().as_u128();
+
+        let scene = SceneDat {
+            version: SCENE_DAT_VERSION,
+            units_per_meter: DEFAULT_UNITS_PER_METER,
+            defs: vec![SceneDatObjectDef {
+                object_id: Some(u128_to_uuid(def_id)),
+                label: "Root".to_string(),
+                size_x: 1.0,
+                size_y: 1.0,
+                size_z: 1.0,
+                collider: None,
+                interaction: None,
+                parts: vec![SceneDatPartDef {
+                    part_id: Some(u128_to_uuid(uuid::Uuid::new_v4().as_u128())),
+                    transform: None,
+                    kind: Some(scene_dat_part_def::Kind::ObjectRef(u128_to_uuid(
+                        child_part_id,
+                    ))),
+                    attachment: None,
+                    animations: Vec::new(),
+                    fallback_basis: None,
+                }],
+                minimap_color: None,
+                health_bar_offset_y: None,
+                anchors: Vec::new(),
+                mobility: None,
+                projectile: None,
+                attack: Some(SceneDatUnitAttack {
+                    kind: SceneDatUnitAttackKind::RangedProjectile as i32,
+                    cooldown_secs: 1.0,
+                    damage: 1,
+                    anim_window_secs: 0.1,
+                    melee: None,
+                    ranged: Some(SceneDatRangedAttack {
+                        projectile_prefab: Some(u128_to_uuid(projectile_id)),
+                        muzzle: Some(SceneDatAnchorRef {
+                            object_id: Some(u128_to_uuid(child_part_id)),
+                            anchor: "muzzle".to_string(),
+                        }),
+                    }),
+                }),
+                aim: None,
+                ground_origin_y: None,
+            }],
+            instances: vec![SceneDatObjectInstance {
+                instance_id: Some(u128_to_uuid(uuid::Uuid::new_v4().as_u128())),
+                base_object_id: Some(u128_to_uuid(instance_id)),
+                x_units: 0,
+                y_units: 0,
+                z_units: 0,
+                rot_x: 0.0,
+                rot_y: 0.0,
+                rot_z: 0.0,
+                rot_w: 1.0,
+                tint: None,
+                scale_x: None,
+                scale_y: None,
+                scale_z: None,
+                forms: vec![u128_to_uuid(form_id)],
+                active_form: 0,
+                is_protagonist: false,
+            }],
+        };
+
+        let ids = referenced_prefab_ids_in_scene(&scene);
+        let mut expected = vec![child_part_id, def_id, form_id, instance_id, projectile_id];
+        expected.sort();
+        assert_eq!(ids, expected);
+    }
 
     #[test]
     fn roundtrips_object_defs_with_anchors_and_attachments() {

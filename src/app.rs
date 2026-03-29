@@ -607,6 +607,10 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::workspace_ui::PendingWorkspaceSwitch>();
     app.init_resource::<crate::workspace_ui::WorkspaceCameraState>();
     app.init_resource::<crate::workspace_scenes_ui::ScenesPanelUiState>();
+    app.init_resource::<crate::workspace_scenes_ui::ScenesPanelExportJob>();
+    app.init_resource::<crate::workspace_scenes_ui::ScenesPanelImportJob>();
+    app.init_resource::<crate::workspace_scenes_ui::ScenesPanelExportDialogJob>();
+    app.init_resource::<crate::workspace_scenes_ui::ScenesPanelImportDialogJob>();
     app.init_resource::<crate::world_drag::WorldDragState>();
     app.init_resource::<crate::scene_build_ai::SceneBuildAiRuntime>();
     app.init_resource::<crate::realm::ActiveRealmScene>();

@@ -12,8 +12,10 @@ pub(crate) struct FloorZipImportReport {
     pub(crate) invalid: usize,
 }
 
-const ZIP_ROOT_DIR: &str = "floors";
-const FLOOR_DEF_FILE_NAME: &str = "floor_def_v1.json";
+const ZIP_ROOT_DIR: &str = "terrain";
+const LEGACY_ZIP_ROOT_DIR: &str = "floors";
+const FLOOR_DEF_FILE_NAME: &str = "terrain_def_v1.json";
+const LEGACY_FLOOR_DEF_FILE_NAME: &str = "floor_def_v1.json";
 
 fn zip_path_string(path: &Path) -> Result<String, String> {
     let Some(path_str) = path.to_str() else {
@@ -79,12 +81,14 @@ pub(crate) fn export_floor_packages_to_zip(
     floor_ids: &[u128],
     zip_path: &Path,
 ) -> Result<usize, String> {
+    crate::realm_floor_packages::migrate_legacy_floor_storage_for_realm(realm_id)?;
+
     let mut ids: Vec<u128> = floor_ids.iter().copied().collect();
     ids.sort();
     ids.dedup();
 
     if ids.contains(&crate::floor_library_ui::DEFAULT_FLOOR_ID) {
-        return Err("Default Floor cannot be exported.".to_string());
+        return Err("Default Terrain cannot be exported.".to_string());
     }
 
     if let Some(parent) = zip_path.parent() {
@@ -100,7 +104,7 @@ pub(crate) fn export_floor_packages_to_zip(
         let package_dir = crate::realm_floor_packages::realm_floor_package_dir(realm_id, *floor_id);
         if !package_dir.exists() {
             return Err(format!(
-                "Floor package not found in this realm: {}",
+                "Terrain package not found in this realm: {}",
                 uuid::Uuid::from_u128(*floor_id)
             ));
         }
@@ -143,24 +147,24 @@ pub(crate) fn import_floor_packages_from_zip(
         let Some(Component::Normal(root)) = components.next() else {
             return Err("Zip contains invalid entry path.".to_string());
         };
-        if root != ZIP_ROOT_DIR {
+        if root != ZIP_ROOT_DIR && root != LEGACY_ZIP_ROOT_DIR {
             return Err(format!(
-                "Zip entry outside {ZIP_ROOT_DIR}/: {}",
+                "Zip entry outside {ZIP_ROOT_DIR}/ or {LEGACY_ZIP_ROOT_DIR}/: {}",
                 file.name()
             ));
         }
 
         let Some(Component::Normal(uuid_component)) = components.next() else {
-            return Err(format!("Zip entry missing floor UUID: {}", file.name()));
+            return Err(format!("Zip entry missing terrain UUID: {}", file.name()));
         };
         let uuid_str = uuid_component
             .to_str()
-            .ok_or_else(|| format!("Invalid floor UUID path: {}", file.name()))?;
+            .ok_or_else(|| format!("Invalid terrain UUID path: {}", file.name()))?;
         let uuid = uuid::Uuid::parse_str(uuid_str)
-            .map_err(|_| format!("Invalid floor UUID in zip: {uuid_str}"))?;
+            .map_err(|_| format!("Invalid terrain UUID in zip: {uuid_str}"))?;
 
         if uuid.as_u128() == crate::floor_library_ui::DEFAULT_FLOOR_ID {
-            return Err("Zip contains Default Floor UUID, which is not supported.".to_string());
+            return Err("Zip contains Default Terrain UUID, which is not supported.".to_string());
         }
 
         let rel: PathBuf = components.collect();
@@ -175,7 +179,7 @@ pub(crate) fn import_floor_packages_from_zip(
 
         if !file.is_dir() {
             if let Some(name) = rel.file_name().and_then(|v| v.to_str()) {
-                if name == FLOOR_DEF_FILE_NAME {
+                if name == FLOOR_DEF_FILE_NAME || name == LEGACY_FLOOR_DEF_FILE_NAME {
                     entry.has_floor_def = true;
                 }
             }
@@ -183,12 +187,14 @@ pub(crate) fn import_floor_packages_from_zip(
     }
 
     if packages.is_empty() {
-        return Err("Zip contains no floor packages.".to_string());
+        return Err("Zip contains no terrain packages.".to_string());
     }
 
     let mut imported = 0;
     let mut skipped = 0;
     let mut invalid = 0;
+
+    crate::realm_floor_packages::migrate_legacy_floor_storage_for_realm(realm_id)?;
 
     for (floor_id, pkg) in packages {
         if !pkg.has_floor_def {
@@ -209,12 +215,18 @@ pub(crate) fn import_floor_packages_from_zip(
             let Some(path) = file.enclosed_name().map(|p| p.to_path_buf()) else {
                 return Err("Zip contains invalid path (path traversal).".to_string());
             };
-            let rel = path
+            let rel_from_root = path
                 .strip_prefix(ZIP_ROOT_DIR)
-                .and_then(|path| path.strip_prefix(pkg.uuid_str.as_str()))
+                .or_else(|_| path.strip_prefix(LEGACY_ZIP_ROOT_DIR))
+                .map_err(|_| format!("Zip entry has invalid layout: {}", file.name()))?;
+            let rel = rel_from_root
+                .strip_prefix(pkg.uuid_str.as_str())
                 .map_err(|_| format!("Zip entry has invalid layout: {}", file.name()))?;
 
-            let out_path = dest_root.join(rel);
+            let mut out_path = dest_root.join(rel);
+            if out_path.file_name().and_then(|v| v.to_str()) == Some(LEGACY_FLOOR_DEF_FILE_NAME) {
+                out_path = out_path.with_file_name(FLOOR_DEF_FILE_NAME);
+            }
             if file.is_dir() {
                 std::fs::create_dir_all(&out_path)
                     .map_err(|err| format!("Failed to create {}: {err}", out_path.display()))?;

@@ -5,14 +5,15 @@ use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 use crate::workspace_scenes_ui::{
     AddSceneAddButton, AddSceneCancelButton, AddSceneErrorText, AddSceneNameField,
     AddSceneNameFieldText, AddScenePanelRoot, ScenesAddSceneButton, ScenesAddSceneButtonText,
-    ScenesList, ScenesListScrollPanel, ScenesScrollbarThumb, ScenesScrollbarTrack,
+    ScenesDeleteButton, ScenesExportButton, ScenesImportButton, ScenesList, ScenesListScrollPanel,
+    ScenesManageButton, ScenesManageButtonText, ScenesManageOnlyAction, ScenesScrollbarThumb,
+    ScenesScrollbarTrack, ScenesSelectAllButton, ScenesSelectNoneButton, SCENES_PANEL_WIDTH_PX,
 };
 
 const WORKSPACE_UI_Z_INDEX: i32 = 960;
 const SIDE_PANEL_Z_INDEX: i32 = 930;
 const TOOLBAR_BUTTON_WIDTH_PX: f32 = 132.0;
 const TOOLBAR_BUTTON_HEIGHT_PX: f32 = 34.0;
-const SIDE_PANEL_WIDTH_PX: f32 = 260.0;
 const LIST_SCROLLBAR_WIDTH_PX: f32 = 14.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,7 +275,7 @@ pub(crate) fn setup_workspace_ui(
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new("Floors"),
+                    Text::new("Terrain"),
                     TextFont {
                         font_size: 16.0,
                         ..default()
@@ -323,7 +324,7 @@ pub(crate) fn setup_workspace_ui(
                 position_type: PositionType::Absolute,
                 top: Val::Px(44.0),
                 left: Val::Px(10.0),
-                width: Val::Px(SIDE_PANEL_WIDTH_PX),
+                width: Val::Px(SCENES_PANEL_WIDTH_PX),
                 height: Val::Px(680.0),
                 max_height: Val::Px(680.0),
                 flex_direction: FlexDirection::Column,
@@ -366,6 +367,79 @@ pub(crate) fn setup_workspace_ui(
                 ));
 
                 row.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(8.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                ))
+                .with_children(|actions| {
+                    actions
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ScenesAddSceneButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Add Scene"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ScenesAddSceneButtonText,
+                            ));
+                        });
+
+                    actions
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            ScenesManageButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Manage"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ScenesManageButtonText,
+                            ));
+                        });
+                });
+            });
+
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(8.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|row| {
+                row.spawn((
                     Button,
                     Node {
                         padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
@@ -374,17 +448,112 @@ pub(crate) fn setup_workspace_ui(
                     },
                     BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
                     BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                    ScenesAddSceneButton,
+                    ScenesImportButton,
                 ))
                 .with_children(|b| {
                     b.spawn((
-                        Text::new("Add Scene"),
+                        Text::new("Import"),
                         TextFont {
                             font_size: 14.0,
                             ..default()
                         },
                         TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                        ScenesAddSceneButtonText,
+                    ));
+                });
+
+                row.spawn((
+                    Button,
+                    Node {
+                        display: Display::None,
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ScenesExportButton,
+                    ScenesManageOnlyAction,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("Export"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    ));
+                });
+
+                row.spawn((
+                    Button,
+                    Node {
+                        display: Display::None,
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.12, 0.06, 0.06, 0.78)),
+                    BorderColor::all(Color::srgb(0.88, 0.40, 0.40)),
+                    ScenesDeleteButton,
+                    ScenesManageOnlyAction,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("Delete"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    ));
+                });
+
+                row.spawn((
+                    Button,
+                    Node {
+                        display: Display::None,
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ScenesSelectAllButton,
+                    ScenesManageOnlyAction,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("All"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    ));
+                });
+
+                row.spawn((
+                    Button,
+                    Node {
+                        display: Display::None,
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ScenesSelectNoneButton,
+                    ScenesManageOnlyAction,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("None"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
                     ));
                 });
             });

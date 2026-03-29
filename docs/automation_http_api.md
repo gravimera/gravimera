@@ -841,7 +841,7 @@ Switch game mode: `build`, `play`.
 To enter the Gen3D workshop (Build Preview scene), set `mode` to `preview` / `build_preview`.
 For legacy compatibility, `gen3d` (alias `gen3d_workshop`) maps to the same behavior.
 
-To enter the GenFloor workshop (Floor Preview scene), set `mode` to `floor_preview`.
+To enter the GenFloor workshop (Terrain Preview scene), set `mode` to `floor_preview`.
 For legacy compatibility, `genfloor` maps to the same behavior.
 
 ```bash
@@ -1388,7 +1388,7 @@ Response (shape):
 
 GenFloor requires rendered mode (no `--headless`).
 
-Workshop endpoints (`/v1/genfloor/*`) operate on the active GenFloor session and require the Floor Preview scene (`mode=build`, `build_scene=floor_preview`).
+Workshop endpoints (`/v1/genfloor/*`) operate on the active GenFloor session and require the Terrain Preview scene (`mode=build`, `build_scene=floor_preview`).
 
 ### `GET /v1/genfloor/status`
 
@@ -1406,7 +1406,7 @@ Response (shape):
   "edit_base_floor_id_uuid": null,
   "last_saved_floor_id_uuid": null,
   "prompt": "…",
-  "status": "Building floor…",
+  "status": "Building terrain…",
   "error": null
 }
 ```
@@ -1436,7 +1436,7 @@ Start (or edit-overwrite) a build using the current prompt.
 Notes:
 
 - On success, GenFloor auto-saves the generated floor and sets `edit_base_floor_id_uuid`.
-- Subsequent builds overwrite the same `edit_base_floor_id_uuid` until you call `/v1/genfloor/new` (or start a fresh session from the Floors panel).
+- Subsequent builds overwrite the same `edit_base_floor_id_uuid` until you call `/v1/genfloor/new` (or start a fresh session from the Terrain panel).
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/genfloor/build \

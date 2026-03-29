@@ -44,6 +44,12 @@ pub(crate) fn realm_startup_init(mut active: ResMut<ActiveRealmScene>) {
     if let Err(err) = migrate_legacy_scene_dat_to_default_realm() {
         warn!("{err}");
     }
+    if let Err(err) = migrate_legacy_floor_storage_all_realms() {
+        warn!("{err}");
+    }
+    if let Err(err) = crate::scene_floor_selection::migrate_legacy_scene_floor_selection_files() {
+        warn!("{err}");
+    }
 
     if let Some(loaded) = load_active_selection_from_disk() {
         *active = loaded;
@@ -83,6 +89,7 @@ pub(crate) fn ensure_realm_scene_scaffold(realm_id: &str, scene_id: &str) -> Res
     })?;
 
     ensure_scene_dirs(&realm_id, &scene_id)?;
+    crate::realm_floor_packages::migrate_legacy_floor_storage_for_realm(&realm_id)?;
     std::fs::create_dir_all(crate::paths::realm_prefabs_dir(&realm_id)).map_err(|err| {
         format!(
             "Failed to create realm prefabs dir {}: {err}",
@@ -361,6 +368,41 @@ fn migrate_scene_dat_copy(src: &Path, dst: &Path) -> Result<(), String> {
         dst.display()
     );
     Ok(())
+}
+
+fn migrate_legacy_floor_storage_all_realms() -> Result<(), String> {
+    let realms_dir = crate::paths::realms_dir();
+    if !realms_dir.exists() {
+        return Ok(());
+    }
+
+    let mut errors = Vec::new();
+    let entries = std::fs::read_dir(&realms_dir)
+        .map_err(|err| format!("Failed to list {}: {err}", realms_dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("Failed to read realm entry: {err}"))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(realm_id) = sanitize_id(name) else {
+            continue;
+        };
+        if let Err(err) =
+            crate::realm_floor_packages::migrate_legacy_floor_storage_for_realm(&realm_id)
+        {
+            errors.push(err);
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(" | "))
+    }
 }
 
 fn load_active_selection_from_disk() -> Option<ActiveRealmScene> {

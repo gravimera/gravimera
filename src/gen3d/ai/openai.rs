@@ -1773,8 +1773,7 @@ fn mock_generate_text_via_openai(
             "solid"
         };
 
-        let (palette, base_color_rgba): (Vec<[f32; 4]>, [f32; 4]) = if coloring_mode == "solid"
-        {
+        let (palette, base_color_rgba): (Vec<[f32; 4]>, [f32; 4]) = if coloring_mode == "solid" {
             (Vec::new(), [0.16, 0.17, 0.20, 1.0])
         } else {
             (

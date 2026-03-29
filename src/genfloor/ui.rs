@@ -29,7 +29,7 @@ pub(crate) fn enter_genfloor_mode(
     workshop.status = floor_workshop.status.clone();
     workshop.error = floor_workshop.error.clone();
     if workshop.status.trim().is_empty() {
-        workshop.status = "Describe the floor and click Build.".to_string();
+        workshop.status = "Describe the terrain and click Build.".to_string();
     }
     gen3d::enter_gen3d_mode(
         commands,
@@ -221,7 +221,7 @@ pub(crate) fn genfloor_save_button(
                     let _ = std::fs::write(source_dir.join("prompt.txt"), workshop.prompt.as_str());
                     set_active_world_floor(&mut active_floor, Some(floor_id), def);
                     floor_library.mark_models_dirty();
-                    workshop.status = "Floor saved.".to_string();
+                    workshop.status = "Terrain saved.".to_string();
                     match crate::scene_floor_selection::save_scene_floor_selection(
                         &active.realm_id,
                         &active.scene_id,
@@ -232,7 +232,7 @@ pub(crate) fn genfloor_save_button(
                         }
                         Err(err) => {
                             workshop.error = Some(format!(
-                                "Floor saved, but failed to persist selection: {err}"
+                                "Terrain saved, but failed to persist selection: {err}"
                             ));
                         }
                     }

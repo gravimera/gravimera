@@ -255,7 +255,7 @@ impl FloorDefV1 {
         };
         Self {
             format_version: FLOOR_DEF_FORMAT_VERSION,
-            label: Some("Default Floor".to_string()),
+            label: Some("Default Terrain".to_string()),
             mesh,
             material,
             coloring,

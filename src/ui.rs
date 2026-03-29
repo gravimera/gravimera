@@ -276,7 +276,7 @@ pub(crate) fn update_window_title(
             }
             if matches!(build_scene.get(), BuildScene::FloorPreview) {
                 window.title =
-                    "Gravimera — BUILD (Floor Preview) | Build/Stop | Scene: Realm".into();
+                    "Gravimera — BUILD (Terrain Preview) | Build/Stop | Scene: Realm".into();
                 return;
             }
             if build.placing_active {

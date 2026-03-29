@@ -58,6 +58,7 @@ mod scene_sources_patch;
 mod scene_sources_runtime;
 mod scene_store;
 mod scene_validation;
+mod scene_zip;
 mod selection_circle;
 mod setup;
 mod system_proxy;

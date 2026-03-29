@@ -2,39 +2,39 @@
 
 ## Entry Points
 
-- Top bar: click `Floors` to open the Floors panel.
-- Floors panel: click `Generate` to enter GenFloor (Floor Preview).
-- Floors panel: click a completed floor item to open the Floor Preview panel.
-- Exiting GenFloor (Save or Cancel) returns to the Floors panel.
+- Top bar: click `Terrain` to open the Terrain panel.
+- Terrain panel: click `Generate` to enter GenFloor (Terrain Preview).
+- Terrain panel: click a completed terrain item to open the Terrain Preview panel.
+- Exiting GenFloor (Save or Cancel) returns to the Terrain panel.
 
 ## Storage Layout
 
-Floors live under the active realm:
+Terrain packages live under the active realm:
 
 ```
-realm/<realm_id>/floors/<floor_id>/
-  floor_def_v1.json
+realm/<realm_id>/terrain/<terrain_id>/
+  terrain_def_v1.json
   thumbnail.png (optional)
   materials/
   genfloor_source_v1/
     prompt.txt
 ```
 
-- `floor_def_v1.json` is the canonical definition written by GenFloor.
+- `terrain_def_v1.json` is the canonical definition written by GenFloor.
 - `thumbnail.png` is optional; if missing, the list shows an empty placeholder.
 
-Per-scene floor selection is stored here:
+Per-scene terrain selection is stored here:
 
 ```
-realm/<realm_id>/scenes/<scene_id>/build/floor_selection.json
+realm/<realm_id>/scenes/<scene_id>/build/terrain.grav
 ```
 
-## Floor Definition (FloorDefV1)
+## Terrain Definition (`FloorDefV1`)
 
-`floor_def_v1.json` is a JSON object with these top-level fields:
+`terrain_def_v1.json` is a JSON object with these top-level fields:
 
 - `format_version`: number (currently `1`).
-- `label`: optional string label shown in the Floors list.
+- `label`: optional string label shown in the Terrain list.
 - `mesh`: grid parameters (`size_m`, `subdiv`, `thickness_m`, `uv_tiling`).
 - `material`: `base_color_rgba`, `metallic`, `roughness`, `unlit`.
 - `coloring`: color pattern definition (`mode`, `palette`, `scale`, `angle_deg`, `noise`).
@@ -43,23 +43,24 @@ realm/<realm_id>/scenes/<scene_id>/build/floor_selection.json
 
 The runtime canonicalizes and clamps values on load.
 
-Note: `mesh.size_m` is clamped to at least the default floor size so generated floors always cover the scene.
+Note: `mesh.size_m` is clamped to at least the default terrain size so generated terrain always covers the scene.
 
 ## Runtime + Preview
 
-- `ActiveWorldFloor` stores the active floor and is applied to the live world floor.
-- Floor Preview uses the same `ActiveWorldFloor` data so the preview and runtime match.
+- `ActiveWorldFloor` stores the active terrain package and is applied to the live world terrain.
+- Terrain Preview uses the same `ActiveWorldFloor` data so the preview and runtime match.
 
 ## Notes
 
-- Clicking `Build` sends the prompt to the GenFloor AI and returns a `FloorDefV1` draft.
-- GenFloor auto-saves the draft on completion and switches the Build button to Edit (subsequent runs overwrite the same floor id).
-- Clicking `Generate` from the Floors panel starts a fresh GenFloor session (clears the previous edit-overwrite floor id), unless a build is currently running (in which case it resumes the active session).
-- Floors can be switched at runtime by clicking items in the Floors list.
-- Floors list always includes a built-in “Default Floor” entry (legacy plain floor).
+- Clicking `Build` sends the prompt to the GenFloor AI and returns a `FloorDefV1` terrain draft.
+- GenFloor auto-saves the draft on completion and switches the Build button to Edit (subsequent runs overwrite the same terrain id).
+- Clicking `Generate` from the Terrain panel starts a fresh GenFloor session (clears the previous edit-overwrite terrain id), unless a build is currently running (in which case it resumes the active session).
+- Terrain can be switched at runtime by clicking items in the Terrain list.
+- The Terrain list always includes a built-in `Default Terrain` entry.
 - GenFloor uses the same AI service selection as Gen3D (`[gen3d].ai_service`).
-- Floors list shows placeholder rows for active GenFloor work (`Generating`, `Editing`, `Queued`).
-- If a scene has no stored floor selection, Default Floor is used.
+- The Terrain list shows placeholder rows for active GenFloor work (`Generating`, `Editing`, `Queued`).
+- If a scene has no stored terrain selection, Default Terrain is used.
+- Import/export details live in `docs/terrain_import_export.md`.
 
 ## Automation API
 

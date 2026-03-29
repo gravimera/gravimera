@@ -4,16 +4,20 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Mutex};
 
 use crate::realm::ActiveRealmScene;
 use crate::rich_text::set_rich_text_line;
 use crate::scene_store::SceneSaveRequest;
-use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
+use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts, UiToastCommand, UiToastKind};
 use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 use crate::workspace_ui::{TopPanelTab, TopPanelUiState};
 
 const SCENE_NAME_MAX_CHARS: usize = 128;
+pub(crate) const SCENES_PANEL_WIDTH_PX: f32 = 260.0;
+pub(crate) const SCENES_PANEL_WIDTH_MANAGE_PX: f32 = 320.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScenesUiField {
@@ -25,12 +29,69 @@ pub(crate) enum ScenesUiField {
 pub(crate) struct ScenesPanelUiState {
     pub(crate) scenes_dirty: bool,
     pub(crate) add_open: bool,
+    pub(crate) multi_select_mode: bool,
     pub(crate) focused_field: ScenesUiField,
     pub(crate) name: String,
     pub(crate) error: Option<String>,
+    pub(crate) multi_selected_scenes: HashSet<String>,
+    pub(crate) export_dialog_pending_ids: Vec<String>,
+    pub(crate) export_dialog_pending_realm: Option<String>,
+    pub(crate) import_dialog_pending_realm: Option<String>,
     scrollbar_drag: Option<ScenesPanelScrollbarDrag>,
     last_realm_id: Option<String>,
     last_panel_open: bool,
+}
+
+#[derive(Resource)]
+pub(crate) struct ScenesPanelExportJob {
+    receiver: Mutex<Option<mpsc::Receiver<Result<crate::scene_zip::SceneZipExportReport, String>>>>,
+}
+
+impl Default for ScenesPanelExportJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct ScenesPanelImportJob {
+    receiver: Mutex<Option<mpsc::Receiver<Result<crate::scene_zip::SceneZipImportReport, String>>>>,
+}
+
+impl Default for ScenesPanelImportJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct ScenesPanelExportDialogJob {
+    receiver: Mutex<Option<mpsc::Receiver<Option<std::path::PathBuf>>>>,
+}
+
+impl Default for ScenesPanelExportDialogJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct ScenesPanelImportDialogJob {
+    receiver: Mutex<Option<mpsc::Receiver<Option<std::path::PathBuf>>>>,
+}
+
+impl Default for ScenesPanelImportDialogJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
 }
 
 impl Default for ScenesPanelUiState {
@@ -38,9 +99,14 @@ impl Default for ScenesPanelUiState {
         Self {
             scenes_dirty: true,
             add_open: false,
+            multi_select_mode: false,
             focused_field: ScenesUiField::None,
             name: String::new(),
             error: None,
+            multi_selected_scenes: HashSet::new(),
+            export_dialog_pending_ids: Vec::new(),
+            export_dialog_pending_realm: None,
+            import_dialog_pending_realm: None,
             scrollbar_drag: None,
             last_realm_id: None,
             last_panel_open: false,
@@ -53,6 +119,30 @@ pub(crate) struct ScenesAddSceneButton;
 
 #[derive(Component)]
 pub(crate) struct ScenesAddSceneButtonText;
+
+#[derive(Component)]
+pub(crate) struct ScenesManageButton;
+
+#[derive(Component)]
+pub(crate) struct ScenesManageButtonText;
+
+#[derive(Component)]
+pub(crate) struct ScenesImportButton;
+
+#[derive(Component)]
+pub(crate) struct ScenesExportButton;
+
+#[derive(Component)]
+pub(crate) struct ScenesDeleteButton;
+
+#[derive(Component)]
+pub(crate) struct ScenesSelectAllButton;
+
+#[derive(Component)]
+pub(crate) struct ScenesSelectNoneButton;
+
+#[derive(Component)]
+pub(crate) struct ScenesManageOnlyAction;
 
 #[derive(Component)]
 pub(crate) struct ScenesListScrollPanel;
@@ -128,10 +218,19 @@ pub(crate) fn scenes_panel_sync_active_realm(
     if realm_changed {
         state.last_realm_id = Some(active.realm_id.clone());
         state.scenes_dirty = true;
+        state.multi_selected_scenes.clear();
+        state.export_dialog_pending_ids.clear();
+        state.export_dialog_pending_realm = None;
+        state.import_dialog_pending_realm = None;
     }
 
     if open && !state.last_panel_open {
         state.scenes_dirty = true;
+    }
+
+    if state.multi_select_mode {
+        state.add_open = false;
+        state.focused_field = ScenesUiField::None;
     }
 
     state.last_panel_open = open;
@@ -149,6 +248,47 @@ pub(crate) fn scenes_panel_set_add_panel_visibility(
     } else {
         Display::None
     };
+}
+
+pub(crate) fn scenes_panel_update_panel_width(
+    state: Res<ScenesPanelUiState>,
+    mut roots: Query<&mut Node, With<crate::workspace_ui::ScenesPanelRoot>>,
+) {
+    let Ok(mut node) = roots.single_mut() else {
+        return;
+    };
+    node.width = Val::Px(if state.multi_select_mode {
+        SCENES_PANEL_WIDTH_MANAGE_PX
+    } else {
+        SCENES_PANEL_WIDTH_PX
+    });
+}
+
+pub(crate) fn scenes_panel_update_action_visibility(
+    state: Res<ScenesPanelUiState>,
+    mut params: ParamSet<(
+        Query<&mut Node, With<ScenesAddSceneButton>>,
+        Query<&mut Node, With<ScenesManageButton>>,
+        Query<&mut Node, With<ScenesManageOnlyAction>>,
+    )>,
+) {
+    if let Ok(mut node) = params.p0().single_mut() {
+        node.display = if state.multi_select_mode {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    if let Ok(mut node) = params.p1().single_mut() {
+        node.display = Display::Flex;
+    }
+    for mut node in &mut params.p2() {
+        node.display = if state.multi_select_mode {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
 }
 
 pub(crate) fn scenes_panel_rebuild_list_ui(
@@ -181,6 +321,15 @@ pub(crate) fn scenes_panel_rebuild_list_ui(
         })
         .collect();
     scenes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    if state.multi_select_mode && !state.multi_selected_scenes.is_empty() {
+        let listed: HashSet<String> = scenes
+            .iter()
+            .map(|(scene_id, _)| scene_id.clone())
+            .collect();
+        state
+            .multi_selected_scenes
+            .retain(|scene_id| listed.contains(scene_id));
+    }
     if scenes.is_empty() {
         commands.entity(list_entity).with_children(|list| {
             list.spawn((
@@ -199,6 +348,11 @@ pub(crate) fn scenes_panel_rebuild_list_ui(
 
     commands.entity(list_entity).with_children(|list| {
         for (scene_id, _created_at_ms) in scenes {
+            let label = if scene_id == active.scene_id {
+                format!("{scene_id} (Current)")
+            } else {
+                scene_id.clone()
+            };
             list.spawn((
                 Button,
                 Node {
@@ -217,7 +371,7 @@ pub(crate) fn scenes_panel_rebuild_list_ui(
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new(scene_id),
+                    Text::new(label),
                     TextFont {
                         font_size: 14.0,
                         ..default()
@@ -250,6 +404,9 @@ pub(crate) fn scenes_panel_add_scene_button_actions(
         if !matches!(*interaction, Interaction::Pressed) {
             continue;
         }
+        if state.multi_select_mode {
+            continue;
+        }
         if state.add_open {
             continue;
         }
@@ -257,6 +414,330 @@ pub(crate) fn scenes_panel_add_scene_button_actions(
         state.focused_field = ScenesUiField::AddSceneName;
         state.name.clear();
         state.error = None;
+    }
+}
+
+pub(crate) fn scenes_panel_manage_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    mut state: ResMut<ScenesPanelUiState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<ScenesManageButton>)>,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) {
+        return;
+    }
+
+    for interaction in &mut buttons {
+        if !matches!(*interaction, Interaction::Pressed) {
+            continue;
+        }
+        state.multi_select_mode = !state.multi_select_mode;
+        state.add_open = false;
+        state.focused_field = ScenesUiField::None;
+        state.error = None;
+        if !state.multi_select_mode {
+            state.multi_selected_scenes.clear();
+        }
+    }
+}
+
+pub(crate) fn scenes_panel_import_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    active: Res<ActiveRealmScene>,
+    mut state: ResMut<ScenesPanelUiState>,
+    import_job: Res<ScenesPanelImportJob>,
+    import_dialog: Res<ScenesPanelImportDialogJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ScenesImportButton>),
+    >,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if let Ok(guard) = import_job.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Scene import already running.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+                if let Ok(guard) = import_dialog.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Scene import dialog already open.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+
+                let (tx, rx) = mpsc::channel();
+                if let Ok(mut guard) = import_dialog.receiver.lock() {
+                    *guard = Some(rx);
+                }
+                state.import_dialog_pending_realm = Some(active.realm_id.clone());
+                std::thread::spawn(move || {
+                    let path = rfd::FileDialog::new()
+                        .add_filter("Scene Zip", &["zip"])
+                        .pick_file();
+                    let _ = tx.send(path);
+                });
+            }
+        }
+    }
+}
+
+pub(crate) fn scenes_panel_export_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    active: Res<ActiveRealmScene>,
+    mut state: ResMut<ScenesPanelUiState>,
+    export_job: Res<ScenesPanelExportJob>,
+    export_dialog: Res<ScenesPanelExportDialogJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ScenesExportButton>),
+    >,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) || !state.multi_select_mode {
+        return;
+    }
+
+    fn ensure_zip_extension(path: std::path::PathBuf) -> std::path::PathBuf {
+        match path.extension().and_then(|value| value.to_str()) {
+            Some(ext) if ext.eq_ignore_ascii_case("zip") => path,
+            _ => path.with_extension("zip"),
+        }
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if let Ok(guard) = export_job.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Scene export already running.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+                if let Ok(guard) = export_dialog.receiver.lock() {
+                    if guard.is_some() {
+                        toasts.write(UiToastCommand::Show {
+                            text: "Scene export dialog already open.".to_string(),
+                            kind: UiToastKind::Warn,
+                            ttl_secs: 3.0,
+                        });
+                        continue;
+                    }
+                }
+                if state.multi_selected_scenes.is_empty() {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Select scenes to export first.".to_string(),
+                        kind: UiToastKind::Warn,
+                        ttl_secs: 4.0,
+                    });
+                    continue;
+                }
+
+                let mut ids: Vec<String> = state.multi_selected_scenes.iter().cloned().collect();
+                ids.sort();
+                ids.dedup();
+                state.export_dialog_pending_ids = ids;
+                state.export_dialog_pending_realm = Some(active.realm_id.clone());
+
+                let (tx, rx) = mpsc::channel();
+                if let Ok(mut guard) = export_dialog.receiver.lock() {
+                    *guard = Some(rx);
+                }
+                toasts.write(UiToastCommand::Show {
+                    text: "Select scene export location…".to_string(),
+                    kind: UiToastKind::Info,
+                    ttl_secs: 3.0,
+                });
+                std::thread::spawn(move || {
+                    let path = rfd::FileDialog::new()
+                        .add_filter("Scene Zip", &["zip"])
+                        .set_file_name("scenes.zip")
+                        .save_file()
+                        .map(ensure_zip_extension);
+                    let _ = tx.send(path);
+                });
+            }
+        }
+    }
+}
+
+pub(crate) fn scenes_panel_select_all_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    active: Res<ActiveRealmScene>,
+    mut state: ResMut<ScenesPanelUiState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<ScenesSelectAllButton>)>,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) || !state.multi_select_mode {
+        return;
+    }
+
+    for interaction in &mut buttons {
+        if !matches!(*interaction, Interaction::Pressed) {
+            continue;
+        }
+        state.multi_selected_scenes = crate::realm::list_scenes(&active.realm_id)
+            .into_iter()
+            .collect();
+    }
+}
+
+pub(crate) fn scenes_panel_select_none_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    mut state: ResMut<ScenesPanelUiState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<ScenesSelectNoneButton>)>,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) || !state.multi_select_mode {
+        return;
+    }
+
+    for interaction in &mut buttons {
+        if !matches!(*interaction, Interaction::Pressed) {
+            continue;
+        }
+        state.multi_selected_scenes.clear();
+    }
+}
+
+pub(crate) fn scenes_panel_delete_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    active: Res<ActiveRealmScene>,
+    mut state: ResMut<ScenesPanelUiState>,
+    mut toasts: MessageWriter<UiToastCommand>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ScenesDeleteButton>),
+    >,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) || !state.multi_select_mode {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                if state.multi_selected_scenes.is_empty() {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Select scenes to delete first.".to_string(),
+                        kind: UiToastKind::Warn,
+                        ttl_secs: 4.0,
+                    });
+                    continue;
+                }
+
+                let mut deleted = 0usize;
+                let mut failed = 0usize;
+                let mut skipped_active = 0usize;
+                let mut ids: Vec<String> = state.multi_selected_scenes.iter().cloned().collect();
+                ids.sort();
+                ids.dedup();
+
+                for scene_id in &ids {
+                    if *scene_id == active.scene_id {
+                        skipped_active += 1;
+                        continue;
+                    }
+
+                    let scene_dir = crate::paths::scene_dir(&active.realm_id, scene_id);
+                    match std::fs::remove_dir_all(&scene_dir) {
+                        Ok(()) => deleted += 1,
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(err) => {
+                            failed += 1;
+                            warn!("Failed to delete {}: {err}", scene_dir.display());
+                        }
+                    }
+                }
+
+                state.multi_selected_scenes.clear();
+                if deleted > 0 {
+                    state.scenes_dirty = true;
+                }
+
+                let text = if failed == 0 && skipped_active == 0 {
+                    format!("Deleted {} scene(s).", deleted)
+                } else if failed == 0 {
+                    format!("Deleted {}, skipped active {}.", deleted, skipped_active)
+                } else {
+                    format!(
+                        "Deleted {}, failed {}, skipped active {}.",
+                        deleted, failed, skipped_active
+                    )
+                };
+                let kind = if failed > 0 || skipped_active > 0 {
+                    UiToastKind::Warn
+                } else {
+                    UiToastKind::Info
+                };
+                toasts.write(UiToastCommand::Show {
+                    text,
+                    kind,
+                    ttl_secs: 5.0,
+                });
+            }
+        }
     }
 }
 
@@ -276,6 +757,15 @@ pub(crate) fn scenes_panel_scene_select_button_actions(
 
     for (interaction, button) in &mut buttons {
         if !matches!(*interaction, Interaction::Pressed) {
+            continue;
+        }
+        if state.multi_select_mode {
+            if state.multi_selected_scenes.contains(&button.scene_id) {
+                state.multi_selected_scenes.remove(&button.scene_id);
+            } else {
+                state.multi_selected_scenes.insert(button.scene_id.clone());
+            }
+            state.error = None;
             continue;
         }
         if button.scene_id == active.scene_id {
@@ -313,7 +803,7 @@ pub(crate) fn scenes_panel_add_panel_buttons(
         ),
     >,
 ) {
-    if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open {
+    if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open || state.multi_select_mode {
         return;
     }
 
@@ -371,6 +861,244 @@ pub(crate) fn scenes_panel_add_panel_buttons(
             scene_id: validated,
         });
         saves.write(SceneSaveRequest::new("add scene"));
+    }
+}
+
+pub(crate) fn scenes_panel_export_dialog_poll(
+    mut state: ResMut<ScenesPanelUiState>,
+    export_dialog: Res<ScenesPanelExportDialogJob>,
+    export_job: Res<ScenesPanelExportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = export_dialog.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    let path = match receiver.try_recv() {
+        Ok(path) => {
+            *guard = None;
+            path
+        }
+        Err(mpsc::TryRecvError::Empty) => return,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            state.export_dialog_pending_ids.clear();
+            state.export_dialog_pending_realm = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Scene export canceled: dialog failed.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 4.0,
+            });
+            return;
+        }
+    };
+
+    let Some(path) = path else {
+        state.export_dialog_pending_ids.clear();
+        state.export_dialog_pending_realm = None;
+        return;
+    };
+    let Some(realm_id) = state.export_dialog_pending_realm.take() else {
+        return;
+    };
+    if state.export_dialog_pending_ids.is_empty() {
+        return;
+    }
+
+    let (tx, rx) = mpsc::channel();
+    if let Ok(mut job_guard) = export_job.receiver.lock() {
+        if job_guard.is_some() {
+            toasts.write(UiToastCommand::Show {
+                text: "Scene export already running.".to_string(),
+                kind: UiToastKind::Warn,
+                ttl_secs: 3.0,
+            });
+            return;
+        }
+        *job_guard = Some(rx);
+    }
+
+    let mut ids = state.export_dialog_pending_ids.clone();
+    state.export_dialog_pending_ids.clear();
+    ids.sort();
+    ids.dedup();
+    toasts.write(UiToastCommand::Show {
+        text: "Exporting scenes…".to_string(),
+        kind: UiToastKind::Info,
+        ttl_secs: 3.0,
+    });
+    std::thread::spawn(move || {
+        let result = crate::scene_zip::export_scene_packages_to_zip(&realm_id, &ids, &path);
+        let _ = tx.send(result);
+    });
+}
+
+pub(crate) fn scenes_panel_export_job_poll(
+    export_job: Res<ScenesPanelExportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = export_job.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    match receiver.try_recv() {
+        Ok(result) => {
+            *guard = None;
+            match result {
+                Ok(report) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: format!(
+                            "Exported {} scene(s) with {} prefab package(s).",
+                            report.exported_scenes, report.exported_prefabs
+                        ),
+                        kind: UiToastKind::Info,
+                        ttl_secs: 4.0,
+                    });
+                }
+                Err(err) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: err,
+                        kind: UiToastKind::Error,
+                        ttl_secs: 5.0,
+                    });
+                }
+            }
+        }
+        Err(mpsc::TryRecvError::Empty) => {}
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Scene export failed: worker disconnected.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 5.0,
+            });
+        }
+    }
+}
+
+pub(crate) fn scenes_panel_import_dialog_poll(
+    mut state: ResMut<ScenesPanelUiState>,
+    import_dialog: Res<ScenesPanelImportDialogJob>,
+    import_job: Res<ScenesPanelImportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = import_dialog.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    let path = match receiver.try_recv() {
+        Ok(path) => {
+            *guard = None;
+            path
+        }
+        Err(mpsc::TryRecvError::Empty) => return,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            state.import_dialog_pending_realm = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Scene import canceled: dialog failed.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 4.0,
+            });
+            return;
+        }
+    };
+
+    let Some(path) = path else {
+        state.import_dialog_pending_realm = None;
+        return;
+    };
+    let Some(realm_id) = state.import_dialog_pending_realm.take() else {
+        return;
+    };
+
+    let (tx, rx) = mpsc::channel();
+    if let Ok(mut job_guard) = import_job.receiver.lock() {
+        if job_guard.is_some() {
+            toasts.write(UiToastCommand::Show {
+                text: "Scene import already running.".to_string(),
+                kind: UiToastKind::Warn,
+                ttl_secs: 3.0,
+            });
+            return;
+        }
+        *job_guard = Some(rx);
+    }
+
+    toasts.write(UiToastCommand::Show {
+        text: "Importing scenes…".to_string(),
+        kind: UiToastKind::Info,
+        ttl_secs: 3.0,
+    });
+    std::thread::spawn(move || {
+        let result = crate::scene_zip::import_scene_packages_from_zip(&realm_id, &path);
+        let _ = tx.send(result);
+    });
+}
+
+pub(crate) fn scenes_panel_import_job_poll(
+    mut state: ResMut<ScenesPanelUiState>,
+    import_job: Res<ScenesPanelImportJob>,
+    mut toasts: MessageWriter<UiToastCommand>,
+) {
+    let Ok(mut guard) = import_job.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    match receiver.try_recv() {
+        Ok(result) => {
+            *guard = None;
+            match result {
+                Ok(report) => {
+                    state.scenes_dirty = true;
+                    toasts.write(UiToastCommand::Show {
+                        text: format!(
+                            "Scenes imported {}, skipped {}, invalid {}; prefabs imported {}, skipped {}, invalid {}.",
+                            report.imported_scenes,
+                            report.skipped_scenes,
+                            report.invalid_scenes,
+                            report.imported_prefabs,
+                            report.skipped_prefabs,
+                            report.invalid_prefabs
+                        ),
+                        kind: if report.invalid_scenes > 0 || report.invalid_prefabs > 0 {
+                            UiToastKind::Warn
+                        } else {
+                            UiToastKind::Info
+                        },
+                        ttl_secs: 5.0,
+                    });
+                }
+                Err(err) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: err,
+                        kind: UiToastKind::Error,
+                        ttl_secs: 5.0,
+                    });
+                }
+            }
+        }
+        Err(mpsc::TryRecvError::Empty) => {}
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            toasts.write(UiToastCommand::Show {
+                text: "Scene import failed: worker disconnected.".to_string(),
+                kind: UiToastKind::Error,
+                ttl_secs: 5.0,
+            });
+        }
     }
 }
 
@@ -798,15 +1526,26 @@ pub(crate) fn scenes_panel_update_texts(
             &mut Text,
             Option<&AddSceneNameFieldText>,
             Option<&AddSceneErrorText>,
+            Option<&ScenesManageButtonText>,
         ),
-        Or<(With<AddSceneNameFieldText>, With<AddSceneErrorText>)>,
+        Or<(
+            With<AddSceneNameFieldText>,
+            With<AddSceneErrorText>,
+            With<ScenesManageButtonText>,
+        )>,
     >,
     name_field: Query<Entity, With<AddSceneNameFieldText>>,
     mut last_name: Local<Option<String>>,
 ) {
-    for (mut text, _name, error) in &mut texts {
+    for (mut text, _name, error, manage) in &mut texts {
         if error.is_some() {
             *text = Text::new(state.error.clone().unwrap_or_default());
+        } else if manage.is_some() {
+            *text = Text::new(if state.multi_select_mode {
+                "Done"
+            } else {
+                "Manage"
+            });
         }
     }
 
@@ -855,6 +1594,27 @@ pub(crate) fn scenes_panel_update_styles(
             ),
             Or<(With<AddSceneAddButton>, With<AddSceneCancelButton>)>,
         >,
+        Query<
+            (
+                &Interaction,
+                Option<&ScenesManageButton>,
+                Option<&ScenesImportButton>,
+                Option<&ScenesExportButton>,
+                Option<&ScenesDeleteButton>,
+                Option<&ScenesSelectAllButton>,
+                Option<&ScenesSelectNoneButton>,
+                &mut BackgroundColor,
+                &mut BorderColor,
+            ),
+            Or<(
+                With<ScenesManageButton>,
+                With<ScenesImportButton>,
+                With<ScenesExportButton>,
+                With<ScenesDeleteButton>,
+                With<ScenesSelectAllButton>,
+                With<ScenesSelectNoneButton>,
+            )>,
+        >,
     )>,
 ) {
     {
@@ -890,7 +1650,11 @@ pub(crate) fn scenes_panel_update_styles(
     {
         let mut scene_buttons = params.p1();
         for (interaction, button, mut bg, mut border) in &mut scene_buttons {
-            let selected = button.scene_id == active.scene_id;
+            let selected = if state.multi_select_mode {
+                state.multi_selected_scenes.contains(&button.scene_id)
+            } else {
+                button.scene_id == active.scene_id
+            };
             apply_option_style(selected, *interaction, &mut bg, &mut border);
         }
     }
@@ -932,6 +1696,51 @@ pub(crate) fn scenes_panel_update_styles(
                 (
                     Color::srgba(0.05, 0.05, 0.06, 0.75),
                     Color::srgba(0.25, 0.25, 0.30, 0.65),
+                )
+            } else {
+                (
+                    Color::srgba(0.05, 0.05, 0.06, 0.75),
+                    Color::srgba(0.25, 0.25, 0.30, 0.65),
+                )
+            };
+
+            let (mut bg_color, mut border_color) = base;
+            match *interaction {
+                Interaction::Pressed => {
+                    bg_color = Color::srgba(0.10, 0.10, 0.12, 0.92);
+                    border_color = Color::srgba(0.45, 0.45, 0.55, 0.85);
+                }
+                Interaction::Hovered => {
+                    bg_color = Color::srgba(0.07, 0.07, 0.09, 0.84);
+                    border_color = Color::srgba(0.35, 0.35, 0.42, 0.75);
+                }
+                Interaction::None => {}
+            }
+            *bg = BackgroundColor(bg_color);
+            *border = BorderColor::all(border_color);
+        }
+    }
+
+    {
+        let mut action_buttons = params.p4();
+        for (interaction, manage, _import, export, delete, _all, _none, mut bg, mut border) in
+            &mut action_buttons
+        {
+            let selected = manage.is_some() && state.multi_select_mode;
+            let base = if delete.is_some() {
+                (
+                    Color::srgba(0.12, 0.06, 0.06, 0.78),
+                    Color::srgb(0.88, 0.40, 0.40),
+                )
+            } else if export.is_some() {
+                (
+                    Color::srgba(0.06, 0.08, 0.12, 0.78),
+                    Color::srgb(0.40, 0.62, 0.92),
+                )
+            } else if selected {
+                (
+                    Color::srgba(0.07, 0.07, 0.09, 0.84),
+                    Color::srgba(0.35, 0.35, 0.42, 0.75),
                 )
             } else {
                 (
