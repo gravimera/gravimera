@@ -158,11 +158,11 @@ pub(crate) use images::{
 };
 pub(crate) use preview::{
     collect_preview_component_overlays, gen3d_apply_draft_to_preview,
-    gen3d_apply_preview_component_explode_offsets, gen3d_preview_orbit_controls,
-    gen3d_preview_tick_selected_animation, gen3d_update_collision_overlay,
-    gen3d_update_preview_camera_render_layers, gen3d_update_preview_component_overlay,
-    pick_hovered_preview_component, preview_image_layout, preview_panel_logical_to_target,
-    Gen3dPreviewAppliedExplodeOffset, PreviewProjectedComponent,
+    gen3d_apply_preview_component_explode_offsets, gen3d_clear_preview_component_explode_offsets,
+    gen3d_preview_orbit_controls, gen3d_preview_tick_selected_animation,
+    gen3d_update_collision_overlay, gen3d_update_preview_camera_render_layers,
+    gen3d_update_preview_component_overlay, pick_hovered_preview_component, preview_image_layout,
+    preview_panel_logical_to_target, Gen3dPreviewAppliedExplodeOffset, PreviewProjectedComponent,
 };
 pub(crate) use save::gen3d_auto_save_when_done;
 pub(crate) use save::gen3d_prefab_thumbnail_capture_poll;

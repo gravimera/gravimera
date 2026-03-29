@@ -90,28 +90,142 @@ where
                     Gen3dPreviewOverlayRoot,
                 ))
                 .with_children(|overlay| {
-                    overlay.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(0.0),
-                            top: Val::Px(0.0),
-                            width: Val::Px(0.0),
-                            height: Val::Px(0.0),
-                            border: UiRect::all(Val::Px(2.0)),
-                            display: Display::None,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.14, 0.64, 0.88, 0.10)),
-                        BorderColor::all(Color::srgb(0.42, 0.82, 1.0)),
-                        Outline {
-                            width: Val::Px(1.0),
-                            color: Color::srgba(0.72, 0.92, 1.0, 0.72),
-                            offset: Val::Px(0.0),
-                        },
-                        Visibility::Hidden,
-                        ZIndex(12),
-                        Gen3dPreviewHoverFrame,
-                    ));
+                    overlay
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(0.0),
+                                top: Val::Px(0.0),
+                                width: Val::Px(0.0),
+                                height: Val::Px(0.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                display: Display::None,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.12, 0.72, 0.96, 0.08)),
+                            BorderColor::all(Color::srgba(0.66, 0.90, 1.0, 0.70)),
+                            Outline {
+                                width: Val::Px(2.0),
+                                color: Color::srgba(0.10, 0.72, 1.0, 0.48),
+                                offset: Val::Px(0.0),
+                            },
+                            Visibility::Hidden,
+                            ZIndex(12),
+                            Gen3dPreviewHoverFrame,
+                        ))
+                        .with_children(|frame| {
+                            const SEGMENT_LEN_PX: f32 = 20.0;
+                            const SEGMENT_THICKNESS_PX: f32 = 3.0;
+
+                            let mut spawn_segment = |node: Node, color: Color| {
+                                frame.spawn((
+                                    Node {
+                                        border_radius: BorderRadius::all(Val::Px(1.0)),
+                                        ..node
+                                    },
+                                    BackgroundColor(color),
+                                ));
+                            };
+
+                            let accent = Color::srgb(0.05, 0.82, 1.0);
+                            let accent_soft = Color::srgba(0.90, 0.98, 1.0, 0.92);
+
+                            // Top-left
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(-1.0),
+                                    top: Val::Px(-1.0),
+                                    width: Val::Px(SEGMENT_LEN_PX),
+                                    height: Val::Px(SEGMENT_THICKNESS_PX),
+                                    ..default()
+                                },
+                                accent_soft,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(-1.0),
+                                    top: Val::Px(-1.0),
+                                    width: Val::Px(SEGMENT_THICKNESS_PX),
+                                    height: Val::Px(SEGMENT_LEN_PX),
+                                    ..default()
+                                },
+                                accent,
+                            );
+
+                            // Top-right
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(-1.0),
+                                    top: Val::Px(-1.0),
+                                    width: Val::Px(SEGMENT_LEN_PX),
+                                    height: Val::Px(SEGMENT_THICKNESS_PX),
+                                    ..default()
+                                },
+                                accent_soft,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(-1.0),
+                                    top: Val::Px(-1.0),
+                                    width: Val::Px(SEGMENT_THICKNESS_PX),
+                                    height: Val::Px(SEGMENT_LEN_PX),
+                                    ..default()
+                                },
+                                accent,
+                            );
+
+                            // Bottom-left
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(-1.0),
+                                    bottom: Val::Px(-1.0),
+                                    width: Val::Px(SEGMENT_LEN_PX),
+                                    height: Val::Px(SEGMENT_THICKNESS_PX),
+                                    ..default()
+                                },
+                                accent_soft,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(-1.0),
+                                    bottom: Val::Px(-1.0),
+                                    width: Val::Px(SEGMENT_THICKNESS_PX),
+                                    height: Val::Px(SEGMENT_LEN_PX),
+                                    ..default()
+                                },
+                                accent,
+                            );
+
+                            // Bottom-right
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(-1.0),
+                                    bottom: Val::Px(-1.0),
+                                    width: Val::Px(SEGMENT_LEN_PX),
+                                    height: Val::Px(SEGMENT_THICKNESS_PX),
+                                    ..default()
+                                },
+                                accent_soft,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(-1.0),
+                                    bottom: Val::Px(-1.0),
+                                    width: Val::Px(SEGMENT_THICKNESS_PX),
+                                    height: Val::Px(SEGMENT_LEN_PX),
+                                    ..default()
+                                },
+                                accent,
+                            );
+                        });
                     overlay
                         .spawn((
                             Node {

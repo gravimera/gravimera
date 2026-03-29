@@ -591,22 +591,25 @@ fn preview_component_sort_key(
     )
 }
 
-fn parent_local_vector_to_world(
-    parent_global: Option<&GlobalTransform>,
-    local_vector: Vec3,
-) -> Vec3 {
-    parent_global
-        .map(|parent| parent.affine().transform_vector3(local_vector))
-        .unwrap_or(local_vector)
-}
+fn component_chain_world_affine(
+    entity: Entity,
+    component_chain: &std::collections::HashMap<Entity, (Option<Entity>, Transform)>,
+    cache: &mut std::collections::HashMap<Entity, Mat4>,
+) -> Mat4 {
+    if let Some(existing) = cache.get(&entity) {
+        return *existing;
+    }
 
-fn world_vector_to_parent_local(
-    parent_global: Option<&GlobalTransform>,
-    world_vector: Vec3,
-) -> Vec3 {
-    parent_global
-        .map(|parent| parent.affine().inverse().transform_vector3(world_vector))
-        .unwrap_or(world_vector)
+    let Some((parent_entity, local_transform)) = component_chain.get(&entity).copied() else {
+        return Mat4::IDENTITY;
+    };
+    let parent_world = parent_entity
+        .filter(|parent| component_chain.contains_key(parent))
+        .map(|parent| component_chain_world_affine(parent, component_chain, cache))
+        .unwrap_or(Mat4::IDENTITY);
+    let world = parent_world * local_transform.to_matrix();
+    cache.insert(entity, world);
+    world
 }
 
 pub(crate) fn collect_preview_component_overlays<'a>(
@@ -1027,20 +1030,51 @@ pub(crate) fn gen3d_preview_orbit_controls(
     );
 }
 
+pub(crate) fn gen3d_clear_preview_component_explode_offsets(
+    build_scene: Res<State<BuildScene>>,
+    ui_roots: Query<Entity, With<Gen3dPreviewUiModelRoot>>,
+    mut components: Query<
+        (
+            &VisualObjectRefRoot,
+            &mut Transform,
+            Option<&Gen3dPreviewAppliedExplodeOffset>,
+        ),
+        With<VisualObjectRefRoot>,
+    >,
+) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
+        return;
+    }
+    let Some(ui_root) = ui_roots.iter().next() else {
+        return;
+    };
+
+    for (meta, mut transform, applied_offset) in &mut components {
+        if meta.root_entity != ui_root {
+            continue;
+        }
+        let offset = applied_offset.map(|offset| offset.0).unwrap_or(Vec3::ZERO);
+        if offset.length_squared() > 1e-8 {
+            transform.translation -= offset;
+        }
+    }
+}
+
 pub(crate) fn gen3d_apply_preview_component_explode_offsets(
     build_scene: Res<State<BuildScene>>,
     preview: Res<Gen3dPreview>,
     library: Res<ObjectLibrary>,
     ui_roots: Query<Entity, With<Gen3dPreviewUiModelRoot>>,
-    components: Query<(
-        Entity,
-        &VisualObjectRefRoot,
-        &GlobalTransform,
-        Option<&ChildOf>,
-        Option<&Gen3dPreviewAppliedExplodeOffset>,
+    mut components: ParamSet<(
+        Query<(
+            Entity,
+            &VisualObjectRefRoot,
+            &Transform,
+            Option<&ChildOf>,
+            Option<&Gen3dPreviewAppliedExplodeOffset>,
+        )>,
+        Query<&mut Transform, With<VisualObjectRefRoot>>,
     )>,
-    mut transforms: Query<&mut Transform, With<VisualObjectRefRoot>>,
-    parents: Query<&GlobalTransform>,
     mut commands: Commands,
 ) {
     if !super::gen3d_ui_scene(build_scene.get()) {
@@ -1051,43 +1085,55 @@ pub(crate) fn gen3d_apply_preview_component_explode_offsets(
     };
 
     let mut ordered_components = Vec::new();
-    for (entity, meta, global_transform, child_of, applied_offset) in &components {
-        if meta.root_entity != ui_root {
-            continue;
-        }
+    let mut component_chain =
+        std::collections::HashMap::<Entity, (Option<Entity>, Transform)>::new();
+    {
+        let components_read = components.p0();
+        for (entity, meta, transform, child_of, applied_offset) in &components_read {
+            if meta.root_entity != ui_root {
+                continue;
+            }
 
-        ordered_components.push((
-            entity,
-            *meta,
-            *global_transform,
-            child_of.map(|child_of| child_of.parent()),
-            applied_offset.is_some(),
-            applied_offset.map(|offset| offset.0).unwrap_or(Vec3::ZERO),
-        ));
+            let parent_entity = child_of.map(|child_of| child_of.parent());
+            let last_offset_local = applied_offset.map(|offset| offset.0).unwrap_or(Vec3::ZERO);
+            component_chain.insert(entity, (parent_entity, *transform));
+            ordered_components.push((
+                entity,
+                *meta,
+                parent_entity,
+                applied_offset.is_some(),
+                last_offset_local,
+            ));
+        }
     }
     ordered_components.sort_by_key(|(entity, meta, ..)| preview_component_sort_key(meta, *entity));
+    let mut world_cache = std::collections::HashMap::<Entity, Mat4>::new();
+    let mut transforms = components.p1();
 
-    for (
-        stable_order,
-        (entity, meta, global_transform, parent_entity, had_applied_offset, last_offset_local),
-    ) in ordered_components.into_iter().enumerate()
+    for (stable_order, (entity, meta, parent_entity, had_applied_offset, last_offset_local)) in
+        ordered_components.into_iter().enumerate()
     {
         let Ok(mut transform) = transforms.get_mut(entity) else {
             continue;
         };
-        transform.translation -= last_offset_local;
 
-        let parent_global = parent_entity.and_then(|parent| parents.get(parent).ok());
         let new_offset_local = if preview.explode_components {
             if let Some(def) = library.get(meta.object_id) {
-                let current_center = global_transform
-                    .transform_point(preview_local_center(def.size, def.ground_origin_y));
-                let current_world_offset =
-                    parent_local_vector_to_world(parent_global, last_offset_local);
-                let base_center = current_center - current_world_offset;
+                let world_from_entity =
+                    component_chain_world_affine(entity, &component_chain, &mut world_cache);
+                let parent_world = parent_entity
+                    .filter(|parent| component_chain.contains_key(parent))
+                    .map(|parent| {
+                        component_chain_world_affine(parent, &component_chain, &mut world_cache)
+                    })
+                    .unwrap_or(Mat4::IDENTITY);
+                let current_center = world_from_entity
+                    .transform_point3(preview_local_center(def.size, def.ground_origin_y));
                 let desired_world_offset =
-                    explode_offset(base_center - preview.focus, def.size, stable_order);
-                world_vector_to_parent_local(parent_global, desired_world_offset)
+                    explode_offset(current_center - preview.focus, def.size, stable_order);
+                parent_world
+                    .inverse()
+                    .transform_vector3(desired_world_offset)
             } else {
                 Vec3::ZERO
             }

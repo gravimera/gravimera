@@ -25,7 +25,9 @@ The behavior is visible in the existing Gen3D workshop in Build Preview mode. Op
 - [x] (2026-03-30 10:57Z) Reworked preview picking/explode to support all object-ref depths generically, using hierarchy-safe local/world explode offsets and a nested-component hover ranking.
 - [x] (2026-03-30 11:12Z) Added preview automation endpoints for component snapshots, explode toggling, and deterministic probe picking.
 - [x] (2026-03-30 11:28Z) Added a rendered real HTTP regression under `test/run_1/gen3d_preview_component_inspection/`.
-- [ ] Run full validation on the nested-component fix path and commit the finished change with a clear message.
+- [x] (2026-03-30 12:18Z) Fixed nested explode drift by subtracting the full ancestor-chain preview offsets before recomputing each component’s target position.
+- [x] (2026-03-30 12:24Z) Reworked the hover frame into a higher-contrast bracket-style selection box and extended the real regression to catch frame-to-frame explode instability.
+- [x] (2026-03-30 12:50Z) Ran focused tests, full `cargo test -q`, the rendered smoke test, and the rendered HTTP regression after the stability/selection-box patch.
 
 ## Surprises & Discoveries
 
@@ -43,6 +45,9 @@ The behavior is visible in the existing Gen3D workshop in Build Preview mode. Op
 
 - Observation: limiting preview inspection to object-ref metadata with `depth == 0` only works for flat assemblies. In nested prefabs it makes torso/body shells shadow all internal targets and makes explode appear inert.
   Evidence: `src/gen3d/preview.rs` originally filtered both hover and explode to `meta.depth != 0`, while `src/object/visuals.rs` stored first-level children with `depth = 0`.
+
+- Observation: once nested components also exploded, subtracting only the component’s own preview offset was insufficient. Ancestor explode offsets stayed baked into the current `GlobalTransform`, so the recomputed target kept drifting frame to frame.
+  Evidence: the user-reported screenshots showed large pose changes with explode still enabled, and the previous implementation in `src/gen3d/preview.rs` only removed `last_offset_local` for the current entity before recomputing the next offset.
 
 ## Decision Log
 
@@ -71,7 +76,7 @@ The behavior is visible in the existing Gen3D workshop in Build Preview mode. Op
 The feature is implemented. Gen3D preview now exposes a hover frame and info card for top-level components, an `Inspect` → `Explode` toggle in the preview controls, and always-on component labels during explode mode. The implementation stays generic by using object-ref visual metadata plus preview-space projection math; it does not assume faces, limbs, or any other object-specific structure.
 The feature is implemented. Gen3D preview now exposes a hover frame and info card for nested object-ref components, an `Inspect` → `Explode` toggle in the preview controls, and always-on component labels during explode mode. The implementation stays generic by using object-ref visual metadata plus preview-space projection math; it does not assume faces, limbs, or any other object-specific structure.
 
-The follow-up fix also added automation-only preview debug endpoints so rendered HTTP tests can prove nested picking and explode motion against real prefabs instead of relying on a human mouse session. Remaining validation work is to run the full suite and the new rendered regression after the nested-component patch.
+The follow-up fix also added automation-only preview debug endpoints so rendered HTTP tests can prove nested picking and explode motion against real prefabs instead of relying on a human mouse session. A second follow-up fixed ancestor-chain explode drift and replaced the subtle frame with a more explicit bracket-style selection box so hover is legible against bright preview backgrounds. Remaining validation work is to run the full suite and the updated rendered regression after the stability patch.
 
 ## Context and Orientation
 

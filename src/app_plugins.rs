@@ -788,6 +788,8 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_preview_tick_selected_animation
                     .after(crate::gen3d::gen3d_apply_draft_to_preview)
                     .before(crate::object::visuals::update_part_animations),
+                crate::gen3d::gen3d_clear_preview_component_explode_offsets
+                    .before(crate::object::visuals::update_part_animations),
                 crate::gen3d::gen3d_apply_preview_component_explode_offsets
                     .after(crate::object::visuals::update_part_animations),
                 crate::gen3d::gen3d_update_collision_overlay

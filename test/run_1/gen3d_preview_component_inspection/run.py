@@ -313,6 +313,37 @@ def label_anchor(component: dict) -> tuple[float, float] | None:
     return (anchor[0], anchor[1])
 
 
+def anchor_motion_stats(before_components: list[dict], after_components: list[dict]) -> dict:
+    before_by_entity = {
+        component["entity_bits"]: component
+        for component in before_components
+        if "entity_bits" in component
+    }
+    count = 0
+    max_distance = 0.0
+    over_25px = 0
+    for component in after_components:
+        entity_bits = component.get("entity_bits")
+        if entity_bits not in before_by_entity:
+            continue
+        before_anchor = label_anchor(before_by_entity[entity_bits])
+        after_anchor = label_anchor(component)
+        if before_anchor is None or after_anchor is None:
+            continue
+        dx = after_anchor[0] - before_anchor[0]
+        dy = after_anchor[1] - before_anchor[1]
+        distance = (dx * dx + dy * dy) ** 0.5
+        count += 1
+        max_distance = max(max_distance, distance)
+        if distance > 25.0:
+            over_25px += 1
+    return {
+        "count": count,
+        "max_distance": max_distance,
+        "over_25px": over_25px,
+    }
+
+
 def main() -> int:
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parents[2]
@@ -528,6 +559,19 @@ def main() -> int:
                 f"expected probing to resolve multiple components after explode, got {probe_hits_after}"
             )
 
+        step(base_url, token, frames=1)
+        after_next = wait_for_preview_components(base_url, token, timeout_secs=10.0)
+        after_next_components = after_next.get("components") or []
+        (run_root / "preview_after_next.json").write_text(
+            json.dumps(after_next, indent=2), encoding="utf-8"
+        )
+        motion_stats = anchor_motion_stats(after_components, after_next_components)
+        if motion_stats["count"] >= 4 and motion_stats["over_25px"] > 2:
+            raise RuntimeError(
+                "explode layout is unstable across adjacent frames: "
+                f"{motion_stats}"
+            )
+
         summary = {
             "prefab": prefab,
             "projected_before": len(projected_before),
@@ -536,6 +580,7 @@ def main() -> int:
             "distinct_probe_hits_after": len(distinct_after),
             "components_moved_after_explode": moved,
             "components_with_non_zero_offsets": non_zero_offsets,
+            "explode_frame_to_frame_motion": motion_stats,
             "artifacts_dir": str(run_root),
         }
         (run_root / "summary.json").write_text(
