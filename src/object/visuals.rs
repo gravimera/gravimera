@@ -1339,6 +1339,7 @@ mod tests {
             signed_distance_m: -10.0,
             speed_mps: 0.0,
             last_translation: Vec3::ZERO,
+            last_move_dir_xz: Vec2::ZERO,
         };
 
         let spin_pos_x = PartAnimationDef::Spin {

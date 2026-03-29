@@ -69,6 +69,7 @@ pub(crate) fn ensure_locomotion_clocks(
             signed_distance_m: 0.0,
             speed_mps: 0.0,
             last_translation: transform.translation,
+            last_move_dir_xz: Vec2::ZERO,
         });
     }
 }
@@ -97,6 +98,11 @@ pub(crate) fn update_locomotion_clocks(
         let dist = delta_xz.length();
         if !dist.is_finite() || dist <= 1e-6 {
             continue;
+        }
+
+        let move_dir = delta_xz / dist;
+        if move_dir.is_finite() {
+            clock.last_move_dir_xz = move_dir;
         }
 
         clock.distance_m += dist;
@@ -184,6 +190,7 @@ mod tests {
                     signed_distance_m: 0.0,
                     speed_mps: 0.0,
                     last_translation: Vec3::ZERO,
+                    last_move_dir_xz: Vec2::ZERO,
                 },
             ))
             .id();
@@ -204,5 +211,7 @@ mod tests {
         assert!((clock.t - 1.0).abs() < 1e-5);
         assert!((clock.signed_distance_m - 1.0).abs() < 1e-5);
         assert!((clock.speed_mps - 2.0).abs() < 1e-5);
+        assert!((clock.last_move_dir_xz.x - 0.0).abs() < 1e-5);
+        assert!((clock.last_move_dir_xz.y - 1.0).abs() < 1e-5);
     }
 }

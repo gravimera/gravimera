@@ -981,6 +981,7 @@ impl Plugin for RenderedGameplayPlugin {
                 combat::tick_attack_cooldowns.after(combat::ensure_attack_cooldowns),
                 combat::unit_attack_execute
                     .after(rts::update_unit_aim_yaw_delta)
+                    .after(locomotion::update_locomotion_clocks)
                     .after(combat::tick_attack_cooldowns),
                 rts::clear_forced_animation_channel_after_one_shot
                     .after(combat::unit_attack_execute)
@@ -1004,6 +1005,7 @@ impl Plugin for RenderedGameplayPlugin {
             Update,
             combat::brain_attack_execute
                 .after(rts::execute_move_orders)
+                .after(locomotion::update_locomotion_clocks)
                 .after(combat::tick_attack_cooldowns)
                 .run_if(in_state(GameMode::Play))
                 .run_if(console::console_closed)
@@ -1244,6 +1246,7 @@ impl Plugin for RenderedGameplayPlugin {
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 combat::player_fire
                     .after(rts::update_fire_control)
+                    .after(locomotion::update_locomotion_clocks)
                     .after(combat::switch_player_weapon),
                 combat::update_lasers
                     .after(rts::update_fire_control)

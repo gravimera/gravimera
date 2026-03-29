@@ -318,6 +318,8 @@ pub(crate) struct LocomotionClock {
     pub(crate) signed_distance_m: f32,
     pub(crate) speed_mps: f32,
     pub(crate) last_translation: Vec3,
+    /// Last non-zero movement direction (world XZ), normalized.
+    pub(crate) last_move_dir_xz: Vec2,
 }
 
 #[derive(Component, Copy, Clone, Debug, Default)]
