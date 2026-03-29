@@ -86,6 +86,19 @@ The left-side Gen3D Status panel shows a compact run summary plus a scrolling st
     `tasks: running X | queued Y | total Z`
   - Finished batch lines keep the total task count in the result summary.
 
+## Preview inspection
+
+The main Gen3D preview panel now has a lightweight component-inspection overlay.
+
+- Hover a top-level component in the preview image to frame it and show a small info card.
+- Use the `Inspect` → `Explode` toggle in the preview stats box to separate top-level components in
+  the preview only.
+- In explode mode, each separated top-level component shows its name directly in the preview. Hover
+  still shows the fuller info card.
+
+This is preview-only inspection UI. It does not modify the draft, saved prefab, or component
+attachments.
+
 ## DraftOps-first primitive editing (seeded edits)
 
 ## Post-build edit flow

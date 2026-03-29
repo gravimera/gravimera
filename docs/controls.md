@@ -95,3 +95,10 @@ Units in Build mode:
 ## Build Preview (Gen3D)
 
 Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdown (**Object Preview**) and the **Gen3D** button. Full workflow: `docs/gen3d/README.md`.
+
+- Preview orbit: `LMB` drag on the preview panel
+- Preview zoom: mouse wheel on the preview panel
+- Component inspection: move the cursor over a top-level component in the preview to show a frame
+  and info card
+- Explode inspection: use the preview panel `Inspect` → `Explode` toggle to separate top-level
+  components and show their names without modifying the draft

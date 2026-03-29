@@ -705,6 +705,8 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_side_tab_buttons.run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_animation_dropdown_button
                     .run_if(crate::automation::local_input_enabled),
+                crate::gen3d::gen3d_preview_explode_toggle_button
+                    .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_animation_option_buttons
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_generate_button
@@ -786,6 +788,8 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_preview_tick_selected_animation
                     .after(crate::gen3d::gen3d_apply_draft_to_preview)
                     .before(crate::object::visuals::update_part_animations),
+                crate::gen3d::gen3d_apply_preview_component_explode_offsets
+                    .after(crate::object::visuals::update_part_animations),
                 crate::gen3d::gen3d_update_collision_overlay
                     .after(crate::gen3d::gen3d_apply_draft_to_preview),
             )
@@ -873,11 +877,14 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_prompt_text_input)
                     .after(crate::gen3d::gen3d_clear_images_button)
                     .after(crate::gen3d::gen3d_preview_animation_dropdown_button)
+                    .after(crate::gen3d::gen3d_preview_explode_toggle_button)
                     .after(crate::gen3d::gen3d_preview_animation_option_buttons)
                     .after(crate::gen3d::gen3d_poll_ai_job),
                 crate::gen3d::gen3d_rebuild_preview_animation_dropdown_options_ui
                     .after(crate::gen3d::gen3d_apply_draft_to_preview),
                 crate::gen3d::gen3d_update_preview_animation_dropdown_ui
+                    .after(crate::gen3d::gen3d_update_ui_text),
+                crate::gen3d::gen3d_update_preview_explode_toggle_ui
                     .after(crate::gen3d::gen3d_update_ui_text),
                 crate::gen3d::gen3d_update_side_panel_ui
                     .after(crate::gen3d::gen3d_update_ui_text)
@@ -901,6 +908,13 @@ impl Plugin for RenderedGen3dPlugin {
         app.add_systems(
             PostUpdate,
             crate::gen3d::gen3d_update_preview_panel_image_fit.in_set(UiSystems::Content),
+        );
+        app.add_systems(
+            PostUpdate,
+            crate::gen3d::gen3d_update_preview_component_overlay
+                .after(crate::gen3d::gen3d_update_preview_panel_image_fit)
+                .in_set(UiSystems::Content)
+                .run_if(in_gen3d_ui_scene),
         );
         app.add_systems(
             PostUpdate,

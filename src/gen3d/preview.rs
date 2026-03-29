@@ -1,10 +1,11 @@
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 use crate::assets::SceneAssets;
 use crate::object::registry::{ColliderProfile, ObjectDef, ObjectLibrary, ObjectPartKind};
-use crate::object::visuals::{MaterialCache, VisualSpawnSettings};
+use crate::object::visuals::{MaterialCache, VisualObjectRefRoot, VisualSpawnSettings};
 use crate::types::{
     ActionClock, AnimationChannelsActive, AttackClock, BuildScene, ForcedAnimationChannel,
     LocomotionClock, ObjectPrefabId,
@@ -14,6 +15,8 @@ use super::ai::Gen3dAiJob;
 use super::state::{
     Gen3dDraft, Gen3dPreview, Gen3dPreviewAnimationDropdownButton,
     Gen3dPreviewAnimationDropdownList, Gen3dPreviewCamera, Gen3dPreviewCollisionRoot,
+    Gen3dPreviewComponentLabel, Gen3dPreviewComponentLabelText, Gen3dPreviewExplodeToggleButton,
+    Gen3dPreviewHoverFrame, Gen3dPreviewHoverInfoCard, Gen3dPreviewHoverInfoText,
     Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel, Gen3dPreviewSceneRoot,
     Gen3dPreviewUiModelRoot, Gen3dReviewOverlayRoot, Gen3dSidePanelRoot,
     Gen3dSidePanelToggleButton,
@@ -261,8 +264,318 @@ pub(super) fn setup_preview_scene(
     preview.ui_applied_assembly_rev = None;
     preview.capture_applied_session_id = None;
     preview.capture_applied_assembly_rev = None;
+    preview.explode_components = false;
+    preview.hovered_component = None;
 
     target
+}
+
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct Gen3dPreviewAppliedExplodeOffset(Vec3);
+
+#[derive(Clone, Copy, Debug)]
+struct PreviewImageLayout {
+    panel_bounds_physical: Rect,
+    panel_size_logical: Vec2,
+    panel_inverse_scale: f32,
+    image_bounds_physical: Rect,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PreviewProjectedComponent {
+    frame_panel_logical: Rect,
+    label_anchor_panel_logical: Vec2,
+}
+
+#[derive(Clone, Debug)]
+struct PreviewComponentOverlayInfo {
+    entity: Entity,
+    object_id: u128,
+    label: String,
+    order: usize,
+    projected: Option<PreviewProjectedComponent>,
+    ray_t: Option<f32>,
+}
+
+fn aspect_fit_size(content_w_px: f32, content_h_px: f32, aspect: f32) -> Vec2 {
+    let content_w_px = content_w_px.max(1.0);
+    let content_h_px = content_h_px.max(1.0);
+    let aspect = aspect.clamp(0.05, 20.0);
+
+    let box_aspect = (content_w_px / content_h_px).max(0.05);
+    if aspect >= box_aspect {
+        Vec2::new(content_w_px, (content_w_px / aspect).max(1.0))
+    } else {
+        Vec2::new((content_h_px * aspect).max(1.0), content_h_px)
+    }
+}
+
+fn ui_node_bounds_physical(node: &ComputedNode, transform: UiGlobalTransform) -> Option<Rect> {
+    if !node.size.is_finite() || node.size.x <= 0.0 || node.size.y <= 0.0 {
+        return None;
+    }
+    let half = node.size * 0.5;
+    let corners = [
+        Vec2::new(-half.x, -half.y),
+        Vec2::new(half.x, -half.y),
+        Vec2::new(half.x, half.y),
+        Vec2::new(-half.x, half.y),
+    ];
+    let mut min = Vec2::splat(f32::INFINITY);
+    let mut max = Vec2::splat(f32::NEG_INFINITY);
+    for corner in corners {
+        let point = transform.transform_point2(corner);
+        min = min.min(point);
+        max = max.max(point);
+    }
+    if !min.is_finite() || !max.is_finite() {
+        return None;
+    }
+    Some(Rect { min, max })
+}
+
+fn preview_image_layout(
+    panel_node: &ComputedNode,
+    panel_transform: UiGlobalTransform,
+) -> Option<PreviewImageLayout> {
+    let panel_bounds_physical = ui_node_bounds_physical(panel_node, panel_transform)?;
+    let panel_inverse_scale = panel_node.inverse_scale_factor();
+    let panel_size_logical = panel_node.size * panel_inverse_scale;
+
+    let content_size_physical = Vec2::new(
+        (panel_node.size.x
+            - panel_node.border.min_inset.x
+            - panel_node.border.max_inset.x
+            - panel_node.padding.min_inset.x
+            - panel_node.padding.max_inset.x)
+            .max(0.0),
+        (panel_node.size.y
+            - panel_node.border.min_inset.y
+            - panel_node.border.max_inset.y
+            - panel_node.padding.min_inset.y
+            - panel_node.padding.max_inset.y)
+            .max(0.0),
+    );
+    if content_size_physical.x < 1.0 || content_size_physical.y < 1.0 {
+        return None;
+    }
+
+    let image_size_physical = aspect_fit_size(
+        content_size_physical.x,
+        content_size_physical.y,
+        super::GEN3D_PREVIEW_WIDTH_PX.max(1) as f32 / super::GEN3D_PREVIEW_HEIGHT_PX.max(1) as f32,
+    );
+    let content_min_physical = Vec2::new(
+        panel_bounds_physical.min.x
+            + panel_node.border.min_inset.x
+            + panel_node.padding.min_inset.x,
+        panel_bounds_physical.min.y
+            + panel_node.border.min_inset.y
+            + panel_node.padding.min_inset.y,
+    );
+    let image_min_physical =
+        content_min_physical + (content_size_physical - image_size_physical) * 0.5;
+
+    Some(PreviewImageLayout {
+        panel_bounds_physical,
+        panel_size_logical,
+        panel_inverse_scale,
+        image_bounds_physical: Rect {
+            min: image_min_physical,
+            max: image_min_physical + image_size_physical,
+        },
+    })
+}
+
+fn preview_cursor_to_target(cursor_physical: Vec2, image_bounds_physical: Rect) -> Option<Vec2> {
+    let image_size = image_bounds_physical.max - image_bounds_physical.min;
+    if image_size.x <= 0.0 || image_size.y <= 0.0 {
+        return None;
+    }
+    if cursor_physical.x < image_bounds_physical.min.x
+        || cursor_physical.x > image_bounds_physical.max.x
+        || cursor_physical.y < image_bounds_physical.min.y
+        || cursor_physical.y > image_bounds_physical.max.y
+    {
+        return None;
+    }
+
+    let uv = (cursor_physical - image_bounds_physical.min) / image_size;
+    Some(Vec2::new(
+        uv.x * super::GEN3D_PREVIEW_WIDTH_PX as f32,
+        uv.y * super::GEN3D_PREVIEW_HEIGHT_PX as f32,
+    ))
+}
+
+fn preview_local_center(size: Vec3, ground_origin_y: Option<f32>) -> Vec3 {
+    let size = size.abs();
+    let ground_origin_y = ground_origin_y
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .unwrap_or(size.y * 0.5);
+    Vec3::new(0.0, size.y * 0.5 - ground_origin_y, 0.0)
+}
+
+fn explode_direction(delta: Vec3, order: usize) -> Vec3 {
+    if delta.is_finite() && delta.length_squared() > 1e-4 {
+        return delta.normalize();
+    }
+
+    let angle = order as f32 * 2.399_963_1;
+    Vec3::new(
+        angle.cos(),
+        if order % 2 == 0 { 0.28 } else { -0.22 },
+        angle.sin(),
+    )
+    .normalize()
+}
+
+fn explode_offset(delta: Vec3, size: Vec3, order: usize) -> Vec3 {
+    let size = size.abs();
+    let distance = (size.max_element() * 0.75).max(0.35) + 0.18;
+    explode_direction(delta, order) * distance
+}
+
+fn ray_intersects_local_aabb(origin: Vec3, direction: Vec3, half: Vec3) -> Option<f32> {
+    let mut t_min = f32::NEG_INFINITY;
+    let mut t_max = f32::INFINITY;
+
+    for axis in 0..3 {
+        let o = origin[axis];
+        let d = direction[axis];
+        let min = -half[axis];
+        let max = half[axis];
+
+        if d.abs() < 1e-6 {
+            if o < min || o > max {
+                return None;
+            }
+            continue;
+        }
+
+        let inv_d = 1.0 / d;
+        let mut t0 = (min - o) * inv_d;
+        let mut t1 = (max - o) * inv_d;
+        if t0 > t1 {
+            std::mem::swap(&mut t0, &mut t1);
+        }
+        t_min = t_min.max(t0);
+        t_max = t_max.min(t1);
+        if t_max < t_min {
+            return None;
+        }
+    }
+
+    if t_max < 0.0 {
+        None
+    } else {
+        Some(t_min.max(0.0))
+    }
+}
+
+fn ray_intersects_component(ray: Ray3d, world_from_box: Mat4, half: Vec3) -> Option<f32> {
+    let inverse = world_from_box.inverse();
+    let origin_local = inverse.transform_point3(ray.origin);
+    let direction_local = inverse.transform_vector3(ray.direction.into());
+    ray_intersects_local_aabb(origin_local, direction_local, half)
+}
+
+fn project_component_bounds(
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    world_from_box: Mat4,
+    layout: PreviewImageLayout,
+) -> Option<PreviewProjectedComponent> {
+    let half = Vec3::new(0.5, 0.5, 0.5);
+    let corners = [
+        Vec3::new(-half.x, -half.y, -half.z),
+        Vec3::new(-half.x, -half.y, half.z),
+        Vec3::new(-half.x, half.y, -half.z),
+        Vec3::new(-half.x, half.y, half.z),
+        Vec3::new(half.x, -half.y, -half.z),
+        Vec3::new(half.x, -half.y, half.z),
+        Vec3::new(half.x, half.y, -half.z),
+        Vec3::new(half.x, half.y, half.z),
+    ];
+    let mut min = Vec2::splat(f32::INFINITY);
+    let mut max = Vec2::splat(f32::NEG_INFINITY);
+    let mut any = false;
+
+    for corner in corners {
+        let world = world_from_box.transform_point3(corner);
+        let Ok(viewport) = camera.world_to_viewport(camera_transform, world) else {
+            continue;
+        };
+        min = min.min(viewport);
+        max = max.max(viewport);
+        any = true;
+    }
+    if !any || !min.is_finite() || !max.is_finite() {
+        return None;
+    }
+
+    let center_world = world_from_box.transform_point3(Vec3::ZERO);
+    let center_viewport = camera
+        .world_to_viewport(camera_transform, center_world)
+        .ok()?;
+    let image_size = layout.image_bounds_physical.max - layout.image_bounds_physical.min;
+    if image_size.x <= 0.0 || image_size.y <= 0.0 {
+        return None;
+    }
+
+    let target_to_panel_logical = |point: Vec2| {
+        let uv = Vec2::new(
+            point.x / super::GEN3D_PREVIEW_WIDTH_PX.max(1) as f32,
+            point.y / super::GEN3D_PREVIEW_HEIGHT_PX.max(1) as f32,
+        );
+        let physical = layout.image_bounds_physical.min + uv * image_size;
+        (physical - layout.panel_bounds_physical.min) * layout.panel_inverse_scale
+    };
+
+    Some(PreviewProjectedComponent {
+        frame_panel_logical: Rect {
+            min: target_to_panel_logical(min),
+            max: target_to_panel_logical(max),
+        },
+        label_anchor_panel_logical: target_to_panel_logical(center_viewport),
+    })
+}
+
+fn component_label_text(def: &ObjectDef, order: usize) -> String {
+    let label = def.label.trim();
+    if !label.is_empty() {
+        label.to_string()
+    } else {
+        format!("Component {}", order + 1)
+    }
+}
+
+fn component_info_text(library: &ObjectLibrary, def: &ObjectDef, label: &str) -> String {
+    let primitive_parts = def
+        .parts
+        .iter()
+        .filter(|part| matches!(part.kind, ObjectPartKind::Primitive { .. }))
+        .count();
+    let child_components = def
+        .parts
+        .iter()
+        .filter(|part| matches!(part.kind, ObjectPartKind::ObjectRef { .. }))
+        .count();
+    let mut channels = library.animation_channels_ordered(def.object_id);
+    channels.retain(|channel| !channel.trim().is_empty());
+    let channels_text = if channels.is_empty() {
+        "none".to_string()
+    } else if channels.len() <= 4 {
+        channels.join(", ")
+    } else {
+        format!("{}, +{} more", channels[..4].join(", "), channels.len() - 4)
+    };
+
+    format!(
+        "{label}\nsize: {:.2} x {:.2} x {:.2}\nparts: {primitive_parts} primitive | {child_components} child\nchannels: {channels_text}",
+        def.size.x.abs(),
+        def.size.y.abs(),
+        def.size.z.abs(),
+    )
 }
 
 pub(crate) fn gen3d_preview_tick_selected_animation(
@@ -385,6 +698,10 @@ pub(crate) fn gen3d_preview_orbit_controls(
         (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
         With<Gen3dPreviewAnimationDropdownButton>,
     >,
+    explode_toggle_button: Query<
+        (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
+        With<Gen3dPreviewExplodeToggleButton>,
+    >,
     anim_dropdown_list: Query<
         (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
         With<Gen3dPreviewAnimationDropdownList>,
@@ -434,6 +751,15 @@ pub(crate) fn gen3d_preview_orbit_controls(
             }
 
             if let Ok((node, transform, vis)) = anim_dropdown_button.single() {
+                let visible = vis
+                    .map(|v| !matches!(*v, Visibility::Hidden))
+                    .unwrap_or(true);
+                if visible && node.contains_point(*transform, cursor) {
+                    blocked = true;
+                }
+            }
+
+            if let Ok((node, transform, vis)) = explode_toggle_button.single() {
                 let visible = vis
                     .map(|v| !matches!(*v, Visibility::Hidden))
                     .unwrap_or(true);
@@ -497,6 +823,322 @@ pub(crate) fn gen3d_preview_orbit_controls(
         preview.distance,
         preview.focus,
     );
+}
+
+pub(crate) fn gen3d_apply_preview_component_explode_offsets(
+    build_scene: Res<State<BuildScene>>,
+    preview: Res<Gen3dPreview>,
+    library: Res<ObjectLibrary>,
+    ui_roots: Query<Entity, With<Gen3dPreviewUiModelRoot>>,
+    mut components: Query<(
+        Entity,
+        &VisualObjectRefRoot,
+        &mut Transform,
+        Option<&Gen3dPreviewAppliedExplodeOffset>,
+    )>,
+    mut commands: Commands,
+) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
+        return;
+    }
+    let Some(ui_root) = ui_roots.iter().next() else {
+        return;
+    };
+
+    for (entity, meta, mut transform, applied_offset) in &mut components {
+        if meta.root_entity != ui_root || meta.depth != 0 {
+            continue;
+        }
+
+        let last_offset = applied_offset.map(|offset| offset.0).unwrap_or(Vec3::ZERO);
+        transform.translation -= last_offset;
+
+        let new_offset = if preview.explode_components {
+            if let Some(def) = library.get(meta.object_id) {
+                let local_center = preview_local_center(def.size, def.ground_origin_y);
+                let center = transform.transform_point(local_center);
+                explode_offset(center - preview.focus, def.size, meta.order)
+            } else {
+                Vec3::ZERO
+            }
+        } else {
+            Vec3::ZERO
+        };
+
+        transform.translation += new_offset;
+        if applied_offset
+            .map(|offset| offset.0 != new_offset)
+            .unwrap_or(true)
+        {
+            commands
+                .entity(entity)
+                .insert(Gen3dPreviewAppliedExplodeOffset(new_offset));
+        }
+    }
+}
+
+pub(crate) fn gen3d_update_preview_component_overlay(
+    build_scene: Res<State<BuildScene>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    library: Res<ObjectLibrary>,
+    mut preview: ResMut<Gen3dPreview>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Gen3dPreviewCamera>>,
+    panels: Query<(&ComputedNode, &UiGlobalTransform), With<Gen3dPreviewPanel>>,
+    ui_roots: Query<Entity, With<Gen3dPreviewUiModelRoot>>,
+    components: Query<(Entity, &VisualObjectRefRoot, &GlobalTransform)>,
+    mut overlay_nodes: Query<
+        (
+            Option<&Gen3dPreviewHoverFrame>,
+            Option<&Gen3dPreviewHoverInfoCard>,
+            Option<&Gen3dPreviewComponentLabel>,
+            &mut Node,
+            &mut Visibility,
+        ),
+        Or<(
+            With<Gen3dPreviewHoverFrame>,
+            With<Gen3dPreviewHoverInfoCard>,
+            With<Gen3dPreviewComponentLabel>,
+        )>,
+    >,
+    mut overlay_texts: Query<
+        (
+            Option<&Gen3dPreviewHoverInfoText>,
+            Option<&Gen3dPreviewComponentLabelText>,
+            &mut Text,
+        ),
+        Or<(
+            With<Gen3dPreviewHoverInfoText>,
+            With<Gen3dPreviewComponentLabelText>,
+        )>,
+    >,
+) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
+        return;
+    }
+
+    let hide_overlay = |overlay_nodes: &mut Query<
+        (
+            Option<&Gen3dPreviewHoverFrame>,
+            Option<&Gen3dPreviewHoverInfoCard>,
+            Option<&Gen3dPreviewComponentLabel>,
+            &mut Node,
+            &mut Visibility,
+        ),
+        Or<(
+            With<Gen3dPreviewHoverFrame>,
+            With<Gen3dPreviewHoverInfoCard>,
+            With<Gen3dPreviewComponentLabel>,
+        )>,
+    >,
+                        overlay_texts: &mut Query<
+        (
+            Option<&Gen3dPreviewHoverInfoText>,
+            Option<&Gen3dPreviewComponentLabelText>,
+            &mut Text,
+        ),
+        Or<(
+            With<Gen3dPreviewHoverInfoText>,
+            With<Gen3dPreviewComponentLabelText>,
+        )>,
+    >| {
+        for (_frame_marker, _card_marker, _label_marker, mut node, mut vis) in
+            overlay_nodes.iter_mut()
+        {
+            node.display = Display::None;
+            *vis = Visibility::Hidden;
+        }
+        for (_hover_info_marker, _label_marker, mut text) in overlay_texts.iter_mut() {
+            **text = "".into();
+        }
+    };
+
+    let context = windows
+        .single()
+        .ok()
+        .zip(cameras.single().ok())
+        .zip(panels.single().ok())
+        .and_then(
+            |((window, (camera, camera_transform)), (panel_node, panel_transform))| {
+                preview_image_layout(panel_node, *panel_transform)
+                    .map(|layout| (window, camera, camera_transform, layout))
+            },
+        )
+        .and_then(|(window, camera, camera_transform, layout)| {
+            ui_roots
+                .iter()
+                .next()
+                .map(|ui_root| (window, camera, camera_transform, layout, ui_root))
+        });
+    let Some((window, camera, camera_transform, layout, ui_root)) = context else {
+        hide_overlay(&mut overlay_nodes, &mut overlay_texts);
+        preview.hovered_component = None;
+        return;
+    };
+
+    let cursor_target = window
+        .physical_cursor_position()
+        .and_then(|cursor| preview_cursor_to_target(cursor, layout.image_bounds_physical));
+    let ray =
+        cursor_target.and_then(|cursor| camera.viewport_to_world(camera_transform, cursor).ok());
+
+    let mut overlays: Vec<PreviewComponentOverlayInfo> = Vec::new();
+    for (entity, meta, global_transform) in &components {
+        if meta.root_entity != ui_root || meta.depth != 0 {
+            continue;
+        }
+        let Some(def) = library.get(meta.object_id) else {
+            continue;
+        };
+
+        let scale = def.size.abs().max(Vec3::splat(0.01));
+        let local_center = preview_local_center(def.size, def.ground_origin_y);
+        let world_from_box = global_transform.to_matrix()
+            * Transform {
+                translation: local_center,
+                rotation: Quat::IDENTITY,
+                scale,
+            }
+            .to_matrix();
+
+        let projected = project_component_bounds(camera, camera_transform, world_from_box, layout);
+        let ray_t = ray
+            .as_ref()
+            .and_then(|ray| ray_intersects_component(*ray, world_from_box, Vec3::splat(0.5)));
+
+        overlays.push(PreviewComponentOverlayInfo {
+            entity,
+            object_id: meta.object_id,
+            label: component_label_text(def, meta.order),
+            order: meta.order,
+            projected,
+            ray_t,
+        });
+    }
+
+    overlays.sort_by_key(|overlay| overlay.order);
+
+    let hovered = overlays
+        .iter()
+        .filter_map(|overlay| {
+            overlay
+                .ray_t
+                .zip(overlay.projected)
+                .map(|(ray_t, projected)| (ray_t, overlay, projected))
+        })
+        .min_by(|(a_t, ..), (b_t, ..)| a_t.partial_cmp(b_t).unwrap_or(std::cmp::Ordering::Equal));
+
+    let hovered_frame = hovered.map(|(_ray_t, hovered, projected)| {
+        let frame_min = projected.frame_panel_logical.min.max(Vec2::ZERO);
+        let frame_max = projected
+            .frame_panel_logical
+            .max
+            .min(layout.panel_size_logical);
+        (hovered, frame_min, frame_max)
+    });
+
+    for (frame_marker, card_marker, label_marker, mut node, mut vis) in &mut overlay_nodes {
+        if let Some(marker) = label_marker {
+            if !preview.explode_components {
+                node.display = Display::None;
+                *vis = Visibility::Hidden;
+                continue;
+            }
+            let Some((_, projected)) = overlays
+                .get(marker.index())
+                .and_then(|overlay| overlay.projected.map(|projected| (overlay, projected)))
+            else {
+                node.display = Display::None;
+                *vis = Visibility::Hidden;
+                continue;
+            };
+            let left = (projected.label_anchor_panel_logical.x + 10.0)
+                .clamp(4.0, (layout.panel_size_logical.x - 96.0).max(4.0));
+            let top = (projected.label_anchor_panel_logical.y - 10.0)
+                .clamp(4.0, (layout.panel_size_logical.y - 28.0).max(4.0));
+            node.left = Val::Px(left);
+            node.top = Val::Px(top);
+            node.display = Display::Flex;
+            *vis = Visibility::Visible;
+            continue;
+        }
+
+        if frame_marker.is_some() {
+            let Some((_hovered, frame_min, frame_max)) = hovered_frame else {
+                node.display = Display::None;
+                *vis = Visibility::Hidden;
+                continue;
+            };
+            let frame_size = (frame_max - frame_min).max(Vec2::splat(4.0));
+            node.left = Val::Px(frame_min.x);
+            node.top = Val::Px(frame_min.y);
+            node.width = Val::Px(frame_size.x);
+            node.height = Val::Px(frame_size.y);
+            node.display = Display::Flex;
+            *vis = Visibility::Visible;
+            continue;
+        }
+
+        if card_marker.is_some() {
+            let Some((_hovered, frame_min, frame_max)) = hovered_frame else {
+                node.display = Display::None;
+                *vis = Visibility::Hidden;
+                continue;
+            };
+            let card_left =
+                (frame_max.x + 10.0).clamp(8.0, (layout.panel_size_logical.x - 220.0).max(8.0));
+            let card_top = frame_min
+                .y
+                .clamp(8.0, (layout.panel_size_logical.y - 92.0).max(8.0));
+            node.left = Val::Px(card_left);
+            node.top = Val::Px(card_top);
+            node.display = Display::Flex;
+            *vis = Visibility::Visible;
+        }
+    }
+
+    let hover_info_text = hovered
+        .and_then(|(_ray_t, hovered, _projected)| {
+            library
+                .get(hovered.object_id)
+                .map(|def| component_info_text(&library, def, &hovered.label))
+        })
+        .unwrap_or_default();
+
+    for (hover_info_marker, label_marker, mut text) in &mut overlay_texts {
+        if hover_info_marker.is_some() {
+            **text = hover_info_text.clone().into();
+            continue;
+        }
+        let value = if preview.explode_components {
+            label_marker
+                .and_then(|marker| overlays.get(marker.index()))
+                .map(|overlay| overlay.label.as_str())
+                .unwrap_or("")
+        } else {
+            ""
+        };
+        **text = value.into();
+    }
+
+    let Some((_ray_t, hovered, _projected)) = hovered else {
+        preview.hovered_component = None;
+        return;
+    };
+
+    if library.get(hovered.object_id).is_none() {
+        preview.hovered_component = Some(super::state::Gen3dPreviewHoveredComponent {
+            entity: hovered.entity,
+            object_id: hovered.object_id,
+            label: hovered.label.clone(),
+        });
+        return;
+    }
+
+    preview.hovered_component = Some(super::state::Gen3dPreviewHoveredComponent {
+        entity: hovered.entity,
+        object_id: hovered.object_id,
+        label: hovered.label.clone(),
+    });
 }
 
 pub(crate) fn gen3d_apply_draft_to_preview(
@@ -887,5 +1529,68 @@ pub(super) fn compute_draft_focus(draft: &Gen3dDraft) -> Vec3 {
         Vec3::ZERO
     } else {
         center
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_local_center_respects_ground_origin() {
+        let centered = preview_local_center(Vec3::new(2.0, 4.0, 6.0), None);
+        assert!((centered - Vec3::ZERO).length() < 1e-4);
+
+        let feet_origin = preview_local_center(Vec3::new(2.0, 4.0, 6.0), Some(0.0));
+        assert!((feet_origin - Vec3::new(0.0, 2.0, 0.0)).length() < 1e-4);
+
+        let above_center = preview_local_center(Vec3::new(2.0, 4.0, 6.0), Some(3.5));
+        assert!((above_center - Vec3::new(0.0, -1.5, 0.0)).length() < 1e-4);
+    }
+
+    #[test]
+    fn explode_direction_uses_delta_when_available() {
+        let delta = Vec3::new(3.0, 4.0, 0.0);
+        let direction = explode_direction(delta, 2);
+        assert!((direction - delta.normalize()).length() < 1e-4);
+    }
+
+    #[test]
+    fn explode_direction_falls_back_to_stable_vector() {
+        let a = explode_direction(Vec3::ZERO, 0);
+        let b = explode_direction(Vec3::ZERO, 1);
+
+        assert!(a.length() > 0.99 && a.length() < 1.01);
+        assert!(b.length() > 0.99 && b.length() < 1.01);
+        assert!(
+            (a - b).length() > 0.1,
+            "fallback directions should differ by order"
+        );
+    }
+
+    #[test]
+    fn preview_cursor_to_target_maps_displayed_image_space() {
+        let image_bounds = Rect {
+            min: Vec2::new(100.0, 50.0),
+            max: Vec2::new(580.0, 320.0),
+        };
+        let mapped = preview_cursor_to_target(Vec2::new(340.0, 185.0), image_bounds)
+            .expect("cursor inside image");
+
+        assert!((mapped.x - crate::gen3d::GEN3D_PREVIEW_WIDTH_PX as f32 * 0.5).abs() < 1e-3);
+        assert!((mapped.y - crate::gen3d::GEN3D_PREVIEW_HEIGHT_PX as f32 * 0.5).abs() < 1e-3);
+        assert!(preview_cursor_to_target(Vec2::new(90.0, 185.0), image_bounds).is_none());
+    }
+
+    #[test]
+    fn ray_intersects_local_aabb_returns_entry_distance() {
+        let origin = Vec3::new(-2.0, 0.0, 0.0);
+        let direction = Vec3::X;
+        let half = Vec3::splat(0.5);
+        let t = ray_intersects_local_aabb(origin, direction, half).expect("ray should hit");
+        assert!((t - 1.5).abs() < 1e-4);
+
+        let miss = ray_intersects_local_aabb(Vec3::new(-2.0, 2.0, 0.0), direction, half);
+        assert!(miss.is_none());
     }
 }

@@ -286,6 +286,16 @@ pub(crate) struct ObjectRefEdgeBinding {
     pub(crate) apply_aim_yaw: bool,
 }
 
+#[allow(dead_code)]
+#[derive(Component, Clone, Debug)]
+pub(crate) struct VisualObjectRefRoot {
+    pub(crate) root_entity: Entity,
+    pub(crate) parent_object_id: u128,
+    pub(crate) object_id: u128,
+    pub(crate) depth: usize,
+    pub(crate) order: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct VisualSpawnSettings {
     pub(crate) mark_parts: bool,
@@ -484,6 +494,13 @@ fn spawn_object_visuals_inner(
                 object_id: child_id,
             } = &part.kind
             {
+                child.insert(VisualObjectRefRoot {
+                    root_entity,
+                    parent_object_id: def.object_id,
+                    object_id: *child_id,
+                    depth,
+                    order: part_index,
+                });
                 child.insert(ObjectRefEdgeBinding {
                     root_entity,
                     parent_object_id: def.object_id,

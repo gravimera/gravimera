@@ -76,6 +76,119 @@ where
                 },
                 Gen3dPreviewPanelImage,
             ));
+            preview
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                    Gen3dPreviewOverlayRoot,
+                ))
+                .with_children(|overlay| {
+                    overlay.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            width: Val::Px(0.0),
+                            height: Val::Px(0.0),
+                            border: UiRect::all(Val::Px(2.0)),
+                            display: Display::None,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.14, 0.64, 0.88, 0.10)),
+                        BorderColor::all(Color::srgb(0.42, 0.82, 1.0)),
+                        Outline {
+                            width: Val::Px(1.0),
+                            color: Color::srgba(0.72, 0.92, 1.0, 0.72),
+                            offset: Val::Px(0.0),
+                        },
+                        Visibility::Hidden,
+                        ZIndex(12),
+                        Gen3dPreviewHoverFrame,
+                    ));
+                    overlay
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(0.0),
+                                top: Val::Px(0.0),
+                                max_width: Val::Px(220.0),
+                                padding: UiRect::all(Val::Px(8.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(4.0),
+                                display: Display::None,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.94)),
+                            BorderColor::all(Color::srgba(0.30, 0.52, 0.66, 0.92)),
+                            Visibility::Hidden,
+                            ZIndex(13),
+                            Gen3dPreviewHoverInfoCard,
+                        ))
+                        .with_children(|card| {
+                            card.spawn((
+                                Text::new(""),
+                                TextFont {
+                                    font_size: 13.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.94, 0.97)),
+                                Gen3dPreviewHoverInfoText,
+                            ));
+                        });
+                    overlay
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(0.0),
+                                top: Val::Px(0.0),
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                            Gen3dPreviewComponentLabelsRoot,
+                        ))
+                        .with_children(|labels| {
+                            for index in 0..super::GEN3D_MAX_COMPONENTS {
+                                labels
+                                    .spawn((
+                                        Node {
+                                            position_type: PositionType::Absolute,
+                                            left: Val::Px(0.0),
+                                            top: Val::Px(0.0),
+                                            padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            display: Display::None,
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.86)),
+                                        BorderColor::all(Color::srgba(0.22, 0.22, 0.28, 0.76)),
+                                        Visibility::Hidden,
+                                        ZIndex(11),
+                                        Gen3dPreviewComponentLabel::new(index),
+                                    ))
+                                    .with_children(|label| {
+                                        label.spawn((
+                                            Text::new(""),
+                                            TextFont {
+                                                font_size: 12.0,
+                                                ..default()
+                                            },
+                                            TextColor(Color::srgb(0.94, 0.94, 0.96)),
+                                            Gen3dPreviewComponentLabelText::new(index),
+                                        ));
+                                    });
+                            }
+                        });
+                });
             extra_children(preview);
         })
         .id()
@@ -199,6 +312,8 @@ pub(crate) fn enter_gen3d_mode(
     preview_state.animation_channel = "idle".to_string();
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
+    preview_state.explode_components = false;
+    preview_state.hovered_component = None;
     if meta_state.open {
         meta_state.close();
     }
@@ -441,6 +556,60 @@ pub(crate) fn enter_gen3d_mode(
                                                         Gen3dPreviewAnimationDropdownList,
                                                     ))
                                                     .with_children(|_list| {});
+                                            });
+                                        });
+
+                                    stats
+                                        .spawn((
+                                            Node {
+                                                flex_direction: FlexDirection::Row,
+                                                column_gap: Val::Px(6.0),
+                                                align_items: AlignItems::Center,
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::NONE),
+                                        ))
+                                        .with_children(|row| {
+                                            row.spawn((
+                                                Text::new("Inspect:"),
+                                                TextFont {
+                                                    font_size: 13.0,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                                            ));
+                                            row.spawn((
+                                                Button,
+                                                Node {
+                                                    min_width: Val::Px(112.0),
+                                                    height: Val::Px(22.0),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    padding: UiRect::axes(
+                                                        Val::Px(10.0),
+                                                        Val::Px(0.0),
+                                                    ),
+                                                    border: UiRect::all(Val::Px(1.0)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgba(
+                                                    0.02, 0.02, 0.03, 0.70,
+                                                )),
+                                                BorderColor::all(Color::srgba(
+                                                    0.25, 0.25, 0.30, 0.65,
+                                                )),
+                                                Gen3dPreviewExplodeToggleButton,
+                                            ))
+                                            .with_children(|button| {
+                                                button.spawn((
+                                                    Text::new("Explode Off"),
+                                                    TextFont {
+                                                        font_size: 13.0,
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                                    Gen3dPreviewExplodeToggleButtonText,
+                                                ));
                                             });
                                         });
                                 });
@@ -1213,10 +1382,14 @@ pub(crate) fn exit_gen3d_mode(
         preview_state.animation_channel = "idle".to_string();
         preview_state.animation_channels.clear();
         preview_state.animation_dropdown_open = false;
+        preview_state.explode_components = false;
+        preview_state.hovered_component = None;
     } else {
         // Keep the preview scene alive so Gen3D can keep rendering/reviewing in the background.
         preview_state.last_cursor = None;
         preview_state.animation_dropdown_open = false;
+        preview_state.explode_components = false;
+        preview_state.hovered_component = None;
     }
     workshop.image_viewer = None;
     workshop.prompt_scrollbar_drag = None;
@@ -1273,6 +1446,8 @@ pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
     preview_state.animation_channel = "idle".to_string();
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
+    preview_state.explode_components = false;
+    preview_state.hovered_component = None;
 }
 
 pub(crate) fn gen3d_prompt_box_focus(
@@ -1959,6 +2134,31 @@ pub(crate) fn gen3d_preview_animation_dropdown_button(
     }
 }
 
+pub(crate) fn gen3d_preview_explode_toggle_button(
+    build_scene: Res<State<BuildScene>>,
+    mut preview_state: ResMut<Gen3dPreview>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<Gen3dPreviewExplodeToggleButton>),
+    >,
+) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        if matches!(*interaction, Interaction::Pressed) {
+            preview_state.explode_components = !preview_state.explode_components;
+        }
+        apply_gen3d_preview_explode_toggle_style(
+            preview_state.explode_components,
+            *interaction,
+            &mut bg,
+            &mut border,
+        );
+    }
+}
+
 pub(crate) fn gen3d_preview_animation_option_buttons(
     build_scene: Res<State<BuildScene>>,
     mut preview_state: ResMut<Gen3dPreview>,
@@ -2278,6 +2478,43 @@ pub(crate) fn gen3d_update_preview_animation_dropdown_ui(
     }
 }
 
+pub(crate) fn gen3d_update_preview_explode_toggle_ui(
+    build_scene: Res<State<BuildScene>>,
+    preview_state: Res<Gen3dPreview>,
+    mut last_open: Local<Option<bool>>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        With<Gen3dPreviewExplodeToggleButton>,
+    >,
+    mut texts: Query<&mut Text, With<Gen3dPreviewExplodeToggleButtonText>>,
+) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
+        return;
+    }
+    if last_open.as_ref() == Some(&preview_state.explode_components) && !preview_state.is_changed()
+    {
+        return;
+    }
+    *last_open = Some(preview_state.explode_components);
+
+    let label = if preview_state.explode_components {
+        "Explode On"
+    } else {
+        "Explode Off"
+    };
+    for mut text in &mut texts {
+        **text = label.into();
+    }
+    for (interaction, mut bg, mut border) in &mut buttons {
+        apply_gen3d_preview_explode_toggle_style(
+            preview_state.explode_components,
+            *interaction,
+            &mut bg,
+            &mut border,
+        );
+    }
+}
+
 fn apply_gen3d_preview_animation_dropdown_button_style(
     open: bool,
     interaction: Interaction,
@@ -2329,6 +2566,51 @@ fn apply_gen3d_preview_animation_option_style(
             if !selected {
                 border_color = Color::srgba(0.35, 0.35, 0.40, 0.70);
             }
+        }
+        Interaction::None => {}
+    }
+
+    *bg = BackgroundColor(bg_color);
+    *border = BorderColor::all(border_color);
+}
+
+fn apply_gen3d_preview_explode_toggle_style(
+    enabled: bool,
+    interaction: Interaction,
+    bg: &mut BackgroundColor,
+    border: &mut BorderColor,
+) {
+    let (mut bg_color, mut border_color) = if enabled {
+        (
+            Color::srgba(0.09, 0.14, 0.08, 0.88),
+            Color::srgb(0.34, 0.86, 0.44),
+        )
+    } else {
+        (
+            Color::srgba(0.02, 0.02, 0.03, 0.70),
+            Color::srgba(0.25, 0.25, 0.30, 0.65),
+        )
+    };
+
+    match interaction {
+        Interaction::Pressed => {
+            bg_color = if enabled {
+                Color::srgba(0.14, 0.22, 0.12, 0.96)
+            } else {
+                Color::srgba(0.10, 0.10, 0.12, 0.92)
+            };
+        }
+        Interaction::Hovered => {
+            bg_color = if enabled {
+                Color::srgba(0.12, 0.18, 0.10, 0.92)
+            } else {
+                Color::srgba(0.06, 0.06, 0.08, 0.86)
+            };
+            border_color = if enabled {
+                Color::srgb(0.40, 0.90, 0.50)
+            } else {
+                Color::srgba(0.35, 0.35, 0.40, 0.70)
+            };
         }
         Interaction::None => {}
     }

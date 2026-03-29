@@ -179,6 +179,16 @@ pub(crate) struct Gen3dPreview {
     pub(crate) animation_channel: String,
     pub(crate) animation_channels: Vec<String>,
     pub(crate) animation_dropdown_open: bool,
+    pub(crate) explode_components: bool,
+    pub(crate) hovered_component: Option<Gen3dPreviewHoveredComponent>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct Gen3dPreviewHoveredComponent {
+    pub(crate) entity: Entity,
+    pub(crate) object_id: u128,
+    pub(crate) label: String,
 }
 
 #[derive(Resource, Default, Clone)]
@@ -397,13 +407,31 @@ pub(crate) struct Gen3dPreviewPanel;
 pub(crate) struct Gen3dPreviewPanelImage;
 
 #[derive(Component)]
+pub(crate) struct Gen3dPreviewOverlayRoot;
+
+#[derive(Component)]
 pub(crate) struct Gen3dPreviewStatsText;
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewHoverFrame;
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewHoverInfoCard;
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewHoverInfoText;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewAnimationDropdownButton;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewAnimationDropdownButtonText;
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewExplodeToggleButton;
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewExplodeToggleButtonText;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewAnimationDropdownList;
@@ -429,6 +457,39 @@ pub(crate) struct Gen3dPreviewAnimationOptionButtonText {
 }
 
 impl Gen3dPreviewAnimationOptionButtonText {
+    pub(crate) fn new(index: usize) -> Self {
+        Self { index }
+    }
+
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
+}
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewComponentLabelsRoot;
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewComponentLabel {
+    index: usize,
+}
+
+impl Gen3dPreviewComponentLabel {
+    pub(crate) fn new(index: usize) -> Self {
+        Self { index }
+    }
+
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
+}
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewComponentLabelText {
+    index: usize,
+}
+
+impl Gen3dPreviewComponentLabelText {
     pub(crate) fn new(index: usize) -> Self {
         Self { index }
     }

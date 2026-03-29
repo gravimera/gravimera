@@ -157,9 +157,10 @@ pub(crate) use images::{
     gen3d_update_images_inline_visibility, gen3d_update_thumbnail_tooltip,
 };
 pub(crate) use preview::{
-    gen3d_apply_draft_to_preview, gen3d_preview_orbit_controls,
-    gen3d_preview_tick_selected_animation, gen3d_update_collision_overlay,
-    gen3d_update_preview_camera_render_layers,
+    gen3d_apply_draft_to_preview, gen3d_apply_preview_component_explode_offsets,
+    gen3d_preview_orbit_controls, gen3d_preview_tick_selected_animation,
+    gen3d_update_collision_overlay, gen3d_update_preview_camera_render_layers,
+    gen3d_update_preview_component_overlay,
 };
 pub(crate) use save::gen3d_auto_save_when_done;
 pub(crate) use save::gen3d_prefab_thumbnail_capture_poll;
@@ -180,10 +181,11 @@ pub(crate) use ui::{
     enter_gen3d_mode, exit_gen3d_mode, gen3d_cancel_queue_button,
     gen3d_cleanup_preview_scene_when_idle, gen3d_exit_button, gen3d_exit_on_escape,
     gen3d_preview_animation_dropdown_button, gen3d_preview_animation_dropdown_scroll_wheel,
-    gen3d_preview_animation_option_buttons, gen3d_prompt_box_focus, gen3d_prompt_ime_position,
-    gen3d_prompt_scroll_wheel, gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
+    gen3d_preview_animation_option_buttons, gen3d_preview_explode_toggle_button,
+    gen3d_prompt_box_focus, gen3d_prompt_ime_position, gen3d_prompt_scroll_wheel,
+    gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
     gen3d_rebuild_preview_animation_dropdown_options_ui, gen3d_side_panel_toggle_button,
-    gen3d_update_preview_animation_dropdown_ui, gen3d_update_preview_panel_image_fit,
-    gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
-    spawn_gen3d_preview_panel,
+    gen3d_update_preview_animation_dropdown_ui, gen3d_update_preview_explode_toggle_ui,
+    gen3d_update_preview_panel_image_fit, gen3d_update_prompt_scrollbar_ui,
+    gen3d_update_side_panel_ui, gen3d_update_ui_text, spawn_gen3d_preview_panel,
 };
