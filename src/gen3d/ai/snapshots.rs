@@ -99,6 +99,7 @@ fn capture_snapshot_state(
         plan_collider: job.plan_collider.clone(),
         rig_move_cycle_m: job.rig_move_cycle_m,
         motion_authoring: job.motion_authoring.clone(),
+        motion_authoring_by_channel: job.motion_authoring_by_channel.clone(),
         reuse_groups: job.reuse_groups.clone(),
         reuse_group_warnings: job.reuse_group_warnings.clone(),
     }
@@ -113,6 +114,7 @@ fn restore_snapshot_state(job: &mut Gen3dAiJob, draft: &mut Gen3dDraft, snap: &G
     job.plan_collider = snap.plan_collider.clone();
     job.rig_move_cycle_m = snap.rig_move_cycle_m;
     job.motion_authoring = snap.motion_authoring.clone();
+    job.motion_authoring_by_channel = snap.motion_authoring_by_channel.clone();
     job.reuse_groups = snap.reuse_groups.clone();
     job.reuse_group_warnings = snap.reuse_group_warnings.clone();
 

@@ -214,6 +214,8 @@ pub(super) struct Gen3dAgentWorkspace {
     pub(super) plan_collider: Option<AiColliderJson>,
     pub(super) rig_move_cycle_m: Option<f32>,
     pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
+    pub(super) motion_authoring_by_channel:
+        std::collections::BTreeMap<String, AiMotionAuthoringJsonV1>,
     pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     pub(super) reuse_group_warnings: Vec<String>,
 }
@@ -231,6 +233,8 @@ pub(super) struct Gen3dAgentSnapshot {
     pub(super) plan_collider: Option<AiColliderJson>,
     pub(super) rig_move_cycle_m: Option<f32>,
     pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
+    pub(super) motion_authoring_by_channel:
+        std::collections::BTreeMap<String, AiMotionAuthoringJsonV1>,
     pub(super) reuse_groups: Vec<reuse_groups::Gen3dValidatedReuseGroup>,
     pub(super) reuse_group_warnings: Vec<String>,
 }
@@ -735,6 +739,8 @@ pub(crate) struct Gen3dAiJob {
     pub(super) plan_collider: Option<AiColliderJson>,
     pub(super) rig_move_cycle_m: Option<f32>,
     pub(super) motion_authoring: Option<AiMotionAuthoringJsonV1>,
+    pub(super) motion_authoring_by_channel:
+        std::collections::BTreeMap<String, AiMotionAuthoringJsonV1>,
     pub(super) descriptor_meta_cache: Option<Gen3dDescriptorMetaCache>,
     pub(super) descriptor_meta_in_flight: Option<Gen3dInFlightDescriptorMeta>,
     pub(super) seed_descriptor_meta: Option<AiDescriptorMetaJsonV1>,

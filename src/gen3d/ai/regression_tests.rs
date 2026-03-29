@@ -1,11 +1,391 @@
 use super::{convert, parse};
-use crate::gen3d::state::Gen3dDraft;
-use crate::object::registry::{ObjectPartDef, ObjectPartKind};
+use crate::gen3d::state::{
+    Gen3dDraft, Gen3dImageRef, Gen3dSideTab, Gen3dSpeedMode, Gen3dStatusLog, Gen3dWorkshop,
+};
+use crate::object::registry::{builtin_object_id, ObjectPartDef, ObjectPartKind};
 use bevy::prelude::{Quat, Transform, Vec3};
 use serde_json::json;
 
 fn id_hex32(id: u128) -> String {
     format!("{:032x}", id)
+}
+
+fn test_workshop() -> Gen3dWorkshop {
+    Gen3dWorkshop {
+        images: Vec::<Gen3dImageRef>::new(),
+        prompt: String::new(),
+        prompt_focused: false,
+        status: String::new(),
+        error: None,
+        status_log: Gen3dStatusLog::default(),
+        image_viewer: None,
+        speed_mode: Gen3dSpeedMode::Level3,
+        side_tab: Gen3dSideTab::Status,
+        side_panel_open: true,
+        prompt_scrollbar_drag: None,
+    }
+}
+
+fn component_def<'a>(draft: &'a Gen3dDraft, name: &str) -> &'a crate::object::registry::ObjectDef {
+    let object_id = builtin_object_id(&format!("gravimera/gen3d/component/{name}"));
+    draft
+        .defs
+        .iter()
+        .find(|def| def.object_id == object_id)
+        .expect("component def should exist")
+}
+
+fn component_animation_slots_for_channel(draft: &Gen3dDraft, name: &str, channel: &str) -> usize {
+    component_def(draft, name)
+        .parts
+        .iter()
+        .map(|part| {
+            part.animations
+                .iter()
+                .filter(|slot| slot.channel.as_ref() == channel)
+                .count()
+        })
+        .sum()
+}
+
+#[test]
+fn gen3d_component_regen_preserves_internal_motion_and_attachment_sync() {
+    let plan_text = r#"
+    {
+      "version": 8,
+      "mobility": { "kind": "static" },
+      "assembly_notes": "Simple torso and expressive head.",
+      "root_component": "torso",
+      "components": [
+        {
+          "name": "torso",
+          "purpose": "body",
+          "modeling_notes": "simple torso block",
+          "size": [1.0, 1.2, 0.8],
+          "anchors": [
+            { "name": "neck", "pos": [0.0, 0.45, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+          ]
+        },
+        {
+          "name": "head",
+          "purpose": "expressive head",
+          "modeling_notes": "head with face rig handles",
+          "size": [0.8, 0.7, 0.7],
+          "anchors": [
+            { "name": "base", "pos": [0.0, -0.25, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+          ],
+          "articulation_nodes": [
+            { "node_id": "face_root", "pos": [0.0, 0.02, 0.18], "forward": [0,0,1], "up": [0,1,0] },
+            { "node_id": "jaw", "parent_node_id": "face_root", "pos": [0.0, -0.10, 0.18], "forward": [0,0,1], "up": [0,1,0] },
+            { "node_id": "brow", "parent_node_id": "face_root", "pos": [0.0, 0.12, 0.18], "forward": [0,0,1], "up": [0,1,0] }
+          ],
+          "attach_to": {
+            "parent": "torso",
+            "parent_anchor": "neck",
+            "child_anchor": "base",
+            "offset": { "pos": [0.0, 0.0, -0.005] }
+          }
+        }
+      ]
+    }
+    "#;
+
+    let plan = parse::parse_ai_plan_from_text(plan_text).expect("plan should parse");
+    let plan_collider = plan.collider.clone();
+    let (planned, _notes, defs) =
+        convert::ai_plan_to_initial_draft_defs(plan).expect("plan should convert");
+
+    let mut workshop = test_workshop();
+    let mut draft = Gen3dDraft { defs };
+    let mut job = super::Gen3dAiJob::default();
+    job.plan_hash = "sha256:test".into();
+    job.plan_collider = plan_collider;
+    job.planned_components = planned;
+
+    let torso_idx = job
+        .planned_components
+        .iter()
+        .position(|component| component.name == "torso")
+        .expect("torso should exist");
+    let head_idx = job
+        .planned_components
+        .iter()
+        .position(|component| component.name == "head")
+        .expect("head should exist");
+
+    let torso_ai = parse::parse_ai_draft_from_text(
+        r#"
+        {
+          "version": 2,
+          "collider": null,
+          "anchors": [
+            { "name": "neck", "pos": [0.0, 0.45, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+          ],
+          "articulation_nodes": [],
+          "parts": [
+            { "primitive": "cuboid", "color": [0.3,0.3,0.35,1.0], "pos": [0.0, 0.0, 0.0], "scale": [1.0, 1.2, 0.8] }
+          ]
+        }
+        "#,
+    )
+    .expect("torso draft should parse");
+    let torso_def =
+        convert::ai_to_component_def(&job.planned_components[torso_idx], torso_ai, None)
+            .expect("torso draft should convert");
+    super::component_regen::apply_regenerated_component(
+        &mut workshop,
+        &mut job,
+        &mut draft,
+        torso_idx,
+        torso_def,
+    )
+    .expect("torso integration should succeed");
+
+    let head_ai = parse::parse_ai_draft_from_text(
+        r#"
+        {
+          "version": 2,
+          "collider": null,
+          "anchors": [
+            { "name": "base", "pos": [0.0, -0.25, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+          ],
+          "articulation_nodes": [
+            { "node_id": "face_root", "pos": [0.0, 0.02, 0.18], "forward": [0,0,1], "up": [0,1,0], "bind_part_indices": [0] },
+            { "node_id": "jaw", "parent_node_id": "face_root", "pos": [0.0, -0.10, 0.18], "forward": [0,0,1], "up": [0,1,0], "bind_part_indices": [1] },
+            { "node_id": "brow", "parent_node_id": "face_root", "pos": [0.0, 0.12, 0.18], "forward": [0,0,1], "up": [0,1,0], "bind_part_indices": [2] }
+          ],
+          "parts": [
+            { "primitive": "cuboid", "color": [0.85,0.75,0.65,1.0], "pos": [0.0, 0.05, 0.0], "scale": [0.8, 0.55, 0.7] },
+            { "primitive": "cuboid", "color": [0.65,0.35,0.35,1.0], "pos": [0.0, -0.14, 0.18], "scale": [0.42, 0.10, 0.24] },
+            { "primitive": "cuboid", "color": [0.25,0.12,0.12,1.0], "pos": [0.0, 0.18, 0.18], "scale": [0.44, 0.06, 0.12] }
+          ]
+        }
+        "#,
+    )
+    .expect("head draft should parse");
+    let head_def = convert::ai_to_component_def(&job.planned_components[head_idx], head_ai, None)
+        .expect("head draft should convert");
+    super::component_regen::apply_regenerated_component(
+        &mut workshop,
+        &mut job,
+        &mut draft,
+        head_idx,
+        head_def,
+    )
+    .expect("head integration should succeed");
+
+    let applies_to = json!({
+        "run_id": "",
+        "attempt": job.attempt,
+        "plan_hash": job.plan_hash.clone(),
+        "assembly_rev": job.assembly_rev,
+    });
+    let smile = parse::parse_ai_motion_authoring_from_text(
+        &serde_json::to_string(&json!({
+            "version": 1,
+            "applies_to": applies_to,
+            "decision": "author_clips",
+            "replace_channels": ["smile"],
+            "targets": [
+                {
+                    "kind": "articulation_node",
+                    "component": "head",
+                    "node_id": "face_root",
+                    "slots": [{
+                        "channel": "smile",
+                        "family": "overlay",
+                        "driver": "always",
+                        "speed_scale": 1.0,
+                        "time_offset_units": 0.0,
+                        "clip": {
+                            "kind": "loop",
+                            "duration_units": 1.0,
+                            "keyframes": [
+                                { "t_units": 0.0, "delta": { "pos": [0.0, 0.0, 0.0] } },
+                                { "t_units": 0.5, "delta": { "pos": [0.0, 0.01, 0.0] } },
+                                { "t_units": 1.0, "delta": { "pos": [0.0, 0.0, 0.0] } }
+                            ]
+                        }
+                    }]
+                },
+                {
+                    "kind": "articulation_node",
+                    "component": "head",
+                    "node_id": "jaw",
+                    "slots": [{
+                        "channel": "smile",
+                        "family": "overlay",
+                        "driver": "always",
+                        "speed_scale": 1.0,
+                        "time_offset_units": 0.0,
+                        "clip": {
+                            "kind": "loop",
+                            "duration_units": 1.0,
+                            "keyframes": [
+                                { "t_units": 0.0, "delta": { "pos": [0.0, 0.0, 0.0] } },
+                                { "t_units": 0.5, "delta": { "pos": [0.0, 0.015, 0.0] } },
+                                { "t_units": 1.0, "delta": { "pos": [0.0, 0.0, 0.0] } }
+                            ]
+                        }
+                    }]
+                }
+            ]
+        }))
+        .expect("smile JSON should serialize"),
+    )
+    .expect("smile motion should parse");
+    super::agent_motion_batch::apply_motion_authoring_for_channel(
+        &mut workshop,
+        &mut job,
+        &mut draft,
+        &smile,
+        "smile",
+    )
+    .expect("smile motion should apply");
+
+    let laugh = parse::parse_ai_motion_authoring_from_text(
+        &serde_json::to_string(&json!({
+            "version": 1,
+            "applies_to": {
+                "run_id": "",
+                "attempt": job.attempt,
+                "plan_hash": job.plan_hash.clone(),
+                "assembly_rev": job.assembly_rev,
+            },
+            "decision": "author_clips",
+            "replace_channels": ["laugh"],
+            "targets": [
+                {
+                    "kind": "articulation_node",
+                    "component": "head",
+                    "node_id": "jaw",
+                    "slots": [{
+                        "channel": "laugh",
+                        "family": "overlay",
+                        "driver": "always",
+                        "speed_scale": 1.0,
+                        "time_offset_units": 0.0,
+                        "clip": {
+                            "kind": "loop",
+                            "duration_units": 1.0,
+                            "keyframes": [
+                                { "t_units": 0.0, "delta": { "pos": [0.0, 0.0, 0.0] } },
+                                { "t_units": 0.5, "delta": { "pos": [0.0, -0.02, 0.0] } },
+                                { "t_units": 1.0, "delta": { "pos": [0.0, 0.0, 0.0] } }
+                            ]
+                        }
+                    }]
+                },
+                {
+                    "kind": "articulation_node",
+                    "component": "head",
+                    "node_id": "brow",
+                    "slots": [{
+                        "channel": "laugh",
+                        "family": "overlay",
+                        "driver": "always",
+                        "speed_scale": 1.0,
+                        "time_offset_units": 0.0,
+                        "clip": {
+                            "kind": "loop",
+                            "duration_units": 1.0,
+                            "keyframes": [
+                                { "t_units": 0.0, "delta": { "pos": [0.0, 0.0, 0.0] } },
+                                { "t_units": 0.5, "delta": { "pos": [0.0, 0.02, 0.0] } },
+                                { "t_units": 1.0, "delta": { "pos": [0.0, 0.0, 0.0] } }
+                            ]
+                        }
+                    }]
+                }
+            ]
+        }))
+        .expect("laugh JSON should serialize"),
+    )
+    .expect("laugh motion should parse");
+    super::agent_motion_batch::apply_motion_authoring_for_channel(
+        &mut workshop,
+        &mut job,
+        &mut draft,
+        &laugh,
+        "laugh",
+    )
+    .expect("laugh motion should apply");
+
+    assert!(
+        component_animation_slots_for_channel(&draft, "head", "smile") > 0,
+        "expected head component to have smile part slots before regen"
+    );
+    assert!(
+        component_animation_slots_for_channel(&draft, "head", "laugh") > 0,
+        "expected head component to have laugh part slots before regen"
+    );
+
+    job.planned_components[head_idx]
+        .attach_to
+        .as_mut()
+        .expect("head should stay attached")
+        .offset
+        .translation = Vec3::new(0.0, 0.0, 0.06);
+
+    let regenerated_head_ai = parse::parse_ai_draft_from_text(
+        r#"
+        {
+          "version": 2,
+          "collider": null,
+          "anchors": [
+            { "name": "base", "pos": [0.0, -0.25, 0.0], "forward": [0,0,1], "up": [0,1,0] }
+          ],
+          "articulation_nodes": [
+            { "node_id": "face_root", "pos": [0.0, 0.03, 0.19], "forward": [0,0,1], "up": [0,1,0], "bind_part_indices": [0] },
+            { "node_id": "jaw", "parent_node_id": "face_root", "pos": [0.0, -0.11, 0.19], "forward": [0,0,1], "up": [0,1,0], "bind_part_indices": [1] },
+            { "node_id": "brow", "parent_node_id": "face_root", "pos": [0.0, 0.13, 0.19], "forward": [0,0,1], "up": [0,1,0], "bind_part_indices": [2] }
+          ],
+          "parts": [
+            { "primitive": "cuboid", "color": [0.87,0.78,0.68,1.0], "pos": [0.0, 0.06, 0.0], "scale": [0.82, 0.58, 0.72] },
+            { "primitive": "cuboid", "color": [0.66,0.36,0.36,1.0], "pos": [0.0, -0.15, 0.19], "scale": [0.44, 0.11, 0.24] },
+            { "primitive": "cuboid", "color": [0.24,0.10,0.10,1.0], "pos": [0.0, 0.19, 0.19], "scale": [0.46, 0.06, 0.12] }
+          ]
+        }
+        "#,
+    )
+    .expect("regenerated head draft should parse");
+    let regenerated_head =
+        convert::ai_to_component_def(&job.planned_components[head_idx], regenerated_head_ai, None)
+            .expect("regenerated head draft should convert");
+    let replayed = super::component_regen::apply_regenerated_component(
+        &mut workshop,
+        &mut job,
+        &mut draft,
+        head_idx,
+        regenerated_head,
+    )
+    .expect("regen integration should succeed");
+
+    assert_eq!(replayed, vec!["laugh".to_string(), "smile".to_string()]);
+    assert!(
+        component_animation_slots_for_channel(&draft, "head", "smile") > 0,
+        "expected smile part slots to survive head regen"
+    );
+    assert!(
+        component_animation_slots_for_channel(&draft, "head", "laugh") > 0,
+        "expected laugh part slots to survive head regen"
+    );
+
+    let torso_def = component_def(&draft, "torso");
+    let head_object_id = builtin_object_id("gravimera/gen3d/component/head");
+    let head_ref = torso_def
+        .parts
+        .iter()
+        .find(|part| {
+            matches!(part.kind, ObjectPartKind::ObjectRef { object_id } if object_id == head_object_id)
+                && part.attachment.is_some()
+        })
+        .expect("torso should still reference regenerated head");
+    assert!(
+        (head_ref.transform.translation.z - 0.06).abs() < 1e-5,
+        "expected synced head attachment z offset of 0.06, got {:?}",
+        head_ref.transform.translation
+    );
 }
 
 #[test]

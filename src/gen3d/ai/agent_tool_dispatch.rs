@@ -7831,6 +7831,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                 source_plan_collider,
                 source_rig_move_cycle_m,
                 source_motion_authoring,
+                source_motion_authoring_by_channel,
                 source_reuse_groups,
                 source_reuse_group_warnings,
             ) = if from == job.agent.active_workspace_id {
@@ -7843,6 +7844,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     job.plan_collider.clone(),
                     job.rig_move_cycle_m,
                     job.motion_authoring.clone(),
+                    job.motion_authoring_by_channel.clone(),
                     job.reuse_groups.clone(),
                     job.reuse_group_warnings.clone(),
                 )
@@ -7856,6 +7858,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     ws.plan_collider.clone(),
                     ws.rig_move_cycle_m,
                     ws.motion_authoring.clone(),
+                    ws.motion_authoring_by_channel.clone(),
                     ws.reuse_groups.clone(),
                     ws.reuse_group_warnings.clone(),
                 )
@@ -7941,6 +7944,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                     plan_collider: source_plan_collider,
                     rig_move_cycle_m: source_rig_move_cycle_m,
                     motion_authoring: source_motion_authoring,
+                    motion_authoring_by_channel: source_motion_authoring_by_channel,
                     reuse_groups: source_reuse_groups,
                     reuse_group_warnings: source_reuse_group_warnings,
                 },
@@ -8022,6 +8026,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                         plan_collider: job.plan_collider.clone(),
                         rig_move_cycle_m: job.rig_move_cycle_m,
                         motion_authoring: job.motion_authoring.clone(),
+                        motion_authoring_by_channel: job.motion_authoring_by_channel.clone(),
                         reuse_groups: job.reuse_groups.clone(),
                         reuse_group_warnings: job.reuse_group_warnings.clone(),
                     },
@@ -8043,6 +8048,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
                         plan_collider: None,
                         rig_move_cycle_m: None,
                         motion_authoring: None,
+                        motion_authoring_by_channel: std::collections::BTreeMap::new(),
                         reuse_groups: Vec::new(),
                         reuse_group_warnings: Vec::new(),
                     })
@@ -8064,6 +8070,7 @@ Hint: Call `{TOOL_ID_QUERY_COMPONENT_PARTS}` first, then retry `{TOOL_ID_LLM_GEN
             job.plan_collider = next.plan_collider;
             job.rig_move_cycle_m = next.rig_move_cycle_m;
             job.motion_authoring = next.motion_authoring;
+            job.motion_authoring_by_channel = next.motion_authoring_by_channel;
             job.reuse_groups = next.reuse_groups;
             job.reuse_group_warnings = next.reuse_group_warnings;
 

@@ -154,6 +154,60 @@ fn articulation_node_world_transforms(
     Ok(out)
 }
 
+pub(super) fn replay_stored_motion_authoring_for_components(
+    workshop: &mut Gen3dWorkshop,
+    job: &mut Gen3dAiJob,
+    draft: &mut Gen3dDraft,
+    component_names: &[String],
+) -> Result<Vec<String>, String> {
+    let wanted: std::collections::HashSet<&str> = component_names
+        .iter()
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+        .collect();
+    if wanted.is_empty() || job.motion_authoring_by_channel.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut stored: Vec<(String, super::schema::AiMotionAuthoringJsonV1)> = job
+        .motion_authoring_by_channel
+        .iter()
+        .filter(|(_, authored)| {
+            authored
+                .targets
+                .iter()
+                .any(|target| wanted.contains(target.component.trim()))
+        })
+        .map(|(channel, authored)| (channel.clone(), authored.clone()))
+        .collect();
+    stored.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+    let run_id = job.run_id.map(|id| id.to_string()).unwrap_or_default();
+    let attempt = job.attempt;
+    let plan_hash = job.plan_hash.clone();
+    let assembly_rev = job.assembly_rev;
+
+    let mut replayed: Vec<String> = Vec::new();
+    for (channel, mut authored) in stored {
+        authored.applies_to = super::schema::AiReviewDeltaAppliesToJsonV1 {
+            run_id: run_id.clone(),
+            attempt,
+            plan_hash: plan_hash.clone(),
+            assembly_rev,
+        };
+        apply_motion_authoring_for_channel(workshop, job, draft, &authored, channel.as_str())
+            .map_err(|err| {
+                format!(
+                    "Failed to replay stored motion channel `{channel}` after regenerating component(s) {:?}: {err}",
+                    component_names
+                )
+            })?;
+        replayed.push(channel);
+    }
+
+    Ok(replayed)
+}
+
 pub(super) fn apply_motion_authoring_for_channel(
     workshop: &mut Gen3dWorkshop,
     job: &mut Gen3dAiJob,
@@ -608,6 +662,8 @@ pub(super) fn apply_motion_authoring_for_channel(
     }
 
     job.motion_authoring = Some(authored.clone());
+    job.motion_authoring_by_channel
+        .insert(expected_channel.clone(), authored.clone());
 
     Ok(ApplyMotionAuthoringSummary {
         decision: "author_clips",

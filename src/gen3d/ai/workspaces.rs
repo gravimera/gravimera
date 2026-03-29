@@ -69,6 +69,7 @@ fn capture_active_workspace(job: &Gen3dAiJob, draft: &Gen3dDraft) -> Gen3dAgentW
         plan_collider: job.plan_collider.clone(),
         rig_move_cycle_m: job.rig_move_cycle_m,
         motion_authoring: job.motion_authoring.clone(),
+        motion_authoring_by_channel: job.motion_authoring_by_channel.clone(),
         reuse_groups: job.reuse_groups.clone(),
         reuse_group_warnings: job.reuse_group_warnings.clone(),
     }
@@ -420,6 +421,7 @@ pub(super) fn set_active_workspace_v1(
                 plan_collider: None,
                 rig_move_cycle_m: None,
                 motion_authoring: None,
+                motion_authoring_by_channel: std::collections::BTreeMap::new(),
                 reuse_groups: Vec::new(),
                 reuse_group_warnings: Vec::new(),
             })
@@ -439,6 +441,7 @@ pub(super) fn set_active_workspace_v1(
     job.plan_collider = next.plan_collider;
     job.rig_move_cycle_m = next.rig_move_cycle_m;
     job.motion_authoring = next.motion_authoring;
+    job.motion_authoring_by_channel = next.motion_authoring_by_channel;
     job.reuse_groups = next.reuse_groups;
     job.reuse_group_warnings = next.reuse_group_warnings;
 

@@ -889,6 +889,7 @@ fn gen3d_start_seeded_session_from_prefab_id_from_api(
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
     job.motion_authoring = None;
+    job.motion_authoring_by_channel.clear();
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
     job.regen_total = 0;
@@ -1348,6 +1349,7 @@ pub(crate) fn gen3d_start_build_from_api(
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
     job.motion_authoring = None;
+    job.motion_authoring_by_channel.clear();
     job.descriptor_meta_cache = None;
     job.descriptor_meta_in_flight = None;
     job.seed_descriptor_meta = None;
@@ -2302,51 +2304,16 @@ pub(crate) fn gen3d_poll_ai_job(
                                 return;
                             }
                         };
-                        let component_def = converted.def;
-
-                        job.planned_components[idx].actual_size = Some(component_def.size);
-                        job.planned_components[idx].anchors = component_def.anchors.clone();
-                        job.planned_components[idx].articulation_nodes =
-                            converted.articulation_nodes;
-
-                        // Replace component def in-place.
-                        let target_id = component_def.object_id;
-                        if let Some(existing) =
-                            draft.defs.iter_mut().find(|d| d.object_id == target_id)
-                        {
-                            let preserved_refs: Vec<ObjectPartDef> = existing
-                                .parts
-                                .iter()
-                                .filter(|p| matches!(p.kind, ObjectPartKind::ObjectRef { .. }))
-                                .cloned()
-                                .collect();
-                            let mut merged = component_def;
-                            merged.parts.extend(preserved_refs);
-                            *existing = merged;
-                        } else {
-                            draft.defs.push(component_def);
-                        }
-
-                        if let Some(root_idx) = job
-                            .planned_components
-                            .iter()
-                            .position(|c| c.attach_to.is_none())
-                        {
-                            if let Err(err) = convert::resolve_planned_component_transforms(
-                                &mut job.planned_components,
-                                root_idx,
-                            ) {
-                                fail_job(&mut workshop, &mut job, err);
-                                return;
-                            }
-                        }
-                        convert::update_root_def_from_planned_components(
-                            &job.planned_components,
-                            &job.plan_collider,
+                        if let Err(err) = super::component_regen::apply_regenerated_component(
+                            &mut workshop,
+                            &mut job,
                             &mut draft,
-                        );
-                        write_gen3d_assembly_snapshot(job.artifact_dir(), &job.planned_components);
-                        job.assembly_rev = job.assembly_rev.saturating_add(1);
+                            idx,
+                            converted,
+                        ) {
+                            fail_job(&mut workshop, &mut job, err);
+                            return;
+                        }
 
                         let next_pos = job.component_queue_pos + 1;
                         let per_component_refine_total =
@@ -3109,6 +3076,7 @@ fn retry_gen3d_plan(
     job.plan_collider = None;
     job.rig_move_cycle_m = None;
     job.motion_authoring = None;
+    job.motion_authoring_by_channel.clear();
     job.reuse_groups.clear();
     job.reuse_group_warnings.clear();
     job.pending_plan_attempt = None;
@@ -3287,52 +3255,12 @@ fn poll_gen3d_parallel_components(
                         return;
                     }
                 };
-                let component_def = converted.def;
-                if let Some(comp) = job.planned_components.get_mut(idx) {
-                    comp.articulation_nodes = converted.articulation_nodes;
+                if let Err(err) = super::component_regen::apply_regenerated_component(
+                    workshop, job, draft, idx, converted,
+                ) {
+                    fail_job(workshop, job, err);
+                    return;
                 }
-
-                if let Some(comp) = job.planned_components.get_mut(idx) {
-                    comp.actual_size = Some(component_def.size);
-                    comp.anchors = component_def.anchors.clone();
-                }
-
-                // Replace component def in-place.
-                let target_id = component_def.object_id;
-                if let Some(existing) = draft.defs.iter_mut().find(|d| d.object_id == target_id) {
-                    let preserved_refs: Vec<ObjectPartDef> = existing
-                        .parts
-                        .iter()
-                        .filter(|p| matches!(p.kind, ObjectPartKind::ObjectRef { .. }))
-                        .cloned()
-                        .collect();
-                    let mut merged = component_def;
-                    merged.parts.extend(preserved_refs);
-                    *existing = merged;
-                } else {
-                    draft.defs.push(component_def);
-                }
-
-                if let Some(root_idx) = job
-                    .planned_components
-                    .iter()
-                    .position(|c| c.attach_to.is_none())
-                {
-                    if let Err(err) = convert::resolve_planned_component_transforms(
-                        &mut job.planned_components,
-                        root_idx,
-                    ) {
-                        fail_job(workshop, job, err);
-                        return;
-                    }
-                }
-                convert::update_root_def_from_planned_components(
-                    &job.planned_components,
-                    &job.plan_collider,
-                    draft,
-                );
-                write_gen3d_assembly_snapshot(job.artifact_dir(), &job.planned_components);
-                job.assembly_rev = job.assembly_rev.saturating_add(1);
             }
             Err(err) => {
                 if task.attempt < GEN3D_MAX_COMPONENT_RETRIES {

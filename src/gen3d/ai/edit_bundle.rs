@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -38,6 +39,8 @@ pub(crate) struct Gen3dEditBundleV1 {
     pub(crate) rig_move_cycle_m: Option<f32>,
     #[serde(default)]
     pub(crate) motion_authoring: Option<AiMotionAuthoringJsonV1>,
+    #[serde(default)]
+    pub(crate) motion_authoring_by_channel: BTreeMap<String, AiMotionAuthoringJsonV1>,
     #[serde(default)]
     pub(crate) reuse_group_warnings: Vec<String>,
 }
@@ -244,6 +247,7 @@ pub(crate) fn gen3d_build_edit_bundle_v1(
             .collect(),
         rig_move_cycle_m: job.rig_move_cycle_m,
         motion_authoring: job.motion_authoring.clone(),
+        motion_authoring_by_channel: job.motion_authoring_by_channel.clone(),
         reuse_group_warnings: job.reuse_group_warnings.clone(),
     }
 }
@@ -280,6 +284,28 @@ pub(crate) fn gen3d_hydrate_seeded_job_from_edit_bundle_v1(
     bundle: &Gen3dEditBundleV1,
     draft_defs: &[crate::object::registry::ObjectDef],
 ) -> Result<(), String> {
+    fn fallback_motion_authoring_by_channel(
+        latest: Option<&AiMotionAuthoringJsonV1>,
+        existing: &BTreeMap<String, AiMotionAuthoringJsonV1>,
+    ) -> BTreeMap<String, AiMotionAuthoringJsonV1> {
+        if !existing.is_empty() {
+            return existing.clone();
+        }
+        let Some(latest) = latest else {
+            return BTreeMap::new();
+        };
+        if latest.replace_channels.len() != 1 {
+            return BTreeMap::new();
+        }
+        let channel = latest.replace_channels[0].trim();
+        if channel.is_empty() {
+            return BTreeMap::new();
+        }
+        let mut out = BTreeMap::new();
+        out.insert(channel.to_string(), latest.clone());
+        out
+    }
+
     let planned: Vec<Gen3dPlannedComponent> = bundle
         .planned_components
         .iter()
@@ -294,6 +320,10 @@ pub(crate) fn gen3d_hydrate_seeded_job_from_edit_bundle_v1(
     job.plan_collider = bundle.plan_collider.clone();
     job.rig_move_cycle_m = bundle.rig_move_cycle_m;
     job.motion_authoring = bundle.motion_authoring.clone();
+    job.motion_authoring_by_channel = fallback_motion_authoring_by_channel(
+        bundle.motion_authoring.as_ref(),
+        &bundle.motion_authoring_by_channel,
+    );
     job.reuse_group_warnings = bundle.reuse_group_warnings.clone();
 
     // Ensure the agent has a workspace so prompt summaries are non-empty after restart.
@@ -312,6 +342,7 @@ pub(crate) fn gen3d_hydrate_seeded_job_from_edit_bundle_v1(
             plan_collider: job.plan_collider.clone(),
             rig_move_cycle_m: job.rig_move_cycle_m,
             motion_authoring: job.motion_authoring.clone(),
+            motion_authoring_by_channel: job.motion_authoring_by_channel.clone(),
             reuse_groups: Vec::new(),
             reuse_group_warnings: job.reuse_group_warnings.clone(),
         },

@@ -17,6 +17,7 @@ mod attachment_motion_basis;
 mod basis_from_up_forward;
 mod bootstrap_requests;
 mod claude;
+mod component_regen;
 mod convert;
 mod copy_component;
 mod draft_ops;

@@ -162,6 +162,13 @@ then composes any matching `overlay` slot on top. This lets named local expressi
 `blink` or `jaw_open` override the default base motion when they were authored as `base`, while
 still supporting additive overlays without replacing the body’s normal motion.
 
+Gen3D now persists accepted motion-authoring JSON per channel inside the live job state, workspace
+state, snapshots, and saved edit bundle metadata. When a later review-delta or seeded edit
+regenerates one component, the engine rebuilds attachment object refs from `planned_components`
+first, then replays the stored channels that target that component. This keeps attachment offsets
+and internal articulation-node part animations aligned with the regenerated geometry instead of
+dropping named expressions during component regen.
+
 `query_component_parts_v1` now returns both `parts[]` and `articulation_nodes[]` so seeded edits can
 reason about internal rig handles deterministically.
 

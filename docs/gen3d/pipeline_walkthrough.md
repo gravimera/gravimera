@@ -60,6 +60,11 @@ Two recent contract changes matter when reading Gen3D artifacts:
   - `overlay` is a forced named family that composes on top of base instead of replacing it.
   - When a named channel is selected in preview/runtime, Gravimera first tries that channel in
     `base`, then composes any matching `overlay` slot on top.
+- Accepted motion authoring is cached per channel, not just as one “latest” blob.
+  - That cache is persisted in workspaces, snapshots, and `gen3d_edit_bundle_v1.json`.
+  - If a later component regen replaces one component def, the merge step rebuilds attachment refs
+    from `planned_components` and replays the stored channels that target the regenerated component,
+    so saved attachment offsets and internal part animations survive the regen.
 
 ## What happens in a run (whole-picture flow)
 

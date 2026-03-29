@@ -8,7 +8,6 @@ use crate::threaded_result::{new_shared_result, take_shared_result, SharedResult
 
 use super::super::state::{Gen3dDraft, Gen3dWorkshop};
 use super::agent_utils::sanitize_prefix;
-use super::artifacts::write_gen3d_assembly_snapshot;
 use super::parse;
 use super::{
     fail_job, set_progress, spawn_gen3d_ai_text_thread, Gen3dAiJob, Gen3dAiProgress,
@@ -205,53 +204,44 @@ pub(super) fn poll_agent_component_batch(
                     }
                 };
                 let component_def = converted.def;
-
-                if let Some(comp) = job.planned_components.get_mut(idx) {
-                    comp.actual_size = Some(component_def.size);
-                    comp.anchors = component_def.anchors.clone();
-                    comp.articulation_nodes = converted.articulation_nodes;
-                }
-
-                // Replace component def in-place, preserving existing object refs.
-                let target_id = component_def.object_id;
-                if let Some(existing) = draft.defs.iter_mut().find(|d| d.object_id == target_id) {
-                    let preserved_refs: Vec<crate::object::registry::ObjectPartDef> = existing
-                        .parts
-                        .iter()
-                        .filter(|p| {
-                            matches!(
-                                p.kind,
-                                crate::object::registry::ObjectPartKind::ObjectRef { .. }
-                            )
-                        })
-                        .cloned()
-                        .collect();
-                    let mut merged = component_def;
-                    merged.parts.extend(preserved_refs);
-                    *existing = merged;
-                } else {
-                    draft.defs.push(component_def);
-                }
-
-                if let Some(root_idx) = job
-                    .planned_components
-                    .iter()
-                    .position(|c| c.attach_to.is_none())
-                {
-                    if let Err(err) = super::convert::resolve_planned_component_transforms(
-                        &mut job.planned_components,
-                        root_idx,
-                    ) {
-                        warn!("Gen3D batch: failed to resolve transforms: {err}");
+                let converted = super::convert::ConvertedComponentDef {
+                    def: component_def,
+                    articulation_nodes: converted.articulation_nodes,
+                };
+                if let Err(err) = super::component_regen::apply_regenerated_component(
+                    workshop, job, draft, idx, converted,
+                ) {
+                    if task.attempt < MAX_COMPONENT_RETRIES {
+                        let next = task.attempt + 1;
+                        warn!(
+                            "Gen3D batch: component integration failed; retrying (idx={}, name={}, attempt {}/{}) err={}",
+                            idx,
+                            component_name,
+                            next + 1,
+                            MAX_COMPONENT_RETRIES + 1,
+                            super::truncate_for_ui(&err, 600),
+                        );
+                        if idx >= job.component_attempts.len() {
+                            job.component_attempts
+                                .resize(job.planned_components.len(), 0);
+                        }
+                        job.component_attempts[idx] = next;
+                        if idx >= job.component_last_errors.len() {
+                            job.component_last_errors
+                                .resize(job.planned_components.len(), None);
+                        }
+                        job.component_last_errors[idx] = Some(err.clone());
+                        job.component_queue.insert(0, idx);
+                        continue;
                     }
+                    batch.completed_indices.insert(idx);
+                    batch.failed.push(super::Gen3dComponentBatchFailure {
+                        index: idx,
+                        name: component_name,
+                        error: err,
+                    });
+                    continue;
                 }
-                super::convert::update_root_def_from_planned_components(
-                    &job.planned_components,
-                    &job.plan_collider,
-                    draft,
-                );
-                write_gen3d_assembly_snapshot(job.step_dir.as_deref(), &job.planned_components);
-                job.assembly_rev = job.assembly_rev.saturating_add(1);
 
                 batch.completed_indices.insert(idx);
                 if idx < job.component_last_errors.len() {
