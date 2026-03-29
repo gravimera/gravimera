@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""
-Build and package Gravimera for distribution.
-
-Outputs:
-  dist/<platform>/...
-
-Platform notes:
-  - macOS: creates `Gravimera.app` and a zipped app bundle.
-  - Windows: creates a zip containing `gravimera.exe` + `assets/`.
-  - Linux: creates a tar.gz containing `gravimera` + `assets/`.
-
-Runtime data is stored under `<root_dir>/` (default: `~/.gravimera/`; override via `root_dir` in config or env `GRAVIMERA_HOME`).
-"""
+"""Build and package Gravimera release artifacts."""
 
 from __future__ import annotations
 
@@ -34,6 +22,40 @@ DIST_DIR = ROOT / "dist"
 
 APP_NAME = "Gravimera"
 BUNDLE_ID = "com.flowbehappy.gravimera"
+
+DESCRIPTION = """Build and package Gravimera release artifacts.
+
+The script builds `gravimera` in release mode and writes packaged artifacts
+under `dist/<platform>/`.
+
+Packaging format by target platform:
+  macOS: app bundle (`Gravimera.app`) plus a zip
+  Windows: zip containing `gravimera.exe` and `assets/`
+  Linux: tar.gz containing `gravimera` and `assets/`
+
+Without `--target`, the script packages the host-default build.
+With one or more `--target` flags, the script packages each explicit target
+triple and suffixes artifact names with that target to avoid overwriting.
+
+Runtime data is not bundled. Gravimera stores runtime config/save/cache under
+`~/.gravimera/` by default (override with `root_dir` in config or the
+`GRAVIMERA_HOME` environment variable).
+"""
+
+EXAMPLES = """Examples:
+  Build and package the host-default target:
+    python3 tools/publish.py
+
+  Build and package both Apple Silicon and Intel macOS artifacts from one run:
+    rustup target add aarch64-apple-darwin x86_64-apple-darwin
+    python3 tools/publish.py --target aarch64-apple-darwin --target x86_64-apple-darwin
+
+  Re-package prebuilt macOS targets without rebuilding:
+    python3 tools/publish.py --no-build --target aarch64-apple-darwin --target x86_64-apple-darwin
+
+  Build and package an explicit Linux target:
+    python3 tools/publish.py --target x86_64-unknown-linux-gnu
+"""
 
 
 @dataclass(frozen=True)
@@ -329,7 +351,11 @@ def _package_macos(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=DESCRIPTION,
+        epilog=EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--no-build", action="store_true", help="Skip `cargo build --release`")
     parser.add_argument(
         "--target",

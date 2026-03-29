@@ -19,6 +19,13 @@ Without `--target`, the script builds the host-default release binary and writes
 - Windows: a zip containing `gravimera.exe` + `assets/`
 - Linux: a tar.gz containing `gravimera` + `assets/`
 
+Example outputs:
+
+- `dist/macos/Gravimera.app`
+- `dist/macos/gravimera-0.1.0-macos.zip`
+- `dist/linux/gravimera-0.1.0-linux.tar.gz`
+- `dist/windows/gravimera-0.1.0-windows.zip`
+
 ## Build + package explicit targets
 
 `--target` is repeatable. Each explicit target is built and packaged according to the target triple instead of the host OS, and the artifact names include the target triple so a single run can emit multiple packages without overwriting earlier ones.
@@ -38,6 +45,26 @@ Example outputs under `dist/macos/`:
 - `gravimera-0.1.0-macos-aarch64-apple-darwin.zip`
 - `Gravimera-x86_64-apple-darwin.app`
 - `gravimera-0.1.0-macos-x86_64-apple-darwin.zip`
+
+Example: package an explicit Linux target:
+
+```bash
+rustup target add x86_64-unknown-linux-gnu
+python3 tools/publish.py --target x86_64-unknown-linux-gnu
+```
+
+Example outputs under `dist/linux/`:
+
+- `gravimera-0.1.0-linux-x86_64-unknown-linux-gnu/`
+- `gravimera-0.1.0-linux-x86_64-unknown-linux-gnu.tar.gz`
+
+Example: re-package already-built targets without rebuilding:
+
+```bash
+python3 tools/publish.py --no-build \
+  --target aarch64-apple-darwin \
+  --target x86_64-apple-darwin
+```
 
 Notes:
 
